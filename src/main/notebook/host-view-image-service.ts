@@ -1,3 +1,4 @@
+import type { TransientViewImage } from './execution-model-contract'
 import { realpath, stat } from 'node:fs/promises'
 import { isAbsolute, posix, relative, resolve, sep, win32 } from 'node:path'
 
@@ -41,10 +42,7 @@ export type HostViewImageResult = Readonly<{
   mimeType: 'image/png' | 'image/jpeg'
 }>
 
-export type TransientViewImage = Readonly<{
-  data: string
-  mimeType: 'image/png' | 'image/jpeg'
-}>
+export type { TransientViewImage } from './execution-model-contract'
 
 type HostViewImageCatalog = Readonly<{
   readHostArtifactCatalog(request: {

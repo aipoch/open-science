@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
-export type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
+import type { NotebookKernelEpochOwnership } from './execution-model-contract'
+export type { NotebookKernelEpochOwnership } from './execution-model-contract'
 
 import type {
   NotebookRunEnvironmentCapture,
@@ -29,7 +29,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
 import { resolveProjectId, type ProjectIdScope } from '../../shared/project-scope'
 import type { NotebookHelperModuleInjection } from './helper-module-host'
-import type { TransientViewImage } from './host-view-image-service'
+import type { TransientViewImage } from './execution-model-contract'
 import { notebookLaneScope, type NotebookLaneIdentity } from './lane-identity'
 
 export type NotebookSessionResolvedInterpreter = {

@@ -281,7 +281,7 @@ export const PackageFileSelection = ({
           ) : null}
           {stats.optionalCount > 0 ? (
             <p className="text-xs text-muted-foreground">
-              {t('Selected: {{selected}} / {{total}} files · {{size}}', {
+              {t('Optional files: {{selected}} / {{total}} selected · {{size}}', {
                 selected: stats.selectedOptionalCount,
                 total: stats.optionalCount,
                 size: packageBytes(stats.selectedOptionalBytes)
@@ -710,7 +710,7 @@ export const PackageFileSelection = ({
           disabled={requiredOversized}
           onClick={() => onSelect([...excluded], includePdfNotes)}
         >
-          {t('Export')}
+          {t('Choose save location…')}
         </Button>
       </div>
     </>

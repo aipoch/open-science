@@ -63,6 +63,17 @@ export const pdfTranslationLayoutSnapshotSchema = z
         includedItemCount: count,
         excludedItemCount: count,
         pagesWithoutText: z.array(pageNumber).max(500),
+        pageDiagnostics: z
+          .array(
+            z
+              .object({
+                pageNumber,
+                reason: z.literal('unreliable-font-unicode')
+              })
+              .strict()
+          )
+          .max(500)
+          .optional(),
         exclusions: z
           .array(
             z
@@ -117,7 +128,12 @@ export const pdfTranslationLayoutSnapshotSchema = z
         }
       return (
         owned.size === value.coverage.textItemCount &&
-        value.coverage.pagesWithoutText.every((page) => page <= value.pages.length)
+        value.coverage.pagesWithoutText.every((page) => page <= value.pages.length) &&
+        (value.coverage.pageDiagnostics ?? []).every(
+          (diagnostic) => diagnostic.pageNumber <= value.pages.length
+        ) &&
+        new Set(value.coverage.pageDiagnostics?.map((diagnostic) => diagnostic.pageNumber)).size ===
+          (value.coverage.pageDiagnostics?.length ?? 0)
       )
     },
     { message: 'Invalid PDF layout snapshot ownership or coverage.' }

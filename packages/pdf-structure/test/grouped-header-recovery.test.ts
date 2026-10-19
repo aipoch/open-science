@@ -908,3 +908,130 @@ it('rebuilds a two-row ruled math table from complete native column anchors', ()
     ).repairs
   ).not.toContain('native-ruled-two-row-math-table-recovered')
 })
+
+it.each(['subscript', 'superscript', 'large-superscript', 'full-em-superscript'] as const)(
+  'keeps an independent leaf below a single-line parent with %s',
+  (position) => {
+    const table = {
+      id: 'anonymous-script-parent-leaf',
+      cropRect: [0, 0, 300, 100],
+      structure: {
+        objects: [
+          ...[0, 100, 200].map((x) => ({ label: 'table column', rect: [x, 20, x + 100, 80] })),
+          ...[20, 40, 60].map((y) => ({ label: 'table row', rect: [0, y, 300, y + 20] })),
+          { label: 'table column header', rect: [0, 18, 300, 60] }
+        ]
+      }
+    }
+    let index = 0
+    const token = (text: string, x: number, y: number, width: number, height = 8): HeaderToken => ({
+      text,
+      rect: [x, y, x + width, y + height],
+      baseline: y + height,
+      height,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: index++, text }
+    })
+    const source = [
+      token('Method', 10, 25, 40),
+      token('Parent x', 105, 28, 50),
+      position === 'large-superscript'
+        ? token('i', 156, 26, 4, 6.8)
+        : position === 'full-em-superscript'
+          ? token('i', 155, 23.2, 4, 8)
+          : token('i', 156, position === 'subscript' ? 32 : 24, 4, 5),
+      token('Leaf', 105, 42, 30),
+      token('Metrics', 215, 24, 40),
+      token('Score', 215, 42, 30),
+      token('A', 10, 65, 10),
+      token('1', 110, 65, 10),
+      token('2', 210, 65, 10)
+    ]
+    const result = refineTable(
+      table,
+      source,
+      [],
+      [],
+      [0, 60, 80, 100].map((y) => [0, y, 300, y])
+    )
+    expect(result.repairs).not.toContain('native-wrapped-header-stub-recovered')
+    expect(
+      result.cells.find((cell: { text: string }) => cell.text.includes('Parent'))
+    ).toMatchObject({ row: 0, rowSpan: 1 })
+    expect(result.cells.find((cell: { text: string }) => cell.text === 'Leaf')).toMatchObject({
+      row: 1,
+      column: 1
+    })
+    for (const cell of result.cells) {
+      if (cell.textRuns)
+        expect(cell.textRuns.map((run: { text: string }) => run.text).join('')).toBe(cell.text)
+    }
+    expect(
+      result.cells
+        .flatMap((cell: { sourceItems?: Array<{ index: number }> }) =>
+          (cell.sourceItems ?? []).map((item) => item.index)
+        )
+        .sort((a: number, b: number) => a - b)
+    ).toEqual(source.map((item) => item.sourceItem.index))
+  }
+)
+
+it('retains rich text and every original when joining a genuinely wrapped header', () => {
+  const table = {
+    id: 'wrapped-stub-header',
+    cropRect: [0, 0, 300, 100],
+    structure: {
+      objects: [
+        ...[0, 100, 200].map((x) => ({
+          label: 'table column',
+          rect: [x, 20, x + 100, 80]
+        })),
+        ...[20, 40, 60].map((y) => ({ label: 'table row', rect: [0, y, 300, y + 20] })),
+        { label: 'table column header', rect: [0, 22, 300, 60] }
+      ]
+    }
+  }
+  let index = 0
+  const token = (text: string, x: number, y: number, width: number): HeaderToken => ({
+    text,
+    rect: [x, y, x + width, y + 8],
+    baseline: y + 8,
+    height: 8,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: index++, text }
+  })
+  const source = [
+    token('Method', 10, 25, 40),
+    token('No. of', 110, 20, 35),
+    token('Activated', 108, 28, 50),
+    { ...token('k', 159, 33, 4), height: 5, baseline: 38, rect: [159, 33, 163, 38] },
+    token('Parameters', 105, 42, 60),
+    token('Metrics', 215, 20, 40),
+    token('Score', 215, 42, 30),
+    token('A', 10, 65, 10),
+    token('1', 110, 65, 10),
+    token('2', 210, 65, 10)
+  ]
+  const result = refineTable(
+    table,
+    source,
+    [],
+    [],
+    [0, 60, 80, 100].map((y) => [0, y, 300, y])
+  )
+  const merged = result.cells.find(
+    (cell: { row: number; column: number }) => cell.row === 0 && cell.column === 1
+  )
+  expect(merged).toMatchObject({ rowSpan: 2, colSpan: 1 })
+  expect(merged.text).toContain('Parameters')
+  expect(merged.textRuns?.some((run: { position: string }) => run.position !== 'normal')).toBe(true)
+  expect(merged.textRuns.map((run: { text: string }) => run.text).join('')).toBe(merged.text)
+  expect(result.repairs).toContain('native-wrapped-header-stub-recovered')
+  expect(
+    result.cells
+      .flatMap((cell: { sourceItems?: Array<{ index: number }> }) =>
+        (cell.sourceItems ?? []).map((item) => item.index)
+      )
+      .sort((a: number, b: number) => a - b)
+  ).toEqual(source.map((item) => item.sourceItem.index))
+})

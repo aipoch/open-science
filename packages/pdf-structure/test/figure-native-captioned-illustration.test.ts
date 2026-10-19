@@ -7,6 +7,219 @@ import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
+
+// A neighboring numbered code box belongs to an independently sourced prose
+// column. Its complete frame, not a text/font heuristic, owns its border paint.
+function neighboringCodeColumn(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800
+  const operators: { fnArray: number[]; argsArray: unknown[] } = { fnArray: [], argsArray: [] }
+  const graphicsBounds: ReturnType<typeof JSON.parse>[] = [],
+    lines: ReturnType<typeof JSON.parse>[] = [],
+    items: ReturnType<typeof JSON.parse>[] = []
+  const emit = (op: number, args: unknown): number => {
+    const index = operators.fnArray.length
+    operators.fnArray.push(op)
+    operators.argsArray.push(args)
+    return index
+  }
+  const paint = (points: number[][], stroke = false): void => {
+    const path = points.flatMap((p, i) => [i ? 1 : 0, p[0], height - p[1]])
+    if (!stroke) path.push(4)
+    const operationIndex = emit(OPS.constructPath, [
+      stroke ? OPS.stroke : OPS.fill,
+      [new Float32Array(path)],
+      null
+    ])
+    const pad = stroke ? 0.5 : 0
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex,
+      normalizedRect: [
+        Math.min(...points.map((p) => p[0])) - pad,
+        Math.min(...points.map((p) => p[1])) - pad,
+        Math.max(...points.map((p) => p[0])) + pad,
+        Math.max(...points.map((p) => p[1])) + pad
+      ].map((v, i) => v / (i % 2 ? height : width))
+    })
+  }
+  const rect = (r: number[]): void =>
+    paint([
+      [r[0], r[1]],
+      [r[2], r[1]],
+      [r[2], r[3]],
+      [r[0], r[3]]
+    ])
+  const text = (
+    str: string,
+    x: number,
+    y: number,
+    w: number,
+    h: number,
+    fontName = 'body',
+    line = true
+  ): void => {
+    items.push({
+      str,
+      dir: 'ltr',
+      width: w,
+      height: h,
+      transform: [h, 0, 0, h, x, height - y - h],
+      fontName,
+      sourceItem: { pageNumber: 1, index: items.length, text: str }
+    })
+    if (line) lines.push({ text: str, x, y, width: w, height: h, fontSize: h })
+  }
+  rect([50, 100, 280, 280])
+  for (let i = 0; i < 8; i++) rect([80 + i * 22, 150 + i * 9, 90 + i * 22, 250])
+  for (let i = 0; i < 4; i++) text(String(i * 10), 55, 150 + i * 25, 15, 10)
+  for (let i = 0; i < 3; i++) text('Group ' + i, 95 + i * 55, 260, 35, 10)
+  const caption = { page: 1, lines: ['Figure 1: Anonymous comparison.'], rect: [50, 290, 275, 300] }
+  text(caption.lines[0], 50, 290, 225, 10)
+  for (const y of [190, 205, 280, 295, 310])
+    text('Ordinary explanation in the independent prose column.', 288, y, 204, 10)
+  emit(OPS.setLineWidth, [1])
+  for (const x of [290, 490])
+    for (const y of [230, 250])
+      paint(
+        [
+          [x, y],
+          [x, y + 20]
+        ],
+        true
+      )
+  for (const y of [230, 270])
+    for (const x of [290, 390])
+      paint(
+        [
+          [x, y],
+          [x + 100, y]
+        ],
+        true
+      )
+  for (let i = 0; i < 4; i++) {
+    text(String(i + 1), 284, 233 + i * 9, 3, 6, 'numbers', false)
+    text('value := input + offset', 292, 232 + i * 9, 180, 7, 'code', false)
+  }
+  const page = { pageNumber: 1, width, height, graphicsBounds, lines, invalidGraphicsBounds: 0 }
+  const context = {
+    operators,
+    graphicsBounds: structuredClone(graphicsBounds),
+    content: {
+      items,
+      styles: {
+        body: { fontFamily: 'serif' },
+        numbers: { fontFamily: 'serif' },
+        code: { fontFamily: 'monospace' }
+      }
+    },
+    viewport: {
+      width,
+      height,
+      scale: 1,
+      rotation: 0,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x: number, y: number) => [x, height - y]
+    }
+  }
+  return { page, caption, context }
+}
+function neighboringCodeResult(
+  f: ReturnType<typeof JSON.parse>,
+  context = true
+): ReturnType<typeof JSON.parse> {
+  return associateFigures(f.page, [f.caption], [], [], [], [], context ? f.context : undefined)[0]
+}
+it('excludes only the complete neighboring code frame owned by surrounding prose', () => {
+  const f = neighboringCodeColumn(),
+    snapshot = JSON.stringify(f)
+  expect(neighboringCodeResult(f, false).rect[2]).toBeGreaterThan(280)
+  expect(neighboringCodeResult(f).rect).toEqual([50, 100, 280, 280])
+  expect(JSON.stringify(f)).toBe(snapshot)
+})
+it('retains native indentation inside the independently owned numbered frame', () => {
+  const f = neighboringCodeColumn()
+  for (const item of f.context.content.items.slice(-6)) {
+    if (item.fontName === 'code') item.transform[4] += 7
+  }
+  expect(neighboringCodeResult(f).rect).toEqual([50, 100, 280, 280])
+})
+it.each([
+  'boxed legend',
+  'only upper prose',
+  'missing frame side',
+  'unknown clip',
+  'transparent stroke',
+  'unknown cap',
+  'gutter ink',
+  'nonmonospace',
+  'source alias',
+  'unknown plural carrier',
+  'cyclic metadata',
+  'unknown paint',
+  'duplicate paint carrier',
+  'different prose fonts',
+  'invalid page',
+  'unowned frame text'
+])('preserves the legacy crop without unique foreign-frame proof: %s', (kind) => {
+  const f = neighboringCodeColumn()
+  if (kind === 'boxed legend')
+    f.page.lines = f.page.lines.filter((l: ReturnType<typeof JSON.parse>) => l.x !== 288)
+  if (kind === 'only upper prose')
+    f.page.lines = f.page.lines.filter(
+      (l: ReturnType<typeof JSON.parse>) => l.x !== 288 || l.y < 230
+    )
+  if (kind === 'missing frame side') f.context.operators.argsArray[10] = [OPS.endPath, [], null]
+  if (kind === 'unknown clip') {
+    f.context.operators.fnArray[9] = OPS.clip
+    f.context.operators.argsArray[9] = []
+  }
+  if (kind === 'transparent stroke') {
+    f.context.operators.fnArray[9] = OPS.setGState
+    f.context.operators.argsArray[9] = [[['CA', 0]]]
+  }
+  if (kind === 'unknown cap') {
+    f.context.operators.fnArray[9] = OPS.setLineCap
+    f.context.operators.argsArray[9] = [9]
+  }
+  if (kind === 'gutter ink')
+    f.context.content.items.push({
+      str: 'bridge',
+      height: 10,
+      width: 20,
+      transform: [10, 0, 0, 10, 275, 600],
+      fontName: 'body'
+    })
+  if (kind === 'nonmonospace') f.context.content.styles.code.fontFamily = 'serif'
+  if (kind === 'source alias')
+    f.context.content.items.push({
+      str: '',
+      sourceToken: { sourceSegment: { pageNumber: 1, index: 8, start: 0, end: 1 } }
+    })
+  if (kind === 'unknown plural carrier')
+    f.context.content.items[8].sourceTokens = [
+      { sourceItem: { pageNumber: 2, index: 0, text: 'foreign' } }
+    ]
+  if (kind === 'cyclic metadata') f.context.content.items[8].metadata = f.context.content.items[8]
+  if (kind === 'unknown paint') {
+    f.context.operators.fnArray.push(OPS.shadingFill)
+    f.context.operators.argsArray.push(['unknown'])
+  }
+  if (kind === 'duplicate paint carrier')
+    f.context.graphicsBounds.push(structuredClone(f.context.graphicsBounds[10]))
+  if (kind === 'different prose fonts') f.context.content.items[10].fontName = 'other'
+  if (kind === 'invalid page') f.page.invalidGraphicsBounds = 1
+  if (kind === 'unowned frame text')
+    f.context.content.items.push({
+      str: 'annotation',
+      dir: 'ltr',
+      height: 5,
+      width: 20,
+      transform: [5, 0, 0, 5, 300, 560],
+      fontName: 'code'
+    })
+  expect(neighboringCodeResult(f)).toEqual(neighboringCodeResult(f, false))
+})
 const {
   nativeCaptionedAlignedRasterPair,
   nativeCaptionedRaster,
@@ -404,6 +617,35 @@ it('recovers a framed raster-plus-text response panel at the outer frame', () =>
   expect(associateFigures(fixture.page, [fixture.caption], [], [], [], [])[0].rect).toEqual([
     60, 120, 540, 600
   ])
+})
+
+it.each([280, 330])('does not give a framed panel to a caption starting at x=%s', (left) => {
+  const frame = [40, 50, 280, 250]
+  const image = [60, 80, 260, 220]
+  const own = { page: 1, lines: ['Figure 1. A response.'], rect: [40, 260, 280, 290] }
+  const neighbor = {
+    page: 1,
+    lines: ['Figure 2. Another response.'],
+    rect: [left, 260, 570, 290]
+  }
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      { text: 'Prompt', x: 80, y: 100, width: 100, height: 10, fontSize: 10 },
+      { text: 'Response', x: 80, y: 120, width: 100, height: 10, fontSize: 10 }
+    ],
+    graphicsBounds: [
+      { kind: 'path', normalizedRect: frame.map((v, i) => v / (i % 2 ? 800 : 600)) },
+      { kind: 'image', normalizedRect: image.map((v, i) => v / (i % 2 ? 800 : 600)) }
+    ]
+  }
+  const snapshot = structuredClone({ page, own, neighbor })
+  expect(nativeCaptionedFramedRasterTextPanel(page, own, [own, neighbor], [])?.rect).toEqual(frame)
+  expect(nativeCaptionedFramedRasterTextPanel(page, neighbor, [own, neighbor], [])).toBeUndefined()
+  expect({ page, own, neighbor }).toEqual(snapshot)
 })
 
 it('keeps a composite outer frame when an inset raster has its own border', () => {
@@ -1314,10 +1556,10 @@ it.each([
   }
 })
 
-it('recovers a narrow vector bar chart with an unpunctuated figure label', () => {
+function narrowBarFigure(label = 'Figure'): ReturnType<typeof JSON.parse> {
   const caption = {
     page: 1,
-    lines: ['Figure 3 Expert-relative performance.'],
+    lines: [`${label} 3 Expert-relative performance.`],
     rect: [330, 305, 545, 320]
   }
   const bars = Array.from({ length: 10 }, (_, index) => ({
@@ -1358,14 +1600,92 @@ it('recovers a narrow vector bar chart with an unpunctuated figure label', () =>
       ...bars
     ]
   }
-  expect(nativeCaptionedVectorBarChart(page, caption, [caption], [])?.rect).toEqual([
+  return { page, caption }
+}
+it.each(['Figure', 'Fig.'])(
+  'recovers a narrow vector bar chart with the native %s label',
+  (label) => {
+    const { page, caption } = narrowBarFigure(label)
+    expect(nativeCaptionedVectorBarChart(page, caption, [caption], [])?.rect).toEqual([
+      330, 100, 540, 295
+    ])
+    expect(associateFigures(page, [caption], [], [], [], [])[0]).toMatchObject({
+      rect: [330, 100, 540, 295],
+      graphicsCount: 11
+    })
+  }
+)
+function mergedBarAxis(): ReturnType<typeof JSON.parse> {
+  const f = narrowBarFigure('Fig.')
+  f.page.lines = f.page.lines.filter((line: { text: string }) => !/^\d+$/.test(line.text))
+  f.page.lines.push({
+    text: '0 20 40 60 80 100',
+    x: 330,
+    y: 281,
+    width: 210,
+    height: 3,
+    fontSize: 3
+  })
+  return {
+    ...f,
+    rules: [
+      [330, 280, 540, 280],
+      [330, 100, 330, 280]
+    ]
+  }
+}
+it('recovers a merged numeric axis only beside its unique native perpendicular rules', () => {
+  const f = mergedBarAxis()
+  expect(nativeCaptionedVectorBarChart(f.page, f.caption, [f.caption], [], f.rules)?.rect).toEqual([
     330, 100, 540, 295
   ])
-  expect(associateFigures(page, [caption], [], [], [], [])[0]).toMatchObject({
-    reason: 'native-vector-bar-chart',
-    graphicsCount: 11
-  })
+  expect(associateFigures(f.page, [f.caption], [], f.rules)[0].rect).toEqual([330, 100, 540, 295])
 })
+it.each([false, true])(
+  'keeps separately captioned merged-axis charts complete (reverse captions: %s)',
+  (reverse) => {
+    const right = mergedBarAxis(),
+      left = mergedBarAxis()
+    left.caption.lines = ['Fig. 4 Independent comparison.']
+    left.caption.rect = left.caption.rect.map((v: number, i: number) => v - (i % 2 ? 0 : 280))
+    left.page.lines[0].text = left.caption.lines[0]
+    for (const line of left.page.lines) line.x -= 280
+    for (const graphic of left.page.graphicsBounds)
+      graphic.normalizedRect = graphic.normalizedRect.map(
+        (v: number, i: number) => v - (i % 2 ? 0 : 280 / left.page.width)
+      )
+    left.rules = left.rules.map((rule: number[]) => rule.map((v, i) => v - (i % 2 ? 0 : 280)))
+    right.page.lines.push(...left.page.lines)
+    right.page.graphicsBounds.push(...left.page.graphicsBounds)
+    const captions = [left.caption, right.caption]
+    if (reverse) captions.reverse()
+    const input = structuredClone({ page: right.page, captions }),
+      figures = associateFigures(right.page, captions, [], [...left.rules, ...right.rules])
+    expect(
+      figures.find((figure: { caption: unknown }) => figure.caption === left.caption)?.rect
+    ).toEqual([50, 100, 260, 295])
+    expect(
+      figures.find((figure: { caption: unknown }) => figure.caption === right.caption)?.rect
+    ).toEqual([330, 100, 540, 295])
+    expect({ page: right.page, captions }).toEqual(input)
+  }
+)
+it.each(['no-rule', 'duplicate-rule', 'nonmonotonic', 'too-short', 'inside-plot', 'unknown-paint'])(
+  'rejects merged numeric text without complete axis evidence: %s',
+  (variant) => {
+    const f = mergedBarAxis(),
+      tick = f.page.lines.at(-1)
+    if (variant === 'no-rule') f.rules.pop()
+    if (variant === 'duplicate-rule') f.rules.push([...f.rules[0]])
+    if (variant === 'nonmonotonic') tick.text = '0 20 40 30 80 100'
+    if (variant === 'too-short') tick.width = 50
+    if (variant === 'inside-plot') tick.y = 200
+    if (variant === 'unknown-paint') f.page.invalidGraphicsBounds = 1
+    expect(
+      nativeCaptionedVectorBarChart(f.page, f.caption, [f.caption], [], f.rules)
+    ).toBeUndefined()
+  }
+)
 it('keeps raster recovery deferred when a path touches the image', () => {
   const fixture = wideRasterWithUnrelatedPaths()
   fixture.page.graphicsBounds.push({
@@ -2294,3 +2614,956 @@ it.each(['no raster', 'below crop', 'prose', 'caption', 'invalid width', 'duplic
     expect(cutLabels(f)).toEqual([])
   }
 )
+
+// Anonymous geometry and same-stream native operators; no publication data.
+const clippedFrameQuad = (x: number, y: number, w: number, h: number): Float32Array =>
+  new Float32Array([0, x, y, 1, x + w, y, 1, x + w, y + h, 1, x, y + h, 4])
+function clippedBackgroundChart(): ReturnType<typeof JSON.parse> {
+  const width = 600,
+    height = 800,
+    coarse = [78, 98, 482, 406],
+    caption = { page: 1, lines: ['Figure 1: Sample results.'], rect: [80, 402, 480, 412] }
+  const ops: { fnArray: number[]; argsArray: unknown[] } = {
+    fnArray: [OPS.transform, OPS.paintFormXObjectBegin, OPS.constructPath],
+    argsArray: [
+      [1, 0, 0, 1, 80, 400],
+      [null, new Float32Array([0, 0, 400, 300])],
+      [OPS.fill, [clippedFrameQuad(0, 0, 400, 300)], [0, 0, 400, 300]]
+    ]
+  }
+  const graphicsBounds = [
+    {
+      kind: 'path',
+      operationIndex: 2,
+      normalizedRect: coarse.map((v, i) => v / (i % 2 ? height : width))
+    }
+  ]
+  for (let i = 0; i < 8; i++) {
+    const r = [120 + i * 35, 150 + i * 10, 132 + i * 35, 350],
+      op = ops.fnArray.length
+    ops.fnArray.push(OPS.constructPath)
+    ops.argsArray.push([
+      OPS.fill,
+      [clippedFrameQuad(r[0] - 80, 800 - r[3] - 400, r[2] - r[0], r[3] - r[1])],
+      null
+    ])
+    graphicsBounds.push({
+      kind: 'path',
+      operationIndex: op,
+      normalizedRect: r.map((v, j) => v / (j % 2 ? height : width))
+    })
+  }
+  ops.fnArray.push(OPS.paintFormXObjectEnd)
+  ops.argsArray.push([])
+  const line = (
+    text: string,
+    x: number,
+    y: number,
+    width: number
+  ): ReturnType<typeof JSON.parse> => ({ text, x, y, width, height: 10, fontSize: 10 })
+  const lines = [
+    ...Array.from({ length: 4 }, (_, i) => line(String(i * 10), 85, 170 + i * 40, 20)),
+    ...['Alpha', 'Beta', 'Gamma'].map((t, i) => line(t, 130 + i * 100, 370, 50)),
+    line(caption.lines[0], 80, 402, 400)
+  ]
+  const page = { pageNumber: 1, width, height, graphicsBounds, lines, invalidGraphicsBounds: 0 },
+    context = {
+      operators: ops,
+      graphicsBounds: structuredClone(graphicsBounds),
+      viewport: { width, height, transform: [1, 0, 0, -1, 0, 800] }
+    }
+  return { page, caption, context, coarse }
+}
+
+function clippedChartResult(
+  f: ReturnType<typeof JSON.parse>,
+  withContext = true
+): ReturnType<typeof JSON.parse> {
+  return nativeCaptionedVectorBarChart(
+    f.page,
+    f.caption,
+    [f.caption],
+    [],
+    [],
+    withContext ? f.context : undefined
+  )
+}
+it('uses the exact selected filled clip contribution without changing selected chart inventory', () => {
+  const f = clippedBackgroundChart(),
+    before = clippedChartResult(f, false),
+    after = clippedChartResult(f)
+  expect(before.rect[3]).toBeGreaterThan(f.caption.rect[1])
+  expect(after.rect).toEqual([80, 100, 480, 400])
+  expect(after.graphicsCount).toBe(before.graphicsCount)
+  expect(after.caption).toBe(before.caption)
+  expect(f.page.graphicsBounds[0].normalizedRect[3] * 800).toBeCloseTo(406)
+})
+it('uses the actual clipped contribution when a background fill extends beyond its Form', () => {
+  const f = clippedBackgroundChart()
+  f.context.operators.argsArray[2][1][0] = clippedFrameQuad(-4, -4, 408, 308)
+  const result = clippedChartResult(f)
+  expect(result.rect).toEqual([80, 100, 480, 400])
+  expect(result.graphicsCount).toBe(clippedChartResult(f, false).graphicsCount)
+  expect(result.caption).toBe(f.caption)
+  expect(result.sourceItems).toBeUndefined()
+})
+it.each([false, true])(
+  'keeps independent labels and paint outside a clipped background (oversized=%s)',
+  (oversized) => {
+    for (const surface of ['text', 'path']) {
+      const f = clippedBackgroundChart()
+      if (oversized) f.context.operators.argsArray[2][1][0] = clippedFrameQuad(-4, -4, 408, 308)
+      if (surface === 'text')
+        f.page.lines.push({
+          text: 'Separate key',
+          x: 150,
+          y: 397,
+          width: 70,
+          height: 10,
+          fontSize: 10
+        })
+      else
+        f.page.graphicsBounds.push({
+          kind: 'path',
+          operationIndex: 99,
+          normalizedRect: [150 / 600, 397 / 800, 220 / 600, 407 / 800]
+        })
+      expect(clippedChartResult(f).rect[3], surface).toBe(407)
+    }
+  }
+)
+it('uses a smaller explicit Form clip without shrinking independently selected chart content', () => {
+  const f = clippedBackgroundChart()
+  f.context.operators.argsArray[1][1] = new Float32Array([10, 10, 390, 290])
+  expect(clippedChartResult(f).rect).toEqual([85, 110, 470, 390])
+})
+function captionAdvanceOverlapChart(): ReturnType<typeof JSON.parse> {
+  const f = clippedBackgroundChart()
+  f.page.graphicsBounds[0].normalizedRect[3] = 404 / 800
+  f.context.graphicsBounds[0].normalizedRect[3] = 404 / 800
+  f.caption.rect = [80, 399.5, 480, 412]
+  f.page.lines.at(-1).y = 399.5
+  return f
+}
+it('uses the proved background clip even when its edge overlaps the caption advance box', () => {
+  const f = captionAdvanceOverlapChart(),
+    input = structuredClone(f),
+    result = associateFigures(f.page, [f.caption], [], [], [], [], f.context)[0]
+  expect(result.rect).toEqual([80, 100, 480, 400])
+  expect(result.caption).toBe(f.caption)
+  expect(result.graphicsCount).toBe(9)
+  expect(result.sourceItems).toBeUndefined()
+  expect(f).toEqual(input)
+})
+it('retains separate paint and labels beyond a background clip beside a caption', () => {
+  for (const surface of ['text', 'path']) {
+    const f = captionAdvanceOverlapChart()
+    f.caption.rect[2] = 140
+    f.page.lines.at(-1).width = 60
+    if (surface === 'text')
+      f.page.lines.push({
+        text: 'External key',
+        x: 200,
+        y: 398,
+        width: 60,
+        height: 10,
+        fontSize: 10
+      })
+    else
+      f.page.graphicsBounds.push({
+        kind: 'path',
+        operationIndex: 99,
+        normalizedRect: [200 / 600, 398 / 800, 230 / 600, 408 / 800]
+      })
+    const result = associateFigures(f.page, [f.caption], [], [], [], [], f.context)[0]
+    expect(result.rect[3], surface).toBe(408)
+    expect(result.caption).toBe(f.caption)
+  }
+})
+it('keeps the coarse background when a caption-overlapping exact clip is unproved', () => {
+  for (const kind of ['missing context', 'missing clip', 'unknown clip']) {
+    const f = captionAdvanceOverlapChart()
+    if (kind === 'missing context') f.context = undefined
+    if (kind === 'missing clip') f.context.operators.argsArray[1][1] = null
+    if (kind === 'unknown clip') f.context.operators.argsArray[1][1] = [NaN, 0, 400, 300]
+    expect(associateFigures(f.page, [f.caption], [], [], [], [], f.context)[0].rect, kind).toEqual([
+      78, 98, 482, 404
+    ])
+  }
+})
+it.each([
+  'unclipped',
+  'larger clip',
+  'empty clip',
+  'stroke',
+  'invalid path',
+  'duplicate page carrier',
+  'duplicate context carrier',
+  'context mismatch',
+  'viewport mismatch',
+  'shear',
+  'missing context',
+  'missing operators',
+  'missing fnArray',
+  'missing argsArray',
+  'missing graphics',
+  'null graphic',
+  'nonfinite rect',
+  'short viewport',
+  'invalid paint',
+  'unknown paint count'
+])('retains legacy geometry when exact background proof is unavailable: %s', (kind) => {
+  const f = clippedBackgroundChart()
+  if (kind === 'unclipped') f.context.operators.argsArray[1][1] = null
+  if (kind === 'larger clip')
+    f.context.operators.argsArray[1][1] = new Float32Array([-10, -10, 410, 310])
+  if (kind === 'empty clip')
+    f.context.operators.argsArray[1][1] = new Float32Array([10, 10, 10, 290])
+  if (kind === 'stroke') f.context.operators.argsArray[2][0] = OPS.stroke
+  if (kind === 'invalid path') f.context.operators.argsArray[2][1][0][3] = 2
+  if (kind === 'duplicate page carrier') f.page.graphicsBounds.push({ ...f.page.graphicsBounds[0] })
+  if (kind === 'duplicate context carrier')
+    f.context.graphicsBounds.push({ ...f.context.graphicsBounds[0] })
+  if (kind === 'context mismatch') f.context.graphicsBounds[0].normalizedRect[3] += 0.001
+  if (kind === 'viewport mismatch') f.context.viewport.width++
+  if (kind === 'shear') f.context.operators.argsArray[0][2] = 0.1
+  if (kind === 'missing context') f.context = undefined
+  if (kind === 'missing operators') f.context.operators = undefined
+  if (kind === 'missing fnArray') f.context.operators.fnArray = undefined
+  if (kind === 'missing argsArray') f.context.operators.argsArray = undefined
+  if (kind === 'missing graphics') f.context.graphicsBounds = undefined
+  if (kind === 'null graphic') f.context.graphicsBounds = [null]
+  if (kind === 'nonfinite rect') f.context.graphicsBounds[0].normalizedRect[0] = NaN
+  if (kind === 'short viewport') f.context.viewport.transform = [1, 0]
+  if (kind === 'invalid paint') f.page.invalidGraphicsBounds = 1
+  if (kind === 'unknown paint count') delete f.page.invalidGraphicsBounds
+  expect(clippedChartResult(f)?.rect).toEqual(clippedChartResult(f, false)?.rect)
+})
+it('keeps existing table and independent caption vetoes for clipped backgrounds', () => {
+  const f = clippedBackgroundChart(),
+    other = { page: 1, lines: ['Figure 2: Independent.'], rect: [100, 150, 300, 170] }
+  expect(
+    nativeCaptionedVectorBarChart(f.page, f.caption, [f.caption, other], [], [], f.context)
+  ).toBeUndefined()
+  expect(
+    nativeCaptionedVectorBarChart(
+      f.page,
+      f.caption,
+      [f.caption],
+      [[100, 150, 300, 170]],
+      [],
+      f.context
+    )
+  ).toBeUndefined()
+})
+
+function assignedBarBesideProse(): ReturnType<typeof JSON.parse> {
+  const line = (
+    text: string,
+    x: number,
+    y: number,
+    width: number,
+    height = 8
+  ): { text: string; x: number; y: number; width: number; height: number; fontSize: number } => ({
+    text,
+    x,
+    y,
+    width,
+    height,
+    fontSize: height
+  })
+  const caption = {
+    page: 1,
+    lines: ['Fig. 2 Comparison of observations.'],
+    rect: [70, 572, 530, 600]
+  }
+  const boxes = [
+    [70, 345, 530, 569],
+    [105, 398, 218, 530],
+    [110, 470, 130, 530],
+    [166, 460, 186, 530],
+    [124, 447, 141, 530],
+    [180, 440, 200, 530],
+    [136, 434, 155, 530],
+    [136, 457, 155, 530]
+  ]
+  const page = {
+    pageNumber: 1,
+    width: 600,
+    height: 800,
+    invalidGraphicsBounds: 0,
+    lines: [
+      line(
+        'The independent discussion continues with a complete sentence about the preceding results and these final',
+        70,
+        312,
+        460,
+        11
+      ),
+      line('Summary.', 70, 325, 33, 11),
+      line('Group', 114, 525, 32),
+      line('A', 120, 534, 20),
+      ...[0, 1, 2, 3].map((v) => line(String(v / 10), 91, 519 - v * 27, 11)),
+      line(caption.lines[0], 70, 572, 460, 11)
+    ],
+    graphicsBounds: boxes.map((rect, i) => ({
+      kind: 'path',
+      operationIndex: i,
+      normalizedRect: rect.map((v, j) => v / (j % 2 ? 800 : 600))
+    }))
+  }
+  return { page, caption }
+}
+it.each([0.75, 1.7])(
+  'keeps assigned abbreviated bars outside preceding prose at scale %s',
+  (scale) => {
+    const f = assignedBarBesideProse()
+    f.page.width *= scale
+    f.page.height *= scale
+    for (const line of f.page.lines)
+      for (const key of ['x', 'y', 'width', 'height', 'fontSize']) line[key] *= scale
+    f.caption.rect = f.caption.rect.map((value: number) => value * scale)
+    const before = structuredClone(f)
+    const [figure] = associateFigures(f.page, [f.caption], [], [])
+    for (const [index, value] of [70, 345, 530, 569].entries())
+      expect(figure.rect[index]).toBeCloseTo(value * scale, 10)
+    expect(figure.rect[1]).toBeGreaterThan((325 + 11) * scale)
+    expect(figure.graphicsCount).toBe(8)
+    expect(f).toEqual(before)
+  }
+)
+
+// The complete anonymous paint/text program is necessary: sparse rule boxes
+// alone also describe ordinary paragraph dividers and do not own a figure.
+function intervalPartitionPacket(rowCount = 3): ReturnType<typeof JSON.parse> {
+  const width = 400,
+    height = 400
+  const page: ReturnType<typeof JSON.parse> = {
+    pageNumber: 1,
+    width,
+    height,
+    lines: [],
+    graphicsBounds: [],
+    invalidGraphicsBounds: 0
+  }
+  const operators: { fnArray: number[]; argsArray: unknown[] } = { fnArray: [], argsArray: [] }
+  const content: ReturnType<typeof JSON.parse> = {
+    items: [],
+    styles: { font: { ascent: 0.8, descent: -0.2 } }
+  }
+  const viewport = { width, height, rotation: 0, scale: 1, transform: [1, 0, 0, -1, 0, height] }
+  const tokens: ReturnType<typeof JSON.parse> = []
+  const emit = (op: number, args: unknown = null): number => {
+    operators.fnArray.push(op)
+    operators.argsArray.push(args)
+    return operators.fnArray.length - 1
+  }
+  const paint = (x: number, y: number, mark: boolean): void => {
+    emit(OPS.save)
+    emit(OPS.transform, [1, 0, 0, 1, x, height - y])
+    emit(OPS.setLineWidth, [0.5])
+    const r = 2,
+      k = 1.1
+    const program = mark
+      ? [
+          0,
+          0,
+          0,
+          0,
+          r,
+          0,
+          2,
+          r,
+          k,
+          k,
+          r,
+          0,
+          r,
+          2,
+          -k,
+          r,
+          -r,
+          k,
+          -r,
+          0,
+          2,
+          -r,
+          -k,
+          -k,
+          -r,
+          0,
+          -r,
+          2,
+          k,
+          -r,
+          r,
+          -k,
+          r,
+          0,
+          4,
+          0,
+          0,
+          0
+        ]
+      : [0, 0, 0, 1, 240, 0]
+    const operationIndex = emit(OPS.constructPath, [
+      mark ? OPS.fillStroke : OPS.stroke,
+      [program],
+      mark ? [-r, -r, r, r] : [0, 0, 240, 0]
+    ])
+    emit(OPS.restore)
+    const rect = mark
+      ? [x - r - 0.25, y - r - 0.25, x + r + 0.25, y + r + 0.25]
+      : [x - 0.25, y - 0.25, x + 240.25, y + 0.25]
+    page.graphicsBounds.push({
+      operationIndex,
+      kind: 'path',
+      normalizedRect: rect.map((z, n) => z / (n % 2 ? height : width))
+    })
+  }
+  const addText = (str: string, x: number, baseline: number, zero = false): void => {
+    const index = content.items.length,
+      size = 10,
+      advance = zero ? 0 : str.length * 5
+    const sourceItem = { pageNumber: 1, index, text: str }
+    content.items.push({
+      str,
+      dir: 'ltr',
+      width: advance,
+      height: size,
+      transform: [size, 0, 0, size, x, height - baseline],
+      fontName: 'font',
+      hasEOL: false,
+      sourceItem
+    })
+    emit(OPS.beginText)
+    emit(OPS.setFont, ['font', size])
+    emit(OPS.moveText, [x, height - baseline])
+    emit(OPS.showText, [
+      Array.from(str).map((c) => ({
+        unicode: c,
+        width: zero ? 0 : 500,
+        originalCharCode: c.codePointAt(0),
+        fontChar: c,
+        isSpace: c === ' ',
+        isInFont: true
+      }))
+    ])
+    emit(OPS.endText)
+    tokens.push({
+      text: str,
+      sourceItem,
+      inlineSymbol: false,
+      baseline,
+      height: size,
+      rect: [x, baseline - size, x + advance, baseline],
+      horizontal: true,
+      fontDescent: -0.2
+    })
+    page.lines.push({
+      text: str,
+      x,
+      y: baseline - size,
+      width: advance,
+      height: size,
+      fontSize: size
+    })
+  }
+  for (let n = 0; n < rowCount; n++) {
+    const y = 100 + n * 50,
+      xs = Array.from({ length: n + 2 }, (_, j) => 80 + (j * 240) / (n + 1))
+    paint(80, y, false)
+    xs.forEach((x) => paint(x, y, true))
+    if (!n) {
+      addText('0', 65, y + 4)
+      addText('1', 330, y + 4)
+    }
+    for (let j = 1; j < xs.length; j++) addText('A', (xs[j - 1] + xs[j]) / 2 - 2.5, y - 9)
+  }
+  const bottom = 100 + (rowCount - 1) * 50
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Interval partitions.'],
+    rect: [110, bottom + 24, 260, bottom + 36]
+  }
+  addText(caption.lines[0], 110, bottom + 34)
+  return { args: [page, [caption], [], [], [], tokens, { viewport, operators, content }], addText }
+}
+
+it('recovers a sparse repeated native interval figure without creating text claims', () => {
+  const { args } = intervalPartitionPacket(),
+    before = structuredClone(args)
+  const figures = associateFigures(...args)
+  expect(figures).toEqual([
+    {
+      caption: args[1][0],
+      rect: [65, 81, 335, 202.25],
+      reason: 'native-repeated-interval-rows',
+      graphicsCount: 12
+    }
+  ])
+  expect(args).toEqual(before)
+})
+
+it('keeps a zero-advance body glyph outside the proved interval font domain', () => {
+  const packet = intervalPartitionPacket()
+  packet.addText('7', 100, 350, true)
+  expect(associateFigures(...packet.args)[0]).toMatchObject({
+    rect: [65, 81, 335, 202.25],
+    graphicsCount: 12
+  })
+})
+
+it.each([1, 2])('does not infer an interval figure from only %i sparse rule rows', (rows) => {
+  expect(associateFigures(...intervalPartitionPacket(rows).args)[0].rect).toBeUndefined()
+})
+
+const refusedIntervalPackets: [string, (packet: ReturnType<typeof JSON.parse>) => void][] = [
+  [
+    'a non-positive page identity',
+    (p) => {
+      p.args[0].pageNumber = 0
+    }
+  ],
+  [
+    'a table caption rather than a figure',
+    (p) => {
+      p.args[1][0].lines[0] = 'Table 1. Interval partitions.'
+    }
+  ],
+  [
+    'unproved alpha',
+    (p) => {
+      p.args[6].operators.fnArray.push(OPS.setGState)
+      p.args[6].operators.argsArray.push([[['ca', 0.5]]])
+    }
+  ],
+  [
+    'unproved clipping',
+    (p) => {
+      p.args[6].operators.fnArray.push(OPS.clip)
+      p.args[6].operators.argsArray.push(null)
+    }
+  ],
+  [
+    'a competing table',
+    (p) => {
+      p.args[2].push([90, 85, 300, 210])
+    }
+  ],
+  [
+    'a competing caption',
+    (p) => {
+      p.args[1].push({ ...p.args[1][0], lines: ['Figure 2. Other.'] })
+    }
+  ],
+  [
+    'a repeated source identity',
+    (p) => {
+      p.args[5][2].sourceItem = { ...p.args[5][0].sourceItem }
+    }
+  ],
+  [
+    'a hidden nested source alias',
+    (p) => {
+      p.args[5][2].nested = { sourceItem: { ...p.args[5][2].sourceItem } }
+    }
+  ],
+  [
+    'a missing whole native label',
+    (p) => {
+      p.args[5].splice(2, 1)
+    }
+  ],
+  [
+    'missing native font metrics',
+    (p) => {
+      delete p.args[6].content.styles.font
+    }
+  ],
+  [
+    'a different active font',
+    (p) => {
+      const o = p.args[6].operators
+      o.argsArray[o.fnArray.indexOf(OPS.setFont)][0] = 'other'
+    }
+  ],
+  [
+    'foreign native prose inside the crop',
+    (p) => {
+      p.addText('Body', 200, 177)
+    }
+  ],
+  [
+    'a zero-advance glyph within the crop vertical domain',
+    (p) => {
+      p.addText('7', 350, 177, true)
+    }
+  ],
+  [
+    'a missing recorded native paint',
+    (p) => {
+      p.args[0].graphicsBounds.pop()
+    }
+  ],
+  [
+    'a noncanonical mark',
+    (p) => {
+      const o = p.args[6].operators,
+        i = o.fnArray.findIndex(
+          (op: number, i: number) =>
+            op === OPS.constructPath && o.argsArray[i][0] === OPS.fillStroke
+        )
+      o.argsArray[i][1][0][8] += 0.5
+    }
+  ],
+  [
+    'an unrecognized empty-path record',
+    (p) => {
+      p.args[6].operators.fnArray.push(OPS.constructPath)
+      p.args[6].operators.argsArray.push([OPS.endPath, [null, null], null])
+    }
+  ]
+]
+it.each(refusedIntervalPackets)('refuses native interval completion with %s', (_name, mutate) => {
+  const packet = intervalPartitionPacket()
+  mutate(packet)
+  const before = structuredClone(packet.args)
+  expect(
+    associateFigures(...packet.args).every((figure: { rect?: number[] }) => !figure.rect)
+  ).toBe(true)
+  expect(packet.args).toEqual(before)
+})
+
+// Native open nodes are whole BT/ET packets; edges require independently painted arrowheads.
+function openCyclePacket({ scale = 1, dx = 0, dy = 0 } = {}): ReturnType<typeof JSON.parse> {
+  const width = 600 * scale,
+    height = 800 * scale,
+    pageNumber = 1,
+    o: { fnArray: number[]; argsArray: ReturnType<typeof JSON.parse>[] } = {
+      fnArray: [],
+      argsArray: []
+    },
+    raw: ReturnType<typeof JSON.parse>[] = [],
+    styles = {
+      base: { ascent: 0.8, descent: -0.2, vertical: false },
+      small: { ascent: 0.8, descent: -0.2, vertical: false }
+    },
+    graphics: ReturnType<typeof JSON.parse>[] = [],
+    lines: ReturnType<typeof JSON.parse>[] = [],
+    indices: { shafts: number[]; heads: number[]; packets: number[]; fontOps: number[] } = {
+      shafts: [],
+      heads: [],
+      packets: [],
+      fontOps: []
+    },
+    v = {
+      width,
+      height,
+      rotation: 0,
+      scale: 1,
+      transform: [1, 0, 0, -1, 0, height],
+      convertToViewportPoint: (x: number, y: number): number[] => [x, height - y]
+    }
+  const op = (code: number, args: unknown = null): number => {
+      o.fnArray.push(code)
+      o.argsArray.push(args)
+      return o.fnArray.length - 1
+    },
+    X = (x: number): number => (x + dx) * scale,
+    Y = (y: number): number => (y + dy) * scale
+  function textPacket(items: [string, number, number, number?, string?][]): number[][] {
+    indices.packets.push(op(OPS.beginText))
+    const rs: number[][] = []
+    for (const [text, x, y, size = 10, font = 'base'] of items) {
+      const px = X(x),
+        baseline = Y(y),
+        h = size * scale,
+        w = text.length * h * 0.6
+      indices.fontOps.push(op(OPS.setFont, [font, h]))
+      op(OPS.setTextMatrix, [[1, 0, 0, 1, px, height - baseline]])
+      op(OPS.showText, [
+        [...text].map((c) => ({
+          unicode: c,
+          fontChar: c,
+          originalCharCode: c.charCodeAt(0),
+          width: 600,
+          accent: null,
+          vmetric: null,
+          operatorListId: null,
+          isSpace: c === ' ',
+          isInFont: true
+        }))
+      ])
+      const index = raw.length
+      raw.push({
+        str: text,
+        dir: 'ltr',
+        width: w,
+        height: h,
+        transform: [h, 0, 0, h, px, height - baseline],
+        fontName: font,
+        hasEOL: false,
+        sourceItem: { pageNumber, index, text }
+      })
+      rs.push([px, baseline - h, px + w, baseline])
+    }
+    op(OPS.endText)
+    return rs
+  }
+  function paint(program: number[], kind: number): number {
+    const pts: number[][] = []
+    for (let n = 0; n < program.length;) {
+      const c = program[n++],
+        k = c === 4 ? 0 : 2
+      for (let j = 0; j < k; j += 2) pts.push([X(program[n + j]), height - Y(program[n + j + 1])])
+      n += k
+    }
+    const transformed: number[] = []
+    let idx = 0
+    for (let n = 0; n < program.length;) {
+      const c = program[n++]
+      transformed.push(c)
+      if (c !== 4) {
+        transformed.push(...pts[idx++])
+        n += 2
+      }
+    }
+    const r = [
+        Math.min(...pts.map((p) => p[0])),
+        Math.min(...pts.map((p) => p[1])),
+        Math.max(...pts.map((p) => p[0])),
+        Math.max(...pts.map((p) => p[1]))
+      ],
+      i = op(OPS.constructPath, [kind, [Float32Array.from(transformed)], Float32Array.from(r)]),
+      pad = scale * 0.3
+    graphics.push({
+      operationIndex: i,
+      kind: 'path',
+      normalizedRect: [
+        (r[0] - pad) / width,
+        (height - r[3] - pad) / height,
+        (r[2] + pad) / width,
+        (height - r[1] + pad) / height
+      ]
+    })
+    return i
+  }
+  op(OPS.setFillRGBColor, ['#000000'])
+  op(OPS.setStrokeRGBColor, ['#000000'])
+  op(OPS.setLineWidth, [0.4 * scale])
+  op(OPS.setLineCap, [0])
+  for (const [x, y, n] of [
+    [100, 110, '0'],
+    [300, 110, '1'],
+    [300, 250, '2'],
+    [100, 250, '3']
+  ] as [number, number, string][])
+    textPacket([
+      ['X', x, y],
+      [n, x + 6, y + 2, 6, 'small']
+    ])
+  for (const [s, e] of [
+    [
+      [114, 105],
+      [290, 105]
+    ],
+    [
+      [305, 120],
+      [305, 231]
+    ],
+    [
+      [295, 245],
+      [122, 245]
+    ],
+    [
+      [105, 235],
+      [105, 121]
+    ]
+  ]) {
+    indices.shafts.push(paint([0, ...s, 1, ...e], OPS.stroke))
+    const dd = [e[0] - s[0], e[1] - s[1]],
+      len = Math.hypot(...dd),
+      u = dd.map((z) => z / len),
+      p = (x: number, y: number): number[] => [
+        e[0] + u[0] * x - u[1] * y,
+        e[1] + u[1] * x + u[0] * y
+      ]
+    indices.heads.push(
+      paint([0, ...p(7, 0), 1, ...p(-3, 2), 1, ...p(0, 0), 1, ...p(-3, -2), 4], OPS.fillStroke)
+    )
+  }
+  for (const [x, y] of [
+    [200, 98],
+    [316, 180],
+    [200, 258],
+    [92, 180]
+  ])
+    textPacket([['L', x, y]])
+  const capText = 'Figure 1: State transitions.',
+    capRects = textPacket([[capText, 80, 300]]),
+    r = capRects[0],
+    caption = { page: pageNumber, lines: [capText], rect: r }
+  lines.push({
+    text: capText,
+    fontSize: 10 * scale,
+    x: r[0],
+    y: r[1],
+    width: r[2] - r[0],
+    height: r[3] - r[1]
+  })
+  const tokens = raw.map((item, index) => ({
+      text: item.str,
+      rect: [
+        item.transform[4],
+        height - item.transform[5] - item.height,
+        item.transform[4] + item.width,
+        height - item.transform[5]
+      ],
+      height: item.height,
+      baseline: height - item.transform[5],
+      horizontal: true,
+      sourceItem: { pageNumber, index, text: item.str }
+    })),
+    page = {
+      pageNumber,
+      width,
+      height,
+      rotation: 0,
+      renderRotation: 0,
+      invalidGraphicsBounds: 0,
+      graphicsBounds: graphics,
+      lines
+    }
+  return {
+    args: [
+      page,
+      [caption],
+      [],
+      [],
+      [],
+      tokens,
+      { operators: o, viewport: v, content: { items: raw, styles } }
+    ],
+    indices,
+    textPacket,
+    op
+  }
+}
+
+function refreshOpenCycleTokens(packet: ReturnType<typeof openCyclePacket>): void {
+  const a = packet.args
+  a[5] = a[6].content.items.map((item: ReturnType<typeof JSON.parse>, index: number) => ({
+    text: item.str,
+    rect: [
+      item.transform[4],
+      a[0].height - item.transform[5] - item.height,
+      item.transform[4] + item.width,
+      a[0].height - item.transform[5]
+    ],
+    height: item.height,
+    baseline: a[0].height - item.transform[5],
+    horizontal: true,
+    sourceItem: { pageNumber: a[0].pageNumber, index, text: item.str }
+  }))
+}
+it.each([0.75, 1.5])('recovers an unframed native directed cycle at scale %s', (scale) => {
+  const p = openCyclePacket({ scale }),
+    before = JSON.stringify(p.args),
+    result = associateFigures(...p.args)
+  expect(result).toHaveLength(1)
+  expect(result[0].rect).toEqual([92, 88, 322, 260].map((x) => x * scale))
+  expect(result[0].graphicsCount).toBe(8)
+  expect(result[0].sourceItems).toBeUndefined()
+  expect(JSON.stringify(p.args)).toBe(before)
+})
+it('keeps open-cycle proof independent of page location and unrelated outside content', () => {
+  const p = openCyclePacket({ dx: 20, dy: 18 })
+  p.textPacket([['Note', 40, 40]])
+  refreshOpenCycleTokens(p)
+  p.args[5].pop()
+  p.args[2].push([420, 420, 470, 450])
+  const result = associateFigures(...p.args)
+  expect(result[0].rect).toEqual([112, 106, 342, 278])
+  expect(result[0].sourceItems).toBeUndefined()
+})
+const refusedOpenCycles: [string, (p: ReturnType<typeof openCyclePacket>) => void][] = [
+  [
+    'a reversed shaft',
+    (p) => {
+      const r = p.args[6].operators.argsArray[p.indices.shafts[0]][1][0]
+      ;[r[1], r[4]] = [r[4], r[1]]
+      ;[r[2], r[5]] = [r[5], r[2]]
+    }
+  ],
+  [
+    'a missing arrowhead',
+    (p) => {
+      const i = p.indices.heads[0]
+      p.args[6].operators.argsArray[i] = [OPS.endPath, [null], null]
+      p.args[0].graphicsBounds = p.args[0].graphicsBounds.filter(
+        (g: { operationIndex: number }) => g.operationIndex !== i
+      )
+    }
+  ],
+  [
+    'a repeated paint identity',
+    (p) => p.args[0].graphicsBounds.push({ ...p.args[0].graphicsBounds[0] })
+  ],
+  ['unknown paint', (p) => p.op(OPS.shadingFill, ['unproved'])],
+  [
+    'a different active font',
+    (p) => (p.args[6].operators.argsArray[p.indices.fontOps[0]][0] = 'small')
+  ],
+  ['a different raw font', (p) => (p.args[6].content.items[0].fontName = 'small')],
+  [
+    'a nested native source alias',
+    (p) => (p.args[5][0].other = { sourceItems: [{ ...p.args[5][1].sourceItem }] })
+  ],
+  ['an omitted whole native label', (p) => (p.args[5] = p.args[5].slice(1))],
+  [
+    'a competing caption',
+    (p) =>
+      p.args[1].push({ page: 1, rect: [400, 400, 500, 410], lines: ['Figure 2: Separate result.'] })
+  ],
+  ['an independent table inside the cycle', (p) => p.args[2].push([180, 160, 230, 210])],
+  ['an independent table in the caption corridor', (p) => p.args[2].push([180, 270, 230, 280])],
+  [
+    'independent text inside the cycle',
+    (p) => {
+      p.textPacket([['Text', 190, 190]])
+      refreshOpenCycleTokens(p)
+    }
+  ],
+  [
+    'an independent glyph packet touching a node',
+    (p) => {
+      p.textPacket([['Z', 110, 110]])
+      refreshOpenCycleTokens(p)
+    }
+  ],
+  [
+    'independent text in the caption corridor',
+    (p) => {
+      p.textPacket([['Text', 190, 280]])
+      refreshOpenCycleTokens(p)
+    }
+  ],
+  [
+    'a changed native glyph literal',
+    (p) => {
+      const o = p.args[6].operators,
+        i = o.fnArray.indexOf(OPS.showText)
+      o.argsArray[i][0][0].unicode = 'Y'
+    }
+  ],
+  ['unknown graphic bounds', (p) => (p.args[0].invalidGraphicsBounds = 1)],
+  ['an unbound caption literal', (p) => (p.args[1][0].lines = ['Figure 1: Different text.'])]
+]
+it.each(refusedOpenCycles)('refuses open-cycle recovery with %s', (_name, mutate) => {
+  const p = openCyclePacket()
+  mutate(p)
+  const before = JSON.stringify(p.args)
+  expect(associateFigures(...p.args).every((f: { rect?: number[] }) => !f.rect)).toBe(true)
+  expect(JSON.stringify(p.args)).toBe(before)
+})

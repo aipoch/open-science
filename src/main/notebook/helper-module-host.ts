@@ -4,7 +4,7 @@ import type {
 } from '../../shared/notebook'
 import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { digestNotebookHelperSource } from './helper-evidence'
-import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
+import type { NotebookKernelEpochOwnership } from './execution-model-contract'
 
 const HELPER_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 const PYTHON_EXPORT = /^[A-Za-z_][A-Za-z0-9_]*$/

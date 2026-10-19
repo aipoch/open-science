@@ -12,6 +12,59 @@ const { associateTableCaptions } = await import(
 const fixture = (): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids/native-caption-context-ownership.jsonl'))
 
+const indentedReferenceParagraph = (): ReturnType<typeof JSON.parse> => ({
+  pageNumber: 1,
+  width: 600,
+  height: 800,
+  invalidGraphicsBounds: 0,
+  graphicsBounds: [],
+  lines: [
+    ['The complete separate comparison is reported in', 95, 200, 385],
+    ['Fig. 3. The corresponding observation remains fully described', 80, 212.8, 400],
+    ['with each separate observation retained across the same interval', 80, 225.6, 400],
+    ['until the complete comparison ends.', 80, 238.4, 260]
+  ].map(([text, x, y, width]) => ({ text, x, y, width, height: 10, fontSize: 10 }))
+})
+
+it('keeps a numbered reference inside a complete indented native body paragraph', () => {
+  const p = indentedReferenceParagraph()
+  const before = structuredClone(p)
+  expect(findCaptionCandidates([p])).toEqual([])
+  expect(p).toEqual(before)
+})
+
+it.each([
+  'closed-opening',
+  'different-right-edge',
+  'missing-ending',
+  'closed-middle',
+  'foreign-text',
+  'duplicate',
+  'paint',
+  'unknown-paint',
+  'rule',
+  'vertical-rule'
+])('retains a detached caption when the indented body proof lacks %s', (variant) => {
+  const p = indentedReferenceParagraph()
+  if (variant === 'closed-opening') p.lines[0].text += '.'
+  if (variant === 'different-right-edge') p.lines[0].width -= 20
+  if (variant === 'missing-ending') p.lines.pop()
+  if (variant === 'closed-middle') p.lines[2].text += '.'
+  if (variant === 'foreign-text')
+    p.lines.push({ text: 'Separate note', x: 300, y: 208, width: 90, height: 4, fontSize: 4 })
+  if (variant === 'duplicate') p.lines.push({ ...p.lines[0] })
+  if (variant === 'paint')
+    p.graphicsBounds.push({ kind: 'image', normalizedRect: [0.1, 0.1, 0.8, 0.2] })
+  if (variant === 'unknown-paint') p.invalidGraphicsBounds = 1
+  const rules =
+    variant === 'rule'
+      ? new Map([[1, [[80, 211, 480, 211]]]])
+      : variant === 'vertical-rule'
+        ? new Map([[1, [[300, 210, 300, 238]]]])
+        : new Map()
+  expect(findCaptionCandidates([p], rules)).toHaveLength(1)
+})
+
 it('keeps an indented unpunctuated finite reference inside its native body paragraph', () => {
   const row = (text: string, x: number, y: number, width = 430): ReturnType<typeof JSON.parse> => ({
     text,

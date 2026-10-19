@@ -1,5 +1,342 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { intersection, area, lineRect, union } from './literature-pdf-page-geometry.mjs'
+import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { tableTextToken } from './literature-pdf-orientation.mjs'
+
+// A closed summary box proves its own extent, not completeness of the plate.
+// Only an original native node/edge inventory with keyed legend and whole fonts
+// can veto that shortcut. This supplies evidence to the existing association;
+// it neither invents a crop nor relaxes the older native glyph validators.
+export function closedFrameCompositeEvidence(
+  page,
+  caption,
+  captions,
+  tables,
+  frames,
+  tokens,
+  context
+) {
+  const closed = closedCaptionFigureFrame(page, caption, captions, tables, frames)
+  const o = context?.operators,
+    v = context?.viewport,
+    content = context?.content
+  const contains = (a, b, t = 0) => b.every((n, i) => (i < 2 ? n >= a[i] - t : n <= a[i] + t))
+  if (
+    !closed ||
+    !o ||
+    !v ||
+    !Array.isArray(content?.items) ||
+    !Array.isArray(o.fnArray) ||
+    !Array.isArray(o.argsArray) ||
+    o.fnArray.length !== o.argsArray?.length ||
+    v.rotation !== 0 ||
+    v.width !== page.width ||
+    v.height !== page.height ||
+    !Array.isArray(v.transform) ||
+    v.transform.length !== 6 ||
+    v.transform.some((n, i) => !Number.isFinite(n) || n !== [1, 0, 0, -1, 0, page.height][i]) ||
+    typeof v.convertToViewportPoint !== 'function' ||
+    page.invalidGraphicsBounds !== 0
+  )
+    return
+  const originals = content.items.filter((t) => t.str?.trim()).map((t) => tableTextToken(t, v, 0))
+  const carriers = (t) =>
+    [
+      t.sourceItem,
+      t.sourceSegment,
+      t.sourceToken,
+      t.sourceToken?.sourceItem,
+      t.sourceToken?.sourceSegment
+    ].filter(Boolean)
+  if (
+    !originals.length ||
+    tokens.length !== originals.length ||
+    [...tokens, ...content.items].some(
+      (t) => t.sourceSegment || t.sourceToken || t.sourceItems || t.sourceSegments
+    ) ||
+    originals.some((t) => {
+      const s = t.sourceItem,
+        matching = tokens.filter(
+          (n) => n.sourceItem?.pageNumber === s?.pageNumber && n.sourceItem?.index === s?.index
+        )
+      return (
+        !s ||
+        s.pageNumber !== page.pageNumber ||
+        !Number.isSafeInteger(s.index) ||
+        s.index < 0 ||
+        content.items.filter((n) => n.sourceItem?.index === s.index).length !== 1 ||
+        content.items
+          .flatMap(carriers)
+          .filter((n) => n.pageNumber === s.pageNumber && n.index === s.index).length !== 1 ||
+        tokens.flatMap(carriers).filter((n) => n.pageNumber === s.pageNumber && n.index === s.index)
+          .length !== 1 ||
+        matching.length !== 1 ||
+        matching[0].text !== t.text ||
+        matching[0].sourceItem.text !== t.text ||
+        s.text !== t.text ||
+        !Array.isArray(matching[0].rect) ||
+        matching[0].rect.length !== 4 ||
+        !matching[0].rect.every(Number.isFinite) ||
+        matching[0].rect.some((n, i) => Math.abs(n - t.rect[i]) > 1e-7)
+      )
+    })
+  )
+    return
+  const paint = [],
+    stack = []
+  let matrix = [1, 0, 0, 1, 0, 0],
+    lineWidth = 1
+  const harmless = new Set(
+    [
+      'setFillRGBColor',
+      'setStrokeRGBColor',
+      'setLineWidth',
+      'setLineCap',
+      'setLineJoin',
+      'setMiterLimit',
+      'setDash',
+      'beginText',
+      'endText',
+      'dependency',
+      'setFont',
+      'setTextMatrix',
+      'showText',
+      'moveText'
+    ].map((n) => OPS[n])
+  )
+  for (let i = 0; i < o.fnArray.length; i++) {
+    const op = o.fnArray[i],
+      a = o.argsArray[i]
+    // White/unknown stroke ink cannot establish a visible graph connection.
+    // Keep this proof conservative instead of changing any legacy selector.
+    if (
+      op === OPS.setStrokeRGBColor &&
+      (a?.length !== 1 || !/^#[0-9a-f]{6}$/iu.test(a[0]) || a[0].toLowerCase() === '#ffffff')
+    )
+      return
+    if (op === OPS.save) {
+      stack.push({ matrix: [...matrix], lineWidth })
+      continue
+    }
+    if (op === OPS.restore) {
+      if (!stack.length) return
+      ;({ matrix, lineWidth } = stack.pop())
+      continue
+    }
+    if (op === OPS.setLineWidth) {
+      if (a?.length !== 1 || !(a[0] > 0) || !Number.isFinite(a[0])) return
+      lineWidth = a[0]
+      continue
+    }
+    if (op === OPS.transform) {
+      if (!a?.every(Number.isFinite) || a.length !== 6 || a[1] || a[2] || a[0] <= 0 || a[3] <= 0)
+        return
+      matrix = Util.transform(matrix, a)
+      continue
+    }
+    if (op !== OPS.constructPath) {
+      if (!harmless.has(op)) return
+      continue
+    }
+    if (a?.[0] === OPS.endPath) continue
+    if (![OPS.stroke, OPS.fillStroke].includes(a?.[0]) || a[1]?.length !== 1 || !a[1][0]) return
+    const program = a[1][0],
+      commands = [],
+      points = [],
+      transform = Util.transform(v.transform, matrix)
+    for (let j = 0; j < program.length;) {
+      const command = program[j++],
+        size = command === 0 || command === 1 ? 2 : command === 2 ? 6 : command === 4 ? 0 : -1
+      if (size < 0 || j + size > program.length) return
+      commands.push(command)
+      for (let k = 0; k < size; k += 2) {
+        const p = [program[j + k], program[j + k + 1]]
+        if (!p.every(Number.isFinite)) return
+        Util.applyTransform(p, transform)
+        points.push(p)
+      }
+      j += size
+    }
+    if (!points.length) return
+    const rect = [
+      Math.min(...points.map((p) => p[0])),
+      Math.min(...points.map((p) => p[1])),
+      Math.max(...points.map((p) => p[0])),
+      Math.max(...points.map((p) => p[1]))
+    ]
+    const recorded = page.graphicsBounds.filter((g) => g.kind === 'path' && g.operationIndex === i)
+    if (recorded.length !== 1) return
+    const measured = recorded[0].normalizedRect.map(
+      (n, k) => n * (k % 2 ? page.height : page.width)
+    )
+    if (rect.some((n, k) => Math.abs(n - measured[k]) > (k % 2 ? page.height : page.width) / 64))
+      return
+    paint.push({
+      rect,
+      points,
+      commands,
+      index: i,
+      mode: a[0],
+      measured,
+      radius: (lineWidth * Math.max(matrix[0], matrix[3])) / 2
+    })
+  }
+  if (stack.length || paint.length !== page.graphicsBounds.length) return
+  const font = Math.max(
+    ...originals.filter((t) => intersection(t.rect, caption.rect) > 0).map((t) => t.height)
+  )
+  if (!(font > 0)) return
+  const upper = paint.filter(
+    (p) =>
+      p.rect[3] < closed.rect[1] &&
+      p.rect[0] >= closed.rect[0] - font &&
+      p.rect[2] <= closed.rect[2] + font
+  )
+  const nodes = upper.filter(
+    (p) =>
+      p.mode === OPS.fillStroke &&
+      /^0,(?:[12],)+4(?:,0)?$/.test(p.commands.join(',')) &&
+      p.rect[2] - p.rect[0] >= font &&
+      p.rect[2] - p.rect[0] <= font * 4 &&
+      p.rect[3] - p.rect[1] >= font &&
+      p.rect[3] - p.rect[1] <= font * 4 &&
+      originals.some((t) => contains(p.rect, t.rect, 0.01))
+  )
+  const edges = upper
+    .filter((p) => p.mode === OPS.stroke && p.commands.join(',') === '0,1')
+    .map((p) => ({
+      ...p,
+      owners: p.points.map((q) =>
+        nodes.filter((n) => contains(n.rect, [...q, ...q], n.radius + p.radius))
+      )
+    }))
+  const links = edges.filter(
+    (p) => p.owners.every((n) => n.length === 1) && p.owners[0][0] !== p.owners[1][0]
+  )
+  if (
+    nodes.length < 2 ||
+    !links.length ||
+    nodes.some((n) => !links.some((e) => e.owners.some((ns) => ns[0] === n)))
+  )
+    return
+  const remaining = new Set([...nodes, ...links].map((p) => ({ ...p, rect: p.measured }))),
+    components = []
+  while (remaining.size) {
+    const first = remaining.values().next().value
+    remaining.delete(first)
+    const component = [first]
+    connectFigureGraphics(component, remaining)
+    components.push(union(component.map((p) => p.rect)))
+  }
+  const lower = frames.filter((r) => contains(closed.rect, r))
+  if (
+    components.some(
+      (c) => lower.filter((r) => c[0] >= r[0] - font && c[2] <= r[2] + font).length !== 1
+    ) ||
+    lower.some(
+      (r) => components.filter((c) => c[0] >= r[0] - font && c[2] <= r[2] + font).length !== 1
+    )
+  )
+    return
+  const keys = edges.filter(
+    (p) =>
+      !links.some((e) => e.index === p.index) &&
+      Math.abs(p.rect[3] - p.rect[1]) < 0.01 &&
+      p.rect[1] > Math.max(...components.map((c) => c[3]))
+  )
+  const owned = new Set(originals.filter((t) => nodes.some((n) => contains(n.rect, t.rect, 0.01))))
+  const titles = []
+  for (const c of components) {
+    const title = originals.filter(
+      (t) =>
+        t.horizontal &&
+        t.rect[3] <= c[1] &&
+        c[1] - t.rect[3] < font * 3 &&
+        t.rect[0] >= c[0] - font &&
+        t.rect[2] <= c[2] + font
+    )
+    if (title.length !== 1 || !/^\p{L}+(?:\s+\p{L}+){0,2}$/u.test(title[0].text.trim())) return
+    titles.push(title[0])
+    owned.add(title[0])
+  }
+  if (
+    titles.some(
+      (t) =>
+        Math.abs(t.baseline - titles[0].baseline) > 0.01 ||
+        Math.abs(t.height - titles[0].height) > 0.01
+    )
+  )
+    return
+  for (const key of keys) {
+    const labels = originals.filter(
+      (t) =>
+        t.horizontal &&
+        t.rect[0] >= key.rect[2] &&
+        t.rect[0] - key.rect[2] < font * 2 &&
+        key.rect[1] >= t.rect[1] &&
+        key.rect[1] <= t.rect[3]
+    )
+    if (labels.length !== 1) return
+    const rows = page.lines.filter((l) => contains(lineRect(l), labels[0].rect, 0.01))
+    if (rows.length !== 1) return
+    const parts = originals.filter((t) => contains(lineRect(rows[0]), t.rect, 0.01))
+    if (
+      parts
+        .map((t) => t.text)
+        .join('')
+        .replace(/\s/gu, '') !== rows[0].text.replace(/\s/gu, '')
+    )
+      return
+    parts.forEach((t) => owned.add(t))
+  }
+  if (
+    !keys.length ||
+    upper.some((p) => ![...nodes, ...links, ...keys].some((n) => n.index === p.index))
+  )
+    return
+  const bound = union([
+    closed.rect,
+    ...upper.map((p) => p.measured),
+    ...[...owned].map((t) => t.rect)
+  ])
+  const allowed = new Set(upper.map((p) => p.index))
+  const accepts = (rect) =>
+    !tables.some((t) => intersection(t, rect) > 0) &&
+    !captions.some(
+      (c) => c !== caption && c.page === caption.page && intersection(c.rect, rect) > 0
+    ) &&
+    !paint.some(
+      (p) =>
+        intersection(p.measured, rect) > 0 &&
+        !contains(closed.rect, p.rect, p.radius) &&
+        !allowed.has(p.index)
+    ) &&
+    !originals.some(
+      (t) => intersection(t.rect, rect) > 0 && !contains(closed.rect, t.rect, 0.01) && !owned.has(t)
+    ) &&
+    !page.lines.some(
+      (l) =>
+        intersection(lineRect(l), rect) > 0 &&
+        !contains(closed.rect, lineRect(l), 0.01) &&
+        (originals.filter((t) => contains(lineRect(l), t.rect, 0.01)).some((t) => !owned.has(t)) ||
+          originals
+            .filter((t) => contains(lineRect(l), t.rect, 0.01))
+            .map((t) => t.text)
+            .join('')
+            .replace(/\s/gu, '') !== l.text.replace(/\s/gu, ''))
+    )
+  if (!accepts(bound)) return
+  return {
+    closed,
+    bound,
+    accepts,
+    // Only the explicitly proved node/title/legend fonts are owned. Fonts
+    // merely enclosed by the lower summary frame have no such text proof.
+    ownedSourceItems: [...owned]
+      .map(({ sourceItem: { pageNumber, index, text } }) => ({ pageNumber, index, text }))
+      .sort((a, b) => a.pageNumber - b.pageNumber || a.index - b.index)
+  }
+}
 
 export function nativeClosedRuleFrames(rules, endpointTolerance = 0.01) {
   const horizontal = rules.filter((r) => r[1] === r[3] && r[2] - r[0] >= 30),

@@ -40,6 +40,7 @@ const getDocument: typeof core.getDocument = (source) => {
   return core.getDocument({
     CMapReaderFactory: BundledCMapReaderFactory,
     useWorkerFetch: false,
+    fontExtraProperties: true,
     ...options
   })
 }

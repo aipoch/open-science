@@ -87,6 +87,135 @@ const romanVariableCaption = (): ReturnType<typeof JSON.parse> => {
   return { p, fonts, rules }
 }
 
+const centeredRuledTitle = (): ReturnType<typeof JSON.parse> => ({
+  ...page([
+    line('TABLE II. COMPARISON OF COMPLETE MEASUREMENTS FOR', 100, 200, 400),
+    line('SEPARATE GROUPS', 240, 211.5, 120),
+    line('Group', 80, 244, 60),
+    line('Response', 400, 244, 70)
+  ]),
+  invalidGraphicsBounds: 0,
+  graphicsBounds: [],
+  rules: [
+    [60, 239, 540, 239],
+    [60, 264, 540, 264]
+  ]
+})
+
+it('completes a centered capitalized title above its separate native header face', () => {
+  const p = centeredRuledTitle()
+  const before = structuredClone(p)
+  const initial = findCaptionCandidates([p])
+  const ruled = findCaptionCandidates([p], new Map([[1, p.rules]]))
+  applyRuledCaptionRecovery(initial, ruled, p, p.rules)
+  expect(initial[0].lines).toEqual([
+    'TABLE II. COMPARISON OF COMPLETE MEASUREMENTS FOR',
+    'SEPARATE GROUPS'
+  ])
+  expect(p).toEqual(before)
+})
+
+it.each([
+  'missing-opening',
+  'missing-close',
+  'miscentered',
+  'font',
+  'foreign-text',
+  'paint',
+  'duplicate',
+  'mixed-case',
+  'closed-title',
+  'unknown-kind',
+  'out-of-page',
+  'reversed-paint'
+])('leaves a centered title unchanged without its complete %s evidence', (variant) => {
+  const p = centeredRuledTitle()
+  if (variant === 'missing-opening') p.rules.shift()
+  if (variant === 'missing-close') p.rules.pop()
+  if (variant === 'miscentered') p.lines[1].x += 15
+  if (variant === 'font') p.lines[1].fontSize = 11
+  if (variant === 'foreign-text') p.lines.push(line('Side note', 75, 224, 50))
+  if (variant === 'paint')
+    p.graphicsBounds.push({ kind: 'path', normalizedRect: [0.2, 0.26, 0.8, 0.27] })
+  if (variant === 'duplicate') p.lines.push({ ...p.lines[1] })
+  if (variant === 'mixed-case') p.lines[1].text = 'Separate groups'
+  if (variant === 'closed-title') p.lines[0].text += '.'
+  if (variant === 'unknown-kind')
+    p.graphicsBounds.push({ kind: 'unknown', normalizedRect: [0.1, 0.1, 0.2, 0.2] })
+  if (variant === 'out-of-page')
+    p.graphicsBounds.push({ kind: 'path', normalizedRect: [-0.1, 0.1, 0.2, 0.2] })
+  if (variant === 'reversed-paint')
+    p.graphicsBounds.push({ kind: 'path', normalizedRect: [0.2, 0.1, 0.1, 0.2] })
+  expect(findCaptionCandidates([p], new Map([[1, p.rules]]))[0].lines).not.toContain(
+    p.lines[1].text
+  )
+})
+
+const hangingCaptionBeforeSection = (): ReturnType<typeof JSON.parse> => ({
+  ...page([
+    line('Figure 2: Separate observations and complete measurements of', 70, 300, 420),
+    line('the final independent response.', 90, 311.5, 240),
+    line('4 INDEPENDENT ANALYSIS', 170, 343, 260, 12)
+  ]),
+  invalidGraphicsBounds: 0,
+  graphicsBounds: [
+    {
+      kind: 'image',
+      operationIndex: 2,
+      imageHash: 'a'.repeat(64),
+      normalizedRect: [0.1, 0.1, 0.9, 0.36]
+    }
+  ]
+})
+
+it('owns an inward two-line caption between native graphics and a separate larger section', () => {
+  const p = hangingCaptionBeforeSection()
+  const before = structuredClone(p)
+  expect(findCaptionCandidates([p])[0].lines).toEqual([
+    'Figure 2: Separate observations and complete measurements of',
+    'the final independent response.'
+  ])
+  expect(p).toEqual(before)
+})
+
+it('keeps a full hanging terminal row under several independent raster panels', () => {
+  const p = hangingCaptionBeforeSection()
+  p.lines[1] = line('the complete measurements across every independent panel', 90, 311.5, 400)
+  p.graphicsBounds = [0, 1].map((i) => ({
+    kind: 'image',
+    operationIndex: i,
+    imageHash: 'b'.repeat(64),
+    normalizedRect: [(70 + i * 210) / 600, 0.1, (260 + i * 210) / 600, 0.36]
+  }))
+  expect(findCaptionCandidates([p])[0].lines).toEqual(
+    p.lines.slice(0, 2).map((l: NativeLine) => l.text)
+  )
+})
+
+it.each([
+  'missing-raster',
+  'unknown-paint',
+  'tail-paint',
+  'foreign-text',
+  'duplicate',
+  'font',
+  'indent',
+  'section',
+  'rule'
+])('refuses a hanging caption without its complete %s boundary', (variant) => {
+  const p = hangingCaptionBeforeSection()
+  if (variant === 'missing-raster') p.graphicsBounds = []
+  if (variant === 'unknown-paint') p.invalidGraphicsBounds = 1
+  if (variant === 'tail-paint') p.graphicsBounds[0].normalizedRect[3] = 0.4
+  if (variant === 'foreign-text') p.lines.push(line('Foreign text', 400, 325, 80))
+  if (variant === 'duplicate') p.lines.push({ ...p.lines[1] })
+  if (variant === 'font') p.lines[1].fontSize = 12
+  if (variant === 'indent') p.lines[1].x += 8
+  if (variant === 'section') p.lines[2].fontSize = 10
+  const rules = variant === 'rule' ? new Map([[1, [[70, 310.5, 490, 310.5]]]]) : new Map()
+  expect(findCaptionCandidates([p], rules)[0].lines).not.toContain(p.lines[1].text)
+})
+
 it('recovers a centered Roman caption only from complete native smallcaps and literal variable carriers', () => {
   const { p, fonts, rules } = romanVariableCaption(),
     original = structuredClone(p),
@@ -1394,4 +1523,66 @@ it.each([
     })
   }
   expect(recoverLiteralTail(packet)[0].lines).toHaveLength(1)
+})
+
+function wideCadenceCenteredSource(): ReturnType<typeof centeredSourceCaption> {
+  const packet = centeredSourceCaption('figure')
+  packet.captionRows = [
+    line('FIG. 2: Complete independent sample observations.', 60, 250, 480),
+    line('Measured samples remain independently available in this panel', 75, 267.5, 450),
+    line('The repeated observations describe the full measured response', 90, 285, 420),
+    line('Final sample values.', 220, 302.5, 160)
+  ]
+  packet.p.lines = [
+    ...packet.captionRows,
+    line('Independent body paragraph begins below this complete caption.', 60, 350, 480)
+  ]
+  packet.fonts = packet.p.lines.map((l: NativeLine, index: number) => ({
+    text: l.text,
+    rect: [l.x, l.y, l.x + l.width, l.y + l.height],
+    baseline: l.y + l.height,
+    height: l.height,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index, text: l.text }
+  }))
+  return packet
+}
+
+it('recovers a centered complete native caption from its repeated wider measured cadence', () => {
+  const packet = wideCadenceCenteredSource()
+  expect(recoverCenteredSource(packet)[0].lines).toEqual(
+    packet.captionRows.map((l: NativeLine) => l.text)
+  )
+})
+
+it.each([
+  'center',
+  'cadence',
+  'missing-font',
+  'alias',
+  'foreign-font',
+  'rule',
+  'unknown-ink',
+  'missing-graphic',
+  'unclosed-tail'
+])('refuses wider centered recovery without complete %s proof', (control) => {
+  const packet = wideCadenceCenteredSource()
+  if (control === 'center') packet.p.lines[1].x += 3
+  if (control === 'cadence') packet.p.lines[2].y += 3
+  if (control === 'missing-font') packet.fonts.splice(1, 1)
+  if (control === 'alias') packet.fonts[1].sourceItem.index = 0
+  if (control === 'foreign-font')
+    packet.fonts.push({
+      ...packet.fonts[1],
+      sourceItem: { ...packet.fonts[1].sourceItem, index: 99 }
+    })
+  if (control === 'rule') packet.rules.push([300, 260, 300, 300])
+  if (control === 'unknown-ink') packet.p.invalidGraphicsBounds = 1
+  if (control === 'missing-graphic') packet.p.graphicsBounds = []
+  if (control === 'unclosed-tail') {
+    packet.p.lines[3].text = 'An unfinished final sample'
+    packet.fonts[3].text = packet.p.lines[3].text
+    packet.fonts[3].sourceItem.text = packet.p.lines[3].text
+  }
+  expect(recoverCenteredSource(packet)[0].lines).toHaveLength(1)
 })

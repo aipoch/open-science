@@ -200,3 +200,285 @@ it.each(['open frame', 'one tick', 'caption barrier', 'body continuation', 'bad 
     ).toEqual(f.figure.rect)
   }
 )
+
+const { OPS: axisOps } = await import('pdfjs-dist/legacy/build/pdf.mjs')
+const axisModule = await import(
+  pathToFileURL(resolve('resources/literature-pdf-figure-native-plot-labels.mjs')).href
+)
+type AxisSource = { pageNumber: number; index: number; text: string }
+type AxisCaption = { page: number; lines: string[]; rect: number[] }
+type AxisGraphic = { operationIndex: number; kind: string; normalizedRect: number[] }
+type AxisToken = {
+  text: string
+  rect: number[]
+  height: number
+  baseline: number
+  horizontal: boolean
+  sourceItem: AxisSource
+}
+type AxisRaw = {
+  str: string
+  dir: string
+  width: number
+  height: number
+  transform: number[]
+  fontName: string
+  hasEOL: boolean
+  sourceItem: AxisSource
+}
+type AxisFixture = {
+  page: {
+    pageNumber: number
+    width: number
+    height: number
+    invalidGraphicsBounds: number
+    lines: unknown[]
+    graphicsBounds: AxisGraphic[]
+  }
+  figure: { rect: number[]; caption: AxisCaption }
+  captions: AxisCaption[]
+  tables: number[][]
+  rules: number[][]
+  tokens: AxisToken[]
+  context: {
+    operators: { fnArray: number[]; argsArray: unknown[] }
+    graphicsBounds: AxisGraphic[]
+    viewport: {
+      width: number
+      height: number
+      scale: number
+      rotation: number
+      transform: number[]
+      convertToViewportPoint: (x: number, y: number) => number[]
+    }
+    content: {
+      items: AxisRaw[]
+      styles: Record<string, { ascent: number; descent: number; vertical: boolean }>
+    }
+    glyphBounds: { fontName: string; glyphs: { fontChar: string; bounds: number[] }[] }[]
+  }
+}
+function scriptedAxisFixture(scale = 1): AxisFixture {
+  const width = 600 * scale,
+    height = 800 * scale
+  const fnArray: number[] = [],
+    argsArray: unknown[] = []
+  const add = (op: number, args: unknown): void => {
+    fnArray.push(op)
+    argsArray.push(args)
+  }
+  const rules = [
+    [100, 100, 100, 200],
+    [500, 100, 500, 200],
+    [100, 200, 500, 200]
+  ].map((r) => r.map((n) => n * scale))
+  const graphicsBounds = rules.map((r) => {
+    const operationIndex = fnArray.length
+    add(axisOps.constructPath, [
+      axisOps.stroke,
+      [[0, r[0], height - r[1], 1, r[2], height - r[3]]],
+      [
+        Math.min(r[0], r[2]),
+        height - Math.max(r[1], r[3]),
+        Math.max(r[0], r[2]),
+        height - Math.min(r[1], r[3])
+      ]
+    ])
+    return {
+      operationIndex,
+      kind: 'path',
+      normalizedRect: [
+        (r[0] - 0.5) / width,
+        (r[1] - 0.5) / height,
+        (r[2] + 0.5) / width,
+        (r[3] + 0.5) / height
+      ]
+    }
+  })
+  const items: {
+    str: string
+    dir: string
+    width: number
+    height: number
+    transform: number[]
+    fontName: string
+    hasEOL: boolean
+    sourceItem: { pageNumber: number; index: number; text: string }
+  }[] = []
+  const tokens: {
+    text: string
+    rect: number[]
+    height: number
+    baseline: number
+    horizontal: boolean
+    sourceItem: { pageNumber: number; index: number; text: string }
+  }[] = []
+  const glyphs: { fontChar: string; bounds: number[] }[] = []
+  let px = 0,
+    py = 0
+  const show = (text: string, x: number, y: number, size: number): void => {
+    x *= scale
+    y *= scale
+    size *= scale
+    add(axisOps.setFont, ['F', size])
+    add(axisOps.moveText, [x - px, height - y - py])
+    px = x
+    py = height - y
+    add(axisOps.showText, [
+      [{ unicode: text, fontChar: text, width: 500, isInFont: true, isSpace: false, accent: null }]
+    ])
+    if (!glyphs.some((g) => g.fontChar === text))
+      glyphs.push({ fontChar: text, bounds: [0, -0.1, 0.5, 0.7] })
+    const index = items.length,
+      sourceItem = { pageNumber: 1, index, text }
+    items.push({
+      str: text,
+      dir: 'ltr',
+      width: size * 0.5,
+      height: size,
+      transform: [size, 0, 0, size, x, height - y],
+      fontName: 'F',
+      hasEOL: false,
+      sourceItem
+    })
+    tokens.push({
+      text,
+      rect: [x, y - size, x + size * 0.5, y],
+      height: size,
+      baseline: y,
+      horizontal: true,
+      sourceItem: { ...sourceItem }
+    })
+  }
+  const begin = (): void => {
+    add(axisOps.beginText, null)
+    px = py = 0
+  }
+  for (const [i, x] of [100, 300, 500].entries()) {
+    begin()
+    show(String(i), x - 2.5, 214, 10)
+    add(axisOps.endText, null)
+  }
+  begin()
+  show('A', 294, 239, 14)
+  show('u', 301, 233, 8)
+  show('v', 301, 243, 8)
+  add(axisOps.endText, null)
+  begin()
+  show('C', 100, 275, 10)
+  add(axisOps.endText, null)
+  const caption = {
+    page: 1,
+    lines: ['Figure 1. Plot.'],
+    rect: [90, 265, 510, 280].map((n) => n * scale)
+  }
+  const page = { pageNumber: 1, width, height, invalidGraphicsBounds: 0, lines: [], graphicsBounds }
+  return {
+    page,
+    figure: { rect: [90, 90, 510, 234].map((n) => n * scale), caption },
+    captions: [caption],
+    tables: [] as number[][],
+    rules,
+    tokens,
+    context: {
+      operators: { fnArray, argsArray },
+      graphicsBounds,
+      viewport: {
+        width,
+        height,
+        scale: 1,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, height],
+        convertToViewportPoint: (x: number, y: number): number[] => [x, height - y]
+      },
+      content: { items, styles: { F: { ascent: 0.7, descent: -0.1, vertical: false } } },
+      glyphBounds: [{ fontName: 'F', glyphs }]
+    }
+  }
+}
+const completeAxisPacket = (
+  f: ReturnType<typeof scriptedAxisFixture>,
+  foreign = (): boolean => false
+): ReturnType<typeof JSON.parse> =>
+  axisModule.nativeAxisTitlePacket?.(
+    f.page,
+    f.figure,
+    f.captions,
+    f.tables,
+    f.rules,
+    f.tokens,
+    f.context,
+    foreign
+  )
+
+it.each([0.75, 1.5])(
+  'completes one scripted native x-axis title without a fixed-distance increase at scale %s',
+  (scale) => {
+    const f = scriptedAxisFixture(scale)
+    const proof = completeAxisPacket(f)
+    expect(proof?.rect).toHaveLength(4)
+    ;[90, 90, 510, 243.8].forEach((n, i) => expect(proof.rect[i]).toBeCloseTo(n * scale, 8))
+    expect(proof?.sourceItems).toEqual([])
+  }
+)
+
+it.each([
+  'missing-glyph',
+  'font-mismatch',
+  'alias',
+  'missing-axis',
+  'few-ticks',
+  'caption',
+  'table',
+  'foreign',
+  'missing-context',
+  'unknown-paint',
+  'unrelated-text'
+])('refuses an unproved axis-title completion: %s', (change) => {
+  const f = scriptedAxisFixture()
+  if (change === 'missing-glyph') f.context.glyphBounds[0].glyphs.pop()
+  if (change === 'font-mismatch') f.context.content.items[3].fontName = 'Other'
+  if (change === 'alias') f.tokens.push({ ...f.tokens[3], rect: [10, 10, 17, 24] })
+  if (change === 'missing-axis') f.rules.pop()
+  if (change === 'few-ticks') {
+    f.context.content.items[0].str = 'word'
+    f.context.content.items[0].sourceItem.text = 'word'
+  }
+  if (change === 'caption')
+    f.captions.push({ page: 1, lines: ['Figure 2. Other.'], rect: [250, 235, 350, 260] })
+  if (change === 'table') f.tables.push([250, 235, 350, 260])
+  if (change === 'missing-context') f.context.glyphBounds = []
+  if (change === 'unknown-paint') {
+    f.context.operators.fnArray.push(axisOps.constructPath)
+    f.context.operators.argsArray.push([
+      axisOps.fill,
+      [[0, 260, 560, 1, 320, 560, 1, 320, 559, 1, 260, 559, 4]],
+      [260, 559, 320, 560]
+    ])
+  }
+  if (change === 'unrelated-text') {
+    const t = f.tokens.at(-1)!
+    t.rect = [100, 236, 105, 246]
+    f.context.content.items.at(-1)!.transform[5] = 554
+  }
+  expect(completeAxisPacket(f, () => change === 'foreign')).toBeUndefined()
+})
+
+it.each([
+  axisOps.shadingFill,
+  axisOps.beginGroup,
+  axisOps.paintImageMaskXObject,
+  axisOps.setTextRenderingMode,
+  99999
+])('rejects unsupported native painting or text state %s', (op) => {
+  const f = scriptedAxisFixture()
+  f.context.operators.fnArray.push(op)
+  f.context.operators.argsArray.push([1])
+  expect(completeAxisPacket(f)).toBeUndefined()
+})
+it('rejects a soft mask rather than claiming complete paint inventory', () => {
+  const f = scriptedAxisFixture()
+  f.context.operators.fnArray.push(axisOps.setGState)
+  f.context.operators.argsArray.push([[['SMask', true]]])
+  expect(completeAxisPacket(f)).toBeUndefined()
+})

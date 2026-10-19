@@ -406,8 +406,8 @@ describe('WorkspaceSidebar accessible render', () => {
       )
       expect(button).toBeDefined()
 
-      ;(button?.props.onClick as () => void)()
-      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(target.id)
+      ;(button?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(target.id, 1)
       expect(onRenameSession).not.toHaveBeenCalled()
 
       ;(button?.props.onDoubleClick as () => void)()
@@ -2573,8 +2573,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const secondTarget = getSessionActionTargetProps(tree, sessions[1].id)
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
-    ;(notebookButton?.props.onClick as () => void)()
-    expect(onOpenSession).toHaveBeenCalledWith('session-a')
+    ;(notebookButton?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+    expect(onOpenSession).toHaveBeenCalledWith('session-a', 1)
 
     await secondTarget.bindings.edit?.execute(secondTarget.invocation)
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])

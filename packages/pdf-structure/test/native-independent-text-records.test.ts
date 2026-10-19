@@ -1406,3 +1406,875 @@ it.each(['missing header', 'missing value', 'overlapping lanes'])(
     expect(recoverNativeTextRecordGrid(x.table, x.items, x.captions, x.rules)).toBeUndefined()
   }
 )
+
+function doublePaintRecords(scale = 1, pageHeight = 200): ReturnType<typeof JSON.parse> {
+  const viewport = {
+    scale,
+    rotation: 0,
+    width: 300 * scale,
+    height: pageHeight * scale,
+    transform: [scale, 0, 0, -scale, 0, pageHeight * scale],
+    convertToViewportPoint: (x: number, y: number): number[] => [
+      x * scale,
+      (pageHeight - y) * scale
+    ]
+  }
+  const sourceContent = {
+    styles: { a: { vertical: false } },
+    items: (
+      [
+        ['Index', 28, 15, 35, 10],
+        ['Value', 120, 15, 35, 10],
+        ['0', 28, 35, 8, 10],
+        ['11', 120, 35, 15, 10],
+        ['1', 28, 55, 8, 10],
+        ['22', 120, 55, 15, 10],
+        ['2', 28, 75, 8, 10],
+        ['33', 120, 75, 15, 10],
+        ['z', 150, 8, 0.6, 1.5]
+      ] as [string, number, number, number, number][]
+    ).map(([str, x, y, width, height], index) => ({
+      str,
+      width,
+      height,
+      dir: 'ltr',
+      fontName: 'a',
+      transform: [height, 0, 0, height, x, pageHeight - y - height],
+      sourceItem: { pageNumber: 1, index, text: str }
+    }))
+  }
+  const operators: { fnArray: number[]; argsArray: unknown[] } = {
+    fnArray: [OPS.setLineWidth],
+    argsArray: [[0.6]]
+  }
+  for (const y of [10, 12, 26, 94, 96]) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [[0, 20, pageHeight - y, 1, 220, pageHeight - y]],
+      [20, pageHeight - y, 220, pageHeight - y]
+    ])
+  }
+  const rulePaintBounds = new Map<string, number[]>(),
+    rules = collectTableRules(operators, viewport, rulePaintBounds)
+  const quantize = (p: number[]): number[] =>
+    p.map(
+      (x, k) =>
+        ((k < 2
+          ? Math.floor((x / Math.ceil(k % 2 ? viewport.height : viewport.width)) * 256)
+          : Math.ceil((x / Math.ceil(k % 2 ? viewport.height : viewport.width)) * 256) + 1) *
+          (k % 2 ? viewport.height : viewport.width)) /
+        256
+    )
+  const nativeEvidenceGraphics = [...rulePaintBounds.values()].map((p) => {
+    const radius = (p[3] - p[1]) / 2
+    return { kind: 'path', rect: quantize([p[0] - radius, p[1], p[2] + radius, p[3]]) }
+  })
+  const context = {
+    viewport,
+    operators,
+    sourceContent,
+    content: sourceContent,
+    rulePaintBounds,
+    nativeEvidenceGraphics,
+    allRules: rules
+  }
+  const items = sourceContent.items.map((raw) => tableTextToken(raw, viewport, 0)),
+    cropRect = [20, 7, 220, 94.5].map((x) => x * scale)
+  const table = {
+    id: 'anonymous',
+    cropRect,
+    structure: {
+      objects: [
+        { label: 'table column', rect: [0, 0, 70, 87.5].map((x) => x * scale) },
+        { label: 'table column', rect: [70, 0, 200, 87.5].map((x) => x * scale) },
+        { label: 'table row', rect: [0, 0, 200, 30].map((x) => x * scale) },
+        { label: 'table row', rect: [0, 30, 200, 87.5].map((x) => x * scale) }
+      ]
+    }
+  }
+  const captions = [
+    { page: 1, lines: ['Table 1. Values.'], rect: [20, -8, 220, 6].map((x) => x * scale) }
+  ]
+  return { table, items, captions, rules, context }
+}
+
+const { refineNativeTableVisualCrop } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
+)
+
+function finalPaintTable(f: ReturnType<typeof doublePaintRecords>): ReturnType<typeof JSON.parse> {
+  const grid: string[][] = [],
+    cells: object[] = []
+  for (let n = 0; n < 8; n++) {
+    const i = f.items[n],
+      row = Math.floor(n / 2),
+      column = n % 2
+    grid[row] ??= []
+    grid[row][column] = i.text
+    cells.push({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      text: i.text,
+      sourceItems: i.sourceItem ? [i.sourceItem] : [],
+      sourceRects: [i.rect],
+      sourceTokens: [{ text: i.text, rect: i.rect, baseline: i.baseline, height: i.height }]
+    })
+  }
+  return {
+    id: 'anonymous',
+    grid,
+    cells,
+    cropRect: [20, 9, 220, 98],
+    clipped: [{ text: f.items[8].text, rect: f.items[8].rect }],
+    issues: ['text-crosses-crop-boundary'],
+    reviewCandidate: false,
+    repairs: ['native-body-records-recovered']
+  }
+}
+function lateRecordPlan(f: ReturnType<typeof doublePaintRecords>): ReturnType<typeof JSON.parse> {
+  const plan = recoverNativeTextRecordGrid(f.table, f.items, f.captions, f.rules)
+  if (!plan) return plan
+  const table = finalPaintTable(f)
+  table.cropRect = plan.cropRect
+  const visual = refineNativeTableVisualCrop?.(table, f.items, f.rules, f.context)
+  return { ...plan, cropRect: visual?.cropRect ?? plan.cropRect }
+}
+
+it.each([1, 2])(
+  'retains outer double-rule paint independently of logical record closing at scale %s',
+  (scale) => {
+    const f = doublePaintRecords(scale)
+    const legacy = recoverNativeTextRecordGrid(f.table, f.items, f.captions, f.rules)
+    const actual = lateRecordPlan(f)
+    expect(actual?.cropRect).toEqual([
+      20 * scale - 0.5,
+      9.7 * scale,
+      220 * scale + 0.5,
+      96.3 * scale
+    ])
+    expect(actual?.rows).toEqual(legacy.rows)
+    expect(actual?.columns).toEqual(legacy.columns)
+  }
+)
+
+it.each([
+  'missing outer rule',
+  'unequal pair gap',
+  'missing paint',
+  'unknown image',
+  'clip',
+  'stroke opacity',
+  'dash',
+  'foreign frame glyph',
+  'crossing opening glyph',
+  'crossing closing glyph',
+  'native alias',
+  'partial range',
+  'range overlap',
+  'wrong literal',
+  'rotated font',
+  'unknown source carrier',
+  'duplicate native graphic',
+  'unknown native graphic'
+])('keeps existing record crop when full double-rule paint proof fails: %s', (mode) => {
+  const f = doublePaintRecords()
+  if (mode === 'missing outer rule') f.rules.pop()
+  if (mode === 'unequal pair gap') f.rules.at(-1)[1] = f.rules.at(-1)[3] = 99
+  if (mode === 'missing paint') f.context.rulePaintBounds.delete(f.rules.at(-1).join(','))
+  if (['unknown image', 'clip', 'stroke opacity', 'dash'].includes(mode)) {
+    const op =
+      mode === 'unknown image'
+        ? OPS.paintImageXObject
+        : mode === 'clip'
+          ? OPS.clip
+          : mode === 'stroke opacity'
+            ? OPS.setGState
+            : OPS.setDash
+    const args =
+      mode === 'unknown image'
+        ? ['image', 10, 10]
+        : mode === 'clip'
+          ? null
+          : mode === 'stroke opacity'
+            ? [[['CA', 0.5]]]
+            : [[1, 1], 0]
+    f.context.operators.fnArray.splice(1, 0, op)
+    f.context.operators.argsArray.splice(1, 0, args)
+  }
+  if (['foreign frame glyph', 'crossing opening glyph', 'crossing closing glyph'].includes(mode)) {
+    const raw = structuredClone(f.context.sourceContent.items[2])
+    raw.str = 'Other'
+    raw.sourceItem = { pageNumber: 1, index: 9, text: 'Other' }
+    raw.transform[4] = 180
+    raw.transform[5] =
+      mode === 'foreign frame glyph' ? 130 : mode === 'crossing opening glyph' ? 185 : 101
+    f.context.sourceContent.items.push(raw)
+  }
+  if (mode === 'native alias')
+    f.context.sourceContent.items.push(structuredClone(f.context.sourceContent.items[2]))
+  if (mode === 'rotated font') f.context.sourceContent.items[2].transform[1] = 2
+  if (mode === 'duplicate native graphic')
+    f.context.nativeEvidenceGraphics.push(structuredClone(f.context.nativeEvidenceGraphics[0]))
+  if (mode === 'unknown native graphic')
+    f.context.nativeEvidenceGraphics.push({ kind: 'path', rect: [50, 7, 60, 10] })
+  const item = f.items.find((i: { text: string }) => i.text === '11'),
+    origin = item.sourceItem
+  if (mode === 'wrong literal') item.sourceItem = { ...origin, text: '44' }
+  if (mode === 'unknown source carrier') item.sourceToken = { ...item }
+  if (mode === 'partial range' || mode === 'range overlap') {
+    delete item.sourceItem
+    item.sourceSegment = {
+      ...origin,
+      start: 0,
+      end: mode === 'partial range' ? 1 : 2,
+      rect: [...item.rect]
+    }
+    if (mode === 'partial range') item.text = '1'
+    else f.items.push(structuredClone(item))
+  }
+  const legacy = recoverNativeTextRecordGrid(f.table, f.items, f.captions, f.rules)
+  expect(lateRecordPlan(f)).toEqual(legacy)
+})
+
+it.each(['repeated image', 'mask group', 'transparency group', 'stroked text', 'unknown state'])(
+  'rejects unsupported complete-paint programs: %s',
+  (mode) => {
+    const f = doublePaintRecords()
+    const program =
+      mode === 'repeated image'
+        ? [[OPS.paintImageXObjectRepeat, ['image', 10, 10, new Float32Array([30, 100])]]]
+        : mode === 'mask group'
+          ? [
+              [
+                OPS.paintImageMaskXObjectGroup,
+                [
+                  [
+                    {
+                      data: new Uint8Array([255]),
+                      width: 1,
+                      height: 1,
+                      transform: [10, 0, 0, 10, 30, 100]
+                    }
+                  ]
+                ]
+              ]
+            ]
+          : mode === 'transparency group'
+            ? [
+                [
+                  OPS.beginGroup,
+                  [
+                    {
+                      isolated: true,
+                      knockout: false,
+                      bbox: [20, 100, 220, 190],
+                      matrix: [1, 0, 0, 1, 0, 0]
+                    }
+                  ]
+                ],
+                [OPS.endGroup, []]
+              ]
+            : mode === 'stroked text'
+              ? [
+                  [OPS.setTextRenderingMode, [1]],
+                  [OPS.showText, [[{ unicode: 'A', width: 500, isSpace: false, fontChar: 'A' }]]]
+                ]
+              : [[OPS.setGState, [[['UnknownPaintState', 1]]]]]
+    for (const [op, args] of program) {
+      f.context.operators.fnArray.push(op)
+      f.context.operators.argsArray.push(args)
+    }
+    const legacy = recoverNativeTextRecordGrid(f.table, f.items, f.captions, f.rules)
+    expect(lateRecordPlan(f)).toEqual(legacy)
+  }
+)
+
+it('uses complete native double-rule paint through the actual table refine entry', () => {
+  const f = doublePaintRecords()
+  const before = refineTable(f.table, f.items, f.captions, [], f.rules)
+  const logical = refineTable(
+    f.table,
+    f.items,
+    f.captions,
+    [],
+    f.rules,
+    [],
+    undefined,
+    f.context.rulePaintBounds,
+    f.context
+  )
+  expect(logical.cropRect).toEqual(before.cropRect)
+  const after = refineNativeTableVisualCrop?.(logical, f.items, f.rules, f.context)
+  expect(after?.cropRect[1]).toBe(9.7)
+  expect(after?.cropRect[3]).toBe(96.3)
+  expect(after?.grid).toEqual(before.grid)
+  expect(after?.cells).toEqual(before.cells)
+  expect(after?.unassigned).toEqual(logical.unassigned)
+  expect(after?.issues).toEqual(logical.issues)
+})
+
+it.each([200, 2000])(
+  'tightens an already correct native table crop at page height %s',
+  (height) => {
+    const f = doublePaintRecords(1, height),
+      table = finalPaintTable(f),
+      before = structuredClone(table)
+    f.context.nativePaintIdentityGraphics = f.context.nativeEvidenceGraphics.map(
+      (g: { kind: string; rect: number[] }, n: number) => ({ ...g, operationIndex: n + 1 })
+    )
+    table.repairs = []
+    if (height === 2000) {
+      expect(f.context.nativeEvidenceGraphics[0].rect).toEqual(
+        f.context.nativeEvidenceGraphics[1].rect
+      )
+      expect(f.context.nativePaintIdentityGraphics[0].operationIndex).not.toBe(
+        f.context.nativePaintIdentityGraphics[1].operationIndex
+      )
+    }
+    const result = refineNativeTableVisualCrop?.(table, f.items, f.rules, f.context)
+    expect(result?.cropRect).toEqual([20, 9.7, 220, 98])
+    expect(result?.cells).toEqual(before.cells)
+    expect(result?.grid).toEqual(before.grid)
+    expect(result?.clipped).toEqual([])
+    expect(table.cropRect).toEqual(before.cropRect)
+  }
+)
+it.each([
+  'parts',
+  'cropRects',
+  'null cropRects',
+  'missing context',
+  'missing source content',
+  'null token',
+  'null raw font'
+])('declines unsafe late visual crop inputs: %s', (mode) => {
+  const f = doublePaintRecords(),
+    table = finalPaintTable(f)
+  let context = f.context
+  if (mode === 'parts') table.parts = []
+  if (mode === 'cropRects') table.cropRects = [table.cropRect]
+  if (mode === 'null cropRects') table.cropRects = null
+  if (mode === 'missing context') context = undefined
+  if (mode === 'missing source content') delete context.sourceContent
+  if (mode === 'null token') table.cells[0].sourceTokens[0] = null
+  if (mode === 'null raw font') context.sourceContent.items.push(null)
+  expect(refineNativeTableVisualCrop?.(table, f.items, f.rules, context)).toBeUndefined()
+})
+
+const { orderNativeTableHeaderPeers } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
+)
+function nativeHeaderPeerTables(): ReturnType<typeof JSON.parse> {
+  const viewport = {
+      rotation: 0,
+      width: 600,
+      height: 200,
+      scale: 1,
+      transform: [1, 0, 0, -1, 0, 200],
+      convertToViewportPoint: (x: number, y: number) => [x, 200 - y]
+    },
+    raw = [],
+    items = [],
+    rules = [],
+    tables = []
+  for (let side = 0; side < 2; side++) {
+    const dx = side * 300,
+      grid = [
+        ['Key', 'Value'],
+        ['A', '11'],
+        ['B', '22']
+      ],
+      cells = []
+    for (let row = 0; row < 3; row++)
+      for (let col = 0; col < 2; col++) {
+        const text = grid[row][col],
+          baseline = 25 + row * 20,
+          o = { pageNumber: 1, index: side * 100 + row * 2 + col, text },
+          r = {
+            str: text,
+            dir: 'ltr',
+            fontName: 'font',
+            width: 20,
+            height: 10,
+            transform: [10, 0, 0, 10, 30 + col * 90 + dx, 200 - baseline],
+            sourceItem: o
+          }
+        raw.push(r)
+        const i = tableTextToken(r, viewport, 0)
+        items.push(i)
+        cells.push({
+          row,
+          column: col,
+          rowSpan: 1,
+          colSpan: 1,
+          text,
+          sourceItems: [o],
+          sourceRects: [i.rect]
+        })
+      }
+    rules.push(...[10, 12, 28, 74, 76].map((y) => [20 + dx, y, 220 + dx, y]))
+    tables.push({
+      id: side ? 'right' : 'left',
+      cropRect: [20 + dx, side ? 8 : 9, 220 + dx, 78],
+      cells,
+      grid,
+      clipped: [],
+      issues: [],
+      repairs: []
+    })
+  }
+  const sourceContent = { items: raw, styles: { font: { vertical: false } } }
+  return {
+    tables: [tables[1], tables[0]],
+    items,
+    rules,
+    context: { viewport, sourceContent, content: sourceContent }
+  }
+}
+it.each([false, true])(
+  'orders proven native header peers independently of crop margins: %s',
+  (changedMargin) => {
+    const f = nativeHeaderPeerTables()
+    if (changedMargin) {
+      f.tables[0].cropRect[1] = 0
+      f.tables[1].cropRect[1] = 5
+    }
+    const before = structuredClone(f.tables)
+    const actual = orderNativeTableHeaderPeers?.(f.tables, f.items, f.rules, f.context) ?? f.tables
+    expect(actual.map((t: { id: string }) => t.id)).toEqual(['left', 'right'])
+    expect(f.tables).toEqual(before)
+    expect(actual[0]).toBe(f.tables[1])
+    expect(actual[1]).toBe(f.tables[0])
+  }
+)
+const peerOrderControls: [string, (f: ReturnType<typeof nativeHeaderPeerTables>) => void][] = [
+  ['null third table', (f) => f.tables.push(null)],
+  ['empty third bounds', (f) => f.tables.push({ cropRect: [] })],
+  ['nonfinite third bounds', (f) => f.tables.push({ cropRect: [0, 0, NaN, 80] })],
+  ['reversed third bounds', (f) => f.tables.push({ cropRect: [300, 35, 250, 70] })],
+  ['third body corridor', (f) => f.tables.push({ cropRect: [240, 35, 290, 70] })],
+  ['parts', (f) => (f.tables[0].parts = [])],
+  ['cropRects', (f) => (f.tables[0].cropRects = [f.tables[0].cropRect])],
+  [
+    'different native header line',
+    (f) => {
+      for (const raw of f.context.sourceContent.items.filter(
+        (r: { sourceItem: { index: number } }) =>
+          r.sourceItem.index >= 100 && r.sourceItem.index <= 101
+      )) {
+        raw.transform[5] -= 1
+        const old = f.items.find(
+            (i: { sourceItem: { index: number } }) => i.sourceItem.index === raw.sourceItem.index
+          ),
+          next = tableTextToken(raw, f.context.viewport, 0)
+        Object.assign(old, next)
+        f.tables[0].cells.find(
+          (c: { row: number; sourceItems: { index: number }[] }) =>
+            c.row === 0 && c.sourceItems[0].index === raw.sourceItem.index
+        ).sourceRects = [old.rect]
+      }
+    }
+  ],
+  [
+    'reversed native index order',
+    (f) => {
+      for (const o of f.context.sourceContent.items
+        .filter((r) => r.sourceItem.index >= 100)
+        .map((r: { sourceItem: { index: number } }) => r.sourceItem))
+        o.index -= 100
+      for (const o of f.context.sourceContent.items.slice(0, 6).map((r) => r.sourceItem))
+        o.index += 200
+    }
+  ],
+  ['external alias', (f) => f.items.push({ ...f.items[0], rect: [0, 0, 5, 5] })],
+  [
+    'foreign raw font',
+    (f) => {
+      const r = structuredClone(f.context.sourceContent.items[0])
+      r.str = 'Z'
+      r.sourceItem = { pageNumber: 1, index: 999, text: 'Z' }
+      r.transform[4] = 180
+      f.context.sourceContent.items.push(r)
+    }
+  ],
+  ['overlapping slot', (f) => (f.tables[0].cells[0].rowSpan = 2)],
+  ['wrong cell text', (f) => (f.tables[0].cells[0].text = 'Other')],
+  [
+    'wrong source literal',
+    (f) => (f.tables[0].cells[0].sourceItems = [{ pageNumber: 1, index: 100, text: 'Other' }])
+  ],
+  ['missing opening rule', (f) => f.rules.splice(5, 1)],
+  ['third same-band table', (f) => f.tables.push({ ...structuredClone(f.tables[0]), id: 'third' })],
+  [
+    'unknown middle table',
+    (f) => f.tables.splice(1, 0, { id: 'unknown', cropRect: [250, 10, 280, 80] })
+  ],
+  ['missing raw owner', (f) => f.context.sourceContent.items.splice(6, 1)],
+  ['missing header owner', (f) => f.tables[0].cells.splice(0, 1)]
+]
+it.each(peerOrderControls)(
+  'retains table order without complete native peer proof: %s',
+  (_name, change) => {
+    const f = nativeHeaderPeerTables()
+    change(f)
+    const before = structuredClone(f.tables)
+    const actual = orderNativeTableHeaderPeers?.(f.tables, f.items, f.rules, f.context) ?? f.tables
+    expect(actual).toEqual(before)
+    expect(f.tables).toEqual(before)
+  }
+)
+
+it.each([
+  'missing identity',
+  'duplicate operation',
+  'wrong operation',
+  'mismatched carrier',
+  'malformed identity'
+])('rejects incomplete coarse-paint identity: %s', (mode) => {
+  const f = doublePaintRecords(1, 2000),
+    table = finalPaintTable(f)
+  table.repairs = []
+  f.context.nativePaintIdentityGraphics = f.context.nativeEvidenceGraphics.map(
+    (g: { kind: string; rect: number[] }, n: number) => ({ ...g, operationIndex: n + 1 })
+  )
+  if (mode === 'missing identity') delete f.context.nativePaintIdentityGraphics
+  if (mode === 'duplicate operation') f.context.nativePaintIdentityGraphics[1].operationIndex = 1
+  if (mode === 'wrong operation') f.context.nativePaintIdentityGraphics[0].operationIndex = 100
+  if (mode === 'mismatched carrier') f.context.nativePaintIdentityGraphics[0].rect = [0, 0, 1, 1]
+  if (mode === 'malformed identity') f.context.nativePaintIdentityGraphics = {}
+  expect(refineNativeTableVisualCrop(table, f.items, f.rules, f.context)).toBeUndefined()
+})
+
+function clippedBottomPaintTable(): ReturnType<typeof JSON.parse> {
+  const f = doublePaintRecords(),
+    table = finalPaintTable(f)
+  table.repairs = []
+  table.clipped = []
+  table.issues = []
+  table.reviewCandidate = true
+  table.cropRect = [20, 9, 220, 92]
+  f.context.nativePaintIdentityGraphics = f.context.nativeEvidenceGraphics.map(
+    (g: { kind: string; rect: number[] }, n: number) => ({ ...g, operationIndex: n + 1 })
+  )
+  return { f, table }
+}
+it('extends only a missing double-rule bottom with complete native paint and no additional text', () => {
+  const { f, table } = clippedBottomPaintTable(),
+    before = structuredClone(table)
+  const result = refineNativeTableVisualCrop(table, f.items, f.rules, f.context)
+  expect(result).toEqual({ ...before, cropRect: [20, 9, 220, 96.3] })
+  expect(table).toEqual(before)
+})
+it.each([
+  'missing closing',
+  'missing paint',
+  'unknown paint',
+  'foreign strip font',
+  'alias',
+  'parts',
+  'cropRects'
+])('refuses bottom extension without complete source and paint ownership: %s', (mode) => {
+  const { f, table } = clippedBottomPaintTable()
+  if (mode === 'missing closing') f.rules.pop()
+  if (mode === 'missing paint') f.context.rulePaintBounds.delete(f.rules.at(-1).join(','))
+  if (mode === 'unknown paint') {
+    f.context.operators.fnArray.push(OPS.paintImageXObjectRepeat)
+    f.context.operators.argsArray.push(['image', 1, 1, new Float32Array([30, 105])])
+  }
+  if (mode === 'foreign strip font') {
+    const raw = structuredClone(f.context.sourceContent.items[0])
+    raw.str = 'X'
+    raw.width = 2
+    raw.height = 2
+    raw.transform = [2, 0, 0, 2, 80, 106]
+    raw.sourceItem = { pageNumber: 1, index: 99, text: 'X' }
+    f.context.sourceContent.items.push(raw)
+  }
+  if (mode === 'alias') f.items.push({ ...f.items[0], rect: [230, 10, 240, 18] })
+  if (mode === 'parts') table.parts = []
+  if (mode === 'cropRects') table.cropRects = [table.cropRect]
+  expect(refineNativeTableVisualCrop(table, f.items, f.rules, f.context)).toBeUndefined()
+})
+
+function ruledBottomNote(): ReturnType<typeof JSON.parse> {
+  const f = doublePaintRecords()
+  const note = f.context.sourceContent.items[8]
+  note.str = 'Note'
+  note.width = 20
+  note.height = 6
+  note.transform = [6, 0, 0, 6, 30, 90]
+  note.sourceItem.text = note.str
+  f.items = f.context.sourceContent.items.map((raw) => tableTextToken(raw, f.context.viewport, 0))
+  const operators = { fnArray: [OPS.setLineWidth], argsArray: [[0.6]] as unknown[] }
+  for (const y of [10, 28, 48, 68, 96]) {
+    operators.fnArray.push(OPS.constructPath)
+    operators.argsArray.push([
+      OPS.stroke,
+      [[0, 20, 200 - y, 1, 220, 200 - y]],
+      [20, 200 - y, 220, 200 - y]
+    ])
+  }
+  f.context.operators = operators
+  f.context.rulePaintBounds = new Map()
+  f.rules = collectTableRules(operators, f.context.viewport, f.context.rulePaintBounds)
+  f.context.allRules = f.rules
+  f.context.nativeEvidenceGraphics = [...f.context.rulePaintBounds.values()].map((p) => ({
+    kind: 'path',
+    rect: [p[0] - 0.3, p[1], p[2] + 0.3, p[3]].map(
+      (x, k) =>
+        ((k < 2
+          ? Math.floor((x / (k % 2 ? 200 : 300)) * 256)
+          : Math.ceil((x / (k % 2 ? 200 : 300)) * 256) + 1) *
+          (k % 2 ? 200 : 300)) /
+        256
+    )
+  }))
+  f.context.nativePaintIdentityGraphics = f.context.nativeEvidenceGraphics.map((g, n) => ({
+    ...g,
+    operationIndex: n + 1
+  }))
+  const table = finalPaintTable(f)
+  table.repairs = []
+  table.cropRect = [20, 9, 220, 106]
+  return { f, table }
+}
+
+it('trims a separate note below complete native closing paint without rebuilding records', () => {
+  const { f, table } = ruledBottomNote(),
+    before = structuredClone(table)
+  const result = refineNativeTableVisualCrop(table, f.items, f.rules, f.context)
+  expect(result).toEqual({
+    ...before,
+    cropRect: [20, 9, 220, 96.3],
+    clipped: [],
+    issues: [],
+    reviewCandidate: true
+  })
+  expect(table).toEqual(before)
+})
+
+it('preserves unrelated diagnostics when removing a proved external bottom note', () => {
+  const { f, table } = ruledBottomNote()
+  table.issues.push('unassigned-source-text')
+  const result = refineNativeTableVisualCrop(table, f.items, f.rules, f.context)
+  expect(result?.cropRect).toEqual([20, 9, 220, 96.3])
+  expect(result?.issues).toEqual(['unassigned-source-text'])
+  expect(result?.reviewCandidate).toBe(false)
+})
+
+it('retains another clipped source and its diagnostic after a bottom-only trim', () => {
+  const { f, table } = ruledBottomNote(),
+    other = { text: 'Separate', rect: [18, 50, 25, 57] }
+  table.clipped.push(other)
+  const result = refineNativeTableVisualCrop(table, f.items, f.rules, f.context)
+  expect(result?.cropRect).toEqual([20, 9, 220, 96.3])
+  expect(result?.clipped).toEqual([other])
+  expect(result?.issues).toEqual(['text-crosses-crop-boundary'])
+  expect(result?.reviewCandidate).toBe(false)
+})
+
+it.each(['missing cell proof', 'duplicate cell proof'])(
+  'requires complete one-to-one cell proof for bottom contraction: %s',
+  async (mode) => {
+    const { completeNativeTableVisualCrop } = await import(
+      pathToFileURL(resolve('resources/literature-pdf-native-text-record-grid.mjs')).href
+    )
+    const { f, table } = ruledBottomNote()
+    const proof = { proved: table.cells.map((cell, n) => ({ cell, fonts: [f.items[n]] })) }
+    expect(
+      completeNativeTableVisualCrop(table, proof, f.items, f.rules, f.context)?.cropRect
+    ).toEqual([20, 9, 220, 96.3])
+    if (mode === 'missing cell proof') proof.proved.pop()
+    else proof.proved[1] = proof.proved[0]
+    expect(completeNativeTableVisualCrop(table, proof, f.items, f.rules, f.context)).toBeUndefined()
+  }
+)
+
+it.each([
+  'missing closing',
+  'missing opening',
+  'missing divider',
+  'duplicate closing',
+  'missing paint',
+  'unknown paint',
+  'alias',
+  'foreign frame font',
+  'note crosses closing',
+  'unknown clipped source',
+  'parts',
+  'cropRects',
+  'already clean'
+])('declines unproved bottom note removal: %s', (mode) => {
+  const { f, table } = ruledBottomNote()
+  if (mode === 'missing closing') f.rules.pop()
+  if (mode === 'missing opening') f.rules.shift()
+  if (mode === 'missing divider') f.rules.splice(1, 1)
+  if (mode === 'duplicate closing') f.rules.push([...f.rules.at(-1)])
+  if (mode === 'missing paint') f.context.rulePaintBounds.delete(f.rules.at(-1).join(','))
+  if (mode === 'unknown paint') {
+    f.context.operators.fnArray.push(OPS.paintImageXObjectRepeat)
+    f.context.operators.argsArray.push(['image', 1, 1, new Float32Array([30, 95])])
+  }
+  if (mode === 'alias') f.items.push({ ...f.items[0], rect: [230, 10, 240, 18] })
+  if (mode === 'foreign frame font' || mode === 'note crosses closing') {
+    const raw = structuredClone(f.context.sourceContent.items[8])
+    raw.transform[5] = mode === 'foreign frame font' ? 150 : 102
+    raw.sourceItem = { ...raw.sourceItem, index: 99 }
+    f.context.sourceContent.items.push(raw)
+    f.items.push(tableTextToken(raw, f.context.viewport, 0))
+  }
+  if (mode === 'unknown clipped source') table.clipped[0].text = 'Unknown'
+  if (mode === 'parts') table.parts = []
+  if (mode === 'cropRects') table.cropRects = [table.cropRect]
+  if (mode === 'already clean') table.cropRect[3] = 96.3
+  expect(refineNativeTableVisualCrop(table, f.items, f.rules, f.context)).toBeUndefined()
+})
+
+const glyphCaptionEdge = (): ReturnType<typeof JSON.parse> => {
+  const viewport = {
+    width: 100,
+    height: 100,
+    scale: 1,
+    rotation: 0,
+    transform: [1, 0, 0, -1, 0, 100],
+    convertToViewportPoint: (x: number, y: number): number[] => [x, 100 - y]
+  }
+  const items = ['Table A.', 'Name', 'Beta'].map((str, index) => ({
+    str,
+    fontName: 'font',
+    width: str.length * 5,
+    height: 10,
+    dir: 'ltr',
+    hasEOL: true,
+    transform: [10, 0, 0, 10, 10, 100 - [20, 34, 48][index]],
+    sourceItem: { pageNumber: 1, index, text: str }
+  }))
+  const content = {
+    items,
+    styles: { font: { fontFamily: 'serif', ascent: 0.7, descent: -0.2, vertical: false } }
+  }
+  const operators: { fnArray: number[]; argsArray: unknown[] } = {
+    fnArray: [OPS.beginText, OPS.setFont],
+    argsArray: [null, ['font', 10]]
+  }
+  for (let n = 0; n < items.length; n++) {
+    operators.fnArray.push(OPS.moveText, OPS.showText)
+    operators.argsArray.push(
+      [n ? 0 : 10, n ? [0, -14, -14][n] : 80],
+      [
+        [...items[n].str].map((unicode) => ({
+          unicode,
+          fontChar: unicode,
+          originalCharCode: unicode.charCodeAt(0),
+          isSpace: unicode === ' ',
+          isInFont: true,
+          width: 500
+        }))
+      ]
+    )
+  }
+  operators.fnArray.push(OPS.endText)
+  operators.argsArray.push(null)
+  const glyphBounds = [
+    {
+      fontName: 'font',
+      glyphs: [...new Set(items.flatMap((i) => [...i.str]))].map((fontChar) => ({
+        fontChar,
+        bounds: fontChar === ' ' ? [0, 0, 0, 0] : [0, -0.2, 0.5, 0.7]
+      }))
+    }
+  ]
+  const table = {
+    page: 1,
+    cropRect: [10, 21, 80, 52],
+    grid: [['Name'], ['Beta']],
+    cells: items.slice(1).map((r, row) => ({
+      row,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 1,
+      text: r.str,
+      sourceItems: [r.sourceItem]
+    })),
+    caption: { page: 1, text: 'Table A.', lines: ['Table A.'], rect: [10, 10, 50, 20] },
+    excludedCaptionItems: ['Table A.'],
+    clipped: [],
+    issues: ['native-table-structure-ambiguous'],
+    reviewCandidate: false
+  }
+  return {
+    table,
+    items: items.map((i) => tableTextToken(i, viewport, 0)),
+    context: {
+      viewport,
+      content,
+      sourceContent: content,
+      nativeGlyphContext: {
+        viewport: { ...viewport, convertToViewportPoint: undefined },
+        content: structuredClone(content),
+        operators,
+        glyphBounds
+      }
+    }
+  }
+}
+
+it('removes only caption glyph ink from a rule-free crop without certifying its grid', () => {
+  const f = glyphCaptionEdge(),
+    before = structuredClone(f.table),
+    result = refineNativeTableVisualCrop(f.table, f.items, [], f.context)
+  expect(result?.cropRect).toEqual([10, 24, 80, 52])
+  expect({ ...result, cropRect: before.cropRect }).toEqual(before)
+  expect(f.table).toEqual(before)
+})
+
+it.each([
+  'missing glyph context',
+  'unknown paint',
+  'text stroke',
+  'glyph missing',
+  'foreign glyph',
+  'alias',
+  'caption consumed',
+  'caption not excluded',
+  'parts',
+  'cropRects',
+  'rotation',
+  'wrong viewport',
+  'source mismatch',
+  'native mismatch',
+  'caption reaches body',
+  'already clean'
+])('declines unsupported rule-free caption separation: %s', (mode) => {
+  const f = glyphCaptionEdge(),
+    p = f.context.nativeGlyphContext
+  if (mode === 'missing glyph context') delete f.context.nativeGlyphContext
+  if (mode === 'unknown paint') {
+    p.operators.fnArray.push(OPS.paintImageXObject)
+    p.operators.argsArray.push(['image', 10, 10])
+  }
+  if (mode === 'text stroke') {
+    p.operators.fnArray.unshift(OPS.setTextRenderingMode)
+    p.operators.argsArray.unshift([1])
+  }
+  if (mode === 'glyph missing') p.glyphBounds[0].glyphs = []
+  if (mode === 'foreign glyph')
+    p.operators.argsArray[3][0].push({ unicode: 'X', fontChar: 'X', width: 500 })
+  if (mode === 'alias') f.context.sourceContent.items[1].sourceItem.index = 0
+  if (mode === 'caption consumed')
+    f.table.cells[0].sourceItems.push(f.context.sourceContent.items[0].sourceItem)
+  if (mode === 'caption not excluded') f.table.excludedCaptionItems = []
+  if (mode === 'parts') f.table.parts = []
+  if (mode === 'cropRects') f.table.cropRects = []
+  if (mode === 'rotation') p.viewport.rotation = 90
+  if (mode === 'wrong viewport') f.context.viewport.transform[4] = 1
+  if (mode === 'source mismatch') f.context.sourceContent.items[1].str = 'Else'
+  if (mode === 'native mismatch') p.content.items[1].transform[4] = 11
+  if (mode === 'caption reaches body')
+    p.glyphBounds[0].glyphs.find((g) => g.fontChar === 'T').bounds[1] = -0.6
+  if (mode === 'already clean') f.table.cropRect[1] = 24
+  expect(refineNativeTableVisualCrop(f.table, f.items, [], f.context)).toBeUndefined()
+})

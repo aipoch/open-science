@@ -13,6 +13,7 @@ import {
   joinHorizontalTableRules
 } from './literature-pdf-table-rules.mjs'
 import { recoverRuledRecordFaces } from './literature-pdf-ruled-record-faces.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
 import { union } from './literature-pdf-table-geometry.mjs'
 
 // Cell-width header strokes can overlap or abut. Subtotals independently prove
@@ -880,6 +881,105 @@ function recoverSegmentedCellBands(table, items, captions, rules) {
   }
 }
 
+// Admit a captionless continuation only when all shared-stub faces are closed
+// and every native font has one complete owner. No header is synthesized.
+function proveClosedSharedProseFaces({
+  source,
+  items,
+  components,
+  width,
+  height,
+  xs,
+  ys,
+  spans,
+  vertical,
+  localHorizontal,
+  rules
+}) {
+  if (width !== 3 || height < 4 || !proveNativeUniqueWholeFonts(source, items)) return false
+  if (spans.length < 2 || spans.some((s) => s.column !== 0 || s.colSpan !== 1 || s.rowSpan < 2))
+    return false
+  if (spans.reduce((n, s) => n + s.rowSpan, 0) !== height) return false
+  const frame = [xs[0], ys[0], xs.at(-1), ys.at(-1)],
+    owned = new Set(source)
+  const touches = (r) => r[0] < frame[2] && r[2] > frame[0] && r[1] < frame[3] && r[3] > frame[1]
+  if (
+    items.some(
+      (i) =>
+        typeof i.text === 'string' &&
+        i.text.trim() &&
+        (!Array.isArray(i.rect) || i.rect.length !== 4 || !i.rect.every(Number.isFinite))
+    )
+  )
+    return false
+  if (items.some((i) => i.rect && touches(i.rect) && !owned.has(i))) return false
+  if (
+    rules.some(
+      (r) =>
+        !Array.isArray(r) ||
+        r.length !== 4 ||
+        !r.every(Number.isFinite) ||
+        (r[0] !== r[2] &&
+          r[1] !== r[3] &&
+          touches([
+            Math.min(r[0], r[2]),
+            Math.min(r[1], r[3]),
+            Math.max(r[0], r[2]),
+            Math.max(r[1], r[3])
+          ]))
+    )
+  )
+    return false
+  const faces = [...components.values()].map((slots) => {
+    const row = Math.min(...slots.map((n) => Math.floor(n / width))),
+      endRow = Math.max(...slots.map((n) => Math.floor(n / width))) + 1
+    const column = Math.min(...slots.map((n) => n % width)),
+      endColumn = Math.max(...slots.map((n) => n % width)) + 1
+    return {
+      row,
+      endRow,
+      column,
+      endColumn,
+      rect: [xs[column], ys[row], xs[endColumn], ys[endRow]],
+      items: []
+    }
+  })
+  for (const face of faces) {
+    const [l, t, r, b] = face.rect
+    if (
+      [l, r].some((x) => classifyTableRuleEdge(vertical, 0, x, t, b) !== 1) ||
+      [t, b].some((y) => classifyTableRuleEdge(localHorizontal, 1, y, l, r) !== 1)
+    )
+      return false
+  }
+  for (const font of source) {
+    const owners = faces.filter(
+      (f) =>
+        font.rect[0] >= f.rect[0] &&
+        font.rect[2] <= f.rect[2] &&
+        font.rect[1] > f.rect[1] &&
+        font.rect[3] < f.rect[3]
+    )
+    if (owners.length !== 1) return false
+    owners[0].items.push(font)
+  }
+  const stubs = faces.filter((f) => f.column === 0),
+    body = faces.filter((f) => f.column > 0)
+  if (!stubs.some((f) => f.items.length) || stubs.some((f) => f.endColumn !== 1)) return false
+  if (body.some((f) => f.endRow !== f.row + 1 || f.endColumn !== f.column + 1)) return false
+  // Repeated independent physical text fields, never a single spanning prose box.
+  if (
+    [1, 2].some(
+      (c) =>
+        body.filter((f) => f.column === c && f.items.some((i) => /\p{L}/u.test(i.text))).length < 3
+    )
+  )
+    return false
+  for (let row = 0; row < height; row++)
+    if (!body.some((f) => f.row === row && f.items.length)) return false
+  return true
+}
+
 // A closed native grid determines its cells independently of model columns.
 // Missing complete edges connect slots; partial edges and nonrectangular
 // components are ambiguous and must not authorize a merge.
@@ -1347,16 +1447,38 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
         .every((i) => i.text.length < 80)
     ) &&
     spans.some((s) => s.colSpan >= 3 && nativeHeaders.includes(s.row))
-  if (!captioned && (width < 4 || (!numericRows.every(Boolean) && !repeatedHeaderGrid))) return
+  const nativeClosedProse =
+    !captioned &&
+    proveClosedSharedProseFaces({
+      source,
+      items,
+      components,
+      width,
+      height,
+      xs,
+      ys,
+      spans,
+      vertical,
+      localHorizontal,
+      rules
+    })
+  if (
+    !captioned &&
+    !nativeClosedProse &&
+    (width < 4 || (!numericRows.every(Boolean) && !repeatedHeaderGrid))
+  )
+    return
   const headingBottom = Math.max(
     frame[1],
     ...table.structure.objects
       .filter((o) => o.label === 'table column header')
       .map((o) => crop[1] + o.rect[3])
   )
-  const headerRows = repeatedHeaderGrid
-    ? nativeHeaders
-    : ys.slice(1).flatMap((y, r) => (y <= headingBottom + 2 ? [r] : []))
+  const headerRows = nativeClosedProse
+    ? []
+    : repeatedHeaderGrid
+      ? nativeHeaders
+      : ys.slice(1).flatMap((y, r) => (y <= headingBottom + 2 ? [r] : []))
   return {
     cropRect: frame,
     rows: ys.slice(1).map((y, r) => [frame[0], ys[r], frame[2], y]),
@@ -1365,6 +1487,9 @@ export function recoverClosedCellGrid(table, items, captions, rules) {
     spans,
     completeSpans: true,
     ownedTokens: new Set(source),
+    ...(nativeClosedProse
+      ? { preservePhysicalRows: true, repair: 'native-closed-prose-faces-recovered' }
+      : {}),
     ...(closedHeaderOverhang ? { repair: 'native-body-records-recovered' } : {})
   }
 }

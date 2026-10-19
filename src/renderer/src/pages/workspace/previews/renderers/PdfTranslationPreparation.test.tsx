@@ -8,6 +8,86 @@ afterEach(() => {
   cleanup()
   vi.useRealTimers()
 })
+it.each([false, true])(
+  'shows a page glyph advisory without claiming missing text was extracted (unit warning: %s)',
+  (hasUnitWarning) => {
+    const state: PdfPreparationState = {
+      status: 'ready',
+      extraction: {
+        source: { units: [] } as never,
+        coverage: {
+          pageCount: 1,
+          textItemCount: 0,
+          includedItemCount: 0,
+          excludedItemCount: 0,
+          pagesWithoutText: [1],
+          exclusions: [],
+          warnings: hasUnitWarning
+            ? [{ unitId: 'unit', reasons: ['unreliable-font-unicode'] }]
+            : [],
+          pageDiagnostics: [{ pageNumber: 1, reason: 'unreliable-font-unicode' }]
+        }
+      }
+    }
+    const before = JSON.stringify(state)
+    render(
+      <PdfTranslationPreparation
+        state={state}
+        pageCount={1}
+        onStart={vi.fn()}
+        onCancel={vi.fn()}
+        onNavigate={vi.fn()}
+      />
+    )
+    expect(
+      screen.getAllByText(
+        'Some PDF glyphs have no reliable text representation. Compare the original page.'
+      )
+    ).toHaveLength(1)
+    expect(screen.queryByText(/The extracted text is retained/)).toBeNull()
+    expect(screen.getByText('Full-text preparation').closest('button')?.disabled).toBe(false)
+    expect(JSON.stringify(state)).toBe(before)
+  }
+)
+
+it.each([
+  [
+    'unreliable-font-unicode',
+    'Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.'
+  ],
+  [
+    'table-structure-unreliable',
+    'Some table structures are unreliable. Original images and text are retained without cell assignments.'
+  ]
+])('shows the %s warning without hiding the original source', (reason, message) => {
+  const state: PdfPreparationState = {
+    status: 'ready',
+    extraction: {
+      source: { units: [] } as never,
+      coverage: {
+        pageCount: 1,
+        textItemCount: 1,
+        includedItemCount: 1,
+        excludedItemCount: 0,
+        pagesWithoutText: [],
+        exclusions: [],
+        warnings: [{ unitId: 'unit', reasons: [reason] }]
+      }
+    }
+  }
+  render(
+    <PdfTranslationPreparation
+      state={state}
+      pageCount={1}
+      onStart={vi.fn()}
+      onCancel={vi.fn()}
+      onNavigate={vi.fn()}
+    />
+  )
+  expect(screen.getByText(message)).toBeTruthy()
+  expect(screen.getByText('Full-text preparation').closest('button')).toBeTruthy()
+})
+
 it('shows actual progress and lets the user cancel or retry a failed read', () => {
   const props = { pageCount: 2, onStart: vi.fn(), onCancel: vi.fn(), onNavigate: vi.fn() }
   const { rerender } = render(
@@ -20,6 +100,48 @@ it('shows actual progress and lets the user cancel or retry a failed read', () =
   expect(screen.getByRole('alert').textContent).toContain('Could not prepare full text')
   fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
   expect(props.onStart).toHaveBeenCalledOnce()
+})
+
+it.each<[string[], boolean]>([
+  [['table-structure-unreliable'], false],
+  [['unreliable-font-unicode'], false],
+  [['table-structure-unreliable', 'ambiguous-line-hyphen'], true]
+])('limits paragraph advice to paragraph risks: %j', async (reasons, expected) => {
+  vi.useFakeTimers()
+  const state: PdfPreparationState = {
+    status: 'ready',
+    extraction: {
+      source: { units: [] } as never,
+      coverage: {
+        pageCount: 1,
+        textItemCount: 1,
+        includedItemCount: 1,
+        excludedItemCount: 0,
+        pagesWithoutText: [],
+        exclusions: [],
+        warnings: [{ unitId: 'unit', reasons }]
+      }
+    }
+  }
+  render(
+    <PdfTranslationPreparation
+      state={state}
+      pageCount={1}
+      onStart={vi.fn()}
+      onCancel={vi.fn()}
+      onNavigate={vi.fn()}
+    />
+  )
+  fireEvent.click(screen.getByText('Full-text preparation').closest('button')!)
+  fireEvent.focus(document.querySelector<HTMLElement>('[data-pdf-preparation-info]')!)
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(100)
+  })
+  expect(
+    document.body.textContent?.includes(
+      'Some paragraph boundaries or hyphenated words need review.'
+    )
+  ).toBe(expected)
 })
 
 it('keeps saved translation recovery compact while it resumes', () => {

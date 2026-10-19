@@ -133,9 +133,9 @@ if (mode) {
     state:
       mode === 'error' || mode === 'update-required'
         ? 'failed'
-        : mode === 'cleanup'
+        : mode === 'cleanup' || mode === 'success'
           ? 'succeeded'
-          : mode === 'progress'
+          : ['progress', 'checking', 'validating'].includes(mode)
             ? 'running'
             : 'awaiting-selection',
     error:
@@ -147,21 +147,36 @@ if (mode) {
           ? 'The package could not be imported.'
           : undefined,
     cleanupPending: mode === 'cleanup',
+    result:
+      mode === 'success' || mode === 'cleanup'
+        ? { imported: { projectId: 'cancer', sessionId: 'imported' } }
+        : undefined,
+    ioBytesPerSecond: mode === 'checking' || mode === 'validating' ? 32 * 1024 ** 2 : undefined,
     importQueueFull: new URLSearchParams(location.search).has('queue-full'),
     importRequestId: 'file-open',
     importFilename: 'tumour-immunity.science',
     importTarget: mode === 'project' ? undefined : { projectId: 'cancer' },
     importPreview: mode === 'review' ? preview : undefined,
     progress:
-      mode === 'update-required'
-        ? { phase: 'validating' }
-        : mode === 'error' || mode === 'cleanup'
-          ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
-          : mode === 'progress'
-            ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
-            : { phase: mode === 'review' ? 'confirming' : 'selecting' },
+      mode === 'checking'
+        ? { phase: 'copying', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
+        : mode === 'update-required' || mode === 'validating'
+          ? { phase: 'validating' }
+          : mode === 'error' || mode === 'cleanup'
+            ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
+            : mode === 'progress'
+              ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
+              : { phase: mode === 'review' ? 'confirming' : 'selecting' },
     pendingImports: [{ id: 'next', filename: 'follow-up-study.science' }]
   }
+  window.addEventListener('package-fixture-inspected', () => {
+    Object.assign(operation, {
+      state: 'awaiting-selection',
+      importPreview: preview,
+      progress: { phase: 'confirming' }
+    })
+    usePackageOperationStore.getState().receive({ ...operation })
+  })
   useProjectStore.setState({
     projects,
     isLoaded: true,
@@ -212,6 +227,17 @@ if (mode) {
                 totalBytes: 42 * 1024 ** 2
               }
             })
+          if (request.action === 'cancel') operation.state = 'cancelling'
+          if (request.action === 'next-import')
+            Object.assign(operation, {
+              id: 'next-import',
+              state: 'awaiting-selection',
+              result: undefined,
+              importFilename: 'follow-up-study.science',
+              importTarget: undefined,
+              progress: { phase: 'selecting' },
+              pendingImports: []
+            })
           usePackageOperationStore.getState().receive({ ...operation })
           return operation
         }
@@ -219,6 +245,23 @@ if (mode) {
     }
   })
   usePackageOperationStore.getState().receive(operation)
+}
+const exportMode = new URLSearchParams(location.search).get('export')
+if (exportMode) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    state: exportMode === 'success' ? 'succeeded' : 'running',
+    files: undefined,
+    progress:
+      exportMode === 'creating'
+        ? { phase: 'compressing' }
+        : { phase: 'saving', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 },
+    result:
+      exportMode === 'success'
+        ? { filePath: '/Users/researcher/Documents/tumour-immunity.science' }
+        : undefined
+  })
 }
 const menuMode = new URLSearchParams(location.search).has('menu')
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
@@ -351,6 +394,11 @@ void localeReady.then(() =>
         </div>
       ) : null}
       {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
+      {mode && !backgroundMode ? (
+        <div className="mx-auto max-w-3xl p-4">
+          <PackageOperationIndicator />
+        </div>
+      ) : null}
     </>
   )
 )
