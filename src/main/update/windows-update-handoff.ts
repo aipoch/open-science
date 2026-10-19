@@ -38,15 +38,6 @@ export async function prepareWindowsUpdateHandoff(
   input: Parameters<typeof createWindowsUpdateRequest>[1]
 ): Promise<WindowsUpdateHandoff> {
   const { directory, request } = await createWindowsUpdateRequest(appData, input)
-  try {
-    const installation = await realpath(dirname(input.applicationPath))
-    const offset = relative(installation, await realpath(directory))
-    if (offset === '' || (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`)))
-      throw new Error('Update handoff storage must be outside the installation')
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true })
-    throw error
-  }
   let handedOff = false
   const receipt = (stage: string): void => {
     const destination = join(directory, `${stage}.receipt`)
@@ -78,6 +69,40 @@ export async function prepareWindowsUpdateHandoff(
 // NSIS uses this same current-user app-data root. Never accept a receipt path from argv.
 export const windowsUpdateHandoffRoot = (appData: string): string =>
   join(appData, 'Open-Science', 'UpdateHandoffs')
+
+// Keep the original root first for existing installations and configuration leases.
+// NSIS, uninstall and diagnostics use these same two fixed current-user locations.
+const windowsUpdateHandoffRoots = (appData: string): string[] => [
+  windowsUpdateHandoffRoot(appData),
+  join(appData, 'Open-Science-UpdateHandoffs')
+]
+
+async function selectHandoffRoot(appData: string, applicationPath: string): Promise<string> {
+  const installation = await realpath(dirname(applicationPath))
+  for (const root of windowsUpdateHandoffRoots(appData)) {
+    await mkdir(root, { recursive: true, mode: 0o700 })
+    if (!(await lstat(root)).isDirectory()) throw new Error('Invalid update handoff storage')
+    const offset = relative(installation, await realpath(root))
+    if (isAbsolute(offset) || offset === '..' || offset.startsWith(`..${sep}`)) return root
+  }
+  throw new Error('Update handoff storage must be outside the installation')
+}
+
+async function findHandoffDirectory(appData: string, operationId: string): Promise<string> {
+  const matches: string[] = []
+  for (const root of windowsUpdateHandoffRoots(appData)) {
+    try {
+      const directory = join(root, operationId)
+      await lstat(directory)
+      if (!(await lstat(root)).isDirectory()) throw new Error('Invalid update handoff storage')
+      matches.push(directory)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+  }
+  if (matches.length !== 1) throw new Error('Missing or ambiguous update operation directory')
+  return matches[0]
+}
 
 export const windowsUpdateOperation = (args: readonly string[]): string | undefined => {
   const values = args.filter((arg) => arg.startsWith(WINDOWS_UPDATE_OPERATION_ARG))
@@ -118,8 +143,7 @@ export async function createWindowsUpdateRequest(
     createdAt: Date.now(),
     parentPid: process.pid
   })
-  const root = windowsUpdateHandoffRoot(appData)
-  await mkdir(root, { recursive: true, mode: 0o700 })
+  const root = await selectHandoffRoot(appData, input.applicationPath)
   const directory = join(root, request.operationId)
   await mkdir(directory, { mode: 0o700 })
   try {
@@ -157,10 +181,10 @@ type SuccessorIdentity = {
 
 async function readInstalledRequest(
   options: SuccessorIdentity
-): Promise<WindowsUpdateRequest | undefined> {
+): Promise<{ request: WindowsUpdateRequest; directory: string } | undefined> {
   const operationId = windowsUpdateOperation(options.args)
   if (!operationId) return undefined
-  const directory = join(windowsUpdateHandoffRoot(options.appData), operationId)
+  const directory = await findHandoffDirectory(options.appData, operationId)
   const request = await readRequest(directory, operationId)
   if (
     request.targetVersion !== options.version ||
@@ -178,7 +202,7 @@ async function readInstalledRequest(
     (await readFile(path, 'utf8')) !== windowsUpdateReceipt(operationId, 'installed')
   )
     throw new Error('The installer completion receipt is unavailable or invalid')
-  return request
+  return { request, directory }
 }
 
 // Restore the same configuration before selecting Chromium's profile or credential store.
@@ -186,20 +210,14 @@ async function readInstalledRequest(
 export async function resolveWindowsUpdateStartup(
   options: SuccessorIdentity
 ): Promise<{ startupOptions: RuntimeStartupOptions; confirmed: boolean } | undefined> {
-  const request = await readInstalledRequest(options)
-  if (!request) return undefined
+  const installed = await readInstalledRequest(options)
+  if (!installed) return undefined
+  const { request, directory } = installed
   // Electron relaunch retains argv. Keep this configuration lease while that successor lives,
   // including startup repair, so later relaunches can consume the same operation safely.
   request.successorPid = process.pid
-  await writeWindowsUpdateFile(
-    join(windowsUpdateHandoffRoot(options.appData), request.operationId, 'request.json'),
-    JSON.stringify(request)
-  )
-  const readyPath = join(
-    windowsUpdateHandoffRoot(options.appData),
-    request.operationId,
-    'ready.receipt'
-  )
+  await writeWindowsUpdateFile(join(directory, 'request.json'), JSON.stringify(request))
+  const readyPath = join(directory, 'ready.receipt')
   const confirmed = await lstat(readyPath)
     .then(async (stat) => {
       if (
@@ -227,15 +245,15 @@ export async function acknowledgeWindowsUpdateReady(
     verifyReady: (startupOptions: RuntimeStartupOptions) => Promise<void>
   }
 ): Promise<boolean> {
-  const request = await readInstalledRequest(options)
-  if (!request) return false
+  const installed = await readInstalledRequest(options)
+  if (!installed) return false
+  const { request, directory } = installed
   if (!sameWindowsPath(request.profilePath, options.profilePath))
     throw new Error(
       'Updated application does not match the requested version, installation or profile'
     )
   await options.waitForPresentation()
   await options.verifyReady(request.startupOptions)
-  const directory = join(windowsUpdateHandoffRoot(options.appData), request.operationId)
   await writeWindowsUpdateFile(
     join(directory, 'ready.receipt'),
     windowsUpdateReceipt(request.operationId, 'ready')
@@ -255,7 +273,17 @@ const processMayBeAlive = (pid: number): boolean => {
 // Exact UUID requests prove the scope; live/PID-reused processes and unknown files are preserved.
 // A crashed installer with no terminal evidence is retained for diagnosis, never treated as success.
 export async function cleanupWindowsUpdateHandoffs(appData: string): Promise<void> {
-  const root = windowsUpdateHandoffRoot(appData)
+  for (const root of windowsUpdateHandoffRoots(appData)) {
+    await cleanupWindowsUpdateHandoffRoot(root)
+  }
+}
+
+async function cleanupWindowsUpdateHandoffRoot(root: string): Promise<void> {
+  const stat = await lstat(root).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === 'ENOENT') return undefined
+    throw error
+  })
+  if (!stat?.isDirectory()) return
   const entries = await readdir(root, { withFileTypes: true }).catch(
     (error: NodeJS.ErrnoException) => {
       if (error.code === 'ENOENT') return []

@@ -34,8 +34,10 @@ The original process must match both creation time and executable path.
 `HandoffAppData` is required and must be the application's actual `app.getPath('appData')`
 for this run, obtained from its startup configuration or recorded evidence. It is not
 `userData`, a profile directory, or a config root. The observer normalizes this path
-once and accepts operation helpers only under its `Open-Science/UpdateHandoffs`
-directory; it never falls back to its own account's AppData or searches other profiles.
+once and accepts operations only under its `Open-Science/UpdateHandoffs` or
+`Open-Science-UpdateHandoffs` directories. The latter is the product's fallback when
+the default storage is inside the installation. Duplicate operation IDs across the
+two directories are rejected; it never uses its own account's AppData or searches other profiles.
 Historical diagnostic invocations must supply this new argument. Product data needs
 no migration. Operation tests exercise live helper classification in a synthetic root,
 wrong-root rejection and packaged-helper digest failure. Current packages use native NSIS

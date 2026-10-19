@@ -1,4 +1,4 @@
-param([Parameter(Mandatory)][string]$Output)
+param([Parameter(Mandatory)][string]$Output, [switch]$Fallback)
 $ErrorActionPreference = 'Stop'
 $nativeSource = [IO.File]::ReadAllText((Join-Path $PSScriptRoot 'HandoffObserver.cs'))
 # Fault injection affects only the native image query; identity handles and exits remain real.
@@ -40,7 +40,8 @@ if (-not $malformedRejected) { throw 'Malformed request was silently accepted' }
 $evidenceDirectory = [IO.Path]::GetDirectoryName([IO.Path]::GetFullPath($Output))
 $fixture = Join-Path $evidenceDirectory ('operation-fixture-' + [guid]::NewGuid().ToString('N'))
 $liveOperation = [guid]::NewGuid().ToString()
-$directory = Join-Path $fixture "Open-Science\UpdateHandoffs\$liveOperation"
+$storage = if ($Fallback) { 'Open-Science-UpdateHandoffs' } else { 'Open-Science\UpdateHandoffs' }
+$directory = Join-Path $fixture "$storage\$liveOperation"
 [IO.Directory]::CreateDirectory($directory) | Out-Null
 $liveHelper = Join-Path $directory 'helper.exe'
 $resourceHelper = Join-Path $fixture 'fixture-resource.exe'
@@ -158,7 +159,7 @@ try {
   # a descendant of the old application or installer, must be receipt-bound.
   Copy-Item -LiteralPath $resourceHelper -Destination $liveInstaller
   $shellOperation = [guid]::NewGuid().ToString()
-  $shellDirectory = Join-Path $fixture "Open-Science\UpdateHandoffs\$shellOperation"
+  $shellDirectory = Join-Path $fixture "$storage\$shellOperation"
   [IO.Directory]::CreateDirectory($shellDirectory) | Out-Null
   $created = [DateTimeOffset]::UtcNow.ToUnixTimeMilliseconds()
   $observer = [HandoffObserver]::new($child.Id,$child.StartTime.ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$resourceHelper,$liveInstaller,$null,$liveHelper,$fixture)
@@ -199,7 +200,7 @@ try {
       if (@($sample.identities | Where-Object { $_.pid -eq $successor.Id }).Count) { throw "Wrong successor $($entry[0]) accepted" }
       $live += @{scenario=('reject-successor-' + $entry[0]);rejected=$true}
     }
-    $unrelated = Join-Path $fixture ('Open-Science\UpdateHandoffs\' + [guid]::NewGuid().ToString())
+    $unrelated = Join-Path $fixture ($storage + '\' + [guid]::NewGuid().ToString())
     [IO.Directory]::CreateDirectory($unrelated) | Out-Null
     foreach ($name in @('installed.receipt','ready.receipt')) { [IO.File]::WriteAllText((Join-Path $unrelated $name),'unrelated') }
     # Missing and corrupt requests from other operations cannot identify a process.
@@ -216,6 +217,18 @@ try {
     }
     [IO.File]::WriteAllText((Join-Path $unrelated 'request.json'),'{')
     $shellRequest | ConvertTo-Json | Set-Content -LiteralPath $requestPath -Encoding UTF8
+    $otherStorage = if ($Fallback) { 'Open-Science\UpdateHandoffs' } else { 'Open-Science-UpdateHandoffs' }
+    $duplicate = Join-Path $fixture "$otherStorage\$shellOperation"
+    [IO.Directory]::CreateDirectory($duplicate) | Out-Null
+    $ambiguousRejected = $false
+    try { $observer.Sample() | Out-Null }
+    catch {
+      if ($_.Exception.GetBaseException().Message -ne 'Ambiguous update operation directory') { throw }
+      $ambiguousRejected = $true
+    }
+    if (-not $ambiguousRejected) { throw 'Duplicate operation across roots was accepted' }
+    [IO.Directory]::Delete($duplicate, $false)
+    $live += @{scenario='reject-duplicate-operation-roots';rejected=$true}
     [HandoffObserver]::DenyPid=$successor.Id
     [HandoffObserver]::DenyImage=$true
     $sample = $observer.Sample()

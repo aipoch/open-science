@@ -78,13 +78,17 @@ public class HandoffObserver : IDisposable {
   [DllImport("user32.dll", CharSet=CharSet.Unicode)] static extern int GetWindowTextW(IntPtr window, StringBuilder text, int length);
   readonly Dictionary<int,HandoffIdentity> known = new Dictionary<int,HandoffIdentity>();
   readonly int root;
-  readonly string app, installer, helperDigest, operationRoot;
+  readonly string app, installer, helperDigest;
+  readonly string[] operationRoots;
   readonly DateTime boundary;
   int installerPid, shellSuccessorPid;
   public HandoffObserver(int pid, string started, string application, string installerPath, string helper, string parentExecutable, string handoffAppData) {
     // .NET Framework treats drive-relative C:dir and root-relative \dir as rooted.
     if(String.IsNullOrWhiteSpace(handoffAppData) || Path.GetPathRoot(handoffAppData).Length < 3) throw new ArgumentException("An absolute handoff app-data directory is required", "handoffAppData");
-    operationRoot = Path.Combine(Path.GetFullPath(handoffAppData),"Open-Science","UpdateHandoffs");
+    operationRoots = new[] {
+      Path.Combine(Path.GetFullPath(handoffAppData),"Open-Science","UpdateHandoffs"),
+      Path.Combine(Path.GetFullPath(handoffAppData),"Open-Science-UpdateHandoffs")
+    };
     root = pid; app = Path.GetFullPath(application); installer = Path.GetFullPath(installerPath);
     // Native-only upgrades have no helper resource. Explicit legacy resources remain mandatory to read and verify.
     helperDigest = String.IsNullOrWhiteSpace(helper) ? null : Digest(helper);
@@ -116,12 +120,21 @@ public class HandoffObserver : IDisposable {
   bool IsOperationHelper(HandoffIdentity child) {
     if(helperDigest==null || child.parent!=root || !Same(Path.GetFileName(child.path),"helper.exe")) return false;
     string directory=Path.GetDirectoryName(child.path);
-    if(!Same(Path.GetDirectoryName(directory),operationRoot)) return false;
+    string operationRoot=Array.Find(operationRoots, candidate=>Same(Path.GetDirectoryName(directory),candidate));
+    if(operationRoot==null) return false;
+    RequireUniqueOperation(directory);
     string requestPath=Path.Combine(directory,"request.json");
     if(!File.Exists(requestPath)) return false;
     if(!MatchesOperation(File.ReadAllText(requestPath),child.path,operationRoot,root,child.pid,app,installer)) return false;
     if(Digest(child.path)!=helperDigest) throw new Exception("Progress executable hash differs from packaged resource");
     return true;
+  }
+  void RequireUniqueOperation(string directory) {
+    foreach(var candidate in operationRoots) {
+      string other=Path.Combine(candidate,Path.GetFileName(directory));
+      if(!Same(directory,other) && (Directory.Exists(other) || File.Exists(other)))
+        throw new Exception("Ambiguous update operation directory");
+    }
   }
   static HandoffIdentity Capture(int pid, int parent) {
     var identity = CaptureDescendant(pid,parent);
@@ -186,7 +199,9 @@ public class HandoffObserver : IDisposable {
   }
   void DiscoverShellSuccessor(List<Entry> entries) {
     var parentExit = ReadExitTime(known[root].process);
-    if(!parentExit.HasValue || installerPid==0 || !Directory.Exists(operationRoot)) return;
+    if(!parentExit.HasValue || installerPid==0) return;
+    foreach(var operationRoot in operationRoots) {
+    if(!Directory.Exists(operationRoot)) continue;
     foreach(var directory in Directory.GetDirectories(operationRoot)) {
       try {
       Guid operation;
@@ -208,6 +223,7 @@ public class HandoffObserver : IDisposable {
          !request.TryGetValue("applicationPath",out requestedApp) || !Same(requestedApp as string,app) ||
          !request.TryGetValue("installerPath",out requestedInstaller) || !Same(requestedInstaller as string,installer) ||
          !request.TryGetValue("successorPid",out successor) || !Int32.TryParse(Convert.ToString(successor),out pid)) continue;
+      RequireUniqueOperation(directory);
       if(pid<=0 || known.ContainsKey(pid)) continue;
       var row=entries.Find(entry=>(int)entry.pid==pid);
       if(row.pid==0) continue;
@@ -229,6 +245,7 @@ public class HandoffObserver : IDisposable {
       } finally { if(!retained) candidate.process.Dispose(); }
       } catch(FileNotFoundException) { continue; }
         catch(DirectoryNotFoundException) { continue; }
+    }
     }
   }
   public HandoffSample Sample() {

@@ -1,6 +1,17 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, open, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifyDesktopRecoveryReadiness } from '../desktop-recovery-readiness'
@@ -54,9 +65,10 @@ async function setup(): Promise<{
   ready: Parameters<typeof acknowledgeWindowsUpdateReady>[0]
 }> {
   const startupOptions = config()
+  await mkdir(join(root, 'installation'), { recursive: true })
   const { directory, request } = await createWindowsUpdateRequest(root, {
     targetVersion: '1.0.2',
-    applicationPath: join(root, 'app.exe'),
+    applicationPath: join(root, 'installation', 'app.exe'),
     installerPath: join(root, 'installer.exe'),
     profilePath: startupOptions.profilePath,
     startupOptions
@@ -82,7 +94,49 @@ async function setup(): Promise<{
 }
 
 describe('Windows update presentation receipts', () => {
-  it.each(['.', 'Open-Science', 'Open-Science/UpdateHandoffs'])(
+  it.each(['Open-Science', 'Open-Science/UpdateHandoffs'])(
+    'restores the profile from safe fallback storage when installed at %s',
+    async (installation) => {
+      const applicationDirectory = join(root, installation)
+      await mkdir(applicationDirectory, { recursive: true })
+      const applicationPath = join(applicationDirectory, 'app.exe')
+      const handoff = await prepareWindowsUpdateHandoff(root, {
+        targetVersion: '1.0.2',
+        applicationPath,
+        installerPath: join(root, 'installer.exe'),
+        profilePath: config().profilePath,
+        startupOptions: config()
+      })
+      const directory = join(root, 'Open-Science-UpdateHandoffs', handoff.operationId)
+      handoff.handoff()
+      await writeFile(
+        join(directory, 'installed.receipt'),
+        windowsUpdateReceipt(handoff.operationId, 'installed')
+      )
+      const identity = {
+        appData: root,
+        args: [WINDOWS_UPDATE_OPERATION_ARG + handoff.operationId],
+        version: '1.0.2',
+        applicationPath
+      }
+      expect(await resolveWindowsUpdateStartup(identity)).toEqual({
+        startupOptions: config(),
+        confirmed: false
+      })
+      expect(
+        await acknowledgeWindowsUpdateReady({
+          ...identity,
+          profilePath: config().profilePath,
+          waitForPresentation: async () => {},
+          verifyReady: async () => {}
+        })
+      ).toBe(true)
+      expect((await resolveWindowsUpdateStartup(identity))?.confirmed).toBe(true)
+      expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+    }
+  )
+
+  it.each(['.'])(
     'rejects handoff storage inside the installation at %s before shutdown',
     async (installation) => {
       const applicationDirectory = join(root, installation)
@@ -97,8 +151,27 @@ describe('Windows update presentation receipts', () => {
         })
       ).rejects.toThrow('Update handoff storage must be outside the installation')
       expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+      expect(await readdir(join(root, 'Open-Science-UpdateHandoffs'))).toEqual([])
     }
   )
+
+  it('uses the resolved installation location when selecting fallback storage', async () => {
+    const installation = join(root, 'Open-Science')
+    const alias = join(root, 'installation-alias')
+    await mkdir(installation)
+    await symlink(installation, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const handoff = await prepareWindowsUpdateHandoff(root, {
+      targetVersion: '1.0.2',
+      applicationPath: join(alias, 'app.exe'),
+      installerPath: join(root, 'installer.exe'),
+      profilePath: config().profilePath,
+      startupOptions: config()
+    })
+    expect(await readdir(join(root, 'Open-Science-UpdateHandoffs', handoff.operationId))).toEqual([
+      'request.json'
+    ])
+    expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+  })
 
   it('prepares a native installer handoff without copying or starting a helper', async () => {
     const startupOptions = config()
@@ -124,6 +197,38 @@ describe('Windows update presentation receipts', () => {
       windowsUpdateReceipt(handoff.operationId, 'unconfirmed')
     )
     expect(await readdir(directory)).not.toContain('closed.receipt')
+  })
+
+  it('rejects duplicate operations across both fixed roots before restoring or acknowledging', async () => {
+    const { directory, operationId, ready } = await setup()
+    const duplicate = join(root, 'Open-Science-UpdateHandoffs', operationId)
+    await cp(directory, duplicate, { recursive: true })
+    await expect(resolveWindowsUpdateStartup(ready)).rejects.toThrow('ambiguous')
+    await expect(acknowledgeWindowsUpdateReady(ready)).rejects.toThrow('ambiguous')
+    expect(ready.verifyReady).not.toHaveBeenCalled()
+    for (const path of [directory, duplicate])
+      expect(await readdir(path)).not.toContain('ready.receipt')
+  })
+
+  it('checks successor identity and cleans failed leases in fallback storage', async () => {
+    const { directory, operationId, ready } = await setup()
+    const fallbackRoot = join(root, 'Open-Science-UpdateHandoffs')
+    await mkdir(fallbackRoot)
+    const fallback = join(fallbackRoot, operationId)
+    await rename(directory, fallback)
+    await expect(resolveWindowsUpdateStartup({ ...ready, version: 'other' })).rejects.toThrow(
+      'does not match'
+    )
+    await expect(
+      acknowledgeWindowsUpdateReady({ ...ready, profilePath: join(root, 'other') })
+    ).rejects.toThrow('does not match')
+    expect(ready.verifyReady).not.toHaveBeenCalled()
+    await writeFile(join(fallback, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('not running'), { code: 'ESRCH' })
+    })
+    await cleanupWindowsUpdateHandoffs(root)
+    expect(await readdir(fallbackRoot)).toEqual([])
   })
 
   it('records an aborted request when installation admission fails before handoff', async () => {

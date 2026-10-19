@@ -833,31 +833,48 @@ it('protects both re-created branded data folders before retrying the old uninst
 })
 
 describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
-  it.each(['valid', 'surrounded', 'duplicate', 'missing', 'invalid'])(
-    'publishes correlated receipts for %s operation arguments',
-    (scenario) => {
-      const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
-      try {
-        const operation = '00000000-0000-4000-8000-000000000001'
-        const directory = join(root, operation)
-        mkdirSync(directory)
-        writeFileSync(join(directory, 'request.json'), '{}')
-        const include = readFileSync(join(repoRoot, 'build/windows-update-handoff.nsh'), 'utf8')
-        const redirected = include.replace(
+  it.each([
+    'valid',
+    'fallback',
+    'ambiguous-roots',
+    'surrounded',
+    'duplicate',
+    'missing',
+    'invalid'
+  ])('publishes correlated receipts for %s operation arguments', (scenario) => {
+    const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
+    try {
+      const operation = '00000000-0000-4000-8000-000000000001'
+      const primary = join(root, 'primary')
+      const fallback = join(root, 'fallback')
+      const directory = join(scenario === 'fallback' ? fallback : primary, operation)
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(join(directory, 'request.json'), '{}')
+      if (scenario === 'ambiguous-roots') {
+        mkdirSync(join(fallback, operation), { recursive: true })
+        writeFileSync(join(fallback, operation, 'request.json'), '{}')
+      }
+      const include = readFileSync(join(repoRoot, 'build/windows-update-handoff.nsh'), 'utf8')
+      const redirected = include
+        .replace(
           '"$APPDATA\\Open-Science\\UpdateHandoffs\\$updateOperation"',
-          `"${root}\\$updateOperation"`
+          `"${primary}\\$updateOperation"`
         )
-        expect(redirected).not.toBe(include)
-        const includeDirective = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8').match(
-          /^!include .*windows-update-handoff\.nsh"\r?$/m
-        )?.[0]
-        expect(includeDirective).toBeDefined()
-        writeFileSync(join(root, 'windows-update-handoff.nsh'), redirected)
-        const executable = join(root, 'probe.exe')
-        const source = join(root, 'probe.nsi')
-        writeFileSync(
-          source,
-          `\uFEFFUnicode true
+        .replace(
+          '"$APPDATA\\Open-Science-UpdateHandoffs\\$updateOperation"',
+          `"${fallback}\\$updateOperation"`
+        )
+      expect(redirected).not.toBe(include)
+      const includeDirective = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8').match(
+        /^!include .*windows-update-handoff\.nsh"\r?$/m
+      )?.[0]
+      expect(includeDirective).toBeDefined()
+      writeFileSync(join(root, 'windows-update-handoff.nsh'), redirected)
+      const executable = join(root, 'probe.exe')
+      const source = join(root, 'probe.nsi')
+      writeFileSync(
+        source,
+        `\uFEFFUnicode true
 !define BUILD_RESOURCES_DIR "${root}"
 ${includeDirective}
 !include "LogicLib.nsh"
@@ -879,45 +896,46 @@ Push "failed"
 Call writeUpdateReceipt
 SectionEnd
 `
-        )
-        const compile = spawnSync(nsisCompiler!, ['/V2', source], {
-          encoding: 'utf8',
-          timeout: 30_000
-        })
-        expect(compile.status, compile.stderr || compile.stdout).toBe(0)
-        // Exercise the actual patched updater's argument transport, including its surrounding flags.
-        const { NsisUpdater } = require('electron-updater/out/NsisUpdater')
-        let args: string[] = []
-        expect(
-          NsisUpdater.prototype.doInstall.call(
-            {
-              installerPath: executable,
-              openScienceUpdateOperation: operation,
-              spawnLog: async (_file: string, values: string[]) => {
-                args = values
-              },
-              dispatchError: (error: Error) => {
-                throw error
-              }
+      )
+      const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+        encoding: 'utf8',
+        timeout: 30_000
+      })
+      expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+      // Exercise the actual patched updater's argument transport, including its surrounding flags.
+      const { NsisUpdater } = require('electron-updater/out/NsisUpdater')
+      let args: string[] = []
+      expect(
+        NsisUpdater.prototype.doInstall.call(
+          {
+            installerPath: executable,
+            openScienceUpdateOperation: operation,
+            spawnLog: async (_file: string, values: string[]) => {
+              args = values
             },
-            { isSilent: false, isForceRunAfter: true }
-          )
-        ).toBe(true)
-        if (scenario === 'surrounded') args.push('/S', '--unused=value with spaces')
-        if (scenario === 'duplicate') args.push(`--open-science-update-operation=${operation}`)
-        if (scenario === 'missing') args = []
-        if (scenario === 'invalid') args = ['--open-science-update-operation=../outside']
-        const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
-        expect(execution.status, execution.stderr || execution.stdout).toBe(0)
-        for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
-          const receipt = join(directory, `${stage}.receipt`)
-          const valid = scenario === 'valid' || scenario === 'surrounded'
-          expect(existsSync(receipt)).toBe(valid)
-          if (valid) expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
-        }
-      } finally {
-        rmSync(root, { recursive: true, force: true })
+            dispatchError: (error: Error) => {
+              throw error
+            }
+          },
+          { isSilent: false, isForceRunAfter: true }
+        )
+      ).toBe(true)
+      if (scenario === 'surrounded') args.push('/S', '--unused=value with spaces')
+      if (scenario === 'duplicate') args.push(`--open-science-update-operation=${operation}`)
+      if (scenario === 'missing') args = []
+      if (scenario === 'invalid') args = ['--open-science-update-operation=../outside']
+      const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
+      expect(execution.status, execution.stderr || execution.stdout).toBe(0)
+      for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
+        const receipt = join(directory, `${stage}.receipt`)
+        const valid = scenario === 'valid' || scenario === 'surrounded' || scenario === 'fallback'
+        expect(existsSync(receipt)).toBe(valid)
+        if (valid) expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
+        if (scenario === 'ambiguous-roots')
+          expect(existsSync(join(fallback, operation, `${stage}.receipt`))).toBe(false)
       }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
     }
-  )
+  })
 })

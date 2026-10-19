@@ -11,6 +11,7 @@ const output = resolve(process.env.UPGRADE_DIAGNOSTIC_OUTPUT || 'test-results/up
 for (const [name, script, args, utf8Input] of [
   ['account residual classification', 'test-account-classification.ps1', []],
   ['operation binding', 'test-observer-operation.ps1', []],
+  ['fallback operation binding', 'test-observer-operation.ps1', ['-Fallback']],
   ['operation binding with UTF-8 input', 'test-observer-operation.ps1', [], true],
   ['limited query rights', 'test-observer-read-access.ps1', []],
   ['image query recovery and strict completion', 'test-observer-pending-image.ps1', []],
