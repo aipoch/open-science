@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import {
   journalIdentityFromItem,
   journalSourceYearsSchema,
@@ -227,6 +228,9 @@ function subscribe(listener: () => void): () => void {
       // Pending keys also invalidate an older in-flight response for that identity.
       if (pending.size) schedule()
     })
+    const removeRecovery = useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+      if (state.phase === 'connected' && previous.phase !== 'connected') refreshJournalAttributes()
+    })
     const visible = (): void => {
       if (document.visibilityState === 'visible') refreshJournalAttributes()
     }
@@ -242,6 +246,7 @@ function subscribe(listener: () => void): () => void {
     window.addEventListener('open-science:web-events-open', refreshJournalAttributes)
     dispose = () => {
       remove?.()
+      removeRecovery()
       window.removeEventListener('storage', storage)
       document.removeEventListener('visibilitychange', visible)
       window.removeEventListener('open-science:web-events-open', refreshJournalAttributes)

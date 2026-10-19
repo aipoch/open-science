@@ -9,6 +9,7 @@ import {
   waitForDesktopSessionRecovery,
   refreshDesktopRecoveryReaders
 } from '@/stores/desktop-runtime-recovery-store'
+import { useUpdateStore } from '@/stores/update-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -18,6 +19,7 @@ import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 export function DesktopRuntimeRecovery(): React.JSX.Element | null {
   const { t } = useTranslation()
   const state = useDesktopRuntimeRecoveryStore()
+  const updating = useUpdateStore((store) => store.status.state === 'applying')
   const contentRef = useRef<HTMLDivElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
@@ -26,6 +28,14 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
     let live = true
     const apply = (next: typeof state): void => {
       if (!live) return
+      if (
+        next.phase !== 'connected' &&
+        useDesktopRuntimeRecoveryStore.getState().phase === 'connected'
+      ) {
+        // Recovery subscribers can disable the composer and blur it before the dialog mounts.
+        previousFocus.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+      }
       if (next.phase !== 'connected') flushComposerDrafts()
       useDesktopRuntimeRecoveryStore.setState(next)
     }
@@ -76,7 +86,8 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
       live = false
     }
   }, [state.epoch, state.phase])
-  if (state.phase === 'connected') return null
+  // The update dialog owns planned shutdown; an aborted/failed update restores recovery here.
+  if (state.phase === 'connected' || (state.closing && updating)) return null
   const busy = state.phase === 'reconnecting' || state.phase === 'reconciling'
   return (
     <AlertDialog.Root open>
@@ -87,7 +98,7 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
           onOpenAutoFocus={(event) => {
             // This programmatic dialog has no Radix Trigger or Cancel to own focus.
             event.preventDefault()
-            previousFocus.current =
+            previousFocus.current ??=
               document.activeElement instanceof HTMLElement ? document.activeElement : null
             contentRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
           }}

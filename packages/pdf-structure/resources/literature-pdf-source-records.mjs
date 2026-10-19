@@ -634,6 +634,25 @@ export function recoverRuledHeaderBands(source, cuts, rules, top, bottom) {
       !parents.some((p) => c >= p.column && c < p.column + p.colSpan) &&
       (source.some((i) => col(i) === c && (i.rect[1] + i.rect[3]) / 2 < split) ||
         enclosedAcrossTiers(c)) &&
+      // A fused child run can hide a parent's leaf coverage from the centre
+      // based grouping above. Its native divider still disproves a vertical
+      // span; retain the source token without inventing child word geometry.
+      !horizontal.some((rule) => {
+        const upper = source.filter(
+          (item) => col(item) === c && (item.rect[1] + item.rect[3]) / 2 < split
+        )
+        return (
+          upper.length > 0 &&
+          Math.abs(rule[1] - split) <= 0.05 &&
+          Math.min(rule[2], cuts[c + 1]) - Math.max(rule[0], cuts[c]) > 0.05 &&
+          // A neighboring underline may enter the model column's padding.
+          // Require it to cross the native upper owner, not just that padding.
+          upper.every((item) => {
+            const center = (item.rect[0] + item.rect[2]) / 2
+            return center > rule[0] + 0.05 && center < rule[2] - 0.05
+          })
+        )
+      }) &&
       !source.some(
         (i) =>
           col(i) === c &&

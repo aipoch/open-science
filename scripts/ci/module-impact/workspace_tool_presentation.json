@@ -11,7 +11,8 @@
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx"
+    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
+    "src/renderer/src/pages/workspace/use-literature-save-state.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
@@ -21,7 +22,8 @@
     "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx"
+    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
+    "src/renderer/src/pages/workspace/use-literature-save-state.ts"
   ],
   "testFiles": {
     "owner": [

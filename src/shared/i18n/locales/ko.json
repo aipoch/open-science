@@ -50,6 +50,17 @@
     "Quit app": "앱 종료"
   },
   "native": {
+    "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
+    "The Local State configuration file could not be read.": "Local State 구성 파일을 읽을 수 없습니다.",
+    "The Local State configuration file is invalid.": "Local State 구성 파일이 올바르지 않습니다.",
+    "The encryption key is missing from Local State.": "Local State에 암호화 키가 없습니다.",
+    "The encryption key in Local State is invalid.": "Local State의 암호화 키가 올바르지 않습니다.",
+    "Local State changed during credential validation.": "자격 증명 검증 중 Local State가 변경되었습니다.",
+    "The Windows credential validator could not start.": "Windows 자격 증명 검증 프로그램을 시작할 수 없습니다.",
+    "The Windows credential validator timed out.": "Windows 자격 증명 검증 프로그램의 시간이 초과되었습니다.",
+    "The Windows credential validator failed.": "Windows 자격 증명 검증 프로그램이 실패했습니다.",
+    "Windows credential validation is unavailable on this system.": "이 시스템에서는 Windows 자격 증명을 검증할 수 없습니다.",
+    "Windows could not decrypt the existing credential key.": "Windows에서 기존 자격 증명 키를 복호화할 수 없습니다.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
     "Credential storage needs recovery": "자격 증명 저장소를 복구해야 합니다",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "이 시스템 자격 증명 백엔드는 사용자 상호 작용 없는 식별 정보 확인을 지원하지 않습니다. 기존 암호화 데이터를 보존하기 위해 시작을 중단했습니다.",
@@ -142,9 +153,16 @@
     "Retry startup": "시작 다시 시도",
     "Open startup logs": "시작 로그 열기",
     "Could not open the logs folder.": "로그 폴더를 열지 못했습니다.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "이 앱 버전은 이 암호화 데이터 형식을 지원하지 않습니다. 호환되는 앱 버전을 사용하거나 원래 프로필을 복원하세요. 기존 자격 증명은 교체되지 않았습니다.",
+    "Installing the Open-Science update…": "Open-Science 업데이트 설치 중…",
+    "Opening the updated Open-Science…": "업데이트된 Open-Science 여는 중…",
+    "The Open-Science update could not finish.": "Open-Science 업데이트를 완료하지 못했습니다.",
+    "Close update window": "업데이트 창 닫기",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "업데이트 상태를 확인할 수 없습니다. 이 창을 닫아도 설치는 중지되지 않습니다."
   },
   "renderer": {
+    "Update preparation failed": "업데이트 준비 실패",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",
     "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",
@@ -166,6 +184,7 @@
     "Search PDC studies and versions by name or identifier.": "이름 또는 식별자로 PDC 연구와 버전 검색.",
     "Retrieve PDC study metadata and available versions.": "PDC 연구 메타데이터와 사용 가능한 버전 조회.",
     "Map PDC aliquots to samples, cases and external references.": "PDC 분주 검체를 검체, 사례 및 외부 참조에 매핑.",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "PDC 사례의 인구통계, 진단 및 샘플 참조를 조회합니다.",
     "Discover PDC study files and quantitative reports without downloading files.": "파일을 다운로드하지 않고 PDC 연구 파일 및 정량 보고서 검색.",
     "Query linkage disequilibrium between two variants in a specified population.": "지정한 집단에서 두 변이 간의 연관 불평형을 조회합니다.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "지정한 집단에서 높은 연관 불평형을 보이는 인접 변이를 검색합니다.",
@@ -7193,7 +7212,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "미완료 작업과 업데이트 설치 가능 여부를 확인하고 있습니다.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "다른 앱에서 작업을 마치고 앱 메뉴에서 종료한 다음 다시 확인하세요.",
     "Force update…": "강제 업데이트…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "설치가 시작되어 취소할 수 없습니다. 설치 후 앱이 다시 열립니다.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "설치가 시작되어 취소할 수 없습니다. 몇 분 정도 걸릴 수 있습니다. 시스템에서 권한을 요청하면 업데이트를 승인하여 계속 진행하세요. 설치가 완료되면 앱이 다시 열립니다.",
     "Installation result is unknown": "설치 결과를 확인하지 못했습니다",
     "Installation starts only after shutdown has finished and its result is confirmed.": "종료가 완료되고 결과가 확인된 후에만 설치를 시작합니다.",
     "Installing update…": "업데이트 설치 중…",
@@ -7274,6 +7293,8 @@
     "Waiting for browser…": "브라우저 대기 중…",
     "Receiving package…": "패키지 수신 중…",
     "Cancel transfer": "전송 취소",
-    "Transfer cancelled": "전송이 취소됨"
+    "Transfer cancelled": "전송이 취소됨",
+    "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다."
   }
 }

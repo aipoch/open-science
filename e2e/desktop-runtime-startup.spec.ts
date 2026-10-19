@@ -122,9 +122,10 @@ test('installation manifests capture physical ASAR bytes in Electron and reject 
 })
 
 // eslint-disable-next-line no-empty-pattern
-test('legacy service recheck hands the startup window to a usable Desktop', async ({}) => {
+test('legacy service recheck API hands the startup window to a usable Desktop', async ({}) => {
   test.skip(
-    process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+    !['darwin', 'linux'].includes(process.platform) ||
+      Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
     'Source credential fixture'
   )
   const root = await mkdtemp(join(tmpdir(), 'legacy-recheck-e2e-'))
@@ -180,18 +181,23 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
     const originalOwner = await readFile(join(config, 'runtime-owner.json'), 'utf8')
     app = await electron.launch({ ...electronLaunchTarget(profile), env })
     page = await app.firstWindow()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible({
+    await expect(
+      page.getByRole('heading', { name: 'An older version is still running' })
+    ).toBeVisible({
       timeout: 30000
     })
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
-    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled()
+    // The current legacy-service UI stops directly; exercise the read-only recovery API here.
+    await page.evaluate(() => window.api.runtimeStartup!.recover())
+    await expect
+      .poll(() => page.evaluate(() => window.api.runtimeStartup!.getState()))
+      .toMatchObject({ phase: 'blocked' })
     expect(requests.every((request) => request === 'GET /owner')).toBe(true)
     expect(await readFile(join(config, 'runtime-owner.json'), 'utf8')).toBe(originalOwner)
     await new Promise<void>((resolve, reject) =>
       server.close((error) => (error ? reject(error) : resolve()))
     )
     const replacement = app.waitForEvent('window')
-    await page.getByRole('button', { name: 'Retry', exact: true }).click()
+    void page.evaluate(() => window.api.runtimeStartup!.recover()).catch(() => undefined)
     const workspace = await replacement
     await expect
       .poll(() => workspace.evaluate(() => window.api?.runtimeStartup?.getState()), {
@@ -219,44 +225,71 @@ test('legacy service recheck hands the startup window to a usable Desktop', asyn
   }
 })
 
-// eslint-disable-next-line no-empty-pattern
-test('guides legacy shutdown through cancellation, retry and opening the saved project', async ({}, testInfo) => {
-  test.skip(
-    process.platform !== 'darwin' || Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
-    'Source credential fixture'
-  )
-  const { build } = await import('esbuild')
-  const root = await mkdtemp(join(tmpdir(), 'legacy-guided-stop-'))
-  const config = join(root, 'config'),
-    profile = join(root, 'profile')
-  await mkdir(config)
-  const env = { ...launchEnvironment(config), OPEN_SCIENCE_USER_DATA: profile }
-  let app: ElectronApplication | undefined
-  let service: ChildProcess | undefined
-  try {
-    app = await electron.launch({ ...electronLaunchTarget(profile), env })
-    let page = await app.firstWindow()
-    await expect
-      .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })
-      .toMatchObject({ phase: 'ready' })
-    const project = await page.evaluate(() =>
-      window.api.projects.create({ name: 'Saved before upgrade' })
+for (const protocol of ['legacy', 'modern'] as const) {
+  // eslint-disable-next-line no-empty-pattern
+  test(`guides ${protocol} shutdown through retry and opening the saved project`, async ({}, testInfo) => {
+    test.skip(
+      !['darwin', 'linux'].includes(process.platform) ||
+        Boolean(process.env.OPEN_SCIENCE_E2E_EXECUTABLE),
+      'Source credential fixture'
     )
-    await page.evaluate(() => window.api.settings.markOnboardingComplete())
-    await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
-    await app.close()
-    app = undefined
-    const entry = join(root, 'service.cjs')
-    await build({
-      stdin: {
-        contents: `
+    const { build } = await import('esbuild')
+    const root = await mkdtemp(join(tmpdir(), 'legacy-guided-stop-'))
+    const config = join(root, 'config'),
+      profile = join(root, 'profile')
+    await mkdir(config)
+    const env = { ...launchEnvironment(config), OPEN_SCIENCE_USER_DATA: profile }
+    const target = electronLaunchTarget(profile)
+    // Playwright selects Chromium's basic store; forward it as an app argument to Node too.
+    target.args.push('--password-store=basic')
+    let app: ElectronApplication | undefined
+    let service: ChildProcess | undefined
+    try {
+      app = await electron.launch({ ...target, env })
+      let page = await app.firstWindow()
+      await expect
+        .poll(() => page.evaluate(() => window.api.databaseStartup.getState()), { timeout: 60000 })
+        .toMatchObject({ phase: 'ready' })
+      const project = await page.evaluate(() =>
+        window.api.projects.create({ name: 'Saved before upgrade' })
+      )
+      await page.evaluate(() => window.api.settings.markOnboardingComplete())
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+      const owner = JSON.parse(await readFile(join(config, 'runtime-owner.json'), 'utf8'))
+      const token = (await readFile(join(config, 'web-token'), 'utf8')).trim()
+      const proof = await fetch(`http://127.0.0.1:${owner.port}/owner`, {
+        headers: {
+          authorization: `Bearer ${token}`,
+          'x-open-science-runtime-generation': owner.generation
+        }
+      })
+      expect(proof.ok).toBe(true)
+      const startupOptions = protocol === 'modern' ? (await proof.json()).startupOptions : undefined
+      if (protocol === 'modern') {
+        expect(startupOptions).toBeDefined()
+        const desktopProfile = await app.evaluate(({ app }) => ({
+          profilePath: app.getPath('userData'),
+          passwordStore: app.commandLine.getSwitchValue('password-store')
+        }))
+        expect(startupOptions.profilePath).toBe(desktopProfile.profilePath)
+        expect(startupOptions.passwordStore ?? '').toBe(desktopProfile.passwordStore)
+      }
+      await app.close()
+      app = undefined
+      // An unrecognized fixture path keeps the legacy forced-stop fallback fail-closed.
+      const entry = join(root, 'service.cjs')
+      await build({
+        stdin: {
+          contents: `
 import {createServer} from 'node:http';
 import {readFile,writeFile} from 'node:fs/promises';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
+import {writeRuntimeExit} from './src/main/runtime-stop-confirmation';
 import {startRuntimeControl} from './src/main/runtime-control';
 import {acquireRuntimeDirectorySync} from './src/main/runtime-ownership';
 const root=process.argv[2], lease=acquireRuntimeDirectorySync(root);
+const generation=randomUUID(), startupOptions=JSON.parse(process.argv[3]);
 let attempts=0;
 async function main() {
  const server=createServer(async(req,res)=>{
@@ -265,100 +298,115 @@ async function main() {
   await writeFile(join(root,'shutdown-attempts'),String(++attempts));
   if(attempts===1){res.writeHead(503).end();return;}
   res.writeHead(202).end();
-  setTimeout(()=>server.close(async()=>{await control.close();lease.release();}),1200);
+  setTimeout(()=>server.close(async()=>{if(startupOptions)await writeRuntimeExit(root,{generation,pid:process.pid,outcome:'clean'});await control.close();lease.release();}),1200);
  });
  await new Promise(r=>server.listen(0,'127.0.0.1',r));
  const port=server.address().port;
  await writeFile(join(root,'web-service.json'),JSON.stringify({pid:process.pid,port}));
- const control=await startRuntimeControl(root,'node',async()=>port,{path:join(root,'runtime.sock'),generation:randomUUID(),secret:'a'.repeat(64),version:'0.37.1'});
+ const control=await startRuntimeControl(root,'node',async()=>port,{path:join(root,'runtime.sock'),generation,secret:'a'.repeat(64),version:'0.37.1'},startupOptions);
  process.send('ready');
 }main();`,
-        resolveDir: process.cwd()
-      },
-      outfile: entry,
-      bundle: true,
-      packages: 'external',
-      platform: 'node',
-      format: 'cjs',
-      logLevel: 'silent'
-    })
-    service = spawn(process.execPath, [entry, config], {
-      stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
-      env: { ...process.env, NODE_PATH: resolve('node_modules') }
-    })
-    await once(service, 'message')
-    service.disconnect()
-    app = await electron.launch({ ...electronLaunchTarget(profile), env })
-    page = await app.firstWindow()
-    const continueButton = page.getByRole('button', {
-      name: '继续',
-      exact: true
-    })
-    await expect(continueButton).toBeVisible()
-    await page.screenshot({ path: testInfo.outputPath('real-startup.png'), animations: 'disabled' })
-    await continueButton.click()
-    await page.screenshot({ path: testInfo.outputPath('real-confirm.png'), animations: 'disabled' })
-    await page.getByRole('button', { name: '取消', exact: true }).click()
-    await page.screenshot({
-      path: testInfo.outputPath('real-cancelled.png'),
-      animations: 'disabled'
-    })
-    await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
-      code: 'ENOENT'
-    })
-    expect(service.exitCode).toBeNull()
-    await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
-    await expect
-      .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
-      .toBe('1')
-    await expect(continueButton).toBeEnabled()
-    await expect(
-      page.getByText('无法停止或检测服务。请重试，或保存诊断信息以寻求帮助。', { exact: true })
-    ).toBeVisible()
-    await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
-    await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
-    await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
-    const replacement = app.waitForEvent('window')
-    await continueButton.click()
-    await page.getByRole('button', { name: '继续', exact: true }).click()
-    await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
-    await page.screenshot({
-      path: testInfo.outputPath('real-stopping.png'),
-      animations: 'disabled'
-    })
-    const workspace = await replacement
-    await expect.poll(() => service!.exitCode).toBe(0)
-    await expect
-      .poll(() => workspace.evaluate(() => window.api.databaseStartup.getState()), {
-        timeout: 60000
+          resolveDir: process.cwd()
+        },
+        outfile: entry,
+        bundle: true,
+        packages: 'external',
+        platform: 'node',
+        format: 'cjs',
+        logLevel: 'silent'
       })
-      .toMatchObject({ phase: 'ready' })
-    expect(
-      await workspace.evaluate(
-        async (id) => (await window.api.projects.list()).some((project) => project.id === id),
-        project.id
-      )
-    ).toBe(true)
-    expect(await readFile(join(config, 'shutdown-attempts'), 'utf8')).toBe('2')
-    await expect(
-      workspace.locator('header').getByRole('button', { name: '新建项目', exact: true })
-    ).toBeVisible()
-    await expect(workspace.getByText('Saved before upgrade', { exact: true }).first()).toBeVisible()
-    await workspace.getByText('Saved before upgrade', { exact: true }).first().click()
-    await expect(workspace.getByRole('button', { name: '所有项目', exact: true })).toBeVisible()
-    await workspace.screenshot({
-      path: testInfo.outputPath('real-project.png'),
-      animations: 'disabled'
-    })
-    expect(app.process().exitCode).toBeNull()
-  } finally {
-    await app?.close()
-    if (service && service.exitCode === null && service.signalCode === null) {
-      const exited = once(service, 'exit')
-      service.kill('SIGKILL')
-      await exited
+      service = spawn(process.execPath, [entry, config, JSON.stringify(startupOptions ?? null)], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
+        env: { ...process.env, NODE_PATH: resolve('node_modules') }
+      })
+      await once(service, 'message')
+      service.disconnect()
+      app = await electron.launch({ ...target, env })
+      page = await app.firstWindow()
+      const continueButton = page.getByRole('button', {
+        name: protocol === 'legacy' ? '关闭并继续' : '继续',
+        exact: true
+      })
+      await expect(continueButton).toBeVisible()
+      await page.screenshot({
+        path: testInfo.outputPath('real-startup.png'),
+        animations: 'disabled'
+      })
+      if (protocol === 'modern') {
+        await continueButton.click()
+        await page.screenshot({
+          path: testInfo.outputPath('real-confirm.png'),
+          animations: 'disabled'
+        })
+        await page.getByRole('button', { name: '取消', exact: true }).click()
+        await expect(readFile(join(config, 'shutdown-attempts'))).rejects.toMatchObject({
+          code: 'ENOENT'
+        })
+        expect(service.exitCode).toBeNull()
+      }
+      await continueButton.click()
+      if (protocol === 'modern')
+        await page.getByRole('button', { name: '继续', exact: true }).click()
+      else await expect(page.getByTestId('runtime-startup-confirmation-S17')).toHaveCount(0)
+      await expect
+        .poll(() => readFile(join(config, 'shutdown-attempts'), 'utf8').catch(() => ''))
+        .toBe('1')
+      await expect(
+        page.getByText(protocol === 'legacy' ? '无法关闭旧版本' : '无法检查应用状态，请重试。', {
+          exact: true
+        })
+      ).toBeVisible()
+      await expect(page.getByRole('button', { name: '恢复应用', exact: true })).toHaveCount(0)
+      if (protocol === 'legacy')
+        await expect(page.getByRole('button', { name: '重试', exact: true })).toBeEnabled()
+      await page.screenshot({ path: testInfo.outputPath('real-retry.png'), animations: 'disabled' })
+      const replacement = app.waitForEvent('window')
+      if (protocol === 'legacy')
+        await page.getByRole('button', { name: '重试', exact: true }).click()
+      else {
+        await continueButton.click()
+        await page.getByRole('button', { name: '继续', exact: true }).click()
+      }
+      await expect(page.locator('[data-runtime-startup-state="S26"]')).toBeVisible()
+      await page.screenshot({
+        path: testInfo.outputPath('real-stopping.png'),
+        animations: 'disabled'
+      })
+      const workspace = await replacement
+      await expect.poll(() => service!.exitCode).toBe(0)
+      await expect
+        .poll(() => workspace.evaluate(() => window.api.databaseStartup.getState()), {
+          timeout: 60000
+        })
+        .toMatchObject({ phase: 'ready' })
+      expect(
+        await workspace.evaluate(
+          async (id) => (await window.api.projects.list()).some((project) => project.id === id),
+          project.id
+        )
+      ).toBe(true)
+      expect(await readFile(join(config, 'shutdown-attempts'), 'utf8')).toBe('2')
+      await expect(
+        workspace.locator('header').getByRole('button', { name: '新建项目', exact: true })
+      ).toBeVisible()
+      await expect(
+        workspace.getByText('Saved before upgrade', { exact: true }).first()
+      ).toBeVisible()
+      await workspace.getByText('Saved before upgrade', { exact: true }).first().click()
+      await expect(workspace.getByRole('button', { name: '所有项目', exact: true })).toBeVisible()
+      await workspace.screenshot({
+        path: testInfo.outputPath('real-project.png'),
+        animations: 'disabled'
+      })
+      expect(app.process().exitCode).toBeNull()
+    } finally {
+      await app?.close()
+      if (service && service.exitCode === null && service.signalCode === null) {
+        const exited = once(service, 'exit')
+        service.kill('SIGKILL')
+        await exited
+      }
+      await rm(root, { recursive: true, force: true })
     }
-    await rm(root, { recursive: true, force: true })
-  }
-})
+  })
+}

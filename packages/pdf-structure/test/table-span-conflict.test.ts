@@ -2,8 +2,10 @@ import { expect, it } from 'vitest'
 import { pathToFileURL } from 'node:url'
 import { resolve } from './paths'
 
-const { refineTable, reconcileResolvedSpanDiagnostics } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href
+const { refineTable, reconcileResolvedSpanDiagnostics, recoverCenteredGroupedHeaderSpans } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-table-refine.mjs')).href)
+const { resolveTableCellMerges } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-merges.mjs')).href
 )
 const token = (text: string, rect: number[]): object => ({
   text,
@@ -171,6 +173,159 @@ it('clears source-span diagnostics after trusted repairs settle a complete grid'
   expect(repairs).toContain('resolved-span-conflicts-discarded')
 })
 
+it('recovers a uniquely underlined grouped header from source ownership', () => {
+  const rows = [{ rect: [0, 0, 400, 20] }, { rect: [0, 20, 400, 40] }]
+  const columns = Array.from({ length: 4 }, (_, column) => ({
+    rect: [column * 100, 0, (column + 1) * 100, 40]
+  }))
+  const title = [token('Grouped', [175, 3, 205, 10]), token('header', [180, 11, 220, 18])]
+  const childTokens = ['A', 'B', 'C', 'D'].map((text, column) =>
+    token(text, [column * 100 + 20, 24, column * 100 + 40, 32])
+  )
+  const cells = [
+    {
+      row: 0,
+      column: 0,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [0, 0, 100, 20],
+      text: '',
+      sourceTokens: []
+    },
+    {
+      row: 0,
+      column: 1,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [100, 0, 200, 20],
+      text: '',
+      sourceTokens: []
+    },
+    {
+      row: 0,
+      column: 2,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [200, 0, 300, 20],
+      text: 'Grouped header',
+      sourceTokens: title
+    },
+    {
+      row: 0,
+      column: 3,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [300, 0, 400, 20],
+      text: '',
+      sourceTokens: []
+    },
+    ...childTokens.map((source, column) => ({
+      row: 1,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 100, 20, (column + 1) * 100, 40],
+      text: source.text,
+      sourceTokens: [source]
+    }))
+  ]
+  const issues = new Set(['span-conflicts-with-source-columns'])
+  const repairs: string[] = []
+  expect(
+    recoverCenteredGroupedHeaderSpans({
+      cells,
+      rows,
+      columns,
+      items: [...title, ...childTokens],
+      headerRows: [0, 1],
+      rules: [[100, 19, 300, 19]],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(1)
+  expect(cells.find((cell) => cell.row === 0 && cell.text === 'Grouped header')).toMatchObject({
+    column: 1,
+    colSpan: 2
+  })
+  expect(repairs).toContain('source-centered-grouped-header-span-recovered')
+  expect(issues).toContain('span-conflicts-with-source-columns')
+})
+
+it('retains an independent body column conflict after restoring a grouped header', () => {
+  const rows = [0, 20, 40].map((top) => ({ rect: [0, top, 400, top + 20] }))
+  const columns = [0, 1, 2, 3].map((column) => ({
+    rect: [column * 100, 0, (column + 1) * 100, 60]
+  }))
+  const title = [token('Grouped', [175, 3, 205, 10]), token('header', [180, 11, 220, 18])]
+  const leaves = ['A', 'B', 'C', 'D'].map((text, column) =>
+    token(text, [column * 100 + 20, 24, column * 100 + 40, 32])
+  )
+  const body = [token('North', [20, 44, 60, 52]), token('South', [120, 44, 160, 52])]
+  const cells = [0, 1, 2].flatMap((row) =>
+    [0, 1, 2, 3].map((column) => ({
+      row,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [column * 100, row * 20, (column + 1) * 100, row * 20 + 20],
+      text:
+        row === 0
+          ? column === 2
+            ? 'Grouped header'
+            : ''
+          : row === 1
+            ? ['A', 'B', 'C', 'D'][column]
+            : ['North', 'South', '', ''][column],
+      sourceTokens:
+        row === 0
+          ? column === 2
+            ? title
+            : []
+          : row === 1
+            ? [leaves[column]]
+            : body[column]
+              ? [body[column]]
+              : [],
+      items: []
+    }))
+  )
+  const items = [...title, ...leaves, ...body]
+  const issues = new Set<string>()
+  const repairs: string[] = []
+  resolveTableCellMerges({
+    proposals: [
+      { origin: 'model-span', slots: cells.filter((cell) => cell.row === 2 && cell.column < 2) }
+    ],
+    baseCells: cells,
+    items,
+    rows,
+    headerRows: [0, 1],
+    headerRuns: new Map(),
+    rules: [],
+    populatedColumns: new Set([0, 1, 2, 3]),
+    issues,
+    repairs
+  })
+  expect(issues).toEqual(new Set(['span-conflicts-with-source-columns']))
+  const unchangedBody = structuredClone(cells.filter((cell) => cell.row === 2))
+  expect(
+    recoverCenteredGroupedHeaderSpans({
+      cells,
+      rows,
+      columns,
+      items,
+      headerRows: [0, 1],
+      rules: [[100, 19, 300, 19]],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(1)
+  expect(cells.filter((cell) => cell.row === 2)).toEqual(unchangedBody)
+  expect(issues).toContain('span-conflicts-with-source-columns')
+})
+
 it('retains source-span diagnostics without trusted repair evidence', () => {
   const issues = new Set(['span-conflicts-with-source-rows'])
   const repairs: string[] = []
@@ -185,6 +340,66 @@ it('retains source-span diagnostics without trusted repair evidence', () => {
     })
   ).toBe(false)
   expect(issues).toEqual(new Set(['span-conflicts-with-source-rows']))
+})
+
+it.each(['outside owner', 'crossing leaf', 'missing native source', 'overlap', 'ambiguous'])(
+  'refuses a grouped header with %s evidence',
+  (kind) => {
+    const title = [token('Parent', [175, 3, 205, 10]), token('heading', [180, 11, 220, 18])]
+    const leaves = [0, 1, 2, 3].map((c) => token(`Leaf ${c}`, [c * 100 + 20, 24, c * 100 + 40, 32]))
+    const parentColumn = kind === 'outside owner' ? 0 : 2
+    const cells = [0, 1].flatMap((row) =>
+      [0, 1, 2, 3].map((column) => ({
+        row,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [column * 100, row * 20, (column + 1) * 100, (row + 1) * 20],
+        text: row ? `Leaf ${column}` : column === parentColumn ? 'Parent heading' : '',
+        sourceTokens: row ? [leaves[column]] : column === parentColumn ? title : []
+      }))
+    )
+    if (kind === 'crossing leaf') leaves[1].rect = [120, 24, 240, 32]
+    const items = [...title, ...leaves]
+    if (kind === 'missing native source') items.splice(items.indexOf(leaves[1]), 1)
+    const issues = new Set(['span-conflicts-with-source-columns'])
+    if (kind === 'overlap') issues.add('overlapping-predicted-columns')
+    if (kind === 'ambiguous') issues.add('ambiguous-cell-assignment')
+    const before = structuredClone(cells)
+    const repairs: string[] = []
+    expect(
+      recoverCenteredGroupedHeaderSpans({
+        cells,
+        rows: [{ rect: [0, 0, 400, 20] }, { rect: [0, 20, 400, 40] }],
+        columns: [0, 1, 2, 3].map((c) => ({ rect: [c * 100, 0, (c + 1) * 100, 40] })),
+        items,
+        headerRows: [0, 1],
+        rules: [[100, 19, 300, 19]],
+        unassigned: [],
+        issues,
+        repairs
+      })
+    ).toBe(0)
+    expect(cells).toEqual(before)
+    expect(repairs).toEqual([])
+    expect(issues).toContain('span-conflicts-with-source-columns')
+  }
+)
+
+it('does not treat a local grouped-header repair as proof of unrelated table conflicts', () => {
+  const issues = new Set(['span-conflicts-with-source-rows', 'overlapping-predicted-columns'])
+  const repairs = ['source-centered-grouped-header-span-recovered']
+  expect(
+    reconcileResolvedSpanDiagnostics({
+      cells: [{ row: 0, column: 0, rowSpan: 1, colSpan: 1 }],
+      rows: [{}],
+      columns: [{}],
+      unassigned: [],
+      issues,
+      repairs
+    })
+  ).toBe(false)
+  expect(issues.size).toBe(2)
 })
 
 it('retains source conflicts while an unresolved span remains', () => {

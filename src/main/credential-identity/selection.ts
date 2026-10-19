@@ -1,4 +1,5 @@
 import { createLogger } from '@aipoch/diagnostics/node'
+import { credentialDiagnosticSchema, type CredentialDiagnostic } from './diagnostic'
 import type { KWalletProbeResult } from './kwallet-probe-contract'
 import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend-contract'
 import { safeCredentialProbeResult } from './probe'
@@ -20,15 +21,19 @@ export type CredentialIdentity = Readonly<
 >
 
 export class CredentialIdentityError extends Error {
+  readonly diagnostic?: CredentialDiagnostic
   constructor(
     readonly reason: string,
-    readonly probe?: IdentityProbeResult & Readonly<{ appName: string }>
+    readonly probe?: IdentityProbeResult & Readonly<{ appName: string }>,
+    diagnostic?: CredentialDiagnostic
   ) {
     // Native startup recovery translates this stable message before displaying it.
     super(
       'Credential storage needs recovery. Existing credentials and profile data have been preserved.'
     )
     this.name = 'CredentialIdentityError'
+    const parsed = credentialDiagnosticSchema.safeParse(diagnostic)
+    if (parsed.success) this.diagnostic = parsed.data
   }
 }
 

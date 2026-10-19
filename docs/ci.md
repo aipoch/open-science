@@ -45,8 +45,9 @@ set and deferred groups appear in preflight reason chains. Checks retain complet
 each selected group, so this is group selection rather than individual-test pruning. Native supervisor
 consumers keep their Rust source/build prerequisites, and selected-but-skipped steps fail the gate. Complete Windows business/browser variants run
 in the independent Windows E2E Regression workflow.
-Automatic PR checks do not allocate Mac runners, including for platform-sensitive changes;
-Mac validation happens in merge queue.
+PR Gate does not allocate Mac runners, including for platform-sensitive changes;
+its Mac validation happens in merge queue. The separate Process Lifecycle workflow runs
+three native platforms for its declared lifecycle owner and harness paths, as described below.
 PR and queue business E2E rely on one Playwright retry to absorb single-attempt flakes; the
 merged E2E summary reports retry-passed tests, and scheduled Source Regression keeps
 `--fail-on-flaky-tests`.
@@ -71,9 +72,41 @@ diagnosis. Classification and gate validation continue to use trusted base code.
 
 ### Scheduled regression and publication
 
+Process Lifecycle runs its fixed source process collection daily on
+macOS, Linux and Windows at **19:23 UTC** (02:23 the next day in Asia/Saigon), even when the
+default-branch SHA is unchanged. Its manual `core` and `detector` modes are focused no-publish
+dry-runs. It does not add PR required checks or replace resource/packaged-runtime certification.
+Its runner selects the independent `scripts/ci/process-lifecycle/vitest.config.ts`; ordinary
+module tests do not collect its native suite or count it as portable consumer evidence.
+PRs changing its harness, tested process owners, dynamic Notebook host or declared setup inputs
+also run the same collection at the exact PR head. The workflow's path inventory and discovery
+contract must be updated when scenario dependencies change; it is not an exhaustive transitive
+dependency selector. Unrelated UI/documentation changes do not allocate these native runners.
+The 14 source scenarios retain immediate MCP cancellation/timeout cleanup checks, owned/borrowed
+runtime behavior and recovery. Twelve detector controls verify the observer itself, including
+delayed/failed initial capture, capture deadlines and spawn failure. Workloads start only after their runner has
+been observed, and the orphan control waits for descendant readiness before reparenting.
+Every scenario report must match the run ID, source SHA, harness digest, platform and ordered
+checkpoint inventory. Failure is recorded before emergency cleanup and cannot be erased by it.
+These fixtures do not certify installed upgrades, OS reboot, real provider protocols or Electron
+quit/persistence UI; those retain their existing dedicated validation paths.
+
 Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
-(Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
-runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
+(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eight isolated Mac test jobs:
+functional, workspace, presentation (browser/visual/accessibility), delegation, three ordinary
+supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
+fail-fast is disabled so every group can report its own failures. Capacity is selected from the
+same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are
+removed. Each job uploads distinct group/shard diagnostics, allowing failed jobs to be rerun
+without repeating successful groups while the one-day setup artifact is retained; after expiry,
+start a new run to rebuild it. Setup failure and any failed or missing selected suite fail
+the scheduled outcome.
+
+Source Regression manual modes `functional`, `workspace`, `presentation`, `regressions`, `capacity`
+and `delegation` select the same production jobs. In `regressions` mode, `shard` can select `1`,
+`2`, `3`, or `all`; `full` always runs all three shards regardless of that diagnostic input.
+Existing focused diagnostic modes remain available and never publish or change scheduled issues.
+PR Gate retains its existing groups and non-capacity selection.
 Windows E2E Regression runs daily at **02:17 Singapore time**
 (Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on three Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run

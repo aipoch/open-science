@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import type { ReactNode } from 'react'
 import { cleanup, render, screen } from '@testing-library/react'
-import { afterEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import type { ComposerDraft } from './pages/workspace/composer-contract'
 
 const root = vi.hoisted(() => ({ render: vi.fn() }))
 vi.mock('react-dom/client', async (importOriginal) => {
@@ -38,9 +39,67 @@ vi.mock('@/stores/navigation-store', () => ({
 vi.mock('@/stores/settings-store', () => ({ useSettingsStore: { getState: () => ({}) } }))
 vi.mock('@/stores/locale-store', () => ({ startLocalePreferenceSync: vi.fn() }))
 
+beforeEach(() => {
+  vi.resetModules()
+  root.render.mockClear()
+  document.documentElement.removeAttribute('data-open-science-web-events')
+  document.body.innerHTML = '<div id="root"></div>'
+  window.api = {} as Window['api']
+  localStorage.clear()
+  sessionStorage.clear()
+})
+
 afterEach(() => {
   cleanup()
   vi.restoreAllMocks()
+  document.documentElement.removeAttribute('data-open-science-web-events')
+  localStorage.clear()
+  sessionStorage.clear()
+})
+
+const draft = (text: string): ComposerDraft => ({
+  doc: { nodes: [{ type: 'text', text }] },
+  annotations: [],
+  attachments: [],
+  attachmentTransfers: [],
+  automaticReadingEnabled: true
+})
+
+it('keeps the Web bootstrap authorization scope and tab storage when loading the shared entry', async () => {
+  document.documentElement.setAttribute('data-open-science-web-events', '')
+  const storage = await import('./pages/workspace/composer-draft-storage')
+  storage.configureComposerDraftStorage('paired-host/principal')
+  storage.writeComposerDraft('project', 'session', draft('Web draft'))
+
+  await import('./main')
+  await vi.waitFor(() => expect(root.render).toHaveBeenCalledOnce())
+  expect(storage.readComposerDraft('project', 'session', 'retry')?.doc.nodes).toEqual(
+    draft('Web draft').doc.nodes
+  )
+  storage.writeComposerDraft('project', 'session', draft('edited Web draft'))
+  const saved = JSON.parse(sessionStorage.getItem('open-science-composer-drafts-v1')!)
+  expect(saved.scope).toBe('paired-host/principal')
+  expect(saved.drafts[0].text).toBe('edited Web draft')
+  expect(localStorage.getItem('open-science-composer-drafts-v1')).toBeNull()
+  storage.revokeComposerDraftStorage()
+  expect(sessionStorage.getItem('open-science-composer-drafts-v1')).toBeNull()
+})
+
+it('initializes desktop profile storage through the shared entry before rendering', async () => {
+  const storage = await import('./pages/workspace/composer-draft-storage')
+  storage.configureComposerDraftStorage('desktop-profile', 'profile')
+  storage.writeComposerDraft('project', 'session', draft('desktop draft'))
+  // Simulate a fresh renderer module lifetime with only the profile storage remaining.
+  vi.resetModules()
+  await import('./main')
+  await vi.waitFor(() => expect(root.render).toHaveBeenCalledOnce())
+  const restarted = await import('./pages/workspace/composer-draft-storage')
+  expect(restarted.readComposerDraft('project', 'session', 'retry')?.doc.nodes).toEqual(
+    draft('desktop draft').doc.nodes
+  )
+  restarted.writeComposerDraft('project', 'session', draft('edited desktop draft'))
+  expect(localStorage.getItem('open-science-composer-drafts-v1')).toContain('edited desktop draft')
+  expect(sessionStorage.getItem('open-science-composer-drafts-v1')).toBeNull()
 })
 
 it('contains a main-view render failure in the real root composition and offers recovery', async () => {

@@ -27,6 +27,7 @@ import {
 } from './conversation-graph'
 import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
 import { createRuntimeAgentMessageId } from './runtime-message-identity'
+import { resolveRuntimeToolActivityId } from './runtime-tool-identity'
 import {
   isInLatestTurn,
   legacySessionStateForOutcome,
@@ -511,17 +512,18 @@ export const applyRuntimeSessionEvents = (
       message.updatedAt = Math.max(message.updatedAt, event.timestamp)
       branch.updatedAt = Math.max(branch.updatedAt, event.timestamp)
     } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
+      const toolCallId = resolveRuntimeToolActivityId(event.toolCallId, scope, graph.activities)
       if (event.kind === 'compaction') completeGroups(graph.activityGroups, scope, event.timestamp)
       if (
         event.kind === 'tool' &&
-        (isActivityGroupToolEvent(event) || groupControls.has(event.toolCallId))
+        (isActivityGroupToolEvent(event) || groupControls.has(toolCallId))
       ) {
-        groupControls.add(event.toolCallId)
+        groupControls.add(toolCallId)
         const title = getActivityGroupTitleFromToolEvent(event)
-        if (title && !graph.activityGroups.some(({ id }) => id === event.toolCallId)) {
+        if (title && !graph.activityGroups.some(({ id }) => id === toolCallId)) {
           completeGroups(graph.activityGroups, scope, event.timestamp)
           graph.activityGroups.push({
-            id: event.toolCallId,
+            id: toolCallId,
             title,
             sortIndex: event.timestamp,
             activityIds: [],
@@ -536,7 +538,7 @@ export const applyRuntimeSessionEvents = (
       }
       let activity = graph.activities.find(
         ({ id, agentFrameId, messageBranchId }) =>
-          id === event.toolCallId &&
+          id === toolCallId &&
           agentFrameId === scope.agentFrameId &&
           messageBranchId === scope.messageBranchId
       )
@@ -551,7 +553,7 @@ export const applyRuntimeSessionEvents = (
             candidate.completedAt === undefined
         )
         activity = {
-          id: event.toolCallId,
+          id: toolCallId,
           kind: 'tool',
           title:
             event.title?.trim() ||

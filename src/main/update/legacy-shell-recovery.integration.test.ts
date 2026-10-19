@@ -117,7 +117,7 @@ it.each(['confirmed', 'changed', 'runtime-blocked', 'new-record', 'claimed', 'co
           beforeConfirmation
         )
       } else {
-        expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+        expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
         expect(durability).toHaveBeenCalledOnce()
         expect(await readdir(join(root, 'shell-process-ownership'))).toEqual([])
         const backupRoot = join(root, 'shell-process-ownership-backups')

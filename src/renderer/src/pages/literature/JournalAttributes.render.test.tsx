@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
@@ -13,6 +14,7 @@ import {
 
 afterEach(() => {
   cleanup()
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   window.localStorage.removeItem('open-science:journal-source-years')
 })
 const item = literatureItemInputSchema.parse({
@@ -35,77 +37,95 @@ it('does not resolve journal metadata for non-journal references', () => {
   expect(container.firstChild).toBeNull()
   expect(journals).not.toHaveBeenCalled()
 })
-it('batches visible references and refreshes all surfaces after dataset changes', async () => {
-  let changed: (event: LiteratureChangedEvent) => void = () => {}
-  let value = 'Gold'
-  const journals = vi.fn(async (request: JournalRequest) =>
-    request.action === 'resolve'
-      ? {
-          matches: request.identities.map(() => ({
-            status: 'matched' as const,
-            identity: {
-              name: 'Imaginary Review',
-              aliases: [],
-              issns: [],
-              externalIds: [{ namespace: 'jcr', value: 'fictional-417' }]
-            },
-            attributes: [
-              {
-                key: 'test:band',
-                label: 'Editorial band',
-                kind: 'singleSelect' as const,
-                value,
-                source: 'Fictional source',
-                year: 2031,
-                colors: { Gold: 'green' as const }
-              }
-            ]
-          }))
-        }
-      : { datasets: [] }
-  )
-  Object.defineProperty(window, 'api', {
-    configurable: true,
-    value: {
-      literature: {
-        journals,
-        onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
-          changed = listener
-          return () => {}
+it.each(['event', 'desktop'] as const)(
+  'batches visible references and refreshes all surfaces after %s dataset changes',
+  async (transport) => {
+    let changed: (event: LiteratureChangedEvent) => void = () => {}
+    let value = 'Gold'
+    const journals = vi.fn(async (request: JournalRequest) =>
+      request.action === 'resolve'
+        ? {
+            matches: request.identities.map(() => ({
+              status: 'matched' as const,
+              identity: {
+                name: 'Imaginary Review',
+                aliases: [],
+                issns: [],
+                externalIds: [{ namespace: 'jcr', value: 'fictional-417' }]
+              },
+              attributes: [
+                {
+                  key: 'test:band',
+                  label: 'Editorial band',
+                  kind: 'singleSelect' as const,
+                  value,
+                  source: 'Fictional source',
+                  year: 2031,
+                  colors: { Gold: 'green' as const }
+                }
+              ]
+            }))
+          }
+        : { datasets: [] }
+    )
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          journals,
+          onChanged: (listener: (event: LiteratureChangedEvent) => void) => {
+            changed = listener
+            return () => {}
+          }
         }
       }
+    })
+    render(
+      <>
+        <JournalAttributes item={item} detail />
+        <JournalAttributes item={{ ...item, containerTitle: 'Imaginary Annals' }} detail />
+      </>
+    )
+    await waitFor(() => expect(screen.getAllByText('Gold')).toHaveLength(2))
+    expect(screen.getAllByText('jcr:fictional-417')).toHaveLength(2)
+    expect(journals.mock.calls.filter(([request]) => request.action === 'resolve')).toHaveLength(1)
+    expect(screen.queryByText('Current local journal data')).toBeNull()
+    expect(screen.queryByText('Fictional source')).toBeNull()
+    const sourceButtons = screen.getAllByRole('button', {
+      name: 'Editorial band · Fictional source 2031'
+    })
+    expect(sourceButtons[0].querySelector('span')?.className).toContain('truncate')
+    expect(sourceButtons[0].querySelector('svg')?.getAttribute('class')).toContain('shrink-0')
+    fireEvent.focus(sourceButtons[0])
+    expect(await screen.findByRole('tooltip')).toHaveProperty(
+      'textContent',
+      expect.stringContaining('Fictional source')
+    )
+    expect(screen.getByRole('tooltip').textContent).toContain('2031')
+    fireEvent.blur(sourceButtons[0])
+    await act(async () => changed({ revision: 1, itemIds: ['fictional-reference'] }))
+    expect(journals.mock.calls.filter(([request]) => request.action === 'resolve')).toHaveLength(1)
+    value = 'Silver'
+    if (transport === 'event') await act(async () => changed({ revision: 2 }))
+    else {
+      for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
+        await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
+        expect(screen.getAllByText('Gold')).toHaveLength(2)
+      }
+      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
     }
-  })
-  render(
-    <>
-      <JournalAttributes item={item} detail />
-      <JournalAttributes item={{ ...item, containerTitle: 'Imaginary Annals' }} detail />
-    </>
-  )
-  await waitFor(() => expect(screen.getAllByText('Gold')).toHaveLength(2))
-  expect(screen.getAllByText('jcr:fictional-417')).toHaveLength(2)
-  expect(journals.mock.calls.filter(([request]) => request.action === 'resolve')).toHaveLength(1)
-  expect(screen.queryByText('Current local journal data')).toBeNull()
-  expect(screen.queryByText('Fictional source')).toBeNull()
-  const sourceButtons = screen.getAllByRole('button', {
-    name: 'Editorial band · Fictional source 2031'
-  })
-  expect(sourceButtons[0].querySelector('span')?.className).toContain('truncate')
-  expect(sourceButtons[0].querySelector('svg')?.getAttribute('class')).toContain('shrink-0')
-  fireEvent.focus(sourceButtons[0])
-  expect(await screen.findByRole('tooltip')).toHaveProperty(
-    'textContent',
-    expect.stringContaining('Fictional source')
-  )
-  expect(screen.getByRole('tooltip').textContent).toContain('2031')
-  fireEvent.blur(sourceButtons[0])
-  await act(async () => changed({ revision: 1, itemIds: ['fictional-reference'] }))
-  expect(journals.mock.calls.filter(([request]) => request.action === 'resolve')).toHaveLength(1)
-  value = 'Silver'
-  await act(async () => changed({ revision: 2 }))
-  await waitFor(() => expect(screen.getAllByText('Silver')).toHaveLength(2))
-  expect(screen.queryByText('Gold')).toBeNull()
-})
+    await waitFor(() => expect(screen.getAllByText('Silver')).toHaveLength(2))
+    expect(screen.queryByText('Gold')).toBeNull()
+    expect(journals.mock.calls.filter(([request]) => request.action === 'list')).toHaveLength(2)
+    cleanup()
+    journals.mockClear()
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(journals).not.toHaveBeenCalled()
+  }
+)
 it('does not display results returned for a previous identity', async () => {
   const resolves: (() => void)[] = []
   const journals = vi.fn((request: JournalRequest) =>

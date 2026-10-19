@@ -18,6 +18,9 @@ const { recoverUnassignedCompleteSourceRows } = await import(
 const { recoverUnassignedInsertedParameterRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
+const { recoverStrictSingletonSourceGaps } = await import(
+  pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
+)
 const { recoverUnassignedAggregateRows } = await import(
   pathToFileURL(resolve('resources/literature-pdf-table-cell-text.mjs')).href
 )
@@ -25,6 +28,263 @@ const fixture = (name: string): ReturnType<typeof JSON.parse> =>
   readPdfFixture(resolve('test/fixtures/source-grids', `${name}.jsonl`))
 const refine = (f: ReturnType<typeof fixture>): ReturnType<typeof JSON.parse> =>
   refineTable(f.table, f.tokens, f.captions, [], f.rules)
+
+type SourceToken = {
+  text: string
+  rect: number[]
+  baseline: number
+  height: number
+  horizontal: boolean
+}
+
+it('recovers only a uniquely supported Route header gap', () => {
+  const rows = [{ rect: [0, 0, 300, 20] }, { rect: [0, 20, 300, 40] }, { rect: [0, 40, 300, 60] }]
+  const cells = rows.flatMap((row, r) =>
+    [0, 100, 200].map((left, column) => ({
+      row: r,
+      column,
+      rowSpan: 1,
+      colSpan: 1,
+      rect: [left, row.rect[1], left + 100, row.rect[3]]
+    }))
+  )
+  const make = (text: string, x: number, y: number): SourceToken => ({
+    text,
+    rect: [x, y, x + 30, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const index = make('Index', 10, 5),
+    route = make('Route', 110, 5),
+    filters = make('Filters', 210, 5)
+  const body = [1, 2].flatMap((row) => [
+    make(String(row), 10, row * 20 + 5),
+    make(`/v${row}`, 110, row * 20 + 5),
+    make('ok', 210, row * 20 + 5)
+  ])
+  const items = [index, route, filters, ...body]
+  const assignments = new Map<object, object>([
+    [index, cells[0]],
+    [filters, cells[2]],
+    ...body.map((item, index) => [item, cells[3 + index]] as [object, object])
+  ])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items,
+      cells,
+      rows,
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(1)
+  expect(assignments.get(route)).toBe(cells[1])
+  expect(repairs).toContain('single-header-gap-recovered')
+})
+
+it('recovers a lone punctuation fragment only inside one populated leaf cell', () => {
+  const rows = [{ rect: [0, 0, 100, 20] }]
+  const cells = [{ row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [0, 0, 100, 20] }]
+  const value = {
+    text: '42',
+    rect: [20, 4, 34, 14],
+    baseline: 14,
+    height: 10,
+    horizontal: true
+  }
+  const mark = {
+    text: '.',
+    rect: [34, 4, 38, 14],
+    baseline: 14,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[value, cells[0]]])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items: [value, mark],
+      cells,
+      rows,
+      headerRows: [],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(1)
+  expect(assignments.get(mark)).toBe(cells[0])
+  expect(repairs).toContain('punctuation-gap-recovered')
+})
+
+it('keeps punctuation unassigned when it crosses a cell boundary', () => {
+  const rows = [{ rect: [0, 0, 100, 20] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [0, 0, 50, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, rect: [50, 0, 100, 20] }
+  ]
+  const value = {
+    text: '42',
+    rect: [20, 4, 34, 14],
+    baseline: 14,
+    height: 10,
+    horizontal: true
+  }
+  const mark = {
+    text: '.',
+    rect: [48, 4, 52, 14],
+    baseline: 14,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[value, cells[0]]])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items: [value, mark],
+      cells,
+      rows,
+      headerRows: [],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(0)
+  expect(assignments.has(mark)).toBe(false)
+})
+
+it('recovers Route when overlapping header slots have one source-owned lane', () => {
+  const rows = [{ rect: [0, 0, 180, 20] }, { rect: [0, 20, 180, 40] }, { rect: [0, 40, 180, 60] }]
+  const cells = [
+    { row: 0, column: 0, rowSpan: 1, colSpan: 1, rect: [0, 0, 40, 20] },
+    { row: 0, column: 1, rowSpan: 1, colSpan: 1, rect: [40, 0, 80, 20] },
+    { row: 0, column: 3, rowSpan: 1, colSpan: 1, rect: [35, 0, 85, 20] },
+    ...[1, 2].flatMap((row) => [
+      { row, column: 1, rowSpan: 1, colSpan: 1, rect: [40, row * 20, 80, row * 20 + 20] },
+      { row, column: 3, rowSpan: 1, colSpan: 1, rect: [100, row * 20, 160, row * 20 + 20] }
+    ])
+  ]
+  const make = (text: string, x: number, y: number): SourceToken => ({
+    text,
+    rect: [x, y, x + 20, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const route = make('Route', 50, 5)
+  const body = [1, 2].flatMap((row) => [
+    make(String(row), 50, row * 20 + 5),
+    make('depth', 120, row * 20 + 5)
+  ])
+  const assignments = new Map<object, object>(body.map((item, index) => [item, cells[3 + index]]))
+  const ambiguousAssignments = new Set([route])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items: [route, ...body],
+      cells,
+      rows,
+      headerRows: [0],
+      assignments,
+      ambiguousAssignments,
+      repairs
+    })
+  ).toBe(1)
+  expect(assignments.get(route)).toBe(cells[1])
+  expect(ambiguousAssignments.size).toBe(0)
+  expect(repairs).toContain('single-header-gap-recovered')
+})
+
+it('does not recover a quoted fragment without both code neighbors', () => {
+  const rows = [{ rect: [0, 0, 300, 20] }]
+  const cells = [0, 100, 200].map((left, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [left, 0, left + 100, 20]
+  }))
+  const quote = {
+    text: '"Marie Curie was a physicist"',
+    rect: [110, 5, 190, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const left = {
+    text: '1 tokenized_text =',
+    rect: [5, 5, 95, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([[left, cells[0]]])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items: [left, quote],
+      cells,
+      rows,
+      headerRows: [],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(0)
+  expect(assignments.has(quote)).toBe(false)
+})
+
+it('recovers a quoted code fragment only between its assignment and split call', () => {
+  const rows = [{ rect: [0, 0, 300, 20] }]
+  const cells = [0, 100, 200].map((left, column) => ({
+    row: 0,
+    column,
+    rowSpan: 1,
+    colSpan: 1,
+    rect: [left, 0, left + 100, 20]
+  }))
+  const quote = {
+    text: '"Marie Curie was a physicist"',
+    rect: [110, 5, 190, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const left = {
+    text: '1 tokenized_text =',
+    rect: [5, 5, 95, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const right = {
+    text: '.split()',
+    rect: [205, 5, 250, 15],
+    baseline: 15,
+    height: 10,
+    horizontal: true
+  }
+  const assignments = new Map<object, object>([
+    [left, cells[0]],
+    [right, cells[2]]
+  ])
+  const repairs: string[] = []
+  expect(
+    recoverStrictSingletonSourceGaps({
+      items: [left, quote, right],
+      cells,
+      rows,
+      headerRows: [],
+      assignments,
+      ambiguousAssignments: new Set(),
+      repairs
+    })
+  ).toBe(1)
+  expect(assignments.get(quote)).toBe(cells[1])
+  expect(repairs).toContain('inline-code-gap-recovered')
+})
 
 it('recovers a complete numbered record straddling duplicate empty bands', () => {
   const token = (text: string, x: number, y: number): Record<string, unknown> => ({
@@ -573,7 +833,7 @@ it('inserts a strictly witnessed three-column parameter row between complete row
   expect(repairs).toContain('unassigned-parameter-row-inserted')
 })
 
-it('splits a wide model row that contains two complete source baselines', () => {
+it('splits complete body baselines while retaining an unmeasured fused header', () => {
   const token = (text: string, x: number, y: number): Record<string, unknown> => ({
     text,
     rect: [x, y, x + Math.max(8, text.length * 4), y + 10],
@@ -631,10 +891,10 @@ it('splits a wide model row that contains two complete source baselines', () => 
   )
   expect(result.grid).toContainEqual(['Model A', '10', '20', '30', '40', '50', '60', '70'])
   expect(result.grid).toContainEqual(['Model B', '11', '21', '31', '41', '51', '61', '71'])
-  expect(result.grid[0].slice(2, 5)).toEqual(['MMLU', 'HellaSwag', 'WinoG'])
-  expect(result.unassigned).toEqual([])
+  expect(result.grid[0].slice(2, 5)).toEqual(['', '', ''])
+  expect(result.unassigned).toEqual(['MMLU HellaSwag WinoG'])
   expect(result.repairs).toContain('stacked-wide-record-rows-recovered')
-  expect(result.repairs).toContain('wide-source-run-split')
+  expect(result.repairs).not.toContain('wide-source-run-split')
 })
 
 it('recovers clipped labels and body rows when a compact table keeps only its header', () => {

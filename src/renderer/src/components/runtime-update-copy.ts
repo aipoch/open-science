@@ -103,7 +103,7 @@ export const runtimeUpdateCopy = (
       return {
         title: t('Installing update…'),
         description: t(
-          'Installation has started and cannot be cancelled. The app will reopen after installation.'
+          'Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.'
         )
       }
     case 'S24':
@@ -136,6 +136,13 @@ export const runtimeUpdateCopy = (
         title: t('Update conditions are unknown'),
         description: t(
           'Application files could not be verified for replacement. The service has not been stopped. Continue working or recheck later.'
+        )
+      }
+    case 'S35':
+      return {
+        title: t('Update preparation failed'),
+        description: t(
+          'The app is still open. Resolve the problem and try again, or cancel to continue working.'
         )
       }
     case 'S34':

@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { ScanSearch, Search, Unlink, X } from 'lucide-react'
@@ -97,11 +98,15 @@ export function JournalAlignment({
       setTarget(undefined)
     }
     const remove = window.api.literature.onChanged?.(invalidate)
+    const removeRecovery = useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+      if (state.phase === 'connected' && previous.phase !== 'connected') invalidate()
+    })
     window.addEventListener('open-science:web-events-open', invalidate)
     return () => {
       cancelScan()
       generation.current += 1
       remove?.()
+      removeRecovery()
       window.removeEventListener('open-science:web-events-open', invalidate)
     }
   }, [open, cancelScan])

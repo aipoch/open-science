@@ -419,7 +419,17 @@ const launchEnvironment = (
       'tmp',
       'number_of_processors',
       'processor_architecture',
-      'systemdrive'
+      'systemdrive',
+      // Keep the test display and Secret Service session when isolating Linux HOME.
+      'display',
+      'xauthority',
+      'dbus_session_bus_address',
+      'xdg_runtime_dir',
+      'xdg_current_desktop',
+      'desktop_session',
+      'gnome_desktop_session_id',
+      'kde_full_session',
+      'kde_session_version'
     ])
     for (const key of Object.keys(environment)) {
       if (!osInputs.has(key.toLowerCase()) && !key.startsWith('OPEN_SCIENCE_E2E_'))

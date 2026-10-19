@@ -74,6 +74,7 @@ jobs:
         shell: bash
         run: |
           node --test packages/credential-identity-probe-native/test/*.test.cjs
+          node --test packages/process-tree-native/test/*.cjs
           node -e "require('./packages/process-tree-native'); require('./packages/safe-file-publisher-native')"
       - name: Verify Linux runtime dependencies
         if: runner.os == 'Linux'

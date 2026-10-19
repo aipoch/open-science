@@ -39,6 +39,7 @@ type LiteratureToolSummary = Readonly<{
   requestedEnd?: number
   pdfDownloaded?: boolean
   savedCount?: number
+  pendingCandidateIds?: readonly string[]
   existingItemIds?: readonly string[]
   duplicateCount?: number
   otherCount?: number
@@ -590,6 +591,17 @@ const buildLiteratureLibraryToolSummary = (
     ...(saveSummary
       ? {
           savedCount: saveSummary.pendingCount,
+          pendingCandidateIds: parsedReceipts?.success
+            ? [
+                ...new Set(
+                  parsedReceipts.data
+                    .filter(({ kind, state }) => kind === 'candidate' && state === 'pending')
+                    .map(({ id }) => id)
+                )
+              ]
+            : acquired
+              ? [acquired.candidateId as string]
+              : [],
           existingItemIds: saveSummary.existingItemIds,
           duplicateCount: saveSummary.duplicateCount,
           otherCount: saveSummary.otherCount

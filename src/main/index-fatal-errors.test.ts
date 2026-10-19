@@ -1,6 +1,6 @@
 vi.mock('./runtime-ownership', async (original) => ({
   ...(await original<typeof import('./runtime-ownership')>()),
-  acquireRuntimeDirectorySync: () => ({ release: vi.fn() }),
+  acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
   RuntimeDirectoryOwnership: class {
     acquireSync = vi.fn()
   },
@@ -124,6 +124,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   errorLogFields: (await importOriginal<typeof import('@aipoch/diagnostics/node')>())
     .errorLogFields,
   createLogger: vi.fn(() => mocks.log),
+  initLogger: vi.fn(),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
   flushLogs: vi.fn(async () => undefined),
   writeFatalLogSync: mocks.writeFatalLogSync

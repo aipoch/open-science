@@ -88,6 +88,18 @@ it('preserves a multi-line native caption continuation across a page boundary', 
   expect(r.regions?.[1]).toEqual({ page: 2, rect: [72, 74, 392, 130] })
 })
 
+it('maps the continuation lane when the following page uses a different width', () => {
+  const f = input()
+  f.pages[1].width = 300
+  for (const line of f.pages[1].lines) {
+    line.x /= 2
+    line.width /= 2
+  }
+  const r = resolveFigureCaption(f.caption, [f.caption], f.pages)
+  expect(r.lines).toEqual([...f.caption.lines, 'coefficients ( a ) and intervals (', 'b ).'])
+  expect(r.regions?.[1]).toEqual({ page: 2, rect: [36, 74, 195, 112] })
+})
+
 it.each([
   'font',
   'indent',

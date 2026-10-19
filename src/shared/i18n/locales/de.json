@@ -50,6 +50,17 @@
     "Quit app": "App beenden"
   },
   "native": {
+    "Local State is in use by another process.": "Local State wird von einem anderen Prozess verwendet.",
+    "The Local State configuration file could not be read.": "Die Konfigurationsdatei Local State konnte nicht gelesen werden.",
+    "The Local State configuration file is invalid.": "Die Konfigurationsdatei Local State ist ungültig.",
+    "The encryption key is missing from Local State.": "Der Verschlüsselungsschlüssel fehlt in Local State.",
+    "The encryption key in Local State is invalid.": "Der Verschlüsselungsschlüssel in Local State ist ungültig.",
+    "Local State changed during credential validation.": "Local State wurde während der Überprüfung der Anmeldedaten geändert.",
+    "The Windows credential validator could not start.": "Das Windows-Prüfprogramm für Anmeldedaten konnte nicht gestartet werden.",
+    "The Windows credential validator timed out.": "Die Zeit für die Windows-Anmeldedatenprüfung ist abgelaufen.",
+    "The Windows credential validator failed.": "Das Windows-Prüfprogramm für Anmeldedaten ist fehlgeschlagen.",
+    "Windows credential validation is unavailable on this system.": "Die Windows-Anmeldedatenprüfung ist auf diesem System nicht verfügbar.",
+    "Windows could not decrypt the existing credential key.": "Windows konnte den vorhandenen Schlüssel für Anmeldedaten nicht entschlüsseln.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
     "Credential storage needs recovery": "Der Anmeldedatenspeicher muss wiederhergestellt werden",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Dieses System-Backend für Anmeldedaten unterstützt keine stille Identitätsprüfung. Zum Schutz vorhandener verschlüsselter Daten wurde der Start angehalten.",
@@ -143,9 +154,16 @@
     "Retry startup": "Start erneut versuchen",
     "Open startup logs": "Startprotokolle öffnen",
     "Could not open the logs folder.": "Der Protokollordner konnte nicht geöffnet werden.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Dieses verschlüsselte Datenformat wird von dieser App-Version nicht unterstützt. Verwenden Sie eine kompatible App-Version oder stellen Sie das ursprüngliche Profil wieder her. Vorhandene Zugangsdaten wurden nicht ersetzt."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Dieses verschlüsselte Datenformat wird von dieser App-Version nicht unterstützt. Verwenden Sie eine kompatible App-Version oder stellen Sie das ursprüngliche Profil wieder her. Vorhandene Zugangsdaten wurden nicht ersetzt.",
+    "Installing the Open-Science update…": "Open-Science-Update wird installiert…",
+    "Opening the updated Open-Science…": "Aktualisiertes Open-Science wird geöffnet…",
+    "The Open-Science update could not finish.": "Das Open-Science-Update konnte nicht abgeschlossen werden.",
+    "Close update window": "Update-Fenster schließen",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "Der Aktualisierungsstatus konnte nicht bestätigt werden. Das Schließen dieses Fensters beendet die Installation nicht."
   },
   "renderer": {
+    "Update preparation failed": "Vorbereitung des Updates fehlgeschlagen",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Die App bleibt geöffnet. Beheben Sie das Problem und versuchen Sie es erneut, oder brechen Sie ab, um weiterzuarbeiten.",
     "Select one or more options": "Eine oder mehrere Optionen auswählen",
     "Your conversation is preserved. Try Resume again.": "Ihre Konversation bleibt erhalten. Versuchen Sie erneut, sie fortzusetzen.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "Der Agent hat nicht rechtzeitig geantwortet. Ihre Konversation bleibt erhalten. Versuchen Sie erneut, sie fortzusetzen.",
@@ -167,6 +185,7 @@
     "Search PDC studies and versions by name or identifier.": "PDC-Studien und Versionen nach Name oder Kennung suchen.",
     "Retrieve PDC study metadata and available versions.": "Metadaten und verfügbare Versionen von PDC-Studien abrufen.",
     "Map PDC aliquots to samples, cases and external references.": "PDC-Aliquots Proben, Fällen und externen Referenzen zuordnen.",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "PDC-Falldemografie, Diagnosen und Probenreferenzen abrufen.",
     "Discover PDC study files and quantitative reports without downloading files.": "Dateien und quantitative Berichte von PDC-Studien ohne Dateidownload suchen.",
     "Query linkage disequilibrium between two variants in a specified population.": "Kopplungsungleichgewicht zwischen zwei Varianten in einer bestimmten Population abfragen.",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "Benachbarte Varianten mit hohem Kopplungsungleichgewicht in einer bestimmten Population finden.",
@@ -7355,7 +7374,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "Unfertige Aufgaben und Installationsbedingungen werden geprüft.",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "Schließen Sie Ihre Arbeit in der anderen App ab und beenden Sie diese über das Anwendungsmenü. Prüfen Sie anschließend erneut.",
     "Force update…": "Update erzwingen…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "Die Installation wurde gestartet und kann nicht abgebrochen werden. Die App wird danach erneut geöffnet.",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "Die Installation wurde gestartet und kann nicht abgebrochen werden. Dies kann einige Minuten dauern. Falls Ihr System eine Berechtigung anfordert, geben Sie das Update frei, um fortzufahren. Die App wird nach Abschluss der Installation erneut geöffnet.",
     "Installation result is unknown": "Installationsergebnis ist unbekannt",
     "Installation starts only after shutdown has finished and its result is confirmed.": "Die Installation beginnt erst, wenn das Herunterfahren abgeschlossen und bestätigt ist.",
     "Installing update…": "Update wird installiert…",
@@ -7437,6 +7456,8 @@
     "Waiting for browser…": "Warten auf den Browser…",
     "Receiving package…": "Paket wird empfangen…",
     "Cancel transfer": "Übertragung abbrechen",
-    "Transfer cancelled": "Übertragung abgebrochen"
+    "Transfer cancelled": "Übertragung abgebrochen",
+    "Sign in to continue this conversation": "Anmelden, um diese Konversation fortzusetzen",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Der Agent benötigt eine Authentifizierung. Öffnen Sie die Modelleinstellungen, melden Sie sich bei Ihrem Anbieter an und versuchen Sie es erneut. Ihre Konversation und Ihr Entwurf bleiben erhalten."
   }
 }

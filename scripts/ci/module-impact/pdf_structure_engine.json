@@ -1746,7 +1746,19 @@
     "packages/pdf-structure/test/wrapped-mean-se.test.ts",
     "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
     "packages/pdf-structure/tsconfig.json",
-    "packages/pdf-structure/vitest.config.ts"
+    "packages/pdf-structure/vitest.config.ts",
+    "packages/pdf-structure/resources/literature-pdf-figure-panel-paragraphs.mjs",
+    "packages/pdf-structure/resources/literature-pdf-source-segments.mjs",
+    "packages/pdf-structure/test/figure-panel-paragraphs.test.ts",
+    "packages/pdf-structure/test/header-fused-parent-divider.test.ts",
+    "packages/pdf-structure/test/native-assigned-numeric-segments.test.ts",
+    "packages/pdf-structure/test/native-measured-source-segments.test.ts",
+    "packages/pdf-structure/test/source-segments-contract.test.ts",
+    "packages/pdf-structure/test/table-continuation-line.test.ts",
+    "packages/pdf-structure/test/table-continuation-row-spans.test.ts",
+    "packages/pdf-structure/test/table-dense-source-lanes.test.ts",
+    "packages/pdf-structure/test/table-native-inline-fragment.test.ts",
+    "packages/pdf-structure/test/table-terminal-task-tail.test.ts"
   ],
   "interfacePaths": [
     "packages/pdf-structure/src/index.ts",
@@ -2268,9 +2280,18 @@
       "packages/pdf-structure/test/wrapped-figure-reference.test.ts",
       "packages/pdf-structure/test/wrapped-group-heading.test.ts",
       "packages/pdf-structure/test/wrapped-mean-se.test.ts",
-      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts"
+      "packages/pdf-structure/test/wrapped-sample-header-band.test.ts",
+      "packages/pdf-structure/test/figure-panel-paragraphs.test.ts",
+      "packages/pdf-structure/test/header-fused-parent-divider.test.ts",
+      "packages/pdf-structure/test/native-assigned-numeric-segments.test.ts",
+      "packages/pdf-structure/test/native-measured-source-segments.test.ts",
+      "packages/pdf-structure/test/table-continuation-line.test.ts",
+      "packages/pdf-structure/test/table-continuation-row-spans.test.ts",
+      "packages/pdf-structure/test/table-dense-source-lanes.test.ts",
+      "packages/pdf-structure/test/table-native-inline-fragment.test.ts",
+      "packages/pdf-structure/test/table-terminal-task-tail.test.ts"
     ],
-    "contract": [],
+    "contract": ["packages/pdf-structure/test/source-segments-contract.test.ts"],
     "consumer": [
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",

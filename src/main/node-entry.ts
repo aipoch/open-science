@@ -6,13 +6,14 @@ import {
 import { randomUUID } from 'node:crypto'
 import { writeRuntimeExit } from './runtime-stop-confirmation'
 import { resolveDataRoot } from './storage-root'
-import { createBackendStartupReporter } from './backend-startup'
+import { backendStartupAttemptId, createBackendStartupReporter } from './backend-startup'
 import {
   buildStartupDiagnostics,
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
-  flushLogs
+  flushLogs,
+  initLogger
 } from '@aipoch/diagnostics/node'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -26,6 +27,7 @@ import {
   prepareCredentialValidation,
   selectStartupCredentialIdentity
 } from './credential-identity/bootstrap'
+import { consumeCredentialInventoryFromEnv } from './credential-identity/inventory-handoff'
 import {
   createNodeSecureStorageCipher,
   initializeNodeWindowsProfileKey
@@ -67,7 +69,7 @@ import { configureRuntimeMetadata } from './runtime-metadata'
 import { configureRuntimeNetwork } from './runtime-network'
 import { createNodeRuntimeNetwork } from './runtime-network-node'
 import {
-  acquireRuntimeDirectorySync,
+  acquireCredentialBootstrapLease,
   configureRuntimeDirectoryOwnership,
   RuntimeDirectoryOwnership,
   RuntimeOwnershipConflict
@@ -114,6 +116,8 @@ async function main(): Promise<void> {
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
+  // Credential preflight can fail before full application diagnostics are initialized.
+  initLogger({ logDir: join(configRoot, 'logs') })
   const network = createNodeRuntimeNetwork()
   configureRuntimeNetwork(network)
   let runtime: Awaited<ReturnType<typeof import('./core-runtime').createCoreRuntime>> | undefined
@@ -270,9 +274,11 @@ async function main(): Promise<void> {
           ? join(home, 'Library', 'Application Support')
           : process.env.XDG_CONFIG_HOME || join(home, '.config')
     profilePath = resolveElectronProfile({ appData, configRoot, packaged })
-    const credentialBootstrapLease = acquireRuntimeDirectorySync(
-      join(home, '.open-science-credential-bootstrap')
-    )
+    const credentialBootstrapLease = acquireCredentialBootstrapLease({
+      home,
+      profilePath,
+      platform: process.platform
+    })
     let identity: ReturnType<typeof selectStartupCredentialIdentity>
     try {
       identity = selectStartupCredentialIdentity({
@@ -282,7 +288,16 @@ async function main(): Promise<void> {
         linuxPasswordStore: passwordStore
       })
       ownership.acquireSync(profilePath)
-      const validateCredentials = prepareCredentialValidation(identity, { configRoot, profilePath })
+      const preloadedCiphertexts = await consumeCredentialInventoryFromEnv({
+        attemptId: backendStartupAttemptId ?? '',
+        configRoot,
+        profilePath
+      })
+      const validateCredentials = prepareCredentialValidation(
+        identity,
+        { configRoot, profilePath },
+        preloadedCiphertexts
+      )
       if (identity.backend === 'windows-dpapi') await initializeNodeWindowsProfileKey(profilePath)
       cipher = createNodeSecureStorageCipher(identity, profilePath)
       configureSecureStorageCipher(cipher)
@@ -670,7 +685,11 @@ void main().catch((error: unknown) => {
     ...diagnosticErrorFields(error),
     ...errorLogFields(error),
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, identityProbe: error.probe }
+      ? {
+          recoveryReason: error.reason,
+          identityProbe: error.probe,
+          validationDiagnostic: error.diagnostic
+        }
       : {})
   })
   process.exitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1

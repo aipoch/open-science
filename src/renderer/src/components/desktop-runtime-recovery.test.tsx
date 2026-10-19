@@ -3,6 +3,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeRecoveryState } from '../../../shared/desktop-runtime-recovery'
 import { DesktopRuntimeRecovery } from './desktop-runtime-recovery'
+import { useUpdateStore } from '@/stores/update-store'
 import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 
 vi.mock('@/pages/workspace/composer-draft-storage', () => ({ flushComposerDrafts: vi.fn() }))
@@ -20,6 +21,7 @@ describe('desktop recovery notice', () => {
   let publish: (state: DesktopRuntimeRecoveryState) => void
   const reconnect = vi.fn(async () => ({ phase: 'connected', epoch: 1, closing: false }))
   beforeEach(() => {
+    useUpdateStore.setState({ status: { state: 'idle', current: '1' } })
     useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     reconnect.mockClear()
     window.api = {
@@ -73,6 +75,30 @@ describe('desktop recovery notice', () => {
     expect((draft as HTMLTextAreaElement).value).toBe('retained draft')
   })
 
+  it('remembers focus before recovery makes the composer non-editable', async () => {
+    render(
+      <>
+        <textarea aria-label="draft" />
+        <DesktopRuntimeRecovery />
+      </>
+    )
+    const draft = screen.getByLabelText('draft')
+    // Model the browser losing focus when a recovery subscriber disables the composer.
+    const unsubscribe = useDesktopRuntimeRecoveryStore.subscribe((state) => {
+      if (state.phase !== 'connected') draft.blur()
+    })
+    try {
+      draft.focus()
+      await act(async () => publish({ phase: 'disconnected', epoch: 1, closing: false }))
+      expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Quit' }))
+      await act(async () => publish({ phase: 'reconnecting', epoch: 1, closing: false }))
+      await act(async () => publish({ phase: 'connected', epoch: 1, closing: false }))
+      await waitFor(() => expect(document.activeElement).toBe(draft))
+    } finally {
+      unsubscribe()
+    }
+  })
+
   it('keeps editable content mounted, announces loss, and disables repeated recovery while pending', async () => {
     render(
       <>
@@ -101,4 +127,24 @@ it('offers quit as the primary action when reconnection is unavailable', async (
   expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
   expect(screen.getByRole('button', { name: 'Quit' }).getAttribute('data-variant')).toBe('default')
   expect(screen.getByRole('status').textContent).toContain('may have completed')
+})
+
+it('leaves planned update shutdown to the update dialog, but exposes a failed handoff', () => {
+  window.api = {} as typeof window.api
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: true, epoch: 1 })
+  useUpdateStore.setState({ status: { state: 'applying', current: '1' } })
+  render(<DesktopRuntimeRecovery />)
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+  act(() => useUpdateStore.setState({ status: { state: 'error', current: '1' } }))
+  expect(screen.getByRole('alertdialog')).toBeTruthy()
+  cleanup()
+})
+
+it('does not hide an unexpected disconnect just because an update is preparing', () => {
+  window.api = {} as typeof window.api
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', closing: false, epoch: 1 })
+  useUpdateStore.setState({ status: { state: 'applying', current: '1' } })
+  render(<DesktopRuntimeRecovery />)
+  expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
+  cleanup()
 })

@@ -79,6 +79,7 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-startup-recovery.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "scripts/backend-dependencies.test.ts",

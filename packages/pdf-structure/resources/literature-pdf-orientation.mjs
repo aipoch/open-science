@@ -114,15 +114,17 @@ export const tableTextToken = (item, viewport, rotation) => {
   const [x, baseline] = viewport.convertToViewportPoint(item.transform[4], item.transform[5])
   const scale = Math.hypot(viewport.transform[0], viewport.transform[1])
   const horizontal = isUprightText(item, rotation)
+  const rect = horizontal
+    ? [x, baseline - item.height * scale, x + item.width * scale, baseline]
+    : rotatedTextRect(item, viewport)
   return {
     text: item.str,
     sourceItem: item.sourceItem,
+    ...(item.sourceSegment ? { sourceSegment: { ...item.sourceSegment, rect: [...rect] } } : {}),
     inlineSymbol: item.inlineSymbol === true,
     baseline,
     height: item.height * scale,
-    rect: horizontal
-      ? [x, baseline - item.height * scale, x + item.width * scale, baseline]
-      : rotatedTextRect(item, viewport),
+    rect,
     horizontal
   }
 }

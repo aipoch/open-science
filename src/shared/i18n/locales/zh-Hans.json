@@ -50,6 +50,17 @@
     "Quit app": "退出应用"
   },
   "native": {
+    "Local State is in use by another process.": "Local State 正被其他进程占用。",
+    "The Local State configuration file could not be read.": "无法读取 Local State 配置文件。",
+    "The Local State configuration file is invalid.": "Local State 配置文件无效。",
+    "The encryption key is missing from Local State.": "Local State 中缺少加密密钥。",
+    "The encryption key in Local State is invalid.": "Local State 中的加密密钥无效。",
+    "Local State changed during credential validation.": "凭据验证期间 Local State 发生了变化。",
+    "The Windows credential validator could not start.": "Windows 凭据验证程序无法启动。",
+    "The Windows credential validator timed out.": "Windows 凭据验证程序超时。",
+    "The Windows credential validator failed.": "Windows 凭据验证程序失败。",
+    "Windows credential validation is unavailable on this system.": "此系统无法进行 Windows 凭据验证。",
+    "Windows could not decrypt the existing credential key.": "Windows 无法解密现有凭据密钥。",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 系统凭据需要原来选定的 Secret Service 或 KWallet 后端以及 /usr/bin/busctl。请解锁原有的默认密钥环或钱包后重启。不要更改 password-store 后端或配置目录来绕过此检查。",
     "Credential storage needs recovery": "凭据存储需要恢复",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "此系统凭据后端不支持静默身份检查。为保留现有加密数据，启动已停止。",
@@ -142,9 +153,16 @@
     "Retry startup": "重试启动",
     "Open startup logs": "打开启动日志",
     "Could not open the logs folder.": "无法打开日志文件夹。",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。"
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。",
+    "Installing the Open-Science update…": "正在安装 Open-Science 更新…",
+    "Opening the updated Open-Science…": "正在打开更新后的 Open-Science…",
+    "The Open-Science update could not finish.": "未能完成 Open-Science 更新。",
+    "Close update window": "关闭更新窗口",
+    "The update status could not be confirmed. Closing this window does not stop installation.": "无法确认更新状态。关闭此窗口不会停止安装。"
   },
   "renderer": {
+    "Update preparation failed": "更新准备失败",
+    "The app is still open. Resolve the problem and try again, or cancel to continue working.": "应用仍保持打开。解决问题后重试，或取消更新以继续工作。",
     "Select one or more options": "选择一个或多个选项",
     "Your conversation is preserved. Try Resume again.": "您的会话已保留。请再次尝试恢复。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能体未能及时响应。您的会话已保留。请再次尝试恢复。",
@@ -166,6 +184,7 @@
     "Search PDC studies and versions by name or identifier.": "按名称或标识符搜索 PDC 研究及版本。",
     "Retrieve PDC study metadata and available versions.": "获取 PDC 研究元数据和可用版本。",
     "Map PDC aliquots to samples, cases and external references.": "将 PDC 等分试样映射到样本、病例和外部引用。",
+    "Retrieve PDC case demographics, diagnoses and sample references.": "获取 PDC 病例的人口统计信息、诊断和样本引用。",
     "Discover PDC study files and quantitative reports without downloading files.": "发现 PDC 研究文件和定量报告，不下载文件。",
     "Query linkage disequilibrium between two variants in a specified population.": "查询指定人群中两个变异之间的连锁不平衡。",
     "Find nearby variants in high linkage disequilibrium in a specified population.": "查找指定人群中具有高连锁不平衡的邻近变异。",
@@ -7195,7 +7214,7 @@
     "Checking unfinished tasks and whether the update can be installed.": "正在检查未完成的任务，以及能否安装更新。",
     "Finish your work in the other app and quit it from its application menu, then recheck.": "请在另一个应用中处理工作，并从应用菜单退出，然后重新检查。",
     "Force update…": "强制更新…",
-    "Installation has started and cannot be cancelled. The app will reopen after installation.": "安装已开始，不能取消。安装后应用会重新打开。",
+    "Installation has started and cannot be cancelled. This may take a few minutes. If your system asks for permission, approve the update to continue. The app will reopen when installation finishes.": "安装已开始，不能取消，可能需要几分钟。如果系统请求授权，请允许更新以继续。安装完成后应用会重新打开。",
     "Installation result is unknown": "安装结果尚未确认",
     "Installation starts only after shutdown has finished and its result is confirmed.": "只有完成关闭操作并确认结果后，才会开始安装。",
     "Installing update…": "正在安装更新…",
@@ -7276,6 +7295,8 @@
     "Waiting for browser…": "等待浏览器…",
     "Receiving package…": "正在接收研究包…",
     "Cancel transfer": "取消传输",
-    "Transfer cancelled": "传输已取消"
+    "Transfer cancelled": "传输已取消",
+    "Sign in to continue this conversation": "登录后继续此对话",
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。"
   }
 }

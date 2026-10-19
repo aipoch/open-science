@@ -1,3 +1,4 @@
+import type { WindowsInstallProgress } from './windows-install-progress'
 import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
@@ -791,6 +792,25 @@ describe('ElectronUpdaterStrategy', () => {
     await downloading
   })
 
+  it('Windows hands off to visible NSIS progress after the install gate', async () => {
+    const updater = new FakeUpdater()
+    const gate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const strategy = createStrategy({
+      platform: 'win32',
+      updater,
+      currentVersion: '1.0.0',
+      broadcast: vi.fn(),
+      installGate: gate
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(gate).toHaveBeenCalledOnce()
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(gate.mock.invocationCallOrder[0]).toBeLessThan(
+      updater.quitAndInstall.mock.invocationCallOrder[0]
+    )
+  })
+
   it('apply installs silently and relaunches (quitAndInstall(true, true))', async () => {
     const updater = new FakeUpdater()
     const log = createLogSpy()
@@ -1526,6 +1546,97 @@ describe('ElectronUpdaterStrategy', () => {
     // The retry's progress event should report fresh transferred, not stale bytes.
     expect(retry.downloadedBytes).toBe(5500)
     await first
+  })
+})
+
+describe('Windows update window handoff', () => {
+  it('keeps the application alive until the independent window acknowledges readiness', async () => {
+    const updater = new FakeUpdater()
+    let acknowledge!: (value: WindowsInstallProgress) => void
+    const startInstallProgress = vi.fn(
+      () =>
+        new Promise<WindowsInstallProgress>((resolve) => {
+          acknowledge = resolve
+        })
+    )
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress
+    })
+    await markUpdateReady(strategy, updater)
+    const apply = strategy.apply()
+    await vi.waitFor(() => expect(startInstallProgress).toHaveBeenCalledOnce())
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    acknowledge({
+      operationId: '00000000-0000-4000-8000-000000000001',
+      handoff: vi.fn(),
+      cancel: vi.fn()
+    })
+    await apply
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+  })
+
+  it('refuses installation before backend shutdown when the independent window cannot start', async () => {
+    const updater = new FakeUpdater()
+    const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
+    const releaseInstallHandoff = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      releaseInstallHandoff,
+      installGate,
+      startInstallProgress: async () => {
+        throw new Error('Window readiness failed')
+      }
+    })
+    await markUpdateReady(strategy, updater)
+    expect(await strategy.apply()).toMatchObject({
+      state: 'error',
+      reason: 'install-failed',
+      error: 'Window readiness failed'
+    })
+    expect(installGate).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+    expect(releaseInstallHandoff).toHaveBeenCalledOnce()
+    expect(currentApplicationShutdownTrigger()).not.toBe('update')
+  })
+
+  it('notifies the progress companion when installer handoff is uncertain', async () => {
+    const updater = new FakeUpdater()
+    const cancel = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress: async () => ({
+        operationId: '00000000-0000-4000-8000-000000000001',
+        handoff: vi.fn(),
+        cancel
+      })
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    updater.emit('error', new Error('Installer spawn failed'))
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(strategy.getStatus()).toMatchObject({ state: 'error' })
+  })
+
+  it('does not show an interactive window for non-relaunching updates', async () => {
+    const updater = new FakeUpdater()
+    const startInstallProgress = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform: 'win32',
+      broadcast: vi.fn(),
+      startInstallProgress
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply({ relaunch: false })
+    expect(startInstallProgress).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
   })
 })
 

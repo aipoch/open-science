@@ -50,6 +50,7 @@ for (const borrowed of [false, true])
           dialog.showErrorBox = () => undefined
         })
         const page = await app.firstWindow()
+        await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
         await expect
           .poll(() => page.evaluate(() => window.api?.databaseStartup.getState()), {
             timeout: 60_000

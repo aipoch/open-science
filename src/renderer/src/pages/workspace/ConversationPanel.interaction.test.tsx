@@ -1,3 +1,4 @@
+import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
 import {
   reportWorkspaceOperationError,
   clearWorkspaceOperationError
@@ -8249,6 +8250,72 @@ describe('ConversationPanel error box + report affordance', () => {
     container.querySelector('[aria-label="Report this error"]')
 
   const errorBoxText = (): string => container.querySelector('.border-red-200')?.textContent ?? ''
+
+  it.each(['composer', 'resume', 'legacy', 'turn'] as const)(
+    'opens Model settings for %s authentication failures without changing the conversation or draft',
+    (surface) => {
+      const openSettingsToPanel = vi.fn()
+      const changeDoc = vi.fn()
+      useSettingsStore.setState({ openSettingsToPanel })
+      const authenticationError = 'Authentication required'
+      const session: ChatSession = {
+        ...errorSession,
+        error: surface === 'legacy' ? authenticationError : undefined,
+        status: surface === 'legacy' ? 'error' : 'idle',
+        messages:
+          surface === 'turn'
+            ? [
+                {
+                  ...planOriginMessages()[0],
+                  turnOutcome: {
+                    kind: 'failed',
+                    settledAt: 2,
+                    error: authenticationError,
+                    errorReportable: true
+                  }
+                }
+              ]
+            : []
+      }
+      session.conversationGraph = materializeSessionConversationGraph(session).conversationGraph
+      const snapshot = structuredClone(session)
+      const doc = docFromText('Keep my research draft')
+      renderPanel({
+        view: {
+          activeSession: session,
+          actionError:
+            surface === 'resume' ? getResumeFailureMessage(new Error(authenticationError)) : null
+        },
+        composer: {
+          view: { doc, error: surface === 'composer' ? authenticationError : null },
+          actions: { changeDoc }
+        }
+      })
+
+      expect(container.textContent).toContain('Sign in to continue this conversation')
+      expect(container.textContent).not.toContain('Agent session resume failed:')
+      expect(reportButton()).toBeNull()
+      const button = Array.from(container.querySelectorAll('button')).find(
+        (candidate) => candidate.textContent === 'Model settings'
+      )
+      expect(button).toBeDefined()
+      act(() => button?.click())
+      expect(openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('model')
+      expect(changeDoc).not.toHaveBeenCalled()
+      expect(session).toEqual(snapshot)
+      expect(container.textContent).toContain('Keep my research draft')
+    }
+  )
+
+  it('keeps an independent run failure reportable beside an authentication notice', () => {
+    renderPanel({
+      view: { activeSession: errorSession },
+      composer: { view: { error: 'Authentication required' } }
+    })
+    expect(container.textContent).toContain('Sign in to continue this conversation')
+    expect(errorBoxText()).toContain(errorSession.error)
+    expect(reportButton()).not.toBeNull()
+  })
 
   it('reports the clicked historical failure while the current turn is non-reportable and preserves the snapshot across navigation', () => {
     const historicalError = 'Historical opaque failure.'

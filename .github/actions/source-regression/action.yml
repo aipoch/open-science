@@ -2,11 +2,14 @@ name: Source desktop regression
 description: Shared supplemental Electron execution for PRs and scheduled main verification
 inputs:
   group:
-    description: Supplemental suite (regressions or delegation)
+    description: Supplemental suite (regressions, capacity or delegation)
     required: true
   include-capacity:
     description: Include nightly capacity profiling ('true' or 'false'; every caller sets it)
     default: 'true'
+  shard:
+    description: Optional ordinary regression shard (1/3, 2/3 or 3/3)
+    default: ''
 runs:
   using: composite
   steps:
@@ -16,19 +19,21 @@ runs:
         GROUP: ${{ inputs.group }}
       run: |
         case "$GROUP" in
-          regressions|delegation) ;;
+          regressions|capacity|delegation) ;;
           *) echo "Unsupported supplemental suite: $GROUP" >&2; exit 1 ;;
         esac
     - name: Install headless Chromium
-      if: inputs.group == 'regressions'
+      if: inputs.group == 'regressions' || inputs.group == 'capacity'
       shell: bash
       run: npx playwright install chromium --only-shell
     # Separate output directories retain the first suite's traces/screenshots when a scheduled
     # runner executes the second suite in the same workspace.
     - name: Run supplemental regressions
-      if: inputs.group == 'regressions'
+      if: inputs.group == 'regressions' || inputs.group == 'capacity'
       shell: bash
       env:
+        GROUP: ${{ inputs.group }}
+        SHARD: ${{ inputs.shard }}
         INCLUDE_CAPACITY: ${{ inputs.include-capacity }}
         PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/regressions_macos
         PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/regressions_macos.json
@@ -36,13 +41,21 @@ runs:
         args=()
         regression_timeout=1200000
         case "$INCLUDE_CAPACITY" in
-          # The 211-test scheduled suite reached only test 168 in 50 minutes.
-          # Allow 75 minutes for the complete serial suite and teardown.
+          # Preserve unsharded callers; complete scheduled runs now isolate capacity and shards.
           true) regression_timeout=4500000 ;;
           false) args+=(--grep-invert '@capacity') ;;
           *) echo "Invalid capacity selection" >&2; exit 1 ;;
         esac
-        : "${regression_timeout:=1200000}"
+        if [[ "$GROUP" == capacity ]]; then
+          args=(--grep '@capacity')
+          regression_timeout=1800000
+          [[ -z "$SHARD" ]] || { echo 'Capacity must not use regression shards' >&2; exit 1; }
+        elif [[ -n "$SHARD" ]]; then
+          case "$SHARD" in
+            1/3|2/3|3/3) args+=(--shard="$SHARD"); regression_timeout=1800000 ;;
+            *) echo 'Invalid regression shard' >&2; exit 1 ;;
+          esac
+        fi
         npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos "${args[@]}"
     - name: Run supplemental delegation
       if: inputs.group == 'delegation'

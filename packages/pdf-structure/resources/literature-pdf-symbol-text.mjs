@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { OPS, Util } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { measuredSourceRanges } from './literature-pdf-source-segments.mjs'
 import {
   joinHorizontalTableRules,
   clusterTableRulePositions,
@@ -555,7 +556,8 @@ export function splitPdfNumericRuns(content, operators, context) {
         (joined
           ? joined.slice(1)
           : (counted ?? [...item.str.matchAll(/\d+(?:\.\d+)?\s*\(\d+\/\d+\)/g)].map((m) => m[0])))
-      const parts = fragments.map((text) => {
+      const sourceRanges = measuredSourceRanges(item, fragments)
+      const parts = fragments.map((text, fragmentIndex) => {
         const count = Array.from(text.replace(/\s/gu, '')).length,
           a = glyphs[cursor],
           b = glyphs[cursor + count - 1]
@@ -565,6 +567,7 @@ export function splitPdfNumericRuns(content, operators, context) {
           str: text,
           // These fragments no longer own the complete original PDF text item.
           sourceItem: undefined,
+          sourceSegment: sourceRanges?.[fragmentIndex],
           width: (b.end - a.start) * scale,
           transform: [
             ...item.transform.slice(0, 4),

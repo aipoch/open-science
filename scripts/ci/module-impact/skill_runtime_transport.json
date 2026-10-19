@@ -172,6 +172,7 @@
       "src/main/connectors/service.test.ts",
       "src/main/connectors/skill-doc.test.ts",
       "src/main/credential-identity/ciphertext-inventory.test.ts",
+      "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/linux.test.ts",
       "src/main/credential-identity/macos.test.ts",
       "src/main/credential-identity/persistence.test.ts",
