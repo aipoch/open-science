@@ -430,7 +430,6 @@ it.each([
   consumer,
   'docs/example.ts',
   'docs/config.json',
-  'src/main/icon.svg',
   'package.json',
   'package-lock.json',
   'tsconfig.json',
@@ -456,7 +455,7 @@ it.each([
 })
 
 it.each(['owner', 'runtime target', 'runtime consumer'])(
-  'retains checks for documentation registered as a %s',
+  'accepts unchanged dependencies when resource content is registered as a %s',
   (role) => {
     const f = repository()
     const asset = 'docs/icon.svg'
@@ -472,9 +471,45 @@ it.each(['owner', 'runtime target', 'runtime consumer'])(
     f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
     const base = f.commit()
     f.put(asset, '<svg><!-- changed --></svg>')
-    expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow('Stale')
+    expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).not.toThrow()
   }
 )
+
+it.each([
+  'LICENSE',
+  'packages/example/README.md',
+  'resources/templates/report.html',
+  'resources/templates/report.tex',
+  'src/renderer/src/theme.css',
+  'src/renderer/src/icon.svg',
+  'test/fixtures/example.bin'
+])('handles non-source resource changes outside documentation: %s', (path) => {
+  const f = repository()
+  f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
+  const base = f.commit()
+  f.put(path, 'Static content')
+  const added = f.commit()
+  expect(() => checkDerivedConsumerRevisions(base, added, f.root)).not.toThrow()
+  f.put(path, 'Updated static content')
+  const modified = f.commit()
+  expect(() => checkDerivedConsumerRevisions(added, modified, f.root)).not.toThrow()
+  rmSync(join(f.root, path))
+  expect(() => checkDerivedConsumerRevisions(modified, f.commit(), f.root)).not.toThrow()
+})
+
+it.each(['target', 'consumer'])('rejects deleting a declared runtime %s resource', (role) => {
+  const f = repository()
+  const resource = 'resources/worker.bin'
+  f.put(resource, 'Runtime resource')
+  const edges = role === 'target' ? { [resource]: [consumer] } : { [owner]: [resource] }
+  f.put('scripts/ci/module-runtime-consumers.json', JSON.stringify(edges))
+  runDerivedConsumersCli(['--write'], f.root)
+  const base = f.commit()
+  rmSync(join(f.root, resource))
+  expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow(
+    'Invalid runtime consumer edge'
+  )
+})
 
 it('does not hide a source deletion behind a rename into documentation', () => {
   const f = repository()

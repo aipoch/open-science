@@ -4,7 +4,11 @@ import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
-import { createConsumerDependencyReader, sourceSnapshot } from './consumer-retirement.mjs'
+import {
+  createConsumerDependencyReader,
+  isConsumerSourcePath,
+  sourceSnapshot
+} from './consumer-retirement.mjs'
 import {
   loadModuleImpactManifest,
   loadModuleImpactManifestAtRevision
@@ -84,37 +88,22 @@ export function checkDerivedConsumersAtRevision(revision, cwd = process.cwd()) {
   checkDerivedConsumers(source, loadModuleImpactManifestAtRevision(revision, { cwd }))
 }
 
-function onlyUnrelatedDocumentationChanged(base, head, cwd) {
+function derivedConsumerInputsUnchanged(base, head, cwd) {
   const git = (...args) =>
     execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
   // Disable rename detection so both the old and new paths must qualify.
   const paths = git('diff', '--no-renames', '--name-only', '-z', base, head)
     .split('\0')
     .filter(Boolean)
-  if (
-    !paths.length ||
-    !paths.every((path) =>
-      /^(?:[^/]+\.md|docs\/.*\.(?:md|txt|svg|png|jpe?g|gif|webp|avif|ico))$/.test(path)
-    )
-  )
-    return false
+  if (!paths.length || paths.some(isConsumerSourcePath)) return false
 
-  // These manifests cannot change in a documentation-only diff. Registered resources
-  // and runtime intermediates remain graph inputs even when they live under docs/.
+  // Reuse the reader's input boundary, not a documentation directory/extension allowlist.
+  // Source text, JSON configuration, registrations and the index itself are unchanged.
   const manifest = loadModuleImpactManifestAtRevision(base, { cwd })
   const runtime = JSON.parse(git('show', `${base}:scripts/ci/module-runtime-consumers.json`))
-  const inputs = new Set([
-    ...Object.values(manifest.modules).flatMap((module) => [
-      ...module.ownerPaths,
-      ...module.interfacePaths,
-      ...Object.values(module.testFiles).flat()
-    ]),
-    ...Object.entries(runtime).flatMap(([target, consumers]) => [target, ...consumers])
-  ])
-  if (paths.some((path) => inputs.has(path))) return false
 
-  // An added/deleted image can shadow a TypeScript import (icon.svg.ts). Prove that
-  // generated memberships are unchanged instead of assuming docs paths are inert.
+  // Resource presence still affects import resolution and runtime edges. Recompute both
+  // snapshots to catch additions/deletions, including images shadowing icon.svg.ts.
   const expectedAt = (revision) =>
     generateDerivedConsumers(
       manifest,
@@ -135,7 +124,7 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
     encoding: 'utf8'
   }).trim()
   if (hasIndex(mergeBase) || hasIndex(head)) {
-    if (onlyUnrelatedDocumentationChanged(mergeBase, head, cwd)) return
+    if (derivedConsumerInputsUnchanged(mergeBase, head, cwd)) return
     checkDerivedConsumersAtRevision(head, cwd)
   }
 }
