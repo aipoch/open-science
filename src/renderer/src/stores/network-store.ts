@@ -75,6 +75,18 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
               return
             }
           }
+          // Electron can report runtime ready before the backend finishes composing its
+          // RPC owners. Database startup publishes ready only after that composition.
+          const backendStartup = window.api?.databaseStartup
+          if (backendStartup) {
+            const state = await readWithDeadline(backendStartup.getState, 10_000)
+            if (probeGeneration !== generation || useDesktopRuntimeRecoveryStore.getState().closing)
+              return
+            if (state.phase !== 'ready') {
+              set({ connectivity: get().isOnline ? 'unknown' : 'unreachable' })
+              return
+            }
+          }
           if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') {
             throw new Error('Backend unavailable for network check.')
           }
@@ -152,6 +164,9 @@ export const startNetworkMonitor = (): void => {
   monitorStarted = true
 
   window.api?.runtimeStartup?.onStateChanged(() => {
+    void useNetworkStore.getState().probeConnectivity({ invalidate: true })
+  })
+  window.api?.databaseStartup?.onStateChanged(() => {
     void useNetworkStore.getState().probeConnectivity({ invalidate: true })
   })
 

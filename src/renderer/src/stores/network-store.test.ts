@@ -369,20 +369,213 @@ describe('probeConnectivity', () => {
     expect(reportRendererFailure).not.toHaveBeenCalled()
   })
 
-  it.each([false, 'rejected'] as const)(
+  it('waits for backend composition even after the desktop runtime reports ready', async () => {
+    let ready = false
+    let stateChanged!: () => void
+    const checkConnectivity = vi.fn(async () => {
+      if (!ready) return new Promise<boolean>(() => {})
+      return true
+    })
+    const reportRendererFailure = vi.fn()
+    ;(window as unknown as { api: unknown }).api = {
+      runtimeStartup: {
+        getState: async () => ({ phase: 'ready' }),
+        onStateChanged: () => () => {}
+      },
+      databaseStartup: {
+        getState: async () => ({ phase: ready ? 'ready' : 'starting' }),
+        onStateChanged: (listener: typeof stateChanged) => {
+          stateChanged = listener
+          return () => {}
+        }
+      },
+      network: { checkConnectivity },
+      diagnostics: { reportRendererFailure }
+    }
+    vi.resetModules()
+    const { startNetworkMonitor: start, useNetworkStore: store } = await import('./network-store')
+    start()
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(store.getState().connectivity).toBe('unknown')
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    expect(reportRendererFailure).not.toHaveBeenCalled()
+
+    ready = true
+    stateChanged()
+    await vi.advanceTimersByTimeAsync(500)
+    expect(checkConnectivity).toHaveBeenCalledOnce()
+    expect(store.getState().connectivity).toBe('reachable')
+    expect(reportRendererFailure).not.toHaveBeenCalled()
+  })
+
+  it('rechecks backend readiness after retry and discards the previous network result', async () => {
+    let phase = 'ready'
+    let stateChanged!: () => void
+    let finish!: (value: boolean) => void
+    const checkConnectivity = vi
+      .fn()
+      .mockImplementationOnce(() => new Promise<boolean>((resolve) => (finish = resolve)))
+      .mockResolvedValue(true)
+    ;(window as unknown as { api: unknown }).api = {
+      databaseStartup: {
+        getState: async () => ({ phase }),
+        onStateChanged: (listener: typeof stateChanged) => {
+          stateChanged = listener
+          return () => {}
+        }
+      },
+      network: { checkConnectivity }
+    }
+    vi.resetModules()
+    const { startNetworkMonitor: start, useNetworkStore: store } = await import('./network-store')
+    start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(checkConnectivity).toHaveBeenCalledOnce()
+
+    for (phase of ['blocked', 'checking', 'migrating', 'starting']) {
+      stateChanged()
+      await vi.advanceTimersByTimeAsync(0)
+      expect(checkConnectivity).toHaveBeenCalledOnce()
+      expect(store.getState().connectivity).toBe('unknown')
+    }
+    finish(false)
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.getState().connectivity).toBe('unknown')
+    phase = 'ready'
+    stateChanged()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(checkConnectivity).toHaveBeenCalledTimes(2)
+    expect(store.getState().connectivity).toBe('reachable')
+  })
+
+  it('discards a stale backend readiness read after a newer startup event', async () => {
+    let stateChanged!: () => void
+    let finish!: (state: { phase: 'ready' }) => void
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    ;(window as unknown as { api: unknown }).api = {
+      databaseStartup: {
+        getState: vi
+          .fn()
+          .mockImplementationOnce(() => new Promise((resolve) => (finish = resolve)))
+          .mockResolvedValue({ phase: 'starting' }),
+        onStateChanged: (listener: typeof stateChanged) => {
+          stateChanged = listener
+          return () => {}
+        }
+      },
+      network: { checkConnectivity }
+    }
+    vi.resetModules()
+    const { startNetworkMonitor: start, useNetworkStore: store } = await import('./network-store')
+    start()
+    stateChanged()
+    await vi.advanceTimersByTimeAsync(0)
+    finish({ phase: 'ready' })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    expect(store.getState().connectivity).toBe('unknown')
+  })
+
+  it('bounds backend readiness reads without preventing a later retry', async () => {
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    ;(window as unknown as { api: unknown }).api = {
+      databaseStartup: {
+        getState: vi
+          .fn()
+          .mockImplementationOnce(() => new Promise(() => {}))
+          .mockResolvedValue({ phase: 'ready' })
+      },
+      network: { checkConnectivity }
+    }
+    vi.resetModules()
+    const { useNetworkStore: store } = await import('./network-store')
+    const pending = store.getState().probeConnectivity()
+    await vi.advanceTimersByTimeAsync(10_001)
+    await pending
+    expect(store.getState().connectivity).toBe('probe-failed')
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    await store.getState().probeConnectivity()
+    expect(store.getState().connectivity).toBe('reachable')
+  })
+
+  it.each(['offline', 'closing'] as const)(
+    'does not probe when the app becomes %s during backend readiness lookup',
+    async (transition) => {
+      let finish!: (state: { phase: 'ready' }) => void
+      const checkConnectivity = vi.fn().mockResolvedValue(true)
+      const reportRendererFailure = vi.fn()
+      ;(window as unknown as { api: unknown }).api = {
+        databaseStartup: {
+          getState: () => new Promise((resolve) => (finish = resolve))
+        },
+        network: { checkConnectivity },
+        diagnostics: { reportRendererFailure }
+      }
+      vi.resetModules()
+      const { useNetworkStore: store } = await import('./network-store')
+      const { useDesktopRuntimeRecoveryStore: recovery } =
+        await import('./desktop-runtime-recovery-store')
+      const pending = store.getState().probeConnectivity()
+      if (transition === 'offline') {
+        setNavigatorOnline(false)
+        store.getState().recheckOnline()
+      } else {
+        recovery.setState({ closing: true })
+      }
+      finish({ phase: 'ready' })
+      await pending
+      expect(checkConnectivity).not.toHaveBeenCalled()
+      expect(reportRendererFailure).not.toHaveBeenCalled()
+      expect(store.getState().connectivity).toBe('unknown')
+    }
+  )
+
+  it('recovers from a rejected backend readiness lookup on the next ready event', async () => {
+    let stateChanged!: () => void
+    const checkConnectivity = vi.fn().mockResolvedValue(true)
+    ;(window as unknown as { api: unknown }).api = {
+      databaseStartup: {
+        getState: vi
+          .fn()
+          .mockRejectedValueOnce(new Error('Startup bridge temporarily unavailable.'))
+          .mockResolvedValue({ phase: 'ready' }),
+        onStateChanged: (listener: typeof stateChanged) => {
+          stateChanged = listener
+          return () => {}
+        }
+      },
+      network: { checkConnectivity }
+    }
+    vi.resetModules()
+    const { startNetworkMonitor: start, useNetworkStore: store } = await import('./network-store')
+    start()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.getState().connectivity).toBe('probe-failed')
+    expect(checkConnectivity).not.toHaveBeenCalled()
+    stateChanged()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(store.getState().connectivity).toBe('reachable')
+    expect(checkConnectivity).toHaveBeenCalledOnce()
+  })
+
+  it.each([false, 'rejected', 'timeout'] as const)(
     'preserves the actual network outcome %s after startup is ready',
     async (result) => {
       const checkConnectivity = vi.fn(async () => {
         if (result === 'rejected') throw new Error('Network probe failed.')
+        if (result === 'timeout') return new Promise<boolean>(() => {})
         return result
       })
       ;(window as unknown as { api: unknown }).api = {
         runtimeStartup: { getState: async () => ({ phase: 'ready' }) },
+        databaseStartup: { getState: async () => ({ phase: 'ready' }) },
         network: { checkConnectivity }
       }
       vi.resetModules()
       const { useNetworkStore: store } = await import('./network-store')
-      await store.getState().probeConnectivity()
+      const probe = store.getState().probeConnectivity()
+      await vi.advanceTimersByTimeAsync(10_001)
+      await probe
       expect(checkConnectivity).toHaveBeenCalledOnce()
       expect(store.getState().connectivity).toBe(result === false ? 'unreachable' : 'probe-failed')
     }
