@@ -1196,3 +1196,103 @@ it('leaves an unproven numeric continuation untouched when prose interrupts owne
   const result = refineTable(raw, items)
   expect(result.repairs).not.toContain('native-centered-numeric-rows-recovered')
 })
+
+function occupiedNativeHeader(): {
+  table: { cropRect: number[]; structure: { objects: Array<{ label: string; rect: number[] }> } }
+  source: Array<
+    ReturnType<typeof token> & { sourceItem: { pageNumber: number; index: number; text: string } }
+  >
+  rules: number[][]
+} {
+  const table = {
+    cropRect: [0, 0, 450, 100],
+    structure: {
+      objects: [
+        ...[0, 120, 200, 300].map((x, i, cuts) => ({
+          label: 'table column',
+          rect: [x, 0, cuts[i + 1] ?? 450, 100]
+        })),
+        { label: 'table column header', rect: [0, 40, 450, 54] },
+        { label: 'table row', rect: [0, 40, 450, 60] },
+        { label: 'table row', rect: [0, 70, 450, 90] }
+      ]
+    }
+  }
+  const fields: Array<[string, number, number, number]> = [
+    ['Type', 10, 10, 50],
+    ['Quality', 130, 10, 50],
+    ['Level', 140, 22, 50],
+    ['Effort', 210, 10, 88],
+    ['Cost', 230, 22, 30],
+    ['Usage', 302, 10, 50],
+    ['Alpha', 10, 44, 50],
+    ['High', 130, 44, 50],
+    ['Low', 210, 44, 50],
+    ['Wide', 310, 44, 50],
+    ['Beta', 10, 74, 50],
+    ['Low', 130, 74, 50],
+    ['High', 210, 74, 50],
+    ['Local', 310, 74, 50]
+  ]
+  const source = fields.map(([text, x, y, width], index) => ({
+    ...token(text, x, y),
+    rect: [x, y, x + width, y + 10],
+    sourceItem: { pageNumber: 1, index, text }
+  }))
+  return {
+    table,
+    source,
+    rules: [
+      [0, 5, 450, 5],
+      [0, 35, 450, 35],
+      [0, 95, 450, 95]
+    ]
+  }
+}
+
+it('keeps wrapped native header leaves in every occupied column', () => {
+  const { table, source, rules } = occupiedNativeHeader()
+  const result = refineTable(table, source, [], [], rules)
+  expect(result.grid).toEqual([
+    ['Type', 'Quality Level', 'Effort Cost', 'Usage'],
+    ['Alpha', 'High', 'Low', 'Wide'],
+    ['Beta', 'Low', 'High', 'Local']
+  ])
+  expect(
+    result.cells
+      .flatMap(
+        (cell: { sourceItems?: Array<{ index: number; text: string }> }) => cell.sourceItems ?? []
+      )
+      .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+  ).toEqual(source.map((item) => item.sourceItem))
+  expect(result.unassigned).toEqual([])
+})
+
+it.each(['crossing value leaf', 'crossing first leaf', 'missing first leaf'])(
+  'does not infer independent header ownership from a %s',
+  (fault) => {
+    const { table, source, rules } = occupiedNativeHeader()
+    if (fault === 'crossing value leaf') source[3].rect[2] = 301
+    if (fault === 'crossing first leaf') source[0].rect[2] = 121
+    if (fault === 'missing first leaf') source.shift()
+    const result = refineTable(table, source, [], [], rules)
+    expect(result.grid[0]).toEqual(
+      fault === 'crossing value leaf'
+        ? ['Type', 'Quality Level', '', 'EffortUsage Cost']
+        : fault === 'crossing first leaf'
+          ? ['', 'Type Quality Level', '', 'Effort Usage Cost']
+          : ['', 'Quality Level', 'Effort Cost', 'Usage']
+    )
+    expect(result.grid.slice(1)).toEqual([
+      ['Alpha', 'High', 'Low', 'Wide'],
+      ['Beta', 'Low', 'High', 'Local']
+    ])
+    expect(
+      result.cells
+        .flatMap(
+          (cell: { sourceItems?: Array<{ index: number; text: string }> }) => cell.sourceItems ?? []
+        )
+        .sort((a: { index: number }, b: { index: number }) => a.index - b.index)
+    ).toEqual(source.map((item) => item.sourceItem))
+  }
+)

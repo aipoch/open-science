@@ -2,6 +2,8 @@
 import { captionKind } from './literature-pdf-caption-group.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { tableTextToken } from './literature-pdf-orientation.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+import { rebaseTableCrop } from './literature-pdf-table-geometry.mjs'
 import { proveNativeCompleteRuledSourcePacket } from './literature-pdf-native-leaf-record-repair.mjs'
 import {
   readSourceRow,
@@ -14,7 +16,9 @@ import {
 // physical baselines establish header ownership. Font boxes may touch a rule;
 // their baseline must remain in the same uniquely bounded physical band.
 export function recoverNativeHeaderOwnershipGrid(table, items, captions, rules) {
-  const plan = recoverHeaderOwnershipPlan(table, items, captions, rules)
+  const titleCrop = recoverClosedTitleCrop(table, items, captions, rules)
+  if (titleCrop) table = rebaseTableCrop(table, titleCrop)
+  const plan = recoverHeaderOwnershipPlan(table, items, captions, rules, Boolean(titleCrop))
   if (!plan) return
   const ink = [...plan.ownedTokens]
   const frameInk = plan.cropRect.map((v, n) =>
@@ -39,6 +43,113 @@ export function recoverNativeHeaderOwnershipGrid(table, items, captions, rules) 
   if (external.some((i) => i.baseline < plan.cropRect[1])) cropRect[1] = frameInk[1]
   if (external.some((i) => i.baseline > plan.cropRect[3])) cropRect[3] = frameInk[3]
   return { ...plan, cropRect, repair: 'native-body-records-recovered' }
+}
+
+// A title above the detector opening is admitted only when the same complete
+// native header/body plan owns its independently closed band. Crop expansion
+// alone cannot establish either its table or its full-width scope.
+function recoverClosedTitleCrop(table, items, captions, rules) {
+  const crop = table.cropRect
+  const candidates = joinHorizontalTableRules(rules).filter(
+    (r) => r[1] < crop[1] && r[0] >= crop[0] && r[2] <= crop[2]
+  )
+  const answers = []
+  for (const opening of candidates) {
+    const title = items.filter(
+      (i) =>
+        i.text.trim() &&
+        i.rect[0] < opening[2] &&
+        i.rect[2] > opening[0] &&
+        i.rect[1] > opening[1] &&
+        i.rect[3] < crop[1]
+    )
+    if (
+      title.length !== 1 ||
+      crop[1] - opening[1] > title[0].height * 2 ||
+      !proveNativeUniqueWholeFonts(title, items)
+    )
+      continue
+    const nextCrop = [crop[0], opening[1], crop[2], crop[3]]
+    const plan = recoverHeaderOwnershipPlan(
+      rebaseTableCrop(table, nextCrop),
+      items,
+      captions,
+      rules,
+      true
+    )
+    if (
+      !plan ||
+      plan.headerRows.length !== 3 ||
+      !plan.ownedTokens.has(title[0]) ||
+      !plan.spans.some(
+        (s) => s.row === 0 && s.column === 0 && s.rowSpan === 1 && s.colSpan === plan.columns.length
+      ) ||
+      plan.rows[0][1] !== opening[1] ||
+      title[0].rect[3] >= plan.rows[0][3]
+    )
+      continue
+    answers.push(nextCrop)
+  }
+  if (answers.length === 1) return answers[0]
+}
+
+function recoverClosedTitleHeader(source, inventory, cuts, rules, top, bottom) {
+  if (!source.length || !proveNativeUniqueWholeFonts(source, inventory)) return
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= top &&
+        r[1] < bottom &&
+        Math.abs(r[0] - cuts[0]) <= 0.101 &&
+        Math.abs(r[2] - cuts.at(-1)) <= 0.101
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length !== 2 ||
+    full[0][1] !== top ||
+    full[0][0] !== full[1][0] ||
+    full[0][2] !== full[1][2]
+  )
+    return
+  const split = full[1][1],
+    title = source.filter((i) => i.rect[3] < split),
+    children = source.filter((i) => i.rect[1] > split)
+  if (
+    title.length !== 1 ||
+    children.length + 1 !== source.length ||
+    title[0].rect[1] <= top ||
+    title[0].rect[0] <= full[0][0] ||
+    title[0].rect[2] >= full[0][2] ||
+    !/\p{L}/u.test(title[0].text) ||
+    Math.abs((title[0].rect[0] + title[0].rect[2] - full[0][0] - full[0][2]) / 2) >
+      title[0].height ||
+    rules.some(
+      (r) => r[0] === r[2] && r[0] > full[0][0] && r[0] < full[0][2] && r[1] < split && r[3] > top
+    )
+  )
+    return
+  const owned = new Set(source)
+  if (
+    inventory.some(
+      (i) =>
+        i.text.trim() &&
+        !owned.has(i) &&
+        i.rect[0] < full[0][2] &&
+        i.rect[2] > full[0][0] &&
+        i.rect[1] < bottom &&
+        i.rect[3] > top
+    )
+  )
+    return
+  const child = recoverRuledHeaderBands(children, cuts, rules, split, bottom)
+  if (child?.rows.length !== 2 || child.spans.filter((s) => s.colSpan > 1).length < 2) return
+  return {
+    rows: [[cuts[0], top, cuts.at(-1), split], ...child.rows],
+    spans: [
+      { row: 0, column: 0, rowSpan: 1, colSpan: cuts.length - 1 },
+      ...child.spans.map((s) => ({ ...s, row: s.row + 1 }))
+    ]
+  }
 }
 
 // This independent proof runs on original whole fonts, before measured token
@@ -86,6 +197,14 @@ export function recoverNativeTwoTierParentHeaderGrid(table, items, captions, rul
     return
   const pairedUnderlined = recoverClosedPairedUnderlinedHeader(table, context, rules, nativeContext)
   if (pairedUnderlined) return { ...pairedUnderlined, repair: 'native-body-records-recovered' }
+  const singleUnderlined = recoverClosedSingleUnderlinedHeader(
+    table,
+    items,
+    context,
+    rules,
+    nativeContext
+  )
+  if (singleUnderlined) return { ...singleUnderlined, repair: 'native-body-records-recovered' }
   if (!Array.isArray(table.structure?.objects)) return
   const columns = table.structure.objects
     .filter((o) => o.label === 'table column')
@@ -568,6 +687,104 @@ function recoverClosedPairedUnderlinedHeader(table, context, rules, nativeContex
   return plan
 }
 
+// A shortened native underline can stop inside the outer leaf fonts. Admit
+// that case only when complete repeated records independently establish every
+// leaf lane and the stroke selects the same contiguous lanes in every record.
+function recoverClosedSingleUnderlinedHeader(table, items, context, rules, nativeContext) {
+  const { source, frame, height } = context
+  const parents = rules.filter(
+    (r) =>
+      r[1] === r[3] &&
+      r[0] > frame[0] &&
+      r[2] < frame[2] &&
+      r[1] > frame[1] + height * 0.5 &&
+      r[1] < frame[1] + height * 3
+  )
+  if (
+    parents.length !== 1 ||
+    !proveNativeCompleteRuledSourcePacket(source, rules, nativeContext, frame)
+  )
+    return
+  const references = items.flatMap((i) =>
+    [
+      i.sourceItem,
+      i.sourceSegment,
+      i.sourceToken,
+      i.sourceToken?.sourceItem,
+      i.sourceToken?.sourceSegment
+    ].filter(Boolean)
+  )
+  if (
+    source.some(
+      (i) =>
+        i.sourceToken ||
+        i.sourceSegment ||
+        references.filter(
+          (o) => o.pageNumber === i.sourceItem.pageNumber && o.index === i.sourceItem.index
+        ).length !== 1
+    )
+  )
+    return
+  const plan = recoverUnderlinedSourceLeafGrid(context, rules, undefined, true)
+  const columns = table.structure?.objects
+    ?.filter((o) => o.label === 'table column')
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (
+    !plan ||
+    columns?.length !== plan.columns.length ||
+    columns.some((c) => !c.rect?.every(Number.isFinite))
+  )
+    return
+  const parent = plan.spans.filter((s) => s.colSpan > 1)
+  if (parent.length !== 1) return
+  const { column: start, colSpan: count } = parent[0],
+    stroke = parents[0]
+  const cuts = [plan.columns[0][0], ...plan.columns.map((c) => c[2])]
+  const oldCuts = [
+    frame[0] - 0.1,
+    ...columns.slice(1).map((c, n) => table.cropRect[0] + (columns[n].rect[2] + c.rect[0]) / 2),
+    frame[2] + 0.1
+  ]
+  if (oldCuts.some((x, n) => !Number.isFinite(x) || (n && x <= oldCuts[n - 1]))) return
+  const center = (i) => (i.rect[0] + i.rect[2]) / 2
+  const owner = (i, xs) => xs.slice(1).findIndex((x) => center(i) < x)
+  const leaves = source.filter((i) => i.baseline > stroke[1])
+  const lanes = plan.columns.map((_, c) => leaves.filter((i) => owner(i, cuts) === c))
+  if (
+    lanes.some((g) => !g.length) ||
+    leaves.some((i) => {
+      const c = owner(i, cuts)
+      return (
+        c < 0 ||
+        i.rect[0] < cuts[c] ||
+        i.rect[2] > cuts[c + 1] ||
+        (i.baseline > plan.rows[1][3] && owner(i, oldCuts) !== c)
+      )
+    })
+  )
+    return
+  for (const [edge, c] of [
+    [stroke[0], start],
+    [stroke[2], start + count - 1]
+  ])
+    if (
+      edge < Math.min(...lanes[c].map((i) => i.rect[0])) ||
+      edge > Math.max(...lanes[c].map((i) => i.rect[2]))
+    )
+      return
+  for (const row of plan.rows.slice(2)) {
+    const record = leaves.filter((i) => i.baseline > row[1] && i.baseline <= row[3])
+    for (let c = 0; c < lanes.length; c++) {
+      const group = record.filter((i) => owner(i, cuts) === c)
+      if (!group.length) return
+      const mid =
+        (Math.min(...group.map((i) => i.rect[0])) + Math.max(...group.map((i) => i.rect[2]))) / 2
+      if ((mid > stroke[0] && mid < stroke[2]) !== (c >= start && c < start + count)) return
+    }
+  }
+  return plan
+}
+
 function proveTwoTierWholeFontPacket(source, frame, context) {
   const raw = context?.sourceContent,
     v = context?.viewport,
@@ -697,7 +914,7 @@ function proveTwoTierWholeCaption(caption, items, original) {
   )
 }
 
-function proveNativeHeaderFrame(table, items, captions, rules) {
+function proveNativeHeaderFrame(table, items, captions, rules, closedTitle = false) {
   const crop = table.cropRect
   if (!crop?.every(Number.isFinite)) return
   const near = items.filter(
@@ -769,7 +986,7 @@ function proveNativeHeaderFrame(table, items, captions, rules) {
   const candidates = aboveCandidates.length
     ? aboveCandidates
     : captions.filter((c) => belowParts.has(c) && c.rect[0] < frame[2] && c.rect[2] > frame[0])
-  if (candidates.length !== 1) return
+  if (candidates.length !== 1 && !(closedTitle && candidates.length === 0)) return
   const intersects = items.filter(
     (i) =>
       i.horizontal &&
@@ -778,7 +995,7 @@ function proveNativeHeaderFrame(table, items, captions, rules) {
       i.rect[2] > frame[0] &&
       i.rect[1] < frame[3] &&
       i.rect[3] > frame[1] &&
-      !(belowParts.get(candidates[0])?.has(i) || contains(candidates[0].rect, i))
+      !(belowParts.get(candidates[0])?.has(i) || (candidates[0] && contains(candidates[0].rect, i)))
   )
   const source = intersects
     .filter(
@@ -795,7 +1012,11 @@ function proveNativeHeaderFrame(table, items, captions, rules) {
         i.rect[3] <= frame[3] + 0.1
     )
     .sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0])
-  if (source.length !== intersects.length) return
+  if (
+    source.length !== intersects.length ||
+    (closedTitle && !proveNativeUniqueWholeFonts(source, items))
+  )
+    return
   return {
     crop,
     height,
@@ -808,10 +1029,10 @@ function proveNativeHeaderFrame(table, items, captions, rules) {
   }
 }
 
-function recoverHeaderOwnershipPlan(table, items, captions, rules) {
-  const compound = recoverAboveCaptionPhysicalLeaves(table, items, captions, rules)
+function recoverHeaderOwnershipPlan(table, items, captions, rules, closedTitle = false) {
+  const compound = !closedTitle && recoverAboveCaptionPhysicalLeaves(table, items, captions, rules)
   if (compound) return compound
-  const context = proveNativeHeaderFrame(table, items, captions, rules)
+  const context = proveNativeHeaderFrame(table, items, captions, rules, closedTitle)
   if (!context) return
   if (context.belowCaption) return recoverCompoundPhysicalLeafGrid(table, context)
   const grouped = recoverCenteredGroupStubGrid(table, context)
@@ -884,8 +1105,15 @@ function recoverHeaderOwnershipPlan(table, items, captions, rules) {
       r[1] > Math.max(...head.map((i) => i.baseline)) &&
       r[1] < Math.min(...body[0].map((i) => i.baseline))
   )
-  if (divider.length !== 1 || divider[0][1] - frame[1] > height * 5) return
-  let header = recoverRuledHeaderBands(head, cuts, rules, frame[1], divider[0][1])
+  if (divider.length !== 1) return
+  const closedHeader = recoverClosedTitleHeader(head, items, cuts, rules, frame[1], divider[0][1])
+  if (
+    (closedTitle && !closedHeader) ||
+    (closedHeader && bodyValues.some((row) => row.some((v) => !v)))
+  )
+    return
+  if (divider[0][1] - (closedHeader ? closedHeader.rows[1][1] : frame[1]) > height * 5) return
+  let header = closedHeader ?? recoverRuledHeaderBands(head, cuts, rules, frame[1], divider[0][1])
   if (header?.rows.length === 1) {
     const parents = recoverSingleTierParentScopes(head, cuts, body, height)
     header =
@@ -1614,7 +1842,7 @@ function recoverSeparatedNumericParentGrid(table, context) {
 // Independent native parent strokes and complete repeated body baselines
 // identify the leaf lanes. Horizontal source-run adjacency is used only for
 // ownership; no literal text, number or script is rewritten by this plan.
-function recoverUnderlinedSourceLeafGrid(context, rules, pairedScopes) {
+function recoverUnderlinedSourceLeafGrid(context, rules, pairedScopes, singleFence = false) {
   const { height, edges: full, frame, source } = context
   const parents = rules
     .filter(
@@ -1672,8 +1900,9 @@ function recoverUnderlinedSourceLeafGrid(context, rules, pairedScopes) {
     const lower = head.filter(
       (i) =>
         i.baseline > stroke[1] &&
-        i.rect[0] >= stroke[0] - height * 0.15 &&
-        i.rect[2] <= stroke[2] + height * 0.15
+        (singleFence
+          ? (i.rect[0] + i.rect[2]) / 2 > stroke[0] && (i.rect[0] + i.rect[2]) / 2 < stroke[2]
+          : i.rect[0] >= stroke[0] - height * 0.15 && i.rect[2] <= stroke[2] + height * 0.15)
     )
     const leaf = clusters(lower)
     if (
@@ -1733,7 +1962,12 @@ function recoverUnderlinedSourceLeafGrid(context, rules, pairedScopes) {
       const c = provisional.slice(1).findIndex((x) => mid < x)
       if (c < 0 || left < frame[0] - 0.1 || right > frame[2] + 0.1) return
       const p = leaves[c].parent >= 0 ? parentProof[leaves[c].parent] : undefined
-      if (p && (left < p.stroke[0] - height * 0.15 || right > p.stroke[2] + height * 0.15)) return
+      if (
+        !singleFence &&
+        p &&
+        (left < p.stroke[0] - height * 0.15 || right > p.stroke[2] + height * 0.15)
+      )
+        return
       cells[c].push(...g)
       owners[c].push(...g)
     }
@@ -1787,6 +2021,7 @@ function recoverUnderlinedSourceLeafGrid(context, rules, pairedScopes) {
     if (indices.some((c, n) => c !== start + n)) return
     const proof = parentProof[p]
     if (
+      !singleFence &&
       !repeatedInset &&
       (Math.abs(cuts[start] - proof.stroke[0]) > height * 0.2 ||
         Math.abs(cuts[start + indices.length] - proof.stroke[2]) > height * 0.2)

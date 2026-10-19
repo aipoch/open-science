@@ -6,6 +6,7 @@ const { associateFigures } = await import(
   pathToFileURL(resolve('resources/literature-pdf-association.mjs')).href
 )
 const {
+  nativeFigureMarginPageNumber,
   nativeOwnedFigureLabels,
   nativeOwnedFigureGlyphTails,
   nativePanelTopHeading,
@@ -13,6 +14,159 @@ const {
 } = await import(
   pathToFileURL(resolve('resources/literature-pdf-native-owned-figure-labels.mjs')).href
 )
+
+function isolatedMarginNumber(): ReturnType<typeof JSON.parse> {
+  const items = [
+    { text: '6', rect: [50, 30, 56, 40], height: 10, baseline: 40 },
+    { text: 'Axis', rect: [100, 90, 130, 98], height: 8, baseline: 98 }
+  ].map((item, index) => ({
+    ...item,
+    horizontal: true,
+    sourceItem: { pageNumber: 6, index, text: item.text }
+  }))
+  return {
+    page: {
+      pageNumber: 6,
+      width: 600,
+      height: 800,
+      rotation: 0,
+      invalidGraphicsBounds: 0,
+      lines: items.map((i) => ({
+        text: i.text,
+        x: i.rect[0],
+        y: i.rect[1],
+        width: i.rect[2] - i.rect[0],
+        height: i.height,
+        fontSize: i.height
+      })),
+      graphicsBounds: [{ kind: 'path', operationIndex: 7, normalizedRect: [0.15, 0.1, 0.9, 0.4] }]
+    },
+    tokens: items,
+    captions: [{ page: 6, lines: ['Figure 1. An example.'], rect: [50, 350, 540, 360] }],
+    tables: []
+  }
+}
+
+it.each(['left', 'right'])(
+  'proves an isolated native page number at the %s margin without changing source',
+  (side) => {
+    const f = isolatedMarginNumber()
+    if (side === 'right') {
+      f.tokens[0].rect = [550, 30, 556, 40]
+      f.page.lines[0].x = 550
+    }
+    const before = structuredClone(f)
+    expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toEqual({
+      line: f.page.lines[0],
+      token: f.tokens[0]
+    })
+    expect(f).toEqual(before)
+  }
+)
+
+it('uses an explicit PDF page label to exclude a detached offset page number', () => {
+  const f = isolatedMarginNumber()
+  f.page.pageNumber = 12
+  f.page.pageLabel = '6'
+  f.tokens.forEach((token) => (token.sourceItem.pageNumber = 12))
+  f.captions[0].page = 12
+  const before = structuredClone(f)
+  expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toEqual({
+    line: f.page.lines[0],
+    token: f.tokens[0]
+  })
+  expect(associateFigures(f.page, f.captions, f.tables, [], [], f.tokens)).toEqual([
+    { caption: f.captions[0], rect: [90, 80, 540, 320], graphicsCount: 1 }
+  ])
+  expect(f).toEqual(before)
+})
+
+it.each([
+  undefined,
+  null,
+  '',
+  '7',
+  '6.0',
+  '06',
+  'vi',
+  '６',
+  '٦',
+  ' 6',
+  '0',
+  '9007199254740992',
+  '6 supplement',
+  6
+])(
+  'does not infer an offset page number from an absent or conflicting PDF label %s',
+  (pageLabel) => {
+    const f = isolatedMarginNumber()
+    f.page.pageNumber = 12
+    f.page.pageLabel = pageLabel
+    f.tokens.forEach((token) => (token.sourceItem.pageNumber = 12))
+    f.captions[0].page = 12
+    expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toBeUndefined()
+  }
+)
+
+it('keeps a physical-page-number-shaped corner label when PDF numbering contradicts it', () => {
+  const f = isolatedMarginNumber()
+  f.page.pageLabel = '3'
+  expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toBeUndefined()
+})
+
+it.each(['source-alias', 'nearby-font', 'nearby-paint', 'unknown-paint'])(
+  'does not let a matching PDF label override incomplete native exclusion with %s',
+  (reason) => {
+    const f = isolatedMarginNumber()
+    f.page.pageNumber = 12
+    f.page.pageLabel = '6'
+    f.tokens.forEach((token) => (token.sourceItem.pageNumber = 12))
+    f.captions[0].page = 12
+    if (reason === 'source-alias')
+      f.tokens.push({ ...structuredClone(f.tokens[0]), rect: [50, 600, 56, 610] })
+    if (reason === 'nearby-font') f.tokens[1].rect = [100, 35, 130, 43]
+    if (reason === 'nearby-paint') f.page.graphicsBounds[0].normalizedRect[1] = 0.04
+    if (reason === 'unknown-paint') f.page.graphicsBounds[0].kind = 'unknown'
+    expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toBeUndefined()
+  }
+)
+
+it.each([
+  'offset-numbering',
+  'middle-label',
+  'lower-label',
+  'noninitial-source',
+  'source-alias',
+  'unknown-source',
+  'nearby-font',
+  'nearby-paint',
+  'unknown-paint',
+  'invalid-graphics',
+  'competing-caption',
+  'competing-table',
+  'invalid-font',
+  'missing-line',
+  'rotated-page'
+])('retains an unproved margin number with %s', (reason) => {
+  const f = isolatedMarginNumber()
+  if (reason === 'offset-numbering') f.page.pageNumber = 9
+  if (reason === 'middle-label') f.tokens[0].rect = [250, 30, 256, 40]
+  if (reason === 'lower-label') f.tokens[0].rect = [50, 100, 56, 110]
+  if (reason === 'noninitial-source') f.tokens[0].sourceItem.index = 5
+  if (reason === 'source-alias')
+    f.tokens.push({ ...structuredClone(f.tokens[0]), rect: [50, 600, 56, 610] })
+  if (reason === 'unknown-source') f.tokens[0].sourceItem.text = '7'
+  if (reason === 'nearby-font') f.tokens[1].rect = [100, 35, 130, 43]
+  if (reason === 'nearby-paint') f.page.graphicsBounds[0].normalizedRect[1] = 0.04
+  if (reason === 'unknown-paint') f.page.graphicsBounds[0].kind = 'unknown'
+  if (reason === 'invalid-graphics') f.page.invalidGraphicsBounds = 1
+  if (reason === 'competing-caption') f.captions[0].rect = [50, 35, 540, 45]
+  if (reason === 'competing-table') f.tables.push([30, 20, 550, 90])
+  if (reason === 'invalid-font') f.tokens[1].rect[0] = NaN
+  if (reason === 'missing-line') f.page.lines.shift()
+  if (reason === 'rotated-page') f.page.rotation = 90
+  expect(nativeFigureMarginPageNumber(f.page, f.tokens, f.captions, f.tables)).toBeUndefined()
+})
 const line = (
   text: string,
   x: number,

@@ -70,6 +70,21 @@ prevents foundation dependencies, shared-to-host/presentation imports, owner-to-
 and private imports across the PDF/isolated-helper public boundaries. It does not claim complete
 encapsulation of every existing domain.
 
+Static diagnostics and selection use different engines: `npm run analyze:test-impact --
+--revision HEAD` uses the private package's external dependency engine, while generated consumers
+use the repository's TypeScript-based reader. Neither missing static edges nor a bounded runtime
+coverage sample proves independence. Dynamic evidence only covers the tests and inputs actually
+executed; IPC, events and filesystem relationships still need explicit contracts.
+
+The derived-consumer reader also follows literal relative and renderer-alias imports of SVG, PNG,
+JPEG, GIF, WebP, AVIF, ICO and CSS files, including `?raw`, `?url`, `?inline`, `?no-inline` and
+fragment suffixes. These edges add consumers but remain incomplete for retirement/pruning:
+resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Computed
+imports and unsupported query combinations retain uncertainty. Resource consumers can be registered
+explicitly in their owning module; the generated index stores only additional memberships.
+Tests that read resource contents through filesystem APIs such as `readFileSync` need explicit
+`testFiles.consumer` entries; import analysis does not discover those relationships.
+
 ### Full fallback
 
 Run `npm run typecheck`, `npm run lint`, and `npm test` when any of these apply:

@@ -7308,6 +7308,9 @@
     "Imported: {{total}}": "已匯入：{{total}}",
     "Dismissed: {{total}}": "已忽略：{{total}}",
     "Current status unavailable: {{total}}": "無法確認目前狀態：{{total}}",
-    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。"
+    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。",
+    "Some PDF glyphs have no reliable text representation. Compare the original page.": "部分 PDF 字形沒有可靠的文字表示。請核對原始頁面。",
+    "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "部分 PDF 文字缺少可靠的 Unicode 對應。已保留擷取的文字，請與原始頁面核對。",
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格結構不可靠。已保留原始影像和文字，未將文字分配至儲存格。"
   }
 }

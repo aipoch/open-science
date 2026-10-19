@@ -375,6 +375,28 @@ export function recoverNativeScalarRecordPlan(table, items, captions, rules, obs
     ...model.slice(1).map((o, n) => crop[0] + (model[n].rect[2] + o.rect[0]) / 2),
     crop[2]
   ]
+
+  // Do not erase an existing descriptor lane supported by every native record
+  // and independent whole header items on both sides of that model boundary.
+  const supportedDescriptorCut = modelCuts.slice(1, -1).some((cut) => {
+    if (!(cut > crop[0] && cut < first)) return false
+    const split = (row) =>
+      row.some((i) => i.rect[2] <= cut) &&
+      row.some((i) => i.rect[0] >= cut) &&
+      row.every((i) => i.rect[2] <= cut || i.rect[0] >= cut)
+    if (!split(prefixHeader) || !parsed.every((p) => split(p.prefix))) return false
+    return !cuts
+      .slice(1, -1)
+      .some(
+        (own) =>
+          own < first &&
+          prefixHeader.every(
+            (i) => i.rect[2] <= own === i.rect[2] <= cut && i.rect[0] >= own === i.rect[0] >= cut
+          )
+      )
+  })
+  if (supportedDescriptorCut) return
+
   const modelRows = table.structure.objects.filter((o) => o.label === 'table row')
   if (
     model.length === cuts.length - 1 &&

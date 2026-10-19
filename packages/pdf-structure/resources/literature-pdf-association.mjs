@@ -6,6 +6,7 @@ import {
   connectFigureGraphics,
   enclosedFigureFrame,
   closedCaptionFigureFrame,
+  closedFrameCompositeEvidence,
   topCaptionedNativeFlow,
   nativeFramedPanelArray,
   collapsedNativeAxisLeft,
@@ -27,8 +28,10 @@ import {
   nativeOwnedFigureGlyphTails,
   nativeOwnedFigureBottomLabels,
   nativeOwnedRasterTitleRows,
+  nativeOwnedRasterColumnHeadings,
   nativeOwnedFigureTopLabel,
   nativeOwnedFormPaintBounds,
+  nativeFigureMarginPageNumber,
   nativeTableDividerGraphic
 } from './literature-pdf-native-owned-figure-labels.mjs'
 import { nativeRasterCaptionColumn } from './literature-pdf-native-raster-column.mjs'
@@ -41,7 +44,10 @@ import {
   nativeConnectedKeyedLegend,
   nativeFiniteTopRowKeyedLegend
 } from './literature-pdf-figure-connected-keyed-legend.mjs'
-import { nativeAttachedPlotLabels } from './literature-pdf-figure-native-plot-labels.mjs'
+import {
+  nativeAttachedPlotLabels,
+  nativeAxisTitlePacket
+} from './literature-pdf-figure-native-plot-labels.mjs'
 import { completeNativePanelParagraphs } from './literature-pdf-figure-panel-paragraphs.mjs'
 import {
   nativeCaptionedTextIllustration,
@@ -72,6 +78,8 @@ import {
   nativeCaptionedRasterDualPanelGrid,
   nativeCaptionedRasterModerateGap,
   nativeCaptionedRepeatedRasterRows,
+  nativeCaptionedIntervalRows,
+  nativeCaptionedOpenCycle,
   nativeCaptionedAlignedRasterPair,
   nativeCaptionedKeyedRasterTriple,
   nativeOwnedAnnotationFrame,
@@ -90,7 +98,16 @@ import {
   nativeClosedCategoryLabels,
   nativeTopParagraphTail
 } from './literature-pdf-figure-native-plot-bands.mjs'
-import { ownedRasterKeyBand, pairedVectorTopTitles } from './literature-pdf-native-panel-labels.mjs'
+import {
+  ownedRasterKeyBand,
+  pairedVectorTopTitles,
+  nativeMultirowRasterPanelEvidence,
+  nativeContiguousRasterStack,
+  nativeCaptionedRasterBand,
+  nativeCaptionedLabeledRasterStack,
+  nativeRepeatedRowPanelEvidence,
+  nativeRasterFormEnvelope
+} from './literature-pdf-native-panel-labels.mjs'
 import { union, area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 import { associateTableNotes } from './literature-pdf-table-notes.mjs'
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
@@ -1528,13 +1545,50 @@ export function associateFigures(
   nativeTokens = [],
   operatorContext
 ) {
+  const marginNumber = nativeFigureMarginPageNumber(page, nativeTokens, candidates, tableRects)
+  if (marginNumber) {
+    nativeTokens = nativeTokens.filter((token) => token !== marginNumber.token)
+    page = { ...page, lines: page.lines.filter((line) => line !== marginNumber.line) }
+  }
+  const rowPanels = nativeRepeatedRowPanelEvidence(
+    page,
+    candidates,
+    tableRects,
+    nativeTokens,
+    operatorContext
+  )
+  const rasterPanels = nativeMultirowRasterPanelEvidence(
+    page,
+    candidates,
+    tableRects,
+    nativeTokens,
+    operatorContext
+  )
+  const closedComposites = new Map(
+    candidates
+      .filter((caption) => caption.page === page.pageNumber)
+      .flatMap((caption) => {
+        const proof = closedFrameCompositeEvidence(
+          page,
+          caption,
+          candidates,
+          tableRects,
+          closedFrames,
+          nativeTokens,
+          operatorContext
+        )
+        return proof ? [[caption, proof]] : []
+      })
+  )
   const associated = associateFigureFaces(
     page,
     candidates,
     tableRects,
     rules,
     closedFrames,
-    nativeTokens
+    nativeTokens,
+    closedComposites,
+    operatorContext
   )
   if (!associated.length) {
     const recovered = recoverNativePunctuatedRasterCaption(
@@ -1558,7 +1612,10 @@ export function associateFigures(
         tableRects
       )
     : undefined
-  if (nativeHead)
+  if (nativeHead) {
+    // A merged printed line can span unrelated labels between its two fonts.
+    // Remove only the native tokens that proved the running head.
+    nativeTokens = nativeTokens.filter((token) => !nativeHead.tokens.includes(token))
     page = {
       ...page,
       lines: page.lines.filter((l) => !nativeHead.lines.includes(l)),
@@ -1566,7 +1623,17 @@ export function associateFigures(
         (g) => g !== nativeHead.bar && !nativeHead.decorations.includes(g)
       )
     }
-  return associated.map((figure, figureIndex) => {
+  }
+  const partialAxes = page.graphicsBounds?.some((g) => g.kind === 'image')
+    ? nativeOpenAxisArray(
+        page,
+        candidates.filter((c) => c.page === page.pageNumber),
+        tableRects,
+        rules,
+        { includeIncomplete: true }
+      )
+    : undefined
+  const completed = associated.map((figure, figureIndex) => {
     const keyedRasterRow = recoverKeyedNativeRasterRow(
       page,
       figure,
@@ -1869,6 +1936,14 @@ export function associateFigures(
       )
       if (frameTitles) candidate = { ...candidate, rect: frameTitles }
       const labels =
+        nativeOwnedRasterColumnHeadings(
+          page,
+          candidate,
+          candidates,
+          tableRects,
+          nativeTokens,
+          foreignOwns
+        ) ??
         nativeOwnedRasterTitleRows(
           page,
           candidate.caption,
@@ -1964,6 +2039,170 @@ export function associateFigures(
       ? completeBottomLabels({ ...attached, rect: recovered, issue: undefined })
       : attached
   })
+  // Generic association sees painted interiors, which need not reach the axes.
+  // Preserve the independently proved vector face while completing its raster.
+  return completed
+    .map((figure) => {
+      if (
+        rowPanels?.caption === figure.caption &&
+        figure.rect &&
+        figure.rect.every((n, i) =>
+          i < 2
+            ? n >= rowPanels.bounds[i] - Math.max(page.width, page.height) / 128
+            : n <= rowPanels.bounds[i] + Math.max(page.width, page.height) / 128
+        ) &&
+        rowPanels.accepts(rowPanels.bounds)
+      )
+        return { ...figure, rect: rowPanels.bounds, graphicsCount: rowPanels.graphicsCount }
+      if (rasterPanels?.caption === figure.caption && figure.rect) {
+        const expanded = union([figure.rect, rasterPanels.bounds])
+        // A partial face need not own its added area. Revalidate the complete
+        // final envelope before retaining any separately proved raster panel.
+        return rasterPanels.accepts(expanded)
+          ? {
+              ...figure,
+              rect: expanded,
+              graphicsCount: rasterPanels.graphicsCount,
+              sourceItems: rasterPanels.ownedSourceItems
+            }
+          : figure
+      }
+      const composite = closedComposites.get(figure.caption)
+      if (composite && figure.rect) {
+        const expanded = union([figure.rect, composite.bound])
+        return composite.accepts(expanded)
+          ? { ...figure, rect: expanded, sourceItems: composite.ownedSourceItems }
+          : { ...figure, rect: composite.closed.rect }
+      }
+      if (
+        !partialAxes?.requiresCompleteAssociation ||
+        figure.caption !== partialAxes.caption ||
+        !figure.rect
+      )
+        return figure
+      const expanded = union([figure.rect, partialAxes.rect])
+      // Generic completion may reach past the local raster into another region.
+      // No text owner is proved for that added area, so retain the native vector
+      // crop when it would add a table or readable alphabetic content.
+      const addsIndependentContent =
+        tableRects.some((t) => intersection(t, expanded) > 0) ||
+        page.lines.some(
+          (l) =>
+            /\p{L}/u.test(l.text) &&
+            intersection(lineRect(l), expanded) > intersection(lineRect(l), partialAxes.rect)
+        )
+      return { ...figure, rect: addsIndependentContent ? partialAxes.rect : expanded }
+    })
+    .map((figure, _index, figures) => {
+      if (figures.length !== 1) return figure
+      const form = nativeRasterFormEnvelope(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        nativeTokens,
+        operatorContext
+      )
+      return form ? { ...figure, ...form, issue: undefined } : figure
+    })
+    .map((figure, index, figures) => {
+      const band =
+        nativeCaptionedLabeledRasterStack(
+          page,
+          figure.caption,
+          candidates,
+          tableRects,
+          operatorContext,
+          figure
+        ) ??
+        nativeCaptionedRasterBand(
+          page,
+          figure.caption,
+          candidates,
+          tableRects,
+          operatorContext,
+          figure
+        )
+      if (
+        !band ||
+        figures.some(
+          (other, i) => i !== index && other.rect && intersection(other.rect, band.rect) > 0
+        )
+      )
+        return figure
+      return band
+    })
+    .map((figure) => {
+      if (figure.rect) return figure
+      const intervals = nativeCaptionedIntervalRows(
+        page,
+        figure.caption,
+        candidates,
+        tableRects,
+        nativeTokens,
+        operatorContext,
+        figure
+      )
+      return intervals ? { ...figure, ...intervals } : figure
+    })
+    .map((figure) => {
+      if (figure.rect) return figure
+      const cycle = nativeCaptionedOpenCycle(
+        page,
+        figure.caption,
+        candidates,
+        tableRects,
+        nativeTokens,
+        operatorContext,
+        figure
+      )
+      return cycle ? { ...figure, ...cycle } : figure
+    })
+    .map((figure, index, figures) => {
+      const axis = nativeAxisTitlePacket(
+        page,
+        figure,
+        candidates,
+        tableRects,
+        rules,
+        nativeTokens,
+        operatorContext,
+        (r) =>
+          figures.some((other, i) => i !== index && other.rect && intersection(other.rect, r) > 0)
+      )
+      return axis ? { ...figure, rect: axis.rect } : figure
+    })
+    .map((figure, index, figures) => {
+      if (!figure.sourceItems?.length) return figure
+      // Other figures may complete their boundaries in the same pass. Publish
+      // text ownership only after those final crops are available, and only for
+      // whole original fonts retained by this crop with no competing owner.
+      const fonts = nativeTokens.filter((token) =>
+        figure.sourceItems.some(
+          (source) =>
+            token.sourceItem?.pageNumber === source.pageNumber &&
+            token.sourceItem?.index === source.index &&
+            token.text === source.text
+        )
+      )
+      const ambiguous =
+        fonts.length !== figure.sourceItems.length ||
+        fonts.some(
+          (token) =>
+            token.rect.some((v, n) => (n < 2 ? v < figure.rect[n] : v > figure.rect[n])) ||
+            tableRects.some((r) => intersection(r, token.rect) > 0) ||
+            candidates.some(
+              (c) => c.page === page.pageNumber && intersection(c.rect, token.rect) > 0
+            ) ||
+            figures.some(
+              (other, n) => n !== index && other.rect && intersection(other.rect, token.rect) > 0
+            )
+        )
+      if (!ambiguous) return figure
+      const retained = { ...figure }
+      delete retained.sourceItems
+      return retained
+    })
 }
 
 function recoverCaptionedPanelGrid(page, figure, candidates, tableRects) {
@@ -3279,7 +3518,9 @@ function associateFigureFaces(
   tableRects = [],
   rules = [],
   closedFrames = [],
-  nativeTokens = []
+  nativeTokens = [],
+  closedComposites = new Map(),
+  operatorContext
 ) {
   const originalLines = page.lines
   // Zero-advance PDF tagging tokens have no painted extent.
@@ -5300,7 +5541,8 @@ function associateFigureFaces(
       caption,
       pageCaptions,
       tableRects,
-      foreignRasters
+      foreignRasters,
+      nativeTokens
     )
     if (rasterVectorStrip) return rasterVectorStrip
     const framedRaster = nativeCaptionedFramedRaster(page, caption, pageCaptions, tableRects)
@@ -5341,17 +5583,46 @@ function associateFigureFaces(
       caption,
       pageCaptions,
       tableRects,
-      rules
+      rules,
+      operatorContext
     )
-    if (vectorBarChart) return vectorBarChart
+    // The abbreviated-caption entry must not bypass the later native prose
+    // ownership checks by discarding an already assigned shallow stroke.
+    // A local chart frame is not evidence that an external mark is unrelated.
+    // Abbreviated captions only recover unassigned charts here. Existing assignments
+    // retain the generic prose/neighbor checks instead of replacing their crop.
+    if (
+      vectorBarChart &&
+      (!/^fig\./i.test(caption.lines?.[0] ?? '') || assigned[index].length === 0)
+    )
+      return vectorBarChart
     const vectorBarPanels = nativeCaptionedVectorBarPanels(page, caption, pageCaptions, tableRects)
     if (vectorBarPanels) return vectorBarPanels
     const vectorGrid = nativeCaptionedVectorGrid(page, caption, pageCaptions, tableRects)
     if (vectorGrid) return vectorGrid
     const fullWidthRaster = nativeCaptionedRasterFullWidth(page, caption, pageCaptions, tableRects)
     if (fullWidthRaster) return fullWidthRaster
+    // A proved complete keyed plate takes precedence over its nearest raster.
+    const rasterArray = nativeLetteredRasterArray(
+      page,
+      caption,
+      pageCaptions,
+      tableRects,
+      nativeTokens
+    )
+    if (rasterArray) return rasterArray
     const captionedRaster = nativeCaptionedRaster(page, caption, pageCaptions, tableRects)
-    if (captionedRaster) return captionedRaster
+    if (captionedRaster)
+      return (
+        nativeContiguousRasterStack(
+          page,
+          caption,
+          pageCaptions,
+          tableRects,
+          operatorContext,
+          captionedRaster
+        ) ?? captionedRaster
+      )
     const captionedRasterModerateGap = nativeCaptionedRasterModerateGap(
       page,
       caption,
@@ -5370,14 +5641,6 @@ function associateFigureFaces(
     if (rasterQuad) return rasterQuad
     const rasterGrid = nativeRasterGrid(page, caption, pageCaptions, tableRects)
     if (rasterGrid) return rasterGrid
-    const rasterArray = nativeLetteredRasterArray(
-      page,
-      caption,
-      pageCaptions,
-      tableRects,
-      nativeTokens
-    )
-    if (rasterArray) return rasterArray
     const compositeRasterGrid = nativeCaptionedRasterCompositeGrid(
       page,
       caption,
@@ -5443,7 +5706,7 @@ function associateFigureFaces(
           )
       )
     const closed = closedCaptionFigureFrame(page, caption, pageCaptions, tableRects, closedFrames)
-    if (closed) return closed
+    if (closed && !closedComposites.has(caption)) return closed
     const enclosed = () =>
       enclosedFigureFrame(page, caption, pageCaptions, tableRects) ?? closedPlots
     // Composite raster panels can wrap around a legend in the lower-left corner.
@@ -6112,7 +6375,15 @@ function associateFigureFaces(
             24)
       ) {
         const extended = union([bounds, ...outlined])
-        bounds.splice(0, 4, ...extended)
+        // Individually separate glyph boxes can span an independent caption
+        // when combined. Keep the established face if their whole envelope
+        // would newly claim any of that caption's area.
+        if (
+          !pageCaptions.some(
+            (c) => c !== caption && intersection(c.rect, extended) > intersection(c.rect, bounds)
+          )
+        )
+          bounds.splice(0, 4, ...extended)
       }
     }
     if (bounds[3] - bounds[1] < 12 || bounds[2] - bounds[0] < 12)

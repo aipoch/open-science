@@ -1,3 +1,4 @@
+import type { CliLauncherEnv } from './cli-launcher-contract'
 import type { z } from 'zod'
 import type {
   desktopOpenOptionsSchema,
@@ -12,7 +13,7 @@ import type { dialog, shell, WebContents, BrowserWindow, Notification } from 'el
 // Only user interactions requiring a local desktop are represented here. Business operations,
 // authorization, persistence and file reads stay in their existing owners.
 export type DesktopInteraction = Readonly<{
-  cliLauncherEnvironment: () => import('./cli-install/launcher').CliLauncherEnv
+  cliLauncherEnvironment: () => CliLauncherEnv
   installPackageQuitGuard: (active: () => boolean, blocked: () => void) => () => void
   notificationCtor: typeof Notification
   hasFocusedWindow: () => boolean

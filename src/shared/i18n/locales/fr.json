@@ -7638,6 +7638,9 @@
     "Imported: {{total}}": "Importées : {{total}}",
     "Dismissed: {{total}}": "Écartées : {{total}}",
     "Current status unavailable: {{total}}": "Statut actuel indisponible : {{total}}",
-    "Historical result; current library status is unavailable.": "Résultat historique ; le statut actuel dans la bibliothèque est indisponible."
+    "Historical result; current library status is unavailable.": "Résultat historique ; le statut actuel dans la bibliothèque est indisponible.",
+    "Some PDF glyphs have no reliable text representation. Compare the original page.": "Certains glyphes du PDF n’ont pas de représentation textuelle fiable. Comparez avec la page d’origine.",
+    "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Certains passages du PDF n’ont pas de correspondance Unicode fiable. Le texte extrait est conservé ; comparez-le à la page d’origine.",
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "La structure de certains tableaux est peu fiable. Les images et les textes d’origine sont conservés sans être affectés aux cellules."
   }
 }

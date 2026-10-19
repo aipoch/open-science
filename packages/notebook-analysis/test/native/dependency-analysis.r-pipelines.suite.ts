@@ -4,8 +4,8 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { analyzeNotebookSourceFileAccess } from './index'
-import { rThemePlots } from './reported-r-theme-plots.fixture'
+import { analyzeNotebookSourceFileAccess } from '../../src/index'
+import { rThemePlots } from '../../src/reported-r-theme-plots.fixture'
 const dataMaskPipelineSource = `
 library(dplyr)
 library(ggplot2)
@@ -19,7 +19,7 @@ write.csv(counts, "counts.csv", row.names = FALSE)
 ggsave("counts.png", p, width = 6, height = 4, dpi = 100)
 `
 
-it.skipIf(!process.env.RUN_KERNEL || !process.env.OPEN_SCIENCE_TEST_R_COMMAND).each([
+it.each([
   {
     name: 'dplyr and ggplot2 pipeline',
     code: dataMaskPipelineSource,
