@@ -103,6 +103,7 @@ const publicImports = new Set([
   'selectFrameworkDisplayName',
   'selectProviderModelOptions',
   'selectVisionRelayAvailable',
+  'PreferenceWriteResult',
   'ProviderModelOption',
   'SaveProviderResult',
   'SettingsLoadFailure'

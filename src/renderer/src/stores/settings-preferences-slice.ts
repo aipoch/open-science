@@ -18,7 +18,8 @@ import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
   SettingsWriteCoordinator,
-  SettingsWriteErrorCode
+  SettingsWriteErrorCode,
+  SettingsWriteKey
 } from './settings-write-coordinator'
 
 type SettingsPreferencesState = {
@@ -77,6 +78,9 @@ export type SettingsPreferencesActions = {
     filter: ProjectFilesFilterPreference | undefined
   ) => Promise<PreferenceWriteResult>
   setDefaultPermissionProfile: (profile: PermissionProfileId) => Promise<PreferenceWriteResult>
+  // A row that reports its own write failure inline takes that failure off the top-of-dialog
+  // banner (which stays the fallback for writes without row-level feedback).
+  dismissSettingsWriteError: (key: SettingsWriteKey) => void
 
   completeOnboarding: () => Promise<void>
   setPackageMirror: (mirror: PackageMirror) => Promise<void>
@@ -382,6 +386,8 @@ export const createSettingsPreferencesSlice = ({
         () => getCommands().setDefaultPermissionProfile({ profile }),
         'Failed to set default permission profile'
       ),
+
+    dismissSettingsWriteError: (key) => writeCoordinator.dismissFailure(key),
 
     completeOnboarding: async () => {
       reconcileSnapshot(await getCommands().markOnboardingComplete())

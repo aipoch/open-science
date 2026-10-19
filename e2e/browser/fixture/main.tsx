@@ -53,7 +53,10 @@ useSettingsStore.setState({
   isLoaded: true,
   onboardingCompletedAt: 1,
   load: async () => true,
-  setReasoningEffort: async (reasoningEffort) => useSettingsStore.setState({ reasoningEffort })
+  setReasoningEffort: async (reasoningEffort) => {
+    useSettingsStore.setState({ reasoningEffort })
+    return 'saved' as const
+  }
 })
 useProjectStore.setState({ isLoaded: true })
 useTagStore.setState({ load: async () => undefined, listen: unsubscribe })

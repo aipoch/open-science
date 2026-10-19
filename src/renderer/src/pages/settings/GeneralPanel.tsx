@@ -156,6 +156,15 @@ const GeneralPanel = (): React.JSX.Element => {
   const showNotificationContent = useSettingsStore((state) => state.showNotificationContent)
   const setShowNotificationContent = useSettingsStore((state) => state.setShowNotificationContent)
   const dismissSettingsWriteError = useSettingsStore((state) => state.dismissSettingsWriteError)
+  // A write that settles after the panel unmounted must keep its top-of-dialog banner — the row
+  // that would report it inline is gone.
+  const mountedRef = useRef(true)
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+    }
+  }, [])
   const closePreference = useSettingsStore((state) => state.closePreference)
   const setClosePreference = useSettingsStore((state) => state.setClosePreference)
   const interfaceScale = useInterfaceScaleStore((state) => state.scale)
@@ -393,7 +402,8 @@ const GeneralPanel = (): React.JSX.Element => {
             onToggle={async (next) => {
               const result = await setNotificationsEnabled(next)
               // The row reports the failure inline, so take it off the top-of-dialog banner.
-              if (result === 'reverted') dismissSettingsWriteError('notifications')
+              if (result === 'reverted' && mountedRef.current)
+                dismissSettingsWriteError('notifications')
               return result
             }}
           />
@@ -411,7 +421,8 @@ const GeneralPanel = (): React.JSX.Element => {
             aria-label={t('Toggle task content in system notifications')}
             onToggle={async (next) => {
               const result = await setShowNotificationContent(next)
-              if (result === 'reverted') dismissSettingsWriteError('notificationContent')
+              if (result === 'reverted' && mountedRef.current)
+                dismissSettingsWriteError('notificationContent')
               return result
             }}
           />

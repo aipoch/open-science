@@ -71,6 +71,7 @@ import {
 import {
   createSettingsPreferencesSlice,
   omitInFlightOptimisticPreferences,
+  type PreferenceWriteResult,
   type SettingsPreferencesActions
 } from './settings-preferences-slice'
 import {
@@ -94,8 +95,7 @@ import {
 } from './settings-skills-slice'
 import {
   createSettingsWriteCoordinator,
-  type SettingsWriteCoordinator,
-  type SettingsWriteKey
+  type SettingsWriteCoordinator
 } from './settings-write-coordinator'
 export { selectAnyInstalling } from './settings-runtime-slice'
 
@@ -175,7 +175,6 @@ type SettingsStoreActions = {
   load: (options?: { force?: boolean }) => Promise<boolean>
   acceptCommittedSnapshot: (snapshot: SettingsSnapshot) => void
   clearSettingsWriteError: () => void
-  dismissSettingsWriteError: (key: SettingsWriteKey) => void
 }
 
 type SettingsStore = SettingsStoreCore & RuntimeSetupActions
@@ -623,7 +622,6 @@ const createSettingsStoreState = (
   },
 
   clearSettingsWriteError: () => writeCoordinator.clearFailures(),
-  dismissSettingsWriteError: (key) => writeCoordinator.dismissFailure(key),
   acceptCommittedSnapshot: (snapshot) =>
     set((state) => mergeSnapshot(state, snapshot, writeCoordinator))
 })
@@ -637,3 +635,4 @@ export const useSettingsStore = create<SettingsStore>((set, get) =>
 )
 
 export type { SaveProviderResult }
+export type { PreferenceWriteResult }

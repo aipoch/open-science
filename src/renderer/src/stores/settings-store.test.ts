@@ -2258,6 +2258,20 @@ describe('settings store: setReasoningEffort', () => {
     expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
   })
 
+  it('reports a superseded result when an older write settles after a newer one begins', async () => {
+    api.setReasoningEffort
+      .mockResolvedValueOnce({ ...snapshot([]), reasoningEffort: 'high' })
+      .mockResolvedValueOnce({ ...snapshot([]), reasoningEffort: 'max' })
+
+    const olderWrite = useSettingsStore.getState().setReasoningEffort('high')
+    const newerWrite = useSettingsStore.getState().setReasoningEffort('max')
+
+    await expect(olderWrite).resolves.toBe('superseded')
+    await expect(newerWrite).resolves.toBe('saved')
+    expect(useSettingsStore.getState().reasoningEffort).toBe('max')
+    expect(useSettingsStore.getState().settingsWriteError).toBeUndefined()
+  })
+
   it('restores the confirmed value when concurrent writes to the same preference both fail', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined)
     api.setReasoningEffort

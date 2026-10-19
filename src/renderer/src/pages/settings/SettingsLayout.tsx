@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { PreferenceWriteResult } from '@/stores/settings-preferences-slice'
+import type { PreferenceWriteResult } from '@/stores/settings-store'
 
 type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
   title: ReactNode
@@ -222,10 +222,16 @@ const SettingsPreferenceToggle = ({
     const next = !enabled
     const request = ++requestRef.current
     setPhase('saving')
-    void onToggle(next).then((result) => {
-      if (request !== requestRef.current) return
-      setPhase(result === 'saved' ? 'saved' : result === 'reverted' ? 'failed' : 'idle')
-    })
+    void onToggle(next)
+      .then((result) => {
+        if (request !== requestRef.current) return
+        setPhase(result === 'saved' ? 'saved' : result === 'reverted' ? 'failed' : 'idle')
+      })
+      .catch(() => {
+        // The contract says onToggle never rejects, but a stuck 'saving' state is worse than a
+        // possibly-redundant failure notice.
+        if (request === requestRef.current) setPhase('failed')
+      })
   }
 
   return (

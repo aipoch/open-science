@@ -36,5 +36,6 @@ export const lazyWithRetry = <Props extends object>(
     const Panel = current.Panel
     return <Panel {...props} />
   }
+  RetryableLazyPanel.displayName = 'RetryableLazyPanel'
   return RetryableLazyPanel
 }

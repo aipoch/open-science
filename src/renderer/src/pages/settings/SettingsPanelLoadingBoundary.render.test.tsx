@@ -137,6 +137,41 @@ describe('SettingsPanelLoadingBoundary', () => {
     }
   })
 
+  it('recovers through retry after a rejected chunk import', async () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const loader = vi
+      .fn<() => Promise<{ default: () => React.JSX.Element }>>()
+      .mockRejectedValueOnce(new Error('chunk unavailable'))
+      .mockResolvedValue({ default: () => <div>Loaded panel</div> })
+    const Panel = lazyWithRetry(loader)
+
+    try {
+      await act(async () => {
+        root.render(
+          <SettingsPanelLoadingBoundary panelKey="skills">
+            <Panel />
+          </SettingsPanelLoadingBoundary>
+        )
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(1)
+      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
+        "Settings panel couldn't be loaded."
+      )
+
+      await act(async () => {
+        findButton('Retry')?.click()
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(loader).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('[role="alert"]')).toBeNull()
+      expect(container.textContent).toContain('Loaded panel')
+    } finally {
+      errorSpy.mockRestore()
+    }
+  })
+
   it('keeps the same single-Retry surface across any number of failed retries', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
     const loader = vi

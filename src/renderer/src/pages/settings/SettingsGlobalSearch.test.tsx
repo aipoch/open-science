@@ -1,4 +1,3 @@
-import { i18next } from '@/i18n'
 // @vitest-environment jsdom
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
