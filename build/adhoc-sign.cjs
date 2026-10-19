@@ -96,6 +96,11 @@ exports.default = async function adhocSign(context) {
         )
     }
   }
+  const progressPath = path.join(appPath, 'Contents/Resources/open-science-update-progress')
+  if (fs.existsSync(progressPath))
+    execFileSync('codesign', ['--force', '--options', 'runtime', '--sign', '-', progressPath], {
+      stdio: 'inherit'
+    })
   signLoose(path.join(appPath, 'Contents/Resources/node-runtime'))
   signLoose(path.join(appPath, 'Contents/Resources/backend'))
 

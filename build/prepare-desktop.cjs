@@ -24,5 +24,24 @@ module.exports = async (context) => {
     if (result.error || result.status !== 0)
       throw result.error || new Error('Windows update progress build failed.')
   }
+  if (process.platform === 'darwin') {
+    const directory = path.join(root, 'build/macos-update-progress')
+    const result = spawnSync(
+      'clang',
+      [
+        '-fobjc-arc',
+        '-O2',
+        '-mmacosx-version-min=12.0',
+        '-framework',
+        'Cocoa',
+        path.join(directory, 'progress.m'),
+        '-o',
+        path.join(directory, 'open-science-update-progress')
+      ],
+      { cwd: root, stdio: 'inherit' }
+    )
+    if (result.error || result.status !== 0)
+      throw result.error || new Error('macOS update progress build failed.')
+  }
   await stageDesktopRuntime(context)
 }

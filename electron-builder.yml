@@ -189,6 +189,8 @@ mac:
     # Ship the ad-hoc-signed micromamba mach-O at Contents/Resources/micromamba, where
     # resolveMicromamba() finds it via process.resourcesPath. Envs materialize in ~/.open-science
     # (never in the signed .app), so only this one binary needs signing (spec §10).
+    - from: build/macos-update-progress/open-science-update-progress
+      to: open-science-update-progress
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:

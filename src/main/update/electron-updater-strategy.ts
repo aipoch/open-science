@@ -1,4 +1,5 @@
 import { app } from 'electron'
+import { startMacInstallProgress } from './macos-install-progress'
 import { spawnSync } from 'node:child_process'
 import { join } from 'node:path'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
@@ -310,7 +311,21 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
               log: this.log
             })
           }
-        : undefined)
+        : this.platform === 'darwin' && !deps.updater && app.isPackaged
+          ? async () => {
+              const startupOptions = deps.getStartupOptions?.()
+              if (!startupOptions) throw new Error('Update startup configuration is unavailable')
+              return startMacInstallProgress({
+                helperPath: join(process.resourcesPath, 'open-science-update-progress'),
+                applicationPath: process.execPath,
+                profilePath: app.getPath('userData'),
+                targetVersion: this.status.latest ?? '',
+                startupOptions,
+                translate: deps.translate ?? englishNativeTranslator,
+                log: this.log
+              })
+            }
+          : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
     this.updater.autoDownload = false

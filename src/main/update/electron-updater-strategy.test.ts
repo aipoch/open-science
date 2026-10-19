@@ -1549,7 +1549,7 @@ describe('ElectronUpdaterStrategy', () => {
   })
 })
 
-describe('Windows update window handoff', () => {
+describe.each(['win32', 'darwin'] as const)('%s update window handoff', (platform) => {
   it('keeps the application alive until the independent window acknowledges readiness', async () => {
     const updater = new FakeUpdater()
     let acknowledge!: (value: WindowsInstallProgress) => void
@@ -1561,7 +1561,7 @@ describe('Windows update window handoff', () => {
     )
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
       startInstallProgress
     })
@@ -1575,7 +1575,7 @@ describe('Windows update window handoff', () => {
       cancel: vi.fn()
     })
     await apply
-    expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
+    expect(updater.quitAndInstall).toHaveBeenCalledWith(platform !== 'win32', true)
   })
 
   it('refuses installation before backend shutdown when the independent window cannot start', async () => {
@@ -1584,7 +1584,7 @@ describe('Windows update window handoff', () => {
     const releaseInstallHandoff = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
       releaseInstallHandoff,
       installGate,
@@ -1609,7 +1609,7 @@ describe('Windows update window handoff', () => {
     const cancel = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
       startInstallProgress: async () => ({
         operationId: '00000000-0000-4000-8000-000000000001',
@@ -1629,7 +1629,7 @@ describe('Windows update window handoff', () => {
     const startInstallProgress = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
       startInstallProgress
     })
