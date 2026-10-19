@@ -6432,6 +6432,45 @@ describe('Provider editor leave protection', () => {
     fireEvent.change(field('Provider name'), { target: { value: 'Research endpoint draft' } })
   }
 
+  it('locks the new provider type through a pending save and allows retry after failure', async () => {
+    let reject!: (error: Error) => void
+    const saveValidatedProvider = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise((_resolve, fail) => {
+          reject = fail
+        })
+      )
+      .mockResolvedValueOnce({
+        providerId: 'created-provider',
+        validation: { ok: true, category: 'ok' }
+      })
+    await mountEditor(true)
+    useSettingsStore.setState({ saveValidatedProvider })
+    act(() => fireEvent.change(field('API key'), { target: { value: 'synthetic-provider-key' } }))
+    await clickLabel('Save')
+
+    const type = field('Provider type') as unknown as HTMLButtonElement
+    expect(type.disabled).toBe(true)
+    expect(footerButton('Cancel').disabled).toBe(true)
+    expect(footerButton('Saving…').disabled).toBe(true)
+    act(() => footerButton('Saving…').click())
+    act(() => type.click())
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
+    expect(saveValidatedProvider).toHaveBeenCalledOnce()
+
+    await act(async () => reject(new Error('Write failed')))
+    expect(type.disabled).toBe(false)
+    expect(footerButton('Cancel').disabled).toBe(false)
+    expect(field('API key').value).toBe('synthetic-provider-key')
+    expect(document.body.textContent).toContain('Write failed')
+    selectSettingsOption('Provider type', 'OpenAI')
+    selectSettingsOption('Provider type', 'Anthropic')
+    await clickLabel('Save')
+    expect(saveValidatedProvider).toHaveBeenCalledTimes(2)
+    expect(field('Provider type')).toBeNull()
+  })
+
   it.each([
     'Back',
     'Forward',
