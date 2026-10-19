@@ -7488,7 +7488,6 @@
     "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Fließtext und Beschriftungen einspaltig neu anordnen und Abbildungen, Tabellen, Formeln, Code und Literaturangaben möglichst beibehalten. Das Ergebnis hängt von der Qualität der PDF-Extraktion ab. Ohne Häkchen wird das ursprüngliche Layout möglichst beibehalten.",
     "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Textrichtung oder ihr Layout nicht sicher neu anordnen ließ.",
     "These source pages were kept in their original form because their links could not be remapped safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Links nicht sicher auf die neuen Positionen übertragen ließen.",
-    "Source pages: {{pages}}": "Quellseiten: {{pages}}",
-    "Original links": "Originalverknüpfungen"
+    "Source pages: {{pages}}": "Quellseiten: {{pages}}"
   }
 }

@@ -93,11 +93,12 @@ URI links and direct/named internal destinations are recreated against the outpu
 Literal or verified scientific link labels follow their translated line positions; links inside
 retained graphics follow the crop transform. Links from copied pages are also rebuilt so they
 cannot point at orphan copies of the old page tree. When a translated link position cannot be
-proved, compact clickable crops of the original link labels are placed in a localized source-links
-row after the paragraph (or at the source-page boundary when paragraph ownership is uncertain).
-The translated body remains visible. Unresolved destinations or
-unsupported link actions retain the complete original document and report the limitation rather
-than publish an output with silently missing links. Existing broken links are not repaired.
+proved, the original page is retained with an `annotations` diagnostic. Fallback extends
+across joined paragraphs and connected links so both endpoints remain valid. Internal targets
+require a unique owning paragraph or crop; a nearest-paragraph guess is not used. Unresolved
+destinations or unsupported link actions retain the complete original document and report the
+limitation rather than publish an output with silently missing links. Existing broken links are
+not repaired. No extra source-links area is added to the translated document.
 
 The host supplies inference execution, provider error interpretation, diagnostics, write admission,
 source authorization, application paths and storage connections. Model/account/Agent lifetimes,

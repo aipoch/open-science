@@ -17,7 +17,7 @@ const fragment = (
 async function generate(
   pdf: PDFDocument,
   units: PdfTranslationPdfRequest['units'],
-  options: Pick<PdfTranslationPdfRequest, 'originalRegions' | 'sourceLinksLabel'> = {}
+  options: Pick<PdfTranslationPdfRequest, 'originalRegions'> = {}
 ): Promise<PdfTranslationPdfResult> {
   const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
   const caller = new TestCallerRegistry().acquire({ leaseId: 'reflow-safety', surface: 'electron' })
@@ -58,6 +58,110 @@ function link(
     )
   )
 }
+
+it.each([false, true])(
+  'retains the original PDF for a chained action (array=%s)',
+  async (array) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+    const next = { S: 'GoTo', D: [pdf.getPage(0).ref, 'Fit'] }
+    link(pdf, 1, [40, 438, 100, 454], {
+      A: { S: 'URI', URI: PDFString.of('https://example.org'), Next: array ? [next] : next }
+    })
+    const bytes = await pdf.save()
+    const output = await generate(pdf, [
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+    ])
+    expect(output.data).toEqual(bytes)
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ code: 'annotations', unitIndex: 0 })
+    ])
+  }
+)
+
+it('preserves Unicode URIs and resolves relative links against the original base', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.addPage([400, 500]).drawText('Read the paper.', { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(
+    PDFName.of('URI'),
+    pdf.context.obj({ Base: PDFString.of('https://example.org/papers/') })
+  )
+  link(pdf, 1, [40, 438, 125, 454], {
+    A: { S: 'URI', URI: PDFString.of(Buffer.from('研究.pdf', 'utf8').toString('latin1')) }
+  })
+  const output = await generate(pdf, [
+    { source: 'Read the paper.', translation: '阅读这篇论文。', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    expect(links[0].url).toBe('https://example.org/papers/%E7%A0%94%E7%A9%B6.pdf')
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('maps separate quad regions without linking the unrelated text between them', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  const page = pdf.addPage([400, 500])
+  page.drawText('[1]', { font, size: 12, x: 40, y: 440 })
+  page.drawText('unlinked', { font, size: 12, x: 80, y: 440 })
+  page.drawText('[2]', { font, size: 12, x: 160, y: 440 })
+  link(pdf, 1, [40, 438, 180, 454], {
+    A: { S: 'URI', URI: PDFString.of('https://example.org/citations') },
+    QuadPoints: [40, 454, 54, 454, 40, 438, 54, 438, 160, 454, 174, 454, 160, 438, 174, 438]
+  })
+  const output = await generate(pdf, [
+    {
+      source: '[1] unlinked [2]',
+      translation: '[1] 未链接的文本 [2]',
+      fragments: [fragment(1, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    expect(links).toHaveLength(2)
+    expect(links[0].rect[2]).toBeLessThan(links[1].rect[0])
+    for (const item of links) expect(item.rect[2] - item.rect[0]).toBeLessThan(20)
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('retains ambiguous internal targets instead of choosing the nearest paragraph', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Reference.', 'Destination.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  link(pdf, 1, [40, 438, 100, 454], { Dest: [pdf.getPage(1).ref, 'XYZ', 40, 200, null] })
+  const output = await generate(pdf, [
+    { source: 'Reference.', translation: 'Translated reference.', fragments: [fragment(1, 0.08)] },
+    {
+      source: 'Destination.',
+      translation: 'Translated destination.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.reflow!.originalPageNumbers).toEqual([1, 2])
+  expect(output.layoutFailures.map((f) => f.code)).toEqual(['annotations', 'annotations'])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(1)
+    expect(links[0].dest[3]).toBe(200)
+  } finally {
+    await task.destroy()
+  }
+})
 
 it.each([false, true])(
   'retains a complete original page for unsafe text direction (page rotation=%s)',
@@ -206,40 +310,38 @@ it('remaps named and direct destinations between reflowed and original pages', a
   }
 })
 
-it('keeps translated body text and appends the original label when its translated link position is unproved', async () => {
+it('retains the original page when a translated link position is unproved', async () => {
   const pdf = await PDFDocument.create(),
     font = await pdf.embedFont(StandardFonts.Helvetica)
   for (const text of ['Original linked words.', 'Independent.'])
     pdf.addPage([400, 500]).drawText(text, { font, x: 40, y: 440, size: 12 })
   link(pdf, 1, [40, 438, 84, 453], { A: { S: 'URI', URI: PDFString.of('https://example.org') } })
-  const output = await generate(
-    pdf,
-    [
-      {
-        source: 'Original linked words.',
-        translation: '完全不同的中文描述。',
-        fragments: [fragment(1, 0.08)]
-      },
-      { source: 'Independent.', translation: '另页继续翻译。', fragments: [fragment(2, 0.08)] }
-    ],
-    { sourceLinksLabel: '原文链接' }
-  )
-  expect(output.reflow!.originalPageNumbers).toEqual([])
-  expect(output.layoutFailures).toEqual([])
+  const output = await generate(pdf, [
+    {
+      source: 'Original linked words.',
+      translation: '完全不同的中文描述。',
+      fragments: [fragment(1, 0.08)]
+    },
+    { source: 'Independent.', translation: '另页继续翻译。', fragments: [fragment(2, 0.08)] }
+  ])
+  expect(output.reflow!.originalPageNumbers).toEqual([1])
+  expect(output.layoutFailures).toEqual([
+    expect.objectContaining({ unitIndex: 0, code: 'annotations' })
+  ])
   const task = getDocument({ data: output.data.slice() })
   try {
     const document = await task.promise
     expect((await (await document.getPage(1)).getAnnotations())[0].url).toBe('https://example.org/')
     expect(
-      (await (await document.getPage(1)).getTextContent()).items
+      (await (await document.getPage(2)).getTextContent()).items
         .map((item) => ('str' in item ? item.str : ''))
         .join('')
     ).toContain('另页继续翻译。')
     const text = (await (await document.getPage(1)).getTextContent()).items
       .map((item) => ('str' in item ? item.str : ''))
       .join('')
-    expect(text).toContain('完全不同的中文描述。')
-    expect(text).toContain('原文链接')
+    expect(text).toBe('Original linked words.')
+    expect(text).not.toContain('Original links')
   } finally {
     await task.destroy()
   }
@@ -526,3 +628,300 @@ it.each([90, 180, 270])(
     }
   }
 )
+
+it('keeps one external link clickable across translated lines and output pages', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.addPage([400, 500]).drawText('Read the paper.', { font, size: 12, x: 40, y: 440 })
+  link(pdf, 1, [40, 438, 125, 454], {
+    A: { S: 'URI', URI: PDFString.of('https://example.org/paper') }
+  })
+  const translation = 'This translated paragraph describes the linked paper in detail. '.repeat(100)
+  const output = await generate(pdf, [
+    { source: 'Read the paper.', translation, fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise
+    expect(parsed.numPages).toBeGreaterThan(1)
+    for (let n = 1; n <= parsed.numPages; n++) {
+      const page = await parsed.getPage(n),
+        annotations = await page.getAnnotations()
+      const text = (await page.getTextContent()).items.filter((i) => 'str' in i && i.str.trim())
+      expect(annotations.length).toBe(text.length)
+      for (const annotation of annotations) {
+        expect(annotation.url).toBe('https://example.org/paper')
+        const [left, low, right, high] = annotation.rect
+        expect(high - low).toBeCloseTo(18, 3)
+        expect(
+          text.some(
+            (item) =>
+              'str' in item &&
+              Math.abs(item.transform[4] - left) < 1 &&
+              item.transform[5] > low &&
+              item.transform[5] < high &&
+              right > left
+          )
+        ).toBe(true)
+      }
+    }
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each(['direct', 'action', 'name-tree', 'named-dictionary'])(
+  'rewrites %s destinations to actual output page references',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    for (const label of ['Introduction.', 'Target paragraph.'])
+      pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+    const dest = pdf.context.obj([pdf.getPage(1).ref, PDFName.of('XYZ'), 40, 450, null])
+    if (kind === 'name-tree')
+      pdf.catalog.set(
+        PDFName.of('Names'),
+        pdf.context.obj({ Dests: { Names: [PDFString.of('target'), dest] } })
+      )
+    if (kind === 'named-dictionary')
+      pdf.catalog.set(PDFName.of('Dests'), pdf.context.obj({ target: dest }))
+    link(
+      pdf,
+      1,
+      [40, 438, 110, 454],
+      kind === 'action'
+        ? { A: { S: 'GoTo', D: dest } }
+        : {
+            Dest:
+              kind === 'name-tree'
+                ? PDFString.of('target')
+                : kind === 'named-dictionary'
+                  ? PDFName.of('target')
+                  : dest
+          }
+    )
+    // Force the target onto a later output page, rather than source page two.
+    const output = await generate(pdf, [
+      {
+        source: 'Introduction.',
+        translation: 'Long translated introduction. '.repeat(350),
+        fragments: [fragment(1, 0.08)]
+      },
+      {
+        source: 'Target paragraph.',
+        translation: 'Translated target paragraph.',
+        fragments: [fragment(2, 0.08)]
+      }
+    ])
+    expect(output.layoutFailures).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        target = output.reflow!.units.find((u) => u.unitIndex === 1)!.fragments[0]
+      expect(target.pageNumber).toBeGreaterThan(2)
+      const links = await (await parsed.getPage(1)).getAnnotations()
+      expect(links.length).toBeGreaterThan(0)
+      for (const link of links) {
+        expect(await parsed.getPageIndex(link.dest[0])).toBe(target.pageNumber - 1)
+        expect(link.dest[3]).toBeCloseTo((1 - target.rect.y) * 841.89, 2)
+      }
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it('remaps mail links in retained figures with the crop scale', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    page = pdf.addPage([400, 500])
+  page.drawText('Body.', { font, size: 12, x: 40, y: 440 })
+  page.drawRectangle({ x: 40, y: 200, width: 200, height: 100, color: rgb(0.2, 0.5, 0.7) })
+  link(pdf, 1, [60, 220, 100, 240], {
+    A: { S: 'URI', URI: PDFString.of('mailto:science@example.org') }
+  })
+  const output = await generate(pdf, [
+    { source: 'Body.', translation: 'Translated body.', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      annotations = await (await parsed.getPage(1)).getAnnotations()
+    expect(annotations).toHaveLength(1)
+    expect(annotations[0].url).toBe('mailto:science@example.org')
+    expect(annotations[0].rect[0]).toBeCloseTo(64, 1)
+    expect(annotations[0].rect[2] - annotations[0].rect[0]).toBeCloseTo(40, 1)
+    expect(annotations[0].rect[3] - annotations[0].rect[1]).toBeCloseTo(20, 1)
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('retains ambiguous labels and rewrites links on copied pages after preceding pagination', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Introduction.', 'Read paper and paper.', 'Destination.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  const x = 40 + font.widthOfTextAtSize('Read ', 12)
+  link(pdf, 2, [x, 438, x + font.widthOfTextAtSize('paper', 12), 454], {
+    Dest: [pdf.getPage(2).ref, PDFName.of('XYZ'), 40, 450, null]
+  })
+  const output = await generate(pdf, [
+    {
+      source: 'Introduction.',
+      translation: 'Expanded introduction. '.repeat(400),
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Read paper and paper.',
+      translation: 'Read translated paper and paper.',
+      fragments: [fragment(2, 0.08)]
+    },
+    {
+      source: 'Destination.',
+      translation: 'Translated destination.',
+      fragments: [fragment(3, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures.map((f) => [f.unitIndex, f.code])).toEqual([
+    [1, 'annotations'],
+    [2, 'annotations']
+  ])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      originals = output.reflow!.originalPageNumbers!
+    expect(originals[0]).toBeGreaterThan(2)
+    const links = await (await parsed.getPage(originals[0])).getAnnotations()
+    expect(links).toHaveLength(1)
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(originals[1] - 1)
+    expect(links[0].dest.slice(2)).toEqual([40, 450, null])
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('keeps two distinct URI identities when translated references change order', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  const source = 'See Figure 1 and Figure 2.'
+  pdf.addPage([400, 500]).drawText(source, { font, size: 12, x: 40, y: 440 })
+  for (const number of [1, 2]) {
+    const label = `Figure ${number}`,
+      start = source.indexOf(label)
+    const x = 40 + font.widthOfTextAtSize(source.slice(0, start), 12)
+    link(pdf, 1, [x, 438, x + font.widthOfTextAtSize(label, 12), 454], {
+      A: { S: 'URI', URI: PDFString.of(`https://example.org/figure-${number}`) }
+    })
+  }
+  const output = await generate(pdf, [
+    { source, translation: '请先看图2，再看图1。', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    expect(links.map((l) => l.url).sort()).toEqual([
+      'https://example.org/figure-1',
+      'https://example.org/figure-2'
+    ])
+    expect(links.find((l) => l.url.endsWith('figure-2')).rect[0]).toBeLessThan(
+      links.find((l) => l.url.endsWith('figure-1')).rect[0]
+    )
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('retains CropBox coordinates and repairs the copied link target', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Original reference.', 'Target.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  pdf.getPage(0).setCropBox(20, 30, 360, 440)
+  link(pdf, 1, [40, 438, 150, 454], { Dest: [pdf.getPage(1).ref, PDFName.of('Fit')] })
+  const output = await generate(pdf, [
+    {
+      source: 'Original reference.',
+      translation: 'Translated reference.',
+      fragments: [fragment(1, 0.08)]
+    },
+    { source: 'Target.', translation: 'Translated target.', fragments: [fragment(2, 0.08)] }
+  ])
+  // A nonzero crop origin conservatively retains the linked component.
+  expect(output.layoutFailures.map((f) => f.code)).toEqual(['annotations', 'annotations'])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      first = await parsed.getPage(1),
+      links = await first.getAnnotations()
+    expect(first.view).toEqual([20, 30, 380, 470])
+    expect(links[0].rect).toEqual([40, 438, 150, 454])
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(1)
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('rewrites the primary destination even when additional actions require an original-page fallback', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Reference.', 'Destination.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  link(pdf, 1, [40, 438, 110, 454], {
+    A: { S: 'GoTo', D: [pdf.getPage(1).ref, PDFName.of('FitH'), null] },
+    AA: { E: { S: 'URI', URI: PDFString.of('https://example.org/hover') } }
+  })
+  const output = await generate(pdf, [
+    { source: 'Reference.', translation: 'Translated reference.', fragments: [fragment(1, 0.08)] },
+    {
+      source: 'Destination.',
+      translation: 'Translated destination.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.reflow!.originalPageNumbers).toEqual([1, 2])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(1)
+    expect(links[0].dest[2]).toBeNull()
+    const raw = await PDFDocument.load(output.data)
+    expect(raw.getPage(0).node.Annots()!.lookup(0).toString()).toContain('/AA')
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('maps a link on an unchanged page to a translated cross-page paragraph', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const label of ['Reference.', 'First part.', 'Second part.'])
+    pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+  link(pdf, 1, [40, 438, 110, 454], {
+    Dest: [pdf.getPage(2).ref, PDFName.of('XYZ'), 40, 450, null]
+  })
+  const output = await generate(pdf, [
+    { source: 'Reference.', translation: 'Reference.', fragments: [fragment(1, 0.08)] },
+    {
+      source: 'First part. Second part.',
+      translation: 'Translated joined paragraph.',
+      fragments: [fragment(2, 0.08), fragment(3, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      links = await (await parsed.getPage(1)).getAnnotations()
+    const target = output.reflow!.units.find((u) => u.unitIndex === 1)!.fragments[0]
+    expect(await parsed.getPageIndex(links[0].dest[0])).toBe(target.pageNumber - 1)
+    expect(target.pageNumber).toBe(2)
+  } finally {
+    await task.destroy()
+  }
+})

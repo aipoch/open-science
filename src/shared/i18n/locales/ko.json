@@ -7325,7 +7325,6 @@
     "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "본문과 캡션을 단일 열로 재배치하고 그림, 표, 수식, 코드와 참고문헌을 가능한 한 유지합니다. 결과는 PDF 추출 품질에 따라 달라집니다. 선택하지 않으면 원본 레이아웃을 가능한 한 유지합니다.",
     "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "텍스트 방향이나 레이아웃을 안전하게 재배치할 수 없어 해당 페이지를 PDF에 원본 그대로 유지했습니다.",
     "These source pages were kept in their original form because their links could not be remapped safely.": "링크를 재배치된 위치에 안전하게 연결할 수 없어 해당 페이지를 PDF에 원본 그대로 유지했습니다.",
-    "Source pages: {{pages}}": "원문 페이지: {{pages}}",
-    "Original links": "원문 링크"
+    "Source pages: {{pages}}": "원문 페이지: {{pages}}"
   }
 }

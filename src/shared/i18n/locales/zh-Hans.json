@@ -7327,7 +7327,6 @@
     "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "将正文和图注重排为单栏，尽量保留图表、公式、代码和参考文献。效果取决于 PDF 提取质量；不勾选时尽量保留原始布局。",
     "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "这些原文页的文字方向或版式无法安全重排，因此在 PDF 中保留了原页。",
     "These source pages were kept in their original form because their links could not be remapped safely.": "这些原文页的链接无法安全映射到重排后的位置，因此在 PDF 中保留了原页。",
-    "Source pages: {{pages}}": "原文页码：{{pages}}",
-    "Original links": "原文链接"
+    "Source pages: {{pages}}": "原文页码：{{pages}}"
   }
 }

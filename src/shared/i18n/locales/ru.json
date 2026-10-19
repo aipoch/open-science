@@ -7797,7 +7797,6 @@
     "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Перекомпоновать основной текст и подписи в одну колонку, по возможности сохраняя рисунки, таблицы, формулы, код и библиографию. Результат зависит от качества извлечения содержимого PDF. Снимите флажок, чтобы по возможности сохранить исходную вёрстку.",
     "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку направление текста или макет нельзя было безопасно переразместить.",
     "These source pages were kept in their original form because their links could not be remapped safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку ссылки нельзя было безопасно сопоставить с новыми позициями.",
-    "Source pages: {{pages}}": "Исходные страницы: {{pages}}",
-    "Original links": "Исходные ссылки"
+    "Source pages: {{pages}}": "Исходные страницы: {{pages}}"
   }
 }

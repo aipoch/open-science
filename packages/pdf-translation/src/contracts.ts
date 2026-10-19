@@ -243,8 +243,6 @@ export type PdfTranslationPdfRequest = Readonly<{
   id: string
   /** Content-first, single-column pagination; original crops retain figures and unsupported glyphs. */
   layout?: 'reflow'
-  /** Localized heading for original link labels whose translated position cannot be proved. */
-  sourceLinksLabel?: string
   /** Whole original tables/figures, never split into translated paragraphs. */
   originalRegions?: readonly Readonly<{
     pageNumber: number

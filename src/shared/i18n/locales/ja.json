@@ -7327,7 +7327,6 @@
     "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "本文とキャプションを1段組みに再配置し、図、表、数式、コード、参考文献を可能な限り保持します。結果は PDF の抽出品質に左右されます。チェックを外すと、元のレイアウトを可能な限り維持します。",
     "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "文字の向きやレイアウトを安全に再配置できないため、これらのページは元の状態で PDF に保持されました。",
     "These source pages were kept in their original form because their links could not be remapped safely.": "リンクを再配置後の位置に安全に対応付けられないため、これらのページは元の状態で PDF に保持されました。",
-    "Source pages: {{pages}}": "原文のページ：{{pages}}",
-    "Original links": "原文のリンク"
+    "Source pages: {{pages}}": "原文のページ：{{pages}}"
   }
 }
