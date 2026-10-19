@@ -40,7 +40,7 @@ afterEach(() => {
   Object.defineProperty(window, 'api', { configurable: true, value: previousApi })
 })
 const status = (ids = ['a'], sessionId: string | null = 'session'): React.JSX.Element => (
-  <LiteratureCandidateSessionContext.Provider value={sessionId}>
+  <LiteratureCandidateSessionContext.Provider value={sessionId ? { sessionId } : null}>
     <LiteratureCandidateStatus candidateIds={ids} />
   </LiteratureCandidateSessionContext.Provider>
 )
@@ -53,7 +53,7 @@ it('updates the real saved-tool card after import without rewriting its receipt'
     .spyOn(useNavigationStore.getState(), 'openLiteratureItem')
     .mockImplementation(() => {})
   const view = render(
-    <LiteratureCandidateSessionContext.Provider value="session">
+    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session' }}>
       <WorkspaceLiteratureToolCard summary={summary} />
     </LiteratureCandidateSessionContext.Provider>
   )
@@ -227,7 +227,7 @@ it('reads only each card’s candidate IDs on refresh and cleans up all subscrip
   }))
   const ids = Array.from({ length: 20 }, (_, index) => `saved-${index}`)
   const view = render(
-    <LiteratureCandidateSessionContext.Provider value="session">
+    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session' }}>
       {ids.map((id) => (
         <WorkspaceLiteratureToolCard
           key={id}

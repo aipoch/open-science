@@ -366,7 +366,7 @@ export function Fixture(): React.JSX.Element {
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
   createRoot(document.getElementById('root')!).render(
-    <LiteratureCandidateSessionContext.Provider value="session-0">
+    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session-0' }}>
       <Fixture />
     </LiteratureCandidateSessionContext.Provider>
   )

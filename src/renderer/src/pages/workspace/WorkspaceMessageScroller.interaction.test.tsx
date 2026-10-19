@@ -534,6 +534,134 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.textContent).toContain('Pending review: 1')
   })
 
+  it.each(['fork', 'nested-fork', 'branch', 'legacy-branch'])(
+    'keeps inherited literature cards historical and refreshes new %s activity',
+    async (kind) => {
+      const sourceSessionId = kind === 'nested-fork' ? 'ancestor-session' : 'source-session'
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const getCandidateStates = vi.fn(async () => ({
+        candidates: [{ candidateId: 'new-candidate', state: 'pending' }]
+      }))
+      const unsubscribe = vi.fn()
+      Object.assign(window.api, {
+        literature: { getCandidateStates, onChanged: vi.fn(() => unsubscribe) }
+      })
+      const oldPrompt = createMessage({
+        id: 'inherited-prompt',
+        sortIndex: 0,
+        usageOrigin:
+          kind === 'legacy-branch'
+            ? undefined
+            : { sessionId: sourceSessionId, messageId: 'source-prompt' }
+      })
+      const newPrompt = createMessage({
+        id: 'local-prompt',
+        sortIndex: 2,
+        createdAt: oldPrompt.createdAt + 2
+      })
+      const graph = createLinearConversationGraph({
+        sessionId: 'forked-session',
+        messages: [oldPrompt, newPrompt],
+        createdAt: oldPrompt.createdAt,
+        updatedAt: newPrompt.createdAt
+      })
+      const activities = [oldPrompt, newPrompt].map((prompt, index) =>
+        createActivity({
+          id: `save-${index}`,
+          status: 'completed',
+          title: 'save_to_inbox',
+          providerToolName: 'mcp__open-science-library__save_to_inbox',
+          sortIndex: index * 2 + 1,
+          createdAt: prompt.createdAt + 1,
+          rawOutput: {
+            results: [
+              { kind: 'candidate', id: index ? 'new-candidate' : 'old-candidate', state: 'pending' }
+            ]
+          }
+        })
+      )
+      graph.activities = activities.map((activity, index) => ({
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.branches[0].id,
+        runtimeSegmentId: graph.runtimeSegments[0].id,
+        promptMessageId: [oldPrompt, newPrompt][index].id
+      }))
+      const session = createSession({
+        id: 'forked-session',
+        status: 'idle',
+        forkOrigin: {
+          importId: 'fork-import',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        },
+        forkHeadMessageId: oldPrompt.id,
+        conversationGraph: graph,
+        messages: [oldPrompt, newPrompt],
+        // Main's flat presentation omits graph ownership: use the canonical activity ID.
+        activities
+      })
+      if (kind.endsWith('branch')) {
+        session.forkOrigin = undefined
+        session.forkHeadMessageId = undefined
+        session.branchSource = { sessionId: 'source-session', headMessageId: oldPrompt.id }
+      }
+      root = createRoot(container)
+      const show = async (value: ChatSession): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <WorkspaceMessageScroller activeSession={value} onSendEditedMessage={vi.fn()} />
+          )
+        })
+      }
+      await show(session)
+      expect(getCandidateStates).toHaveBeenCalledExactlyOnceWith({
+        candidateIds: ['new-candidate']
+      })
+      expect(container.textContent).toContain(
+        'Historical result; current library status is unavailable.'
+      )
+      expect(container.textContent).toContain('Pending review: 1')
+      expect(container.querySelectorAll('[data-testid="literature-tool-card"]')).toHaveLength(2)
+
+      const historicalBranch = structuredClone(graph)
+      historicalBranch.branches.push({
+        ...historicalBranch.branches[0],
+        id: 'historical-branch',
+        headMessageId: oldPrompt.id
+      })
+      historicalBranch.frames[0].activeBranchId = 'historical-branch'
+      await show({
+        ...session,
+        conversationGraph: historicalBranch,
+        messages: [oldPrompt],
+        activities: session.activities?.slice(0, 1)
+      })
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalledOnce()
+      await show(session)
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+      // An unresolvable activity must not acquire live identities from another card.
+      await show({ ...session, conversationGraph: { ...graph, activities: [] } })
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+      await show({
+        ...session,
+        packageOrigin: {
+          importId: 'readonly-import',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+    }
+  )
+
   it.each([false, true])(
     'opens Literature metadata with package=%s independently of bookmark scope',
     async (packaged) => {

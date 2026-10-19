@@ -123,12 +123,18 @@ const CurrentCandidateStatus = ({
 }
 
 export const LiteratureCandidateStatus = ({
-  candidateIds
+  candidateIds,
+  activityId
 }: {
   candidateIds?: readonly string[]
+  activityId?: string
 }): React.JSX.Element => {
   const { t } = useTranslation()
-  const sessionId = useContext(LiteratureCandidateSessionContext)
+  const context = useContext(LiteratureCandidateSessionContext)
+  const sessionId =
+    context && (!context.liveActivityIds || (activityId && context.liveActivityIds.has(activityId)))
+      ? context.sessionId
+      : null
   return (
     <div className="text-xs text-text-200">
       {sessionId && candidateIds?.length ? (

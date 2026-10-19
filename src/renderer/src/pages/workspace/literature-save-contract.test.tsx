@@ -26,7 +26,7 @@ afterEach(() => {
 })
 const render = (node: React.ReactNode): ReturnType<typeof renderComponent> =>
   renderComponent(
-    <LiteratureCandidateSessionContext.Provider value="session">
+    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session' }}>
       {node}
     </LiteratureCandidateSessionContext.Provider>
   )

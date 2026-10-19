@@ -1,5 +1,8 @@
 import { createContext } from 'react'
 
-// Only original local transcripts opt into resolving catalog identities.
-// Imported and standalone replay surfaces retain historical receipts by default.
-export const LiteratureCandidateSessionContext = createContext<string | null>(null)
+// Imported and standalone replay surfaces remain historical. Writable forks opt in
+// only for activities whose canonical prompt belongs to the local continuation.
+export const LiteratureCandidateSessionContext = createContext<{
+  sessionId: string
+  liveActivityIds?: ReadonlySet<string>
+} | null>(null)

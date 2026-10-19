@@ -20,9 +20,11 @@ import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 
 const WorkspaceLiteratureToolCard = ({
   summary,
+  activityId,
   isApproval = false
 }: {
   summary: LiteratureToolSummary
+  activityId?: string
   isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -180,7 +182,7 @@ const WorkspaceLiteratureToolCard = ({
       {!isApproval &&
       summary.action === 'save' &&
       (summary.candidateIds?.length || (summary.savedCount ?? 0) > 0) ? (
-        <LiteratureCandidateStatus candidateIds={summary.candidateIds} />
+        <LiteratureCandidateStatus candidateIds={summary.candidateIds} activityId={activityId} />
       ) : null}
 
       {summary.pdfElements ? (
