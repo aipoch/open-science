@@ -166,6 +166,16 @@ export function readReflowLinks(native, source, input, originalDocument) {
         if (!p.FPDF_GetPageBoundingBox(page, at)) throw Error('Link page bounds')
         const [left, top, right, bottom] = m.HEAPF32.slice(at / 4, at / 4 + 4)
         geometry.push({ left, top, width: right - left, height: top - bottom })
+        // Graphic extraction uses the supplied zero-origin viewport even without links.
+        if (
+          [
+            left,
+            bottom,
+            right - input.pages[number - 1].width,
+            top - input.pages[number - 1].height
+          ].some((offset) => Math.abs(offset) >= 0.001)
+        )
+          unsafePages.add(number)
         let text
         try {
           if (p.FPDFPage_GetRotation(page)) unsafePages.add(number)
@@ -426,8 +436,11 @@ export function mapReflowLinks(
   const destination = (dest) => {
     const original = originals.get(dest.pageNumber)
     if (original) return { pageNumber: original, mode: dest.mode, params: dest.params }
+    // Reflow can split a FitR rectangle across pages; preserve the source page and
+    // all four operands rather than replacing its fitted view with an XYZ point.
+    if (dest.mode === 5) return undefined
     const { left, top, width, height } = geometry[dest.pageNumber - 1]
-    const [a, b, , d] = dest.params
+    const [a, b] = dest.params
     if ([2, 6].includes(dest.mode) || (dest.mode === 1 && a == null && b == null)) {
       const locations = crops
         .filter((c) => c.sourcePage === dest.pageNumber)
@@ -446,8 +459,8 @@ export function mapReflowLinks(
       const number = sourcePages.findIndex((pages) => pages.includes(dest.pageNumber)) + 1
       return number ? { pageNumber: number, mode: 2, params: [] } : undefined
     }
-    const x = dest.mode === 1 || dest.mode === 5 ? a : [4, 8].includes(dest.mode) ? a : null
-    const y = dest.mode === 1 ? b : dest.mode === 5 ? d : [3, 7].includes(dest.mode) ? a : null
+    const x = [1, 4, 8].includes(dest.mode) ? a : null
+    const y = dest.mode === 1 ? b : [3, 7].includes(dest.mode) ? a : null
     const point = {
       x: x == null ? null : (x - left) / width,
       y: y == null ? null : (top - y) / height

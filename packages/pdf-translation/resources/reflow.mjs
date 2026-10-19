@@ -306,7 +306,11 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       const box = sourceLinks.geometry[link.pageNumber - 1]
       // The graphic extractor currently assumes a zero-origin page. Keep links
       // and content together when that assumption does not hold.
-      if (link.unsupported || box.left !== 0 || box.top !== input.pages[link.pageNumber - 1].height)
+      if (
+        link.unsupported ||
+        Math.abs(box.left) >= 0.001 ||
+        Math.abs(box.top - input.pages[link.pageNumber - 1].height) >= 0.001
+      )
         retainedLinkPages.add(link.pageNumber)
     }
     retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)

@@ -1238,3 +1238,118 @@ it.each(['Text', 'Highlight', 'Widget', 'visible-form', 'hidden-form', 'xfa'])(
     ])
   }
 )
+
+it.each(['crop', 'media'])(
+  'retains an unlinked graphic page with an offset %s box',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    const page = pdf.addPage([400, 500])
+    if (kind === 'crop') page.setCropBox(20, 30, 360, 440)
+    else page.setMediaBox(20, 30, 400, 500)
+    page.drawText('Original.', { font, size: 12, x: 50, y: 440 })
+    page.drawRectangle({ x: 60, y: 100, width: 120, height: 80, color: rgb(1, 0, 0) })
+    const output = await generate(pdf, [
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+    ])
+    expect(output.reflow!.originalPageNumbers).toEqual([1])
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ code: 'unsupported-layout', unitIndex: 0 })
+    ])
+    const saved = await PDFDocument.load(output.data),
+      originalPage = saved.getPage(0)
+    expect(originalPage.getMediaBox()).toEqual(page.getMediaBox())
+    expect(originalPage.getCropBox()).toEqual(page.getCropBox())
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        content = await (await parsed.getPage(1)).getTextContent()
+      expect(content.items.map((item) => ('str' in item ? item.str : '')).join(' ')).toContain(
+        'Original.'
+      )
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it.each(['link', 'bookmark'])(
+  'preserves the complete FitR rectangle for a %s destination',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    for (const text of ['See target.', 'Target paragraph.'])
+      pdf.addPage([400, 500]).drawText(text, { font, size: 12, x: 40, y: 440 })
+    const dest = [pdf.getPage(1).ref, 'FitR', 40, 430, 100, 450]
+    if (kind === 'link') link(pdf, 1, [40, 438, 120, 454], { Dest: dest })
+    else {
+      const root = pdf.context.obj({ Type: 'Outlines', Count: 1 }),
+        rootRef = pdf.context.register(root)
+      const item = pdf.context.register(
+        pdf.context.obj({ Title: PDFString.of('Rectangle'), Parent: rootRef, Dest: dest })
+      )
+      root.set(PDFName.of('First'), item)
+      root.set(PDFName.of('Last'), item)
+      pdf.catalog.set(PDFName.of('Outlines'), rootRef)
+    }
+    const output = await generate(pdf, [
+      {
+        source: 'See target.',
+        translation: 'Expanded introduction. '.repeat(400),
+        fragments: [fragment(1, 0.08)]
+      },
+      {
+        source: 'Target paragraph.',
+        translation: 'Translated target.',
+        fragments: [fragment(2, 0.08)]
+      }
+    ])
+    expect(output.layoutFailures).toContainEqual(
+      expect.objectContaining({ code: 'annotations', unitIndex: 1 })
+    )
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise
+      const destination =
+        kind === 'link'
+          ? (await (await parsed.getPage(1)).getAnnotations())[0].dest
+          : (await parsed.getOutline())![0].dest
+      expect(destination.slice(1)).toEqual([{ name: 'FitR' }, 40, 430, 100, 450])
+      const targetIndex = await parsed.getPageIndex(destination[0])
+      expect(output.reflow!.originalPageNumbers).toContain(targetIndex + 1)
+      if (kind === 'bookmark') expect(targetIndex).toBeGreaterThan(1)
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it.each([false, true])(
+  'reflows ordinary fractional A4 bounds despite native float rounding (linked=%s)',
+  async (linked) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    pdf.addPage([595.28, 841.89]).drawText('Original.', { font, size: 12, x: 60, y: 760 })
+    if (linked)
+      link(pdf, 1, [60, 758, 110, 774], {
+        A: { S: 'URI', URI: PDFString.of('https://example.org') }
+      })
+    const output = await generate(pdf, [
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+    ])
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        page = await parsed.getPage(1),
+        text = await page.getTextContent()
+      expect(text.items.map((item) => ('str' in item ? item.str : '')).join(' ')).toContain(
+        'Translated.'
+      )
+      if (linked) expect((await page.getAnnotations())[0].url).toBe('https://example.org/')
+    } finally {
+      await task.destroy()
+    }
+  }
+)

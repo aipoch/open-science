@@ -105,6 +105,9 @@ relationships, field values and editability rather than dropping them during ref
 
 Exported PDFs preserve the source bookmark titles, hierarchy, styles and expansion state.
 Bookmark destinations use the same mapping as internal links, including named destinations.
+FitR destinations retain their original target page and all four rectangle coordinates.
+Pages whose native bounds do not match the zero-origin viewport also retain their original
+content, including unlinked graphics.
 An ambiguous destination retains its original page; unsupported actions or malformed bookmark
 trees retain the complete original PDF. No nearest-paragraph destination is guessed.
 
