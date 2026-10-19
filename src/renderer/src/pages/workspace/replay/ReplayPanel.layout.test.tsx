@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { useEffect, useState } from 'react'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import { buildObservationReplayDocument } from '@/lib/replay/live-source'
 import type { ReplayDocument, ReplayStep } from '../../../../../shared/replay'
@@ -454,8 +454,11 @@ describe('research replay layout', () => {
       await tick(5)
       const stage = screen.getByTestId('replay-stage')
       const originalPane = pane('conversation')
-      fireEvent.click(screen.getByTestId('replay-information-trigger'))
+      const informationTrigger = screen.getByTestId('replay-information-trigger')
+      fireEvent.click(informationTrigger)
       fireEvent.click(screen.getByRole('button', { name: 'View files' }))
+      // Radix restores focus on a timer; finish closing the popover before the next interaction.
+      await waitFor(() => expect(window.document.activeElement).toBe(informationTrigger))
       await tick(2)
       const files = screen.getByRole('complementary', { name: 'Files' })
       expect(files.hidden).toBe(false)
