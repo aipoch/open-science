@@ -1186,3 +1186,55 @@ it.each([false, true])(
     }
   }
 )
+
+it.each(['Text', 'Highlight', 'Widget', 'visible-form', 'hidden-form', 'xfa'])(
+  'retains the complete original document for unsupported annotations/forms (%s)',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    for (const label of ['Introduction.', 'Original.'])
+      pdf.addPage([400, 500]).drawText(label, { font, size: 12, x: 40, y: 440 })
+    const page = pdf.getPage(1)
+    if (kind.endsWith('-form')) {
+      const field = pdf.getForm().createTextField('review-field')
+      field.setText('User-entered value')
+      if (kind === 'visible-form')
+        field.addToPage(page, { x: 40, y: 350, width: 200, height: 30, font })
+    } else if (kind === 'xfa') {
+      const packet = pdf.context.register(
+        pdf.context.stream('<xdp:xdp xmlns:xdp="http://ns.adobe.com/xdp/"></xdp:xdp>')
+      )
+      pdf.catalog.set(PDFName.of('AcroForm'), pdf.context.obj({ Fields: [], XFA: packet }))
+    } else {
+      page.node.addAnnot(
+        pdf.context.register(
+          pdf.context.obj({
+            Type: 'Annot',
+            Subtype: kind,
+            Rect: [40, 438, 100, 454],
+            Contents: PDFString.of('Keep this review comment'),
+            ...(kind === 'Highlight' ? { QuadPoints: [40, 454, 100, 454, 40, 438, 100, 438] } : {}),
+            ...(kind === 'Widget'
+              ? { FT: 'Tx', T: PDFString.of('orphan-field'), V: PDFString.of('Keep this value') }
+              : {})
+          })
+        )
+      )
+    }
+    const bytes = await pdf.save()
+    const output = await generate(pdf, [
+      {
+        source: 'Introduction.',
+        translation: 'Translated introduction.',
+        fragments: [fragment(1, 0.08)]
+      },
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(2, 0.08)] }
+    ])
+    expect(output.data).toEqual(bytes)
+    expect(output.reflow!.originalPageNumbers).toEqual([1, 2])
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ code: 'annotations', unitIndex: 0 }),
+      expect.objectContaining({ code: 'annotations', unitIndex: 1 })
+    ])
+  }
+)

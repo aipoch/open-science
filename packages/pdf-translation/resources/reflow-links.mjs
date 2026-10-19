@@ -118,6 +118,9 @@ function readOutlines(original, native, source, readDestination) {
 }
 
 export function readReflowLinks(native, source, input, originalDocument) {
+  // Form fields (including hidden fields and XFA) have document-level relationships.
+  // Rebuilding page content cannot preserve their values, actions or editability.
+  if (originalDocument.catalog.has(PDFName.of('AcroForm'))) return { wholeDocument: true }
   const pageCount = input.pages.length,
     unsafePages = new Set()
   const { p, m } = native,
@@ -200,7 +203,9 @@ export function readReflowLinks(native, source, input, originalDocument) {
           for (let index = 0; index < p.FPDFPage_GetAnnotCount(page); index++) {
             const annotation = p.FPDFPage_GetAnnot(page, index)
             try {
-              if (p.FPDFAnnot_GetSubtype(annotation) !== 2) continue
+              // Comments, highlights, widgets and other non-link annotations must not
+              // disappear silently. Preserve the complete annotation graph in the source bytes.
+              if (p.FPDFAnnot_GetSubtype(annotation) !== 2) return { wholeDocument: true }
               if (result.length >= 10000) throw Error('Reflow link limit')
               const link = p.FPDFAnnot_GetLink(annotation),
                 action = p.FPDFLink_GetAction(link)

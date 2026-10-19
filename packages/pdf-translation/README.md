@@ -99,6 +99,9 @@ require a unique owning paragraph or crop; a nearest-paragraph guess is not used
 destinations or unsupported link actions retain the complete original document and report the
 limitation rather than publish an output with silently missing links. Existing broken links are
 not repaired. No extra source-links area is added to the translated document.
+Non-link annotations (including comments, highlights and widgets) and AcroForm structures
+retain the complete original document with existing diagnostics, preserving annotation
+relationships, field values and editability rather than dropping them during reflow.
 
 Exported PDFs preserve the source bookmark titles, hierarchy, styles and expansion state.
 Bookmark destinations use the same mapping as internal links, including named destinations.
