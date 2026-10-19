@@ -5,11 +5,13 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "compute_domain_contracts": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "environment_contracts": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "host_runtime_lifecycle": [
       "src/main/update/windows-install-progress.test.ts",
@@ -23,13 +25,15 @@
       "src/main/update/windows-install-progress.test.ts"
     ],
     "i18n_renderer_adapter": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "i18n_shared_runtime": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/windows-install-progress.test.ts",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "literature_presentation_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -45,35 +49,41 @@
     ],
     "notebook_analysis": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_journal_catalog": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_citations": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_discovery": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_library": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_reading": ["src/main/settings/codex-bridge-tools.test.ts"],
     "package_literature_screening": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_pdf_translation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -83,7 +93,8 @@
     "pdf_document_source": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "pdf_preview_runtime": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -97,7 +108,8 @@
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "renderer_acp": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "renderer_action_menu": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_app_icons": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "renderer_compute": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
@@ -109,15 +121,24 @@
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
     "renderer_diagnostics": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_hooks": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
-    "renderer_i18n": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "renderer_hooks": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "renderer_i18n": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "renderer_i18n_adapter": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_model_selection": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -127,14 +148,16 @@
     ],
     "renderer_package_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_package_transport": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_preferences": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_preview_persistence": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -151,25 +174,30 @@
     "renderer_session_package_capabilities": [
       "src/renderer/src/pages/home/HomePage.persistence.test.tsx",
       "src/renderer/src/pages/home/HomePage.render.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_session_persistence": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_settings_model": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_settings_state": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_shared_components": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_state": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_streamdown": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -177,7 +205,8 @@
     "renderer_ui": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_upload_transfer": [
       "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts",
@@ -185,25 +214,32 @@
     ],
     "renderer_utilities": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "reproducibility_contracts": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "resilient_download": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "session_diagnostic_contracts": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "session_renderer": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "session_replay": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "session_replay": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "settings_extension_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -225,9 +261,13 @@
     "skill_package": [
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "specialist_package": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -242,7 +282,8 @@
     ],
     "workspace_artifact_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_artifact_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -253,10 +294,14 @@
     "workspace_bookmarks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_composer": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "workspace_composer": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "workspace_composer_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_conversation": [
       "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
@@ -270,10 +315,12 @@
     ],
     "workspace_file_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_file_presentation": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_job_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -293,7 +340,8 @@
     ],
     "workspace_notebook": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "workspace_notebook_model": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
     "workspace_permissions": [
@@ -301,7 +349,8 @@
     ],
     "workspace_plan_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_preview_actions": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -315,7 +364,8 @@
     ],
     "workspace_replay_model": [
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_reproducibility_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -330,12 +380,16 @@
     "workspace_session_plan": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_shell": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "workspace_shell": [
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
     "workspace_side_chat": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_tool_model": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_tool_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
