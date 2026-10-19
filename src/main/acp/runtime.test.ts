@@ -7361,6 +7361,110 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      [
+        { nativeChoice: true, action: 'quit' },
+        { nativeChoice: true, action: 'stop' },
+        { nativeChoice: false, action: 'quit' }
+      ].map((scenario) => ({ name, framework, modelRoute, backendId, ...scenario }))
+    )
+  )(
+    'settles native-question lifecycle through $name (nativeChoice: $nativeChoice, action: $action)',
+    async ({ framework, modelRoute, backendId, nativeChoice, action }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['native-quit-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'native-quit-question',
+          message: 'Choose an approach',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              question_0: { type: 'string', title: 'Approach', enum: ['Focused', 'Broad'] },
+              ...(nativeChoice ? { question_0_custom: { type: 'string', title: 'Other' } } : {})
+            }
+          }
+        })
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => ({
+              framework: { ...framework, spawn: () => asAgentProcess(process) },
+              backendId,
+              modelRoute,
+              executablePath: '/bin/agent',
+              env: {},
+              ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+            })
+          })
+      )
+      let prompting: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1'
+        })
+        prompting = coordinator.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'Ask before proceeding',
+          provenanceContext: { promptMessageId: 'prompt-native-quit' }
+        })
+        void prompting.catch(() => undefined)
+        await vi.waitFor(() =>
+          expect(coordinator.getSnapshot().pendingElicitations).toHaveLength(1)
+        )
+        const request = coordinator.getSnapshot().pendingElicitations![0]
+        expect(Boolean(request.durable)).toBe(nativeChoice)
+        expect(coordinator.getActivePromptSessions()).toEqual([
+          { projectId: 'project-1', sessionId: session.sessionId }
+        ])
+
+        if (action === 'quit') await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+        else await coordinator.cancelPrompt({ sessionId: session.sessionId })
+
+        const preserved = nativeChoice && action === 'quit'
+        expect(
+          coordinator
+            .getSnapshot()
+            .events.filter((event) => event.toolCallId === 'native-quit-question')
+            .at(-1)?.elicitation?.state
+        ).toBe(preserved ? 'pending' : 'cancelled')
+        if (preserved) {
+          expect(fakeAgent.cancelledSessions).toEqual([])
+          expect(coordinator.getQuitBlockingPromptSessions()).toEqual([])
+          expect(coordinator.getActivePromptSessions()).toHaveLength(1)
+          coordinator.abortQuitPreparation()
+          await coordinator.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Focused' }]
+          })
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Focused' } }
+          ])
+        } else {
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+      } finally {
+        await coordinator.shutdownForQuit()
+        await prompting?.catch(() => undefined)
+      }
+    }
+  )
+
   it('makes a provider-native AskUserQuestion form durable for restore and revision', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['native-choice-session'], {
