@@ -156,11 +156,12 @@ export function findCaptionedNumericTableRegions(items, rules, detectedRects = [
 // Keep closed stroke rectangles separate from table-rule discovery: a path's
 // bounding box does not prove four edges. Explicit closed outlines and four
 // separately painted, connected sides establish frames after exact clipping.
-export function collectClosedFigureFrames(operators, viewport) {
+export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
   let transform = [1, 0, 0, 1, 0, 0],
     clip = [0, 0, viewport.width ?? Infinity, viewport.height ?? Infinity],
     pendingClip = false,
     lineWidth = 1,
+    lineCap = 0,
     solidStroke = true,
     strokeAlpha = 1,
     fillAlpha = 1
@@ -172,6 +173,7 @@ export function collectClosedFigureFrames(operators, viewport) {
       transform: [...transform],
       clip: clip && [...clip],
       lineWidth,
+      lineCap,
       solidStroke,
       strokeAlpha,
       fillAlpha
@@ -181,6 +183,7 @@ export function collectClosedFigureFrames(operators, viewport) {
     transform = state?.transform ?? [1, 0, 0, 1, 0, 0]
     clip = state ? state.clip : null
     lineWidth = state?.lineWidth ?? 1
+    lineCap = state?.lineCap ?? 0
     solidStroke = state?.solidStroke ?? true
     strokeAlpha = state?.strokeAlpha ?? 1
     fillAlpha = state ? state.fillAlpha : 1
@@ -217,14 +220,43 @@ export function collectClosedFigureFrames(operators, viewport) {
       Math.max(...points.map((p) => p[1]))
     ]
   }
+  let frameOperationIndex
   const addFrame = (rect, paintClip) => {
     if (
       paintClip &&
       rect.every((v, n) => (n < 2 ? v >= paintClip[n] - 1e-8 : v <= paintClip[n] + 1e-8))
-    )
+    ) {
       frames.push(rect)
+      paintEvidence?.frames?.set(frameOperationIndex, rect)
+    }
   }
   for (const [i, op] of operators.fnArray.entries()) {
+    frameOperationIndex = i
+    // Optional native ownership evidence observes the same transform/clip
+    // state as frame discovery. It does not change legacy frame selection.
+    if (paintEvidence && op === OPS.paintImageXObject) {
+      const matrix = Util.transform(viewport.transform, transform),
+        points = [
+          [0, 0],
+          [1, 0],
+          [1, 1],
+          [0, 1]
+        ]
+      for (const point of points) Util.applyTransform(point, matrix)
+      paintEvidence.images.push({ operationIndex: i, rect: intersectClip(rectangle(points)) })
+    }
+    if (paintEvidence?.paths && op === OPS.constructPath)
+      paintEvidence.paths.set(i, {
+        transform: [...transform],
+        clip: clip && [...clip],
+        lineWidth,
+        lineCap,
+        solidStroke,
+        strokeAlpha,
+        fillAlpha
+      })
+    if (paintEvidence && op === OPS.showText)
+      paintEvidence.texts.set(i, { transform: [...transform], clip: clip && [...clip] })
     const args = operators.argsArray[i],
       // PDF.js paints the current path against the old clip before consumePath
       // applies a pending clip. Keep that paint domain even when the new clip
@@ -270,10 +302,12 @@ export function collectClosedFigureFrames(operators, viewport) {
         clip = intersectClip(rectangle(points))
       }
     } else if (op === OPS.setLineWidth) lineWidth = args[0]
+    else if (op === OPS.setLineCap) lineCap = args[0]
     else if (op === OPS.setDash) solidStroke = Array.isArray(args[0]) && args[0].length === 0
     else if (op === OPS.setGState) {
       for (const [key, value] of args?.[0] ?? []) {
         if (key === 'LW') lineWidth = value
+        if (key === 'LC') lineCap = value
         if (key === 'D') solidStroke = Array.isArray(value?.[0]) && value[0].length === 0
         if (key === 'CA') strokeAlpha = value
         if (key === 'ca') fillAlpha = value
@@ -291,6 +325,9 @@ export function collectClosedFigureFrames(operators, viewport) {
       )
         continue
       let path = Array.from(nativePath)
+      // An ownership observer may normalize consecutive unpainted moves before
+      // the existing closed-frame validator. Legacy frame selection is unchanged.
+      if (paintEvidence?.frames) while (path[0] === 0 && path[3] === 0) path = path.slice(3)
       if (args[0] !== OPS.fill && (!(strokeAlpha > 0) || !Number.isFinite(strokeAlpha))) continue
       // A fill-and-stroke operation really paints its closed perimeter. A
       // fill alone still requires the separate hollow-contour proof below.
@@ -1202,6 +1239,10 @@ export function excludeRepeatedMarginContent(pages) {
         line.height > 0 &&
         rect[3] <= (authorHeader(line.text) || runningSeparator(page, line) ? 0.1 : 0.07) &&
         rect[3] - rect[1] <= 0.03
+      // The separator depends only on this native row and the unchanged page.
+      // Resolve it outside the overlap scan, including author-shaped headers
+      // whose short-circuited margin check did not need a separator lookup.
+      const separator = runningHeader ? runningSeparator(page, line) : undefined
       if (
         !(verticalNotice || runningHeader) ||
         (page.graphicsBounds ?? []).some((graphic) => {
@@ -1210,7 +1251,7 @@ export function excludeRepeatedMarginContent(pages) {
             // A page background/border path is not evidence that a repeated
             // running header is a figure label. Real images remain protected.
             !(runningHeader && kind === 'path' && r[2] - r[0] >= 0.95 && r[3] - r[1] >= 0.95) &&
-            !(runningHeader && graphic === runningSeparator(page, line)) &&
+            !(runningHeader && graphic === separator) &&
             // Quantized separator strokes can touch the top of the header's
             // font box. A long thin rule is not an enclosing body graphic.
             !(

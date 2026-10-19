@@ -540,7 +540,12 @@ function nativeForeignFrameDuplicateIndices(tables, associations, items, rules) 
 // Tighten a detector crop only when an independently closed native frame owns
 // every assigned glyph and every native glyph within it. Neighboring panel
 // ink cannot lend a wider boundary to this complete source grid.
-export function proveNativeAssignedClosedTableFrame(table, items, rules) {
+export function proveNativeAssignedClosedTableFrame(
+  table,
+  items,
+  rules,
+  allowRuleOverhang = false
+) {
   const valid = (r) => r?.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   const crop = table.cropRect
   if (
@@ -579,8 +584,7 @@ export function proveNativeAssignedClosedTableFrame(table, items, rules) {
     (r) =>
       r.every(Number.isFinite) &&
       r[1] === r[3] &&
-      r[0] >= crop[0] - 0.02 &&
-      r[2] <= crop[2] + 0.02 &&
+      (allowRuleOverhang || (r[0] >= crop[0] - 0.02 && r[2] <= crop[2] + 0.02)) &&
       r[1] >= crop[1] - 0.02 &&
       r[1] <= crop[3] + 0.02 &&
       r[0] <= x0 + 0.02 &&
@@ -3576,8 +3580,41 @@ function nativeClosedTableReferenceItems(table, items, rules) {
     table.cells?.length !== table.grid.length * table.grid[0].length
   )
     return
-  const proof = proveNativeAssignedClosedTableFrame(table, items, rules)
+  // A detector can stop before a rule endpoint while retaining every printed
+  // field. The native frame still must uniquely enclose all and only the
+  // assigned fonts; use it solely to localize the bibliography evidence below.
+  const proof = proveNativeAssignedClosedTableFrame(table, items, rules, true)
   if (!proof) return
+  if (
+    proof.sourceTokens.some((item) => {
+      const origin = item.sourceItem
+      return (
+        !origin ||
+        origin.text !== item.text ||
+        !Number.isSafeInteger(origin.pageNumber) ||
+        origin.pageNumber < 1 ||
+        !Number.isSafeInteger(origin.index) ||
+        origin.index < 0 ||
+        item.sourceSegment ||
+        item.sourceToken ||
+        items.some(
+          (other) =>
+            other !== item &&
+            [
+              other.sourceItem,
+              other.sourceSegment,
+              other.sourceToken,
+              other.sourceToken?.sourceItem,
+              other.sourceToken?.sourceSegment
+            ].some(
+              (reference) =>
+                reference?.pageNumber === origin.pageNumber && reference?.index === origin.index
+            )
+        )
+      )
+    })
+  )
+    return
   const same = (a, b) =>
     a?.length === 4 && b?.length === 4 && a.every((v, n) => Math.abs(v - b[n]) < 0.02)
   const literal = (text) => text.replace(/\s/gu, '')
@@ -3625,14 +3662,14 @@ function nativeClosedTableReferenceItems(table, items, rules) {
     Math.max(...fonts.map((font) => font.rect[3]))
   ])
   if (nativeRows.some((row, index) => index && row[0] <= nativeRows[index - 1][1] + 0.02)) return
-  // A padded detector may touch a complete note below the closing line. It
+  // A padded detector may touch a complete label or note outside the frame. It
   // cannot exclude a partial native font or text crossing the source frame.
   if (
     (table.clipped ?? []).some(
       (item) =>
         item.rect?.length !== 4 ||
         !item.rect.every(Number.isFinite) ||
-        item.rect[1] <= proof.cropRect[3] + 0.02 ||
+        !(item.rect[3] < proof.cropRect[1] - 0.02 || item.rect[1] > proof.cropRect[3] + 0.02) ||
         !items.some(
           (font) => font.horizontal && same(font.rect, item.rect) && font.text === item.text
         )
@@ -4921,4 +4958,77 @@ export function hasTableEvidence(table, caption, pageItems = [], sourceRules, so
   )
     return false
   return populatedRows.filter((count) => count >= 2).length >= 2
+}
+
+// The fonts must be original whole native tokens, uniquely referenced across the
+// complete page inventory. Source-bearing aliases outside a crop still compete.
+export function proveNativeUniqueWholeFonts(fonts, inventory) {
+  if (!Array.isArray(fonts) || !fonts.length || !Array.isArray(inventory)) return false
+  const identity = (o) =>
+    o &&
+    Number.isInteger(o.pageNumber) &&
+    o.pageNumber > 0 &&
+    Number.isInteger(o.index) &&
+    o.index >= 0
+  const key = (o) => `${o.pageNumber}:${o.index}`
+  const sourceKeys = new Set([
+    'sourceItem',
+    'sourceItems',
+    'sourceSegment',
+    'sourceSegments',
+    'sourceToken',
+    'sourceTokens'
+  ])
+  const walk = (value, visit, ancestors = new Set(), depth = 0) => {
+    if (!value || typeof value !== 'object') return true
+    if (depth > 16 || ancestors.has(value)) return false
+    const next = new Set(ancestors)
+    next.add(value)
+    return visit(value) && Object.values(value).every((v) => walk(v, visit, next, depth + 1))
+  }
+  const counts = new Map()
+  for (const item of inventory) {
+    if (
+      !walk(item, (o) => {
+        if (identity(o)) counts.set(key(o), (counts.get(key(o)) ?? 0) + 1)
+        return true
+      })
+    )
+      return false
+  }
+  const present = new Set(inventory),
+    used = new Set()
+  return fonts.every((font) => {
+    const origin = font?.sourceItem
+    if (
+      !present.has(font) ||
+      !identity(origin) ||
+      typeof origin.text !== 'string' ||
+      !origin.text.trim() ||
+      font.text !== origin.text ||
+      counts.get(key(origin)) !== 1 ||
+      used.has(key(origin)) ||
+      !Array.isArray(font.rect) ||
+      font.rect.length !== 4 ||
+      !font.rect.every(Number.isFinite) ||
+      font.rect[2] <= font.rect[0] ||
+      font.rect[3] <= font.rect[1] ||
+      !font.horizontal ||
+      !Number.isFinite(font.baseline) ||
+      !Number.isFinite(font.height) ||
+      font.height <= 0
+    )
+      return false
+    if (
+      !Object.entries(font).every(
+        ([name, value]) =>
+          name === 'sourceItem' ||
+          (!sourceKeys.has(name) &&
+            walk(value, (o) => !Object.keys(o).some((k) => sourceKeys.has(k)) && !identity(o)))
+      )
+    )
+      return false
+    used.add(key(origin))
+    return true
+  })
 }

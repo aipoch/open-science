@@ -1102,7 +1102,27 @@ function recoverResidualSectionedOrdinaryPairs(table, items, rules, context) {
 
 // The page-local ruled fallbacks below require the complete ordinary native
 // packet. A font box alone cannot witness invisible paint or a Type3 program.
-export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop) {
+const closedRecordPacket = Symbol('closed-record-packet')
+const intervalColumnPacket = Symbol('interval-column-packet')
+
+// An interval field may coexist with colored links outside its closed domain.
+// All paint state and all glyphs are still verified; only wholly exterior glyph
+// boxes may use another opaque RGB fill. The general packet contract is unchanged.
+export function proveNativeIntervalColumnSourcePacket(items, rules, context, crop) {
+  if (!fencedGroupValidRect(crop)) return false
+  return proveNativeCompleteRuledSourcePacket(items, rules, context, crop, intervalColumnPacket)
+}
+
+// Only the closed-record owner may use this scope. All page operators and
+// visible text still participate in the proof; the original packet is untouched.
+export function proveNativeClosedRecordSourcePacket(items, rules, context, crop) {
+  if (!fencedGroupValidRect(crop)) return false
+  return proveNativeCompleteRuledSourcePacket(items, rules, context, crop, closedRecordPacket)
+}
+
+export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop, scope) {
+  const localRecord = scope === closedRecordPacket
+  const intervalColumns = scope === intervalColumnPacket
   const {
     operators: op,
     content,
@@ -1111,6 +1131,14 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
     nativeEvidenceGraphics: graphics
   } = context ?? {}
   const valid = fencedGroupValidRect
+  if (
+    localRecord &&
+    (!(viewport?.width > 0) ||
+      !(viewport?.height > 0) ||
+      !Number.isFinite(viewport.width) ||
+      !Number.isFinite(viewport.height))
+  )
+    return false
   if (
     !Array.isArray(items) ||
     !items.length ||
@@ -1299,7 +1327,13 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
       font = a[0]
       size = a[1]
     } else if (code === O.setFillRGBColor || code === O.setStrokeRGBColor) {
-      if (!Array.isArray(a) || a.length !== 1 || a[0] !== '#000000') return false
+      if (
+        !Array.isArray(a) ||
+        a.length !== 1 ||
+        (a[0] !== '#000000' &&
+          !(intervalColumns && typeof a[0] === 'string' && /^#[0-9a-f]{6}$/iu.test(a[0])))
+      )
+        return false
       if (code === O.setFillRGBColor) fill = a[0]
       else stroke = a[0]
     } else if (code === O.setLineWidth) {
@@ -1316,13 +1350,14 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
       if (
         !text ||
         !font ||
-        fill !== '#000000' ||
+        (!intervalColumns && fill !== '#000000') ||
         !Array.isArray(a) ||
         a.length !== 1 ||
         !Array.isArray(a[0])
       )
         return false
       let advance = 0
+      const paintedRun = []
       for (const glyph of a[0]) {
         if (typeof glyph === 'number') {
           if (!Number.isFinite(glyph)) return false
@@ -1347,11 +1382,60 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
         const end = [advance + (glyph.width * size) / 1000, 0]
         fencedGroupUtil.applyTransform(end, matrix)
         for (const char of characters(glyph.unicode))
-          glyphs.push({ char, font, start, end, sizeX: size * matrix[0], sizeY: size * matrix[3] })
+          paintedRun.push({
+            char,
+            font,
+            start,
+            end,
+            sizeX: size * matrix[0],
+            sizeY: size * matrix[3]
+          })
         advance += (glyph.width * size) / 1000
       }
       textMatrix[4] += textMatrix[0] * advance
       textMatrix[5] += textMatrix[1] * advance
+      if (intervalColumns && fill !== '#000000') {
+        for (const glyph of paintedRun) {
+          const points = [[...glyph.start], [glyph.end[0], glyph.end[1] + glyph.sizeY]]
+          points.forEach((point) => fencedGroupUtil.applyTransform(point, viewport.transform))
+          const bounds = [
+            Math.min(points[0][0], points[1][0]),
+            Math.min(points[0][1], points[1][1]),
+            Math.max(points[0][0], points[1][0]),
+            Math.max(points[0][1], points[1][1])
+          ]
+          if (!(
+            bounds[2] < crop[0] ||
+            bounds[0] > crop[2] ||
+            bounds[3] < crop[1] ||
+            bounds[1] > crop[3]
+          ))
+            return false
+        }
+      }
+      if (localRecord && paintedRun.length) {
+        const boxes = paintedRun.map((g) => {
+          const points = [[...g.start], [g.end[0], g.end[1] + g.sizeY]]
+          points.forEach((p) => fencedGroupUtil.applyTransform(p, viewport.transform))
+          return [
+            Math.min(points[0][0], points[1][0]),
+            Math.min(points[0][1], points[1][1]),
+            Math.max(points[0][0], points[1][0]),
+            Math.max(points[0][1], points[1][1])
+          ]
+        })
+        const outside =
+          boxes.every((b) => b[2] < 0) ||
+          boxes.every((b) => b[0] > viewport.width) ||
+          boxes.every((b) => b[3] < 0) ||
+          boxes.every((b) => b[1] > viewport.height)
+        if (outside) continue
+        if (
+          boxes.some((b) => b[0] < 0 || b[1] < 0 || b[2] > viewport.width || b[3] > viewport.height)
+        )
+          return false
+      }
+      glyphs.push(...paintedRun)
     } else if (code === O.constructPath) {
       const program = Array.isArray(a?.[1]?.[0])
         ? a[1][0]
@@ -1363,6 +1447,75 @@ export function proveNativeCompleteRuledSourcePacket(items, rules, context, crop
         : a?.[2] instanceof Float32Array
           ? [...a[2]]
           : undefined
+      if (localRecord && a?.[0] === O.fill) {
+        if (
+          a.length !== 3 ||
+          !program ||
+          program.length !== 13 ||
+          !program.every(Number.isFinite) ||
+          !numeric(pathBounds, 4) ||
+          fill !== '#000000'
+        )
+          return false
+        const [left, bottom, right, top] = pathBounds
+        if (
+          !(left < right && bottom < top) ||
+          !fencedGroupOpaqueEqual(program, [
+            0,
+            left,
+            bottom,
+            1,
+            right,
+            bottom,
+            1,
+            right,
+            top,
+            1,
+            left,
+            top,
+            4
+          ])
+        )
+          return false
+        const matrix = fencedGroupUtil.transform(viewport.transform, transform),
+          points = [
+            [left, bottom],
+            [right, top]
+          ]
+        points.forEach((p) => fencedGroupUtil.applyTransform(p, matrix))
+        const bounds = [
+          Math.min(points[0][0], points[1][0]),
+          Math.min(points[0][1], points[1][1]),
+          Math.max(points[0][0], points[1][0]),
+          Math.max(points[0][1], points[1][1])
+        ]
+        if (!(
+          bounds[2] < crop[0] ||
+          bounds[0] > crop[2] ||
+          bounds[3] < crop[1] ||
+          bounds[1] > crop[3]
+        ))
+          return false
+        const clipped = [
+          Math.max(0, bounds[0]),
+          Math.max(0, bounds[1]),
+          Math.min(viewport.width, bounds[2]),
+          Math.min(viewport.height, bounds[3])
+        ]
+        if (!fencedGroupValidRect(clipped)) return false
+        carriers.push(
+          clipped.map(
+            (v, k) =>
+              ((k < 2
+                ? Math.floor((v / Math.ceil(k % 2 ? viewport.height : viewport.width)) * 256)
+                : Math.ceil((v / Math.ceil(k % 2 ? viewport.height : viewport.width)) * 256) + 1) *
+                (k % 2 ? viewport.height : viewport.width)) /
+              256
+          )
+        )
+        paths++
+        continue
+      }
       if (
         a?.length !== 3 ||
         a[0] !== O.stroke ||
@@ -1500,6 +1653,63 @@ export function nativeCompleteRuledPaintCrop(frame, boundaryRules, context, owne
   )
     return
   return crop
+}
+
+// A record plan may use an inner double stroke as its logical closing while
+// its image must retain the complete outer paint. Reuse the complete original
+// path/state proof; unknown paint or clipping never authorizes a visual change.
+export function nativeCompleteRuledRecordPaintCrop(frame, boundaryRules, rules, context, owned) {
+  const v = context?.viewport,
+    ops = context?.operators,
+    paint = context?.rulePaintBounds,
+    graphics = context?.nativeEvidenceGraphics,
+    page = [0, 0, v?.width, v?.height],
+    allowed = new Set([
+      fencedGroupOPS.dependency,
+      fencedGroupOPS.save,
+      fencedGroupOPS.restore,
+      fencedGroupOPS.transform,
+      fencedGroupOPS.setDash,
+      fencedGroupOPS.setLineWidth,
+      fencedGroupOPS.setLineCap,
+      fencedGroupOPS.setStrokeRGBColor,
+      fencedGroupOPS.setFillRGBColor,
+      fencedGroupOPS.constructPath,
+      fencedGroupOPS.beginText,
+      fencedGroupOPS.endText,
+      fencedGroupOPS.setFont,
+      fencedGroupOPS.setTextMatrix,
+      fencedGroupOPS.moveText,
+      fencedGroupOPS.showText
+    ])
+  if (
+    !fencedGroupValidRect(page) ||
+    v.rotation !== 0 ||
+    !Array.isArray(v.transform) ||
+    v.transform.length !== 6 ||
+    !v.transform.every(Number.isFinite) ||
+    !Array.isArray(ops?.fnArray) ||
+    !Array.isArray(ops?.argsArray) ||
+    ops.fnArray.length !== ops.argsArray.length ||
+    ops.fnArray.some((op) => !allowed.has(op)) ||
+    !(paint instanceof Map) ||
+    !Array.isArray(rules) ||
+    rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite)) ||
+    !Array.isArray(graphics) ||
+    graphics.some((g) => g?.kind !== 'path' || !fencedGroupValidRect(g.rect)) ||
+    !proveNativeFencedPaintClosure(
+      rules,
+      page,
+      page,
+      [],
+      paint,
+      graphics,
+      context,
+      context.nativePaintIdentityGraphics
+    ).qualified
+  )
+    return
+  return nativeCompleteRuledPaintCrop(frame, boundaryRules, context, owned)
 }
 
 const median = (values) => [...values].sort((a, b) => a - b)[values.length >> 1]
@@ -11341,7 +11551,8 @@ function proveNativeFencedPaintClosure(
   groups,
   paint,
   graphics,
-  operatorContext
+  operatorContext,
+  operationGraphics
 ) {
   const fail = (reason) => ({ qualified: false, reason }),
     rect = fencedGroupValidRect,
@@ -11521,7 +11732,13 @@ function proveNativeFencedPaintClosure(
           bounds[1] !== bounds[3])
       )
         return fail('solid-horizontal-stroke')
-      paths.push({ fill, bounds, matrix, width })
+      paths.push({
+        fill,
+        bounds,
+        matrix,
+        width,
+        ...(operationGraphics !== undefined ? { operationIndex: n } : {})
+      })
     }
   }
   if (stack.length) return fail('unbalanced-paint-state')
@@ -11555,6 +11772,21 @@ function proveNativeFencedPaintClosure(
         256
     )
   const carriers = []
+  if (
+    operationGraphics !== undefined &&
+    (!Array.isArray(operationGraphics) ||
+      operationGraphics.some((g) => !g || typeof g !== 'object' || !rect(g.rect)) ||
+      operationGraphics.length !== graphics.length ||
+      new Set(operationGraphics.map((g) => g.operationIndex)).size !== operationGraphics.length ||
+      operationGraphics.some(
+        (g, i) =>
+          !Number.isInteger(g.operationIndex) ||
+          g.operationIndex < 0 ||
+          g.kind !== graphics[i].kind ||
+          !same(g.rect, graphics[i].rect)
+      ))
+  )
+    return fail('complete-operation-identity-inventory')
   for (const p of paths) {
     let ink = p.bounds,
       conservative = p.bounds
@@ -11565,7 +11797,12 @@ function proveNativeFencedPaintClosure(
       conservative = [ink[0] - radius, ink[1], ink[2] + radius, ink[3]]
     }
     const carrier = quantize(conservative),
-      matches = graphics.filter((g) => fencedGroupMachineRect(g.rect, carrier))
+      matches = graphics.filter(
+        (g, i) =>
+          fencedGroupMachineRect(g.rect, carrier) &&
+          (operationGraphics === undefined ||
+            operationGraphics[i].operationIndex === p.operationIndex)
+      )
     if (matches.length !== 1) return fail('exact-native-carrier')
     carriers.push(matches[0])
     if (p.fill) {

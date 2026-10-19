@@ -9,6 +9,7 @@ import {
 import { joinHorizontalTableRules } from './literature-pdf-table-rules.mjs'
 import { splitNativeMeasuredFields } from './literature-pdf-native-header-grid.mjs'
 import { nativeWhitespaceGaps } from './literature-pdf-symbol-text.mjs'
+import { measuredSourceRanges } from './literature-pdf-source-segments.mjs'
 const bounds = (items) => [
   Math.min(...items.map((i) => i.rect[0])),
   Math.min(...items.map((i) => i.rect[1])),
@@ -16,6 +17,76 @@ const bounds = (items) => [
   Math.max(...items.map((i) => i.rect[3]))
 ]
 const text = (items) => items.map((i) => i.text).join('')
+
+// A native split can share its parent identity, but only disjoint measured
+// ranges can own different glyphs. Whole-item aliases cannot prove a reorder.
+function hasNoncompetingStackSources(items) {
+  const claims = new Map()
+  for (const item of items) {
+    const segment = item.sourceSegment ?? item.sourceToken?.sourceSegment,
+      whole = item.sourceItem ?? item.sourceToken?.sourceItem,
+      origin = segment ?? whole
+    if (!origin) continue
+    if (
+      (segment && item.sourceItem) ||
+      !Number.isSafeInteger(origin.pageNumber) ||
+      origin.pageNumber < 1 ||
+      !Number.isSafeInteger(origin.index) ||
+      origin.index < 0 ||
+      typeof origin.text !== 'string' ||
+      (!segment && origin.text !== item.text) ||
+      [
+        item.sourceItem,
+        item.sourceToken?.sourceItem,
+        item.sourceSegment,
+        item.sourceToken?.sourceSegment
+      ]
+        .filter(Boolean)
+        .some(
+          (other) =>
+            other.pageNumber !== origin.pageNumber ||
+            other.index !== origin.index ||
+            other.text !== origin.text ||
+            (other.start !== undefined &&
+              (other.start !== segment?.start ||
+                other.end !== segment?.end ||
+                !Array.isArray(other.rect) ||
+                other.rect.length !== 4 ||
+                other.rect.some(
+                  (v, n) => !Number.isFinite(v) || Math.abs(v - item.rect[n]) > 1e-6
+                )))
+        )
+    )
+      return false
+    const start = segment?.start ?? 0,
+      end = segment?.end ?? origin.text.length
+    if (
+      segment &&
+      (!Number.isSafeInteger(start) ||
+        !Number.isSafeInteger(end) ||
+        start < 0 ||
+        end <= start ||
+        end > origin.text.length ||
+        origin.text.slice(start, end) !== item.text ||
+        !Array.isArray(segment.rect) ||
+        segment.rect.length !== 4 ||
+        segment.rect.some((v, n) => !Number.isFinite(v) || Math.abs(v - item.rect[n]) > 1e-6))
+    )
+      return false
+    const key = `${origin.pageNumber}:${origin.index}`,
+      previous = claims.get(key) ?? []
+    if (
+      previous.some(
+        (claim) =>
+          claim.text !== origin.text || Math.min(claim.end, end) > Math.max(claim.start, start)
+      )
+    )
+      return false
+    previous.push({ text: origin.text, start, end })
+    claims.set(key, previous)
+  }
+  return true
+}
 
 // A same-TJ field gutter may separate a whole stub from its central value only
 // beside four complete serial uncertainty peers. The raw page packet and every
@@ -199,9 +270,17 @@ export function recoverNativeFusedStackedScalarOwners(table, items, rules, runs,
     )
   )
     return
+  const ranges = measuredSourceRanges(
+    { str: font.text, sourceItem: font.sourceItem },
+    parts.map((part) => part.text)
+  )
+  if (font.sourceItem && !ranges) return
+  const measuredCentral = ranges
+    ? { ...central, sourceItem: undefined, sourceSegment: { ...ranges[1], rect: central.rect } }
+    : central
   const targetTokens = [central, ...target.sourceTokens],
     proof = recoverNativeStackedUncertainty(
-      [central, ...target.sourceTokens.map((t) => body.find((i) => same(i, t)))],
+      [measuredCentral, ...target.sourceTokens.map((t) => body.find((i) => same(i, t)))],
       rules
     ),
     donorOrigins = nativeChangedCellOrigins([donor], items, [label]),
@@ -213,6 +292,7 @@ export function recoverNativeFusedStackedScalarOwners(table, items, rules, runs,
 // baselines and matched smaller signed lanes witness the two scripts. Every
 // original character is emitted once; no value or sign is synthesized.
 export function recoverNativeStackedUncertainty(items, rules, equalFontStacks) {
+  if (!hasNoncompetingStackSources(items)) return
   const labelled = recoverLabelledStackedPairs(items, rules)
   if (labelled) return labelled
   if (
@@ -254,8 +334,11 @@ export function recoverNativeStackedUncertainty(items, rules, equalFontStacks) {
   const smallFontBoundary = witnessed?.length === 1 && witnessed[0].smallFontBoundary === true
   if (
     !/^[−-]?\d+\.\d+$/.test(text(main)) ||
-    !/^\+\d+\.\d+$/.test(text(upper)) ||
-    !/^[−-]\d+\.\d+$/.test(text(lower)) ||
+    !/^[+−-]\d+\.\d+$/.test(text(upper)) ||
+    !/^[+−-]\d+\.\d+$/.test(text(lower)) ||
+    // Printed lanes determine script positions. Opposite signs can appear in
+    // either order; do not swap them to impose a numerical convention.
+    text(upper).startsWith('+') === text(lower).startsWith('+') ||
     // PDF font sizes may round a true three-quarter em just above 0.75.
     // A thousandth of an em tolerance retains the independent lane proof.
     (!equalFont && (script < height * 0.55 || script > height * 0.751)) ||

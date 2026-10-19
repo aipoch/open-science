@@ -16,6 +16,216 @@ const run = (f: ReturnType<typeof fixture>): ReturnType<typeof refineTable> =>
   refineTable(f.table, f.items, f.captions, [], f.rules, f.runs)
 const characters = (text: string): string => [...text.replace(/\s/gu, '')].sort().join('')
 
+const sparseReferenceTail = (): ReturnType<typeof JSON.parse> => {
+  const table = {
+    id: 'sparse-reference-tail',
+    cropRect: [0, 0, 400, 105],
+    structure: {
+      objects: [
+        ...[0, 20, 40, 60].map((y) => ({ label: 'table row', rect: [0, y, 400, y + 20] })),
+        ...Array.from({ length: 8 }, (_, c) => ({
+          label: 'table column',
+          rect: [c * 50, 0, c * 50 + 50, 105]
+        }))
+      ]
+    }
+  }
+  const token = (text: string, c: number, y: number): ReturnType<typeof JSON.parse> => ({
+    text,
+    rect: [c * 50 + 5, y, c * 50 + 35, y + 10],
+    baseline: y + 10,
+    height: 10,
+    horizontal: true
+  })
+  const items = [
+    ...Array.from({ length: 8 }, (_, c) => token(c ? `Value${c}` : 'Method', c, 5)),
+    ...Array.from({ length: 3 }, (_, r) =>
+      Array.from({ length: 8 }, (_, c) => token(c ? '1.23' : `Model${r}`, c, 25 + r * 20))
+    ).flat(),
+    token('Ref.', 0, 87),
+    token('1.40 [1]', 6, 87),
+    token('4401 [1]', 7, 87)
+  ].map((i, index) => ({ ...i, sourceItem: { pageNumber: 1, index, text: i.text } }))
+  const rules = [
+    [0, 0, 400, 0],
+    [0, 20, 400, 20],
+    [0, 82, 400, 82],
+    [0, 102, 400, 102]
+  ]
+  return { table, items, rules }
+}
+it('recovers a separately ruled sparse reference tail with native values aligned to prior records', () => {
+  const { table, items, rules } = sparseReferenceTail()
+  const result = refineTable(table, items, [], [], rules)
+  expect(result.grid.at(-1)).toEqual(['Ref.', '', '', '', '', '', '1.40 [1]', '4401 [1]'])
+  expect(result.unassigned).toEqual([])
+  expect(characters(result.cells.map((c: { text: string }) => c.text).join(''))).toBe(
+    characters(items.map((i: { text: string }) => i.text).join(''))
+  )
+})
+
+const numberedNativeRecords = (): ReturnType<typeof JSON.parse> => {
+  const table = {
+    id: 'numbered-native-records',
+    cropRect: [0, 0, 1000, 110],
+    structure: {
+      objects: [
+        ...[0, 20, 40, 56].map((y) => ({ label: 'table row', rect: [0, y, 1000, y + 20] })),
+        ...Array.from({ length: 10 }, (_, c) => ({
+          label: 'table column',
+          rect: [c * 100, 0, c * 100 + 100, 110]
+        }))
+      ]
+    }
+  }
+  const items = Array.from({ length: 4 }, (_, r) => [
+    { text: String(r + 1), rect: [5, 25 + r * 16, 15, 35 + r * 16] },
+    {
+      text: '1.23 2.34 3.45 4.56 5.67 6.78 7.89 8.90 9.01',
+      rect: [105, 25 + r * 16, 985, 35 + r * 16]
+    }
+  ])
+    .flat()
+    .map((i, index) => ({
+      ...i,
+      height: 10,
+      baseline: i.rect[3],
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index, text: i.text }
+    }))
+  return {
+    table,
+    items,
+    rules: [
+      [0, 0, 1000, 0],
+      [0, 20, 1000, 20],
+      [0, 94, 1000, 94]
+    ]
+  }
+}
+it('keeps a final independent numbered numeric record after three matching native records', () => {
+  const { table, items, rules } = numberedNativeRecords()
+  const result = refineTable(table, items, [], [], rules)
+  expect(result.grid.slice(1).map((r: string[]) => r[0])).toEqual(['1', '2', '3', '4'])
+  expect(result.grid.at(-1)).toEqual([
+    '4',
+    '1.23',
+    '2.34',
+    '3.45',
+    '4.56',
+    '5.67',
+    '6.78',
+    '7.89',
+    '8.90',
+    '9.01'
+  ])
+  expect(result.unassigned).toEqual([])
+})
+
+it.each([
+  'closing rule',
+  'separator',
+  'source identity',
+  'peer alignment',
+  'competing face text',
+  'citation',
+  'peer source',
+  'native geometry'
+])('declines sparse-tail recovery without %s proof', (control) => {
+  const f = sparseReferenceTail()
+  if (control === 'closing rule') f.rules.pop()
+  if (control === 'separator') f.rules.splice(2, 1)
+  if (control === 'source identity') f.items.at(-1).sourceItem = f.items.at(-2).sourceItem
+  if (control === 'peer alignment') f.items.at(-1).rect[2] -= 3
+  if (control === 'competing face text')
+    f.items.push({
+      text: 'Note',
+      rect: [55, 87, 85, 97],
+      baseline: 97,
+      height: 10,
+      horizontal: true,
+      sourceItem: { pageNumber: 1, index: 100, text: 'Note' }
+    })
+  if (control === 'citation') f.items.at(-1).text = f.items.at(-1).sourceItem.text = 'a comment'
+  if (control === 'peer source') for (const item of f.items.slice(0, -3)) delete item.sourceItem
+  if (control === 'native geometry') f.items.at(-1).baseline += 1
+  const result = refineTable(f.table, f.items, [], [], f.rules)
+  expect(result.repairs).not.toContain('native-ruled-sparse-reference-tail-recovered')
+})
+
+it.each([
+  'source identity',
+  'cadence',
+  'numeric leaves',
+  'ordinal sequence',
+  'only two peers',
+  'native geometry'
+])('does not infer an independent terminal record without %s', (control) => {
+  const f = numberedNativeRecords()
+  if (control === 'source identity') f.items.at(-1).sourceItem = f.items.at(-3).sourceItem
+  if (control === 'cadence') {
+    f.items[0].rect[1] -= 2
+    f.items[0].rect[3] -= 2
+    f.items[0].baseline -= 2
+  }
+  if (control === 'numeric leaves')
+    f.items.at(-1).text = f.items.at(-1).sourceItem.text = 'a wrapped description'
+  if (control === 'ordinal sequence') f.items.at(-2).text = f.items.at(-2).sourceItem.text = '3'
+  if (control === 'only two peers') f.items.splice(0, 2)
+  if (control === 'native geometry') f.items.at(-1).rect[3] += 1
+  const result = refineTable(f.table, f.items, [], [], f.rules)
+  expect(result.repairs).not.toContain('native-terminal-ordinal-record-recovered')
+})
+
+for (const [name, make, repair] of [
+  ['sparse reference', sparseReferenceTail, 'native-ruled-sparse-reference-tail-recovered'],
+  ['ordinal record', numberedNativeRecords, 'native-terminal-ordinal-record-recovered']
+] as const) {
+  it.each(['sourceSegment', 'sourceToken', 'nested segment'])(
+    `rejects an external %s alias for ${name}`,
+    (carrier) => {
+      const f = make(),
+        origin = f.items.at(-1).sourceItem
+      const alias = {
+        text: origin.text,
+        rect: [2000, 2000, 2100, 2010],
+        height: 10,
+        baseline: 2010,
+        horizontal: true
+      }
+      const segment = { ...origin, start: 0, end: origin.text.length, rect: alias.rect }
+      f.items.push({
+        ...alias,
+        ...(carrier === 'sourceSegment'
+          ? { sourceSegment: segment }
+          : carrier === 'sourceToken'
+            ? { sourceToken: origin }
+            : { sourceToken: { sourceSegment: segment } })
+      })
+      expect(refineTable(f.table, f.items, [], [], f.rules).repairs).not.toContain(repair)
+    }
+  )
+  it(`retains ${name} recovery with an unrelated external segment`, () => {
+    const f = make()
+    f.items.push({
+      text: 'external',
+      rect: [2000, 2000, 2100, 2010],
+      height: 10,
+      baseline: 2010,
+      horizontal: true,
+      sourceSegment: {
+        pageNumber: 1,
+        index: 1000,
+        text: 'external',
+        start: 0,
+        end: 8,
+        rect: [2000, 2000, 2100, 2010]
+      }
+    })
+    expect(refineTable(f.table, f.items, [], [], f.rules).repairs).toContain(repair)
+  })
+}
+
 for (const kind of ['closed-field-faces', 'measured-four-leaf']) {
   it(`recovers complete ${kind} records with unique unchanged source ownership`, () => {
     const input = fixture(kind),

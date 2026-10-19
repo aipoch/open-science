@@ -1,16 +1,84 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
+  classifyTableRuleEdge,
   hasHorizontalTableRuleBetween,
   joinHorizontalTableRules
 } from './literature-pdf-table-rules.mjs'
 import {
   readSourceRow,
+  hasUniqueRecordTokens,
   groupSourceRowsWithScripts,
   splitOwnedSourceRow,
   splitOwnedSourceRows
 } from './literature-pdf-source-records.mjs'
 import { area, intersection } from './literature-pdf-page-geometry.mjs'
 import { inside, union, isAdjacentTableScript } from './literature-pdf-table-geometry.mjs'
+import { splitNativeMeasuredFields } from './literature-pdf-native-header-grid.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+
+// The dense numeric fallback may mistake a superscript-only baseline for a
+// record. Pair its original tokens before constructing row bands, so later
+// script assignment cannot leave an artificial empty row. This is not a
+// general empty-row filter: ordinary records, ruled bands and spans stay put.
+export function pairDenseStatisticalScriptRows(groups, rules, objects, inventory = groups.flat()) {
+  const source = groups.flat()
+  const identities = new Set()
+  for (const item of source) {
+    const origin = item.sourceItem
+    if (
+      !origin ||
+      !Number.isInteger(origin.pageNumber) ||
+      origin.pageNumber < 1 ||
+      !Number.isInteger(origin.index) ||
+      origin.index < 0 ||
+      origin.text !== item.text ||
+      item.sourceToken ||
+      item.sourceSegment ||
+      inventory.some(
+        (other) =>
+          other !== item &&
+          [
+            other.sourceItem,
+            other.sourceSegment,
+            other.sourceToken,
+            other.sourceToken?.sourceItem,
+            other.sourceToken?.sourceSegment
+          ].some(
+            (reference) =>
+              reference?.pageNumber === origin.pageNumber && reference?.index === origin.index
+          )
+      )
+    )
+      return groups
+    const key = `${origin.pageNumber}:${origin.index}`
+    if (identities.has(key)) return groups
+    identities.add(key)
+  }
+  const height = Math.max(...source.map((item) => item.height))
+  const paired = groupSourceRowsWithScripts(source, height, 0.3)
+  if (!paired || paired.length >= groups.length) return groups
+  const owners = new Map(paired.flatMap((group, row) => group.map((item) => [item, row])))
+  const origins = paired.map(() => [])
+  for (const group of groups) {
+    const targets = new Set(group.map((item) => owners.get(item)))
+    if (targets.size !== 1 || targets.has(undefined)) return groups
+    origins[owners.get(group[0])].push(group)
+  }
+  for (const originals of origins) {
+    if (originals.length === 1) continue
+    const main = originals.filter((group) => group.some((item) => item.height >= height * 0.8))
+    if (main.length !== 1) return groups
+    const bounds = union(originals.flat())
+    if (
+      hasHorizontalTableRuleBetween(rules, bounds[1], bounds[3]) ||
+      objects.some(
+        (object) => object.label === 'table spanning cell' && intersection(object.rect, bounds) > 0
+      )
+    )
+      return groups
+  }
+  return paired
+}
 
 // An N/mean/median/range block has its own explicit native start. A predicted
 // ancestor span can begin one category too early; do not move genuinely
@@ -4844,8 +4912,21 @@ function recoverSectionedMeanCycles({ rows, groups, items, columnRects, repairs 
 // Recover complete native records that fall in a gap between predicted bands.
 // A row is accepted only when every value has a unique column, adjacent source
 // baselines bound it, and splitting the affected bands cannot discard text.
-export function recoverUnownedSourceRows({ rows, groups, items, columnRects, repairs }) {
+export function recoverUnownedSourceRows({
+  rows,
+  groups,
+  items,
+  columnRects,
+  repairs,
+  rules = [],
+  observedRuns = [],
+  inventory = items
+}) {
   if (columnRects.length < 2 || groups.length < 4) return
+  if (rules.length && proveNativeUniqueWholeFonts(items, inventory)) {
+    recoverMeasuredDescriptorGutters({ items, groups, columnRects, rules, observedRuns, repairs })
+    recoverSharedScientificRows({ rows, items, columnRects, rules, repairs })
+  }
   const sizes = items.map((i) => i.height).sort((a, b) => a - b)
   const native = groupSourceRowsWithScripts(
     items.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
@@ -5096,6 +5177,215 @@ export function recoverUnownedSourceRows({ rows, groups, items, columnRects, rep
     rows.push({ rect: band, origin: 'source-text' })
     rows.sort((a, b) => a.rect[1] - b.rect[1])
     repairs.push('text-supported-row-recovered')
+  }
+  recoverClosedSharedRecordGroups({ rows, items, columnRects, rules, inventory, repairs })
+}
+
+// A fused descriptor is split only at observed TJ whitespace shared by the
+// native leaf header and two independently printed peer descriptor records.
+// Do this after record-grid selection so it cannot select a different header
+// reconstruction. The complete original item stays in the source inventory.
+function recoverMeasuredDescriptorGutters({
+  items,
+  groups,
+  columnRects,
+  rules,
+  observedRuns,
+  repairs
+}) {
+  if (columnRects.length < 4 || !observedRuns.length) return
+  const h = items.map((i) => i.height).sort((a, b) => a - b)[Math.floor(items.length / 2)],
+    cut = columnRects[1][0]
+  const full = joinHorizontalTableRules(rules)
+    .filter(
+      (r) =>
+        r[1] >= columnRects[0][1] &&
+        r[1] <= columnRects[0][3] &&
+        Math.abs(r[0] - columnRects[0][0]) < h &&
+        Math.abs(r[2] - columnRects.at(-1)[2]) < h
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (
+    full.length < 3 ||
+    full.some((r) => Math.abs(r[0] - full[0][0]) > 0.05 || Math.abs(r[2] - full[0][2]) > 0.05)
+  )
+    return
+  const [opening, divider] = full,
+    closing = full.at(-1)
+  const insideColumn = (rect, item) =>
+    inside(rect, item) && item.rect[0] >= rect[0] && item.rect[2] <= rect[2]
+  const header = items.filter(
+    (i) => i.baseline > opening[1] && i.baseline < divider[1] && i.rect[0] < columnRects[1][2]
+  )
+  if (
+    header.length !== 2 ||
+    !header.every((i) => /\p{L}/u.test(i.text)) ||
+    !insideColumn(columnRects[0], header[0]) ||
+    !insideColumn(columnRects[1], header[1]) ||
+    Math.abs(header[0].baseline - header[1].baseline) > h * 0.04
+  )
+    return
+  const replacements = new Map()
+  for (const item of items.filter(
+    (i) =>
+      i.baseline > divider[1] &&
+      i.baseline < closing[1] &&
+      i.rect[0] < cut &&
+      i.rect[2] > cut &&
+      i.rect[2] <= columnRects[1][2]
+  )) {
+    const observations = observedRuns.filter(
+      (r) => r.text === item.text && r.rect?.every((v, n) => Math.abs(v - item.rect[n]) < 0.02)
+    )
+    if (
+      observations.length !== 1 ||
+      observations[0].literalGlyphs?.join('') !== item.text.replace(/\s/gu, '')
+    )
+      continue
+    const parts = splitNativeMeasuredFields(item, observations, item.height)
+    if (
+      !parts ||
+      parts.length !== 2 ||
+      parts.some((p) => !/^\p{L}[\p{L}\p{N}\s.-]*$/u.test(p.text)) ||
+      !insideColumn(columnRects[0], parts[0]) ||
+      !insideColumn(columnRects[1], parts[1])
+    )
+      continue
+    const peers = items
+      .filter(
+        (i) =>
+          i !== item &&
+          i.baseline > divider[1] &&
+          i.baseline < closing[1] &&
+          insideColumn(columnRects[0], i) &&
+          /\p{L}/u.test(i.text) &&
+          Math.abs(i.rect[0] - parts[0].rect[0]) < h * 0.05
+      )
+      .filter((i) => {
+        const leaf = items.filter(
+          (j) =>
+            j !== i &&
+            insideColumn(columnRects[1], j) &&
+            Math.abs(j.baseline - i.baseline) < h * 0.04 &&
+            Math.abs(j.rect[0] - parts[1].rect[0]) < h * 0.05 &&
+            /\p{L}/u.test(j.text)
+        )
+        return (
+          leaf.length === 1 &&
+          items.filter(
+            (j) => j.rect[0] < columnRects[1][2] && Math.abs(j.baseline - i.baseline) < h * 0.04
+          ).length === 2
+        )
+      })
+    if (peers.length < 2) continue
+    replacements.set(item, parts)
+  }
+  if (!replacements.size) return
+  items.splice(0, items.length, ...items.flatMap((i) => replacements.get(i) ?? [i]))
+  for (const group of groups)
+    group.splice(0, group.length, ...group.flatMap((i) => replacements.get(i) ?? [i]))
+  repairs.push('native-measured-descriptor-gutter-recovered')
+}
+
+// Complete measurement lanes may leave an ancestor stub empty. A missing
+// terminal record belongs to that ancestor only when its native closing rule
+// separates it from a fully populated new ancestor, and both neighboring
+// records attest the same leaf lanes. Unknown or partial fields cannot pass.
+function recoverSharedScientificRows({ rows, items, columnRects, rules, repairs }) {
+  if (columnRects.length < 4) return
+  const h = items.map((i) => i.height).sort((a, b) => a - b)[Math.floor(items.length / 2)],
+    cuts = [...columnRects.map((c) => c[0]), columnRects.at(-1)[2]]
+  const groups = groupSourceRowsWithScripts(
+    items.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    h,
+    0.35
+  )
+  if (!groups) return
+  const scalar = '[−+-]?\\d+(?:\\.\\d+)?',
+    numeric = new RegExp(
+      `^(?:${scalar}(?:\\[${scalar},${scalar}\\])?|${scalar}×10[−+-]?\\d+)$`,
+      'u'
+    )
+  const records = groups.map((g) => readSourceRow(g, cuts))
+  const complete = (n) => {
+    const v = records[n]
+    return (
+      v &&
+      /\p{L}/u.test(v[1]) &&
+      (!v[0] || /\p{L}/u.test(v[0])) &&
+      v.slice(2).every((s) => numeric.test(s))
+    )
+  }
+  for (let n = 1; n < groups.length - 1; n++) {
+    if (
+      !complete(n) ||
+      records[n][0] ||
+      !records[n].slice(2).some((s) => s.includes('×')) ||
+      !complete(n - 1) ||
+      !complete(n + 1)
+    )
+      continue
+    const g = groups[n],
+      before = groups[n - 1],
+      after = groups[n + 1],
+      box = union(g),
+      prev = union(before),
+      next = union(after)
+    if (
+      rows.some((r) => g.every((i) => inside(r.rect, i))) ||
+      prev[3] >= box[1] ||
+      next[1] <= box[3] ||
+      next[1] - prev[3] > h * 5
+    )
+      continue
+    let ancestor = n - 1
+    while (ancestor >= 0 && complete(ancestor) && !records[ancestor][0]) ancestor--
+    if (ancestor < 0 || !complete(ancestor) || !records[ancestor][0]) continue
+    const ancestorBox = union(groups[ancestor]),
+      full = rules.filter(
+        (r) => r[1] === r[3] && Math.abs(r[0] - cuts[0]) < h && Math.abs(r[2] - cuts.at(-1)) < h
+      )
+    if (
+      !full.some((r) => r[1] < ancestorBox[1] && ancestorBox[1] - r[1] < h) ||
+      full.some((r) => r[1] > ancestorBox[3] && r[1] < box[3])
+    )
+      continue
+    const closing = rules.filter(
+      (r) =>
+        r[1] === r[3] &&
+        Math.abs(r[0] - cuts[0]) < h &&
+        Math.abs(r[2] - cuts.at(-1)) < h &&
+        r[1] > box[3] &&
+        r[1] < next[1]
+    )
+    if (closing.length !== 1 || !records[n + 1][0]) continue
+    const top = (prev[3] + box[1]) / 2,
+      bottom = closing[0][1],
+      band = [cuts[0], top, cuts.at(-1), bottom],
+      members = new Set(g)
+    if (items.some((i) => !members.has(i) && i.rect[1] < bottom && i.rect[3] > top)) continue
+    const affected = rows.filter((r) => r.rect[1] < bottom && r.rect[3] > top)
+    if (
+      affected.some((r) => {
+        const own = items.filter((i) => inside(r.rect, i) && !members.has(i))
+        return own.some((i) => i.rect[3] > top && i.rect[1] < bottom)
+      })
+    )
+      continue
+    for (const r of affected) {
+      const own = items.filter((i) => inside(r.rect, i) && !members.has(i)),
+        upper = own.some((i) => i.rect[3] <= top),
+        lower = own.some((i) => i.rect[1] >= bottom)
+      if (upper && lower) {
+        rows.push({ ...r, rect: [cuts[0], bottom, cuts.at(-1), r.rect[3]] })
+        r.rect[3] = top
+      } else if (upper) r.rect[3] = top
+      else if (lower) r.rect[1] = bottom
+      else rows.splice(rows.indexOf(r), 1)
+    }
+    rows.push({ rect: band, origin: 'source-text' })
+    rows.sort((a, b) => a.rect[1] - b.rect[1])
+    repairs.push('native-complete-shared-scientific-record-recovered')
   }
 }
 
@@ -6056,4 +6346,170 @@ function recoverRepeatedMeasuredHangingTails({ rows, items, columnRects, rules, 
     rows.splice(rows.indexOf(lower[0]), 1)
     repairs.push('wrapped-comparison-record-recovered')
   }
+}
+
+// Complete original fonts, header leaves and closed
+// native groups prove record bands. Model centers never establish ownership.
+function recoverClosedSharedRecordGroups({ rows, items, columnRects, rules, inventory, repairs }) {
+  if (columnRects.length < 4 || !proveNativeUniqueWholeFonts(items, inventory)) return []
+  if (
+    inventory.some(
+      (i) =>
+        typeof i.text === 'string' &&
+        i.text.trim() &&
+        (!Array.isArray(i.rect) ||
+          i.rect.length !== 4 ||
+          !i.rect.every(Number.isFinite) ||
+          i.rect[2] <= i.rect[0] ||
+          i.rect[3] <= i.rect[1])
+    ) ||
+    rules.some((r) => !Array.isArray(r) || r.length !== 4 || !r.every(Number.isFinite))
+  )
+    return []
+  const cuts = [...columnRects.map((c) => c[0]), columnRects.at(-1)[2]],
+    h = items.map((i) => i.height).sort((a, b) => a - b)[Math.floor(items.length / 2)]
+  if (cuts.some((x, n) => !Number.isFinite(x) || (n && x <= cuts[n - 1]))) return []
+  const groups = groupSourceRowsWithScripts(
+    items.slice().sort((a, b) => a.baseline - b.baseline || a.rect[0] - b.rect[0]),
+    h,
+    0.35
+  )
+  if (!groups) return []
+  const bounds = groups.map(union),
+    values = groups.map((g) => readSourceRow(g, cuts))
+  const horizontal = rules.filter(
+    (r) => r.length === 4 && r.every(Number.isFinite) && r[1] === r[3] && r[2] > r[0]
+  )
+  const full = horizontal
+    .filter(
+      (r) =>
+        r[0] <= Math.min(...items.map((i) => i.rect[0])) &&
+        r[2] >= Math.max(...items.map((i) => i.rect[2])) &&
+        r[1] >= columnRects[0][1] &&
+        r[1] <= columnRects[0][3]
+    )
+    .sort((a, b) => a[1] - b[1])
+  if (full.length < 3 || new Set(full.map((r) => r[1])).size !== full.length) return []
+  const scalar = '[−+-]?\\d+(?:\\.\\d+)?',
+    numeric = new RegExp(
+      `^(?:${scalar}(?:\\[${scalar},${scalar}\\])?|${scalar}×10[−+-]?\\d+)$`,
+      'u'
+    )
+  const complete = (v) =>
+    v &&
+    /^\p{L}/u.test(v[1]) &&
+    (!v[0] || /^\p{L}/u.test(v[0])) &&
+    v.slice(2).every((s) => numeric.test(s))
+  const plans = []
+  for (let n = 0; n < full.length - 1; n++) {
+    const opening = full[n],
+      closing = full[n + 1],
+      top = opening[1],
+      bottom = closing[1]
+    if (
+      classifyTableRuleEdge([closing], 1, bottom, opening[0], opening[2]) !== 1 ||
+      classifyTableRuleEdge([opening], 1, top, closing[0], closing[2]) !== 1
+    )
+      continue
+    const indices = groups.flatMap((_, k) =>
+      bounds[k][1] > top && bounds[k][3] < bottom ? [k] : []
+    )
+    if (
+      indices.length < 3 ||
+      indices.some((k) => !complete(values[k])) ||
+      !values[indices[0]][0] ||
+      indices.slice(1).some((k) => values[k][0])
+    )
+      continue
+    const body = indices.map((k) => groups[k]),
+      fonts = body.flat(),
+      boxes = indices.map((k) => bounds[k])
+    // All ink touching the whole closed block must be accounted for. The page
+    // inventory also catches source-less or foreign ink absent from items.
+    const touches = (i) =>
+      i.rect &&
+      i.rect[0] < opening[2] &&
+      i.rect[2] > opening[0] &&
+      i.rect[1] < bottom &&
+      i.rect[3] > top
+    if (
+      inventory.some((i) => touches(i) && !fonts.includes(i)) ||
+      !hasUniqueRecordTokens(fonts, body) ||
+      fonts.some((i) => i.rect[0] < opening[0] || i.rect[2] > opening[2])
+    )
+      continue
+    if (
+      horizontal.some((r) => r[1] > top && r[1] < bottom && r[0] < opening[2] && r[2] > opening[0])
+    )
+      continue
+    // This proof covers horizontal group rules only. A competing vertical or
+    // slanted segment in the record domain requires a different cell topology.
+    if (
+      rules.some(
+        (r) =>
+          r[1] !== r[3] &&
+          Math.max(r[0], r[2]) > opening[0] &&
+          Math.min(r[0], r[2]) < opening[2] &&
+          Math.max(r[1], r[3]) > top &&
+          Math.min(r[1], r[3]) < bottom
+      )
+    )
+      continue
+    if (boxes.slice(1).some((b, k) => b[1] <= boxes[k][3] || b[1] - boxes[k][3] > h)) continue
+    // A complete same-column native leaf header precedes this chain of complete
+    // ruled record groups. No prose/formula group can bridge that evidence.
+    let first = indices[0] - 1
+    while (first >= 0 && complete(values[first])) first--
+    if (first < 0 || !values[first]?.every((v) => v && /\p{L}/u.test(v)) || bounds[first][3] >= top)
+      continue
+    if (!full.some((r) => r[1] > bounds[first][3] && r[1] <= bounds[indices[0]][1])) continue
+    // Existing ownership is only a trigger; source proof above and full glyph
+    // containment below establish replacement, never a model-center heuristic.
+    if (body.every((g) => rows.filter((r) => g.every((i) => inside(r.rect, i))).length === 1))
+      continue
+    const bands = boxes.map((b, k) => [
+      cuts[0],
+      k ? (boxes[k - 1][3] + b[1]) / 2 : top,
+      cuts.at(-1),
+      k + 1 < boxes.length ? (b[3] + boxes[k + 1][1]) / 2 : bottom
+    ])
+    if (
+      fonts.some(
+        (i) =>
+          bands.filter(
+            (b) => i.rect[0] >= b[0] && i.rect[2] <= b[2] && i.rect[1] > b[1] && i.rect[3] < b[3]
+          ).length !== 1
+      )
+    )
+      continue
+    // Cut only padding of old rows. No glyph anywhere in the source crop may
+    // straddle either native boundary; outside row pieces remain in place.
+    if (
+      inventory.some(
+        (i) =>
+          i.rect &&
+          i.rect[0] < cuts.at(-1) &&
+          i.rect[2] > cuts[0] &&
+          [top, bottom].some((y) => i.rect[1] < y && i.rect[3] > y)
+      )
+    )
+      continue
+    plans.push({ top, bottom, bands, fonts, values: indices.map((k) => values[k]) })
+  }
+  for (const plan of plans) {
+    const next = []
+    for (const row of rows) {
+      const [l, t, r, b] = row.rect
+      if (b <= plan.top || t >= plan.bottom) {
+        next.push(row)
+        continue
+      }
+      if (t < plan.top) next.push({ ...row, rect: [l, t, r, plan.top] })
+      if (b > plan.bottom) next.push({ ...row, rect: [l, plan.bottom, r, b] })
+    }
+    next.push(...plan.bands.map((rect) => ({ rect, origin: 'source-text' })))
+    rows.splice(0, rows.length, ...next.sort((a, b) => a.rect[1] - b.rect[1]))
+    repairs.push('native-closed-shared-records-recovered')
+  }
+  return plans
 }
