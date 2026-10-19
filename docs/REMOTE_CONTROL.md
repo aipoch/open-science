@@ -119,12 +119,19 @@ Keep Open-Science and the Remote.It agent running on the host, verify that the h
 
 ## Security notes
 
+- A paired browser controls the host workspace; it is not a separate read-only copy or execution
+  sandbox. Commands, model requests, and uploads use the host's configured capabilities and recipients.
+- Do not persist browser trust on a shared browser profile. A compromised trusted profile can expose
+  workspace access; review trust entries and revoke those you do not recognize.
 - App access relies on the signed-in Remote.It account and the private service created for Open-Science, then requires Open-Science's own browser verification before workspace access.
 - Browser access publishes a persistent endpoint and uses the same secure-cookie, trusted-browser, and revocation controls.
 - Provider `Host` and `Origin` headers identify an expected route but never authenticate a request.
 - Do not share a browser pairing code with another person.
 - Revoke browsers you no longer use.
 - Select **Off** when remote access is not needed.
+
+Read [intended use and safe operation](usage-scope.md), the [security model](security.md), and
+[known limitations](known-limitations.md) before enabling remote access to sensitive research.
 
 ## Verification scope
 

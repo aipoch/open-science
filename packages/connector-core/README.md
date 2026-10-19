@@ -60,3 +60,16 @@ Without it, untrusted diagnostic text is replaced with `[redacted]`.
 Set `userAgent` to identify your application. It applies to managed and raw requests; an
 explicit raw-request User-Agent takes precedence. Without it the engine identifies itself
 as `connector-core/0.1.0`.
+
+## Safety and integration
+
+- **Scope:** Descriptor validation and request execution using caller-supplied transport and credentials.
+- **Controls:** Argument schema validation, managed-request limits/deadlines, and diagnostic redaction.
+  Credential projection limits the supplied view when configured; `requiredCredential` is not authorization.
+- **Remaining risks:** Descriptors contain executable callbacks. Valid arguments and read-only service
+  operations can still disclose query content, and credentials permit whatever the service grants.
+  The package does not sandbox callbacks or automatically apply application Notebook network policy.
+- **Safe integration:** Trust/review descriptors, validate before execution, inject destination and
+  transport policy, and supply only needed credentials. The host owns consent, storage protection,
+  and authorization. Review the application's
+  [data recipients](https://github.com/aipoch/open-science/blob/main/docs/security.md#data-recipients).

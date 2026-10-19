@@ -46,6 +46,19 @@ must confirm termination before resolving. Engine stop waits for conversion befo
 a rejection requires retry and retention of the caller's file/model leases. Each start needs a unique
 job directory. This package adds no persistent queue, database, or application states.
 
+## Safety and integration
+
+- **Scope:** Offline figure/table extraction from bounded PDF snapshots using supplied local model assets.
+- **Controls:** Input/page limits, identity and decoding-budget validation, and owned worker cleanup
+  constrain the extraction workflow; the host supplies source authorization and process supervision.
+- **Remaining risks:** Parsed structure can omit or misassociate labels, units, cells, or figures.
+  A valid result schema does not establish semantic accuracy or make an untrusted PDF harmless.
+  Worker separation alone is not a general OS sandbox.
+- **Safe integration:** Supply only disposable immutable snapshots in unique job directories, review
+  extracted evidence against the source, and keep sensitive data out of shared job storage. Use host
+  isolation/resource controls appropriate for untrusted documents. See the application's
+  [research-use boundaries](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md#research-judgment-and-high-consequence-uses).
+
 ## Development and verification
 
 ```sh

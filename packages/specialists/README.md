@@ -30,6 +30,18 @@ For bundled Skills, provide `parseSkillDocument` and a `SpecialistPackageSkillPo
 
 Domain-authored `SpecialistError` messages can be mapped by a host. Unknown IO errors must not be presented as trusted messages. Product-specific managed-content policies, reserved identities, filename branding and logger are injected. Historical origin values remain serialized for compatibility; no marketplace workflow is owned here.
 
+## Safety and integration
+
+- **Scope:** Specialist profiles, capability selection, portable archives, and file transactions.
+- **Controls:** Profile/archive validation, caller-scoped candidates, and recoverable transactions
+  preserve identity and mutation rules. Host-supplied capability catalogs determine available actions.
+- **Remaining risks:** A profile's role or name does not establish expertise or trustworthy behavior.
+  Imported prompts and bundled Skills can influence execution; archive validation does not certify
+  their instructions. Profile selection is not a runtime sandbox or a substitute for authorization.
+- **Safe integration:** Review imported content and capability changes, authenticate caller identity,
+  and enforce delegation permissions and execution policy in the host. See the application's
+  [extension precautions](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md#extensions-remote-access-and-automation).
+
 ## Persistence and compatibility
 
 Retains specialists.json version 2 (reads versions 1/2), portable archive schema 1, and the existing transaction journal/sidecar layout. Recovery accepts legacy embedded before/after documents and absent newlyDisabledSkillIds. Damaged authoritative data is preserved. Keep all operations for a domain behind the same owner and recovery barrier.

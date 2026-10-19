@@ -16,6 +16,12 @@ contracts, caller leases, permission prompts and navigation revocation remain in
 requests travel back to Electron for dialogs, notifications and rendering. This is one business
 implementation, with transport and native adapters, rather than two server implementations.
 
+Before unattended operation, review [intended use](usage-scope.md), the
+[security model](security.md), and [known limitations](known-limitations.md). A headless service
+retains the host's configured permissions and data recipients; absence of a desktop window does not
+establish isolation or offline operation. Protect its profile and service credentials, and confirm
+task/job cancellation separately from stopping a client wait.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on
