@@ -87,7 +87,7 @@
     "src/renderer/src/pages/settings/runtimes-panel-i18n.test.ts",
     "src/renderer/src/pages/settings/runtimes-panel-view.ts",
     "src/renderer/src/pages/settings/settings-panel-loader.test.ts",
-    "src/renderer/src/pages/settings/settings-panel-loader.ts",
+    "src/renderer/src/pages/settings/settings-panel-loader.tsx",
     "src/renderer/src/pages/settings/storage-i18n.render.test.tsx",
     "src/renderer/src/pages/settings/test-utils.ts",
     "src/renderer/src/pages/settings/token-usage-analytics.test.ts",
