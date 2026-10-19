@@ -5374,7 +5374,6 @@
     "Saving stopped. Completed results are kept.": "Se detuvo el guardado. Se conservan los resultados completados.",
     "Could not save reference {{number}}. Earlier results are kept.": "No se pudo guardar la referencia {{number}}. Se conservan los resultados anteriores.",
     "Open Inbox": "Abrir bandeja de entrada",
-    "Open existing reference {{number}}": "Abrir referencia existente {{number}}",
     "The selected file is not valid CSL XML.": "El archivo seleccionado no contiene XML de CSL válido.",
     "CSL files with a document type declaration are not supported.": "No se admiten archivos CSL con una declaración de tipo de documento.",
     "The selected file must be an independent CSL 1.0 style.": "El archivo seleccionado debe ser un estilo CSL 1.0 independiente.",
@@ -6277,7 +6276,6 @@
     "DeepSeek API model and routing details": "Detalles de modelos y enrutamiento de la API de DeepSeek",
     "Saved to Inbox": "Guardado en la bandeja de entrada",
     "PDF downloaded to Inbox": "PDF descargado en la bandeja de entrada",
-    "Review in Inbox to add to your library.": "Revise el contenido en la bandeja de entrada para añadirlo a su biblioteca.",
     "Already in library": "Ya está en la biblioteca",
     "Open reference": "Abrir referencia",
     "The parent Session is unavailable.": "La sesión principal no está disponible.",
@@ -7632,6 +7630,14 @@
     "Checking Session package…": "Comprobando el paquete de sesión…",
     "Review the package contents next. No Session has been created yet.": "Revise el contenido del paquete a continuación. Todavía no se ha creado ninguna sesión.",
     "Optional files: {{selected}} / {{total}} selected · {{size}}": "Archivos opcionales: {{selected}} / {{total}} seleccionados · {{size}}",
-    "Choose save location…": "Elegir ubicación para guardar…"
+    "Choose save location…": "Elegir ubicación para guardar…",
+    "Drop a .science file to import": "Soltar un archivo .science para importar",
+    "Checking current library status…": "Comprobando el estado actual en la biblioteca…",
+    "Could not check current library status.": "No se pudo comprobar el estado actual en la biblioteca.",
+    "Current library status": "Estado actual en la biblioteca",
+    "Imported: {{total}}": "Importadas: {{total}}",
+    "Dismissed: {{total}}": "Descartadas: {{total}}",
+    "Current status unavailable: {{total}}": "Estado actual no disponible: {{total}}",
+    "Historical result; current library status is unavailable.": "Resultado histórico; el estado actual en la biblioteca no está disponible."
   }
 }

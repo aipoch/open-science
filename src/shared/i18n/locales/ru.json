@@ -5504,7 +5504,6 @@
     "Saving stopped. Completed results are kept.": "Сохранение остановлено. Завершённые результаты сохранены.",
     "Could not save reference {{number}}. Earlier results are kept.": "Не удалось сохранить источник {{number}}. Предыдущие результаты сохранены.",
     "Open Inbox": "Открыть входящие",
-    "Open existing reference {{number}}": "Открыть существующий источник {{number}}",
     "The selected file is not valid CSL XML.": "Выбранный файл не является корректным XML-файлом CSL.",
     "CSL files with a document type declaration are not supported.": "Файлы CSL с объявлением типа документа не поддерживаются.",
     "The selected file must be an independent CSL 1.0 style.": "Выбранный файл должен содержать независимый стиль CSL 1.0.",
@@ -6412,7 +6411,6 @@
     "DeepSeek API model and routing details": "Модели и маршрутизация API DeepSeek",
     "Saved to Inbox": "Сохранено во входящих",
     "PDF downloaded to Inbox": "PDF загружен во входящие",
-    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку.",
     "Already in library": "Уже в библиотеке",
     "Open reference": "Открыть публикацию",
     "The parent Session is unavailable.": "Родительская сессия недоступна.",
@@ -7772,6 +7770,14 @@
     "Checking Session package…": "Проверка пакета сеанса…",
     "Review the package contents next. No Session has been created yet.": "Далее проверьте содержимое пакета. Сеанс ещё не создан.",
     "Optional files: {{selected}} / {{total}} selected · {{size}}": "Необязательные файлы: выбрано {{selected}} / {{total}} · {{size}}",
-    "Choose save location…": "Выбрать место сохранения…"
+    "Choose save location…": "Выбрать место сохранения…",
+    "Drop a .science file to import": "Перетащите файл .science для импорта",
+    "Checking current library status…": "Проверка текущего состояния в библиотеке…",
+    "Could not check current library status.": "Не удалось проверить текущее состояние в библиотеке.",
+    "Current library status": "Текущее состояние в библиотеке",
+    "Imported: {{total}}": "Импортировано: {{total}}",
+    "Dismissed: {{total}}": "Отклонено: {{total}}",
+    "Current status unavailable: {{total}}": "Текущее состояние недоступно: {{total}}",
+    "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно."
   }
 }

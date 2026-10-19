@@ -272,7 +272,13 @@ const WorkspaceToolDetailsRow = ({
     if (section.kind === 'summary')
       return <WorkspaceToolSummaryCard key={index} summary={section.summary} file={section.file} />
     if (section.kind === 'literature') {
-      return <WorkspaceLiteratureToolCard key={index} summary={section.summary} />
+      return (
+        <WorkspaceLiteratureToolCard
+          key={index}
+          summary={section.summary}
+          activityId={activity.id}
+        />
+      )
     }
 
     if (section.kind === 'diff') {

@@ -587,6 +587,9 @@ const SessionRow = memo(function SessionRow({
           .join(' ') || undefined
       }
       onClick={() => actions.onOpenSession(session.id)}
+      onDoubleClick={() => {
+        if (canMutateConversations) actions.onRenameSession(session)
+      }}
     >
       <span className="inline-flex size-3 shrink-0 items-center justify-center" aria-hidden="true">
         <span

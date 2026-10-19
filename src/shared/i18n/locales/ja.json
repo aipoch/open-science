@@ -5064,7 +5064,6 @@
     "Saving stopped. Completed results are kept.": "保存を停止しました。完了した結果は保持されます。",
     "Could not save reference {{number}}. Earlier results are kept.": "文献 {{number}} を保存できませんでした。それまでの結果は保持されます。",
     "Open Inbox": "受信トレイを開く",
-    "Open existing reference {{number}}": "既存の文献 {{number}} を開く",
     "The selected file is not valid CSL XML.": "選択したファイルは有効な CSL XML ではありません。",
     "CSL files with a document type declaration are not supported.": "文書型宣言を含む CSL ファイルには対応していません。",
     "The selected file must be an independent CSL 1.0 style.": "独立した CSL 1.0 スタイルのファイルを選択してください。",
@@ -5957,7 +5956,6 @@
     "DeepSeek API model and routing details": "DeepSeek API のモデルとルーティングの詳細",
     "Saved to Inbox": "受信トレイに保存済み",
     "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",
-    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。",
     "Already in library": "ライブラリに登録済み",
     "Open reference": "文献を開く",
     "The parent Session is unavailable.": "親セッションを利用できません。",
@@ -7302,6 +7300,14 @@
     "Checking Session package…": "セッションパッケージを検証中…",
     "Review the package contents next. No Session has been created yet.": "次にパッケージの内容を確認します。セッションはまだ作成されていません。",
     "Optional files: {{selected}} / {{total}} selected · {{size}}": "任意ファイル：{{selected}} / {{total}} 選択済み · {{size}}",
-    "Choose save location…": "保存先を選択…"
+    "Choose save location…": "保存先を選択…",
+    "Drop a .science file to import": ".scienceファイルをドロップしてインポート",
+    "Checking current library status…": "ライブラリの現在の状態を確認中…",
+    "Could not check current library status.": "ライブラリの現在の状態を確認できませんでした。",
+    "Current library status": "ライブラリの現在の状態",
+    "Imported: {{total}}": "インポート済み: {{total}}",
+    "Dismissed: {{total}}": "除外済み: {{total}}",
+    "Current status unavailable: {{total}}": "現在の状態を確認できません: {{total}}",
+    "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。"
   }
 }

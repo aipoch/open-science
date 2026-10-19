@@ -18,6 +18,7 @@ import { defineApplicationCommandContract, validationCodec } from './application
 import { uploadedAttachmentSchema } from './uploads'
 
 import {
+  LITERATURE_INBOX_STATES,
   literatureCatalogCommandSchema,
   literatureCatalogReceiptSchema,
   literatureCatalogSearchRequestSchema,
@@ -43,6 +44,33 @@ import {
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 
 const nonEmptyTextSchema = z.string().trim().min(1)
+
+// Read current state without changing the immutable tool receipt that supplied these IDs.
+export const literatureCandidateStatesRequestSchema = z
+  .object({ candidateIds: z.array(nonEmptyTextSchema.max(256)).min(1).max(200) })
+  .strict()
+
+export const literatureCandidateStatesResultSchema = z
+  .object({
+    candidates: z
+      .array(
+        z
+          .object({
+            candidateId: nonEmptyTextSchema,
+            state: z.enum(LITERATURE_INBOX_STATES),
+            // Omitted when the accepted reference is no longer available.
+            acceptedItemId: nonEmptyTextSchema.optional()
+          })
+          .strict()
+      )
+      .max(200)
+  })
+  .strict()
+
+export type LiteratureCandidateStatesRequest = z.infer<
+  typeof literatureCandidateStatesRequestSchema
+>
+export type LiteratureCandidateStatesResult = z.infer<typeof literatureCandidateStatesResultSchema>
 
 export const literatureAnnotationSearchViewSchema = z
   .object({
@@ -85,6 +113,10 @@ export const pdfAddToLiteratureContract = defineApplicationCommandContract(
 )
 
 const literatureApplicationCommandContracts = Object.freeze({
+  getCandidateStates: defineApplicationCommandContract(
+    validationCodec(z.tuple([literatureCandidateStatesRequestSchema])),
+    validationCodec(literatureCandidateStatesResultSchema)
+  ),
   fullText: defineApplicationCommandContract(
     validationCodec(z.tuple([literatureFullTextRequestSchema])),
     validationCodec(literatureFullTextResultSchema)

@@ -30,6 +30,8 @@ import { type LiteratureItemInput } from '@aipoch/literature-library/item'
 import { journalAttributesContract } from '../../shared/journal-attributes'
 import {
   literatureApplicationCommandContracts,
+  type LiteratureCandidateStatesRequest,
+  type LiteratureCandidateStatesResult,
   pdfAddToLiteratureContract,
   type LiteratureCatalogSearchPage,
   type LiteraturePdfImportRequest
@@ -50,6 +52,9 @@ import {
 import { withDataRootWrite } from '../storage/migration-state'
 
 type LiteratureCommandOwner = Readonly<{
+  getCandidateStates(
+    request: LiteratureCandidateStatesRequest
+  ): Promise<LiteratureCandidateStatesResult>
   addPdf(
     request: PdfAddToLiteratureRequest,
     signal?: AbortSignal
@@ -80,6 +85,11 @@ type LiteratureCommandOwner = Readonly<{
 }>
 
 const literatureApplicationCommands = Object.freeze({
+  getCandidateStates: defineApplicationCommand<
+    'literature:get-candidate-states',
+    readonly [LiteratureCandidateStatesRequest],
+    LiteratureCandidateStatesResult
+  >('literature:get-candidate-states', literatureApplicationCommandContracts.getCandidateStates),
   addPdf: defineApplicationCommand<
     'literature:add-pdf',
     readonly [PdfAddToLiteratureRequest],
@@ -168,6 +178,7 @@ const literatureApplicationCommands = Object.freeze({
 })
 
 const literatureApplicationCommandGroup = defineApplicationCommandGroup('literature', [
+  literatureApplicationCommands.getCandidateStates,
   literatureApplicationCommands.journals,
   literatureApplicationCommands.exportRecord,
   literatureApplicationCommands.jobs,
@@ -194,6 +205,8 @@ const registerLiteratureApplicationCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(literatureApplicationCommandGroup, {
+      'literature:get-candidate-states': ({ args }) =>
+        withDataRootWrite(() => owner.getCandidateStates(args[0])),
       'literature:journals': ({ args }) => withDataRootWrite(() => owner.journals(args[0])),
       'literature:export-record': ({ args }) =>
         withDataRootWrite(() => owner.exportRecord(args[0])),

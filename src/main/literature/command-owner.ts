@@ -48,6 +48,7 @@ type LiteratureCommandServices = Readonly<{
   literatureCitationDocument: Pick<LiteratureCitationDocument, 'reformat'>
   literatureCatalog: Pick<
     LiteratureCatalog,
+    | 'getCandidateStates'
     | 'getMany'
     | 'exportRecord'
     | 'get'
@@ -77,6 +78,7 @@ export const createLiteratureCommandOwner = ({
   literaturePdfImporter,
   contentRepository
 }: LiteratureCommandServices): LiteratureCommandOwner => ({
+  getCandidateStates: (request) => literatureCatalog.getCandidateStates(request),
   journals: (request) => journalAttributes.run(request),
   jobs: (request) => literatureBatchJobs.run(request),
   citationStyles: (request) =>

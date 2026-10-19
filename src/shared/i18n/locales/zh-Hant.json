@@ -5064,7 +5064,6 @@
     "Saving stopped. Completed results are kept.": "儲存已停止。已完成的結果會保留。",
     "Could not save reference {{number}}. Earlier results are kept.": "無法儲存第 {{number}} 筆文獻。先前的結果會保留。",
     "Open Inbox": "開啟收件匣",
-    "Open existing reference {{number}}": "開啟已有文獻 {{number}}",
     "The selected file is not valid CSL XML.": "所選檔案不是有效的 CSL XML。",
     "CSL files with a document type declaration are not supported.": "不支援含有文件類型宣告的 CSL 檔案。",
     "The selected file must be an independent CSL 1.0 style.": "所選檔案必須是獨立的 CSL 1.0 樣式。",
@@ -5957,7 +5956,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 模型與路由說明",
     "Saved to Inbox": "已儲存至收件匣",
     "PDF downloaded to Inbox": "PDF 已下載至收件匣",
-    "Review in Inbox to add to your library.": "請前往收件匣審核，確認後加入文獻庫。",
     "Already in library": "已在文獻庫中",
     "Open reference": "開啟文獻",
     "The parent Session is unavailable.": "主工作階段無法使用。",
@@ -7302,6 +7300,14 @@
     "Checking Session package…": "正在檢查工作階段套件…",
     "Review the package contents next. No Session has been created yet.": "接下來請確認套件內容。尚未建立工作階段。",
     "Optional files: {{selected}} / {{total}} selected · {{size}}": "選用檔案：已選擇 {{selected}} / {{total}} 個 · {{size}}",
-    "Choose save location…": "選擇儲存位置…"
+    "Choose save location…": "選擇儲存位置…",
+    "Drop a .science file to import": "拖入 .science 檔案以匯入",
+    "Checking current library status…": "正在檢查目前文獻庫狀態…",
+    "Could not check current library status.": "無法檢查目前文獻庫狀態。",
+    "Current library status": "目前文獻庫狀態",
+    "Imported: {{total}}": "已匯入：{{total}}",
+    "Dismissed: {{total}}": "已忽略：{{total}}",
+    "Current status unavailable: {{total}}": "無法確認目前狀態：{{total}}",
+    "Historical result; current library status is unavailable.": "這是歷史結果，無法確認目前文獻庫狀態。"
   }
 }

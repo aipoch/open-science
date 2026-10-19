@@ -720,6 +720,9 @@ The upper-right pin toggles the current Session through the shared Session contr
   filenames. Ordinary files use the existing composer intake and remain draft attachments until
   submission; one `.science` package opens the existing Project import flow. Reject mixed package
   batches without partially attaching or importing. Respect blocked composer and Project availability.
+- Project Home also accepts one `.science` package across its content area with the same bounded
+  overlay. Dropping opens the existing destination Project picker, followed by the existing import
+  preview and confirmation; Home does not preselect the previously visited Project.
 - Keep the new-Session `.science` import guide and keyboard-accessible picker visible at rest.
   Ordinary file drags must not highlight that package-only guide. Clear hover feedback on leave,
   drop, cancellation, or window blur.

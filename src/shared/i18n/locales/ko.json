@@ -5062,7 +5062,6 @@
     "Saving stopped. Completed results are kept.": "저장이 중지되었습니다. 완료된 결과는 유지됩니다.",
     "Could not save reference {{number}}. Earlier results are kept.": "문헌 {{number}}을(를) 저장하지 못했습니다. 이전 결과는 유지됩니다.",
     "Open Inbox": "받은 편지함 열기",
-    "Open existing reference {{number}}": "기존 문헌 {{number}} 열기",
     "The selected file is not valid CSL XML.": "선택한 파일은 유효한 CSL XML이 아닙니다.",
     "CSL files with a document type declaration are not supported.": "문서 유형 선언이 포함된 CSL 파일은 지원하지 않습니다.",
     "The selected file must be an independent CSL 1.0 style.": "선택한 파일은 독립형 CSL 1.0 스타일이어야 합니다.",
@@ -5955,7 +5954,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 모델 및 라우팅 안내",
     "Saved to Inbox": "받은 편지함에 저장됨",
     "PDF downloaded to Inbox": "PDF가 받은 편지함에 다운로드됨",
-    "Review in Inbox to add to your library.": "받은 편지함에서 검토한 후 라이브러리에 추가하세요.",
     "Already in library": "이미 라이브러리에 있음",
     "Open reference": "문헌 열기",
     "The parent Session is unavailable.": "상위 세션을 사용할 수 없습니다.",
@@ -7300,6 +7298,14 @@
     "Checking Session package…": "세션 패키지 검사 중…",
     "Review the package contents next. No Session has been created yet.": "다음으로 패키지 내용을 확인합니다. 아직 세션이 생성되지 않았습니다.",
     "Optional files: {{selected}} / {{total}} selected · {{size}}": "선택적 파일: {{selected}} / {{total}} 선택됨 · {{size}}",
-    "Choose save location…": "저장 위치 선택…"
+    "Choose save location…": "저장 위치 선택…",
+    "Drop a .science file to import": ".science 파일을 놓아 가져오기",
+    "Checking current library status…": "현재 라이브러리 상태 확인 중…",
+    "Could not check current library status.": "현재 라이브러리 상태를 확인할 수 없습니다.",
+    "Current library status": "현재 라이브러리 상태",
+    "Imported: {{total}}": "가져옴: {{total}}",
+    "Dismissed: {{total}}": "제외됨: {{total}}",
+    "Current status unavailable: {{total}}": "현재 상태 확인 불가: {{total}}",
+    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다."
   }
 }
