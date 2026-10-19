@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfThumbnail } from './PdfThumbnail'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 
@@ -37,6 +38,7 @@ describe('PdfThumbnail', () => {
 
   beforeEach(() => {
     vi.clearAllMocks()
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -95,6 +97,41 @@ describe('PdfThumbnail', () => {
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
   })
+
+  it.each([false, true])(
+    'does not reacquire while Desktop is recovering (closing=%s)',
+    async (closing) => {
+      const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      await act(async () => {
+        root.render(
+          <PdfThumbnail path={`/recovery-${closing}.pdf`} name="recovery.pdf" source="local" />
+        )
+        await flushMicrotasks()
+      })
+      const acquire = vi.mocked(window.api.previewResources.acquire)
+      expect(acquire).toHaveBeenCalledOnce()
+      const connectedAcquire = acquire.getMockImplementation()!
+      acquire.mockImplementation((request) =>
+        useDesktopRuntimeRecoveryStore.getState().phase === 'connected'
+          ? connectedAcquire(request)
+          : Promise.reject(new Error('Desktop is recovering. This operation was not submitted.'))
+      )
+      for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
+        await act(async () => {
+          useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1, closing })
+          await flushMicrotasks()
+        })
+        expect(acquire).toHaveBeenCalledOnce()
+      }
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 1, closing: false })
+        await flushMicrotasks()
+      })
+      expect(acquire).toHaveBeenCalledTimes(2)
+      expect(container.querySelector('img[alt="Preview of recovery.pdf"]')).not.toBeNull()
+      expect(consoleError).not.toHaveBeenCalled()
+    }
+  )
 
   it.each([false, true])(
     'retries a thumbnail once after re-entry (persistent failure=%s)',

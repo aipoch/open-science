@@ -98,6 +98,7 @@ import {
   createLogger,
   diagnosticErrorFields,
   flushLogs,
+  initLogger,
   writeFatalLogSync
 } from '@aipoch/diagnostics/node'
 import {
@@ -300,6 +301,8 @@ async function startDesktop(): Promise<void> {
   }
   // Verified handoff configuration selects the credential identity before Chromium starts.
   // An incomplete installation opens only the recovery shell and never reads application secrets.
+  // Configure the existing sink before credential preflight; full diagnostics start after ready.
+  initLogger({ logDir: join(profilePath, 'desktop-logs') })
   if (!initialRecoveryError) {
     const bootstrapLease = acquireCredentialBootstrapLease({
       home: app.getPath('home'),
@@ -1751,11 +1754,14 @@ async function startDesktop(): Promise<void> {
   diagnostics.operation.complete()
 }
 void startDesktop().catch(async (error: unknown) => {
-  bootstrapLog.error('desktop startup failed', {
+  const failureFields = {
     ...diagnosticErrorFields(error),
     phase: bootstrapPhase,
-    ...(error instanceof CredentialIdentityError ? { recoveryReason: error.reason } : {})
-  })
+    ...(error instanceof CredentialIdentityError
+      ? { recoveryReason: error.reason, validationDiagnostic: error.diagnostic }
+      : {})
+  }
+  bootstrapLog.error('desktop startup failed', failureFields)
   const message =
     error instanceof CredentialIdentityError
       ? credentialRecoveryMessage(error, app.getPreferredSystemLanguages())
@@ -1764,6 +1770,8 @@ void startDesktop().catch(async (error: unknown) => {
         : String(error)
   // Failed identity preflight must not yield to Chromium's profile/key initialization.
   if (!app.isReady()) {
+    // This path must not await: preserve the diagnostic before the immediate process exit.
+    writeFatalLogSync('desktop-bootstrap', 'desktop startup failed', failureFields)
     dialog.showErrorBox(APP_NAME, message)
     app.exit(1)
     return

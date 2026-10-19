@@ -1,4 +1,5 @@
 import { usePreviewResourceKey } from '../usePreviewResourceGeneration'
+import { desktopRuntimeWritable } from '@/stores/desktop-runtime-recovery-store'
 import { useEffect, useRef, useState } from 'react'
 import { FileText } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -325,7 +326,7 @@ export const PdfThumbnail = ({
   const shouldRender = isNearViewport && !hasCurrentError && (!hasCurrentResult || !cached)
 
   useEffect(() => {
-    if (!shouldRender) return
+    if (!shouldRender || !desktopRuntimeWritable()) return
 
     const subscription = subscribeThumbnailJob(
       requestKey,

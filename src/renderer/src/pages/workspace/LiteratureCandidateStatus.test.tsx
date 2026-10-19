@@ -12,18 +12,23 @@ const previousApi = window.api
 const read =
   vi.fn<(request: { candidateIds: string[] }) => Promise<LiteratureCandidateStatesResult>>()
 const remove = vi.fn()
-let notify: () => void
+const listeners = new Set<() => void>()
+const notify = (): void => listeners.forEach((listener) => listener())
 beforeEach(() => {
   read.mockReset().mockResolvedValue({ candidates: [{ candidateId: 'a', state: 'pending' }] })
   remove.mockClear()
+  listeners.clear()
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
       literature: {
         getCandidateStates: read,
         onChanged: (listener: () => void) => {
-          notify = listener
-          return remove
+          listeners.add(listener)
+          return () => {
+            listeners.delete(listener)
+            remove()
+          }
         }
       }
     }
@@ -140,6 +145,17 @@ it('ignores late responses after switching identities, refreshing, and unmountin
   await act(async () => notify())
   await act(async () => window.dispatchEvent(new Event('open-science:web-events-open')))
   expect(await view.findByText('Dismissed: 1')).toBeDefined()
+  await waitFor(() => expect(view.getByRole('status').getAttribute('aria-busy')).toBe('false'))
+  await act(async () => resolve({ candidates: [{ candidateId: 'b', state: 'pending' }] }))
+  expect(view.getByText('Dismissed: 1')).toBeDefined()
+  expect(view.queryByText('Pending review: 1')).toBeNull()
+  read.mockImplementationOnce(
+    () =>
+      new Promise((done) => {
+        resolve = done
+      })
+  )
+  await act(async () => notify())
   view.unmount()
   const calls = read.mock.calls.length
   await act(async () => {
@@ -175,4 +191,72 @@ it('keeps summary-only history neutral and bounds batch reads', async () => {
   view.rerender(status(Array.from({ length: 201 }, (_, i) => `candidate-${i}`)))
   expect(await view.findByText('Pending review: 201')).toBeDefined()
   expect(read.mock.calls.map(([request]) => request.candidateIds.length)).toEqual([200, 1])
+})
+
+it('rechecks deleted, restored, and missing destinations without keeping failed navigation', async () => {
+  const accepted = {
+    candidates: [{ candidateId: 'a', state: 'accepted' as const, acceptedItemId: 'paper' }]
+  }
+  read.mockResolvedValue(accepted)
+  const view = render(status())
+  await view.findByRole('button', { name: 'Open reference' })
+  read.mockRejectedValueOnce(new Error('offline'))
+  await act(async () => notify())
+  await view.findByText('Could not check current library status.')
+  expect(view.queryByRole('button', { name: 'Open reference' })).toBeNull()
+  read.mockResolvedValue({ candidates: [{ candidateId: 'a', state: 'accepted' }] })
+  fireEvent(window, new Event('focus'))
+  await view.findByText('Current status unavailable: 1')
+  expect(view.queryByText(/Pending review:/)).toBeNull()
+  read.mockResolvedValue(accepted)
+  fireEvent(window, new Event('open-science:web-events-open'))
+  await view.findByRole('button', { name: 'Open reference' })
+  read.mockResolvedValue({ candidates: [] })
+  await act(async () => notify())
+  await view.findByText('Current status unavailable: 1')
+  expect(view.queryByRole('button')).toBeNull()
+})
+
+it('reads only each card’s candidate IDs on refresh and cleans up all subscriptions', async () => {
+  read.mockImplementation(async ({ candidateIds }) => ({
+    candidates: candidateIds.map((candidateId) => ({
+      candidateId,
+      state: 'accepted',
+      acceptedItemId: `item-${candidateId}`
+    }))
+  }))
+  const ids = Array.from({ length: 20 }, (_, index) => `saved-${index}`)
+  const view = render(
+    <LiteratureCandidateSessionContext.Provider value="session">
+      {ids.map((id) => (
+        <WorkspaceLiteratureToolCard
+          key={id}
+          summary={buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            {
+              results: [{ kind: 'candidate', id, state: 'pending' }]
+            }
+          )}
+        />
+      ))}
+    </LiteratureCandidateSessionContext.Provider>
+  )
+  expect(await view.findAllByText('Imported: 1')).toHaveLength(20)
+  expect(read.mock.calls.map(([request]) => request.candidateIds)).toEqual(ids.map((id) => [id]))
+  await act(async () => {
+    for (const listener of listeners) {
+      listener()
+      await Promise.resolve()
+    }
+  })
+  await waitFor(() => expect(read).toHaveBeenCalledTimes(40))
+  expect(read.mock.calls.slice(20).map(([request]) => request.candidateIds)).toEqual(
+    ids.map((id) => [id])
+  )
+  view.unmount()
+  expect(listeners.size).toBe(0)
+  fireEvent(window, new Event('focus'))
+  await act(async () => notify())
+  expect(read).toHaveBeenCalledTimes(40)
 })

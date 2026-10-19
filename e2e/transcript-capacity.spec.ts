@@ -10,7 +10,7 @@ import {
   validateConversationGraph
 } from '../src/shared/conversation-graph'
 import { expect } from '@playwright/test'
-import { test } from './fixtures/electron-app'
+import { runWithCleanup, test } from './fixtures/electron-app'
 import { openProjectSession } from './certification/helpers'
 import { openGeneralSettings } from './fixtures/settings-preferences'
 
@@ -240,7 +240,9 @@ for (const { count, contextLines } of [
   test(`profiles ${count} Notebook runs and ${contextLines ? 'long' : 'short'} approvals across branches and restart @capacity`, async ({
     app
   }, testInfo) => {
-    test.setTimeout(300_000)
+    // The isolated macOS 1,000-run long-approval profile takes about 289 seconds.
+    // Allow profiling/teardown headroom without relaxing ordinary interaction assertions.
+    test.setTimeout(count === 1000 && contextLines > 0 ? 600_000 : 300_000)
     let page = await app.completeOnboarding()
     const cwd = await app.createTestDirectory('notebook-review-capacity')
     const projectName = `Notebook capacity ${count}`
@@ -386,180 +388,183 @@ for (const { count, contextLines } of [
         await cdp.detach()
       }
     }
-    try {
-      page = await app.restartWithSessionFixture(session, runs)
-      await app.markResourceProfilePhase('seeded-cold')
-      const openedAt = performance.now()
-      await openProjectSession(page, projectName, session.title)
-      // The cold 1,000-run fixture loads a 26 MB transcript before rendering (22s locally).
-      // Keep this profiling wait separate from ordinary interaction budgets and record the time.
-      await expect(
-        page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-      ).toBeVisible({ timeout: 60_000 })
-      metrics.firstViewMs = performance.now() - openedAt
-      metrics.mountedMessages = await page.locator('[data-message-id]').count()
-      expect(metrics.mountedMessages).toBeLessThanOrEqual(160)
-      await app.markResourceProfilePhase('first-view')
-      await captureHeap('first-view')
-      // Review history remains durable without mounting duplicate transcript code blocks.
-      await expect(
-        page.getByTestId('tool-chip').filter({ hasText: 'Code risk review' })
-      ).toHaveCount(0)
-      await expect(page.getByTestId('notebook-code-review-receipt')).toHaveCount(0)
-      metrics.hiddenReviewReceipts = true
-      await app.markResourceProfilePhase('reviews-hidden')
-      await captureHeap('reviews-hidden')
-      metrics.ipc = await page.evaluate(
-        async ({ projectId, id, cwd, count }) => {
-          const request = { projectId, sessionId: id }
-          const loadMs: number[] = [],
-            saveMs: number[] = [],
-            runIndexMs: number[] = []
-          let payloadBytes = 0,
-            reviewCount = 0
-          for (let i = 0; i < 3; i++) {
-            let start = performance.now()
-            const loaded = await window.api.sessions.loadOne(request)
-            loadMs.push(performance.now() - start)
-            if (!loaded) throw new Error('Capacity Session disappeared')
-            if (i === 0) {
-              payloadBytes = new TextEncoder().encode(JSON.stringify(loaded)).byteLength
-              reviewCount = loaded.conversationGraph!.activities.filter((item) =>
-                item.id.startsWith('app-approval:')
-              ).length
-            }
-            start = performance.now()
-            await window.api.sessions.saveSession(loaded)
-            saveMs.push(performance.now() - start)
-            start = performance.now()
-            const index = await window.api.notebook.runIndex({ ...request, workspaceCwd: cwd })
-            runIndexMs.push(performance.now() - start)
-            if (index.length !== count)
-              throw new Error(`Lost Notebook runs: ${index.length}/${count}`)
-          }
-          return { loadMs, saveMs, runIndexMs, payloadBytes, reviewCount }
-        },
-        { projectId, id, cwd, count }
-      )
-      expect((metrics.ipc as { reviewCount: number }).reviewCount).toBe(expectedReviewCount)
-      const branchMetrics = []
-      for (const branchId of [alternateBranch, primaryBranch, alternateBranch, primaryBranch]) {
-        const started = performance.now()
-        const saveMs = await page.evaluate(
-          async ({ projectId, id, branchId }) => {
-            const loaded = await window.api.sessions.loadOne({ projectId, sessionId: id })
-            if (!loaded) throw new Error('Missing Session')
-            const frame = loaded.conversationGraph!.frames.find(
-              (frame) => frame.id === loaded.conversationGraph!.rootFrameId
-            )!
-            const start = performance.now()
-            await window.api.sessions.saveSession(loaded, {
-              conversationCommands: [
-                {
-                  id: `capacity-switch-${Date.now()}`,
-                  timestamp: Date.now(),
-                  kind: 'select-branch',
-                  branchId,
-                  previousBranchId: frame.activeBranchId
-                }
-              ]
-            })
-            return performance.now() - start
-          },
-          { projectId, id, branchId }
-        )
-        await page.reload()
+    await runWithCleanup(
+      async () => {
+        page = await app.restartWithSessionFixture(session, runs)
+        await app.markResourceProfilePhase('seeded-cold')
+        const openedAt = performance.now()
         await openProjectSession(page, projectName, session.title)
-        const tail = branchId === primaryBranch ? count * 2 - 1 : (count - 4) * 2 - 1
-        await expect(page.locator(`[data-message-id="capacity-message-${tail}"]`)).toBeVisible()
-        if (branchId === alternateBranch)
-          await expect(
-            page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-          ).toHaveCount(0)
-        branchMetrics.push({ branchId, saveMs, switchAndReloadMs: performance.now() - started })
-      }
-      metrics.branchSwitches = branchMetrics
-      await app.markResourceProfilePhase('four-branch-switches')
-      await captureHeap('four-branch-switches')
-      const restartAt = performance.now()
-      page = await app.restart({ resourceProfilePhase: 'restart' })
-      metrics.restartToReadyMs = performance.now() - restartAt
-      const restoredAt = performance.now()
-      await openProjectSession(page, projectName, session.title)
-      await expect(
-        page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
-      ).toBeVisible()
-      metrics.restoredViewMs = performance.now() - restoredAt
-      const integrity = await page.evaluate(
-        async ({ projectId, id, expectedCode }) => {
-          const loaded = await window.api.sessions.loadOne({ projectId, sessionId: id })
-          const restoredReviews = loaded!.conversationGraph!.activities.filter((item) =>
-            item.id.startsWith('app-approval:')
+        // The cold 1,000-run fixture loads a 26 MB transcript before rendering (22s locally).
+        // Keep this profiling wait separate from ordinary interaction budgets and record the time.
+        await expect(
+          page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
+        ).toBeVisible({ timeout: 60_000 })
+        metrics.firstViewMs = performance.now() - openedAt
+        metrics.mountedMessages = await page.locator('[data-message-id]').count()
+        expect(metrics.mountedMessages).toBeLessThanOrEqual(160)
+        await app.markResourceProfilePhase('first-view')
+        await captureHeap('first-view')
+        // Review history remains durable without mounting duplicate transcript code blocks.
+        await expect(
+          page.getByTestId('tool-chip').filter({ hasText: 'Code risk review' })
+        ).toHaveCount(0)
+        await expect(page.getByTestId('notebook-code-review-receipt')).toHaveCount(0)
+        metrics.hiddenReviewReceipts = true
+        await app.markResourceProfilePhase('reviews-hidden')
+        await captureHeap('reviews-hidden')
+        metrics.ipc = await page.evaluate(
+          async ({ projectId, id, cwd, count }) => {
+            const request = { projectId, sessionId: id }
+            const loadMs: number[] = [],
+              saveMs: number[] = [],
+              runIndexMs: number[] = []
+            let payloadBytes = 0,
+              reviewCount = 0
+            for (let i = 0; i < 3; i++) {
+              let start = performance.now()
+              const loaded = await window.api.sessions.loadOne(request)
+              loadMs.push(performance.now() - start)
+              if (!loaded) throw new Error('Capacity Session disappeared')
+              if (i === 0) {
+                payloadBytes = new TextEncoder().encode(JSON.stringify(loaded)).byteLength
+                reviewCount = loaded.conversationGraph!.activities.filter((item) =>
+                  item.id.startsWith('app-approval:')
+                ).length
+              }
+              start = performance.now()
+              await window.api.sessions.saveSession(loaded)
+              saveMs.push(performance.now() - start)
+              start = performance.now()
+              const index = await window.api.notebook.runIndex({ ...request, workspaceCwd: cwd })
+              runIndexMs.push(performance.now() - start)
+              if (index.length !== count)
+                throw new Error(`Lost Notebook runs: ${index.length}/${count}`)
+            }
+            return { loadMs, saveMs, runIndexMs, payloadBytes, reviewCount }
+          },
+          { projectId, id, cwd, count }
+        )
+        expect((metrics.ipc as { reviewCount: number }).reviewCount).toBe(expectedReviewCount)
+        const branchMetrics = []
+        for (const branchId of [alternateBranch, primaryBranch, alternateBranch, primaryBranch]) {
+          const started = performance.now()
+          const saveMs = await page.evaluate(
+            async ({ projectId, id, branchId }) => {
+              const loaded = await window.api.sessions.loadOne({ projectId, sessionId: id })
+              if (!loaded) throw new Error('Missing Session')
+              const frame = loaded.conversationGraph!.frames.find(
+                (frame) => frame.id === loaded.conversationGraph!.rootFrameId
+              )!
+              const start = performance.now()
+              await window.api.sessions.saveSession(loaded, {
+                conversationCommands: [
+                  {
+                    id: `capacity-switch-${Date.now()}`,
+                    timestamp: Date.now(),
+                    kind: 'select-branch',
+                    branchId,
+                    previousBranchId: frame.activeBranchId
+                  }
+                ]
+              })
+              return performance.now() - start
+            },
+            { projectId, id, branchId }
           )
-          return {
-            branches: loaded!.conversationGraph!.branches.length,
-            hostOwned: restoredReviews.every((item) => item.appOwned === true),
-            exactSource:
-              (restoredReviews.at(-1)!.rawInput as { code: string }).code === expectedCode
-          }
-        },
-        { projectId, id, expectedCode: runs.at(-1)!.script }
-      )
-      expect(integrity).toEqual({ branches: 2, hostOwned: true, exactSource: true })
-      await app.markResourceProfilePhase('restored-view')
-      await captureHeap('restored-view')
-      await app.captureResourceTimings('capacity:')
-      await page.screenshot({ path: testInfo.outputPath('notebook-capacity.png') })
-      // Notebook data root is separate from settings/Session storage; derive the latter from
-      // the profiler's documented fixture root, without inspecting any user storage.
-      const sessionPath = join(dataRoot, '..', 'storage', 'sessions', projectId, `${id}.json`)
-      metrics.sessionFileBytes = (await stat(sessionPath)).size
-      const durable = JSON.parse(await readFile(sessionPath, 'utf8'))
-      let allReviewSourceBytes = 0,
-        reviewSourceCopies = 0
-      const uniqueReviewSources = new Set<string>()
-      const visit = (value: unknown): void => {
-        if (!value || typeof value !== 'object') return
-        if ('notebookCodeRisk' in value && 'code' in value && typeof value.code === 'string') {
-          reviewSourceCopies++
-          allReviewSourceBytes += Buffer.byteLength(value.code)
-          uniqueReviewSources.add(value.code)
+          await page.reload()
+          await openProjectSession(page, projectName, session.title)
+          const tail = branchId === primaryBranch ? count * 2 - 1 : (count - 4) * 2 - 1
+          await expect(page.locator(`[data-message-id="capacity-message-${tail}"]`)).toBeVisible()
+          if (branchId === alternateBranch)
+            await expect(
+              page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
+            ).toHaveCount(0)
+          branchMetrics.push({ branchId, saveMs, switchAndReloadMs: performance.now() - started })
         }
-        for (const child of Object.values(value)) visit(child)
+        metrics.branchSwitches = branchMetrics
+        await app.markResourceProfilePhase('four-branch-switches')
+        await captureHeap('four-branch-switches')
+        const restartAt = performance.now()
+        page = await app.restart({ resourceProfilePhase: 'restart' })
+        metrics.restartToReadyMs = performance.now() - restartAt
+        const restoredAt = performance.now()
+        await openProjectSession(page, projectName, session.title)
+        await expect(
+          page.locator(`[data-message-id="capacity-message-${count * 2 - 1}"]`)
+        ).toBeVisible()
+        metrics.restoredViewMs = performance.now() - restoredAt
+        const integrity = await page.evaluate(
+          async ({ projectId, id, expectedCode }) => {
+            const loaded = await window.api.sessions.loadOne({ projectId, sessionId: id })
+            const restoredReviews = loaded!.conversationGraph!.activities.filter((item) =>
+              item.id.startsWith('app-approval:')
+            )
+            return {
+              branches: loaded!.conversationGraph!.branches.length,
+              hostOwned: restoredReviews.every((item) => item.appOwned === true),
+              exactSource:
+                (restoredReviews.at(-1)!.rawInput as { code: string }).code === expectedCode
+            }
+          },
+          { projectId, id, expectedCode: runs.at(-1)!.script }
+        )
+        expect(integrity).toEqual({ branches: 2, hostOwned: true, exactSource: true })
+        await app.markResourceProfilePhase('restored-view')
+        await captureHeap('restored-view')
+        await app.captureResourceTimings('capacity:')
+        await page.screenshot({ path: testInfo.outputPath('notebook-capacity.png') })
+        // Notebook data root is separate from settings/Session storage; derive the latter from
+        // the profiler's documented fixture root, without inspecting any user storage.
+        const sessionPath = join(dataRoot, '..', 'storage', 'sessions', projectId, `${id}.json`)
+        metrics.sessionFileBytes = (await stat(sessionPath)).size
+        const durable = JSON.parse(await readFile(sessionPath, 'utf8'))
+        let allReviewSourceBytes = 0,
+          reviewSourceCopies = 0
+        const uniqueReviewSources = new Set<string>()
+        const visit = (value: unknown): void => {
+          if (!value || typeof value !== 'object') return
+          if ('notebookCodeRisk' in value && 'code' in value && typeof value.code === 'string') {
+            reviewSourceCopies++
+            allReviewSourceBytes += Buffer.byteLength(value.code)
+            uniqueReviewSources.add(value.code)
+          }
+          for (const child of Object.values(value)) visit(child)
+        }
+        visit(durable)
+        const uniqueReviewSourceBytes = [...uniqueReviewSources].reduce(
+          (sum, code) => sum + Buffer.byteLength(code),
+          0
+        )
+        metrics.sourceDuplication = {
+          reviewSourceCopies,
+          uniqueReviewCount: uniqueReviewSources.size,
+          allReviewSourceBytes,
+          uniqueReviewSourceBytes,
+          redundantReviewSourceBytes: allReviewSourceBytes - uniqueReviewSourceBytes
+        }
+        // Each seeded review has a unique "# Run i" prefix; repeated durable projections
+        // add source copies, never new unique sources.
+        expect(uniqueReviewSources.size).toBe(expectedReviewCount)
+      },
+      async () => {
+        const profile = await app.finishResourceProfile()
+        await testInfo.attach('notebook-capacity-profile', {
+          path: profile.summaryMarkdownPath,
+          contentType: 'text/markdown'
+        })
+        await testInfo.attach('notebook-capacity-resource-data', {
+          body: JSON.stringify(profile.summary),
+          contentType: 'application/json'
+        })
+        await writeFile(
+          testInfo.outputPath('notebook-capacity-metrics.json'),
+          JSON.stringify(metrics, null, 2)
+        )
+        await testInfo.attach('notebook-capacity-metrics', {
+          path: testInfo.outputPath('notebook-capacity-metrics.json'),
+          contentType: 'application/json'
+        })
       }
-      visit(durable)
-      const uniqueReviewSourceBytes = [...uniqueReviewSources].reduce(
-        (sum, code) => sum + Buffer.byteLength(code),
-        0
-      )
-      metrics.sourceDuplication = {
-        reviewSourceCopies,
-        uniqueReviewCount: uniqueReviewSources.size,
-        allReviewSourceBytes,
-        uniqueReviewSourceBytes,
-        redundantReviewSourceBytes: allReviewSourceBytes - uniqueReviewSourceBytes
-      }
-      // Each seeded review has a unique "# Run i" prefix; repeated durable projections
-      // add source copies, never new unique sources.
-      expect(uniqueReviewSources.size).toBe(expectedReviewCount)
-    } finally {
-      const profile = await app.finishResourceProfile()
-      await testInfo.attach('notebook-capacity-profile', {
-        path: profile.summaryMarkdownPath,
-        contentType: 'text/markdown'
-      })
-      await testInfo.attach('notebook-capacity-resource-data', {
-        body: JSON.stringify(profile.summary),
-        contentType: 'application/json'
-      })
-      await writeFile(
-        testInfo.outputPath('notebook-capacity-metrics.json'),
-        JSON.stringify(metrics, null, 2)
-      )
-      await testInfo.attach('notebook-capacity-metrics', {
-        path: testInfo.outputPath('notebook-capacity-metrics.json'),
-        contentType: 'application/json'
-      })
-    }
+    )
   })
 }

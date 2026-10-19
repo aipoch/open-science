@@ -19,6 +19,7 @@ export type UpsertToolActivityInput = {
   eventId: string
   timestamp?: number
   promptMessageId?: string
+  promptExecutionId?: string
   title?: string
   status?: string
   toolDisposition?: 'declined' | 'permission-closed'

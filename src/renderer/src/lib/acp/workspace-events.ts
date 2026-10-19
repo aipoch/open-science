@@ -165,13 +165,12 @@ const ownsForegroundPrompt = (session: ChatSession): boolean =>
 const didCurrentToolBecomeTerminal = (
   before: ChatSession | undefined,
   after: ChatSession | undefined,
-  toolCallId: string,
   eventId: string
 ): boolean => {
   if (!after || !ownsForegroundPrompt(after)) return false
 
-  const beforeActivity = before?.activities?.find((activity) => activity.id === toolCallId)
-  const afterActivity = after.activities?.find((activity) => activity.id === toolCallId)
+  const afterActivity = after.activities?.find((activity) => activity.eventIds.includes(eventId))
+  const beforeActivity = before?.activities?.find((activity) => activity.id === afterActivity?.id)
   if (
     !afterActivity ||
     beforeActivity?.eventIds.includes(eventId) ||
@@ -818,6 +817,7 @@ const applyWorkspaceRuntimeEvent = async (
     store.upsertToolActivity({
       sessionId: event.sessionId,
       toolCallId: event.toolCallId,
+      promptExecutionId: event.promptExecutionId,
       eventId: event.id,
       timestamp: event.timestamp,
       promptMessageId: event.promptMessageId,
@@ -839,14 +839,7 @@ const applyWorkspaceRuntimeEvent = async (
     const sessionAfterToolEvent = useSessionStore
       .getState()
       .sessions.find((session) => session.id === event.sessionId)
-    if (
-      didCurrentToolBecomeTerminal(
-        sessionBeforeToolEvent,
-        sessionAfterToolEvent,
-        event.toolCallId,
-        event.id
-      )
-    ) {
+    if (didCurrentToolBecomeTerminal(sessionBeforeToolEvent, sessionAfterToolEvent, event.id)) {
       useSessionStore.getState().setAwaitingFirstAgentOutput(event.sessionId, true)
     }
     return true

@@ -32,7 +32,8 @@
     "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
     "src/renderer/src/pages/workspace/workspace-page.architecture.test.ts",
     "src/renderer/src/pages/workspace/workspace-session-agent-configuration-controller.test.ts",
-    "src/renderer/src/pages/workspace/workspace-session-controller.test.ts"
+    "src/renderer/src/pages/workspace/workspace-session-controller.test.ts",
+    "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/WorkspacePage.tsx",
@@ -74,7 +75,8 @@
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceActivityGroup.i18n.render.test.tsx",
       "src/renderer/src/components/job-observation-ui.test.tsx",
-      "src/renderer/src/components/components-batch-i18n.render.test.tsx"
+      "src/renderer/src/components/components-batch-i18n.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.render.test.tsx",

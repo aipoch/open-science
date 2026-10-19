@@ -50,6 +50,17 @@
     "Quit app": "Quitter l’application"
   },
   "native": {
+    "Local State is in use by another process.": "Local State est utilisé par un autre processus.",
+    "The Local State configuration file could not be read.": "Le fichier de configuration Local State n’a pas pu être lu.",
+    "The Local State configuration file is invalid.": "Le fichier de configuration Local State est invalide.",
+    "The encryption key is missing from Local State.": "La clé de chiffrement est absente de Local State.",
+    "The encryption key in Local State is invalid.": "La clé de chiffrement dans Local State est invalide.",
+    "Local State changed during credential validation.": "Local State a été modifié pendant la validation des identifiants.",
+    "The Windows credential validator could not start.": "Le programme de validation des identifiants Windows n’a pas pu démarrer.",
+    "The Windows credential validator timed out.": "Le programme de validation des identifiants Windows a dépassé le délai imparti.",
+    "The Windows credential validator failed.": "Le programme de validation des identifiants Windows a échoué.",
+    "Windows credential validation is unavailable on this system.": "La validation des identifiants Windows est indisponible sur ce système.",
+    "Windows could not decrypt the existing credential key.": "Windows n’a pas pu déchiffrer la clé d’identification existante.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Les identifiants système Linux nécessitent le backend Secret Service ou KWallet sélectionné à l’origine et /usr/bin/busctl. Déverrouillez le trousseau ou le portefeuille par défaut d’origine et redémarrez. Ne changez pas le backend password-store ni le profil pour contourner cette vérification.",
     "Credential storage needs recovery": "Le stockage des identifiants doit être restauré",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Ce système de stockage des identifiants ne prend pas en charge la vérification silencieuse de leur identité. Le démarrage a été interrompu pour préserver les données chiffrées existantes.",

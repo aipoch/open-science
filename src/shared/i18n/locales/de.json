@@ -50,6 +50,17 @@
     "Quit app": "App beenden"
   },
   "native": {
+    "Local State is in use by another process.": "Local State wird von einem anderen Prozess verwendet.",
+    "The Local State configuration file could not be read.": "Die Konfigurationsdatei Local State konnte nicht gelesen werden.",
+    "The Local State configuration file is invalid.": "Die Konfigurationsdatei Local State ist ungültig.",
+    "The encryption key is missing from Local State.": "Der Verschlüsselungsschlüssel fehlt in Local State.",
+    "The encryption key in Local State is invalid.": "Der Verschlüsselungsschlüssel in Local State ist ungültig.",
+    "Local State changed during credential validation.": "Local State wurde während der Überprüfung der Anmeldedaten geändert.",
+    "The Windows credential validator could not start.": "Das Windows-Prüfprogramm für Anmeldedaten konnte nicht gestartet werden.",
+    "The Windows credential validator timed out.": "Die Zeit für die Windows-Anmeldedatenprüfung ist abgelaufen.",
+    "The Windows credential validator failed.": "Das Windows-Prüfprogramm für Anmeldedaten ist fehlgeschlagen.",
+    "Windows credential validation is unavailable on this system.": "Die Windows-Anmeldedatenprüfung ist auf diesem System nicht verfügbar.",
+    "Windows could not decrypt the existing credential key.": "Windows konnte den vorhandenen Schlüssel für Anmeldedaten nicht entschlüsseln.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux-Systemzugangsdaten benötigen das ursprünglich ausgewählte Secret-Service- oder KWallet-Backend und /usr/bin/busctl. Entsperren Sie den ursprünglichen Standardschlüsselbund oder die ursprüngliche Wallet und starten Sie neu. Ändern Sie weder das password-store-Backend noch das Profil, um diese Prüfung zu umgehen.",
     "Credential storage needs recovery": "Der Anmeldedatenspeicher muss wiederhergestellt werden",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "Dieses System-Backend für Anmeldedaten unterstützt keine stille Identitätsprüfung. Zum Schutz vorhandener verschlüsselter Daten wurde der Start angehalten.",

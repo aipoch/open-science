@@ -50,6 +50,17 @@
     "Quit app": "앱 종료"
   },
   "native": {
+    "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
+    "The Local State configuration file could not be read.": "Local State 구성 파일을 읽을 수 없습니다.",
+    "The Local State configuration file is invalid.": "Local State 구성 파일이 올바르지 않습니다.",
+    "The encryption key is missing from Local State.": "Local State에 암호화 키가 없습니다.",
+    "The encryption key in Local State is invalid.": "Local State의 암호화 키가 올바르지 않습니다.",
+    "Local State changed during credential validation.": "자격 증명 검증 중 Local State가 변경되었습니다.",
+    "The Windows credential validator could not start.": "Windows 자격 증명 검증 프로그램을 시작할 수 없습니다.",
+    "The Windows credential validator timed out.": "Windows 자격 증명 검증 프로그램의 시간이 초과되었습니다.",
+    "The Windows credential validator failed.": "Windows 자격 증명 검증 프로그램이 실패했습니다.",
+    "Windows credential validation is unavailable on this system.": "이 시스템에서는 Windows 자격 증명을 검증할 수 없습니다.",
+    "Windows could not decrypt the existing credential key.": "Windows에서 기존 자격 증명 키를 복호화할 수 없습니다.",
     "Linux OS credentials require the original selected Secret Service or KWallet backend and /usr/bin/busctl. Unlock the original default keyring or wallet and restart. Do not change the password-store backend or profile to bypass this check.": "Linux 시스템 자격 증명에는 원래 선택한 Secret Service 또는 KWallet 백엔드와 /usr/bin/busctl이 필요합니다. 원래 기본 키링 또는 지갑의 잠금을 해제하고 다시 시작하세요. 이 검사를 우회하기 위해 password-store 백엔드나 프로필을 변경하지 마세요.",
     "Credential storage needs recovery": "자격 증명 저장소를 복구해야 합니다",
     "Silent credential identity checks are not supported by this system credential backend. Startup has stopped to preserve existing encrypted data.": "이 시스템 자격 증명 백엔드는 사용자 상호 작용 없는 식별 정보 확인을 지원하지 않습니다. 기존 암호화 데이터를 보존하기 위해 시작을 중단했습니다.",

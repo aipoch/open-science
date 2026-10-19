@@ -51,6 +51,132 @@ afterEach(() => {
   else Reflect.deleteProperty(process, 'mas')
 })
 
+it.each(['ENOENT', 'EACCES', 'ETIMEDOUT'])(
+  'preserves the Windows validator process failure %s without raw output',
+  async (code) => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    fixture.spawn.mockReturnValue({
+      status: null,
+      signal: null,
+      error: Object.assign(new Error('PRIVATE-PATH'), { code }),
+      stdout: 'PRIVATE-HELPER-OUTPUT'
+    })
+    const { validateWindowsKey } = await import('./windows-profile-key')
+    expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+      status: 'error',
+      diagnostic: {
+        code: code === 'ETIMEDOUT' ? 'validator-timeout' : 'validator-start-failed',
+        systemCode: code
+      }
+    })
+  }
+)
+
+it('retains the numeric DPAPI error but excludes untrusted native fields', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  fixture.spawn.mockReturnValue({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: JSON.stringify({
+      schemaVersion: 1,
+      platform: 'win32',
+      status: 'error',
+      reason: 'dpapi-unprotect-failed',
+      errorCode: 13,
+      secret: 'PRIVATE-SECRET'
+    })
+  })
+  const { validateWindowsKey } = await import('./windows-profile-key')
+  expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+    status: 'error',
+    diagnostic: { code: 'dpapi-unprotect-failed', osStatus: 13 }
+  })
+})
+
+it.each([
+  'PRIVATE-OUTPUT',
+  'null',
+  '[]',
+  '{"schemaVersion":99}',
+  '{"schemaVersion":1,"platform":"win32","status":"PRIVATE-STATUS"}'
+])('rejects malformed Windows helper output without echoing it: %s', async (stdout) => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  fixture.spawn.mockReturnValue({ status: 0, signal: null, error: undefined, stdout })
+  const { validateWindowsKey } = await import('./windows-profile-key')
+  expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+    status: 'error',
+    diagnostic: { code: 'validator-invalid-response' }
+  })
+})
+
+it.each([
+  ['invalid-key-size', 0, 'profile-key-invalid'],
+  ['input-read-failed', 0, 'validator-input-failed'],
+  ['invalid-ciphertext-size', 0, 'validator-input-failed'],
+  ['binary-input-mode-unavailable', 0, 'validator-input-failed'],
+  ['PRIVATE-REASON', 0, 'validator-failed'],
+  ['PRIVATE-REASON', 13, 'validator-failed']
+])('omits Windows status for non-DPAPI failure %s (%s)', async (reason, errorCode, code) => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  fixture.spawn.mockReturnValue({
+    status: 0,
+    signal: null,
+    error: undefined,
+    stdout: JSON.stringify({
+      schemaVersion: 1,
+      platform: 'win32',
+      status: 'error',
+      reason,
+      errorCode
+    })
+  })
+  const { validateWindowsKey } = await import('./windows-profile-key')
+  expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+    status: 'error',
+    diagnostic: { code }
+  })
+})
+
+it.each([0, -1, 1.5, 0x100000000, 'PRIVATE-CODE'])(
+  'drops an invalid native system code: %s',
+  async (errorCode) => {
+    Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+    fixture.spawn.mockReturnValue({
+      status: 0,
+      signal: null,
+      error: undefined,
+      stdout: JSON.stringify({
+        schemaVersion: 1,
+        platform: 'win32',
+        status: 'error',
+        reason: 'dpapi-unprotect-failed',
+        errorCode
+      })
+    })
+    const { validateWindowsKey } = await import('./windows-profile-key')
+    expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+      status: 'error',
+      diagnostic: { code: 'dpapi-unprotect-failed' }
+    })
+  }
+)
+
+it('retains abnormal validator exit status without its output', async () => {
+  Object.defineProperty(process, 'platform', { value: 'win32', configurable: true })
+  fixture.spawn.mockReturnValue({
+    status: 7,
+    signal: null,
+    error: undefined,
+    stdout: 'PRIVATE-OUTPUT'
+  })
+  const { validateWindowsKey } = await import('./windows-profile-key')
+  expect(validateWindowsKey(Buffer.from('fixture'))).toEqual({
+    status: 'error',
+    diagnostic: { code: 'validator-failed', exitCode: 7 }
+  })
+})
+
 it('resolves the real package entry without loading or executing a native binding', async () => {
   const { probeCredentialIdentity } = await import('./probe')
   const entry = createRequire(import.meta.url)('@aipoch/credential-identity-probe-native') as {
@@ -146,7 +272,7 @@ it('passes only DPAPI ciphertext over stdin to the separate Windows key-read exe
   })
   const { validateWindowsKey } = await import('./windows-profile-key')
   const ciphertext = Buffer.from([0, 26, 13, 10, 255])
-  expect(validateWindowsKey(ciphertext)).toBe('valid')
+  expect(validateWindowsKey(ciphertext)).toEqual({ status: 'valid' })
   expect(fixture.spawn).toHaveBeenCalledWith(
     fixture.overridePath.replace('app.asar\\', 'app.asar.unpacked\\'),
     [],

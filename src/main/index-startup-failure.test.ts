@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
-import { CredentialIdentityError } from './credential-identity/selection'
 
 // Exercise the real production entry up to the process boundary. Database/runtime failures belong
 // to Node's startup owner; Electron must not construct a second store while handling those failures.
@@ -7,6 +6,8 @@ const f = vi.hoisted(() => {
   const log = { info: vi.fn(), warn: vi.fn(), error: vi.fn() }
   return {
     log,
+    initLogs: vi.fn(),
+    fatalLog: vi.fn(),
     ready: false,
     lock: true,
     fail: undefined as unknown,
@@ -123,7 +124,8 @@ vi.mock('@aipoch/diagnostics/node', async (original) => ({
   ...(await original<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => f.log,
   flushLogs: vi.fn(async () => {}),
-  writeFatalLogSync: vi.fn()
+  initLogger: f.initLogs,
+  writeFatalLogSync: f.fatalLog
 }))
 vi.mock('./diagnostics/startup', () => ({
   initializeApplicationDiagnostics: () => {
@@ -259,11 +261,42 @@ it.each(['mac-keychain', 'windows-dpapi'] as const)(
   }
 )
 it('releases credential preflight and exits without yielding or initializing the profile after recovery failure', async () => {
+  // beforeEach resets module identity; use the same error class as this entry import.
+  const { CredentialIdentityError } = await import('./credential-identity/selection')
   f.validate.mockImplementationOnce(() => {
-    throw new CredentialIdentityError('windows-profile-key-unavailable')
+    throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, {
+      code: 'profile-read-failed',
+      systemCode: 'EBUSY'
+    })
   })
   await import('./index')
   expect(f.app.exit).toHaveBeenCalledWith(1)
+  expect(f.dialog.showErrorBox).toHaveBeenCalledWith(
+    'Open-Science',
+    expect.stringContaining('SYSTEM_ERROR: EBUSY')
+  )
+  expect(f.log.error).toHaveBeenCalledWith(
+    'desktop startup failed',
+    expect.objectContaining({
+      validationDiagnostic: { code: 'profile-read-failed', systemCode: 'EBUSY' }
+    })
+  )
+  expect(f.initLogs).toHaveBeenCalledWith({
+    logDir: expect.stringMatching(/profile[/\\]desktop-logs$/)
+  })
+  expect(f.initLogs.mock.invocationCallOrder[0]).toBeLessThan(
+    f.validate.mock.invocationCallOrder[0]
+  )
+  expect(f.fatalLog).toHaveBeenCalledWith(
+    'desktop-bootstrap',
+    'desktop startup failed',
+    expect.objectContaining({
+      validationDiagnostic: { code: 'profile-read-failed', systemCode: 'EBUSY' }
+    })
+  )
+  expect(f.fatalLog.mock.invocationCallOrder[0]).toBeLessThan(
+    f.app.exit.mock.invocationCallOrder[0]
+  )
   expect(f.leaseRelease).toHaveBeenCalledOnce()
   expect(f.app.whenReady).not.toHaveBeenCalled()
   expect(f.key).not.toHaveBeenCalled()
