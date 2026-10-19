@@ -5630,7 +5630,6 @@
     "Run in background": "在背景執行",
     "Large-file threshold (MiB)": "大型檔案門檻 (MiB)",
     "Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.": "一律包含對話和證據中繼資料。未選取的檔案內容會標記為未包含。",
-    "Current stage": "目前階段",
     "Retry cleanup": "重試清理",
     "Show more versions": "顯示更多版本",
     "Source Session": "來源工作階段",
@@ -5642,7 +5641,6 @@
     "All versions": "所有版本",
     "Package progress": "套件操作進度",
     "Imported Sessions are read-only.": "匯入的工作階段為唯讀。",
-    "Selected: {{selected}} / {{total}} files · {{size}}": "已選取：{{selected}} / {{total}} 個檔案 · {{size}}",
     "Show in folder": "在資料夾中顯示",
     "Versions and dependencies": "版本與相依性",
     "Search optional files": "搜尋可選檔案",
@@ -5661,7 +5659,6 @@
     "Customize contents": "自訂內容",
     "Checks from the source installation": "來源環境的檢查紀錄",
     "Completed, cleanup pending": "已完成，清理待處理",
-    "Package operation completed": "套件操作已完成",
     "Source project": "來源專案",
     "View progress": "查看進度",
     "Validating package…": "正在驗證套件…",
@@ -7293,6 +7290,18 @@
     "You can configure up to 32 pages.": "最多可設定 32 頁。",
     "Native reading order will be used for your next message.": "下一則訊息將使用原生閱讀順序。",
     "Sign in to continue this conversation": "登入後繼續此對話",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。",
+    "Check package": "檢查套件",
+    "Review contents": "確認內容",
+    "Choose contents": "選擇內容",
+    "Create package": "產生套件",
+    "Save package": "儲存套件",
+    "Package steps": "套件處理步驟",
+    "Session imported": "工作階段已匯入",
+    "Session package exported": "工作階段套件已匯出",
+    "Checking Session package…": "正在檢查工作階段套件…",
+    "Review the package contents next. No Session has been created yet.": "接下來請確認套件內容。尚未建立工作階段。",
+    "Optional files: {{selected}} / {{total}} selected · {{size}}": "選用檔案：已選擇 {{selected}} / {{total}} 個 · {{size}}",
+    "Choose save location…": "選擇儲存位置…"
   }
 }

@@ -1,5 +1,74 @@
 import { expect, test } from '@playwright/test'
 
+for (const flow of [
+  { query: '', labels: ['选择内容', '生成包', '保存包'] },
+  { query: 'import=review&', labels: ['检查包', '确认内容', '导入'] }
+]) {
+  test(`Chinese package step labels fit at 320px: ${flow.labels[0]}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 740 })
+    await page.goto(`/session-package.html?${flow.query}locale=zh-Hans`)
+    const steps = page.getByRole('list', { name: '包处理步骤' })
+    for (const label of flow.labels) {
+      const text = steps.getByText(label, { exact: true })
+      await expect(text).toBeVisible()
+      expect(
+        await text.evaluate((element) => {
+          const range = document.createRange()
+          range.selectNodeContents(element)
+          return range.getClientRects().length
+        })
+      ).toBe(1)
+    }
+    expect(await steps.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  })
+}
+
+for (const width of [1280, 320]) {
+  test(`package checks stay distinct from import progress at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.goto('/session-package.html?import=checking')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Check package')
+    await expect(dialog.getByText('18.0 MiB / 42.0 MiB')).toBeVisible()
+    await expect(dialog.getByRole('progressbar')).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
+    const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
+    await expect(indicator.getByRole('status')).toHaveText('Checking Session package…')
+    await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Review contents')
+    await expect(dialog.getByText('Cancer immunotherapy', { exact: true })).toBeVisible()
+    const confirm = dialog.getByRole('button', { name: 'Import', exact: true })
+    await confirm.focus()
+    await confirm.press('Enter')
+    await expect(dialog.getByRole('status')).toHaveText('Importing research…')
+    await expect(dialog.getByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext',
+      'Importing research…: 42%'
+    )
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Import')
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
+    await expect(
+      dialog.getByRole('button', { name: 'Run in background', exact: true })
+    ).toBeInViewport()
+  })
+
+  test(`completed import exposes the next queued package at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.goto('/session-package.html?import=success')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    await expect(dialog.getByRole('status')).toHaveText('Session imported')
+    await expect(dialog).toContainText('Cancer immunotherapy')
+    const next = dialog.getByRole('button', { name: 'Open next package (1)', exact: true })
+    await expect(next).toBeInViewport()
+    await next.click()
+    await expect(dialog.getByText('follow-up-study.science', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: 'Cancer immunotherapy' })).toBeVisible()
+  })
+}
+
 for (const width of [1280, 320]) {
   test(`early import errors use the shared dialog layout at ${width}px`, async ({
     page
@@ -123,7 +192,7 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(dialog.getByRole('radio', { name: 'Essential export', exact: true })).toBeChecked()
   await expect(dialog.getByRole('radio').first()).toHaveAccessibleName('Essential export')
-  await expect(dialog.getByText('Selected: 0 / 29 files · 0 B')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 0 / 29 selected · 0 B')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('presets-compact.png') })
   await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
   const required = dialog.getByRole('checkbox', { name: 'research-result-0.csv', exact: true })
@@ -140,7 +209,7 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await expect(dialog).toHaveAttribute('data-state', 'open')
   await page.screenshot({ path: testInfo.outputPath('presets-custom.png') })
   await dialog.getByRole('radio', { name: 'Full export', exact: true }).check()
-  await expect(dialog.getByText('Selected: 29 / 29 files · 464.0 KiB')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 29 / 29 selected · 464.0 KiB')).toBeVisible()
   await expect(dialog.getByLabel('Search optional files', { exact: true })).toHaveCount(0)
 })
 
@@ -154,7 +223,7 @@ for (const width of [1280, 414]) {
       await page.goto(`/session-package.html${empty ? '?empty' : ''}`)
       const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
       const customize = dialog.getByRole('button', { name: 'Customize contents', exact: true })
-      const save = dialog.getByRole('button', { name: 'Export', exact: true })
+      const save = dialog.getByRole('button', { name: 'Choose save location…', exact: true })
       await expect(customize).toBeVisible()
       await page.evaluate(() => document.fonts.ready)
       const before = await dialog.boundingBox()

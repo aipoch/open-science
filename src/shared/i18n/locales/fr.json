@@ -5946,7 +5946,6 @@
     "Run in background": "Exécuter en arrière-plan",
     "Large-file threshold (MiB)": "Seuil des fichiers volumineux (MiB)",
     "Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.": "Les métadonnées de conversation et de preuve sont toujours incluses. Le contenu des fichiers non sélectionnés est signalé comme non inclus.",
-    "Current stage": "Étape actuelle",
     "Retry cleanup": "Réessayer le nettoyage",
     "Show more versions": "Afficher plus de versions",
     "Source Session": "Session source",
@@ -5958,7 +5957,6 @@
     "All versions": "Toutes les versions",
     "Package progress": "Progression du paquet",
     "Imported Sessions are read-only.": "Les sessions importées sont en lecture seule.",
-    "Selected: {{selected}} / {{total}} files · {{size}}": "Sélection : {{selected}} / {{total}} fichiers · {{size}}",
     "Show in folder": "Afficher dans le dossier",
     "Versions and dependencies": "Versions et dépendances",
     "Search optional files": "Rechercher des fichiers facultatifs",
@@ -5977,7 +5975,6 @@
     "Customize contents": "Personnaliser le contenu",
     "Checks from the source installation": "Vérifications de l’installation source",
     "Completed, cleanup pending": "Terminé, nettoyage en attente",
-    "Package operation completed": "Opération terminée",
     "Source project": "Projet source",
     "View progress": "Voir la progression",
     "Validating package…": "Vérification du paquet…",
@@ -7623,6 +7620,18 @@
     "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
     "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message.",
     "Sign in to continue this conversation": "Se connecter pour poursuivre cette conversation",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés.",
+    "Check package": "Vérifier le paquet",
+    "Review contents": "Vérifier le contenu",
+    "Choose contents": "Choisir le contenu",
+    "Create package": "Créer le paquet",
+    "Save package": "Enregistrer le paquet",
+    "Package steps": "Étapes du paquet",
+    "Session imported": "Session importée",
+    "Session package exported": "Paquet de session exporté",
+    "Checking Session package…": "Vérification du paquet de session…",
+    "Review the package contents next. No Session has been created yet.": "Vérifiez ensuite le contenu du paquet. Aucune session n’a encore été créée.",
+    "Optional files: {{selected}} / {{total}} selected · {{size}}": "Fichiers facultatifs : {{selected}} / {{total}} sélectionnés · {{size}}",
+    "Choose save location…": "Choisir l’emplacement…"
   }
 }

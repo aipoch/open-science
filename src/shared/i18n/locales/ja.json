@@ -5630,7 +5630,6 @@
     "Run in background": "バックグラウンドで実行",
     "Large-file threshold (MiB)": "大容量ファイルのしきい値 (MiB)",
     "Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.": "会話と証拠のメタデータは常に含まれます。選択しなかったファイルの内容は未収録として記録されます。",
-    "Current stage": "現在の段階",
     "Retry cleanup": "クリーンアップを再試行",
     "Show more versions": "さらにバージョンを表示",
     "Source Session": "元のセッション",
@@ -5642,7 +5641,6 @@
     "All versions": "すべてのバージョン",
     "Package progress": "パッケージの進行状況",
     "Imported Sessions are read-only.": "インポートしたセッションは読み取り専用です。",
-    "Selected: {{selected}} / {{total}} files · {{size}}": "選択済み：{{selected}} / {{total}} ファイル · {{size}}",
     "Show in folder": "フォルダーで表示",
     "Versions and dependencies": "バージョンと依存関係",
     "Search optional files": "任意ファイルを検索",
@@ -5661,7 +5659,6 @@
     "Customize contents": "内容をカスタマイズ",
     "Checks from the source installation": "元の環境での検証記録",
     "Completed, cleanup pending": "完了しました。後処理が必要です",
-    "Package operation completed": "パッケージ操作が完了しました",
     "Source project": "元のプロジェクト",
     "View progress": "進行状況を表示",
     "Validating package…": "パッケージを検証中…",
@@ -7293,6 +7290,18 @@
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
     "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
     "Sign in to continue this conversation": "ログインしてこの会話を続ける",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。",
+    "Check package": "パッケージを検証",
+    "Review contents": "内容を確認",
+    "Choose contents": "内容を選択",
+    "Create package": "パッケージを作成",
+    "Save package": "パッケージを保存",
+    "Package steps": "パッケージの処理手順",
+    "Session imported": "セッションをインポートしました",
+    "Session package exported": "セッションパッケージをエクスポートしました",
+    "Checking Session package…": "セッションパッケージを検証中…",
+    "Review the package contents next. No Session has been created yet.": "次にパッケージの内容を確認します。セッションはまだ作成されていません。",
+    "Optional files: {{selected}} / {{total}} selected · {{size}}": "任意ファイル：{{selected}} / {{total}} 選択済み · {{size}}",
+    "Choose save location…": "保存先を選択…"
   }
 }

@@ -5628,7 +5628,6 @@
     "Run in background": "백그라운드에서 실행",
     "Large-file threshold (MiB)": "대용량 파일 기준 (MiB)",
     "Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.": "대화와 증거 메타데이터는 항상 포함됩니다. 선택하지 않은 파일 내용은 미포함으로 기록됩니다.",
-    "Current stage": "현재 단계",
     "Retry cleanup": "정리 다시 시도",
     "Show more versions": "버전 더 보기",
     "Source Session": "원본 세션",
@@ -5640,7 +5639,6 @@
     "All versions": "모든 버전",
     "Package progress": "패키지 진행 상황",
     "Imported Sessions are read-only.": "가져온 세션은 읽기 전용입니다.",
-    "Selected: {{selected}} / {{total}} files · {{size}}": "선택됨: {{selected}} / {{total}}개 파일 · {{size}}",
     "Show in folder": "폴더에서 보기",
     "Versions and dependencies": "버전 및 의존 관계",
     "Search optional files": "선택 가능한 파일 검색",
@@ -5659,7 +5657,6 @@
     "Customize contents": "콘텐츠 사용자 지정",
     "Checks from the source installation": "원본 환경의 검증 기록",
     "Completed, cleanup pending": "완료됨, 정리 대기 중",
-    "Package operation completed": "패키지 작업 완료",
     "Source project": "원본 프로젝트",
     "View progress": "진행 상황 보기",
     "Validating package…": "패키지 검증 중…",
@@ -7291,6 +7288,18 @@
     "You can configure up to 32 pages.": "최대 32페이지까지 설정할 수 있습니다.",
     "Native reading order will be used for your next message.": "다음 메시지에는 원래 읽기 순서가 사용됩니다.",
     "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다.",
+    "Check package": "패키지 검사",
+    "Review contents": "내용 확인",
+    "Choose contents": "내용 선택",
+    "Create package": "패키지 생성",
+    "Save package": "패키지 저장",
+    "Package steps": "패키지 처리 단계",
+    "Session imported": "세션을 가져왔습니다",
+    "Session package exported": "세션 패키지를 내보냈습니다",
+    "Checking Session package…": "세션 패키지 검사 중…",
+    "Review the package contents next. No Session has been created yet.": "다음으로 패키지 내용을 확인합니다. 아직 세션이 생성되지 않았습니다.",
+    "Optional files: {{selected}} / {{total}} selected · {{size}}": "선택적 파일: {{selected}} / {{total}} 선택됨 · {{size}}",
+    "Choose save location…": "저장 위치 선택…"
   }
 }

@@ -5630,7 +5630,6 @@
     "Run in background": "在后台运行",
     "Large-file threshold (MiB)": "大文件阈值 (MiB)",
     "Conversation and evidence metadata are always included. Unselected file contents are recorded as not included.": "始终包含对话和证据元数据。未选中的文件内容会标记为未包含。",
-    "Current stage": "当前阶段",
     "Retry cleanup": "重试清理",
     "Show more versions": "显示更多版本",
     "Source Session": "源会话",
@@ -5642,7 +5641,6 @@
     "All versions": "所有版本",
     "Package progress": "包操作进度",
     "Imported Sessions are read-only.": "导入的会话为只读。",
-    "Selected: {{selected}} / {{total}} files · {{size}}": "已选择：{{selected}} / {{total}} 个文件 · {{size}}",
     "Show in folder": "在文件夹中显示",
     "Versions and dependencies": "版本与依赖",
     "Search optional files": "搜索可选文件",
@@ -5661,7 +5659,6 @@
     "Customize contents": "自定义内容",
     "Checks from the source installation": "来源环境的检查记录",
     "Completed, cleanup pending": "已完成，清理待处理",
-    "Package operation completed": "包操作已完成",
     "Source project": "源项目",
     "View progress": "查看进度",
     "Validating package…": "正在验证包…",
@@ -7293,6 +7290,18 @@
     "You can configure up to 32 pages.": "最多可配置 32 页。",
     "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。",
     "Sign in to continue this conversation": "登录后继续此对话",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。",
+    "Check package": "检查包",
+    "Review contents": "确认内容",
+    "Choose contents": "选择内容",
+    "Create package": "生成包",
+    "Save package": "保存包",
+    "Package steps": "包处理步骤",
+    "Session imported": "会话已导入",
+    "Session package exported": "会话包已导出",
+    "Checking Session package…": "正在检查会话包…",
+    "Review the package contents next. No Session has been created yet.": "接下来请确认包内容。尚未创建会话。",
+    "Optional files: {{selected}} / {{total}} selected · {{size}}": "可选文件：已选择 {{selected}} / {{total}} 个 · {{size}}",
+    "Choose save location…": "选择保存位置…"
   }
 }
