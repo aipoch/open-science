@@ -304,8 +304,14 @@ export const PackageExportProgressButton = ({
   iconOnly?: boolean
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  const { operation: sourceOperation, open, dismissedId, setOpen } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation)
+  const {
+    operation: sourceOperation,
+    browserReceipt,
+    open,
+    dismissedId,
+    setOpen
+  } = usePackageOperationStore()
+  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
   if (
     !operation ||
     operation.kind !== 'export' ||
@@ -351,12 +357,13 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const {
     operation: sourceOperation,
+    browserReceipt,
     open,
     dismissedId,
     setOpen,
     dismiss
   } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation)
+  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
   const [cancellingId, setCancellingId] = useState<string>()
   const [cancelError, setCancelError] = useState<{ id: string; message: string }>()
   if (
@@ -464,8 +471,15 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
   const riskId = useId()
-  const { operation: sourceOperation, open, receive, setOpen, dismiss } = usePackageOperationStore()
-  const operation = packageOperationPresentation(sourceOperation)
+  const {
+    operation: sourceOperation,
+    browserReceipt,
+    open,
+    receive,
+    setOpen,
+    dismiss
+  } = usePackageOperationStore()
+  const operation = packageOperationPresentation(sourceOperation, browserReceipt)
   const [operationError, setError] = useState<{ id: string; message: string }>()
   const [retrying, setRetrying] = useState(false)
   const retryPending = useRef(false)

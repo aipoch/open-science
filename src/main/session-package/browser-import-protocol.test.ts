@@ -100,6 +100,36 @@ const launchUrl =
     size: '100'
   })
 
+it.each(['reject', 'startup'] as const)(
+  'reclaims failed %s requests without evicting active launches',
+  async (mode) => {
+    const relay = new BrowserImportLaunchRelay()
+    const active = launchUrl.replace('early.science', 'active.science')
+    relay.receive(active)
+    if (mode === 'reject')
+      relay.bind((url) =>
+        url === active ? new Promise<void>(() => undefined) : Promise.reject(new Error('Failed'))
+      )
+    for (let i = 1; i <= 20; i++) {
+      const url = launchUrl.replace('cd'.repeat(32), i.toString(16).padStart(64, '0'))
+      relay.receive(url)
+      if (mode === 'startup') relay.failPending()
+      await Promise.resolve()
+    }
+    const fresh = launchUrl
+      .replace('cd'.repeat(32), 'ef'.repeat(32))
+      .replace('early.science', 'fresh.science')
+    relay.receive(fresh)
+    expect(relay.snapshot?.browserTransfers).toContainEqual(
+      expect.objectContaining({ filename: 'fresh.science' })
+    )
+    if (mode === 'reject')
+      expect(relay.snapshot?.browserTransfers).toContainEqual(
+        expect.objectContaining({ filename: 'active.science', state: 'preparing' })
+      )
+  }
+)
+
 it('replays safe preparing metadata for cold arguments before a backend exists', () => {
   const relay = new BrowserImportLaunchRelay()
   relay.receiveArgv(['app', launchUrl, launchUrl])

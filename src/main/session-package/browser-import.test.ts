@@ -23,6 +23,33 @@ afterEach(async () => {
   for (const dispose of disposers.splice(0).reverse()) await dispose()
 })
 
+it('keeps released-source cleanup failures visible and retries without revoking the receipt', async () => {
+  const f = await setup({ idleMs: 100 })
+  await f.bridge.begin(launch(f.port))
+  const id = f.bridge.snapshot[0].id
+  await f.chunk('hello')
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  vi.spyOn(fs, 'rm').mockRejectedValueOnce(new Error('File locked'))
+  syncBuiltinESMExports()
+  f.releases[0]()
+  await vi.waitFor(() =>
+    expect(f.bridge.snapshot).toEqual([expect.objectContaining({ id, cleanupPending: true })])
+  )
+  expect(f.bridge.active).toBe(true)
+  // Polling the receipt must not restart expiry while a cleanup failure needs user attention.
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  await new Promise((resolve) => setTimeout(resolve, 150))
+  expect(f.bridge.snapshot[0].cleanupPending).toBe(true)
+  expect(await readdir(f.root)).toHaveLength(1)
+  await f.bridge.cancel(id) // Existing row action doubles as Retry cleanup.
+  expect(f.bridge.active).toBe(false)
+  expect(f.bridge.snapshot).toEqual([])
+  expect(await readdir(f.root)).toEqual([])
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+  await f.bridge.cancel(id) // A late duplicate cleanup click cannot revoke an accepted receipt.
+  expect((await f.request('/complete', { method: 'POST' })).status).toBe(202)
+})
+
 async function setup(
   options: {
     idleMs?: number

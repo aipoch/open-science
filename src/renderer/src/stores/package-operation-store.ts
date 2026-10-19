@@ -1,9 +1,13 @@
 import { create } from 'zustand'
 import { PACKAGE_MAX_FILE_BYTES } from '../../../shared/session-package'
-import type { PackageOperationSnapshot } from '../../../shared/session-package'
+import type {
+  BrowserPackageTransfer,
+  PackageOperationSnapshot
+} from '../../../shared/session-package'
 
 export const usePackageOperationStore = create<{
   operation: PackageOperationSnapshot | null
+  browserReceipt?: BrowserPackageTransfer
   errorKind?: 'fork'
   importError?: string
   setImportError: (error: string | undefined) => void
@@ -33,10 +37,24 @@ export const usePackageOperationStore = create<{
   receive: (operation) =>
     set((state) => {
       const same = operation?.id === state.operation?.id
-      const newReceipt = operation?.browserTransfers?.some(
+      const newReceipt = operation?.browserTransfers?.findLast(
         (transfer) =>
           !state.operation?.browserTransfers?.some((previous) => previous.id === transfer.id)
       )
+      // Retain the latest receipt result across tombstone expiry, until another operation owns UI.
+      const finishedReceipt =
+        state.browserReceipt &&
+        !state.browserReceipt.cleanupPending &&
+        ['cancelled', 'failed'].includes(state.browserReceipt.state)
+          ? state.browserReceipt
+          : undefined
+      const browserReceipt = same
+        ? (newReceipt ??
+          operation?.browserTransfers?.find((t) => t.id === state.browserReceipt?.id) ??
+          finishedReceipt)
+        : operation?.browserReceiptOnly || !packageOperationActive(operation)
+          ? newReceipt
+          : undefined
       const retry =
         state.operation?.state === 'failed' &&
         operation?.kind === 'export' &&
@@ -52,6 +70,7 @@ export const usePackageOperationStore = create<{
         )
       return {
         operation,
+        browserReceipt,
         dismissedId: same && !newReceipt ? state.dismissedId : undefined,
         excludedStorageKeys: operation?.files
           ? [

@@ -175,6 +175,9 @@ export class BrowserImportLaunchRelay {
       }
       return true
     }
+    // Keep a failure visible until the next launch, but do not let settled failures consume capacity.
+    for (const [key, entry] of this.pending)
+      if (entry.transfer.state === 'failed' && !entry.work) this.pending.delete(key)
     if (this.pending.size >= 16) return true
     const entry: PendingLaunch = {
       url: value as string,

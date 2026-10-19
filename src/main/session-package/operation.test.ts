@@ -5,6 +5,46 @@ import { SessionPackageOperation } from './operation'
 afterEach(() => vi.useRealTimers())
 
 const session = { projectId: 'project', sessionId: 'session' }
+
+it('throttles byte-only receipt events to 150 ms while publishing task boundaries immediately', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(1000)
+  const changed = vi.fn()
+  const owner = new SessionPackageOperation(changed)
+  const transfer = {
+    id: 'one',
+    filename: 'one.science',
+    state: 'receiving' as const,
+    completedBytes: 0,
+    totalBytes: 100
+  }
+  owner.setBrowserTransfers([transfer])
+  expect(changed).toHaveBeenCalledTimes(1)
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 10 }])
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 20 }])
+  expect(owner.snapshot?.browserTransfers?.[0].completedBytes).toBe(20)
+  expect(changed).toHaveBeenCalledTimes(1)
+  vi.advanceTimersByTime(150)
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 30 }])
+  expect(changed).toHaveBeenCalledTimes(2)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30 },
+    { ...transfer, id: 'two' }
+  ])
+  expect(changed).toHaveBeenCalledTimes(3)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30, state: 'cancelled' },
+    { ...transfer, id: 'two' }
+  ])
+  expect(changed).toHaveBeenCalledTimes(4)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30, state: 'cancelled' },
+    { ...transfer, id: 'two', completedBytes: 100 }
+  ])
+  expect(changed).toHaveBeenCalledTimes(5)
+  owner.setBrowserTransfers([])
+  expect(changed).toHaveBeenCalledTimes(6)
+})
 const file = {
   storageKey: 'artifacts/p/s/file',
   filename: 'result.csv',

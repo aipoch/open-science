@@ -139,7 +139,7 @@ export class BrowserPackageImport {
 
   get snapshot(): BrowserPackageTransfer[] {
     return [...this.transfers.values()]
-      .filter((t) => !t.removed && (!t.accepted || t.cancelled))
+      .filter((t) => t.cleanupPending || (!t.removed && (!t.accepted || t.cancelled)))
       .map((t) => ({
         id: t.id,
         filename: t.request.name,
@@ -165,8 +165,13 @@ export class BrowserPackageImport {
 
   cancel(id: string): Promise<void> {
     const t = [...this.transfers.values()].find((t) => t.id === id)
-    if (!t || t.removed) return Promise.resolve()
+    if (!t || (t.removed && !t.cleanupPending)) return Promise.resolve()
     if (t.cancellation) return t.cancellation
+    // A released queue source only needs cleanup; its authenticated receipt remains valid.
+    if (t.accepted && t.consumed) {
+      if (t.cleanupPending) t.sourceCleanup = this.cleanupSource(t)
+      return t.sourceCleanup ?? Promise.resolve()
+    }
     t.cancelled = true
     t.state = 'cancelling'
     t.cleanupPending = false
@@ -298,6 +303,7 @@ export class BrowserPackageImport {
 
   private touch(transfer: Transfer): void {
     clearTimeout(transfer.timer)
+    if (transfer.cleanupPending) return
     transfer.timer = setTimeout(() => {
       void this.remove(transfer, transfer.accepted && !transfer.consumed).catch(() => undefined)
     }, this.options.idleMs ?? 120_000)
@@ -311,12 +317,24 @@ export class BrowserPackageImport {
   private releaseSource(t: Transfer): void {
     t.consumed = true
     // Keep the receipt endpoint alive briefly so a lost completion response can be retried.
-    t.sourceCleanup = (async () => {
+    t.sourceCleanup = this.cleanupSource(t)
+    void t.sourceCleanup.catch(() => undefined)
+  }
+
+  private async cleanupSource(t: Transfer): Promise<void> {
+    try {
       await t.io?.catch(() => undefined)
       if (t.directory) await rm(t.directory, { recursive: true, force: true })
+      t.cleanupPending = false
       if (!t.server) this.transfers.delete(t.request.secret)
-    })()
-    void t.sourceCleanup.catch(() => undefined)
+      else if (!this.closed && !t.removed) this.touch(t)
+      this.publish()
+    } catch (error) {
+      clearTimeout(t.timer)
+      t.cleanupPending = true
+      this.publish()
+      throw error
+    }
   }
 
   private async handle(

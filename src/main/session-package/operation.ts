@@ -154,6 +154,17 @@ export class SessionPackageOperation {
 
   setBrowserTransfers(transfers: BrowserPackageTransfer[]): void {
     const added = transfers.some((t) => !this.browserTransfers.some((old) => old.id === t.id))
+    const boundary =
+      transfers.length !== this.browserTransfers.length ||
+      transfers.some((t, i) => {
+        const previous = this.browserTransfers[i]
+        return (
+          t.id !== previous?.id ||
+          t.state !== previous.state ||
+          t.cleanupPending !== previous.cleanupPending ||
+          (t.completedBytes === t.totalBytes && previous.completedBytes !== t.completedBytes)
+        )
+      })
     this.browserTransfers = transfers
     // Receipt presentation does not acquire the single import/export operation owner.
     if (!this.current || this.current.browserReceiptOnly) {
@@ -162,15 +173,22 @@ export class SessionPackageOperation {
         id: this.current?.id ?? randomUUID(),
         kind: 'import',
         browserReceiptOnly: true,
-        state: transfers.some((t) => t.state !== 'cancelled' || t.cleanupPending)
+        state: transfers.some(
+          (t) => (t.state !== 'cancelled' && t.state !== 'failed') || t.cleanupPending
+        )
           ? 'running'
-          : 'cancelled',
+          : transfers.some((t) => t.state === 'failed')
+            ? 'failed'
+            : 'cancelled',
         progress: { phase: 'preparing' },
         presentationRevision: this.current?.presentationRevision ?? 0
       }
     }
-    if (added) this.present()
-    else this.publish()
+    if (added || boundary || Date.now() - this.lastProgressAt >= 150) {
+      this.lastProgressAt = Date.now()
+      if (added) this.present()
+      else this.publish()
+    }
   }
 
   setPendingImports(

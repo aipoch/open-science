@@ -67,6 +67,107 @@ const button = (text: string): HTMLButtonElement => {
   return result!
 }
 
+it.each(['cancelled', 'failed'] as const)(
+  'keeps the latest %s receipt result until a new operation takes over',
+  async (state) => {
+    const previous: PackageOperationSnapshot = {
+      id: 'old-import',
+      kind: 'import',
+      state: 'succeeded',
+      importFilename: 'old.science',
+      progress: { phase: 'importing' },
+      result: { imported: { projectId: 'p', sessionId: 's' } },
+      pendingImports: [{ id: 'queued', filename: 'queued.science' }]
+    }
+    const transfer = {
+      id: 'new-transfer',
+      filename: 'new.science',
+      state: 'receiving' as const,
+      completedBytes: 3,
+      totalBytes: 5
+    }
+    vi.stubGlobal('api', { sessions: { packageOperation: vi.fn(async () => undefined) } })
+    usePackageOperationStore.getState().receive(previous)
+    usePackageOperationStore.getState().receive({ ...previous, browserTransfers: [transfer] })
+    await act(async () => root.render(<SessionPackageOperation />))
+    await act(async () =>
+      usePackageOperationStore
+        .getState()
+        .receive({ ...previous, browserTransfers: [{ ...transfer, state }] })
+    )
+    expect(document.querySelector('[title="new.science"]')).not.toBeNull()
+    expect(document.body.textContent).toContain(
+      state === 'failed' ? 'Package operation failed' : 'Transfer cancelled'
+    )
+    expect(document.body.textContent).not.toContain('old.science')
+    expect(document.body.textContent).not.toContain('Package operation completed')
+    expect(document.querySelector('[aria-label="Waiting packages (1)"]')).not.toBeNull()
+    // Expiring the transport tombstone must not resurrect the older result.
+    await act(async () =>
+      usePackageOperationStore.getState().receive({ ...previous, browserTransfers: [] })
+    )
+    expect(document.querySelector('[title="new.science"]')).not.toBeNull()
+    await act(async () =>
+      usePackageOperationStore.getState().receive({
+        ...previous,
+        id: 'next-import',
+        importFilename: 'next.science',
+        state: 'running',
+        progress: { phase: 'validating' },
+        browserTransfers: [{ ...transfer, state }]
+      })
+    )
+    expect(document.querySelector('[title="next.science"]')).not.toBeNull()
+    await act(async () =>
+      usePackageOperationStore.getState().receive({
+        ...previous,
+        id: 'next-import',
+        importFilename: 'next.science',
+        browserTransfers: [{ ...transfer, state }]
+      })
+    )
+    expect(document.querySelector('[title="next.science"]')).not.toBeNull()
+    expect(document.body.textContent).toContain('Package operation completed')
+  }
+)
+
+it.each([false, true])(
+  'releases cached receipt presentation after handoff or cleanup (cleanup: %s)',
+  async (cleanupPending) => {
+    const operation: PackageOperationSnapshot = {
+      id: 'export-owner',
+      kind: 'export',
+      state: 'running',
+      progress: { phase: 'compressing' },
+      pendingImports: [{ id: 'queued', filename: 'queued.science' }]
+    }
+    const transfer = {
+      id: 'receipt',
+      filename: 'receipt.science',
+      state: 'receiving' as const,
+      completedBytes: 5,
+      totalBytes: 5,
+      cleanupPending
+    }
+    vi.stubGlobal('api', { sessions: { packageOperation: vi.fn(async () => undefined) } })
+    usePackageOperationStore.getState().receive(operation)
+    usePackageOperationStore.getState().receive({ ...operation, browserTransfers: [transfer] })
+    await act(async () => root.render(<SessionPackageOperation />))
+    expect(document.body.textContent).toContain('receipt.science')
+    await act(async () =>
+      usePackageOperationStore.getState().receive({ ...operation, browserTransfers: [] })
+    )
+    await act(async () =>
+      usePackageOperationStore
+        .getState()
+        .receive({ ...operation, state: 'succeeded', browserTransfers: [] })
+    )
+    expect(document.body.textContent).not.toContain('receipt.science')
+    expect(document.body.textContent).toContain('Package operation completed')
+    expect(document.querySelector('[aria-label="Waiting packages (1)"]')).not.toBeNull()
+  }
+)
+
 it('cancels a hidden export setup directly and waits for the owner to release the Session', async () => {
   let finish!: () => void
   const packageOperation = vi.fn(
@@ -124,6 +225,7 @@ it('keeps failed background cancellation visible and retryable without discardin
   expect(usePackageOperationStore.getState().open).toBe(true)
 })
 beforeEach(() => {
+  usePackageOperationStore.setState({ browserReceipt: undefined })
   const container = document.createElement('div')
   document.body.append(container)
   root = createRoot(container)
