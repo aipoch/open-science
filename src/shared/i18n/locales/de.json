@@ -7474,6 +7474,10 @@
     "Historical result; current library status is unavailable.": "Früheres Ergebnis; der aktuelle Bibliotheksstatus ist nicht verfügbar.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "Für einige PDF-Schriftzeichen gibt es keine zuverlässige Textdarstellung. Vergleichen Sie die Originalseite.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Für einige PDF-Textstellen fehlt eine zuverlässige Unicode-Zuordnung. Der extrahierte Text bleibt erhalten; vergleichen Sie ihn mit der Originalseite.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Einige Tabellenstrukturen sind unzuverlässig. Die ursprünglichen Bilder und Texte bleiben ohne Zuordnung zu Zellen erhalten."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Einige Tabellenstrukturen sind unzuverlässig. Die ursprünglichen Bilder und Texte bleiben ohne Zuordnung zu Zellen erhalten.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Textrichtung oder ihr Layout nicht sicher neu anordnen ließ.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Links nicht sicher auf die neuen Positionen übertragen ließen.",
+    "Source pages: {{pages}}": "Quellseiten: {{pages}}",
+    "Original links": "Originalverknüpfungen"
   }
 }

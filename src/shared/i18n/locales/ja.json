@@ -7313,6 +7313,10 @@
     "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "一部の PDF グリフには信頼できるテキスト表現がありません。元のページと照合してください。",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "一部の PDF テキストには信頼できる Unicode マッピングがありません。抽出したテキストは保持されています。元のページと照合してください。",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "一部の表構造の信頼性を確認できません。元の画像とテキストは、セルへの割り当てを行わずに保持されます。"
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "一部の表構造の信頼性を確認できません。元の画像とテキストは、セルへの割り当てを行わずに保持されます。",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "文字の向きやレイアウトを安全に再配置できないため、これらのページは元の状態で PDF に保持されました。",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "リンクを再配置後の位置に安全に対応付けられないため、これらのページは元の状態で PDF に保持されました。",
+    "Source pages: {{pages}}": "原文のページ：{{pages}}",
+    "Original links": "原文のリンク"
   }
 }

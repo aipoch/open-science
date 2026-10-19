@@ -228,6 +228,11 @@ export class PdfTranslationWriter {
       !input ||
       (input.layout !== undefined && input.layout !== 'reflow') ||
       (input.layout === 'reflow' && input.incremental !== undefined) ||
+      (input.sourceLinksLabel !== undefined &&
+        (input.layout !== 'reflow' ||
+          typeof input.sourceLinksLabel !== 'string' ||
+          !input.sourceLinksLabel.trim() ||
+          input.sourceLinksLabel.length > 100)) ||
       (input.originalRegions !== undefined &&
         (input.layout !== 'reflow' ||
           !Array.isArray(input.originalRegions) ||

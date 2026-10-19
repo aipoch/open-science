@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { resolve } from 'node:path'
-import { PDFDocument, StandardFonts } from 'pdf-lib'
+import { PDFDocument, StandardFonts, degrees } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
@@ -14,13 +14,19 @@ vi.mock('../pdfjs', async () => {
 })
 afterEach(() => vi.unstubAllGlobals())
 
-it.each([false, true])(
-  'checks reflowed text independently before displaying it (corrupted=%s)',
-  async (corrupted) => {
+it.each([
+  { corrupted: false, retained: false },
+  { corrupted: true, retained: false },
+  { corrupted: false, retained: true }
+])(
+  'checks reflowed text and explicitly retained originals before display (%j)',
+  async ({ corrupted, retained }) => {
     vi.stubGlobal('Uint8Array', Object.getPrototypeOf(Buffer.prototype).constructor)
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.Helvetica)
-    pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+    const page = pdf.addPage([400, 500])
+    page.drawText('Original.', { font, x: 40, y: 440, size: 12 })
+    if (retained) page.setRotation(degrees(90))
     const bytes = await pdf.save(),
       originalTask = getDocument({ data: bytes.slice() }),
       original = await originalTask.promise
@@ -76,6 +82,15 @@ it.each([false, true])(
       if (corrupted) {
         expect(hook.result.current.state.status).toBe('error')
         expect(hook.result.current.ready).toBeUndefined()
+      } else if (retained) {
+        expect(hook.result.current.state.status).toBe('ready')
+        expect(hook.result.current.ready!.document.numPages).toBe(1)
+        expect(hook.result.current.ready!.retainedUnitIds).toEqual(['a'])
+        expect(hook.result.current.layoutFailures.a).toMatchObject({
+          code: 'unsupported-layout',
+          pageNumbers: [1]
+        })
+        expect(hook.result.current.unfilledUnitIds).toEqual(['a'])
       } else {
         expect(hook.result.current.state.status).toBe('ready')
         expect(hook.result.current.ready!.document.numPages).toBeGreaterThan(1)

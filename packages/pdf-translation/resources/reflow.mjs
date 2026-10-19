@@ -3,8 +3,9 @@ import { readFile } from 'node:fs/promises'
 import { Readable } from 'node:stream'
 import { deflateSync } from 'node:zlib'
 import * as fontkit from 'fontkit'
-import { PDFDocument, rgb } from 'pdf-lib'
+import { PDFDocument, PDFDict, PDFName, rgb } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
+import { createReflowLinks } from './reflow-links.mjs'
 
 const width = 595.28,
   height = 841.89,
@@ -108,7 +109,7 @@ function png(pixels, stride, x, y, w, h) {
   ])
 }
 
-export async function generateReflow(input) {
+export async function generateReflow(input, forcedRetained = new Map(), attempt = 0) {
   const document = await PDFDocument.create(),
     bytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url)),
     face = fontkit.create(bytes)
@@ -187,11 +188,75 @@ export async function generateReflow(input) {
   const native = await engine(),
     source = native.open(input.data),
     { p } = native
+  let originalDocument
+  try {
+    originalDocument = await PDFDocument.load(input.data, { updateMetadata: false })
+  } catch (error) {
+    source.close()
+    throw error
+  }
+  let links
+  try {
+    links = createReflowLinks(originalDocument, input, { ...native, doc: source.doc })
+  } catch (error) {
+    source.close()
+    throw error
+  }
+  const retainedPages = new Map([...links.retained, ...forcedRetained])
+  if (links.wholeDocument)
+    for (let number = 1; number <= input.pages.length; number++)
+      retainedPages.set(number, 'annotations')
+  // A translated paragraph crossing a retained page cannot be emitted partially.
+  // Follow the page/unit graph once, including transitive paragraph continuations.
+  const byPage = new Map()
+  for (const unit of input.units.filter((unit) => unit.translation !== unit.source)) {
+    const numbers = [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))]
+    for (const number of numbers) {
+      const peers = byPage.get(number) ?? new Set()
+      for (const peer of numbers) peers.add(peer)
+      byPage.set(number, peers)
+    }
+  }
+  const pending = [...retainedPages.keys()]
+  for (let at = 0; at < pending.length; at++)
+    for (const peer of byPage.get(pending[at]) ?? [])
+      if (!retainedPages.has(peer)) {
+        retainedPages.set(peer, retainedPages.get(pending[at]))
+        pending.push(peer)
+      }
   const sourcePageNumbers = [],
     sourcePages = [],
     originalPageNumbers = [],
     placements = new Map(),
     layoutFailures = []
+  for (const [unitIndex, unit] of input.units.entries()) {
+    const numbers = [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))]
+    const reason = numbers.map((number) => retainedPages.get(number)).find(Boolean)
+    if (reason && unit.translation !== unit.source)
+      layoutFailures.push({
+        unitIndex,
+        code: reason,
+        phase: 'planning',
+        pageNumbers: numbers,
+        fragmentCount: unit.fragments.length
+      })
+  }
+  if (links.wholeDocument) {
+    source.close()
+    return {
+      data: input.data.slice(),
+      layoutFailures,
+      reflow: {
+        sourcePageNumbers: input.pages.map((_, index) => index + 1),
+        sourcePages: input.pages.map((_, index) => [index + 1]),
+        originalPageNumbers: input.pages.map((_, index) => index + 1),
+        units: input.units.map((unit, unitIndex) => ({
+          unitIndex,
+          fragments: unit.fragments.map((fragment) => ({ ...fragment, text: '' }))
+        }))
+      }
+    }
+  }
   // An original page without any replacement needs no reflow at all. In particular,
   // bibliography text must not be expanded into overlapping screenshots of rows.
   const changedPages = new Set(
@@ -229,7 +294,7 @@ export async function generateReflow(input) {
       )
       .map((candidate) => candidate.index)
   )
-  let originalDocument
+  const originalPages = new Map()
   let page, cursor, sourceNumber
   const newPage = () => {
     if (sourcePageNumbers.length >= 2000) throw Error('Reflow page limit')
@@ -260,14 +325,37 @@ export async function generateReflow(input) {
     if (p.FPDF_GetPageCount(source.doc) !== input.pages.length) throw Error('Source pages changed')
     for (let number = 1; number <= input.pages.length; number++) {
       sourceNumber = number
-      if (!changedPages.has(number)) {
+      if (!changedPages.has(number) || retainedPages.has(number)) {
         if (sourcePageNumbers.length >= 2000) throw Error('Reflow page limit')
-        originalDocument ??= await PDFDocument.load(input.data, { updateMetadata: false })
-        const [originalPage] = await document.copyPages(originalDocument, [number - 1])
+        const original = originalDocument.getPage(number - 1),
+          annotations = original.node.Annots()
+        // Link destinations must point into the generated document, never copied orphan pages.
+        // Other annotation types retain their original page ownership.
+        if (annotations)
+          original.node.set(
+            PDFName.of('Annots'),
+            originalDocument.context.obj(
+              annotations.asArray().filter((ref) => {
+                const annotation = originalDocument.context.lookup(ref)
+                return (
+                  !(annotation instanceof PDFDict) ||
+                  annotation.get(PDFName.of('Subtype'))?.toString() !== '/Link'
+                )
+              })
+            )
+          )
+        let originalPage
+        try {
+          ;[originalPage] = await document.copyPages(originalDocument, [number - 1])
+        } finally {
+          if (annotations) original.node.set(PDFName.of('Annots'), annotations)
+        }
         document.addPage(originalPage)
         sourcePageNumbers.push(number)
         sourcePages.push([number])
         originalPageNumbers.push(sourcePageNumbers.length)
+        originalPages.set(number, sourcePageNumbers.length)
+        links.originalPage(document, number, sourcePageNumbers.length)
         for (const [index, unit] of input.units.entries())
           for (const fragment of unit.fragments)
             if (fragment.pageNumber === number) place(index, fragment.rect)
@@ -282,9 +370,6 @@ export async function generateReflow(input) {
         nativePage = p.FPDF_LoadPage(source.doc, number - 1)
       let bitmap
       try {
-        const rotation = p.FPDFPage_GetRotation(nativePage)
-        // Crop geometry is expressed in the PDF.js default viewport. For unusual
-        // rotations preserve the complete visible page before its reflowed text.
         const objects = [],
           matrixBuffer = native.alloc(24)
         // A publisher Form may wrap the entire page. Walk through it to locate
@@ -339,7 +424,7 @@ export async function generateReflow(input) {
         const scale = Math.min(2, 2400 / Math.max(dimensions.width, dimensions.height))
         const pw = Math.ceil(dimensions.width * scale),
           ph = Math.ceil(dimensions.height * scale)
-        const crop = async (rect) => {
+        const imageFor = async (rect) => {
           if (!bitmap) {
             bitmap = p.FPDFBitmap_Create(pw, ph, 1)
             if (!bitmap) throw Error('Bitmap allocation')
@@ -355,6 +440,10 @@ export async function generateReflow(input) {
           const image = await document.embedPng(
             png(native.m.HEAPU8.subarray(at, at + stride * ph), stride, x, y, w, h)
           )
+          return { image, w, h }
+        }
+        const crop = async (rect) => {
+          const { image, w, h } = await imageFor(rect)
           let drawWidth = Math.min(contentWidth, rect.width * dimensions.width),
             drawHeight = (drawWidth * h) / w
           if (drawHeight > bottom - margin) {
@@ -375,15 +464,75 @@ export async function generateReflow(input) {
             width: drawWidth,
             height: drawHeight
           })
+          links.crop(number, rect, target, sourcePageNumbers.length)
           cursor += drawHeight + 12
           return target
         }
-        const graphics = rotation
-          ? [{ x: 0, y: 0, width: 1, height: 1 }]
-          : (input.originalRegions ?? [])
-              .filter((region) => region.pageNumber === number)
-              .map((region) => ({ ...region.rect }))
-        for (const object of rotation ? [] : objects) {
+        const appendSourceLinks = async (references) => {
+          if (!references.length) return
+          const requestedLabel = input.sourceLinksLabel ?? 'Source links'
+          const label = [...requestedLabel].every((char) =>
+            face.hasGlyphForCodePoint(char.codePointAt(0))
+          )
+            ? requestedLabel
+            : 'Source links'
+          const entries = []
+          for (const link of references) {
+            const snapshot = await imageFor(link.rect)
+            let drawWidth = Math.min(contentWidth, link.rect.width * dimensions.width),
+              drawHeight = (drawWidth * snapshot.h) / snapshot.w
+            if (drawHeight > 28) {
+              drawWidth *= 28 / drawHeight
+              drawHeight = 28
+            }
+            entries.push({ link, ...snapshot, drawWidth, drawHeight })
+          }
+          const rowHeight = Math.max(18, ...entries.map((entry) => entry.drawHeight + 6))
+          const heading = () => {
+            markSources(sourcePageNumbers.length)
+            page.drawText(label, {
+              x: margin,
+              y: height - cursor - size,
+              font: fonts[0],
+              size,
+              color: rgb(0.3, 0.3, 0.3)
+            })
+            cursor += leading
+          }
+          if (!page || cursor + leading + rowHeight > bottom) newPage()
+          heading()
+          let x = margin
+          for (const entry of entries) {
+            if (x + entry.drawWidth > width - margin) {
+              cursor += rowHeight
+              x = margin
+            }
+            if (cursor + rowHeight > bottom) {
+              newPage()
+              heading()
+              x = margin
+            }
+            const target = {
+              x: x / width,
+              y: cursor / height,
+              width: entry.drawWidth / width,
+              height: entry.drawHeight / height
+            }
+            page.drawImage(entry.image, {
+              x,
+              y: height - cursor - entry.drawHeight,
+              width: entry.drawWidth,
+              height: entry.drawHeight
+            })
+            links.crop(number, entry.link.rect, target, sourcePageNumbers.length)
+            x += entry.drawWidth + 12
+          }
+          cursor += rowHeight + 8
+        }
+        const graphics = (input.originalRegions ?? [])
+          .filter((region) => region.pageNumber === number)
+          .map((region) => ({ ...region.rect }))
+        for (const object of objects) {
           if (object.type === 1) continue
           const [left, low, right, high] = object.bounds
           if (
@@ -537,6 +686,8 @@ export async function generateReflow(input) {
           // Joined paragraphs are emitted once, at their first source fragment.
           if (unit.fragments[0].pageNumber !== number) continue
           const paragraphLines = lines(unit.translation)
+          const paragraphText = unit.translation.replace(/\r\n?/gu, '\n')
+          let lineOffset = 0
           // Keep at least two lines together where possible. Avoid a one-line
           // paragraph tail, without reserving an entire long paragraph's height.
           if (page && cursor + Math.min(2, paragraphLines.length) * leading > bottom) newPage()
@@ -575,28 +726,70 @@ export async function generateReflow(input) {
               run += char
             }
             flush()
-            if (key(line))
-              place(
-                unitIndex,
-                {
-                  x: margin / width,
-                  y: cursor / height,
-                  width: Math.max(1, measure(line)) / width,
-                  height: leading / height
-                },
-                line
-              )
+            const start = paragraphText.indexOf(line, lineOffset)
+            if (start < 0) throw Error('Reflow line identity changed')
+            lineOffset = start + line.length
+            if (key(line)) {
+              const rect = {
+                x: margin / width,
+                y: cursor / height,
+                width: Math.max(1, measure(line)) / width,
+                height: leading / height
+              }
+              links.text(unitIndex, line, start, rect, sourcePageNumbers.length, measure, width)
+              place(unitIndex, rect, line)
+            }
             cursor += leading
           }
           cursor += 10
+          await appendSourceLinks(links.references(unitIndex, number))
         }
         for (const graphic of graphics) if (!drawn.has(graphic)) await crop(graphic)
+        await appendSourceLinks(links.references(undefined, number))
         // A page without located source text remains fully visible.
         if (!pageUnits.length && !graphics.length) await crop({ x: 0, y: 0, width: 1, height: 1 })
       } finally {
         if (bitmap) p.FPDFBitmap_Destroy(bitmap)
         p.FPDF_ClosePage(nativePage)
       }
+    }
+    const missingLinks = links.finish(document, originalPages)
+    if (missingLinks.size) {
+      if (attempt >= 1) {
+        for (let number = 1; number <= input.pages.length; number++) missingLinks.add(number)
+      }
+      for (const number of missingLinks) retainedPages.set(number, 'annotations')
+      // At most one selective retry; the final fallback retains the complete original.
+      if (attempt >= 1) {
+        return {
+          data: input.data.slice(),
+          layoutFailures: input.units.flatMap((unit, unitIndex) =>
+            unit.translation === unit.source
+              ? []
+              : [
+                  {
+                    unitIndex,
+                    code: 'annotations',
+                    phase: 'planning',
+                    pageNumbers: [
+                      ...new Set(unit.fragments.map((fragment) => fragment.pageNumber))
+                    ],
+                    fragmentCount: unit.fragments.length
+                  }
+                ]
+          ),
+          reflow: {
+            sourcePageNumbers: input.pages.map((_, index) => index + 1),
+            sourcePages: input.pages.map((_, index) => [index + 1]),
+            originalPageNumbers: input.pages.map((_, index) => index + 1),
+            units: input.units.map((unit, unitIndex) => ({
+              unitIndex,
+              fragments: unit.fragments.map((fragment) => ({ ...fragment, text: '' }))
+            }))
+          }
+        }
+      }
+      return generateReflow(input, retainedPages, attempt + 1)
     }
     const data = await document.save()
     if (data.length > 64 * 1024 ** 2) throw Error('Reflow output size')

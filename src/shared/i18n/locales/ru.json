@@ -7783,6 +7783,10 @@
     "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "Для некоторых глифов PDF нет надёжного текстового представления. Сверьтесь с исходной страницей.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Для части текста PDF отсутствует надёжное сопоставление с Unicode. Извлечённый текст сохранён; сравните его с исходной страницей.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Структура некоторых таблиц ненадёжна. Исходные изображения и текст сохранены без распределения по ячейкам."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Структура некоторых таблиц ненадёжна. Исходные изображения и текст сохранены без распределения по ячейкам.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку направление текста или макет нельзя было безопасно переразместить.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Эти исходные страницы сохранены в PDF без изменений, поскольку ссылки нельзя было безопасно сопоставить с новыми позициями.",
+    "Source pages: {{pages}}": "Исходные страницы: {{pages}}",
+    "Original links": "Исходные ссылки"
   }
 }

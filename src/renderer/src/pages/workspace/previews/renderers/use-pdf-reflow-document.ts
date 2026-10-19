@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
+import { useTranslation } from 'react-i18next'
 import type { PdfTranslationResults, PdfTranslationFragment } from '@aipoch/pdf-translation/reader'
 import {
   pdfReflowContentKinds,
@@ -37,6 +38,7 @@ export function usePdfReflowDocument(
   retry: () => void
   registerDisposer: (dispose: () => void) => () => void
 } {
+  const { t } = useTranslation()
   const [revision, setRevision] = useState(0)
   type Snapshot = { original: PDFDocumentProxy; results: PdfTranslationResults }
   const [selection, setSelection] = useState<Snapshot>()
@@ -156,6 +158,7 @@ export function usePdfReflowDocument(
         const output = await api.generatePdf({
           id,
           layout: 'reflow',
+          sourceLinksLabel: t('Original links'),
           originalRegions: protectedSource.originalRegions,
           data,
           pages: results.source.pages,
@@ -305,7 +308,7 @@ export function usePdfReflowDocument(
       void api.cancelPdf(id).catch(() => undefined)
       if (live.current?.release !== release) release()
     }
-  }, [admitted, original, results, revision, beforeReady])
+  }, [admitted, original, results, revision, beforeReady, t])
   const current = admitted && stored?.original === original && stored.results === results
   if (!admitted && stored) setStored(undefined)
   useEffect(() => {

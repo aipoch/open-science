@@ -84,6 +84,21 @@ translated text at those placements, uses them for navigation/highlights, and ex
 Reflow candidates bypass the fixed-layout cache. This local step reuses saved text and makes no
 inference requests.
 
+Reflow checks native text directions before pagination. Rotated pages and pages with
+unsupported text directions retain their complete original page once, including all pages
+connected by a translated cross-page paragraph. Other pages continue to use translated text.
+The sidebar reports the retained source pages; accepted translations remain readable there.
+
+URI links and direct/named internal destinations are recreated against the output pages.
+Literal or verified scientific link labels follow their translated line positions; links inside
+retained graphics follow the crop transform. Links from copied pages are also rebuilt so they
+cannot point at orphan copies of the old page tree. When a translated link position cannot be
+proved, compact clickable crops of the original link labels are placed in a localized source-links
+row after the paragraph (or at the source-page boundary when paragraph ownership is uncertain).
+The translated body remains visible. Unresolved destinations or
+unsupported link actions retain the complete original document and report the limitation rather
+than publish an output with silently missing links. Existing broken links are not repaired.
+
 The host supplies inference execution, provider error interpretation, diagnostics, write admission,
 source authorization, application paths and storage connections. Model/account/Agent lifetimes,
 credential access, global usage aggregation, process supervision and application shutdown stay

@@ -143,9 +143,11 @@ function TranslationFailureDetails({
 }
 
 function LayoutFailureDetails({
-  failure
+  failure,
+  retained = false
 }: {
   failure: PdfTranslationLayoutFailure
+  retained?: boolean
 }): React.JSX.Element {
   const { t } = useTranslation()
   const descriptions: Record<PdfTranslationLayoutFailure['code'], string> = {
@@ -165,10 +167,25 @@ function LayoutFailureDetails({
       'The generated PDF did not pass verification. The text translation is still available.'
     )
   }
+  const description =
+    retained && failure.phase === 'planning'
+      ? failure.code === 'unsupported-layout'
+        ? t(
+            'These source pages were kept in their original form because their text direction or layout could not be reflowed safely.'
+          )
+        : failure.code === 'annotations'
+          ? t(
+              'These source pages were kept in their original form because their links could not be remapped safely.'
+            )
+          : descriptions[failure.code]
+      : descriptions[failure.code]
   return (
-    <p className="text-xs" data-layout-failure>
-      {descriptions[failure.code]}
-    </p>
+    <div className="space-y-1 text-xs" data-layout-failure>
+      <p>{description}</p>
+      {failure.pageNumbers.length ? (
+        <p>{t('Source pages: {{pages}}', { pages: failure.pageNumbers.join(', ') })}</p>
+      ) : null}
+    </div>
   )
 }
 
@@ -599,7 +616,10 @@ export const PdfTranslationSidebar = memo(function PdfTranslationSidebar({
                                         )}
                                 </p>
                                 {layoutFailures?.[unit.id] ? (
-                                  <LayoutFailureDetails failure={layoutFailures[unit.id]} />
+                                  <LayoutFailureDetails
+                                    failure={layoutFailures[unit.id]}
+                                    retained={retainedIds.has(unit.id)}
+                                  />
                                 ) : null}
                               </>
                             )}

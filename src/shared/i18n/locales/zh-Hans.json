@@ -7313,6 +7313,10 @@
     "Historical result; current library status is unavailable.": "这是历史结果，无法确认当前文献库状态。",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "部分 PDF 字形没有可靠的文字表示。请核对原始页面。",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "部分 PDF 文字缺少可靠的 Unicode 映射。已保留提取的文字，请与原始页面核对。",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格结构不可靠。已保留原始图像和文本，未将文本分配到单元格。"
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格结构不可靠。已保留原始图像和文本，未将文本分配到单元格。",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "这些原文页的文字方向或版式无法安全重排，因此在 PDF 中保留了原页。",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "这些原文页的链接无法安全映射到重排后的位置，因此在 PDF 中保留了原页。",
+    "Source pages: {{pages}}": "原文页码：{{pages}}",
+    "Original links": "原文链接"
   }
 }

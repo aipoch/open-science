@@ -21,6 +21,7 @@
     "packages/pdf-translation/resources/pdfium.mjs",
     "packages/pdf-translation/resources/reading-order.mjs",
     "packages/pdf-translation/resources/reflow.mjs",
+    "packages/pdf-translation/resources/reflow-links.mjs",
     "packages/pdf-translation/resources/scientific-scripts.d.mts",
     "packages/pdf-translation/resources/scientific-scripts.mjs",
     "packages/pdf-translation/resources/shared-text-runs.mjs",
