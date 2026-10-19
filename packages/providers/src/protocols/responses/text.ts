@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import type { TextCodec } from '../text-types'
 import { normalizeChatCompletionsUsage } from '../usage'
-import { isMiniMaxM31Model } from '../reasoning'
+import { resolveResponsesReasoningTransport } from '../reasoning'
 
 const responsesResponse = z.object({
   status: z.literal('completed'),
@@ -38,15 +38,11 @@ export const responsesTextCodec: TextCodec = {
       stream: false,
       store: false,
       ...(explicitEffort
-        ? {
-            reasoning: {
-              effort:
-                explicitEffort === 'none' &&
-                isMiniMaxM31Model(input.target.vendorId, input.target.model)
-                  ? 'low'
-                  : explicitEffort
-            }
-          }
+        ? resolveResponsesReasoningTransport(
+            input.target.vendorId,
+            input.target.model,
+            explicitEffort
+          )
         : {})
     }
   },

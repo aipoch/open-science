@@ -1,6 +1,6 @@
 import { z } from 'zod'
 import type { TextCodec } from '../text-types'
-import { isMiniMaxM31Model } from '../reasoning'
+import { resolveMessagesReasoningTransport } from '../reasoning'
 
 const textBlock = z.object({ type: z.literal('text'), text: z.string() })
 const tokenCount = z.number().int().nonnegative().safe()
@@ -26,14 +26,14 @@ export const messagesTextCodec: TextCodec = {
     const provider = input.target
     const effort = input.target.reasoningEffort
     const explicitEffort = effort && effort !== 'default' ? effort : undefined
-    const miniMaxM31 = isMiniMaxM31Model(provider.vendorId, provider.model)
-    // Known Claude models that allow disabling thinking. Unknown / always-on models keep
-    // their declared lowest effort instead of receiving an unsupported disable request.
-    const disableClaudeThinking =
-      provider.vendorId === 'anthropic' &&
-      /^claude-(?:opus-(?:4-[5-8]|5)|sonnet-(?:4-[5-6]|5))(?:\[1m\]|-\d{8})?$/.test(
-        input.target.model ?? ''
-      )
+    const reasoning = explicitEffort
+      ? resolveMessagesReasoningTransport(
+          provider.vendorId,
+          provider.model,
+          explicitEffort,
+          provider.reasoningEffortTransport
+        )
+      : undefined
     const maxTokens = Math.min(
       provider.maxOutputTokens ?? input.maxOutputTokens,
       input.maxOutputTokens
@@ -44,18 +44,8 @@ export const messagesTextCodec: TextCodec = {
       max_tokens: maxTokens,
       system: input.systemPrompt,
       messages: [{ role: 'user', content: input.prompt }],
-      ...(explicitEffort && miniMaxM31
-        ? {
-            thinking: { type: 'adaptive' },
-            output_config: { effort: explicitEffort === 'none' ? 'low' : explicitEffort }
-          }
-        : explicitEffort === 'none' || (explicitEffort === 'low' && disableClaudeThinking)
-          ? { thinking: { type: 'disabled' } }
-          : explicitEffort
-            ? provider.vendorId === 'minimax' || provider.reasoningEffortTransport === 'minimax'
-              ? { thinking: { type: 'adaptive' } }
-              : { output_config: { effort: explicitEffort } }
-            : {})
+      ...(reasoning?.thinking ? { thinking: reasoning.thinking } : {}),
+      ...(reasoning?.outputConfig ? { output_config: reasoning.outputConfig } : {})
     }
   },
   usage(value) {

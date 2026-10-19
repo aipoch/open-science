@@ -1,9 +1,6 @@
 import type { CustomReasoningEffortTransport, ModelReasoningEffort } from './types'
 
-export const isMiniMaxM31Model = (
-  vendorId: string | undefined,
-  model: string | undefined
-): boolean =>
+const isMiniMaxM31Model = (vendorId: string | undefined, model: string | undefined): boolean =>
   vendorId === 'minimax' &&
   (model === 'MiniMax-M3.1-Flash' || model === 'MiniMax-M3.1-Flash-Preview')
 
@@ -65,3 +62,41 @@ export const resolveChatReasoningTransport = (
 
   return { reasoningEffort: effort }
 }
+
+type MessagesReasoningTransport = {
+  thinking?: { type: 'adaptive' | 'disabled' }
+  outputConfig?: { effort: ModelReasoningEffort }
+}
+
+export const resolveMessagesReasoningTransport = (
+  vendorId: string | undefined,
+  model: string | undefined,
+  effort: ModelReasoningEffort,
+  customTransport?: CustomReasoningEffortTransport
+): MessagesReasoningTransport => {
+  if (isMiniMaxM31Model(vendorId, model)) {
+    return {
+      thinking: { type: 'adaptive' },
+      outputConfig: { effort: effort === 'none' ? 'low' : effort }
+    }
+  }
+  // Known Claude models that allow disabling thinking. Unknown / always-on models keep
+  // their declared lowest effort instead of receiving an unsupported disable request.
+  const disableClaudeThinking =
+    vendorId === 'anthropic' &&
+    /^claude-(?:opus-(?:4-[5-8]|5)|sonnet-(?:4-[5-6]|5))(?:\[1m\]|-\d{8})?$/.test(model ?? '')
+  if (effort === 'none' || (effort === 'low' && disableClaudeThinking)) {
+    return { thinking: { type: 'disabled' } }
+  }
+  return vendorId === 'minimax' || customTransport === 'minimax'
+    ? { thinking: { type: 'adaptive' } }
+    : { outputConfig: { effort } }
+}
+
+export const resolveResponsesReasoningTransport = (
+  vendorId: string | undefined,
+  model: string | undefined,
+  effort: ModelReasoningEffort
+): { reasoning: { effort: ModelReasoningEffort } } => ({
+  reasoning: { effort: effort === 'none' && isMiniMaxM31Model(vendorId, model) ? 'low' : effort }
+})
