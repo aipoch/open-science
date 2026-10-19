@@ -25,6 +25,11 @@ const findButton = (label: string): HTMLButtonElement | undefined =>
     (button) => button.textContent?.trim() === label
   )
 
+const surfaceButtons = (): HTMLButtonElement[] => {
+  const section = container.querySelector('[role="alert"]')?.closest('section')
+  return Array.from(section?.querySelectorAll('button') ?? [])
+}
+
 describe('SettingsPanelLoadingBoundary', () => {
   it('preserves healthy children and recovers a failed route when resetKey changes', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
@@ -35,7 +40,7 @@ describe('SettingsPanelLoadingBoundary', () => {
     const renderRoute = async (resetKey: string, fail = false): Promise<void> => {
       await act(async () => {
         root.render(
-          <SettingsPanelLoadingBoundary panelKey="model:tabs" resetKey={resetKey} onClose={vi.fn()}>
+          <SettingsPanelLoadingBoundary panelKey="model:tabs" resetKey={resetKey}>
             <Panel fail={fail} />
           </SettingsPanelLoadingBoundary>
         )
@@ -72,7 +77,7 @@ describe('SettingsPanelLoadingBoundary', () => {
 
     await act(async () => {
       root.render(
-        <SettingsPanelLoadingBoundary panelKey="skills" onClose={vi.fn()}>
+        <SettingsPanelLoadingBoundary panelKey="skills">
           <Panel />
         </SettingsPanelLoadingBoundary>
       )
@@ -97,9 +102,8 @@ describe('SettingsPanelLoadingBoundary', () => {
     expect(container.querySelector('[role="status"]')).toBeNull()
   })
 
-  it('retries a failed panel in place and remounts the children', async () => {
+  it('retries a failed panel in place from a compact single-action notice', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const onClose = vi.fn()
     let shouldFail = true
     const Panel = (): React.JSX.Element => {
       if (shouldFail) throw new Error('chunk unavailable')
@@ -109,7 +113,7 @@ describe('SettingsPanelLoadingBoundary', () => {
     try {
       await act(async () => {
         root.render(
-          <SettingsPanelLoadingBoundary panelKey="skills" onClose={onClose}>
+          <SettingsPanelLoadingBoundary panelKey="skills">
             <Panel />
           </SettingsPanelLoadingBoundary>
         )
@@ -118,13 +122,11 @@ describe('SettingsPanelLoadingBoundary', () => {
       const alert = container.querySelector('[role="alert"]')
       expect(alert?.textContent).toContain("Settings panel couldn't be loaded.")
       expect(alert?.textContent).toContain('Retry to load it in place')
-      // The full-page surface: brand mark, tone-tinted icon circle, and h1 title.
-      expect(alert?.closest('section')?.querySelector('svg[viewBox="0 0 432 432"]')).not.toBeNull()
-      expect(alert?.closest('section')?.querySelector('.size-9.rounded-full')).not.toBeNull()
-      expect(alert?.querySelector('h1')).not.toBeNull()
-      expect(findButton('Retry')?.dataset.variant).toBe('default')
-      expect(findButton('Close')?.dataset.variant).toBe('secondary')
-      expect(findButton('Reload')).toBeUndefined()
+      // Compact surface: no full-page brand mark, no h1, compact outline action.
+      expect(container.querySelector('svg[viewBox="0 0 432 432"]')).toBeNull()
+      expect(alert?.querySelector('h1')).toBeNull()
+      expect(surfaceButtons()).toHaveLength(1)
+      expect(findButton('Retry')?.dataset.variant).toBe('outline')
 
       shouldFail = false
       await act(async () => findButton('Retry')?.click())
@@ -135,22 +137,18 @@ describe('SettingsPanelLoadingBoundary', () => {
     }
   })
 
-  it('re-invokes the panel import on each retry and escalates after two failed retries', async () => {
+  it('re-invokes the panel import on each retry and escalates to a single Reload action', async () => {
     const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const onClose = vi.fn()
     const onReload = vi.fn()
     const loader = vi
       .fn<() => Promise<{ default: () => React.JSX.Element }>>()
-      .mockRejectedValueOnce(new Error('chunk unavailable'))
-      .mockRejectedValueOnce(new Error('chunk unavailable'))
-      .mockRejectedValueOnce(new Error('chunk unavailable'))
-      .mockResolvedValue({ default: () => <div>Loaded panel</div> })
+      .mockRejectedValue(new Error('chunk unavailable'))
     const Panel = lazyWithRetry(loader)
 
     try {
       await act(async () => {
         root.render(
-          <SettingsPanelLoadingBoundary panelKey="skills" onClose={onClose} onReload={onReload}>
+          <SettingsPanelLoadingBoundary panelKey="skills" onReload={onReload}>
             <Panel />
           </SettingsPanelLoadingBoundary>
         )
@@ -160,6 +158,7 @@ describe('SettingsPanelLoadingBoundary', () => {
       expect(container.querySelector('[role="alert"]')?.textContent).toContain(
         "Settings panel couldn't be loaded."
       )
+      expect(findButton('Reload')).toBeUndefined()
 
       // Each retry creates a fresh lazy instance, so the import really runs again.
       await act(async () => {
@@ -182,66 +181,12 @@ describe('SettingsPanelLoadingBoundary', () => {
       const alert = container.querySelector('[role="alert"]')
       expect(alert?.textContent).toContain("Retrying didn't fix it")
       expect(alert?.textContent).toContain('Reload Open-Science to try loading this panel again.')
-      // Escalated hierarchy: Reload is primary, Retry demoted to secondary, no Close.
-      expect(findButton('Reload')?.dataset.variant).toBe('default')
-      expect(findButton('Retry')?.dataset.variant).toBe('secondary')
+      // Escalated: Reload is the only action; no Retry, no Close.
+      expect(surfaceButtons()).toHaveLength(1)
+      expect(findButton('Reload')).toBeDefined()
+      expect(findButton('Retry')).toBeUndefined()
       expect(findButton('Close')).toBeUndefined()
 
-      act(() => findButton('Reload')?.click())
-      expect(onReload).toHaveBeenCalledOnce()
-
-      // The escalated state still allows an in-place retry, which recovers once the import succeeds.
-      await act(async () => {
-        findButton('Retry')?.click()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-      expect(loader).toHaveBeenCalledTimes(4)
-      expect(container.querySelector('[role="alert"]')).toBeNull()
-      expect(container.textContent).toContain('Loaded panel')
-    } finally {
-      errorSpy.mockRestore()
-    }
-  })
-
-  it('keeps close and reload recovery available for a permanently rejected chunk', async () => {
-    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
-    const onClose = vi.fn()
-    const onReload = vi.fn()
-    const Panel = lazyWithRetry((): Promise<{ default: () => React.JSX.Element }> =>
-      Promise.reject(new Error('chunk unavailable'))
-    )
-
-    try {
-      await act(async () => {
-        root.render(
-          <SettingsPanelLoadingBoundary panelKey="skills" onClose={onClose} onReload={onReload}>
-            <Panel />
-          </SettingsPanelLoadingBoundary>
-        )
-        await Promise.resolve()
-      })
-      expect(container.querySelector('[role="alert"]')?.textContent).toContain(
-        "Settings panel couldn't be loaded."
-      )
-
-      // First failure: Close is the secondary action and still dismisses.
-      act(() => findButton('Close')?.click())
-      expect(onClose).toHaveBeenCalledOnce()
-
-      await act(async () => {
-        findButton('Retry')?.click()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-      await act(async () => {
-        findButton('Retry')?.click()
-        await Promise.resolve()
-        await Promise.resolve()
-      })
-
-      // Escalated: Reload is the recovery action; Close leaves the surface.
-      expect(findButton('Close')).toBeUndefined()
       act(() => findButton('Reload')?.click())
       expect(onReload).toHaveBeenCalledOnce()
     } finally {

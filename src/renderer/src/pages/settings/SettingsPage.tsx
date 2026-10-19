@@ -1884,7 +1884,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
                             : `${activePanel}:${historyIndex}`
                     }
-                    onClose={requestClose}
                   >
                     {activePanel === 'skills' ? (
                       <SkillsPanel

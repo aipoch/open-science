@@ -1,5 +1,4 @@
 import { Component, Suspense, useEffect, useState, type ErrorInfo, type ReactNode } from 'react'
-import { TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
@@ -83,7 +82,6 @@ type SettingsPanelLoadingBoundaryProps = {
   panelKey: string
   resetKey?: string
   children: ReactNode
-  onClose: () => void
   onReload?: () => void
 }
 
@@ -91,7 +89,6 @@ const SettingsPanelLoadingBoundary = ({
   panelKey,
   resetKey,
   children,
-  onClose,
   onReload = () => window.location.reload()
 }: SettingsPanelLoadingBoundaryProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -121,10 +118,8 @@ const SettingsPanelLoadingBoundary = ({
       fallback={
         <div className="flex min-h-[360px] items-center justify-center px-5">
           <ErrorNotice
-            fullPage
             role="alert"
             tone="amber"
-            icon={TriangleAlert}
             title={
               escalated ? t("Retrying didn't fix it") : t("Settings panel couldn't be loaded.")
             }
@@ -134,11 +129,6 @@ const SettingsPanelLoadingBoundary = ({
                 : t(
                     'This is usually a temporary file issue after an app update. Retry to load it in place — no need to reload the app.'
                   )
-            }
-            secondaryButton={
-              escalated
-                ? { label: t('Retry'), onClick: retry }
-                : { label: t('Close'), onClick: onClose }
             }
             primaryButton={
               escalated
