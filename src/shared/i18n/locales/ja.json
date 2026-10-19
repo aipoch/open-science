@@ -5066,7 +5066,6 @@
     "Saving stopped. Completed results are kept.": "保存を停止しました。完了した結果は保持されます。",
     "Could not save reference {{number}}. Earlier results are kept.": "文献 {{number}} を保存できませんでした。それまでの結果は保持されます。",
     "Open Inbox": "受信トレイを開く",
-    "Open existing reference {{number}}": "既存の文献 {{number}} を開く",
     "The selected file is not valid CSL XML.": "選択したファイルは有効な CSL XML ではありません。",
     "CSL files with a document type declaration are not supported.": "文書型宣言を含む CSL ファイルには対応していません。",
     "The selected file must be an independent CSL 1.0 style.": "独立した CSL 1.0 スタイルのファイルを選択してください。",
@@ -5732,6 +5731,7 @@
     "Other files": "その他のファイル",
     "Drop one .science file at a time. No files were added.": ".science ファイルは一度に1つドロップしてください。ファイルは追加されていません。",
     "This Project is unavailable for import.": "このプロジェクトには現在インポートできません。",
+    "Drop a .science file to import": ".scienceファイルをドロップしてインポート",
     "Drop a .science file to import into “{{project}}”": "「{{project}}」にインポートする .science ファイルをドロップ",
     "Import previous research": "以前の研究をインポート",
     "Drag a .science research package onto this page, or choose a file": "このページに .science 研究パッケージをドラッグするか、ファイルを選択",
@@ -5962,7 +5962,6 @@
     "DeepSeek API model and routing details": "DeepSeek API のモデルとルーティングの詳細",
     "Saved to Inbox": "受信トレイに保存済み",
     "PDF downloaded to Inbox": "PDF を受信トレイにダウンロード済み",
-    "Review in Inbox to add to your library.": "受信トレイで確認してライブラリに追加してください。",
     "Already in library": "ライブラリに登録済み",
     "Open reference": "文献を開く",
     "The parent Session is unavailable.": "親セッションを利用できません。",
@@ -7295,6 +7294,13 @@
     "You can configure up to 32 pages.": "最大32ページまで設定できます。",
     "Native reading order will be used for your next message.": "次のメッセージでは元の読み取り順序が使われます。",
     "Sign in to continue this conversation": "ログインしてこの会話を続ける",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。",
+    "Checking current library status…": "ライブラリの現在の状態を確認中…",
+    "Could not check current library status.": "ライブラリの現在の状態を確認できませんでした。",
+    "Current library status": "ライブラリの現在の状態",
+    "Imported: {{total}}": "インポート済み: {{total}}",
+    "Dismissed: {{total}}": "除外済み: {{total}}",
+    "Current status unavailable: {{total}}": "現在の状態を確認できません: {{total}}",
+    "Historical result; current library status is unavailable.": "過去の結果です。ライブラリの現在の状態は確認できません。"
   }
 }

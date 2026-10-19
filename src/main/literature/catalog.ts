@@ -64,6 +64,10 @@ import {
   type LiteratureItemInput
 } from '@aipoch/literature-library/item'
 import {
+  literatureCandidateStatesRequestSchema,
+  literatureCandidateStatesResultSchema,
+  type LiteratureCandidateStatesRequest,
+  type LiteratureCandidateStatesResult,
   type LiteratureAnnotationSearchView,
   type LiteratureCatalogSearchPage
 } from '../../shared/literature'
@@ -1278,6 +1282,39 @@ class LiteratureCatalog {
       digest,
       nextOffset: end < content.length ? end : undefined
     }
+  }
+
+  async getCandidateStates(
+    request: LiteratureCandidateStatesRequest
+  ): Promise<LiteratureCandidateStatesResult> {
+    const { candidateIds } = literatureCandidateStatesRequestSchema.parse(request)
+    const client = await this.getClient()
+    const rows = await client.literatureInboxCandidate.findMany({
+      where: { id: { in: [...new Set(candidateIds)] } },
+      select: {
+        id: true,
+        state: true,
+        acceptedItem: {
+          select: {
+            id: true,
+            deletedAt: true,
+            mergedInto: { select: { id: true, deletedAt: true } }
+          }
+        }
+      }
+    })
+    return literatureCandidateStatesResultSchema.parse({
+      candidates: rows.map((row) => {
+        const item = row.acceptedItem?.mergedInto ?? row.acceptedItem
+        return {
+          candidateId: row.id,
+          state: row.state,
+          ...(row.state === 'accepted' && item && !item.deletedAt
+            ? { acceptedItemId: item.id }
+            : {})
+        }
+      })
+    })
   }
 
   async get(itemId: string): Promise<LiteratureItemView | undefined> {

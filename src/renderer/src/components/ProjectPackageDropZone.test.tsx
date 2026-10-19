@@ -214,3 +214,31 @@ it('ignores ordinary file drags and drops in portal dialogs', () => {
   drop(portal, ['data.csv'])
   expect(attach).not.toHaveBeenCalled()
 })
+
+it.each(['blur', 'dragend', 'drop'])('clears the destination-free overlay on %s', (type) => {
+  render(<ProjectPackageDropZone canImport data-testid="home" />)
+  fireEvent.dragEnter(screen.getByTestId('home'), { dataTransfer: { types: ['Files'] } })
+  expect(screen.getByText('Drop a .science file to import')).toBeTruthy()
+  fireEvent(type === 'blur' ? window : document, new Event(type, { bubbles: true }))
+  expect(screen.queryByText('Drop a .science file to import')).toBeNull()
+})
+
+it('does not enable destination-free desktop import on Web', () => {
+  document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+  render(<ProjectPackageDropZone canImport data-testid="home" />)
+  const home = screen.getByTestId('home')
+  const dataTransfer = { types: ['Files'], dropEffect: 'copy' }
+  fireEvent.dragEnter(home, { dataTransfer })
+  fireEvent.dragOver(home, { dataTransfer })
+  expect(dataTransfer.dropEffect).toBe('none')
+  expect(screen.queryByText('Drop a .science file to import')).toBeNull()
+  drop(home, ['research.science'])
+  expect(importPackage).not.toHaveBeenCalled()
+})
+
+it('keeps an explicitly empty Project target unavailable', () => {
+  render(<ProjectPackageDropZone projectId="" projectName="" canImport data-testid="invalid" />)
+  drop(screen.getByTestId('invalid'), ['study.science'])
+  expect(importPackage).not.toHaveBeenCalled()
+  expect(screen.getByRole('status').textContent).toContain('unavailable')
+})

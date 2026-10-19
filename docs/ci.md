@@ -92,8 +92,21 @@ These fixtures do not certify installed upgrades, OS reboot, real provider proto
 quit/persistence UI; those retain their existing dedicated validation paths.
 
 Complete Mac Source Regression runs twice daily on `main`, at **01:37 and 13:37 Singapore time**
-(Asia/Singapore, UTC+8), including when main is unchanged. Each round uses one build and one Mac
-runner for functional/workspace journeys, browser/visual/accessibility and supplemental suites.
+(Asia/Singapore, UTC+8), including when main is unchanged. Each round builds once and restores that exact-revision snapshot into eight isolated Mac test jobs:
+functional, workspace, presentation (browser/visual/accessibility), delegation, three ordinary
+supplemental regression shards, and capacity. Electron retains one worker per runner; matrix
+fail-fast is disabled so every group can report its own failures. Capacity is selected from the
+same regression command with `@capacity`, while ordinary shards exclude that tag. No tests are
+removed. Each job uploads distinct group/shard diagnostics, allowing failed jobs to be rerun
+without repeating successful groups while the one-day setup artifact is retained; after expiry,
+start a new run to rebuild it. Setup failure and any failed or missing selected suite fail
+the scheduled outcome.
+
+Source Regression manual modes `functional`, `workspace`, `presentation`, `regressions`, `capacity`
+and `delegation` select the same production jobs. In `regressions` mode, `shard` can select `1`,
+`2`, `3`, or `all`; `full` always runs all three shards regardless of that diagnostic input.
+Existing focused diagnostic modes remain available and never publish or change scheduled issues.
+PR Gate retains its existing groups and non-capacity selection.
 Windows E2E Regression runs daily at **02:17 Singapore time**
 (Asia/Singapore, UTC+8), with the complete functional/workspace/browser suites on three Windows
 test runners and `--fail-on-flaky-tests`. It has its own failure-tracking issue and does not run

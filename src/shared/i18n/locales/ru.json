@@ -5506,7 +5506,6 @@
     "Saving stopped. Completed results are kept.": "Сохранение остановлено. Завершённые результаты сохранены.",
     "Could not save reference {{number}}. Earlier results are kept.": "Не удалось сохранить источник {{number}}. Предыдущие результаты сохранены.",
     "Open Inbox": "Открыть входящие",
-    "Open existing reference {{number}}": "Открыть существующий источник {{number}}",
     "The selected file is not valid CSL XML.": "Выбранный файл не является корректным XML-файлом CSL.",
     "CSL files with a document type declaration are not supported.": "Файлы CSL с объявлением типа документа не поддерживаются.",
     "The selected file must be an independent CSL 1.0 style.": "Выбранный файл должен содержать независимый стиль CSL 1.0.",
@@ -6181,6 +6180,7 @@
     "Other files": "Другие файлы",
     "Drop one .science file at a time. No files were added.": "Перетаскивайте по одному файлу .science. Файлы не добавлены.",
     "This Project is unavailable for import.": "Импорт в этот проект сейчас недоступен.",
+    "Drop a .science file to import": "Перетащите файл .science для импорта",
     "Drop a .science file to import into “{{project}}”": "Перетащите файл .science для импорта в «{{project}}»",
     "Import previous research": "Импортировать предыдущее исследование",
     "Drag a .science research package onto this page, or choose a file": "Перетащите исследовательский пакет .science на эту страницу или выберите файл",
@@ -6417,7 +6417,6 @@
     "DeepSeek API model and routing details": "Модели и маршрутизация API DeepSeek",
     "Saved to Inbox": "Сохранено во входящих",
     "PDF downloaded to Inbox": "PDF загружен во входящие",
-    "Review in Inbox to add to your library.": "Проверьте во входящих, чтобы добавить в библиотеку.",
     "Already in library": "Уже в библиотеке",
     "Open reference": "Открыть публикацию",
     "The parent Session is unavailable.": "Родительская сессия недоступна.",
@@ -7765,6 +7764,13 @@
     "You can configure up to 32 pages.": "Можно настроить не более 32 страниц.",
     "Native reading order will be used for your next message.": "Для следующего сообщения будет использоваться исходный порядок чтения.",
     "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены.",
+    "Checking current library status…": "Проверка текущего состояния в библиотеке…",
+    "Could not check current library status.": "Не удалось проверить текущее состояние в библиотеке.",
+    "Current library status": "Текущее состояние в библиотеке",
+    "Imported: {{total}}": "Импортировано: {{total}}",
+    "Dismissed: {{total}}": "Отклонено: {{total}}",
+    "Current status unavailable: {{total}}": "Текущее состояние недоступно: {{total}}",
+    "Historical result; current library status is unavailable.": "Исторический результат; текущее состояние в библиотеке недоступно."
   }
 }

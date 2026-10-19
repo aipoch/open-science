@@ -1106,6 +1106,7 @@ describe('SettingsPage layout', () => {
   it('renders the model-dependent reasoning effort explanation naturally in Japanese', async () => {
     await i18next.changeLanguage('ja')
     try {
+      useSettingsStore.getState().openSettingsToPanel('model')
       act(() => {
         root.render(<SettingsPage open onClose={vi.fn()} />)
       })
@@ -1299,7 +1300,7 @@ describe('SettingsPage layout', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
-  it('mounts the sidebar + content with grouped nav items and a close control', () => {
+  it('mounts General by default with grouped nav items and a close control', async () => {
     useSettingsStore.setState({
       providers: [
         {
@@ -1320,8 +1321,13 @@ describe('SettingsPage layout', () => {
       activeModel: 'test-model'
     })
 
-    act(() => {
-      root.render(<SettingsPage open onClose={vi.fn()} />)
+    await act(async () => root.render(<SettingsPage open={false} onClose={vi.fn()} />))
+    expect(document.body.querySelector('[role="dialog"]')).toBeNull()
+    useSettingsStore.getState().openSettings()
+    await act(async () => {
+      root.render(
+        <SettingsPage open={useSettingsStore.getState().isSettingsOpen} onClose={vi.fn()} />
+      )
     })
 
     // Dialog content is portaled to the document body.
@@ -1381,8 +1387,9 @@ describe('SettingsPage layout', () => {
     expect(agentNavButton?.className).toContain('h-8')
     expect(agentNavButton?.className).toContain('text-sm')
     expect(agentNavButton?.parentElement?.tagName).toBe('LI')
-    // Model is the default active panel.
-    expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('Model')
+    expect(nav?.querySelector('[aria-current="page"]')?.textContent).toContain('General')
+    expect(document.body.querySelector('[aria-label="Theme"]')).not.toBeNull()
+    expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
 
     // The header shows the panel title and a close control.
     expect(document.body.querySelector('[aria-label="Close settings"]')).not.toBeNull()
@@ -1392,6 +1399,8 @@ describe('SettingsPage layout', () => {
     expect(document.body.querySelector('[aria-label="Maximize"]')?.getAttribute('data-slot')).toBe(
       'button'
     )
+
+    await act(async () => navButton('Model')?.click())
 
     // The Model panel splits the Main model section (model + reasoning effort on one row),
     // the Scenario models accordion card (Subagent / Reviewer / Vision), and provider management;
@@ -1913,6 +1922,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('opens Add provider as a history-driven sub-page and returns via the back arrow', () => {
+    useSettingsStore.getState().openSettingsToPanel('model')
     act(() => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -1968,6 +1978,7 @@ describe('SettingsPage layout', () => {
       needsKey: false,
       supportsImageInput: true
     }
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => {
       useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
@@ -2007,6 +2018,7 @@ describe('SettingsPage layout', () => {
     const refreshProviderModels = vi.fn().mockRejectedValue(new Error('transport failed'))
     useSettingsStore.setState({ refreshProviderModels: refreshProviderModels as never })
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () => {
       useSettingsStore.setState({ providers: [provider], activeProviderId: provider.id })
@@ -2045,7 +2057,7 @@ describe('SettingsPage layout', () => {
 
     const back = document.body.querySelector<HTMLButtonElement>('[aria-label="Back"]')
     act(() => back?.click())
-    expect(document.body.querySelector('section[aria-label="Providers"]')).not.toBeNull()
+    expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
 
     const forward = document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')
     act(() => forward?.click())
@@ -2055,6 +2067,7 @@ describe('SettingsPage layout', () => {
   it('closes a nested dialog, then a breadcrumb, then Settings with the close-pane shortcut', () => {
     const onClose = vi.fn()
     const settingsRef = createRef<SettingsPageHandle>()
+    useSettingsStore.getState().openSettingsToPanel('model')
     act(() => {
       root.render(<SettingsPage ref={settingsRef} open onClose={onClose} />)
     })
@@ -2144,6 +2157,7 @@ describe('SettingsPage layout', () => {
     ] as const
 
     for (const { framework, runtime, label } of scenarios) {
+      useSettingsStore.getState().openSettingsToPanel('model')
       await act(async () => {
         root.render(<SettingsPage open onClose={vi.fn()} />)
       })
@@ -2170,6 +2184,7 @@ describe('SettingsPage layout', () => {
   })
 
   it('defaults a custom gateway to the active framework API format', async () => {
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -2241,6 +2256,7 @@ describe('SettingsPage layout', () => {
       activeProviderReady: true
     })
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -2261,6 +2277,7 @@ describe('SettingsPage layout', () => {
     const validateProvider = vi.fn().mockResolvedValue({ ok: false, category: 'auth' })
     const saveValidatedProvider = vi.fn()
     useSettingsStore.setState({ validateProvider, saveValidatedProvider })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2303,6 +2320,7 @@ describe('SettingsPage layout', () => {
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -2337,6 +2355,7 @@ describe('SettingsPage layout', () => {
       saveValidatedProvider,
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2379,6 +2398,7 @@ describe('SettingsPage layout', () => {
       validateProvider: vi.fn().mockResolvedValue(undefined)
     })
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2449,6 +2469,7 @@ describe('SettingsPage layout', () => {
       runtimeReconnectFailed: true
     })
     useSettingsStore.setState({ saveValidatedProvider })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2472,6 +2493,7 @@ describe('SettingsPage layout', () => {
       .mockResolvedValue({ validation: { ok: false, category: 'auth' } })
     const persistProvider = vi.fn()
     useSettingsStore.setState({ saveValidatedProvider, persistProvider })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2500,6 +2522,7 @@ describe('SettingsPage layout', () => {
     useSettingsStore.setState({
       validateProvider: vi.fn().mockResolvedValue({ ok: true, category: 'ok', applied: false })
     })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2525,6 +2548,7 @@ describe('SettingsPage layout', () => {
         })
     )
     useSettingsStore.setState({ validateProvider })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -2553,6 +2577,7 @@ describe('SettingsPage layout', () => {
         })
     )
     useSettingsStore.setState({ validateProvider })
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage open onClose={vi.fn()} />))
     await act(async () =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Edit"]')?.click()
@@ -4317,7 +4342,7 @@ describe('SettingsPage layout', () => {
       await Promise.resolve()
     })
 
-    // Landed on the skill's detail page (breadcrumb + detail), not the default Model panel.
+    // Landed on the skill's detail page (breadcrumb + detail), not the default General panel.
     expect(document.body.querySelector('[aria-label="Back to skills"]')).not.toBeNull()
     expect(document.body.textContent).toContain('Alpha')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
@@ -4420,7 +4445,7 @@ describe('SettingsPage layout', () => {
     })
 
     // Landed on the specialist's editor (display name prefilled), not the
-    // default Model panel.
+    // default General panel.
     const name = document.body.querySelector<HTMLInputElement>('#sp-name')
     expect(name?.value).toBe('Researcher')
     expect(document.body.querySelector('section[aria-label="Providers"]')).toBeNull()
@@ -5068,6 +5093,7 @@ describe('SettingsPage layout', () => {
       }
     ).api.settings.isEncryptionAvailable.mockResolvedValue(false)
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -5139,28 +5165,24 @@ describe('SettingsPage layout', () => {
     const forward = (): HTMLButtonElement | null =>
       document.body.querySelector<HTMLButtonElement>('[aria-label="Forward"]')
 
-    // Start on Model: back and forward are both disabled.
+    // Start on General: back and forward are both disabled.
+    expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
     expect(back()?.disabled).toBe(true)
     expect(forward()?.disabled).toBe(true)
 
-    // Navigate Model -> General enables Back.
-    const generalTab = Array.from(
-      document.body.querySelectorAll('nav[aria-label="Settings"] button')
-    ).find((button) => /general/i.test(button.textContent ?? '')) as HTMLButtonElement | undefined
-    await act(async () => {
-      generalTab?.click()
-    })
+    // Navigate General -> Model enables Back.
+    await act(async () => navButton('Model')?.click())
+    expect(navButton('Model')?.getAttribute('aria-current')).toBe('page')
     expect(back()?.disabled).toBe(false)
 
-    // Back returns to Model (its nav item is the current page) and enables Forward.
+    // Back returns to General and enables Forward.
     await act(async () => {
       back()?.click()
     })
-    const modelNav = Array.from(
-      document.body.querySelectorAll('nav[aria-label="Settings"] button')
-    ).find((button) => /model/i.test(button.textContent ?? '')) as HTMLButtonElement | undefined
-    expect(modelNav?.getAttribute('aria-current')).toBe('page')
+    expect(navButton('General')?.getAttribute('aria-current')).toBe('page')
     expect(forward()?.disabled).toBe(false)
+    await act(async () => forward()?.click())
+    expect(navButton('Model')?.getAttribute('aria-current')).toBe('page')
   })
 
   it('toggles the dialog size with the maximize control', async () => {
@@ -6054,6 +6076,7 @@ describe('SettingsPage Codex framework', () => {
     const logoutIsolatedCodex = vi.fn().mockResolvedValue({ ok: true, category: 'ok' })
     api.settings.logoutIsolatedCodex = logoutIsolatedCodex
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -6104,6 +6127,7 @@ describe('SettingsPage Codex framework', () => {
       .mockResolvedValue({ ok: false, category: 'timeout', message: 'Codex sign-out timed out.' })
     api.settings.logoutIsolatedCodex = logoutIsolatedCodex
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -6149,6 +6173,7 @@ describe('SettingsPage Codex framework', () => {
       .fn()
       .mockRejectedValue(new Error('The Codex adapter does not support authentication status.'))
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -6194,6 +6219,7 @@ describe('SettingsPage Codex framework', () => {
     api.settings.loginIsolatedCodex = vi.fn(() => new Promise(() => undefined))
     api.settings.cancelCodexLogin = vi.fn().mockResolvedValue(undefined)
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -6235,6 +6261,7 @@ describe('SettingsPage Codex framework', () => {
       .fn()
       .mockRejectedValue(new Error('The Codex adapter failed to spawn.'))
 
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => {
       root.render(<SettingsPage open onClose={vi.fn()} />)
     })
@@ -6422,6 +6449,7 @@ describe('Provider editor leave protection', () => {
     if (!create) installCustomProviderSnapshot()
     const onClose = vi.fn<() => void>()
     const handle = createRef<SettingsPageHandle>()
+    useSettingsStore.getState().openSettingsToPanel('model')
     await act(async () => root.render(<SettingsPage ref={handle} open onClose={onClose} />))
     if (create) await clickLabel('Add provider')
     else await act(async () => field('Edit').click())

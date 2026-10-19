@@ -748,7 +748,6 @@ const ConversationPanel = ({
   const specialistItems = useSpecialistStore((state) => state.items)
   const catalogSkills = useSettingsStore((state) => state.skills)
   const settingsLoaded = useSettingsStore((state) => state.isLoaded)
-  const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToComputeHost = useSettingsStore((state) => state.openSettingsToComputeHost)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const [messageQueueExpanded, setMessageQueueExpanded] = useState(false)
@@ -1864,7 +1863,7 @@ const ConversationPanel = ({
                   <SubagentAvailabilityNotice
                     unavailable={subagentUnavailable}
                     onTurnOnDelegation={() => setAgentControlsOpenRequest((request) => request + 1)}
-                    onOpenSettings={openSettings}
+                    onOpenSettings={() => openSettingsToPanel('model')}
                   />
                 ) : null}
 

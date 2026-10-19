@@ -5066,7 +5066,6 @@
     "Saving stopped. Completed results are kept.": "保存已停止。已完成的结果会保留。",
     "Could not save reference {{number}}. Earlier results are kept.": "无法保存第 {{number}} 条文献。此前的结果会保留。",
     "Open Inbox": "打开收件箱",
-    "Open existing reference {{number}}": "打开已有文献 {{number}}",
     "The selected file is not valid CSL XML.": "所选文件不是有效的 CSL XML。",
     "CSL files with a document type declaration are not supported.": "不支持包含文档类型声明的 CSL 文件。",
     "The selected file must be an independent CSL 1.0 style.": "所选文件必须是独立的 CSL 1.0 样式。",
@@ -5732,6 +5731,7 @@
     "Other files": "其他文件",
     "Drop one .science file at a time. No files were added.": "每次拖入一个 .science 文件。未添加任何文件。",
     "This Project is unavailable for import.": "此项目当前无法导入。",
+    "Drop a .science file to import": "拖入 .science 文件以导入",
     "Drop a .science file to import into “{{project}}”": "拖入 .science 文件以导入到“{{project}}”",
     "Import previous research": "导入之前的研究",
     "Drag a .science research package onto this page, or choose a file": "将 .science 研究包拖到此页面，或选择文件",
@@ -5962,7 +5962,6 @@
     "DeepSeek API model and routing details": "DeepSeek API 模型与路由说明",
     "Saved to Inbox": "已保存到收件箱",
     "PDF downloaded to Inbox": "PDF 已下载到收件箱",
-    "Review in Inbox to add to your library.": "请前往收件箱审核，确认后加入文献库。",
     "Already in library": "已在文献库中",
     "Open reference": "打开文献",
     "The parent Session is unavailable.": "主会话不可用。",
@@ -7295,6 +7294,13 @@
     "You can configure up to 32 pages.": "最多可配置 32 页。",
     "Native reading order will be used for your next message.": "下一条消息将使用原生阅读顺序。",
     "Sign in to continue this conversation": "登录后继续此对话",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。"
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。",
+    "Checking current library status…": "正在检查当前文献库状态…",
+    "Could not check current library status.": "无法检查当前文献库状态。",
+    "Current library status": "当前文献库状态",
+    "Imported: {{total}}": "已导入：{{total}}",
+    "Dismissed: {{total}}": "已忽略：{{total}}",
+    "Current status unavailable: {{total}}": "无法确认当前状态：{{total}}",
+    "Historical result; current library status is unavailable.": "这是历史结果，无法确认当前文献库状态。"
   }
 }

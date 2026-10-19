@@ -38,6 +38,7 @@ const validatedChannels = [
   'literature:format-references',
   'literature:full-text',
   'literature:get',
+  'literature:get-candidate-states',
   'literature:import-pdf',
   'literature:import-records',
   'literature:jobs',

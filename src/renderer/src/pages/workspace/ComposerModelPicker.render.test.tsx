@@ -451,7 +451,6 @@ describe('ComposerModelPicker', () => {
     // provider is unavailable in an item roving focus can reach (not a label or a disabled item, both
     // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings. The reason
     // row now lives inside the "Model" submenu; "Open Settings" stays on the first level.
-    const openSettings = vi.fn()
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: [
@@ -464,8 +463,7 @@ describe('ComposerModelPicker', () => {
       ],
       providers: [
         provider({ id: 'p1', apiEndpoints: ['openai'], name: 'OpenAI Gateway', models: ['gpt-x'] })
-      ],
-      openSettings
+      ]
     })
     render()
 
@@ -533,12 +531,15 @@ describe('ComposerModelPicker', () => {
     const openSettingsItem = menuItems().find((el) => el.textContent?.includes('Open Settings'))
     expect(openSettingsItem, 'expected an "Open Settings" menu item').toBeDefined()
     act(() => openSettingsItem!.click())
-    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
   })
 
-  it('warns and opens settings when no model is configured', () => {
-    const openSettings = vi.fn()
-    useSettingsStore.setState({ providers: [], openSettings })
+  it('warns and opens Model settings when no model is configured', () => {
+    useSettingsStore.setState({ providers: [] })
     render()
 
     // No picker, but a warning affordance the user can click to fix the missing model.
@@ -550,7 +551,11 @@ describe('ComposerModelPicker', () => {
     expect(warning?.textContent).toContain('No model available')
 
     act(() => warning?.click())
-    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
   })
 
   it('warns when the only provider has failed validation', () => {

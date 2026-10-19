@@ -28,6 +28,14 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
     let live = true
     const apply = (next: typeof state): void => {
       if (!live) return
+      if (
+        next.phase !== 'connected' &&
+        useDesktopRuntimeRecoveryStore.getState().phase === 'connected'
+      ) {
+        // Recovery subscribers can disable the composer and blur it before the dialog mounts.
+        previousFocus.current =
+          document.activeElement instanceof HTMLElement ? document.activeElement : null
+      }
       if (next.phase !== 'connected') flushComposerDrafts()
       useDesktopRuntimeRecoveryStore.setState(next)
     }
@@ -90,7 +98,7 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
           onOpenAutoFocus={(event) => {
             // This programmatic dialog has no Radix Trigger or Cancel to own focus.
             event.preventDefault()
-            previousFocus.current =
+            previousFocus.current ??=
               document.activeElement instanceof HTMLElement ? document.activeElement : null
             contentRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus()
           }}

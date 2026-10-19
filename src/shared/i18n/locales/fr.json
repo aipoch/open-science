@@ -5376,7 +5376,6 @@
     "Saving stopped. Completed results are kept.": "Enregistrement arrêté. Les résultats terminés sont conservés.",
     "Could not save reference {{number}}. Earlier results are kept.": "Impossible d’enregistrer la référence {{number}}. Les résultats précédents sont conservés.",
     "Open Inbox": "Ouvrir la boîte de réception",
-    "Open existing reference {{number}}": "Ouvrir la référence existante {{number}}",
     "The selected file is not valid CSL XML.": "Le fichier sélectionné ne contient pas de XML CSL valide.",
     "CSL files with a document type declaration are not supported.": "Les fichiers CSL contenant une déclaration de type de document ne sont pas pris en charge.",
     "The selected file must be an independent CSL 1.0 style.": "Le fichier sélectionné doit être un style CSL 1.0 indépendant.",
@@ -6048,6 +6047,7 @@
     "Other files": "Autres fichiers",
     "Drop one .science file at a time. No files were added.": "Déposez un seul fichier .science à la fois. Aucun fichier n’a été ajouté.",
     "This Project is unavailable for import.": "L’importation dans ce projet est actuellement indisponible.",
+    "Drop a .science file to import": "Déposer un fichier .science pour l’importer",
     "Drop a .science file to import into “{{project}}”": "Déposez un fichier .science pour l’importer dans « {{project}} »",
     "Import previous research": "Importer une recherche précédente",
     "Drag a .science research package onto this page, or choose a file": "Faites glisser un paquet de recherche .science sur cette page ou choisissez un fichier",
@@ -6282,7 +6282,6 @@
     "DeepSeek API model and routing details": "Détails des modèles et du routage de l’API DeepSeek",
     "Saved to Inbox": "Enregistré dans la boîte de réception",
     "PDF downloaded to Inbox": "PDF téléchargé dans la boîte de réception",
-    "Review in Inbox to add to your library.": "Vérifiez dans la boîte de réception pour ajouter à votre bibliothèque.",
     "Already in library": "Déjà dans la bibliothèque",
     "Open reference": "Ouvrir la référence",
     "The parent Session is unavailable.": "La session parente est indisponible.",
@@ -7625,6 +7624,13 @@
     "You can configure up to 32 pages.": "Vous pouvez configurer jusqu’à 32 pages.",
     "Native reading order will be used for your next message.": "L’ordre de lecture natif sera utilisé pour votre prochain message.",
     "Sign in to continue this conversation": "Se connecter pour poursuivre cette conversation",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés."
+    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "L’Agent nécessite une authentification. Ouvrez les paramètres du modèle, connectez-vous à votre fournisseur, puis réessayez. Votre conversation et votre brouillon sont conservés.",
+    "Checking current library status…": "Vérification du statut actuel dans la bibliothèque…",
+    "Could not check current library status.": "Impossible de vérifier le statut actuel dans la bibliothèque.",
+    "Current library status": "Statut actuel dans la bibliothèque",
+    "Imported: {{total}}": "Importées : {{total}}",
+    "Dismissed: {{total}}": "Écartées : {{total}}",
+    "Current status unavailable: {{total}}": "Statut actuel indisponible : {{total}}",
+    "Historical result; current library status is unavailable.": "Résultat historique ; le statut actuel dans la bibliothèque est indisponible."
   }
 }

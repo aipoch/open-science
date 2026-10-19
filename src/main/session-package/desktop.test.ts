@@ -213,16 +213,19 @@ it('keeps a missing original retryable and lets the user deliberately choose ano
   }
 })
 
-it('validates dropped package commands without expanding the destination model', () => {
+it('accepts dropped packages with an existing Project or deferred destination selection', () => {
   const parse = sessionPackageCommandContracts.import.args.parse
-  expect(parse([{ projectId: 'target' }, '/data/research.SCIENCE'])).toEqual([
-    { projectId: 'target' },
-    '/data/research.SCIENCE'
-  ])
+  for (const target of [undefined, {}, { projectId: 'target' }]) {
+    const args = [target, '/data/research.SCIENCE']
+    expect(parse(args)).toEqual(args)
+  }
   for (const args of [
-    [{}, '/data/research.science'],
     [{ projectName: 'New' }, '/data/research.science'],
+    [{ projectId: '' }, '/data/research.science'],
     [{ projectId: 'target' }, '/data/data.csv'],
+    [{}, '/data/data.csv'],
+    [{}, ''],
+    [{}, `${'a'.repeat(32768)}.science`],
     [{ projectId: 'target' }, '']
   ]) {
     expect(() => parse(args)).toThrow()
