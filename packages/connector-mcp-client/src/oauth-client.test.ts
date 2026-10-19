@@ -265,11 +265,12 @@ describe('PersistentOAuthClientProvider', () => {
     'does not send credentials bound to %s to a newly selected issuer',
     async (oldIssuer) => {
       const issuer = 'https://new-auth.example.test'
+      const cachedIssuer = oldIssuer ? issuer : 'https://obsolete-auth.example.test'
       const redirectUrl = 'http://127.0.0.1:4000/oauth/callback'
       const saveState = vi.fn<(state: import('./types').McpOAuthState) => Promise<void>>(
         async () => undefined
       )
-      const openExternal = vi.fn(async () => undefined)
+      const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined)
       const provider = new PersistentOAuthClientProvider({
         serverId: 'oauth',
         redirectUrl,
@@ -287,16 +288,16 @@ describe('PersistentOAuthClientProvider', () => {
             issuer: oldIssuer
           },
           discoveryState: {
-            authorizationServerUrl: issuer,
+            authorizationServerUrl: cachedIssuer,
             resourceMetadata: {
               resource: 'https://mcp.example.test',
-              authorization_servers: [issuer]
+              authorization_servers: [cachedIssuer]
             },
             authorizationServerMetadata: {
-              issuer,
-              authorization_endpoint: `${issuer}/authorize`,
-              token_endpoint: `${issuer}/token`,
-              registration_endpoint: `${issuer}/register`,
+              issuer: cachedIssuer,
+              authorization_endpoint: `${cachedIssuer}/authorize`,
+              token_endpoint: `${cachedIssuer}/token`,
+              registration_endpoint: `${cachedIssuer}/register`,
               response_types_supported: ['code'],
               code_challenge_methods_supported: ['S256']
             }
@@ -306,6 +307,22 @@ describe('PersistentOAuthClientProvider', () => {
         openExternal
       })
       const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        if (String(input) === 'https://mcp.example.test/.well-known/oauth-protected-resource') {
+          return Response.json({
+            resource: 'https://mcp.example.test',
+            authorization_servers: [issuer]
+          })
+        }
+        if (String(input) === `${issuer}/.well-known/oauth-authorization-server`) {
+          return Response.json({
+            issuer,
+            authorization_endpoint: `${issuer}/authorize`,
+            token_endpoint: `${issuer}/token`,
+            registration_endpoint: `${issuer}/register`,
+            response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256']
+          })
+        }
         if (String(input) === `${issuer}/register`) {
           return Response.json({
             client_id: 'new-client',
@@ -326,8 +343,16 @@ describe('PersistentOAuthClientProvider', () => {
 
       await expect(auth(provider, options)).resolves.toBe('REDIRECT')
       expect(openExternal).toHaveBeenCalledOnce()
-      expect(fetchFn).toHaveBeenCalledTimes(1)
-      expect(String(fetchFn.mock.calls[0][0])).toBe(`${issuer}/register`)
+      expect(new URL(openExternal.mock.calls[0][0]).origin).toBe(issuer)
+      expect(fetchFn.mock.calls.map(([url]) => String(url))).toEqual(
+        oldIssuer
+          ? [`${issuer}/register`]
+          : [
+              'https://mcp.example.test/.well-known/oauth-protected-resource',
+              `${issuer}/.well-known/oauth-authorization-server`,
+              `${issuer}/register`
+            ]
+      )
       await expect(auth(provider, { ...options, authorizationCode: 'new-code' })).resolves.toBe(
         'AUTHORIZED'
       )

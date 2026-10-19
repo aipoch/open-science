@@ -2067,7 +2067,8 @@ describe('ConnectorSettingsModule', () => {
       const id = snapshot.customServers[0].id
       await service.saveCustomServerOAuthState(id, {
         tokens: { access_token: 'legacy-token', token_type: 'Bearer' },
-        clientInformation: { client_id: 'bound-client', issuer: oauth.authorizationServerUrl }
+        clientInformation: { client_id: 'bound-client', issuer: oauth.authorizationServerUrl },
+        discoveryState: { authorizationServerUrl: 'https://obsolete-auth.example.test' }
       })
       await repository.setCustomServerEnabled(id, true)
 

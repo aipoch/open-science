@@ -183,6 +183,7 @@ export function clearUnboundOAuthCredentials(state: McpOAuthState): boolean {
   // Discovery is controlled by the MCP server; it cannot establish a legacy credential's issuer.
   delete state.tokens
   delete state.clientInformation
+  delete state.discoveryState
   return true
 }
 
@@ -322,7 +323,8 @@ export class PersistentOAuthClientProvider implements OAuthClientProvider {
     await this.persist()
   }
 
-  discoveryState(): OAuthDiscoveryState | undefined {
+  async discoveryState(): Promise<OAuthDiscoveryState | undefined> {
+    await this.clearUnboundCredentials()
     const state =
       this.oauthState.discoveryState ??
       (this.options.config.authorizationServerUrl
