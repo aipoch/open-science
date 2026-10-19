@@ -85,7 +85,9 @@ public class HandoffObserver : IDisposable {
     // .NET Framework treats drive-relative C:dir and root-relative \dir as rooted.
     if(String.IsNullOrWhiteSpace(handoffAppData) || Path.GetPathRoot(handoffAppData).Length < 3) throw new ArgumentException("An absolute handoff app-data directory is required", "handoffAppData");
     operationRoot = Path.Combine(Path.GetFullPath(handoffAppData),"Open-Science","UpdateHandoffs");
-    root = pid; app = Path.GetFullPath(application); installer = Path.GetFullPath(installerPath); helperDigest = Digest(helper);
+    root = pid; app = Path.GetFullPath(application); installer = Path.GetFullPath(installerPath);
+    // Native-only upgrades have no helper resource. Explicit legacy resources remain mandatory to read and verify.
+    helperDigest = String.IsNullOrWhiteSpace(helper) ? null : Digest(helper);
     var original = Capture(pid, 0);
     if (original.started != started || !Same(original.path, parentExecutable)) { original.process.Dispose(); throw new Exception("Old application identity mismatch"); }
     boundary = original.process.StartTime.ToUniversalTime();
@@ -112,7 +114,7 @@ public class HandoffObserver : IDisposable {
     return Same(Path.GetFullPath(helperPath),Path.Combine(operationRoot,operation as string,"helper.exe"));
   }
   bool IsOperationHelper(HandoffIdentity child) {
-    if(child.parent!=root || !Same(Path.GetFileName(child.path),"helper.exe")) return false;
+    if(helperDigest==null || child.parent!=root || !Same(Path.GetFileName(child.path),"helper.exe")) return false;
     string directory=Path.GetDirectoryName(child.path);
     if(!Same(Path.GetDirectoryName(directory),operationRoot)) return false;
     string requestPath=Path.Combine(directory,"request.json");

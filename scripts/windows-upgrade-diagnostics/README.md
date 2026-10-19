@@ -17,8 +17,8 @@ merge-queue requirement. Artifacts preserve the evidence for seven days.
 ## Handoff observation
 
 Launch `observe-handoff.ps1` with the original application's PID and UTC creation
-time (six fractional digits), actual application/installer paths, the packaged
-progress executable, actual handoff app-data directory, and an output JSONL path. Keep `HandoffObserver.cs` beside
+time (six fractional digits), actual application/installer paths, actual handoff
+app-data directory, and an output JSONL path. Keep `HandoffObserver.cs` beside
 the script when reusing it from another checkout or generated diagnostic harness.
 The original process must match both creation time and executable path.
 
@@ -27,7 +27,7 @@ The original process must match both creation time and executable path.
   -TargetPid $applicationPid -Started $creationTime `
   -HandoffAppData $actualAppData `
   -Application $applicationPath -Installer $installerPath `
-  -HelperResource $progressExecutable -ParentExecutable $originalExecutable `
+  -ParentExecutable $originalExecutable `
   -Output $timelinePath
 ```
 
@@ -38,7 +38,12 @@ once and accepts operation helpers only under its `Open-Science/UpdateHandoffs`
 directory; it never falls back to its own account's AppData or searches other profiles.
 Historical diagnostic invocations must supply this new argument. Product data needs
 no migration. Operation tests exercise live helper classification in a synthetic root,
-wrong-root rejection and packaged-helper digest failure.
+wrong-root rejection and packaged-helper digest failure. Current packages use native NSIS
+installation UI and have no progress executable. Omit `HelperResource` and unset
+`OPEN_SCIENCE_UPDATE_OBSERVER_PROGRESS_EXECUTABLE_PATH` for those packages. To observe
+a historical helper, explicitly pass its packaged executable with `-HelperResource`;
+a missing file or mismatched digest still fails. Without that resource, helper-shaped
+children remain tracked descendants and are not exempt from cleanup checks.
 
 Discovery retains a native `QUERY_LIMITED_INFORMATION | SYNCHRONIZE` handle.
 Transient image-query errors 5/31/87 retain that exact identity for the next normal
@@ -52,7 +57,8 @@ exit signal. Persistent denial fails at the observation deadline. JSONL adds
 `imageError`, `imageQueryFailures`, `lastImageError`, and `unresolvedImages`; even a
 recovered query leaves an error count. Consumers must wait for observer exit 0,
 require a verified successor and zero unresolved live identities, and still check
-window coverage, ready receipts, and final process cleanup themselves. A single
+native installer presentation, ready receipts, and final process cleanup themselves.
+Current upgrades allow brief windowless process handoffs. A single
 sample's `successorPid` is not an acceptance result.
 
 The fault replay exercises native handles, process lifetimes and complete tree

@@ -64,6 +64,16 @@ $failure = $null
 $live = @()
 $cleanup = @{forced=$false;exited=$false;directoryRemoved=$false}
 try {
+  $missingResourceRejected = $false
+  try {
+    $invalid = [HandoffObserver]::new($PID,$parent.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$parentPath,$installer,(Join-Path $fixture 'missing.exe'),$parentPath,$fixture)
+    $invalid.Dispose()
+  } catch {
+    if ($_.Exception.GetBaseException() -isnot [IO.FileNotFoundException]) { throw }
+    $missingResourceRejected = $true
+  }
+  if (-not $missingResourceRejected) { throw 'An explicitly configured missing legacy helper was accepted' }
+  $live += @{scenario='reject-missing-legacy-resource';rejected=$true}
   foreach ($invalidRoot in @('', 'synthetic', 'C:synthetic', '\synthetic')) {
     $rejected = $false
     try {
@@ -92,9 +102,10 @@ try {
   $liveInstaller = Join-Path $fixture 'installer.exe'
   @{schema=1;operationId=$liveOperation;parentPid=$PID;helperPid=$child.Id;applicationPath=$parentPath;installerPath=$liveInstaller} |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $directory 'request.json') -Encoding UTF8
-  foreach ($scenario in @('matching-root','wrong-root','wrong-digest')) {
+  foreach ($scenario in @('matching-root','wrong-root','wrong-digest','native-only')) {
     $appData = if ($scenario -eq 'wrong-root') { Join-Path $fixture 'other-account' } else { $fixture }
     $resource = if ($scenario -eq 'wrong-digest') { $parentPath } else { $resourceHelper }
+    if ($scenario -eq 'native-only') { $resource = $null }
     $observer = [HandoffObserver]::new($PID,$parent.StartTime.ToString("yyyy-MM-ddTHH:mm:ss.ffffff'Z'"),$parentPath,$liveInstaller,$resource,$parentPath,$appData)
     try {
       $sample = $null

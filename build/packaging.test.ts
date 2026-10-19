@@ -24,10 +24,7 @@ const repoRoot = join(__dirname, '..')
 const require = createRequire(import.meta.url)
 
 describe('desktop packaging preparation', () => {
-  function preparation(
-    platform: string,
-    compilerStatus = 0
-  ): {
+  function preparation(platform: string): {
     run: (context: unknown) => Promise<void>
     calls: string[]
   } {
@@ -42,19 +39,6 @@ describe('desktop packaging preparation', () => {
         if (name === './stage-desktop-runtime.cjs')
           return async () => {
             calls.push('stage')
-          }
-        if (name === 'node:child_process')
-          return {
-            spawnSync: (_executable: string, args: string[]) => {
-              expect(args).toEqual([
-                require.resolve('node-gyp/bin/node-gyp.js'),
-                'rebuild',
-                '--directory',
-                join(repoRoot, 'build/windows-update-progress')
-              ])
-              calls.push('compile-progress')
-              return { status: compilerStatus }
-            }
           }
         return require(name)
       },
@@ -77,21 +61,9 @@ describe('desktop packaging preparation', () => {
         arch: require('builder-util').Arch.x64,
         packager: { projectDir: repoRoot }
       })
-      expect(calls).toEqual(platform === 'win32' ? ['compile-progress', 'stage'] : ['stage'])
+      expect(calls).toEqual(['stage'])
     }
   )
-
-  it('does not stage a Windows application after progress compilation fails', async () => {
-    const { run, calls } = preparation('win32', 1)
-    await expect(
-      run({
-        electronPlatformName: 'win32',
-        arch: require('builder-util').Arch.x64,
-        packager: { projectDir: repoRoot }
-      })
-    ).rejects.toThrow('Windows update progress build failed')
-    expect(calls).toEqual(['compile-progress'])
-  })
 
   it('rejects cross packaging before starting a compiler or staging', async () => {
     const { run, calls } = preparation('win32')
@@ -554,9 +526,9 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     const retryAt = recovery.indexOf('ExecWait')
     const restoreAt = recovery.indexOf('Rename "$R7" "${DIR}\\OpenScience"')
     const preserveErrorAt = recovery.indexOf('Could not safely preserve')
-    const preserveQuitAt = recovery.indexOf('Quit', preserveErrorAt)
+    const preserveQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', preserveErrorAt)
     const restoreErrorAt = recovery.indexOf('The preserved data remains at: $R7')
-    const restoreQuitAt = recovery.indexOf('Quit', restoreErrorAt)
+    const restoreQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', restoreErrorAt)
     const retryResultAt = recovery.indexOf('${if} $R0 != 0', retryAt)
     const clearPreservedPathAt = recovery.indexOf('StrCpy $R7 ""', restoreAt)
 

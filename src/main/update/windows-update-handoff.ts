@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
-import { lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { isAbsolute, join, resolve } from 'node:path'
+import { renameSync, rmSync, writeFileSync } from 'node:fs'
+import { lstat, mkdir, readFile, readdir, realpath, rename, rm, writeFile } from 'node:fs/promises'
+import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { z } from 'zod'
 import { retryFileReplacement } from '@aipoch/durable-files'
 import { runtimeStartupOptionsSchema, type RuntimeStartupOptions } from '../runtime-startup-options'
@@ -23,6 +24,56 @@ const requestSchema = z
   })
   .strict()
 export type WindowsUpdateRequest = z.infer<typeof requestSchema>
+
+export interface WindowsUpdateHandoff {
+  readonly operationId: string
+  handoff(): void
+  cancel(): void
+}
+
+// Prepare only the configuration lease. The signed NSIS installer owns installation UI,
+// errors and successor launch; no detached presentation process is needed.
+export async function prepareWindowsUpdateHandoff(
+  appData: string,
+  input: Parameters<typeof createWindowsUpdateRequest>[1]
+): Promise<WindowsUpdateHandoff> {
+  const { directory, request } = await createWindowsUpdateRequest(appData, input)
+  try {
+    const installation = await realpath(dirname(input.applicationPath))
+    const offset = relative(installation, await realpath(directory))
+    if (offset === '' || (!isAbsolute(offset) && offset !== '..' && !offset.startsWith(`..${sep}`)))
+      throw new Error('Update handoff storage must be outside the installation')
+  } catch (error) {
+    await rm(directory, { recursive: true, force: true })
+    throw error
+  }
+  let handedOff = false
+  const receipt = (stage: string): void => {
+    const destination = join(directory, `${stage}.receipt`)
+    const temporary = `${destination}.${randomUUID()}.tmp`
+    try {
+      writeFileSync(temporary, windowsUpdateReceipt(request.operationId, stage), {
+        flag: 'wx',
+        mode: 0o600
+      })
+      renameSync(temporary, destination)
+    } finally {
+      rmSync(temporary, { force: true })
+    }
+  }
+  return {
+    operationId: request.operationId,
+    handoff() {
+      receipt('handoff')
+      handedOff = true
+    },
+    cancel() {
+      // An installer may already be running after submission; retain its lease and never
+      // claim it was cancelled. Pre-submission failures can use the existing aborted state.
+      receipt(handedOff ? 'unconfirmed' : 'aborted')
+    }
+  }
+}
 
 // NSIS uses this same current-user app-data root. Never accept a receipt path from argv.
 export const windowsUpdateHandoffRoot = (appData: string): string =>
@@ -227,7 +278,10 @@ export async function cleanupWindowsUpdateHandoffs(appData: string): Promise<voi
         /^(?:request\.json|config\.bin|helper\.exe|cancel|(?:accepted|installing|installed|failed|ready|closed|aborted|handoff|unconfirmed)\.receipt)(?:\.[0-9a-f-]{36}\.tmp|\.tmp)?$/
       if (files.some((file) => !file.isFile() || !owned.test(file.name))) continue
       const closed = await readFile(join(directory, 'closed.receipt'), 'utf8').catch(() => '')
-      if (closed !== windowsUpdateReceipt(request.operationId, 'closed')) continue
+      // Legacy helpers must confirm their own closure. Native-only attempts have no helper
+      // and are judged by installer/successor receipts plus the owner liveness checks above.
+      if (request.helperPid && closed !== windowsUpdateReceipt(request.operationId, 'closed'))
+        continue
       const receipt = async (stage: string): Promise<boolean> =>
         (await readFile(join(directory, `${stage}.receipt`), 'utf8').catch(() => '')) ===
         windowsUpdateReceipt(request.operationId, stage)
@@ -247,8 +301,8 @@ export async function cleanupWindowsUpdateHandoffs(appData: string): Promise<voi
   }
 }
 
-// Use the application's own window events, not a process/window snapshot. Keep listening after the
-// companion's observation timeout so a late healthy startup can still confirm the same operation.
+// Use the application's own window events, not a process/window snapshot, so the readiness receipt
+// confirms actual presentation as well as backend/data health.
 export function waitForWindowsUpdateWindow(
   window:
     | {
