@@ -81,7 +81,13 @@ describe('pdfjs runtime', () => {
     const task = pdfjsLib.getDocument({ data: await pdf.save() })
     try {
       const document = await task.promise,
-        text = await (await document.getPage(1)).getTextContent()
+        sourcePage = await document.getPage(1),
+        text = await sourcePage.getTextContent()
+      await sourcePage.getOperatorList()
+      const first = text.items.find((item) => 'str' in item && item.str.trim())!
+      expect(
+        sourcePage.commonObjs.get('fontName' in first ? first.fontName : '').fontExtraProperties
+      ).toBe(true)
       expect(
         text.items
           .filter((item) => 'str' in item)

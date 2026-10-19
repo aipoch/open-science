@@ -7306,6 +7306,9 @@
     "Imported: {{total}}": "가져옴: {{total}}",
     "Dismissed: {{total}}": "제외됨: {{total}}",
     "Current status unavailable: {{total}}": "현재 상태 확인 불가: {{total}}",
-    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다."
+    "Historical result; current library status is unavailable.": "과거 결과입니다. 현재 라이브러리 상태는 확인할 수 없습니다.",
+    "Some PDF glyphs have no reliable text representation. Compare the original page.": "일부 PDF 글리프에는 신뢰할 수 있는 텍스트 표현이 없습니다. 원본 페이지와 비교해 주세요.",
+    "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "일부 PDF 텍스트에 신뢰할 수 있는 Unicode 매핑이 없습니다. 추출된 텍스트는 보존됩니다. 원본 페이지와 비교해 주세요.",
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "일부 표 구조의 신뢰성을 확인할 수 없습니다. 원본 이미지와 텍스트는 셀에 할당하지 않고 유지됩니다."
   }
 }

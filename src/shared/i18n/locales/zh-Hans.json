@@ -7308,6 +7308,9 @@
     "Imported: {{total}}": "已导入：{{total}}",
     "Dismissed: {{total}}": "已忽略：{{total}}",
     "Current status unavailable: {{total}}": "无法确认当前状态：{{total}}",
-    "Historical result; current library status is unavailable.": "这是历史结果，无法确认当前文献库状态。"
+    "Historical result; current library status is unavailable.": "这是历史结果，无法确认当前文献库状态。",
+    "Some PDF glyphs have no reliable text representation. Compare the original page.": "部分 PDF 字形没有可靠的文字表示。请核对原始页面。",
+    "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "部分 PDF 文字缺少可靠的 Unicode 映射。已保留提取的文字，请与原始页面核对。",
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "部分表格结构不可靠。已保留原始图像和文本，未将文本分配到单元格。"
   }
 }

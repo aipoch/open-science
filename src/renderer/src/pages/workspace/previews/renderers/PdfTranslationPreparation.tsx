@@ -42,6 +42,15 @@ export function PdfTranslationPreparation({
     )
   }
   const coverage = state.status === 'ready' ? state.extraction.coverage : undefined
+  const unreliableText = coverage?.warnings.some((warning) =>
+    warning.reasons.includes('unreliable-font-unicode')
+  )
+  const unreliableGlyphs = coverage?.pageDiagnostics?.some(
+    (diagnostic) => diagnostic.reason === 'unreliable-font-unicode'
+  )
+  const unreliableTables = coverage?.warnings.some((warning) =>
+    warning.reasons.includes('table-structure-unreliable')
+  )
   const independent =
     state.status === 'ready' ? state.extraction.source.units.filter((unit) => unit.sourceOnly) : []
   const independentItemCount = independent.reduce(
@@ -64,6 +73,30 @@ export function PdfTranslationPreparation({
       aria-label={t('Full-text preparation')}
       data-pdf-preparation
     >
+      {unreliableText || unreliableGlyphs ? (
+        <ErrorNotice
+          inline
+          level="warning"
+          description={
+            unreliableGlyphs
+              ? t(
+                  'Some PDF glyphs have no reliable text representation. Compare the original page.'
+                )
+              : t(
+                  'Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.'
+                )
+          }
+        />
+      ) : null}
+      {unreliableTables ? (
+        <ErrorNotice
+          inline
+          level="warning"
+          description={t(
+            'Some table structures are unreliable. Original images and text are retained without cell assignments.'
+          )}
+        />
+      ) : null}
       {!coverage && state.status === 'idle' ? (
         <Collapsible.Root
           defaultOpen
@@ -233,7 +266,13 @@ export function PdfTranslationPreparation({
                                 )}
                               </p>
                               <p>{t('Text segments may be words, lines, or labels.')}</p>
-                              {coverage.warnings.length > 0 ? (
+                              {coverage.warnings.some((warning) =>
+                                warning.reasons.some(
+                                  (reason) =>
+                                    reason !== 'unreliable-font-unicode' &&
+                                    reason !== 'table-structure-unreliable'
+                                )
+                              ) ? (
                                 <p>
                                   {t('Some paragraph boundaries or hyphenated words need review.')}
                                 </p>
