@@ -15,7 +15,10 @@
       "src/main/update/windows-install-progress.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
-    "host_runtime_ports": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_runtime_ports": [
+      "src/main/cli-install/launcher.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
@@ -219,6 +222,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
+    "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
     "shared_promise_identity": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
