@@ -1456,7 +1456,7 @@ describe('bounded short-unit translation prefetch', () => {
         type: 'custom' as const,
         key: 'secret',
         baseUrl: 'https://api.example',
-        apiEndpoints: ['openai' as const]
+        apiEndpoints: ['chat-completions' as const]
       }
     }
     const captureApiTarget = vi.fn(async () => target)
