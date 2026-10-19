@@ -44,10 +44,8 @@ test('forks local and imported research and immediately continues through the re
       await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
       await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
       const exporting = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-      await exporting.getByRole('button', { name: 'Export', exact: true }).click()
-      await expect(
-        exporting.getByText('Package operation completed', { exact: true })
-      ).toBeVisible()
+      await exporting.getByRole('button', { name: 'Choose save location…', exact: true }).click()
+      await expect(exporting.getByText('Session package exported', { exact: true })).toBeVisible()
       await exporting.getByRole('button', { name: 'Close', exact: true }).click()
       await page.getByRole('button', { name: 'Fork lifecycle', exact: true }).click()
       await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
