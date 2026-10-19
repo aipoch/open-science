@@ -209,7 +209,7 @@ export async function generateReflow(input, forcedRetained = new Map(), attempt 
   // A translated paragraph crossing a retained page cannot be emitted partially.
   // Follow the page/unit graph once, including transitive paragraph continuations.
   const byPage = new Map()
-  for (const unit of input.units.filter((unit) => unit.translation !== unit.source)) {
+  for (const unit of input.units) {
     const numbers = [...new Set(unit.fragments.map((fragment) => fragment.pageNumber))]
     for (const number of numbers) {
       const peers = byPage.get(number) ?? new Set()

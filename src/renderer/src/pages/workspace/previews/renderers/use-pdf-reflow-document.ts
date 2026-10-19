@@ -6,7 +6,9 @@ import {
   pdfReflowContentKinds,
   preservePdfFigureSources,
   applyPdfContentFirstPolicy,
-  isPdfTranslationResultExtension
+  isPdfTranslationResultExtension,
+  getPdfTranslationLayoutSnapshot,
+  extractPdfTranslationSource
 } from '@aipoch/pdf-translation/reader'
 import {
   pdfGenerationFailure,
@@ -127,6 +129,28 @@ export function usePdfReflowDocument(
       void (async () => {
         const accepted = new Map(results.units.map((u) => [u.id, u]))
         const units = results.source.units
+        const coverage =
+          getPdfTranslationLayoutSnapshot(results.source)?.coverage ??
+          (
+            await extractPdfTranslationSource({
+              document: original,
+              resourceRequestKey,
+              signal: controller.signal
+            })
+          ).coverage
+        const retainedPages = new Set(
+          coverage.exclusions
+            .filter((entry) => entry.reason === 'unsupported-orientation')
+            .flatMap((entry) => entry.items.map((item) => item.pageNumber))
+        )
+        // Keep a cross-page paragraph whole when any of its pages needs an original-page fallback.
+        let previousSize: number
+        do {
+          previousSize = retainedPages.size
+          for (const unit of units)
+            if (unit.fragments.some((fragment) => retainedPages.has(fragment.pageNumber)))
+              for (const fragment of unit.fragments) retainedPages.add(fragment.pageNumber)
+        } while (retainedPages.size !== previousSize)
         // Derive visual ownership locally even for historical editions. Only the
         // rendering request changes; saved source indices and translations do not.
         const protectedSource = applyPdfContentFirstPolicy(
@@ -143,14 +167,23 @@ export function usePdfReflowDocument(
         const kinds = pdfReflowContentKinds(protectedSource)
         const requestUnits = protectedSource.units.map((u) => {
           const result = accepted.get(u.id)
+          const translation =
+            !u.sourceOnly && result?.translationSource === u.source && result.translation.trim()
+              ? result.translation
+              : u.source
+          const retain = u.fragments.some((fragment) => retainedPages.has(fragment.pageNumber))
+          if (retain && translation !== u.source)
+            failures[u.id] = {
+              code: 'unsupported-layout',
+              phase: 'planning',
+              pageNumbers: [...new Set(u.fragments.map((fragment) => fragment.pageNumber))],
+              fragmentCount: u.fragments.length
+            }
           return {
             source: u.source,
             kind: kinds.get(u.id),
             fragments: u.fragments,
-            translation:
-              !u.sourceOnly && result?.translationSource === u.source && result.translation.trim()
-                ? result.translation
-                : u.source
+            translation: retain ? u.source : translation
           }
         })
         const data = await original.getData()
@@ -177,7 +210,7 @@ export function usePdfReflowDocument(
         const placements = new Map(output.reflow.units.map((u) => [u.unitIndex, u.fragments]))
         if (placements.size !== output.reflow.units.length)
           throw new Error('Duplicate reflow units')
-        const retained = new Set<string>()
+        const retained = new Set(Object.keys(failures))
         for (const { unitIndex, ...failure } of output.layoutFailures) {
           if (!units[unitIndex]) throw new Error('Invalid reflow failure')
           if (accepted.has(units[unitIndex].id)) {
@@ -308,7 +341,7 @@ export function usePdfReflowDocument(
       void api.cancelPdf(id).catch(() => undefined)
       if (live.current?.release !== release) release()
     }
-  }, [admitted, original, results, revision, beforeReady, t])
+  }, [admitted, original, results, revision, beforeReady, resourceRequestKey, t])
   const current = admitted && stored?.original === original && stored.results === results
   if (!admitted && stored) setStored(undefined)
   useEffect(() => {
