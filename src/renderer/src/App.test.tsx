@@ -354,7 +354,7 @@ vi.mock('@/pages/home/HomePage', () => ({
     )
   }
 }))
-vi.mock('@/pages/literature/LiteratureLibraryPage', () => ({
+vi.mock('@/pages/literature/public/page', () => ({
   LiteratureLibraryPage: (): React.JSX.Element => {
     mocks.literaturePage.renderCount += 1
     return <div data-testid="literature-library-page" />

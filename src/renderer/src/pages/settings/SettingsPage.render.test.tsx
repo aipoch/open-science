@@ -1,12 +1,12 @@
+// @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
-// @vitest-environment jsdom
 import { act, createRef, Profiler, StrictMode } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { fireEvent, waitFor } from '@testing-library/react'
 import * as Dialog from '@/components/ui/dialog'
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { LinkSafetyModal } from '@/components/streamdown/LinkSafetyModal'
 import { APP } from '../../../../shared/app-config'
 import { MINIMUM_CLAUDE_CLI_VERSION } from '../../../../shared/claude-runtime'
@@ -26,6 +26,17 @@ import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { SettingsPage, type SettingsPageHandle } from './SettingsPage'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
+import {
+  marketplaceCatalog,
+  marketplaceDetail
+} from '../../../../shared/__fixtures__/skill-marketplace'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 vi.mock('../workspace/FilePreviewDialog', () => ({
   FilePreviewDialog: ({
@@ -88,11 +99,6 @@ beforeAll(async () => {
     import('./TokenUsagePanel')
   ])
 })
-
-import {
-  marketplaceCatalog,
-  marketplaceDetail
-} from '../../../../shared/__fixtures__/skill-marketplace'
 
 // Minimal window.api surface the settings store touches when the dialog opens. Attached onto the
 // real jsdom window so DOM globals radix relies on (getComputedStyle, etc.) stay intact.

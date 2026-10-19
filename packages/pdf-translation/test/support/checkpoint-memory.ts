@@ -41,9 +41,7 @@ export function memoryCheckpoints(): {
             const row = [...working.values()]
               .reverse()
               .find(
-                (r) =>
-                  r.contentId === contentId &&
-                  (key === undefined || JSON.parse(r.payloadJson).key === key)
+                (r) => r.contentId === contentId && (key === undefined || r.checkpoint.key === key)
               )
             return row ? structuredClone(row) : null
           },
@@ -51,14 +49,14 @@ export function memoryCheckpoints(): {
             return [...working.values()]
               .filter((r) => r.contentId === contentId)
               .map((r) => {
-                const p = JSON.parse(r.payloadJson)
+                const p = r.checkpoint
                 return {
                   id: r.id,
                   key: p.key,
                   language: p.language,
-                  glossary: JSON.stringify(p.glossary),
+                  glossary: p.glossary,
                   concurrency: p.concurrency ?? 1,
-                  model: JSON.stringify(p.model),
+                  model: p.model,
                   updatedAt: Date.now()
                 }
               })
@@ -67,43 +65,35 @@ export function memoryCheckpoints(): {
             return working.get(id)?.contentId === contentId && working.delete(id)
           },
           async insert(row) {
-            working.set(row.id, { ...structuredClone(row), blocks: [] })
+            working.set(row.id, structuredClone(row))
           },
           async readHeader(id) {
             return working.has(id) ? structuredClone(get(id)) : null
           },
-          async readBase(id) {
-            return working.has(id) ? structuredClone(get(id)) : null
+          async readMetadata(id) {
+            return working.has(id) ? structuredClone(get(id).checkpoint) : null
           },
           async readLayoutReports(id) {
-            const reports = JSON.parse(get(id).payloadJson).layoutReports
-            return reports ? JSON.stringify(reports) : null
+            return structuredClone(get(id).checkpoint.layoutReports)
           },
           async pinLayout(id, snapshot) {
-            get(id).layoutSnapshotJson ??= snapshot
+            get(id).checkpoint.layoutSnapshot ??= structuredClone(snapshot)
           },
-          async updatePayload(id, payload) {
-            get(id).payloadJson = payload
+          async updateLayoutReports(id, reports) {
+            get(id).checkpoint.layoutReports = structuredClone(reports)
           },
           async commit(id, revision, change) {
-            const row = get(id),
-              state = row.blocks.find((b) => b.sourceIndex === -1)
-            if ((state?.revision ?? row.revision) !== revision) return false
-            if (change.base) {
-              Object.assign(row, change.base, {
-                revision: change.revision,
-                blocks: [{ sourceIndex: -1, revision: change.revision, translation: null }]
-              })
-            } else if (change.block && state) {
-              state.revision = change.revision
-              row.blocks = row.blocks.filter((b) => b.sourceIndex !== change.block!.sourceIndex)
-              row.blocks.push({ ...change.block, revision: change.revision })
-              if (change.layoutReportsJson !== undefined)
-                row.payloadJson = JSON.stringify({
-                  ...JSON.parse(row.payloadJson),
-                  layoutReports: JSON.parse(change.layoutReportsJson)
-                })
-            } else throw Error('invalid commit')
+            const row = get(id)
+            if (row.checkpoint.revision !== revision) return false
+            // This consumer stores complete objects and ignores the incremental write hint.
+            const checkpoint = structuredClone(change.checkpoint)
+            if (change.changedBlock) {
+              checkpoint.layoutSnapshot = structuredClone(row.checkpoint.layoutSnapshot)
+              checkpoint.layoutReports = structuredClone(
+                change.layoutReports ?? row.checkpoint.layoutReports
+              )
+            }
+            row.checkpoint = checkpoint
             return true
           }
         }

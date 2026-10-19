@@ -16,7 +16,7 @@ import {
 } from '../LiteratureTable'
 import { type SmartCollectionCellActions } from '../collections/SmartCollectionDecision'
 import { useLiteratureSmartReevaluation } from '../collections/useLiteratureSmartReevaluation'
-import { useAttachmentOperations } from '../workflows/literature-attachment-operations'
+import { useAttachmentOperationsStore } from '../workflows/literature-attachment-operations'
 import { LiteratureItemRow, LiteratureRowActions } from './LiteratureItemRow'
 import { LiteratureSelectPageCheckbox } from './LiteratureSelection'
 import { LiteratureRowNumbers } from './literature-row-numbers'
@@ -65,7 +65,9 @@ export function LiteratureResultsTable({
   smartView: SmartCollectionView | undefined
   completedReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['completedReevaluation']
   singleReevaluation: ReturnType<typeof useLiteratureSmartReevaluation>['singleReevaluation']
-  attachmentOperations: ReturnType<typeof useAttachmentOperations.getState>['operations']
+  attachmentOperations: ReturnType<
+    ReturnType<typeof useAttachmentOperationsStore>['getState']
+  >['operations']
   smartCellActions: React.RefObject<SmartCollectionCellActions>
   itemTypeLabels: Record<LiteratureItemType, string>
   rowActions: React.RefObject<LiteratureRowActions>

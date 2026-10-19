@@ -1,3 +1,5 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { SessionPackageImportError } from '@/components/SessionPackageImportError'
 import { TooltipProvider } from '@/components/ui/tooltip'
@@ -378,4 +380,8 @@ export function Fixture(): React.JSX.Element {
     </TooltipProvider>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+createRoot(document.getElementById('root')!).render(
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {<Fixture />}
+  </LiteratureRendererProvider>
+)

@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { createLiteratureIdentifierUrl } from '@aipoch/literature-citations/contracts'
@@ -22,7 +23,6 @@ import {
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import { useSettingsStore } from '@/stores/settings-store'
 import { formatBytes } from '../../../../../shared/update'
 import { UnpaywallCredentialForm } from '../../settings/UnpaywallCredentialForm'
 import { LiteratureOpenAlexCredential } from './LiteratureOpenAlexCredential'
@@ -38,6 +38,10 @@ export const LiteratureFullTextLookup = ({
   onCompleteMetadata: () => void
   onUpload: () => void
 }): React.JSX.Element => {
+  const { useSettingsStore } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [attempt, setAttempt] = useState(0)
   const [result, setResult] = useState<Extract<LiteratureFullTextResult, { mode: 'search' }>>()
@@ -66,11 +70,11 @@ export const LiteratureFullTextLookup = ({
       notifiedCandidate.current = candidateId
       onAdded(updated)
       if (transferId)
-        void window.api.literature
+        void hostApi.literature
           .fullText({ mode: 'transfer', itemId: item.id, acknowledgeId: transferId })
           .catch(() => undefined)
     },
-    [item.id, onAdded]
+    [hostApi.literature, item.id, onAdded]
   )
   const restoreFailure = useCallback(
     (candidate: LiteratureFullTextCandidate, retryAt?: number): void => {
@@ -94,7 +98,7 @@ export const LiteratureFullTextLookup = ({
     let timer: ReturnType<typeof setTimeout> | undefined
     const poll = async (): Promise<void> => {
       try {
-        const response = await window.api.literature.fullText({ mode: 'transfer', itemId: item.id })
+        const response = await hostApi.literature.fullText({ mode: 'transfer', itemId: item.id })
         if (!active || response.mode !== 'transfer' || !response.transfer) return
         const task = response.transfer
         if (task.candidate.id !== adding) return
@@ -118,14 +122,14 @@ export const LiteratureFullTextLookup = ({
       active = false
       clearTimeout(timer)
     }
-  }, [adding, item.id, notifyAdded, restoreFailure])
+  }, [adding, hostApi.literature, item.id, notifyAdded, restoreFailure])
   useEffect(() => {
     let active = true
     void (async () => {
-      if (typeof window.api.literature.fullText !== 'function') {
+      if (typeof hostApi.literature.fullText !== 'function') {
         throw new Error("No handler registered for 'literature:full-text'")
       }
-      const response = await window.api.literature.fullText({ mode: 'transfer', itemId: item.id })
+      const response = await hostApi.literature.fullText({ mode: 'transfer', itemId: item.id })
       if (!active) return
       if (response.mode === 'transfer' && response.transfer) {
         const task = response.transfer
@@ -142,7 +146,7 @@ export const LiteratureFullTextLookup = ({
         }
         if (task.status === 'failed') restoreFailure(task.candidate, task.retryAt)
       }
-      const found = await window.api.literature.fullText({ mode: 'search', itemId: item.id })
+      const found = await hostApi.literature.fullText({ mode: 'search', itemId: item.id })
       if (active && found.mode === 'search') setResult(found)
     })()
       .catch((failure: unknown) => {
@@ -160,7 +164,7 @@ export const LiteratureFullTextLookup = ({
     return () => {
       active = false
     }
-  }, [item.id, item.metadataRevision, attempt, t, notifyAdded, restoreFailure])
+  }, [item.id, item.metadataRevision, attempt, t, notifyAdded, restoreFailure, hostApi.literature])
 
   const retry = (): void => {
     setSearching(true)
@@ -177,7 +181,7 @@ export const LiteratureFullTextLookup = ({
     setError(undefined)
     let awaitingItem = false
     try {
-      const response = await window.api.literature.fullText({
+      const response = await hostApi.literature.fullText({
         mode: 'attach',
         itemId: item.id,
         candidateId: candidate.id

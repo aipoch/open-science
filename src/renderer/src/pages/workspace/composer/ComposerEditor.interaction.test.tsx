@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { ComposerEditor } from './ComposerEditor'
 import {
   domToDoc,
@@ -26,6 +26,13 @@ import {
   type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 let container: HTMLDivElement
 let root: Root

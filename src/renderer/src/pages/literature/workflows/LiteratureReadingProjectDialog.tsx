@@ -1,3 +1,8 @@
+import type {
+  LiteratureReadingDocument,
+  LiteratureProject,
+  LiteratureProjectCreation
+} from '../renderer-host'
 import { ProjectPicker } from '@/components/ProjectPicker'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -11,10 +16,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
 import { cn } from '@/lib/utils'
-import type { PdfReadingDocument } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { FolderPlus, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -34,12 +36,12 @@ export function LiteratureReadingProjectDialog({
   readingProjectQuery,
   startReadingInProject
 }: {
-  pendingLiteratureReading: readonly PdfReadingDocument[] | undefined
-  readingProjectFormDialog: ReturnType<typeof useProjectFormDialog>
+  pendingLiteratureReading: readonly LiteratureReadingDocument[] | undefined
+  readingProjectFormDialog: LiteratureProjectCreation
   startingReadingProjectId: string | undefined
   setReadingProjectQuery: React.Dispatch<React.SetStateAction<string>>
   setPendingLiteratureReading: React.Dispatch<
-    React.SetStateAction<readonly PdfReadingDocument[] | undefined>
+    React.SetStateAction<readonly LiteratureReadingDocument[] | undefined>
   >
   setReadingProjectError: React.Dispatch<React.SetStateAction<string | undefined>>
   readingProjectError: string | undefined
@@ -48,17 +50,17 @@ export function LiteratureReadingProjectDialog({
     React.SetStateAction<{ entries?: LiteratureItemView[]; error?: string } | undefined>
   >
   projectsLoaded: boolean
-  activeProjects: ReturnType<typeof useProjectStore.getState>['projects']
+  activeProjects: LiteratureProject[]
   readingProjectQuery: string
   startReadingInProject: (
     targetProjectId: string,
-    reading?: readonly PdfReadingDocument[] | undefined
+    reading?: readonly LiteratureReadingDocument[] | undefined
   ) => Promise<void>
 }): React.JSX.Element {
   const { t } = useTranslation()
   return (
     <Dialog.Root
-      open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.dialogProps.open}
+      open={Boolean(pendingLiteratureReading) && !readingProjectFormDialog.isOpen}
       onOpenChange={(open) => {
         if (open || startingReadingProjectId) return
         setReadingProjectQuery('')

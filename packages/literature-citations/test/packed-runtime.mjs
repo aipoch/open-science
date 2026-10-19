@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import * as citationApi from '@aipoch/literature-citations'
 import * as styleApi from '@aipoch/literature-citations/styles'
@@ -31,3 +33,25 @@ const bundle = await new LiteratureLatexBundle({
 })
 assert.equal(bundle.citationCount, 1)
 assert.ok(bundle.content.byteLength > 0)
+
+const stylesDirectory = await mkdtemp(join(tmpdir(), 'packed-styles-'))
+try {
+  const service = new LiteratureCitationFormatter(
+    new styleApi.LiteratureCitationStyleLibrary(stylesDirectory)
+  )
+  await service.formatStyleExample('apa')
+  const imported = await service.citationStyles({
+    kind: 'import',
+    content: `<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" class="in-text"><info><title>External style</title><id>https://example.test/style</id></info><citation><layout><text variable="title"/></layout></citation><bibliography><layout><text variable="title"/></layout></bibliography></style>`
+  })
+  const styleId = imported.changedStyleId
+  assert.ok(styleId)
+  assert.equal(
+    (await service.citationStyles({ kind: 'preview', styleId })).preview.reference,
+    'Genome Editing in Human Cells'
+  )
+  await service.citationStyles({ kind: 'delete', styleId })
+  await assert.rejects(service.formatStyleExample(styleId))
+} finally {
+  await rm(stylesDirectory, { recursive: true, force: true })
+}

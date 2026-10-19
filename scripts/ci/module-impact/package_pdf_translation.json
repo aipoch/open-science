@@ -40,7 +40,6 @@
     "packages/pdf-translation/src/public-storage.ts",
     "packages/pdf-translation/src/reader.ts",
     "packages/pdf-translation/src/reader/extraction.ts",
-    "packages/pdf-translation/src/reader/figure-source.ts",
     "packages/pdf-translation/src/reader/fragments.ts",
     "packages/pdf-translation/src/reader/glossary.ts",
     "packages/pdf-translation/src/reader/latin-accents.ts",
@@ -462,6 +461,8 @@
     "packages/pdf-translation/resources/source-fragments.d.mts",
     "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts",
     "packages/pdf-translation/test/fixtures/numeric-glyph-name-roundtrip.jsonl",
+    "packages/pdf-translation/test/cache-revision.test.ts",
+    "packages/pdf-translation/src/reader/figure-source.ts",
     "packages/pdf-translation/test/reader/pdf-translation-layout-left-prose.test.ts"
   ],
   "interfacePaths": [
@@ -544,6 +545,7 @@
       "packages/pdf-translation/test/usage.test.ts",
       "packages/pdf-translation/test/workflow.test.ts",
       "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts",
+      "packages/pdf-translation/test/cache-revision.test.ts",
       "packages/pdf-translation/test/reader/pdf-translation-layout-left-prose.test.ts"
     ],
     "contract": ["scripts/pdf-package-fixtures.test.ts"],
@@ -656,7 +658,6 @@
       "src/main/literature/pdf-translation/local.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/agent-target.test.ts",
-      "src/main/literature/pdf-translation/cache-revision.test.ts",
       "src/shared/pdf-translation.test.ts",
       "src/main/desktop-runtime-backpressure.integration.test.ts",
       "src/main/desktop-runtime-transport-diagnostics.test.ts",

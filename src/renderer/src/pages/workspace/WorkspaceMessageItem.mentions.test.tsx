@@ -1,16 +1,22 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { act, StrictMode } from 'react'
 import { fireEvent } from '@testing-library/react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage } from '@/stores/session-store'
-
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const WorkspaceMessageItem = (
   props: React.ComponentProps<typeof MessageItem>

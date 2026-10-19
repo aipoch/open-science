@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
@@ -39,6 +40,9 @@ export function LiteraturePdfBatchImportDialog({
   createDraft: (file: File) => LiteratureItemInput
   onClose: () => void
 }): React.JSX.Element {
+  const host = useLiteratureHost()
+  const { api: hostApi } = host
+
   const { t } = useTranslation()
   const [rows, setRows] = useState<Row[]>(() =>
     files.map((file) => ({ file, draft: createDraft(file), checked: true, status: 'pending' }))
@@ -71,13 +75,11 @@ export function LiteraturePdfBatchImportDialog({
     const transfer = upload.current
     if (transfer) {
       transfer.controller.abort()
-      void window.api.uploads
-        .abortTransfer({ transferId: transfer.transferId })
-        .catch(() => undefined)
+      void hostApi.uploads.abortTransfer({ transferId: transfer.transferId }).catch(() => undefined)
     }
     const activeNativeImport = nativeImport.current
     if (activeNativeImport) {
-      void window.api.literature
+      void hostApi.literature
         .cancelPdfImport?.({ operationId: activeNativeImport.operationId })
         ?.catch(() => undefined)
     }
@@ -98,9 +100,9 @@ export function LiteraturePdfBatchImportDialog({
             if (!disposed)
               row.metadataNotice = pdfMetadataNoticeLabel(value, metadataTranslation.current)
           }
-          const local = await extractLiteraturePdfDraft(row.file, row.draft, notice)
+          const local = await extractLiteraturePdfDraft(host, row.file, row.draft, notice)
           if (disposed) return
-          const draft = await completeLiteraturePdfDraft(local, notice)
+          const draft = await completeLiteraturePdfDraft(hostApi, local, notice)
           if (disposed) return
           row.draft = draft
         } catch {
@@ -137,12 +139,12 @@ export function LiteraturePdfBatchImportDialog({
       const transfer = upload.current
       if (transfer) {
         transfer.controller.abort()
-        void window.api.uploads
+        void hostApi.uploads
           .abortTransfer({ transferId: transfer.transferId })
           .catch(() => undefined)
       }
     }
-  }, [])
+  }, [host, hostApi])
 
   const run = async (): Promise<void> => {
     if (running.current || reading) return
@@ -162,7 +164,7 @@ export function LiteraturePdfBatchImportDialog({
         try {
           if (!row.itemId) {
             creating = true
-            const receipt = await window.api.literature.transact({
+            const receipt = await hostApi.literature.transact({
               kind: 'create-item',
               item: row.draft,
               duplicatePolicy: policy
@@ -176,7 +178,7 @@ export function LiteraturePdfBatchImportDialog({
           }
           if (!row.linked) {
             if (destination.projectId)
-              await window.api.literature.transact({
+              await hostApi.literature.transact({
                 kind: 'set-project-item',
                 projectId: destination.projectId,
                 itemId: row.itemId,
@@ -184,7 +186,7 @@ export function LiteraturePdfBatchImportDialog({
                 source: 'library'
               })
             else if (destination.collectionId)
-              await window.api.literature.transact({
+              await hostApi.literature.transact({
                 kind: 'set-collection-item',
                 collectionId: destination.collectionId,
                 itemId: row.itemId,
@@ -198,7 +200,7 @@ export function LiteraturePdfBatchImportDialog({
           }
           const transfer = { controller: new AbortController(), transferId: crypto.randomUUID() }
           upload.current = transfer
-          staged = await stageComposerFile(row.file, window.api.uploads, {
+          staged = await stageComposerFile(row.file, hostApi.uploads, {
             transferId: transfer.transferId,
             name: row.file.name,
             signal: transfer.controller.signal,
@@ -207,9 +209,9 @@ export function LiteraturePdfBatchImportDialog({
             }
           })
           try {
-            await window.api.uploads.claimLocalFile?.({ transferId: transfer.transferId })
+            await hostApi.uploads.claimLocalFile?.({ transferId: transfer.transferId })
           } catch (claimError) {
-            await window.api.uploads
+            await hostApi.uploads
               .abortTransfer({ transferId: transfer.transferId })
               .catch(() => undefined)
             throw claimError
@@ -220,13 +222,13 @@ export function LiteraturePdfBatchImportDialog({
           upload.current = undefined
           if (active.current) setProgress(undefined)
           const operationId = crypto.randomUUID()
-          const stopNativeProgress = window.api.pdfAnnotations?.onImportProgress
-            ? window.api.pdfAnnotations.onImportProgress((value) => {
+          const stopNativeProgress = hostApi.pdfAnnotations?.onImportProgress
+            ? hostApi.pdfAnnotations.onImportProgress((value) => {
                 if (value.operationId === operationId && active.current) setNativeProgress(value)
               })
             : () => undefined
           nativeImport.current = { operationId, stop: stopNativeProgress }
-          const receipt = await window.api.literature.importPdf({
+          const receipt = await hostApi.literature.importPdf({
             itemId: row.itemId,
             attachment: staged,
             operationId
@@ -254,7 +256,7 @@ export function LiteraturePdfBatchImportDialog({
                   : t('PDF could not be added.')
         } finally {
           if (staged)
-            await window.api.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
+            await hostApi.uploads.deleteUpload({ path: staged.path }).catch(() => undefined)
           upload.current = undefined
           nativeImport.current?.stop()
           nativeImport.current = undefined

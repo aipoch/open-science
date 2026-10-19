@@ -1,3 +1,4 @@
+import type { LiteraturePreviewItem } from '../renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -16,7 +17,6 @@ import {
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
 import { cn } from '@/lib/utils'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import type {
   LiteratureCitationStyleView,
   LiteratureItemType
@@ -87,7 +87,7 @@ export function LiteratureDetailDialog({
   renderOverview
 }: {
   detailController: LiteratureDetailController
-  previewItem: PreviewFileItem | undefined
+  previewItem: LiteraturePreviewItem | undefined
   selectedItemDialogRef: React.RefObject<HTMLDivElement | null>
   detailTagMenuOpenRef: React.RefObject<boolean>
   detailSelectOpenRef: React.RefObject<boolean>

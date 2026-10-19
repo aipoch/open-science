@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -5,9 +6,8 @@ import {
   parseLiteratureDeletionError,
   type LiteratureDeletionDiagnostic
 } from '../../../../../shared/literature-deletion'
-import { readLiteratureSelectionPage } from '../literature-read-pages'
+import { useLiteratureClient } from '../literature-read-pages'
 
-import { useTagStore } from '@/stores/tag-store'
 import type {
   LiteratureCatalogReceipt,
   LiteratureCatalogSearchRequest,
@@ -79,6 +79,12 @@ export function useLiteratureLifecycle({
   refreshAfterPermanentDeletion: () => Promise<void>
   deleteItemsPermanently: () => Promise<void>
 } {
+  const { readLiteratureSelectionPage } = useLiteratureClient()
+
+  const { useTagStore } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const clearSelection = (): void => selectionStore.clear()
   const [restorePreview, setRestorePreview] = useState<RestorePreview>()
@@ -156,7 +162,7 @@ export function useLiteratureLifecycle({
       resolvedIds = itemIds ?? (await resolveSelectedItemIds())
       for (let offset = 0; offset < resolvedIds.length; offset += LITERATURE_BATCH_COMMAND_SIZE) {
         const batch = resolvedIds.slice(offset, offset + LITERATURE_BATCH_COMMAND_SIZE)
-        await window.api.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
+        await hostApi.literature.transact({ kind: 'set-item-lifecycle', itemIds: batch, state })
         completed += batch.length
       }
       if (isCurrent()) clearSelection()
@@ -227,7 +233,7 @@ export function useLiteratureLifecycle({
     setPermanentDeleteResult(undefined)
     let receipt: LiteratureCatalogReceipt
     try {
-      receipt = await window.api.literature.transact({
+      receipt = await hostApi.literature.transact({
         kind: 'delete-items-permanently',
         itemIds: permanentDeleteIds
       })

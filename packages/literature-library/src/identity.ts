@@ -198,7 +198,7 @@ const rememberImportIdentity = (
 
 // Include all owners, including Trash and explicitly independent duplicates.
 const importIdentityMap = async (
-  store: LibraryStore,
+  store: Pick<LibraryStore, 'importIdentityRecords'>,
   items: readonly LiteratureItemInput[]
 ): Promise<ImportIdentityIndex> => {
   const identifiers = items

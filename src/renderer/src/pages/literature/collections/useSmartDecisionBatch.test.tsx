@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { saveSmartDecisionChunks, useSmartDecisionBatch } from './useSmartDecisionBatch'
 import {
   setSmartReevaluationConfirmation,
   shouldConfirmSmartReevaluation
 } from './smart-collection-preferences'
+
+const { renderHook } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
 afterEach(cleanup)
 
 it('saves bounded atomic chunks and retries only a failed chunk', async () => {

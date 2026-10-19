@@ -1,10 +1,9 @@
+import type { LiteraturePreviewItem } from './renderer-host'
+import { useLiteratureHost } from './renderer-host'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { LITERATURE_JOB_MAX_ITEMS } from '@aipoch/literature-discovery/jobs'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
-import {
-  createBookmarkPreviewItem,
-  requestPdfAnnotationReveal
-} from '../workspace/annotations/annotation-reveal'
+
 import { LiteratureCollectionDeleteDialog } from './collections/LiteratureCollectionDeleteDialog'
 import { setSmartReevaluationConfirmation } from './collections/smart-collection-preferences'
 import {
@@ -55,7 +54,7 @@ import { useLiteratureQuery } from './list/useLiteratureQuery'
 import { useLiteratureTable } from './list/useLiteratureTable'
 import { LiteratureDeletionNotice } from './LiteratureDeletionNotice'
 import { isCollectionOnlyChange, useLiteratureChanges } from './useLiteratureChanges'
-import { useAttachmentOperations } from './workflows/literature-attachment-operations'
+import { useAttachmentOperationsStore } from './workflows/literature-attachment-operations'
 import { LiteratureAttachmentOperations } from './workflows/LiteratureAttachmentOperations'
 import { LiteratureReadingProjectDialog } from './workflows/LiteratureReadingProjectDialog'
 import { useLiteratureAttachments } from './workflows/useLiteratureAttachments'
@@ -69,7 +68,6 @@ import { ArrowLeft, BookOpenText, Check, Inbox, LoaderCircle, Pencil, X } from '
 import { Checkbox, Tabs } from 'radix-ui'
 import {
   lazy,
-  memo,
   startTransition,
   Suspense,
   useCallback,
@@ -96,12 +94,9 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+
 import { cn } from '@/lib/utils'
-import { useNavigationStore } from '@/stores/navigation-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { useProjectStore } from '@/stores/project-store'
-import { useTagStore } from '@/stores/tag-store'
+
 import type {
   LiteratureCitationStyle,
   LiteratureCitationStyleView,
@@ -115,9 +110,8 @@ import type {
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import { createLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
-import { ProjectFormDialog } from '../home/ProjectFormDialog'
-import { FilePreviewDialog } from '../workspace/FilePreviewDialog'
-import { LITERATURE_PREVIEW_SESSION_ID } from '../workspace/preview-file-item'
+
+import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
 import { CitationStylesView } from './CitationStylesView'
 import {
   CollectionEditorDialog,
@@ -169,9 +163,22 @@ type LiteraturePageSize = (typeof LITERATURE_PAGE_SIZES)[number]
 const LITERATURE_REVIEW_CTA_ATTENTION_KEY = 'open-science:literature-review-cta-attention-seen'
 
 // Keep unrelated library updates outside the preview subtree.
-const LiteratureFilePreviewDialog = memo(FilePreviewDialog)
 
 const LiteratureLibraryPage = (): React.JSX.Element => {
+  const useAttachmentOperations = useAttachmentOperationsStore()
+
+  const {
+    useNavigationStore,
+    useProjectStore,
+    useTagStore,
+    createBookmarkPreviewItem,
+    requestPdfAnnotationReveal,
+    useProjectFormDialog,
+    FilePreviewDialog: LiteratureFilePreviewDialog
+  } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const journalDatasets = useJournalDatasets()
   const displayedJournalDatasets = useDisplayedJournalDatasets()
   const journalSourceYears = useJournalSourceYears()
@@ -290,7 +297,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const [selectedCandidate, setSelectedCandidate] = useState<LiteratureInboxCandidateView>()
   const attachmentOperations = useAttachmentOperations((state) => state.operations)
   const [detailController] = useState(() =>
-    createLiteratureDetailController((id) => window.api.literature.get(id))
+    createLiteratureDetailController((id) => hostApi.literature.get(id))
   )
   const selectedItem = detailController.getSnapshot().item
 
@@ -302,7 +309,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
 
   const [projectLinkError, setProjectLinkError] = useState<string>()
   const [collectionLinkError, setCollectionLinkError] = useState<string>()
-  const [previewItem, setPreviewItem] = useState<PreviewFileItem>()
+  const [previewItem, setPreviewItem] = useState<LiteraturePreviewItem>()
   const [annotationToReveal, setAnnotationToReveal] = useState<PdfAnnotation>()
 
   const [citationStyles, setCitationStyles] = useState<LiteratureCitationStyleView[]>()
@@ -440,7 +447,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     openSelectedItemDetail,
     pendingLiteratureItemId,
     pendingLiteratureAnnotation,
-    t
+    t,
+    createBookmarkPreviewItem
   ])
 
   useEffect(() => {
@@ -460,7 +468,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return () => {
       active = false
     }
-  }, [annotationToReveal, previewItem, t])
+  }, [annotationToReveal, previewItem, requestPdfAnnotationReveal, t])
 
   useEffect(() => {
     if (pendingLiteratureLibrarySection !== 'library') return
@@ -579,7 +587,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     setAnnotationToReveal(undefined)
     const current = detailController.getSnapshot().item
     if (current)
-      void window.api.literature
+      void hostApi.literature
         .get(current.id)
         .then((updated) => {
           if (!updated) return
@@ -588,7 +596,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           updateMetadataItem(updated)
         })
         .catch(() => undefined)
-  }, [detailController, updateMetadataItem])
+  }, [detailController, hostApi.literature, updateMetadataItem])
   const metadata = useLiteratureMetadata(detailController, updateMetadataItem)
   const { changeMode: changeDetailMode } = metadata
   const detailModeRef = useRef(metadata.mode)
@@ -651,7 +659,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   const resolveSelectedItemIds = async (): Promise<string[]> => {
     const { allMatchingSelected, excludedMatchingIds, selectedIds } = selectionStore.getSnapshot()
     if (!allMatchingSelected) return [...selectedIds]
-    const page = await window.api.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
+    const page = await hostApi.literature.search({ ...buildEntriesRequest(0), allItemIds: true })
     if (!page.itemIds) throw new Error('Literature membership is unavailable.')
     return page.itemIds.filter((id) => !excludedMatchingIds.has(id))
   }
@@ -856,7 +864,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
         if (!snapshot.open || !snapshot.item) return
         const latest = await detailController.read(snapshot.item.id)
         if (latest && selectedCollection?.smart) {
-          const receipt = await window.api.literature.transact({
+          const receipt = await hostApi.literature.transact({
             kind: 'read-smart-decisions',
             collectionId: selectedCollection.id,
             itemIds: [latest.id]
@@ -913,7 +921,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
   useEffect(() => {
     if (metadata.mode !== 'citation' || citationStyles !== undefined) return
     let active = true
-    void window.api.literature.citationStyles({ kind: 'list' }).then(
+    void hostApi.literature.citationStyles({ kind: 'list' }).then(
       ({ styles }) => {
         if (active) updateCitationStyles(styles)
       },
@@ -922,7 +930,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     return () => {
       active = false
     }
-  }, [citationStyles, metadata.mode, updateCitationStyles])
+  }, [citationStyles, hostApi.literature, metadata.mode, updateCitationStyles])
 
   const formattedMatchingCount = useMemo(
     () => new Intl.NumberFormat(i18n.language).format(entriesTotalCount),
@@ -1224,7 +1232,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
       const source = useNavigationStore.getState().consumeLiteraturePdfImport(pendingPdfImport)
       if (source) beginPdfImport(source)
     })
-  }, [beginPdfImport, pendingPdfImport, projectId])
+  }, [beginPdfImport, pendingPdfImport, projectId, useNavigationStore])
 
   const {
     pendingDecisions,
@@ -2748,7 +2756,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
           readingProjectQuery={readingProjectQuery}
           startReadingInProject={startReadingInProject}
         />
-        <ProjectFormDialog {...readingProjectFormDialog.dialogProps} />
+        {readingProjectFormDialog.dialog}
         {batchReading ? (
           <LiteratureReadingDialog
             {...batchReading}
@@ -2765,7 +2773,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             }}
           />
         ) : null}
-        <ProjectFormDialog {...batchProjectFormDialog.dialogProps} />
+        {batchProjectFormDialog.dialog}
         <LiteratureFilePreviewDialog
           onFocusFallback={focusPreviewFallback}
           item={previewItem}

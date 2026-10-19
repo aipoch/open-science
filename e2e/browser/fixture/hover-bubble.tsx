@@ -6,12 +6,23 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { SkillUsageAgents } from '@/pages/settings/SkillUsageAgents'
 import { CitationStylesView } from '@/pages/literature/CitationStylesView'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import {
   SessionHoverPreview,
   SessionHoverPreviewProvider
 } from '@/pages/workspace/SessionHoverPreview'
 
 const params = new URLSearchParams(location.search)
+if (params.has('csl')) {
+  window.api = {
+    literature: {
+      citationStyles: async () => {
+        throw new Error('CSL hover previews must use the supplied fixture styles.')
+      }
+    }
+  } as unknown as Window['api']
+}
 document.documentElement.classList.toggle('dark', params.has('dark'))
 const longCopy =
   '这是包含很长文件名称的提示。 Dies ist ein langer Hinweis mit zusätzlichen Informationen. '.repeat(
@@ -22,16 +33,22 @@ export function Fixture(): React.JSX.Element {
   const [opened, setOpened] = useState('')
   if (params.has('csl')) {
     return (
-      <CitationStylesView
-        styles={['APA', 'MLA'].map((title) => ({
-          id: title,
-          title,
-          source: 'built-in',
-          preview: { styleId: title, inText: `${title} citation`, reference: `${title} reference` }
-        }))}
-        onBack={() => {}}
-        onStylesChange={() => {}}
-      />
+      <LiteratureRendererProvider host={literatureRendererHost}>
+        <CitationStylesView
+          styles={['APA', 'MLA'].map((title) => ({
+            id: title,
+            title,
+            source: 'built-in',
+            preview: {
+              styleId: title,
+              inText: `${title} citation`,
+              reference: `${title} reference`
+            }
+          }))}
+          onBack={() => {}}
+          onStylesChange={() => {}}
+        />
+      </LiteratureRendererProvider>
     )
   }
   return (

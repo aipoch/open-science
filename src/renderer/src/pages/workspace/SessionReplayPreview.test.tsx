@@ -1,7 +1,6 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
@@ -12,7 +11,10 @@ import { SessionReplayPreview } from './SessionReplayPreview'
 import type { ReplayPanelProps } from './replay/ReplayPanel'
 
 const mocks = vi.hoisted(() => ({ load: vi.fn(), panel: vi.fn(), get: vi.fn(), save: vi.fn() }))
-vi.mock('react-i18next', () => createI18nTestStub())
+vi.mock('react-i18next', async () => {
+  const { createI18nTestStub } = await import('../../../../../test/i18n-test-stub')
+  return createI18nTestStub()
+})
 vi.mock('@/lib/replay', () => ({ loadReplayDocument: mocks.load }))
 vi.mock('@/lib/session-fork', () => ({ sessionForkAvailable: () => false, forkSession: vi.fn() }))
 vi.mock('./replay/ReplayPanel', () => ({

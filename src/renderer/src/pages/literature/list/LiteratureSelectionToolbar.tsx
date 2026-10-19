@@ -1,8 +1,7 @@
+import type { LiteratureProject, LiteratureProjectCreation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import { DropdownMenuItem, DropdownMenuSeparator } from '@/components/ui/dropdown-menu'
 import { Popover, PopoverClose, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import { useProjectStore } from '@/stores/project-store'
 import type {
   LiteratureCollectionView,
   LiteratureItemView
@@ -92,10 +91,10 @@ export function LiteratureSelectionToolbar({
   startingReadingProjectId: string | undefined
   requestReadSelection: () => Promise<void>
   batchCollections: LiteratureCollectionView[]
-  activeProjects: ReturnType<typeof useProjectStore.getState>['projects']
+  activeProjects: LiteratureProject[]
   projectsLoaded: boolean
   createCollectionForSelection: (name: string) => Promise<boolean>
-  batchProjectFormDialog: ReturnType<typeof useProjectFormDialog>
+  batchProjectFormDialog: LiteratureProjectCreation
   moveSelectedItems: (collectionId: string) => Promise<void>
   addSelectedItemsToProject: (projectId: string) => Promise<void>
   items: LiteratureItemView[]

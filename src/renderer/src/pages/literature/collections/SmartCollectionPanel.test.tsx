@@ -1,24 +1,34 @@
-import { formatSmartRule } from './smart-rule-fields'
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { create } from 'zustand'
+import type { LiteratureRendererHost } from '../public/host'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { formatSmartRule } from './smart-rule-fields'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SmartCollectionPanel as Panel } from './SmartCollectionPanel'
 import { useState, type ComponentProps } from 'react'
 import { createSmartCollectionState } from './smart-collection-state'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {},
+  useSettingsStore: create(() => ({
+    isSettingsOpen: false,
+    openSettingsToClassification: configure
+  })) as unknown as LiteratureRendererHost['useSettingsStore']
+})
+
 const SmartCollectionPanel = (
   props: Omit<ComponentProps<typeof Panel>, 'state'>
 ): React.JSX.Element => {
   const [state] = useState(createSmartCollectionState)
   return <Panel {...props} state={state} />
 }
-import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
 
 const { configure } = vi.hoisted(() => ({ configure: vi.fn() }))
-vi.mock('@/stores/settings-store', () => ({
-  useSettingsStore: Object.assign(() => false, {
-    getState: () => ({ openSettingsToClassification: configure })
-  })
-}))
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)
 let view: SmartCollectionView

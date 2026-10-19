@@ -1,9 +1,11 @@
-import { downloadLiteratureRecord } from '../literature-read-pages'
+import { useLiteratureClient } from '../literature-read-pages'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 
 export function LiteratureOversizedNotice({ itemId }: { itemId: string }): React.JSX.Element {
+  const { downloadLiteratureRecord } = useLiteratureClient()
+
   const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
   const [failed, setFailed] = useState(false)

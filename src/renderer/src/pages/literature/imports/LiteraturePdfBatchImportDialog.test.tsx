@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { LITERATURE_IMPORT_IDENTITY_CONFLICT } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { StrictMode } from 'react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LiteraturePdfBatchImportDialog } from './LiteraturePdfBatchImportDialog'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const mocks = vi.hoisted(() => ({ extract: vi.fn(), complete: vi.fn(), stage: vi.fn() }))
 vi.mock('./literature-pdf-metadata', async (importOriginal) => ({
@@ -54,8 +62,8 @@ const start = async (): Promise<void> => {
 }
 beforeEach(() => {
   vi.resetAllMocks()
-  mocks.extract.mockImplementation(async (_file, draft) => draft)
-  mocks.complete.mockImplementation(async (draft) => draft)
+  mocks.extract.mockImplementation(async (_api, _file, draft) => draft)
+  mocks.complete.mockImplementation(async (_api, draft) => draft)
   mocks.stage.mockResolvedValue(attachment)
   let id = 0
   transact.mockImplementation(async (command) => ({

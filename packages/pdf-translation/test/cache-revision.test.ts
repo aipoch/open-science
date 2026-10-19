@@ -2,7 +2,7 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { pdfTranslationCacheRevision } from '@aipoch/pdf-translation/storage'
+import { pdfTranslationCacheRevision } from '../src/public-storage.js'
 
 let root: string
 async function fixture(): Promise<string> {
@@ -14,7 +14,7 @@ async function fixture(): Promise<string> {
     await writeFile(join(directory, 'index.js'), '')
   }
   await writeFile(join(root, 'node_modules/@embedpdf/pdfium/pdfium.wasm'), 'wasm')
-  const resources = join(root, 'packages/pdf-translation/resources')
+  const resources = join(root, 'external-pdf-resources')
   await mkdir(resources, { recursive: true })
   await writeFile(join(resources, 'worker.mjs'), 'worker')
   await writeFile(join(resources, 'layout.mjs'), 'layout')

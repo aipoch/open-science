@@ -1,6 +1,6 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { JournalAttributes } from '@/pages/literature/JournalAttributes'
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import { JournalAttributes } from '@/pages/literature/public/components'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as Dialog from '@/components/ui/dialog'
 import { ArrowUpRight, FileText, X } from 'lucide-react'

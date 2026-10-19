@@ -1,13 +1,20 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { ResourceTagBadges } from './ResourceTagControls'
 import { TagsPanel } from './TagsPanel'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 let container: HTMLDivElement
 let root: Root

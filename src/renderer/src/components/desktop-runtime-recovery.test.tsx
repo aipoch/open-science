@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { useLayoutEffect, useRef } from 'react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeRecoveryState } from '../../../shared/desktop-runtime-recovery'
 import { DesktopRuntimeRecovery } from './desktop-runtime-recovery'
