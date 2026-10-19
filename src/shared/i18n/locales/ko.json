@@ -162,7 +162,7 @@
   },
   "renderer": {
     "Content first": "내용 우선",
-    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "본문과 캡션을 번역하고 이미지, 표, 수식, 코드와 참고문헌은 가능한 한 원문 그대로 유지합니다. 결과는 PDF 내용 추출 품질에 따라 달라집니다. 선택하지 않으면 원본 PDF 레이아웃을 가능한 한 유지합니다.",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "본문과 캡션을 단일 열로 재배치하고 그림, 표, 수식, 코드와 참고문헌을 가능한 한 유지합니다. 결과는 PDF 추출 품질에 따라 달라집니다. 선택하지 않으면 원본 레이아웃을 가능한 한 유지합니다.",
     "Update preparation failed": "업데이트 준비 실패",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "앱은 계속 열려 있습니다. 문제를 해결한 후 다시 시도하거나 업데이트를 취소하고 작업을 계속하세요.",
     "Select one or more options": "하나 이상의 옵션 선택",

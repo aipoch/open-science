@@ -163,7 +163,7 @@
   },
   "renderer": {
     "Content first": "Inhalt bevorzugen",
-    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Fließtext sowie Abbildungs- und Tabellenbeschriftungen übersetzen und Bilder, Tabellen, Formeln, Code und Literaturangaben möglichst im Original erhalten. Das Ergebnis hängt von der Qualität der PDF-Inhaltsextraktion ab. Ohne Häkchen wird das ursprüngliche PDF-Layout möglichst beibehalten.",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Fließtext und Beschriftungen einspaltig neu anordnen und Abbildungen, Tabellen, Formeln, Code und Literaturangaben möglichst beibehalten. Das Ergebnis hängt von der Qualität der PDF-Extraktion ab. Ohne Häkchen wird das ursprüngliche Layout möglichst beibehalten.",
     "Update preparation failed": "Vorbereitung des Updates fehlgeschlagen",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Die App bleibt geöffnet. Beheben Sie das Problem und versuchen Sie es erneut, oder brechen Sie ab, um weiterzuarbeiten.",
     "Select one or more options": "Eine oder mehrere Optionen auswählen",

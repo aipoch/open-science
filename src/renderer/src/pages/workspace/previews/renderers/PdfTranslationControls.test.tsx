@@ -573,7 +573,7 @@ it('requires explicit model and language, discloses remote text transfer and pas
     glossary: [{ source: 'cell', target: '细胞' }]
   })
 })
-it('passes content-first selection to a new edition and locks it during translation', () => {
+it('passes content-first selection to a new edition and locks it during translation', async () => {
   const onStart = vi.fn(),
     onContentFirstChange = vi.fn()
   const props = {
@@ -586,8 +586,17 @@ it('passes content-first selection to a new edition and locks it during translat
     onContentFirstChange
   }
   const view = render(<PdfTranslationControls {...props} state={idle} />)
+  expect(screen.queryByRole('checkbox', { name: 'Content first' })).toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Advanced' }))
   const checkbox = screen.getByRole<HTMLInputElement>('checkbox', { name: 'Content first' })
   expect(checkbox.checked).toBe(false)
+  const hint = document.getElementById(checkbox.getAttribute('aria-describedby')!)!
+  expect(hint.classList.contains('sr-only')).toBe(true)
+  expect(screen.queryByRole('tooltip')).toBeNull()
+  const info = screen.getByRole('button', { name: 'More information' })
+  act(() => info.focus())
+  expect((await screen.findByRole('tooltip')).textContent).toBe(hint.textContent)
+  act(() => info.blur())
   fireEvent.click(checkbox)
   expect(onContentFirstChange).toHaveBeenLastCalledWith(true)
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
@@ -603,6 +612,7 @@ it('passes content-first selection to a new edition and locks it during translat
     />
   )
   fireEvent.click(screen.getByRole('button', { name: /Translation settings/ }))
+  fireEvent.click(screen.getByRole('button', { name: 'Advanced' }))
   expect(screen.getByRole<HTMLInputElement>('checkbox', { name: 'Content first' }).checked).toBe(
     true
   )

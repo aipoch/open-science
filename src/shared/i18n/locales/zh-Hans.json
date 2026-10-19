@@ -162,7 +162,7 @@
   },
   "renderer": {
     "Content first": "内容优先",
-    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "翻译正文和图表说明，尽量保留图片、表格、公式、代码和参考文献原文。效果受 PDF 内容提取质量影响。不勾选则尽量保持原 PDF 版式。",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "将正文和图注重排为单栏，尽量保留图表、公式、代码和参考文献。效果取决于 PDF 提取质量；不勾选时尽量保留原始布局。",
     "Update preparation failed": "更新准备失败",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "应用仍保持打开。解决问题后重试，或取消更新以继续工作。",
     "Select one or more options": "选择一个或多个选项",

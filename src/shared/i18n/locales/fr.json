@@ -164,7 +164,7 @@
   },
   "renderer": {
     "Content first": "Priorité au contenu",
-    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Traduire le corps du texte et les légendes en conservant autant que possible les images, tableaux, formules, code et références dans leur forme d’origine. Le résultat dépend de la qualité de l’extraction du contenu du PDF. Laisser cette option décochée pour préserver autant que possible la mise en page du PDF d’origine.",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Réorganiser le texte et les légendes sur une seule colonne, en préservant autant que possible les figures, tableaux, formules, code et références. Le résultat dépend de la qualité de l’extraction du PDF. Laisser cette option décochée pour préserver autant que possible la mise en page d’origine.",
     "Update preparation failed": "Échec de la préparation de la mise à jour",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "L’application reste ouverte. Résolvez le problème et réessayez, ou annulez pour continuer à travailler.",
     "Select one or more options": "Sélectionnez une ou plusieurs options",

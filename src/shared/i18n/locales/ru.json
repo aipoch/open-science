@@ -165,7 +165,7 @@
   },
   "renderer": {
     "Content first": "Приоритет содержимого",
-    "Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.": "Перевести основной текст и подписи, по возможности сохраняя изображения, таблицы, формулы, код и библиографию в исходном виде. Результат зависит от качества извлечения содержимого PDF. Снимите флажок, чтобы по возможности сохранить исходную вёрстку PDF.",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Перекомпоновать основной текст и подписи в одну колонку, по возможности сохраняя рисунки, таблицы, формулы, код и библиографию. Результат зависит от качества извлечения содержимого PDF. Снимите флажок, чтобы по возможности сохранить исходную вёрстку.",
     "Update preparation failed": "Не удалось подготовить обновление",
     "The app is still open. Resolve the problem and try again, or cancel to continue working.": "Приложение остаётся открытым. Устраните проблему и повторите попытку или отмените обновление, чтобы продолжить работу.",
     "Select one or more options": "Выберите один или несколько вариантов",

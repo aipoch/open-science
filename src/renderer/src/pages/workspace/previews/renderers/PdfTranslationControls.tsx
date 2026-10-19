@@ -339,6 +339,9 @@ function TranslationSettingsFields({
   const targetLanguageId = useId()
   const concurrencyId = useId()
   const contentFirstHintId = useId()
+  const contentFirstHint = t(
+    'Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.'
+  )
   const apiModelId = useId()
   const apiModels = useAvailableApiModels()
   const agentCatalog = useAgentModels(options.agentModel?.frameworkId)
@@ -674,26 +677,6 @@ function TranslationSettingsFields({
       {target?.id === 'api' && disabled && !options.apiModel ? (
         <AgentModelDetails state={state} direct={target.id === 'api'} />
       ) : null}
-      <div className="space-y-1.5 rounded-md border border-border/60 px-3 py-2">
-        <PdfTranslationActionHint reason={lockedSettingsReason} className="w-full">
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              checked={options.contentFirst ?? false}
-              disabled={disabled}
-              aria-describedby={contentFirstHintId}
-              onChange={(event) => onChange({ ...options, contentFirst: event.target.checked })}
-              className="size-4 accent-primary"
-            />
-            {t('Content first')}
-          </label>
-        </PdfTranslationActionHint>
-        <p id={contentFirstHintId} className="text-xs leading-5 text-muted-foreground">
-          {t(
-            'Translate body text and captions while preserving images, tables, formulas, code and references where possible. Results depend on PDF content extraction quality. Leave unchecked to preserve the original PDF layout where possible.'
-          )}
-        </p>
-      </div>
       <Collapsible.Root className="overflow-hidden rounded-md border border-border/60 bg-background/70">
         <Collapsible.Trigger asChild>
           <Button
@@ -736,6 +719,45 @@ function TranslationSettingsFields({
           </Button>
         </Collapsible.Trigger>
         <Collapsible.Content className="flex flex-col gap-1.5 border-t border-border/60 px-3 pb-3 pt-3 data-[state=closed]:hidden">
+          <div className="mb-2 flex items-center gap-1">
+            <PdfTranslationActionHint reason={lockedSettingsReason}>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={options.contentFirst ?? false}
+                  disabled={disabled}
+                  aria-describedby={contentFirstHintId}
+                  onChange={(event) => onChange({ ...options, contentFirst: event.target.checked })}
+                  className="size-4 accent-primary"
+                />
+                {t('Content first')}
+              </label>
+            </PdfTranslationActionHint>
+            <span id={contentFirstHintId} className="sr-only">
+              {contentFirstHint}
+            </span>
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="size-6 text-muted-foreground"
+                    aria-label={t('More information')}
+                  >
+                    <Info aria-hidden="true" className="size-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent
+                  className="z-[130] max-w-64"
+                  onEscapeKeyDown={(event) => event.stopPropagation()}
+                >
+                  {contentFirstHint}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </div>
           <label id={concurrencyId}>{t('Concurrent translations')}</label>
           <PdfTranslationActionHint
             reason={
