@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { builtinModules } from 'node:module'
+import { posix } from 'node:path'
 
 export const isElectronPackage = (name) =>
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
@@ -35,6 +36,45 @@ const packageName = (specifier) =>
 export const isShippableDependencyPath = (relativePath) => {
   const parts = relativePath.split(/[\\/]/)
   return parts[0] !== 'node_modules' && parts[0] !== '.git' && !parts.includes('obj.target')
+}
+
+// extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
+// conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
+// See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
+export function createDesktopDependencyFilter(manifest) {
+  const runtimeEntries = []
+  const collect = (value) => {
+    if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
+    else if (value && typeof value === 'object')
+      for (const [key, entry] of Object.entries(value))
+        if (key !== 'types' && !key.startsWith('types@')) collect(entry)
+  }
+  for (const field of ['main', 'module', 'bin', 'exports', 'imports', 'browser'])
+    collect(manifest[field])
+  const exportedRoots = new Set(runtimeEntries.map((entry) => entry.split('/')[0]))
+  const developmentRoots = new Set([
+    'test',
+    'tests',
+    '__tests__',
+    'powered-test',
+    'example',
+    'examples'
+  ])
+  return (relativePath, isDirectory) => {
+    // Traverse excluded roots so nested redistribution notices are not lost. Keep first-party
+    // artifacts, SDK declarations and diagnostic maps under their existing files allowlists.
+    if (isDirectory || manifest.name?.startsWith('@aipoch/')) return true
+    const parts = relativePath.split(/[\\/]/)
+    const path = parts.join('/')
+    if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
+      return true
+    if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
+    if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
+    return (
+      !developmentRoots.has(parts[0]) ||
+      [...exportedRoots].some((entry) => posix.matchesGlob(parts[0], entry))
+    )
+  }
 }
 
 // esbuild inputs cover the entire reachable source/worker graph; outputs record actual external

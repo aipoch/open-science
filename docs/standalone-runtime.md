@@ -16,6 +16,17 @@ contracts, caller leases, permission prompts and navigation revocation remain in
 requests travel back to Electron for dialogs, notifications and rendering. This is one business
 implementation, with transport and native adapters, rather than two server implementations.
 
+Desktop packaging builds a separate `out/desktop-backend` tree with
+`node scripts/stage-backend.mjs --desktop`. Its dependency filter follows
+[electron-builder's runtime packaging exclusions](https://www.electron.build/v26/docs/contents/)
+and the explicit-exception approach in [VS Code's module rules](https://github.com/microsoft/vscode/blob/main/build/.moduleignore):
+third-party declarations and package-root tests/examples are omitted, while declared runtime
+entry roots, licenses/notices, first-party artifacts, maps and dynamic resources remain under
+the existing dependency policies. README files are retained because they can contain license
+notices. This tree is not the npm SDK publication artifact. The default staging command still
+builds `out/standalone` with its CLI/SDK declarations intact; desktop packaging neither prunes
+that tree nor reads a stale copy of it. Installed CLI commands remain available.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on
