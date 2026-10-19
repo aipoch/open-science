@@ -9,6 +9,16 @@ import {
 import { countMessagesInputTokens } from './messages/tokens'
 import { sanitizeXaiResponsesRequest } from './xai/responses'
 
+type Json = Record<string, unknown>
+const imageParts = (value: unknown): Json[] => {
+  if (Array.isArray(value)) return value.flatMap(imageParts)
+  if (value === null || typeof value !== 'object') return []
+  const part = value as Json
+  return part.type === 'input_image' || part.type === 'image_url'
+    ? [part]
+    : Object.values(part).flatMap(imageParts)
+}
+
 describe('xAI protocol projection', () => {
   it('maps Anthropic messages and tools to Responses', () => {
     const request = messagesToResponses(
@@ -132,5 +142,110 @@ describe('xAI protocol projection', () => {
     expect(
       countMessagesInputTokens({ messages: [{ role: 'user', content: 'hello world' }] })
     ).toBeGreaterThan(0)
+  })
+
+  it.each(['native', 'messages', 'chat'] as const)(
+    'R08 preserves business schema names and null constraints (%s)',
+    (wire) => {
+      const schema = {
+        type: 'object',
+        properties: {
+          safety_identifier: { type: 'string' },
+          external_web_access: { type: 'boolean' },
+          prompt_cache_retention: { type: 'string' },
+          nullable: { const: null }
+        },
+        required: ['safety_identifier', 'nullable'],
+        additionalProperties: false
+      }
+      const original = structuredClone(schema)
+      const request =
+        wire === 'native'
+          ? sanitizeXaiResponsesRequest({
+              safety_identifier: 'metadata',
+              tools: [{ type: 'function', name: 'audit', parameters: schema }]
+            })
+          : wire === 'messages'
+            ? messagesToResponses(
+                { messages: [], tools: [{ name: 'audit', input_schema: schema }] },
+                'test'
+              )
+            : chatCompletionsToResponses(
+                {
+                  messages: [],
+                  tools: [{ type: 'function', function: { name: 'audit', parameters: schema } }]
+                },
+                'test'
+              )
+      expect(request).not.toHaveProperty('safety_identifier')
+      expect(schema).toEqual(original)
+      expect(request.tools).toEqual([expect.objectContaining({ parameters: original })])
+    }
+  )
+
+  it('R01 preserves URL images in Claude tool results and their call association', () => {
+    const result = messagesToResponses(
+      {
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'tool_result',
+                tool_use_id: 'url_call',
+                content: [
+                  { type: 'text', text: 'image result' },
+                  { type: 'image', source: { type: 'url', url: 'https://example.test/tool.png' } }
+                ]
+              },
+              { type: 'tool_result', tool_use_id: 'other_call', content: 'other result' }
+            ]
+          }
+        ]
+      },
+      'test'
+    )
+    expect((result.input as Json[]).slice(0, 2)).toEqual([
+      { type: 'function_call_output', call_id: 'url_call', output: 'image result' },
+      { type: 'function_call_output', call_id: 'other_call', output: 'other result' }
+    ])
+    expect(imageParts(result)).toEqual([
+      { type: 'input_image', image_url: 'https://example.test/tool.png' }
+    ])
+    expect(JSON.stringify((result.input as Json[]).slice(2))).toContain('url_call')
+  })
+
+  it('R08 leaves schema defaults, enums, metadata and tool output business values opaque', () => {
+    const data = {
+      safety_identifier: null,
+      external_web_access: false,
+      prompt_cache_retention: 'business'
+    }
+    const body = {
+      prompt_cache_retention: '24h',
+      safety_identifier: 'wire',
+      external_web_access: true,
+      previous_response_id: null,
+      metadata: data,
+      input: [{ type: 'function_call_output', call_id: 'a', output: data }],
+      additional_tools: [
+        {
+          type: 'function',
+          name: 'audit',
+          parameters: {
+            type: 'object',
+            properties: { value: { enum: [null, 'present'], default: null } }
+          }
+        }
+      ]
+    }
+    const expected = structuredClone(body)
+    const result = sanitizeXaiResponsesRequest(body)
+    expect(result).toEqual({
+      metadata: expected.metadata,
+      input: expected.input,
+      tools: expected.additional_tools
+    })
+    expect(body).toEqual(expected)
   })
 })

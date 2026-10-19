@@ -502,16 +502,15 @@ describe('opencodeFramework.prepareModelConfig', () => {
   it.each([
     ['minimax', 'MiniMax-M3', 'none', { thinking: { type: 'disabled' } }],
     ['minimax', 'MiniMax-M3', 'high', { thinking: { type: 'adaptive' } }],
-    ...(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'] as const).flatMap((model) =>
-      (['low', 'medium', 'high', 'xhigh', 'max'] as const).map(
-        (effort) =>
-          [
-            'minimax',
-            model,
-            effort,
-            { reasoningEffort: effort, thinking: { type: 'adaptive' } }
-          ] as const
-      )
+    // The package owns the full effort matrix; these cases verify both OpenCode config layers.
+    ...(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'] as const).map(
+      (model) =>
+        [
+          'minimax',
+          model,
+          'high',
+          { reasoningEffort: 'high', thinking: { type: 'adaptive' } }
+        ] as const
     ),
     ['xiaomimimo', 'mimo-v2.5-pro', 'none', { thinking: { type: 'disabled' } }],
     ['xiaomimimo', 'mimo-v2.5-pro', 'high', { thinking: { type: 'enabled' } }],

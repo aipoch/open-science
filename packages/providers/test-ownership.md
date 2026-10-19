@@ -130,3 +130,17 @@ Host paths in this table are relative to `src/main/` unless prefixed with `share
 assertions or fixtures are removed by this registration reconciliation. The package-boundary
 selection test explicitly verifies both helper edits select host text-generation evidence without
 selecting provider unit tests; provider edits still select their own tests and downstream contracts.
+
+## Protocol regression ownership follow-up
+
+The three pure groups from host `settings/provider-protocol-regressions.test.ts` now live in
+`src/protocols/compatibility.test.ts`: business schema names/null constraints across native Responses,
+Messages and Chat; URL images and tool-result call association; and opaque schema/default/metadata/output
+values. Their assertions are preserved. The Messages table entry now matches the actual `messages`
+branch instead of accidentally repeating Chat coverage through the historical `anthropic` label.
+Host HTTP/authentication/SSE regressions and captured framework fixtures remain host-owned.
+
+The complete MiniMax M3.1 effort matrix lives in `src/models/text-generation.test.ts` and
+`src/responses/conversion.test.ts`. Host `agent-framework/opencode.test.ts` keeps one representative
+effort for each released/Preview model ID, checking both the written and pinned environment config.
+Host Skill routing retains its lowest-supported-effort policy checks.
