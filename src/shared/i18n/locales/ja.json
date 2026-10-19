@@ -50,6 +50,11 @@
     "Quit app": "アプリを終了"
   },
   "native": {
+    "Updating Open-Science…": "Open-Science を更新中…",
+    "Updating to version {{version}}": "バージョン {{version}} に更新中",
+    "Open-Science will reopen automatically when the update is ready.": "更新の準備が整うと、Open-Science が自動的に再起動します。",
+    "Hide this window": "このウィンドウを非表示",
+    "Hiding this window does not stop the update.": "このウィンドウを非表示にしても、更新は停止しません。",
     "Local State is in use by another process.": "Local State は別のプロセスで使用されています。",
     "The Local State configuration file could not be read.": "Local State 設定ファイルを読み取れませんでした。",
     "The Local State configuration file is invalid.": "Local State 設定ファイルが無効です。",

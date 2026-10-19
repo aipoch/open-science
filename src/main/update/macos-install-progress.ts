@@ -151,11 +151,18 @@ export async function startMacInstallProgress(options: {
     writeState(directory, request.operationId, 'prepared')
     const config = {
       ...request,
-      installing: options.translate('Installing the Open-Science update…'),
+      installing: options.translate('Updating Open-Science…'),
+      version: options.translate('Updating to version {{version}}', {
+        version: request.targetVersion
+      }),
+      reopening: options.translate(
+        'Open-Science will reopen automatically when the update is ready.'
+      ),
       unconfirmed: options.translate(
         'The update status could not be confirmed. Closing this window does not stop installation.'
       ),
-      close: options.translate('Close update window')
+      close: options.translate('Hide this window'),
+      closeHelp: options.translate('Hiding this window does not stop the update.')
     }
     writeFileSync(join(directory, 'config.json'), JSON.stringify(config), {
       flag: 'wx',

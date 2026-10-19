@@ -52,9 +52,9 @@
     "src/main/update/windows-install-progress.test.ts",
     "src/main/update/macos-install-progress.ts",
     "src/main/update/macos-install-progress.test.ts",
-    "build/macos-update-progress/**",
+    "build/macos-update-progress/progress.m",
     "scripts/macos-update-progress.test.ts",
-    "scripts/fixtures/macos-update-progress/**"
+    "scripts/fixtures/macos-update-progress/parent.mjs"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",

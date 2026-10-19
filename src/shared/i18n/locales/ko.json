@@ -50,6 +50,11 @@
     "Quit app": "앱 종료"
   },
   "native": {
+    "Updating Open-Science…": "Open-Science 업데이트 중…",
+    "Updating to version {{version}}": "버전 {{version}}(으)로 업데이트 중",
+    "Open-Science will reopen automatically when the update is ready.": "업데이트가 준비되면 Open-Science가 자동으로 다시 열립니다.",
+    "Hide this window": "이 창 숨기기",
+    "Hiding this window does not stop the update.": "이 창을 숨겨도 업데이트는 중지되지 않습니다.",
     "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
     "The Local State configuration file could not be read.": "Local State 구성 파일을 읽을 수 없습니다.",
     "The Local State configuration file is invalid.": "Local State 구성 파일이 올바르지 않습니다.",

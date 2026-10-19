@@ -21,10 +21,14 @@ writeFileSync(
   JSON.stringify({
     operationId,
     parentPid: process.pid,
-    installing: 'Installing the Open-Science update…',
+    applicationPath: join(root, 'Test.app/Contents/MacOS/app'),
+    installing: 'Updating Open-Science…',
+    version: 'Updating to version 1.0.12',
+    reopening: 'Open-Science will reopen automatically when the update is ready.',
     unconfirmed:
       'The update status could not be confirmed. Closing this window does not stop installation.',
-    close: 'Close update window'
+    close: 'Hide this window',
+    closeHelp: 'Hiding this window does not stop the update.'
   }),
   { mode: 0o600 }
 )

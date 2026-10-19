@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promise
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { startMacInstallProgress } from '../src/main/update/macos-install-progress'
+import { translateNativeMessage } from '../src/main/locale/main-process-messages'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 describe.skipIf(process.platform !== 'darwin')('native macOS update presentation', () => {
@@ -98,12 +99,25 @@ describe.skipIf(process.platform !== 'darwin')('native macOS update presentation
         host: '127.0.0.1',
         credentialStore: 'os'
       },
-      translate: (key) => key,
+      translate: (key, options) => translateNativeMessage('zh-Hans', key, options),
       log: { info, warn: vi.fn(), debug: vi.fn(), error: vi.fn() }
     })
     const pid = info.mock.calls[0][1].helperPid as number
     helperPids.push(pid)
     expect(alive(pid)).toBe(true)
+    const config = JSON.parse(
+      await readFile(
+        join(profilePath, 'mac-update-handoff', presentation.operationId, 'config.json'),
+        'utf8'
+      )
+    )
+    expect(config).toMatchObject({
+      installing: '正在更新 Open-Science…',
+      version: '正在更新至 1.0.2 版本',
+      reopening: '更新就绪后，Open-Science 会自动重新打开。',
+      close: '隐藏此窗口',
+      closeHelp: '隐藏此窗口不会停止更新。'
+    })
     presentation.cancel()
     await vi.waitFor(() => expect(alive(pid)).toBe(false))
   })

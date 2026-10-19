@@ -50,6 +50,11 @@
     "Quit app": "Выйти из приложения"
   },
   "native": {
+    "Updating Open-Science…": "Обновление Open-Science…",
+    "Updating to version {{version}}": "Обновление до версии {{version}}",
+    "Open-Science will reopen automatically when the update is ready.": "Open-Science автоматически откроется снова, когда обновление будет готово.",
+    "Hide this window": "Скрыть это окно",
+    "Hiding this window does not stop the update.": "Скрытие этого окна не останавливает обновление.",
     "Local State is in use by another process.": "Local State используется другим процессом.",
     "The Local State configuration file could not be read.": "Не удалось прочитать файл конфигурации Local State.",
     "The Local State configuration file is invalid.": "Файл конфигурации Local State недействителен.",
