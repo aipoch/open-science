@@ -26,6 +26,10 @@ the existing dependency policies. README files are retained because they can con
 notices. This tree is not the npm SDK publication artifact. The default staging command still
 builds `out/standalone` with its CLI/SDK declarations intact; desktop packaging neither prunes
 that tree nor reads a stale copy of it. Installed CLI commands remain available.
+Desktop staging also omits the audited renderer-only dependency roots already compiled into
+`out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
+dependencies are still copied normally. Unknown dependencies remain included. This does not
+bundle backend packages together or change their module identity or resource paths.
 
 ## Install with Homebrew (macOS/Linux)
 

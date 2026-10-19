@@ -2,6 +2,7 @@
 import {
   backendDependencyIncludes,
   createDesktopDependencyFilter,
+  desktopBackendDependencies,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -19,6 +20,12 @@ const cliManifest = JSON.parse(
   await readFile(join(root, 'packages/open-science/package.json'), 'utf8')
 )
 const forbidden = isElectronPackage
+const dependencyRoots = values.desktop
+  ? desktopBackendDependencies(
+      manifest.dependencies,
+      JSON.parse(await readFile(join(root, 'out/backend/dependencies.json'), 'utf8'))
+    )
+  : Object.keys(manifest.dependencies)
 await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
 await cp(join(root, 'out/backend'), join(stage, 'out/backend'), { recursive: true })
@@ -129,7 +136,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   }
 }
 const dependencies = {}
-for (const name of Object.keys(manifest.dependencies)) {
+for (const name of dependencyRoots) {
   if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))

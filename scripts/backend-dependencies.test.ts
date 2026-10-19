@@ -7,6 +7,7 @@ import {
   assertBackendImports,
   backendDependencyIncludes,
   createDesktopDependencyFilter,
+  desktopBackendDependencies,
   isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
@@ -14,6 +15,42 @@ import {
 } from './backend-dependencies.mjs'
 
 describe('desktop-only dependency contents', () => {
+  it('omits only audited renderer roots and keeps unclassified and dynamic runtime dependencies', () => {
+    const dependencies = {
+      '@radix-ui/react-focus-scope': '1',
+      '@rc-component/qrcode': '1',
+      'react-markdown': '1',
+      'react-remove-scroll': '1',
+      tiff: '1',
+      '@anthropic-ai/claude-agent-sdk': '1',
+      '@aipoch/credential-identity-probe-native': '1',
+      'future-runtime-package': '1'
+    }
+    expect(desktopBackendDependencies(dependencies, [{ inputs: {}, outputs: {} }])).toEqual([
+      '@anthropic-ai/claude-agent-sdk',
+      '@aipoch/credential-identity-probe-native',
+      'future-runtime-package'
+    ])
+    expect(Object.keys(dependencies)).toHaveLength(8)
+  })
+
+  it('retains a renderer root when a backend worker imports its subpath', () => {
+    const dependencies = { '@rc-component/qrcode': '1', tiff: '1' }
+    expect(
+      desktopBackendDependencies(dependencies, [
+        { inputs: {}, outputs: { 'index.cjs': { imports: [] } } },
+        {
+          inputs: {},
+          outputs: {
+            'worker.cjs': {
+              imports: [{ path: '@rc-component/qrcode/lib/index', external: true }]
+            }
+          }
+        }
+      ])
+    ).toEqual(['@rc-component/qrcode'])
+  })
+
   it.each(['/', '\\'])(
     'prunes development files without changing standalone staging (%s)',
     (separator) => {

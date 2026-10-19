@@ -30,6 +30,29 @@ export const prismaEngineFilenames = (platform = process.platform, arch = proces
 const packageName = (specifier) =>
   specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
 
+// These renderer imports are already compiled into out/web. Only omit their direct backend
+// roots: the dependency walker must still retain them if another runtime package needs them.
+export function desktopBackendDependencies(dependencies, metafiles) {
+  assertBackendImports(metafiles, dependencies)
+  const rendererRoots = new Set([
+    '@radix-ui/react-focus-scope',
+    '@rc-component/qrcode',
+    'react-markdown',
+    'react-remove-scroll',
+    'tiff'
+  ])
+  const runtimeImports = new Set(
+    metafiles.flatMap((meta) =>
+      Object.values(meta.outputs).flatMap((output) =>
+        output.imports.filter((item) => item.external).map((item) => packageName(item.path))
+      )
+    )
+  )
+  return Object.keys(dependencies).filter(
+    (name) => !rendererRoots.has(name) || runtimeImports.has(name)
+  )
+}
+
 // node-gyp keeps compiler intermediates (e.g. *.o) in build/Release/obj.target. They are dead
 // weight at runtime and, being unsigned Mach-O objects, break packaged signature verification —
 // so dependency copies for the standalone backend must never include them.
