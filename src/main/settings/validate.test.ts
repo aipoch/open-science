@@ -56,10 +56,10 @@ describe('validate: request construction', () => {
         baseUrl: 'https://tokenhub.tencentmaas.com',
         model: 'hy4-preview',
         key: 'tokenhub-key',
-        apiEndpoints: ['anthropic', 'openai', 'responses']
+        apiEndpoints: ['messages', 'chat-completions', 'responses']
       },
       false,
-      ['anthropic']
+      ['messages']
     )
 
     expect(request.url).toBe('https://tokenhub.tencentmaas.com/v1/messages')
@@ -88,10 +88,10 @@ describe('validate: request construction', () => {
         baseUrl,
         model,
         key: 'plan-key',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       },
       false,
-      ['anthropic']
+      ['messages']
     )
 
     expect(request.url).toBe(`${baseUrl}/v1/messages`)
@@ -112,7 +112,7 @@ describe('validate: request construction', () => {
       baseUrl: 'https://gateway.example.com',
       model: 'gpt-x',
       key: 'test-token',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
 
     expect(JSON.parse(request.body)).toEqual({
@@ -131,7 +131,7 @@ describe('validate: request construction', () => {
         baseUrl: 'https://gateway.example.com',
         model: 'gpt-x',
         key: 'test-token',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       },
       true
     )
@@ -161,7 +161,7 @@ describe('validate: request construction', () => {
       model: 'openai/gpt-5.4-mini',
       key: 'synthetic-key'
     })
-    const messages = buildValidationRequest(provider, false, ['anthropic'])
+    const messages = buildValidationRequest(provider, false, ['messages'])
     expect(messages.url).toBe('https://router.requesty.ai/v1/messages')
     expect(JSON.parse(messages.body).max_tokens).toBe(16)
 
@@ -177,7 +177,7 @@ describe('validate: request construction', () => {
       baseUrl: 'https://gateway.example.com/v1',
       model: 'm',
       key: 'k',
-      apiEndpoints: ['anthropic', 'openai']
+      apiEndpoints: ['messages', 'chat-completions']
     })
 
     // preferredEndpoint(both) → openai, so the probe hits chat/completions once.
@@ -190,16 +190,16 @@ describe('validate: request construction', () => {
       baseUrl: 'https://gateway.example.com/v1',
       model: 'm',
       key: 'k',
-      apiEndpoints: ['anthropic', 'openai'] as const
+      apiEndpoints: ['messages', 'chat-completions'] as const
     }
 
     // A framework that only speaks Anthropic must probe /v1/messages, even though the provider also
     // offers OpenAI (which the framework-agnostic preference would otherwise pick).
-    expect(buildValidationRequest(provider, false, ['anthropic']).url).toBe(
+    expect(buildValidationRequest(provider, false, ['messages']).url).toBe(
       'https://gateway.example.com/v1/messages'
     )
     // A framework that speaks OpenAI probes chat/completions for the same provider.
-    expect(buildValidationRequest(provider, false, ['anthropic', 'openai']).url).toBe(
+    expect(buildValidationRequest(provider, false, ['messages', 'chat-completions']).url).toBe(
       'https://gateway.example.com/v1/chat/completions'
     )
   })
@@ -229,10 +229,10 @@ describe('validate: request construction', () => {
     const request = buildValidationRequest({
       type: 'custom',
       baseUrl: 'https://ark.cn-beijing.volces.com/api/compatible',
-      openaiBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
+      chatCompletionsBaseUrl: 'https://ark.cn-beijing.volces.com/api/v3',
       model: 'doubao-seed-2-1-pro-260628',
       key: 'test-token',
-      apiEndpoints: ['anthropic', 'openai', 'responses']
+      apiEndpoints: ['messages', 'chat-completions', 'responses']
     })
 
     expect(request.url).toBe('https://ark.cn-beijing.volces.com/api/v3/responses')
@@ -242,11 +242,11 @@ describe('validate: request construction', () => {
     const request = buildValidationRequest({
       type: 'custom',
       baseUrl: 'https://api.deepseek.com/anthropic',
-      openaiBaseUrl: 'https://api.deepseek.com/v1',
+      chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
       responsesBaseUrl: 'https://api.deepseek.com',
       model: 'deepseek-flash',
       key: 'test-token',
-      apiEndpoints: ['anthropic', 'openai', 'responses']
+      apiEndpoints: ['messages', 'chat-completions', 'responses']
     })
 
     expect(request.url).toBe('https://api.deepseek.com/responses')
@@ -392,7 +392,7 @@ describe('validate: provider dispatch', () => {
 
     const result = await validateProvider(
       { type: 'custom', baseUrl: 'https://api.kimi.com/coding', key: 'k', model: 'kimi-k3' },
-      { fetchImpl: fetchImpl as unknown as typeof fetch, frameworkEndpoints: ['anthropic'] }
+      { fetchImpl: fetchImpl as unknown as typeof fetch, frameworkEndpoints: ['messages'] }
     )
 
     expect(result).toMatchObject({ ok: true, category: 'ok', status: 200 })
@@ -442,7 +442,13 @@ describe('validate: provider dispatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -453,7 +459,13 @@ describe('validate: provider dispatch', () => {
     const fetchImpl = vi.fn().mockResolvedValue(chatSseResponse())
 
     await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -477,15 +489,15 @@ describe('validate: provider dispatch', () => {
 
   it('probes a GLM dual-endpoint provider at its verbatim OpenAI base, not a hard-coded /v1', async () => {
     // apiEndpoints ['anthropic','openai'] → OpenAI wins; the OpenAI base is the vendor's exact
-    // openaiBaseUrl (GLM's /api/paas/v4), so the probe must hit /api/paas/v4/chat/completions.
+    // chatCompletionsBaseUrl (GLM's /api/paas/v4), so the probe must hit /api/paas/v4/chat/completions.
     const fetchImpl = vi.fn().mockResolvedValue({ status: 200 } as Response)
 
     await validateProvider(
       {
         type: 'custom',
-        apiEndpoints: ['anthropic', 'openai'],
+        apiEndpoints: ['messages', 'chat-completions'],
         baseUrl: 'https://api.z.ai/api/anthropic',
-        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
+        chatCompletionsBaseUrl: 'https://api.z.ai/api/paas/v4',
         model: 'glm-5.2',
         key: 'k'
       },
@@ -501,7 +513,7 @@ describe('validate: provider dispatch', () => {
     await validateProvider(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://host/proxy',
         model: 'm',
         key: 'k'
@@ -520,7 +532,13 @@ describe('validate: provider dispatch', () => {
       )
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -540,7 +558,13 @@ describe('validate: provider dispatch', () => {
       )
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -553,7 +577,13 @@ describe('validate: provider dispatch', () => {
       .mockResolvedValue(new Response('{"error":{"message":"Gateway timeout"}}', { status: 502 }))
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -575,7 +605,13 @@ describe('validate: provider dispatch', () => {
       )
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 
@@ -597,7 +633,13 @@ describe('validate: provider dispatch', () => {
       )
 
     const result = await validateProvider(
-      { type: 'custom', apiEndpoints: ['openai'], baseUrl: 'https://g/v1', key: 'k', model: 'm' },
+      {
+        type: 'custom',
+        apiEndpoints: ['chat-completions'],
+        baseUrl: 'https://g/v1',
+        key: 'k',
+        model: 'm'
+      },
       { fetchImpl: fetchImpl as unknown as typeof fetch, requireBridgeToolCall: true }
     )
 

@@ -1,9 +1,9 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { useDesktopRuntimeRecoveryStore } from '../../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { i18next } from '@/i18n'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type {
@@ -12,6 +12,13 @@ import type {
 } from '@aipoch/literature-library/contracts'
 import type { ProjectFileItem } from '../../../../../shared/project-files'
 import { ArtifactMentionPopup } from './ArtifactMentionPopup'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 let container: HTMLDivElement
 let root: Root

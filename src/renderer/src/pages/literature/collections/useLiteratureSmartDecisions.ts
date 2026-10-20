@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { useRef, useState } from 'react'
@@ -73,6 +74,8 @@ export function useLiteratureSmartDecisions({
     singleRecord?: boolean
   ) => Promise<void>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [pendingDecisions, setPendingDecisions] = useState<Set<string>>(new Set())
   const decisionQueue = useRef(Promise.resolve())
@@ -116,7 +119,7 @@ export function useLiteratureSmartDecisions({
         if (currentCollectionId.current === targetCollectionId) setError(undefined)
         setDecisionFailures((current) => current.filter((failure) => failure.key !== operationKey))
         try {
-          const receipt = await window.api.literature.transact({
+          const receipt = await hostApi.literature.transact({
             kind: 'smart-collection',
             collectionId: targetCollectionId,
             action: 'override',

@@ -6,6 +6,8 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   ReviewWithChecks,
+  ReviewLogRequest,
+  ReviewerLogEntry,
   ReviewRunRequest,
   ReviewRunResult,
   ReviewUpdateEvent,
@@ -14,7 +16,7 @@ import type {
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
-import { createLogger } from '@aipoch/diagnostics/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { runReview as RunReview } from './orchestrator'
 import {
   resolveCorrectionResume,
@@ -30,6 +32,7 @@ import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
+import type { HostArtifactVersionRecord } from '../project-files/repository'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 import {
@@ -128,7 +131,8 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'> &
+    Partial<Pick<ManagedFileVersionService, 'openExactVersionContent'>>
   artifactCatalog?: {
     readHostArtifactCatalog(request: {
       projectId: string
@@ -142,6 +146,11 @@ type ReviewerIpcOptions = {
         versionId: string
       }>
     >
+    // Optional so existing test doubles keep the per-version fallback.
+    readHostArtifactVersionRecords?(request: {
+      projectId: string
+      versionIds: readonly string[]
+    }): Promise<HostArtifactVersionRecord[]>
   }
   artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'getReviewerVersionTrace'> &
     Partial<Pick<ArtifactProvenanceRepository, 'resolveReviewerTurnFileEvidence'>>
@@ -186,6 +195,7 @@ type ReviewerCommandOwner = Readonly<{
   run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
+  getReviewLog: (request: ReviewLogRequest) => Promise<ReviewerLogEntry[]>
   abort: (request: ReviewSessionRequest) => void
   abortFixLoop: (request: ReviewSessionRequest) => void
 }>
@@ -290,6 +300,51 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           }
         }
       : undefined
+  // The list load batches the exact versions referenced by the returned Reviews. The project catalog
+  // only exposes current heads, so historical reviewed versions still need this exact-version path.
+  // Any miss (or a batch failure) falls back to the per-version resolver above.
+  const createLoadArtifactVersionResolver = (
+    reviews: ReviewWithChecks[]
+  ): ArtifactVersionContentResolver | undefined => {
+    if (!resolveArtifactVersion) return undefined
+    const readBatch = options.artifactCatalog?.readHostArtifactVersionRecords
+    const openExact = options.managedFileVersions?.openExactVersionContent
+    const projectId = reviews[0]?.projectId
+    if (!readBatch || !openExact || !projectId) return resolveArtifactVersion
+    const versionIds = [...new Set(reviews.flatMap((review) => review.scope.artifactVersionIds))]
+    if (versionIds.length === 0) return resolveArtifactVersion
+
+    let batch: Promise<Map<string, HostArtifactVersionRecord>> | undefined
+    const loadBatch = (): Promise<Map<string, HostArtifactVersionRecord>> => {
+      batch ??= readBatch
+        .call(options.artifactCatalog, { projectId, versionIds })
+        .then((records) => new Map(records.map((record) => [record.versionId, record])))
+        .catch((error: unknown) => {
+          log.warn('review staleness batch lookup failed', { error: toErrorMessage(error) })
+          return new Map<string, HostArtifactVersionRecord>()
+        })
+      return batch
+    }
+
+    return async (request) => {
+      const record = (await loadBatch()).get(request.versionId)
+      if (!record) return resolveArtifactVersion(request)
+      if (request.sessionId && record.sessionId !== request.sessionId) {
+        return resolveArtifactVersion(request)
+      }
+      const lease = await openExact.call(options.managedFileVersions, record)
+      return {
+        path: lease.path,
+        filename: lease.filename,
+        ...(lease.contentType ? { contentType: lease.contentType } : {}),
+        checksum: lease.checksum,
+        size: lease.size,
+        readRange: lease.readRange,
+        verifyUnchanged: lease.verifyUnchanged,
+        close: lease.close
+      }
+    }
+  }
   const projectRuntime = options.projectRuntime ?? new ReviewerProjectRuntimeOwner()
   // Per-session abort capabilities for active and queued fix loops. Keyed by the main session id
   // (not the reviewer session id). Project deletion owns the same signal, so user cancellation and
@@ -311,20 +366,36 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
   const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
-    await ensureRecovery()
-    const reviews = await reviewRepository.getReviewsForProjectSession(
-      request.projectId,
-      request.appSessionId
-    )
-    let session: PersistedChatSession | undefined
     try {
-      session = await sessionReader.loadSession(request.projectId, request.appSessionId)
-    } catch {
-      return reviews.map((review) =>
-        review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+      await ensureRecovery()
+      const reviews = await reviewRepository.getReviewSummariesForProjectSession(
+        request.projectId,
+        request.appSessionId
       )
+      let session: PersistedChatSession | undefined
+      try {
+        session = await sessionReader.loadSession(request.projectId, request.appSessionId)
+      } catch {
+        return reviews.map((review) =>
+          review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+        )
+      }
+      return flagStaleReviews(
+        reviews,
+        session,
+        dataRoot,
+        createLoadArtifactVersionResolver(reviews)
+      )
+    } catch (error) {
+      // Preserve the rejection for the caller, but keep the cause diagnosable. The transport's
+      // response-byte budget failure happens after this handler resolves and is logged separately.
+      log.error('review history load failed', {
+        projectId: request.projectId,
+        sessionId: request.appSessionId,
+        ...errorLogFields(error)
+      })
+      throw error
     }
-    return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
 
   const abortFixLoop = (request: ReviewSessionRequest): void => {
@@ -811,6 +882,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     triggerReview: (request) => triggerReview(request),
     onSessionUpdated,
     getForSession,
+    getReviewLog: (request) => reviewRepository.getReviewLog(request),
     abort,
     abortFixLoop
   }
@@ -825,6 +897,9 @@ const registerReviewerIpcHandlers = (
   ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => owner.run(request))
   ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, (_event, request: ReviewSessionRequest) =>
     owner.getForSession(request)
+  )
+  ipcMainHandle(REVIEWER_IPC.GET_REVIEW_LOG, (_event, request: ReviewLogRequest) =>
+    owner.getReviewLog(request)
   )
   ipcMainHandle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) =>
     owner.abortFixLoop(request)

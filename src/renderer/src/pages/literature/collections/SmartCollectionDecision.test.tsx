@@ -1,12 +1,21 @@
-import { SmartRuleSummary } from './SmartRuleSummary'
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { SmartRuleSummary } from './SmartRuleSummary'
 import { afterEach, expect, it, vi } from 'vitest'
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import {
   SmartCollectionAssessment,
   SmartCollectionDecisionActions
 } from './SmartCollectionDecision'
 import type { SmartCollectionRow } from '@aipoch/literature-screening/contracts'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
 afterEach(cleanup)
 
 const assessedRow = (

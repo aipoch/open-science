@@ -66,13 +66,6 @@ const matchingLayoutReports = (
   })
 }
 
-type CheckpointRow = {
-  payloadJson: string
-  layoutSnapshotJson?: string | null
-  revision: number
-  blocks: { sourceIndex: number; translation: string | null; revision: number }[]
-}
-
 const checkpointPayload = (checkpoint: PdfTranslationCheckpoint): string =>
   JSON.stringify({ ...checkpoint, layoutSnapshot: undefined })
 const freezeSnapshot = (value: unknown): void => {
@@ -84,7 +77,7 @@ const freezeSnapshot = (value: unknown): void => {
 
 // A run uses CAS after each accepted paragraph; a stale window cannot replace newer work.
 export class PdfTranslationCheckpoints {
-  // Only immutable snapshots read or committed by this owner can use block-sized writes.
+  // Only immutable snapshots committed by this owner can use block-sized writes.
   private readonly persistedLengths = new WeakMap<PdfTranslationCheckpoint, number>()
   private readonly storageReferences = new WeakMap<PdfTranslationCheckpoint, StorageReference>()
 
@@ -182,10 +175,10 @@ export class PdfTranslationCheckpoints {
           id: row.id,
           key: pdfTranslationCheckpointSchema.shape.key.parse(row.key),
           language: pdfTranslationCheckpointSchema.shape.language.parse(row.language),
-          glossary: pdfTranslationCheckpointSchema.shape.glossary.parse(JSON.parse(row.glossary)),
+          glossary: pdfTranslationCheckpointSchema.shape.glossary.parse(row.glossary),
           concurrency:
             pdfTranslationCheckpointSchema.shape.concurrency.parse(Number(row.concurrency)) ?? 1,
-          model: pdfTranslationCheckpointSchema.shape.model.parse(JSON.parse(row.model)),
+          model: pdfTranslationCheckpointSchema.shape.model.parse(row.model),
           updatedAt: new Date(row.updatedAt).getTime()
         }))
       })
@@ -224,7 +217,7 @@ export class PdfTranslationCheckpoints {
         const source = await tx.requireSource(identity)
         const contentId = await tx.requireDocument(identity, source)
         signal?.throwIfAborted()
-        // Cascade only this edition's blocks, never the PDF or other editions.
+        // Delete only this edition; other source editions remain available.
         const result = await tx.delete(request.translationId, contentId)
         if (!result) throw new Error('Translation edition is unavailable.')
         signal?.throwIfAborted()
@@ -251,9 +244,7 @@ export class PdfTranslationCheckpoints {
           storageMs: decodedAt - startedAt,
           decodeMs: performance.now() - decodedAt,
           sourceCount: checkpoint?.sources.length ?? 0,
-          blockCount: row?.blocks.length ?? 0,
-          payloadChars: row?.payloadJson.length ?? 0,
-          layoutSnapshotChars: row?.layoutSnapshotJson?.length ?? 0
+          translatedCount: checkpoint?.translations.length ?? 0
         })
         return checkpoint
       })
@@ -261,72 +252,23 @@ export class PdfTranslationCheckpoints {
   }
 
   private decode(
-    row: CheckpointRow | null,
+    record: TranslationStoredCheckpoint | null,
     identity: CheckpointIdentity
   ): PdfTranslationCheckpoint | null {
-    if (!row) return null
-    if (row.payloadJson.length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
-    let value = pdfTranslationCheckpointSchema.parse(JSON.parse(row.payloadJson))
-    if (value.checksum !== identity.checksum || value.revision !== row.revision)
-      throw new Error('Translation source changed.')
-    // The payload's original entry point may have been removed. Only the verified current
-    // source is exposed to the renderer; the immutable content and saved layout stay shared.
+    if (!record) return null
+    let value = pdfTranslationCheckpointSchema.parse(record.checkpoint)
+    if (checkpointPayload(value).length > 8 * 1024 * 1024)
+      throw new Error('Invalid translation checkpoint.')
+    if (value.checksum !== identity.checksum) throw new Error('Translation source changed.')
+    // The consumer may retain an old entry point; only the authorized current source is exposed.
     value = { ...value, ...identity }
-    const state = row.blocks.find((block) => block.sourceIndex === -1)
-    const blocks = row.blocks.filter((block) => block.sourceIndex !== -1)
-    if (state) {
-      if (
-        state.translation !== null ||
-        state.revision < value.revision ||
-        (blocks.length ? Math.max(...blocks.map((block) => block.revision)) : value.revision) !==
-          state.revision ||
-        blocks.some(
-          (block) =>
-            block.revision <= value.revision ||
-            block.sourceIndex < 0 ||
-            block.sourceIndex >= value.sources.length
-        )
-      )
-        throw new Error('Invalid translation checkpoint.')
-      const accepted = new Map(
-        pdfTranslationSourceIndices(value).map((index, position) => [
-          index,
-          value.translations[position]
-        ])
-      )
-      const failed = new Set(value.failedSourceIndices ?? [])
-      for (const block of blocks) {
-        if (block.translation === null) {
-          accepted.delete(block.sourceIndex)
-          failed.add(block.sourceIndex)
-        } else {
-          accepted.set(block.sourceIndex, block.translation)
-          failed.delete(block.sourceIndex)
-        }
-      }
-      const entries = [...accepted].sort(([a], [b]) => a - b)
-      value = pdfTranslationCheckpointSchema.parse({
-        ...value,
-        version: 1,
-        revision: state.revision,
-        translations: entries.map(([, text]) => text),
-        translatedSourceIndices: entries.map(([index]) => index),
-        failedSourceIndices: [...failed].sort((a, b) => a - b),
-        ...(value.failures
-          ? { failures: value.failures.filter(({ sourceIndex }) => failed.has(sourceIndex)) }
-          : {})
-      })
-    } else if (blocks.length) throw new Error('Invalid translation checkpoint.')
-    if (row.layoutSnapshotJson) {
-      if (row.layoutSnapshotJson.length > 32 * 1024 * 1024)
-        throw new Error('Invalid PDF layout snapshot.')
-      const snapshot = pdfTranslationLayoutSnapshotSchema.parse(JSON.parse(row.layoutSnapshotJson))
-      if (!pdfTranslationSnapshotMatchesSources(snapshot, value.fingerprint, value.sources))
-        throw new Error('PDF layout snapshot does not match translation.')
-      value = { ...value, layoutSnapshot: snapshot }
-    }
+    if (
+      value.layoutSnapshot &&
+      !pdfTranslationSnapshotMatchesSources(value.layoutSnapshot, value.fingerprint, value.sources)
+    )
+      throw new Error('PDF layout snapshot does not match translation.')
     if (value.layoutReports) value = { ...value, layoutReports: matchingLayoutReports(value) }
-    return state ? this.remember(value, checkpointPayload(value).length) : value
+    return value
   }
 
   // One-time adoption for legacy checkpoints. Never replace a run's existing layout or
@@ -341,7 +283,7 @@ export class PdfTranslationCheckpoints {
         const source = await tx.requireSource(identity)
         const row = await this.readStored(tx, identity, source, request.checkpointKey)
         if (!row) throw new Error('Translation checkpoint no longer exists.')
-        const current = pdfTranslationCheckpointSchema.parse(JSON.parse(row.payloadJson))
+        const current = pdfTranslationCheckpointSchema.parse(row.checkpoint)
         if (
           current.key !== request.checkpointKey ||
           current.checksum !== identity.checksum ||
@@ -353,13 +295,14 @@ export class PdfTranslationCheckpoints {
         )
           throw new Error('PDF layout snapshot does not match translation.')
         const snapshotJson = JSON.stringify(request.snapshot)
-        if (row.layoutSnapshotJson) {
-          if (row.layoutSnapshotJson !== snapshotJson)
+        if (row.checkpoint.layoutSnapshot) {
+          if (JSON.stringify(row.checkpoint.layoutSnapshot) !== snapshotJson)
             throw new Error('PDF layout snapshot is already pinned.')
           return
         }
         signal.throwIfAborted()
-        await tx.pinLayout(row.id, snapshotJson)
+        await tx.pinLayout(row.id, request.snapshot)
+        signal.throwIfAborted()
       })
     })
   }
@@ -415,16 +358,13 @@ export class PdfTranslationCheckpoints {
           })
         }
         if (!committed.length) return []
-        // Keep the base revision and block overrides intact: diagnostics never invalidate an
-        // in-flight translation CAS. Successful reports are tombstones for late old failures.
-        const base = pdfTranslationCheckpointSchema.parse(JSON.parse(row.payloadJson))
-        const payloadJson = JSON.stringify({
-          ...base,
-          layoutReports: [...reports.values()].sort((a, b) => a.sourceIndex - b.sourceIndex)
-        })
-        if (payloadJson.length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
+        // Layout diagnostics never invalidate an in-flight translation revision.
+        const layoutReports = [...reports.values()].sort((a, b) => a.sourceIndex - b.sourceIndex)
+        if (checkpointPayload({ ...current, layoutReports }).length > 8 * 1024 * 1024)
+          throw new Error('Invalid translation checkpoint.')
         signal.throwIfAborted()
-        await tx.updatePayload(row.id, payloadJson)
+        await tx.updateLayoutReports(row.id, layoutReports)
+        signal.throwIfAborted()
         return committed
       })
       const failures = applied.filter((report) => report.failure)
@@ -518,9 +458,7 @@ export class PdfTranslationCheckpoints {
           contentId: await tx.requireDocument(identity, source),
           checksum: identity.checksum,
           sizeBytes: source.sizeBytes,
-          revision: opened.revision,
-          payloadJson: checkpointPayload(opened),
-          layoutSnapshotJson: opened.layoutSnapshot ? JSON.stringify(opened.layoutSnapshot) : null
+          checkpoint: opened
         })
       })
     )
@@ -600,7 +538,7 @@ export class PdfTranslationCheckpoints {
       // Successful paragraphs without changed diagnostics retain block-sized upserts.
       const incremental = previousLength !== undefined && !diagnosticsChanged
       let next: PdfTranslationCheckpoint
-      let payloadJson: string | undefined
+      let serializedCheckpoint: string | undefined
       let length: number
       if (incremental) {
         pdfTranslationCheckpointSchema.shape.revision.parse(candidate.revision)
@@ -629,8 +567,8 @@ export class PdfTranslationCheckpoints {
       } else {
         // New runs, legacy prefixes and reconciled extraction changes replace the base once.
         next = pdfTranslationCheckpointSchema.parse(candidate)
-        payloadJson = checkpointPayload(next)
-        length = payloadJson.length
+        serializedCheckpoint = checkpointPayload(next)
+        length = serializedCheckpoint.length
       }
       const snapshotBuildMs = performance.now() - startedAt
       const request = checkpoint.sourceId
@@ -655,37 +593,29 @@ export class PdfTranslationCheckpoints {
         )
           throw new Error('Translation source changed.')
         committedId = reference.id
-        let layoutReportsJson: string | undefined
+        let layoutReports: PdfTranslationCheckpoint['layoutReports']
         if (incremental && replaceExisting) {
-          const reportsJson = await tx.readLayoutReports(reference.id)
-          if (reportsJson) {
-            const storedReports = pdfTranslationLayoutReportSchema
-              .array()
-              .max(10000)
-              .parse(JSON.parse(reportsJson))
-            const reports = matchingLayoutReports(next, storedReports)
+          const reports = await tx.readLayoutReports(reference.id)
+          if (reports) {
+            const storedReports = pdfTranslationLayoutReportSchema.array().max(10000).parse(reports)
+            const matching = matchingLayoutReports(next, storedReports)
             length +=
-              JSON.stringify(reports).length - JSON.stringify(next.layoutReports ?? []).length
-            next = { ...next, layoutReports: reports }
+              JSON.stringify(matching).length - JSON.stringify(next.layoutReports ?? []).length
+            next = { ...next, layoutReports: matching }
             if (length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
-            if (reports.length !== storedReports.length) layoutReportsJson = JSON.stringify(reports)
+            if (matching.length !== storedReports.length) layoutReports = matching
           }
         }
         if (!incremental) {
           // Snapshot replacement must merge the latest independently committed layout reports.
           // Never copy reports from another run, changed extraction or replaced translations.
-          const stored = await tx.readBase(reference.id)
-          const current = stored
-            ? pdfTranslationCheckpointSchema.parse(JSON.parse(stored.payloadJson))
-            : undefined
-          if (current?.key === next.key && stored?.layoutSnapshotJson) {
-            const snapshot = pdfTranslationLayoutSnapshotSchema.parse(
-              JSON.parse(stored.layoutSnapshotJson)
-            )
+          const current = await tx.readMetadata(reference.id)
+          if (current?.key === next.key && current.layoutSnapshot) {
+            const snapshot = pdfTranslationLayoutSnapshotSchema.parse(current.layoutSnapshot)
             if (
               !pdfTranslationSnapshotMatchesSources(snapshot, next.fingerprint, next.sources) ||
               (next.layoutSnapshot &&
-                JSON.stringify(next.layoutSnapshot) !== stored.layoutSnapshotJson)
+                JSON.stringify(next.layoutSnapshot) !== JSON.stringify(snapshot))
             )
               throw new Error('PDF layout snapshot is already pinned.')
             next = { ...next, layoutSnapshot: snapshot }
@@ -700,23 +630,16 @@ export class PdfTranslationCheckpoints {
             ...next,
             ...(current?.layoutReports || next.layoutReports ? { layoutReports: reports } : {})
           }
-          payloadJson = checkpointPayload(next)
-          length = payloadJson.length
+          serializedCheckpoint = checkpointPayload(next)
+          length = serializedCheckpoint.length
           if (length > 8 * 1024 * 1024) throw new Error('Invalid translation checkpoint.')
         }
         const updated = await tx.commit(reference.id, checkpoint.revision, {
-          revision: next.revision,
+          checkpoint: next,
           ...(incremental
-            ? { block: { sourceIndex: index, translation: text ?? null } }
-            : {
-                base: {
-                  payloadJson: payloadJson!,
-                  layoutSnapshotJson: next.layoutSnapshot
-                    ? JSON.stringify(next.layoutSnapshot)
-                    : null
-                }
-              }),
-          ...(layoutReportsJson !== undefined ? { layoutReportsJson } : {})
+            ? { changedBlock: { sourceIndex: index, translation: text ?? null } }
+            : {}),
+          ...(layoutReports !== undefined ? { layoutReports } : {})
         })
         if (!updated) throw new Error('Translation changed in another window.')
         signal.throwIfAborted()
@@ -729,7 +652,8 @@ export class PdfTranslationCheckpoints {
         incremental,
         durationMs: performance.now() - startedAt,
         writtenTextBytes: text === undefined ? 0 : Buffer.byteLength(text, 'utf8'),
-        baseSnapshotBytes: payloadJson === undefined ? 0 : Buffer.byteLength(payloadJson, 'utf8'),
+        baseSnapshotBytes:
+          serializedCheckpoint === undefined ? 0 : Buffer.byteLength(serializedCheckpoint, 'utf8'),
         snapshotBuildMs,
         snapshotCharacters: length
       })

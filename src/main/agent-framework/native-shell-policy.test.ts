@@ -19,7 +19,7 @@ describe('native shell policy', () => {
     const opencode = opencodeFramework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://gateway.example/v1',
         model: 'test-model',
         key: 'test-key'
@@ -43,7 +43,7 @@ describe('native shell policy', () => {
     const codebuddy = createCodeBuddyFramework({ platform: 'linux' }).prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://gateway.example/v1',
         model: 'test-model',
         key: 'test-key'

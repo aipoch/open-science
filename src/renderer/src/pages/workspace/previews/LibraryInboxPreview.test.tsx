@@ -1,13 +1,21 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import {
   type LiteratureCatalogSearchRequest,
   type LiteratureInboxCandidateView
 } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { LibraryInboxPreview } from './LibraryInboxPreview'
 import LibraryPreview from './LibraryPreview'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const openLibrary = vi.hoisted(() => vi.fn())
 vi.mock('@/stores/navigation-store', () => ({

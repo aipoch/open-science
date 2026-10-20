@@ -198,6 +198,7 @@ export const WEB_INVOKE_CHANNELS = {
   'remoteAccess.revokeBrowsers': 'remote-access:revoke-browsers',
   'reviewer.abortFixLoop': 'reviewer:abort-fix-loop',
   'reviewer.getForSession': 'reviewer:get-for-session',
+  'reviewer.getReviewLog': 'reviewer:get-review-log',
   'reviewer.run': 'reviewer:run',
   'runtime.describeUsage': 'runtime:describe-usage',
   'runtime.getAgentEnvironmentCreationEnabled': 'runtime:get-agent-environment-creation-enabled',

@@ -1,5 +1,6 @@
 import { createLogger } from '@aipoch/diagnostics/node'
-import { LiteratureIndex, type IndexDatabase } from '@aipoch/literature-reading'
+import { LiteratureIndex } from '@aipoch/literature-reading'
+import { openSqliteLiteratureIndex, type IndexDatabase } from './full-text-index-storage'
 import { PrismaClient, type Prisma } from '@prisma/client'
 import { access, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -35,7 +36,9 @@ export const literatureIndex = (storageRoot: string): LiteratureIndex => {
         const client = new PrismaClient({
           datasources: { db: { url: `file:${path}?connection_limit=1` } }
         })
-        return adapt(client, client)
+        return openSqliteLiteratureIndex(adapt(client, client), (message, fields) =>
+          log.info(message, fields)
+        )
       },
       exists: async () => {
         try {

@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "1.0.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -18,6 +18,8 @@
     "test": "vitest run",
     "test:notebook-analysis-native": "npm run test:native --prefix packages/notebook-analysis",
     "test:module": "npm run build:packages && node scripts/ci/module-test-impact.mjs module",
+    "pretest:module:arguments": "npm run pretest",
+    "test:module:arguments": "node scripts/ci/run-vitest-arguments.mjs",
     "test:affected": "npm run build:packages && node scripts/ci/module-test-impact.mjs affected",
     "test:affected:explain": "node scripts/ci/module-test-impact.mjs affected --explain",
     "build:e2e": "npm run build:packages -- --clean && npm run build:backend:compiled && npm run stage:node-runtime && npm run build:web:compiled && node --max-old-space-size=4096 node_modules/electron-vite/bin/electron-vite.js build",
@@ -119,7 +121,8 @@
     "generate:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --write",
     "check:module-consumers": "node scripts/ci/generate-module-derived-consumers.mjs --check",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
-    "check:test-impact-package": "node scripts/check-test-impact-package.mjs"
+    "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
+    "check:providers-package": "node scripts/check-providers-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -135,7 +138,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@embedpdf/pdfium": "2.15.1",
     "@huggingface/transformers": "4.2.0",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@napi-rs/canvas": "0.1.100",
     "@peculiar/x509": "2.1.0",
     "@prisma/client": "^6.19.3",
@@ -188,7 +191,8 @@
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
     "@aipoch/literature-reading": "file:packages/literature-reading",
-    "semver": "^7.7.3"
+    "semver": "^7.7.3",
+    "@aipoch/providers": "file:packages/providers"
   },
   "overrides": {
     "@huggingface/transformers": {

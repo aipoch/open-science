@@ -1,4 +1,5 @@
 import * as acp from '@agentclientprotocol/sdk'
+import { randomUUID } from 'node:crypto'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
@@ -74,6 +75,8 @@ const composeAcpRuntimePromptOwners = (
   host: AcpRuntimePromptHost
 ) => {
   const callbacks = options.callbacks ?? {}
+  // Persisted skill activities outlive the runtime's prompt sequence.
+  const skillActivityNamespace = randomUUID()
   // Connection teardown may release an interaction before its finalizer unwinds. Keep callback
   // ownership separate from terminal outcomes so every published start has exactly one end.
   const startedPromptTurns = new Map<string, string>()
@@ -117,7 +120,7 @@ const composeAcpRuntimePromptOwners = (
         kind: 'tool',
         level: status === 'failed' ? 'error' : 'info',
         sessionId,
-        toolCallId: `open-science-skill-${promptTurn}-${index}`,
+        toolCallId: `open-science-skill-${skillActivityNamespace}-${promptTurn}-${index}`,
         providerToolName: 'skill',
         title: `Loaded skill: ${name}`,
         status

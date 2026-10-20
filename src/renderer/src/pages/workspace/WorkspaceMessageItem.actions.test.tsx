@@ -1,14 +1,10 @@
 // @vitest-environment jsdom
-// Pins the user-bubble hover actions and the inline edit flow: copy writes the prompt to the
-// clipboard, edit swaps the bubble for a multi-line editor, and confirming resends the prompt —
-// with a warning first when several later turns would be deleted.
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import type { ChatMessage } from '@/stores/session-store'
-
 import type { SendEditedMessage } from './workspace-edited-message'
 import type { EditAnnotationTarget } from './WorkspaceMessageItem'
 import type { Annotation, TextAnnotation } from '../../../../shared/annotations'
@@ -16,6 +12,17 @@ import { ComposerEditor } from './composer/ComposerEditor'
 import { domToDoc, docToMessageParts, emptyDoc } from './composer/composer-doc'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
+// Pins the user-bubble hover actions and the inline edit flow: copy writes the prompt to the
+// clipboard, edit swaps the bubble for a multi-line editor, and confirming resends the prompt —
+// with a warning first when several later turns would be deleted.
 
 const WorkspaceMessageItem = (
   props: React.ComponentProps<typeof MessageItem>

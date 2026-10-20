@@ -1,5 +1,5 @@
 import type { SessionConfigOption } from '@agentclientprotocol/sdk'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 
 // The config option id + value to apply via session/set_config_option. `alreadyCurrent` flags the
 // case where the option's currentValue already equals the desired model — the caller should treat

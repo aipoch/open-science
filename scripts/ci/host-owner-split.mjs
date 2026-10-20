@@ -3,6 +3,137 @@ import { execFileSync } from 'node:child_process'
 import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
 import { isModuleImpactRegistrationPath } from './load-module-impact.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { derivedConsumersPath, withDerivedConsumers } from './module-derived-consumers.mjs'
+
+// Existing owners can exchange unchanged host paths without copying unrelated interfaces.
+// Unlike a split, this proof retains every historical test bucket and authorizes no retirement.
+export function verifiedExistingHostOwnerTransfers(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  { cwd = process.cwd() } = {}
+) {
+  const contains = (after, before) => before.every((entry) => after.includes(entry))
+  const hostPath = (path) => /^src\/(?:main|renderer)\/.*\.[cm]?[jt]sx?$/.test(path)
+  const protectedOwner = (module) =>
+    module.fullTestReason ||
+    module.ownerPaths.some((path) => /^(?:src\/(?!main\/|renderer\/)|packages\/)/.test(path))
+  const retainsHistory = (before, after) =>
+    contains(after.interfacePaths, before.interfacePaths) &&
+    ['owner', 'contract', 'consumer'].every((kind) =>
+      contains(after.testFiles[kind], before.testFiles[kind])
+    ) &&
+    contains(after.consumerModules, before.consumerModules) &&
+    contains(after.capabilityOverlays, before.capabilityOverlays) &&
+    after.fallbackCapability === before.fallbackCapability
+  try {
+    const transfers = []
+    for (const [id, original] of Object.entries(baseManifest.modules)) {
+      const remaining = headManifest.modules[id]
+      if (!remaining || protectedOwner(original) || protectedOwner(remaining)) continue
+      const paths = original.ownerPaths.filter((path) => !remaining.ownerPaths.includes(path))
+      if (!paths.length || paths.some((path) => !hostPath(path))) continue
+      if (!retainsHistory(original, remaining)) continue
+      const targets = new Map()
+      for (const path of paths) {
+        const origins = Object.values(baseManifest.modules).filter((module) =>
+          module.ownerPaths.includes(path)
+        )
+        const destinations = Object.entries(headManifest.modules).filter(([, module]) =>
+          module.ownerPaths.includes(path)
+        )
+        if (origins.length !== 1 || destinations.length !== 1) return new Set()
+        const [targetId, target] = destinations[0]
+        const previous = baseManifest.modules[targetId]
+        if (
+          !previous ||
+          protectedOwner(previous) ||
+          protectedOwner(target) ||
+          !target.ownerPaths.every(hostPath) ||
+          !contains(target.ownerPaths, previous.ownerPaths) ||
+          !retainsHistory(previous, target) ||
+          target.fallbackCapability !== original.fallbackCapability ||
+          !contains(target.capabilityOverlays, original.capabilityOverlays) ||
+          !contains(
+            target.consumerModules,
+            original.consumerModules.filter((id) => id !== targetId)
+          ) ||
+          !contains(
+            Object.values(target.testFiles).flat(),
+            Object.values(original.testFiles).flat()
+          ) ||
+          (original.interfacePaths.includes(path) && !target.interfacePaths.includes(path))
+        )
+          return new Set()
+        targets.set(targetId, previous)
+      }
+      transfers.push({ id, original, paths, targets })
+    }
+    if (!transfers.length) return new Set()
+    // Disable rename folding and allow only data files, never candidate policy/runtime edits.
+    const changed = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', base, head], {
+      cwd
+    })
+      .toString()
+      .split('\0')
+      .filter(Boolean)
+    if (
+      !changed.length ||
+      changed.some(
+        (path) => !/^scripts\/ci\/module-impact(?:\.json|\/[a-z][a-z0-9_]*\.json)$/.test(path)
+      )
+    )
+      return new Set()
+    const before = sourceSnapshot(base, cwd)
+    const after = sourceSnapshot(head, cwd)
+    // Keep raw manifests above for explicit-history obligations; execution also includes
+    // derived consumers. A registration-only move can otherwise strand those tests.
+    const effective = (manifest, source) =>
+      withDerivedConsumers(
+        manifest,
+        source.files.has(derivedConsumersPath)
+          ? JSON.parse(source.read(derivedConsumersPath))
+          : { schemaVersion: 1, modules: {} }
+      )
+    const beforeSelection = effective(baseManifest, before)
+    const afterSelection = effective(headManifest, after)
+    const checked = new Set()
+    const result = new Set()
+    for (const { id, original, paths, targets } of transfers) {
+      if (
+        paths.some(
+          (path) => before.read(path) === undefined || before.read(path) !== after.read(path)
+        )
+      )
+        return new Set()
+      // Ownership has priority over historical interfaces in the selector. Check each path,
+      // not an aggregate count that could hide lost coverage behind an unrelated added test.
+      for (const module of [original, ...targets.values()]) {
+        for (const path of [...module.ownerPaths, ...module.interfacePaths]) {
+          if (checked.has(path)) continue
+          checked.add(path)
+          const change = [{ path, status: 'modified' }]
+          const graph = { status: 'not-used', testFiles: [] }
+          const baseline = createAffectedTestPlan(change, graph, beforeSelection)
+          const candidate = createAffectedTestPlan(change, graph, afterSelection)
+          if (
+            baseline.mode !== 'selective' ||
+            candidate.mode !== 'selective' ||
+            ['testFiles', 'capabilityOverlays', 'fallbackCapabilities'].some(
+              (field) => !contains(candidate[field], baseline[field])
+            )
+          )
+            return new Set()
+        }
+      }
+      for (const path of paths) result.add(`${id}:${path}`)
+    }
+    return result
+  } catch {
+    return new Set()
+  }
+}
 
 // Registration-only splits can correct mixed host layers without authorizing source changes
 // or dropping contracts. This proof runs from trusted-base policy, never candidate flags.

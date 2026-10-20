@@ -1,3 +1,4 @@
+import type { LiteratureReadingDocument } from '../renderer-host'
 /* Hallmark · component scope · existing Open-Science tokens · P5 H5 E5 S5 R5 V4 */
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -10,7 +11,6 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import type { PdfReadingDocument } from '@/stores/navigation-store'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { BookOpenText, LoaderCircle, X } from 'lucide-react'
 import { useMemo, useState } from 'react'
@@ -28,7 +28,7 @@ export const LiteratureReadingDialog = ({
   entries?: readonly LiteratureItemView[]
   error?: string
   onClose: () => void
-  onContinue: (documents: readonly PdfReadingDocument[]) => void
+  onContinue: (documents: readonly LiteratureReadingDocument[]) => void
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const rows = useMemo(

@@ -1,7 +1,8 @@
 import { z } from 'zod'
 
 import { REVIEWER_MCP_SERVER_NAME, REVIEWER_MCP_TOOLS } from '../../shared/reviewer'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-bridge'
+import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
+
 import {
   reviewerArtifactReadInputSchema,
   submitFindingsBridgeInputSchema
@@ -12,7 +13,7 @@ export const REVIEWER_BRIDGE_TOOL_NAMESPACE = `mcp__${REVIEWER_MCP_SERVER_NAME.r
   '_'
 )}`
 
-export const REVIEWER_BRIDGE_NAMESPACED_TOOLS: ResponsesBridgeNamespacedTool[] = [
+export const REVIEWER_BRIDGE_NAMESPACED_TOOLS: ResponsesNamespacedTool[] = [
   {
     namespace: REVIEWER_BRIDGE_TOOL_NAMESPACE,
     name: REVIEWER_MCP_TOOLS.readTurn,
@@ -54,6 +55,6 @@ export const REVIEWER_BRIDGE_NAMESPACED_TOOLS: ResponsesBridgeNamespacedTool[] =
       'their strict run prompt.',
     parameters: z.toJSONSchema(submitFindingsBridgeInputSchema, {
       target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
+    }) as ResponsesNamespacedTool['parameters']
   }
 ]

@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { availableParallelism, cpus } from 'node:os'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import WindowsTestSequencer from '../../scripts/ci/windows-test-sequencer'
 
@@ -20,6 +21,17 @@ import vitestConfig, {
   VITEST_PROCESS_TEST_GLOBS,
   vitestExcludePatternsFor
 } from '../../vitest.config'
+
+const literaturePackages = [
+  'pdf-structure',
+  'pdf-translation',
+  'literature-citations',
+  'journal-catalog',
+  'literature-discovery',
+  'literature-screening',
+  'literature-library',
+  'literature-reading'
+]
 
 describe('Vitest discovery boundaries', () => {
   it('enables module-based sharding only in the Windows full-test profile', () => {
@@ -166,7 +178,13 @@ it.each([
           OPEN_SCIENCE_CI_PORTABLE_SCOPE: '',
           OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
             hostOnly
-              ? ['packages/resilient-download', 'packages/durable-files', 'packages/compute']
+              ? [
+                  'packages/resilient-download',
+                  'packages/durable-files',
+                  'packages/compute',
+                  'packages/providers',
+                  ...literaturePackages.map((name) => `packages/${name}`)
+                ]
               : []
           ),
           OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]',
@@ -179,22 +197,39 @@ it.each([
     )
     expect(probe.error).toBeUndefined()
     expect(probe.status, probe.stderr).toBe(0)
-    expect(JSON.parse(probe.stdout)).toEqual([
-      ...['default', 'architecture', 'process', 'database'].map((name) => ({
-        name,
-        hookTimeout: profile === '1' ? 60_000 : 30_000,
-        maxWorkers:
-          profile === '1' || name !== 'default' ? 1 : resolveVitestMaxWorkers(undefined, override),
-        testTimeout: 60_000
-      })),
-      ...(hostOnly
-        ? []
-        : ['resilient-download', 'durable-files', 'compute'].map((name) => ({
-            name,
-            hookTimeout: 10000,
-            testTimeout: 60000
-          })))
-    ])
+    expect(
+      JSON.parse(probe.stdout).sort((a: { name: string }, b: { name: string }) =>
+        a.name.localeCompare(b.name)
+      )
+    ).toEqual(
+      [
+        ...['default', 'architecture', 'process', 'database'].map((name) => ({
+          name,
+          hookTimeout: profile === '1' ? 60_000 : 30_000,
+          maxWorkers:
+            profile === '1' || name !== 'default'
+              ? 1
+              : resolveVitestMaxWorkers(undefined, override),
+          testTimeout: 60_000
+        })),
+        ...(hostOnly
+          ? []
+          : ['resilient-download', 'durable-files', 'compute', 'providers'].map((name) => ({
+              name,
+              hookTimeout: 10000,
+              testTimeout: 60000
+            }))),
+        ...(hostOnly
+          ? []
+          : literaturePackages.map((name) => ({
+              name,
+              hookTimeout: 30000,
+              testTimeout: 60000,
+              maxWorkers:
+                name === 'pdf-structure' ? Math.min(4, Math.max(availableParallelism() - 1, 1)) : 2
+            })))
+      ].sort((a, b) => a.name.localeCompare(b.name))
+    )
   }
 )
 
@@ -418,6 +453,72 @@ it.each([false, true])(
       ).toBe(true)
       expect(result.setup).toEqual([])
       expect(result.workers).toBeUndefined()
+    }
+  }
+)
+
+it.each(['all', 'host', 'excluded'])(
+  'keeps Literature/PDF discovery in package-owned projects (%s)',
+  (selection) => {
+    const probe = spawnSync(
+      process.execPath,
+      [
+        '--input-type=module',
+        '-e',
+        `
+        import { createVitest } from 'vitest/node'
+        import { readdirSync } from 'node:fs'
+        import { resolve } from 'node:path'
+        const names = ${JSON.stringify(literaturePackages)}
+        const ctx = await createVitest('test', { watch: false })
+        try {
+          const specs = await ctx.globTestSpecifications(names.map(name => 'packages/' + name))
+          console.log(JSON.stringify({
+            specs: specs.map(spec => ({name: spec.project.name, path: spec.moduleId})),
+            projects: ctx.projects.filter(project => names.includes(project.name)).map(({name, config, vite}) => ({
+              name, setup: config.setupFiles,
+              hostAliases: vite.config.resolve.alias.filter(({find}) => ['@', '@renderer', 'e-virt-table/dist/index.es.js'].includes(find))
+            })),
+            expected: names.flatMap(name => readdirSync('packages/' + name + '/test', {recursive: true})
+              .filter(file => file.endsWith('.test.ts'))
+              .map(file => resolve('packages/' + name + '/test', file)))
+          }))
+        } finally { await ctx.close() }
+      `
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 30000,
+        env: {
+          ...process.env,
+          VITEST_PORTABLE_CI: '1',
+          OPEN_SCIENCE_CI_PORTABLE_SCOPE: selection === 'host' ? 'host' : '',
+          OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: JSON.stringify(
+            selection === 'excluded' ? literaturePackages.map((name) => `packages/${name}`) : []
+          )
+        }
+      }
+    )
+    expect(probe.error).toBeUndefined()
+    expect(probe.status, probe.stderr).toBe(0)
+    const result = JSON.parse(probe.stdout)
+    if (selection !== 'all') {
+      expect(result.specs).toEqual([])
+      expect(result.projects).toEqual([])
+      return
+    }
+    expect(result.projects).toHaveLength(literaturePackages.length)
+    expect(result.expected.length).toBeGreaterThan(600)
+    expect(result.specs.map(({ path }: { path: string }) => resolve(path)).sort()).toEqual(
+      result.expected.sort()
+    )
+    for (const { name, path } of result.specs) {
+      expect(literaturePackages).toContain(name)
+      expect(path).toContain(`/packages/${name}/test/`)
+    }
+    for (const project of result.projects) {
+      expect(project.setup).toEqual([])
+      expect(project.hostAliases).toEqual([])
     }
   }
 )

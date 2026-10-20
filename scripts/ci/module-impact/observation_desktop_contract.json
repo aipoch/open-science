@@ -155,6 +155,7 @@
       "src/renderer/src/stores/settings-connectors-slice.test.ts",
       "src/main/acp/runtime.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/compute/compute-remote-operation-owner.test.ts",
       "src/main/compute/harvest-engine.test.ts",
       "src/main/literature/batch-jobs.test.ts",

@@ -16,7 +16,7 @@ export default defineConfig({
     commonjsOptions: {
       include: [
         /node_modules/,
-        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
+        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|providers|skills|specialists)[\\/]dist/,
         /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
       ]
     },

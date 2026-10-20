@@ -198,6 +198,17 @@ describe('trusted supplemental selection', () => {
     )
   })
 
+  it('installs Chromium before every Mac group that launches a browser', () => {
+    const steps = scheduled.jobs.regression.steps
+    const install = steps.find(({ name }) => name === 'Install headless Chromium')!
+    expect(install.run).toBe('npx playwright install chromium --only-shell')
+    expect(install.if).toBe(
+      "${{ matrix.group == 'functional' || matrix.group == 'presentation' || matrix.group == 'presentation-screening' }}"
+    )
+    for (const id of ['functional', 'presentation', 'presentation_screening'])
+      expect(steps.indexOf(install)).toBeLessThan(steps.findIndex((step) => step.id === id))
+  })
+
   it.skipIf(process.platform === 'win32')(
     'requires the complete Windows browser regression on every scheduled shard',
     () => {

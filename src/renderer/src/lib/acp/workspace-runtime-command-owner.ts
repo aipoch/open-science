@@ -288,6 +288,7 @@ type PromptDispatch = {
   accepted?: () => void
   preparation?: WorkspacePromptPreparation
   rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+  beforeDispatch?: () => void
 }
 
 const dispatchPrompt = (
@@ -356,6 +357,7 @@ const dispatchPrompt = (
     : undefined
   let result: ReturnType<WorkspaceCommandRuntime['sendPrompt']>
   try {
+    request.beforeDispatch?.()
     result =
       currentImages?.length || request.parts?.length
         ? runtime.sendPrompt(...args, referencedSessions, currentImages, request.parts)
@@ -1011,7 +1013,8 @@ const startPendingPrompt = (
 const performSendWorkspaceMessage = async (
   runtime: WorkspaceCommandRuntime,
   input: SendWorkspaceMessageCommand,
-  lifecycle: WorkspaceCommandLifecycle = {}
+  lifecycle: WorkspaceCommandLifecycle = {},
+  attempt?: WorkspaceSendAttempt
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   let promptPreparation: WorkspacePromptPreparation | undefined
   if (input.sessionId) clearWorkspaceOperationError(input.sessionId)
@@ -1481,8 +1484,13 @@ const performSendWorkspaceMessage = async (
       )
       return undefined
     }
+    if (attempt) attempt.preparation = promptPreparation
     if (lifecycle.isCurrent?.() === false) {
-      await rollbackWorkspacePrompt(promptPreparation)
+      // Stop owns compensation after the in-flight preparation has returned its exact receipt.
+      if (!attempt?.cancelled) {
+        await rollbackWorkspacePrompt(promptPreparation)
+        if (attempt) attempt.preparation = undefined
+      }
       return undefined
     }
     if (input.truncateFromMessageId) {
@@ -1538,6 +1546,7 @@ const performSendWorkspaceMessage = async (
       try {
         await saveSessionInOrder(toPersistedSession(durableSession))
       } catch (error) {
+        if (attempt?.cancelled) return undefined
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         await rejectPreparedPrompt(
@@ -1553,6 +1562,7 @@ const performSendWorkspaceMessage = async (
       try {
         await (lifecycle.flushPersistence ?? flushSessionPersistence)(`session:${sessionId}`)
       } catch (error) {
+        if (attempt?.cancelled) return undefined
         if (isSessionPersistenceDeferredError(error)) return undefined
         if (isSessionSizeLimitError(error)) lifecycle.onSessionSizeLimit?.(sessionId)
         await rejectPreparedPrompt(
@@ -1565,6 +1575,7 @@ const performSendWorkspaceMessage = async (
       }
       if (!ownsPrompt(sessionId, appended.messageId)) return undefined
     }
+    if (attempt?.cancelled) return undefined
     const promptMedia =
       input.truncateFromMessageId && promptAttachments.length > 0
         ? partitionWorkspacePromptAttachments({
@@ -1590,6 +1601,9 @@ const performSendWorkspaceMessage = async (
           : replay,
         turnIntent: input.turnIntent,
         accepted: () => prepared.acceptPrompt(appended.messageId),
+        beforeDispatch: () => {
+          if (attempt) attempt.dispatched = true
+        },
         preparation: promptPreparation,
         rejected: input.onPreparationRejected
       })
@@ -1661,21 +1675,79 @@ const performSendWorkspaceMessage = async (
   return pending
 }
 
-const preparingSessionIds = new Set<string>()
+type WorkspaceSendAttempt = {
+  cancellationEligible: boolean
+  cancelled: boolean
+  dispatched: boolean
+  preparation?: WorkspacePromptPreparation
+  settled: Promise<void>
+  failure?: string
+}
+const preparingSessionAttempts = new Map<string, WorkspaceSendAttempt>()
+
+// Latch Stop before its first await. Only this request may compensate its preparation; an IPC
+// already sent belongs to Main's cancellation path, even before Main publishes admission.
+const cancelPreparingWorkspacePrompt = async (sessionId: string): Promise<boolean> => {
+  const attempt = preparingSessionAttempts.get(sessionId)
+  const session = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  if (!attempt || !attempt.cancellationEligible || attempt.dispatched || session?.isPending)
+    return false
+  attempt.cancelled = true
+  await attempt.settled
+  if (attempt.failure) throw new Error(attempt.failure)
+  return true
+}
+
 const sendWorkspaceMessage = async (
   runtime: WorkspaceCommandRuntime,
   input: SendWorkspaceMessageCommand,
   lifecycle: WorkspaceCommandLifecycle = {}
 ): Promise<SendWorkspaceMessageResult | undefined> => {
   const sessionId = input.sessionId
-  // Establish the local admission gate before the first persistence/preparation await. An idle
-  // Session stays idle until append; two commands must not both capture that same baseline.
-  if (sessionId && preparingSessionIds.has(sessionId)) return undefined
-  if (sessionId) preparingSessionIds.add(sessionId)
+  // Hold admission until preparation and any Stop compensation settle. A late completion cannot
+  // release another request's gate or issue a session-wide cancel against its successor.
+  if (sessionId && preparingSessionAttempts.has(sessionId)) return undefined
+  let settle!: () => void
+  const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
+  const attempt: WorkspaceSendAttempt = {
+    cancellationEligible:
+      !input.allowCompactionRecovery &&
+      !previousSession?.compacting &&
+      !previousSession?.activeRun &&
+      previousSession?.status !== 'running' &&
+      !runtime.state.promptInFlightSessionIds.includes(sessionId ?? ''),
+    cancelled: false,
+    dispatched: false,
+    settled: new Promise<void>((resolve) => {
+      settle = resolve
+    })
+  }
+  if (sessionId) preparingSessionAttempts.set(sessionId, attempt)
   try {
-    return await performSendWorkspaceMessage(runtime, input, lifecycle)
+    return await performSendWorkspaceMessage(
+      runtime,
+      input,
+      {
+        ...lifecycle,
+        isCurrent: () => !attempt.cancelled && lifecycle.isCurrent?.() !== false
+      },
+      attempt
+    )
   } finally {
-    if (sessionId) preparingSessionIds.delete(sessionId)
+    try {
+      if (attempt.cancelled && !attempt.dispatched && attempt.preparation) {
+        const rollback = await attemptWorkspacePromptRollback(attempt.preparation)
+        if (rollback.failure !== undefined) {
+          attempt.failure = describeWorkspacePromptRollbackFailure(undefined, rollback.failure)
+          reportWorkspaceOperationError(attempt.preparation.sessionId, attempt.failure)
+        }
+      }
+    } finally {
+      if (sessionId) {
+        preparingSessionAttempts.delete(sessionId)
+      }
+      settle()
+    }
   }
 }
 
@@ -1736,5 +1808,5 @@ const resendEditedWorkspaceMessage = async (
     )
   )
 }
-export { resendEditedWorkspaceMessage, sendWorkspaceMessage }
+export { cancelPreparingWorkspacePrompt, resendEditedWorkspaceMessage, sendWorkspaceMessage }
 export type { ResendEditedMessageInput, SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

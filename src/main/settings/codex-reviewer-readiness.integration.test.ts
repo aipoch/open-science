@@ -113,7 +113,11 @@ createInterface({ input: process.stdin }).on('line', async line => {
         model: 'probe-native-model',
         contextWindow: 128_000
       },
-      { storageRoot: root, executablePath: managedAdapter, responsesBridge: bridge }
+      {
+        storageRoot: root,
+        executablePath: managedAdapter,
+        responsesConnection: bridge
+      }
     )
     for (const file of config.configFiles ?? []) {
       await mkdir(dirname(file.path), { recursive: true })

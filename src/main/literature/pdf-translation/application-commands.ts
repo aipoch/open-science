@@ -1,5 +1,7 @@
-import { pdfTranslationResourceDirectory } from '@aipoch/pdf-translation/resources'
-import { join } from 'node:path'
+import {
+  pdfTranslationResourceDirectory,
+  pdfTranslationWorkerPath
+} from '@aipoch/pdf-translation/resources'
 import {
   PdfTranslationError,
   type PdfTranslationOperationRequest,
@@ -99,7 +101,7 @@ export function createPdfTranslationHandlers(
     root: resolveDataRoot,
     revision: () => pdfTranslationCacheRevision(resources(), runtimeMetadata().version),
     owner,
-    writer: new PdfTranslationWriter(() => join(resources(), 'worker.mjs'))
+    writer: new PdfTranslationWriter(() => toUnpackedAsarPath(pdfTranslationWorkerPath()))
   })
   return {
     'pdf-translation:generate-pdf': ({ args, callerLease }) =>
@@ -107,10 +109,8 @@ export function createPdfTranslationHandlers(
     'pdf-translation:cancel-pdf': ({ args, callerLease }) => writer.cancel(args[0], callerLease),
     'pdf-translation:save-snapshot': ({ args, callerLease }) =>
       owner.saveSnapshot(args[0], callerLease),
-    'pdf-translation:record-layout': async ({ args, callerLease }) => {
-      await owner.recordLayout(args[0], callerLease)
-      await writer.confirm(args[0], callerLease)
-    },
+    'pdf-translation:record-layout': ({ args, callerLease }) =>
+      writer.recordLayout(args[0], callerLease),
     'pdf-translation:read-checkpoint': ({ args, callerLease }) =>
       owner.readCheckpoint(args[0], callerLease),
     'pdf-translation:begin': ({ args, callerLease }) => owner.begin(args[0], callerLease),

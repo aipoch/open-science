@@ -179,7 +179,7 @@ jobs:
       - name: Restore E2E setup
         run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
-        if: ${{ matrix.group == 'presentation' || matrix.group == 'presentation-screening' }}
+        if: ${{ matrix.group == 'functional' || matrix.group == 'presentation' || matrix.group == 'presentation-screening' }}
         run: npx playwright install chromium --only-shell
       - name: Test scheduled regression fixes
         id: scheduled_fixes

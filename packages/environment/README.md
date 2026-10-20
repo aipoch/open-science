@@ -31,6 +31,19 @@ stores it unchanged without depending on Notebook analysis, session or artifact 
 uses `cwd` and an optional generic `context`; the host owns project/session identifiers and maps its
 RPC request into this boundary. Context is forwarded to its process adapter without interpretation.
 
+## Safety and integration
+
+- **Scope:** Python/R runtime and package provisioning, installation, locks, inventory, and recovery.
+- **Controls:** Authorization rechecks, operation journals, verification hooks, and host-supervised
+  execution preserve the documented installation/recovery boundaries.
+- **Remaining risks:** Installing or running dependencies can execute third-party code with the
+  installer's granted authority. Pinned versions, checksums, and inventory records do not prove that
+  a dependency is harmless, vulnerability-free, or suitable for a scientific workflow.
+- **Safe integration:** Review package sources and updates; inject constrained network/process
+  capabilities, executable verification, and minimal storage roots. Retain backups and confirm process
+  teardown before recovery or cleanup. See the application's
+  [supply-chain guidance](https://github.com/aipoch/open-science/blob/main/SECURITY.md#dependencies-and-supply-chain).
+
 ## Compatibility
 
 Extraction preserves inventory/manifest schema 1, environment lock schemas 1 and 2, immutable

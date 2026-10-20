@@ -1,4 +1,6 @@
 import { LiteratureCandidateSessionContext } from '@/pages/workspace/literature-candidate-session-context'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceLiteratureToolCard } from '@/pages/workspace/WorkspaceLiteratureToolCard'
@@ -312,13 +314,11 @@ export function Fixture(): React.JSX.Element {
           }}
         />
         <WorkspaceLiteratureToolCard
-          summary={{
-            action: 'save',
-            libraryScope: 'project',
-            documentNames: [],
-            documentCount: 0,
-            savedCount: 4
-          }}
+          summary={buildLiteratureLibraryToolSummary(
+            'save',
+            {},
+            { results: candidates.map(({ id }) => ({ kind: 'candidate', id, state: 'pending' })) }
+          )}
         />
         <WorkspaceLiteratureToolCard
           isApproval
@@ -411,8 +411,10 @@ export function Fixture(): React.JSX.Element {
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
   createRoot(document.getElementById('root')!).render(
-    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session-0' }}>
-      <Fixture />
-    </LiteratureCandidateSessionContext.Provider>
+    <LiteratureRendererProvider host={literatureRendererHost}>
+      <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session-0' }}>
+        <Fixture />
+      </LiteratureCandidateSessionContext.Provider>
+    </LiteratureRendererProvider>
   )
 })

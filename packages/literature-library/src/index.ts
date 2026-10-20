@@ -11,10 +11,12 @@ export {
   normalizeSpace,
   normalizedIdentifiers
 } from './identity.js'
+export { LibraryImporter } from './importer.js'
 export { LibraryTransaction } from './library.js'
 export type {
   CandidateRecord,
   LibraryPdf,
+  LibraryImportStore,
   LibraryStore,
   MetadataReceipt,
   NormalizedIdentifier

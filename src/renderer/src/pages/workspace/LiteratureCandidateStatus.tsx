@@ -5,7 +5,7 @@ import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { LiteratureCandidateStatesResult } from '../../../../shared/literature'
-import { isCollectionOnlyChange, useLiteratureChanges } from '../literature/useLiteratureChanges'
+import { isCollectionOnlyChange, useLiteratureChanges } from '../literature/public/events'
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 
 import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'

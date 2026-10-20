@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { create } from 'zustand'
+import type { LiteratureRendererHost } from '@/pages/literature/public/host'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-
 import { i18next } from '@/i18n'
 import {
   LITERATURE_ITEM_TYPES,
@@ -28,6 +30,19 @@ import { LiteratureMergeReview } from './duplicates/LiteratureMergeReview'
 import { LiteratureTypeControl } from './list/LiteratureInlineEditors'
 import { LiteratureResultsTable } from './list/LiteratureResultsTable'
 import { createLiteratureSelectionStore } from './list/literature-selection'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {},
+  useProjectStore: create(() => ({
+    projects: []
+  })) as unknown as LiteratureRendererHost['useProjectStore'],
+  useNavigationStore: create(() => ({
+    openSession: () => false
+  })) as unknown as LiteratureRendererHost['useNavigationStore']
+})
 
 const previousApi = window.api
 const locales = ['de', 'es', 'fr', 'zh-Hans', 'zh-Hant', 'ja', 'ko', 'ru'] as const

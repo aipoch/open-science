@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -408,10 +409,25 @@ export function executeModuleTestPlan(
     )
   }
   const command = npmExecPath ? nodeExecutable : 'npm'
-  const arguments_ = npmExecPath ? [npmExecPath, ...npmArguments] : npmArguments
-  const result = spawn(command, arguments_, { cwd, env: environment, stdio: 'inherit' })
-  if (result.error) throw result.error
-  return result.status ?? 1
+  let arguments_ = npmExecPath ? [npmExecPath, ...npmArguments] : npmArguments
+  let argumentDirectory
+  try {
+    // npm also crosses cmd.exe on Windows (8,191 characters). Leave room for its wrapper.
+    if (!mergeReports && JSON.stringify([command, ...arguments_]).length > 6000) {
+      argumentDirectory = mkdtempSync(resolve(tmpdir(), 'open-science-vitest-'))
+      const argumentFile = resolve(argumentDirectory, 'arguments.json')
+      writeFileSync(argumentFile, JSON.stringify(['run', ...npmArguments.slice(2)]), {
+        mode: 0o600
+      })
+      const fileArguments = ['run', 'test:module:arguments', '--', argumentFile]
+      arguments_ = npmExecPath ? [npmExecPath, ...fileArguments] : fileArguments
+    }
+    const result = spawn(command, arguments_, { cwd, env: environment, stdio: 'inherit' })
+    if (result.error) throw result.error
+    return result.status ?? 1
+  } finally {
+    if (argumentDirectory) rmSync(argumentDirectory, { recursive: true, force: true })
+  }
 }
 
 function argumentValue(arguments_, name) {

@@ -66,8 +66,8 @@ for (const withPlugins of [false, true])
             vendorId: 'opencode-go',
             agentProviderId: 'open-science-concurrency-probe',
             baseUrl,
-            openaiBaseUrl: `${baseUrl}/v1`,
-            apiEndpoints: ['openai'],
+            chatCompletionsBaseUrl: `${baseUrl}/v1`,
+            apiEndpoints: ['chat-completions'],
             model: 'probe-model',
             key: 'synthetic-probe-key'
           },

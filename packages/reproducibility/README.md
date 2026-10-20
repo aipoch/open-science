@@ -16,7 +16,9 @@ its public exports are the only supported import paths.
   receipt publication and persistence. No SQL, Prisma, transaction, commit or rollback API belongs here.
 - The browser-safe `@aipoch/reproducibility/contracts` entry exposes schemas and immutable DTOs.
   The `/comparison` entry exposes comparison contracts; `/execution-context` exposes execution-context helpers.
-  The root entry is Node-only. Internal workers, validators and helper implementations are private.
+  The `/helper-identity` entry exposes `notebookHelperEvidenceKey` without loading the executor or
+  comparison dependencies. It preserves the same identity encoding and root export.
+  The root entry is Node-only. Other internal workers, validators and helper implementations are private.
 
 ## Composition
 
@@ -48,6 +50,19 @@ report the existing environment `CHILD_UNCONFIRMED` error.
 eligibility, blocking reasons and available input evidence. It returns `undefined` without a graph
 and exposes entity identities rather than private storage keys. The host only assembles this result
 with its public snapshot metadata.
+
+## Safety and integration
+
+- **Scope:** Captured-recipe validation, replay through an injected runtime, and bounded output comparison.
+- **Controls:** Input identity/size/digest checks, preflight validation, and teardown-confirmed cleanup
+  protect the documented attempt lifecycle. The host supplies authorization and process isolation.
+- **Remaining risks:** Recipe code can have side effects within its runtime's authority. Integrity
+  checks do not make it safe. A matching output does not prove scientific validity; missing evidence,
+  environment differences, and nondeterminism can prevent or limit reproduction.
+- **Safe integration:** Review the recipe and original inputs, use a constrained runtime and disposable
+  attempt storage, and report the exact comparison performed. Review exported evidence for sensitive
+  content. See the application's
+  [research-use boundaries](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md#research-judgment-and-high-consequence-uses).
 
 ## Compatibility
 

@@ -13,8 +13,8 @@ describe('resolved agent backend lease owner', () => {
       throw new Error('synchronous close failure')
     })
     const backend = {
-      responsesBridgeLease: { release: responsesRelease },
-      anthropicBridgeLease: { release: anthropicRelease },
+      responsesTransportLease: { release: responsesRelease },
+      messagesBridgeLease: { release: anthropicRelease },
       providerTransportLease: { release: transportRelease }
     } as unknown as ResolvedAgentBackend
 
@@ -34,8 +34,8 @@ describe('resolved agent backend lease owner', () => {
     const release = vi.fn(async () => undefined)
     const aliasedLease = { release }
     const backend = {
-      responsesBridgeLease: aliasedLease,
-      anthropicBridgeLease: aliasedLease,
+      responsesTransportLease: aliasedLease,
+      messagesBridgeLease: aliasedLease,
       providerTransportLease: aliasedLease
     } as unknown as ResolvedAgentBackend
 

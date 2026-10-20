@@ -34,7 +34,7 @@ const draft: UpsertProviderRequest = {
   key: 'old-key',
   baseUrl: 'https://lab.example/v1',
   model: 'model-a',
-  apiEndpoints: ['anthropic']
+  apiEndpoints: ['messages']
 }
 
 const discovery = {

@@ -6,6 +6,7 @@ import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateStatus } from '../../../src/shared/update'
 
 const params = new URLSearchParams(location.search)
+if (params.has('dark')) document.documentElement.classList.add('dark')
 const locale = params.get('locale') === 'zh-Hans' ? 'zh-Hans' : 'en'
 const notes = Array.from(
   { length: params.has('short') ? 1 : 35 },
@@ -37,6 +38,62 @@ useUpdateStore.setState({
     }
   }
 })
+if (params.has('continuous')) {
+  const status: UpdateStatus = {
+    state: 'available',
+    current: '1.0.11',
+    latest: '1.0.12',
+    applyKind: 'restart',
+    notes,
+    localizedNotes,
+    totalBytes: 314.5 * 1024 * 1024
+  }
+  useUpdateStore.setState({
+    status,
+    download: async () => {
+      useUpdateStore.setState({ status: { ...status, state: 'downloading', progress: 50 } })
+      await new Promise((resolve) => setTimeout(resolve, 150))
+      useUpdateStore.setState({ status: { ...status, state: 'ready' } })
+    },
+    apply: async () => {
+      useUpdateStore.setState({ status: { ...status, state: 'applying' } })
+    },
+    cancel: async () => {
+      useUpdateStore.setState({ status })
+    }
+  })
+}
+// Pin actual updater states for visual and keyboard acceptance without timing races.
+if (params.has('continuous') && params.has('stage')) {
+  const stage = params.get('stage')
+  const status = useUpdateStore.getState().status
+  useUpdateStore.setState({
+    status: {
+      ...status,
+      state:
+        stage === 'checking'
+          ? 'checking'
+          : stage === 'installing'
+            ? 'applying'
+            : stage === 'downloading'
+              ? 'downloading'
+              : 'ready',
+      progress: stage === 'downloading' ? 50 : undefined,
+      downloadedBytes: stage === 'downloading' ? (status.totalBytes ?? 0) / 2 : undefined,
+      recovery:
+        stage === 'installing'
+          ? {
+              phase: 'handoff',
+              runtime: 'stopped-clean',
+              installation: 'pending',
+              canCancel: false,
+              canRetryInstall: false,
+              canRecover: false
+            }
+          : undefined
+    }
+  })
+}
 if (params.has('refused-restart')) {
   let status: UpdateStatus = {
     state: 'ready',

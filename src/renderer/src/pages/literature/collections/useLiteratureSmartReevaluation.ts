@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
@@ -60,6 +61,8 @@ export function useLiteratureSmartReevaluation({
   prepareSmartReevaluation: (ids?: string[], detailItemId?: string) => Promise<void>
   runSmartReevaluation: (request?: Reevaluation) => Promise<void>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const smartResultSnapshot = useRef<string | undefined>(undefined)
   const [smartRunningCollection, setSmartRunningCollection] = useState<string>()
@@ -85,7 +88,7 @@ export function useLiteratureSmartReevaluation({
   const refreshSmartSummary = useCallback(async () => {
     if (!collectionId) return false
     const token = smartState.beginRead()
-    const receipt = await window.api.literature.transact({
+    const receipt = await hostApi.literature.transact({
       kind: 'smart-collection',
       collectionId,
       action: 'read',
@@ -93,7 +96,7 @@ export function useLiteratureSmartReevaluation({
       offset: 0
     })
     return Boolean(receipt.smart) && smartState.acceptRead(token, receipt.smart)
-  }, [collectionId, smartState])
+  }, [collectionId, hostApi.literature, smartState])
   const receiveSmartView = useCallback(
     (view: SmartCollectionView | undefined, updating: boolean): void => {
       if (!collectionId || currentCollectionId.current !== collectionId) return
@@ -153,7 +156,7 @@ export function useLiteratureSmartReevaluation({
     setIsBatching(true)
     smartState.beginWrite()
     try {
-      const receipt = await window.api.literature.transact({
+      const receipt = await hostApi.literature.transact({
         kind: 'smart-collection',
         collectionId: selectedCollection.id,
         action: 'refresh',
@@ -225,7 +228,7 @@ export function useLiteratureSmartReevaluation({
     setSingleReevaluation(single)
     receiveSmartView(smartView, true)
     try {
-      const receipt = await window.api.literature.transact({
+      const receipt = await hostApi.literature.transact({
         kind: 'smart-collection',
         collectionId: request.collectionId,
         action: 'recompute',

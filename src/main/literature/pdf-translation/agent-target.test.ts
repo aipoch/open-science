@@ -23,7 +23,7 @@ function setup(): {
     getSettingsView: vi.fn(
       async () =>
         ({
-          agentFrameworks: [{ id: 'opencode', supportedApiTypes: ['openai'] }],
+          agentFrameworks: [{ id: 'opencode', supportedApiTypes: ['chat-completions'] }],
           activeProviderId: 'main',
           activeModel: 'main-model',
           providers: [
@@ -32,7 +32,7 @@ function setup(): {
               name: 'Chosen',
               type: 'custom',
               baseUrl: 'http://127.0.0.1:9',
-              apiEndpoints: ['openai'],
+              apiEndpoints: ['chat-completions'],
               models: ['chosen-model'],
               hasKey: false,
               needsKey: false,
@@ -80,7 +80,7 @@ it.each(['missing-framework', 'incompatible-endpoint'] as const)(
     snapshot.agentFrameworks =
       fault === 'missing-framework'
         ? []
-        : [{ ...snapshot.agentFrameworks[0], supportedApiTypes: ['anthropic'] }]
+        : [{ ...snapshot.agentFrameworks[0], supportedApiTypes: ['messages'] }]
     settings.getSettingsView.mockResolvedValue(snapshot)
     await expect(capturePdfTranslationAgentTarget(settings, selected)).rejects.toThrow(
       '[pdf-translation:unsupported-model]'

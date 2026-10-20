@@ -1,4 +1,96 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+
+// Inspect real overflow: jsdom cannot detect a second scrollbar or a clipped footer.
+async function expectSingleBodyScroll(dialog: Locator, primary: Locator): Promise<void> {
+  const heading = dialog.getByRole('heading').first()
+  const before = { heading: await heading.boundingBox(), primary: await primary.boundingBox() }
+  const scrollable = await dialog.evaluate((element) => {
+    const regions = [element, ...element.querySelectorAll<HTMLElement>('*')].filter(
+      (node) =>
+        /auto|scroll/.test(getComputedStyle(node).overflowY) &&
+        node.scrollHeight > node.clientHeight + 1
+    )
+    for (const region of regions) region.scrollTop = region.scrollHeight
+    return regions.length
+  })
+  expect(scrollable, 'exactly one vertical scroll region').toBe(1)
+  await expect(heading).toBeInViewport()
+  await expect(primary).toBeInViewport()
+  expect((await heading.boundingBox())!.y).toBeCloseTo(before.heading!.y, 0)
+  expect((await primary.boundingBox())!.y).toBeCloseTo(before.primary!.y, 0)
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+}
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 800, height: 480 },
+  { width: 320, height: 640 },
+  // The effective CSS viewport of a 1280 × 720 window at 200% zoom.
+  { width: 640, height: 360 }
+]) {
+  test(`package dialog has one scroll region for long project lists at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?import=project&many-projects&queue-full')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    const primary = dialog.getByRole('button', { name: 'Continue', exact: true })
+    await expect(dialog.getByRole('radio')).toHaveCount(32)
+    await expectSingleBodyScroll(dialog, primary)
+    const last = dialog.getByRole('radio').last()
+    await last.check()
+    await expect(primary).toBeEnabled()
+    await dialog.screenshot({ path: testInfo.outputPath('import-single-scroll.png') })
+    await dialog.getByRole('searchbox').fill('Cancer')
+    await expect(dialog.getByRole('radio')).toHaveCount(1)
+    await dialog.getByRole('radio').check()
+    await primary.click()
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeInViewport()
+  })
+
+  test(`package dialog has one scroll region for expanded export at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?retained&pdf-notes')
+    const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    const primary = dialog.getByRole('button', { name: 'Choose save location…', exact: true })
+    await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
+    await dialog.getByRole('button', { name: 'View files', exact: true }).click()
+    await expectSingleBodyScroll(dialog, primary)
+    await dialog
+      .getByRole('checkbox', {
+        name: 'Include shared PDF notes and annotations from all projects as a read-only snapshot'
+      })
+      .check()
+    await expect(primary).toBeInViewport()
+    await dialog.screenshot({ path: testInfo.outputPath('export-single-scroll.png') })
+  })
+}
+
+for (const scenario of [
+  { query: 'import=project&many-projects&transfers&queue-full', primary: 'Continue' },
+  { query: 'import=progress&transfers&queue-full', primary: 'Run in background' },
+  { query: 'import=cleanup&transfers', primary: 'Run in background' },
+  { query: 'evidence', primary: 'Try again' }
+]) {
+  test(`package dialog shares one scroll region with status content: ${scenario.query}`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 640, height: 360 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`/session-package.html?${scenario.query}`)
+    const dialog = page.getByRole('dialog').first()
+    if (scenario.query === 'evidence')
+      await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
+    await expectSingleBodyScroll(
+      dialog,
+      dialog.getByRole('button', { name: scenario.primary, exact: true })
+    )
+  })
+}
 
 for (const flow of [
   { query: '', labels: ['选择内容', '生成包', '保存包'] },

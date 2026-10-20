@@ -5,8 +5,8 @@ import { useTranslation } from 'react-i18next'
 import { parseLiteratureDeletionError } from '../../../../../shared/literature-deletion'
 import { LiteratureDeletionNotice } from '../LiteratureDeletionNotice'
 import {
-  useAttachmentOperations,
-  type AttachmentOperation
+  type AttachmentOperation,
+  useAttachmentOperationsStore
 } from './literature-attachment-operations'
 
 export function AttachmentOperationStatus({
@@ -57,6 +57,8 @@ export function LiteratureAttachmentOperations({
   detailController: LiteratureDetailController
   onChanged: (operation: AttachmentOperation) => void
 }): React.JSX.Element {
+  const useAttachmentOperations = useAttachmentOperationsStore()
+
   const { t } = useTranslation()
   const detailItemId = useSyncExternalStore(
     detailController.subscribe,
@@ -71,7 +73,7 @@ export function LiteratureAttachmentOperations({
           if (!operation.pending && !previous.operations.includes(operation)) receive(operation)
         })
       }),
-    []
+    [useAttachmentOperations]
   )
   return (
     <div className="space-y-2">

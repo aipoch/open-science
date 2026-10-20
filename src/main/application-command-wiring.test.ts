@@ -98,18 +98,18 @@ describe('production application command wiring', () => {
   it('constructs desktop and headless Session package surfaces once with shared owners and drains both before the service', () => {
     const source = domainCompact('session-packages')
     expect(source).toContain(
-      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(), onSensitiveContentFailure: rememberSensitiveContentFailure })'
+      'const sessionPackageDesktop = createSessionPackageDesktop({ sessionPackageService, translate, archiveCoordinator, sessionPersistenceCoordinator, applicationEvents, projectRepository, sessionRepository, isPackageHandoffHeld: () => packageHandoffHeld.current || sessionPackageHeadless.hasActiveTransfer(), cancelBrowserTransfer: (id) => browserPackageImport.cancel(id), onSensitiveContentFailure: rememberSensitiveContentFailure })'
     )
     expect(occurrences(source, 'createSessionPackageDesktop(')).toBe(1)
     expect(occurrences(source, 'new SessionPackageHeadless(')).toBe(1)
     expect(source).toContain(
-      'const sessionPackageHeadless = new SessionPackageHeadless({ service: sessionPackageService, withDataRootWrite, assertCanStart: () => { if ( packageHandoffHeld.current || isMigrationInProgress() || isMigrationPending() || sessionPackageDesktop.hasActiveTransfer() )'
+      'const sessionPackageHeadless = new SessionPackageHeadless({ service: sessionPackageService, withDataRootWrite, assertCanStart: () => { if ( packageHandoffHeld.current || isMigrationInProgress() || isMigrationPending() || sessionPackageDesktop.hasActiveTransfer() || browserPackageImport.active )'
     )
     expect(source).toContain(
-      'sessionPackageDesktopLifecycle.isActive = () => sessionPackageDesktop.operations.active || sessionPackageHeadless.hasActiveTransfer()'
+      'sessionPackageDesktopLifecycle.isActive = () => browserPackageImport.active || sessionPackageDesktop.operations.active || sessionPackageHeadless.hasActiveTransfer()'
     )
     expect(source).toContain(
-      "sessionPackageDesktopLifecycle.close = async () => { const results = await Promise.allSettled([ sessionPackageHeadless.close(), sessionPackageDesktop.close() ]) const failures = results.filter((result) => result.status === 'rejected') if (failures.length) throw new AggregateError( failures.map((result) => result.reason), 'Session package transfers did not finish closing.' ) }"
+      "sessionPackageDesktopLifecycle.close = async () => { browserPackageImport.stop() const closeDesktop = async (): Promise<void> => { await sessionPackageDesktop.close() // The desktop queue must release every admitted source before browser staging is removed. await browserPackageImport.close() } const results = await Promise.allSettled([sessionPackageHeadless.close(), closeDesktop()]) const failures = results.filter((result) => result.status === 'rejected') if (failures.length) throw new AggregateError( failures.map((result) => result.reason), 'Session package transfers did not finish closing.' ) }"
     )
     expect(source).toContain('await sessionPackageDesktopLifecycle.close() await service.close()')
     for (const call of [
@@ -776,6 +776,7 @@ it('connects committed deletion to the same credential broker used by approval s
     },
     settingsSnapshotCommits: { currentSnapshotAfter },
     specialistService: { resolveRunnableByReference: resolveSpecialist },
+    browserPackageImport: { active: false },
     sessionPackageDesktop: {
       reportOpenOverflow: vi.fn(),
       enqueueFile: vi.fn(),
@@ -889,6 +890,11 @@ it('connects committed deletion to the same credential broker used by approval s
   expect(owners.sessionPackageDesktop.reportOpenOverflow).toHaveBeenCalledOnce()
   expect(owners.sessionPackageDesktop.enqueueFile).toHaveBeenCalledWith('/session.osci')
   expect(result.hasActivePackageTransfer()).toBe(true)
+  owners.sessionPackageDesktop.hasActiveTransfer.mockReturnValue(false)
+  owners.browserPackageImport.active = true
+  expect(result.hasActivePackageTransfer()).toBe(true)
+  owners.browserPackageImport.active = false
+  expect(result.hasActivePackageTransfer()).toBe(false)
   expect(result.hasActiveReviewerWork()).toBe(true)
   expect(result.getActiveSettingsInstallId()).toBe('install')
   result.holdSettingsInstallAdmission()

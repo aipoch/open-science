@@ -3,24 +3,25 @@ import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'n
 
 import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { OfficialVendorId } from '../../shared/provider-registry'
 import type {
+  ModelProtocol,
+  OfficialVendorId,
   CustomReasoningEffortTransport,
   ModelReasoningEffort,
   ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+} from '@aipoch/providers'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
+
 import type { AgentFrameworkId, CodexSubscriptionTransport } from '../../shared/settings'
 import type { PermissionProfileApplication } from '../acp/permission-profile-controller'
 import type { ResolvedProvider } from '../settings/provider-env'
 import type {
-  ResponsesBridgeConnection,
-  ResponsesBridgeModelTarget,
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput
-} from '../settings/responses-bridge-contract'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+  ResponsesConnection,
+  ResponsesModelTarget,
+  ResponsesSkillCandidate,
+  ResponsesSkillInput
+} from '../settings/responses-transport-contract'
+import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 
 // The agent frameworks the app can drive over ACP (id union defined in shared settings so the renderer
 // and persisted settings share it). Adding one means implementing AgentFramework.
@@ -123,7 +124,7 @@ export type AgentModelChangeTarget = Readonly<{
   contextWindow?: number
   // Opaque, secret-free id for one provider/model already registered in the current Claude
   // generation's loopback Anthropic bridge. Absent means this target cannot cross a provider env.
-  anthropicBridgeTargetId?: string
+  messagesBridgeTargetId?: string
   // Opaque, secret-free id for a provider/model route pre-registered in the generation transport.
   // The lease decides whether selecting it is validation-only (OpenCode) or retargets a route.
   providerTransportTargetId?: string
@@ -147,7 +148,7 @@ export type ModelConfigContext = {
   // Detected version of the native CLI behind an adapter. Codex uses this to trust bundled model
   // metadata only when the model/version pair is explicitly known.
   nativeVersion?: string
-  responsesBridge?: ResponsesBridgeConnection
+  responsesConnection?: ResponsesConnection
   // Compact connector conventions for frameworks that need host.mcp guidance in their baseline
   // instructions. Detailed connector schemas live in on-demand `mcp-*` skills. Empty ⇒ omitted.
   instructions?: string
@@ -312,7 +313,7 @@ export interface AgentFramework {
 
   // Chat endpoints this framework can drive. A provider is only selectable when it shares one:
   // Claude Code speaks Anthropic /v1/messages; opencode speaks both.
-  readonly supportedApiTypes: readonly ChatApiEndpoint[]
+  readonly supportedApiTypes: readonly ModelProtocol[]
 }
 
 // The resolved agent backend for one connect: which framework to drive plus its already-resolved spawn
@@ -376,39 +377,39 @@ export type ResolvedAgentBackend = {
   }
   // A bridged backend owns one reference to its local loopback bridge. Runtime teardown releases it;
   // reviewer sessions register their Codex prompt_cache_key here so routing never depends on content.
-  responsesBridgeLease?: {
+  responsesTransportLease?: {
     selectSkills: (
       text: string,
-      catalog: ResponsesBridgeSkillCandidate[],
+      catalog: ResponsesSkillCandidate[],
       signal?: AbortSignal,
       observeUsage?: (observation: SkillSelectorUsageObservation) => void
-    ) => Promise<ResponsesBridgeSkillInput[]>
+    ) => Promise<ResponsesSkillInput[]>
     registerReviewerSession: (promptCacheKey: string) => void
     unregisterReviewerSession: (promptCacheKey: string) => boolean
     registerToolLessSession?: (promptCacheKey: string) => void
     unregisterToolLessSession?: (promptCacheKey: string) => boolean
     registerHostMessageSession?: (
       promptCacheKey: string,
-      namespacedTools: ResponsesBridgeNamespacedTool[],
+      namespacedTools: ResponsesNamespacedTool[],
       options?: Readonly<{ failClosedUnknownKeys?: boolean }>
     ) => void
     unregisterHostMessageSession?: (promptCacheKey: string) => boolean
     registerMcpSession?: (
       promptCacheKey: string,
-      namespacedTools: ResponsesBridgeNamespacedTool[],
+      namespacedTools: ResponsesNamespacedTool[],
       namespaces?: readonly string[]
     ) => void
     unregisterMcpSession?: (promptCacheKey: string) => boolean
     // Updates the concrete effort on this runtime's own bridged provider/model. Keeping it on the
     // lease prevents an active-model value from leaking into bridges owned by retiring generations.
     setReasoningEffort?: (effort?: ModelReasoningEffort) => void
-    setModelTarget?: (target: ResponsesBridgeModelTarget) => void
+    setModelTarget?: (target: ResponsesModelTarget) => void
     release: () => Promise<void>
   }
   // API-key Claude generations keep their process environment stable by talking to an app-owned
   // loopback Anthropic bridge. The bridge owns endpoint/token/model routing in memory; live model
   // targets carry only an opaque id into this lease.
-  anthropicBridgeLease?: {
+  messagesBridgeLease?: {
     setTarget: (targetId: string) => boolean
     release: () => Promise<void>
   }
@@ -416,10 +417,10 @@ export type ResolvedAgentBackend = {
     setTarget: (targetId: string) => boolean
     selectSkills?: (
       text: string,
-      catalog: ResponsesBridgeSkillCandidate[],
+      catalog: ResponsesSkillCandidate[],
       signal?: AbortSignal,
       observeUsage?: (observation: SkillSelectorUsageObservation) => void
-    ) => Promise<ResponsesBridgeSkillInput[]>
+    ) => Promise<ResponsesSkillInput[]>
     release: () => Promise<void>
   }
 }

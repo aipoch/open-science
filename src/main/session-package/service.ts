@@ -1,3 +1,5 @@
+import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
+import type { PackageLiteratureSource } from './literature-source'
 import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
   createLogger,
@@ -166,6 +168,7 @@ const PACKAGE_README =
   '# Open-Science Session package\n\nOpen-Science can inspect and import this archive as read-only research history. Import does not execute code or restore account credentials. Checksums verify bytes, not scientific claims or the identity of the sender.\n'
 
 type PackageOptions = {
+  literatureSource?: PackageLiteratureSource
   storageRoot: string
   configRoot?: string
   getDefaultPermissionProfile?: () => Promise<PermissionProfileId>
@@ -555,6 +558,16 @@ export class SessionPackageService {
     options: PackageSnapshotOptions
   ): Promise<SessionPackagePreview> {
     const request = sessionPackageRequestSchema.parse(rawRequest)
+    return withWorkingFileEvidenceRead(this.options.storageRoot, request.projectId, () =>
+      this.exportSnapshot(request, path, options)
+    )
+  }
+
+  private async exportSnapshot(
+    request: SessionPackageRequest,
+    path: string,
+    options: PackageSnapshotOptions
+  ): Promise<SessionPackagePreview> {
     const sessions = new SessionRepository(this.configRoot)
     const loaded = await loadSessionMutationAuthority(
       sessions,
@@ -641,6 +654,7 @@ export class SessionPackageService {
             .map((entry) => ({
               storageKey: entry.storageKey!,
               filename: entry.storageKey!,
+              checksum: entry.checksum,
               sizeBytes: entry.sizeBytes
             }))
         },
@@ -816,7 +830,7 @@ export class SessionPackageService {
       request.sessionId
     )
     const literatureSources = await capturePackageLiterature(
-      client,
+      this.options.literatureSource,
       session,
       records,
       bookmarkLiteratureIds
@@ -856,6 +870,7 @@ export class SessionPackageService {
       [...selectable, ...inheritedExclusions].map((file) => file.storageKey)
     )
     const retainedFiles: PackageSelectionSummary['retainedFiles'] = []
+    const measuredContent = new Map<string, { checksum: string; sizeBytes: number }>()
     for (const key of new Set([
       ...nativeStorageKeys(records),
       ...notebookKeys,
@@ -865,11 +880,20 @@ export class SessionPackageService {
       if (optionalKeys.has(key)) continue
       this.signal.throwIfAborted()
       await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
-      retainedFiles.push({
-        storageKey: key,
-        filename: key,
-        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, sourceKey(key)))).size
-      })
+      const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
+      const metadata = await lstat(original)
+      // Shared evidence paths can name one immutable inode; do not reread it per activity.
+      const identity =
+        metadata.ino > 0
+          ? [metadata.dev, metadata.ino, metadata.size, metadata.mtimeMs, metadata.ctimeMs].join(
+              ':'
+            )
+          : key
+      const integrity =
+        measuredContent.get(identity) ??
+        (await digestFileWithinBudget(original, metadata.size, this.signal))
+      measuredContent.set(identity, integrity)
+      retainedFiles.push({ storageKey: key, filename: key, ...integrity })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
     let recordsJson = JSON.stringify(records)
@@ -1147,7 +1171,7 @@ export class SessionPackageService {
             retainedOrigin.identities
           ) as NonNullable<PackageRecords['literature']>
         const currentLiteratureSources = await capturePackageLiterature(
-          client,
+          this.options.literatureSource,
           session,
           currentRecords,
           bookmarkLiteratureIds
@@ -1273,9 +1297,22 @@ export class SessionPackageService {
     target: SessionPackageImportRequest,
     forkSource?: PersistedChatSession
   ): Promise<{ projectId: string; sessionId: string }> {
-    if (target.projectId) await this.assertImportProject(target.projectId)
     const operationId = randomUUID()
     const projectId = target.projectId ?? `import-${operationId}`
+    return withWorkingFileEvidenceRead(this.options.storageRoot, projectId, () =>
+      this.importSnapshot(path, onProgress, confirm, target, { operationId, projectId }, forkSource)
+    )
+  }
+
+  private async importSnapshot(
+    path: string,
+    onProgress: ((progress: PackageProgress) => void) | undefined,
+    confirm: ((preview: SessionPackagePreview, signal: AbortSignal) => Promise<void>) | undefined,
+    target: SessionPackageImportRequest,
+    { operationId, projectId }: { operationId: string; projectId: string },
+    forkSource?: PersistedChatSession
+  ): Promise<{ projectId: string; sessionId: string }> {
+    if (target.projectId) await this.assertImportProject(target.projectId)
     // Only read-only imports use the import identity convention consumed by the lazy catalog.
     const sessionId = forkSource ? randomUUID() : `import-${randomUUID()}`
     const operationRoot = join(this.options.storageRoot, 'session-package-imports', operationId)
@@ -1723,14 +1760,24 @@ export class SessionPackageService {
         }
         // Database and publication failures still propagate to the deferred data-root gate.
         if (identity) {
-          const client = await this.options.getClient()
-          const committed = await client.fileOriginSession.findUnique({
-            where: {
-              projectId_sessionId: { projectId: identity.projectId, sessionId: identity.sessionId }
+          const journal = identity
+          await withWorkingFileEvidenceRead(
+            this.options.storageRoot,
+            journal.projectId,
+            async () => {
+              const client = await this.options.getClient()
+              const committed = await client.fileOriginSession.findUnique({
+                where: {
+                  projectId_sessionId: {
+                    projectId: journal.projectId,
+                    sessionId: journal.sessionId
+                  }
+                }
+              })
+              if (!committed) await this.removeUnpublished(journal, operation)
+              else await this.finishPublishedImport(stage, operation)
             }
-          })
-          if (!committed) await this.removeUnpublished(identity, operation)
-          else await this.finishPublishedImport(stage, operation)
+          )
         }
         if (this.configRoot !== this.options.storageRoot) {
           const dataStage = join(this.options.storageRoot, 'session-package-imports', operation)
@@ -2044,17 +2091,19 @@ export class SessionPackageService {
   }
 
   private async removeUnpublished(journal: ImportJournal, operation: string): Promise<void> {
-    for (const entry of journal.directories) {
-      const parent = join(this.options.storageRoot, entry.scope, journal.projectId)
-      const directory = join(parent, entry.sessionId)
-      if (!(await this.ownsDirectory(directory, operation))) continue
-      await assertPackageSourcePath(
-        this.options.storageRoot,
-        `${entry.scope}/${journal.projectId}/${entry.sessionId}`
-      )
-      await rm(directory, { recursive: true, force: true })
-      await defaultFileDurability.syncDirectory(parent)
-    }
+    return withWorkingFileEvidenceRead(this.options.storageRoot, journal.projectId, async () => {
+      for (const entry of journal.directories) {
+        const parent = join(this.options.storageRoot, entry.scope, journal.projectId)
+        const directory = join(parent, entry.sessionId)
+        if (!(await this.ownsDirectory(directory, operation))) continue
+        await assertPackageSourcePath(
+          this.options.storageRoot,
+          `${entry.scope}/${journal.projectId}/${entry.sessionId}`
+        )
+        await rm(directory, { recursive: true, force: true })
+        await defaultFileDurability.syncDirectory(parent)
+      }
+    })
   }
 
   private async finishPublishedImport(operationRoot: string, operation: string): Promise<void> {

@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type { LiteratureCatalogReceipt } from '@aipoch/literature-library/contracts'
 import { useRef, useState } from 'react'
@@ -12,6 +13,8 @@ export function SmartEvaluationHistory({
   collectionId: string
   itemId: string
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const pending = useRef(false)
   const [loading, setLoading] = useState(false)
@@ -23,7 +26,7 @@ export function SmartEvaluationHistory({
     setLoading(true)
     setFailed(false)
     try {
-      const receipt = await window.api.literature.transact({
+      const receipt = await hostApi.literature.transact({
         kind: 'read-smart-history',
         collectionId,
         itemId,

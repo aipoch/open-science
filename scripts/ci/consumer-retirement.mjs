@@ -5,6 +5,10 @@ import ts from 'typescript'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
+export function isConsumerSourcePath(path) {
+  return /\.(?:[cm]?[jt]sx?|json)$/.test(path)
+}
+
 // Read immutable Git objects, never materialize or execute candidate code. A bounded
 // batch also avoids one subprocess per dependency when inspecting a renderer cone.
 export function sourceSnapshot(revision, cwd) {
@@ -24,8 +28,7 @@ export function sourceSnapshot(revision, cwd) {
     ...new Set(
       [...entries]
         .filter(
-          ([path, entry]) =>
-            /\.(?:[cm]?[jt]sx?|json)$/.test(path) && /^100(?:644|755)$/.test(entry.mode)
+          ([path, entry]) => isConsumerSourcePath(path) && /^100(?:644|755)$/.test(entry.mode)
         )
         .map(([, entry]) => entry.oid)
     )
@@ -165,7 +168,7 @@ export function createConsumerDependencyReader(
     parsed.set(path, result)
     // Resources can contain further URLs/imports. Their known edges add coverage, but
     // never prove that unrelated consumers can retire; do not parse binary data as TS.
-    if (!/\.(?:[cm]?[jt]sx?|json)$/.test(path)) {
+    if (!isConsumerSourcePath(path)) {
       result.complete = false
       return result
     }

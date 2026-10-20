@@ -4,8 +4,8 @@ import type {
   ProviderFailureObserver
 } from './provider-failure-observation'
 
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import { usesVendorMessagesApiKeyHeader, type ModelReasoningEffort } from '@aipoch/providers'
+
 import {
   CLAUDE_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentModelCatalogEntry,
@@ -15,68 +15,72 @@ import {
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { netFetchStandard } from '../network-fetch'
-import {
-  AnthropicProviderBridge,
-  type AnthropicProviderBridgeTarget
-} from './anthropic-provider-bridge'
+import { MessagesBridge, type MessagesBridgeTarget } from './messages-bridge'
 import type { BackendRoutePlan } from './backend-route-planner'
 import {
-  normalizeAnthropicBaseUrl,
-  openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
+  normalizeMessagesRootUrl,
+  resolveChatCompletionsUrl,
+  resolveChatCompletionsBaseUrl,
+  type ResponsesNamespacedTool
+} from '@aipoch/providers/protocol'
 import {
-  ChatProviderCompatibilityBridge,
-  type ChatProviderCompatibilityTarget
-} from './chat-provider-compatibility'
+  ChatCompletionsCompatibilityBridge,
+  type ChatCompletionsCompatibilityTarget
+} from './chat-completions-compatibility'
 import { adaptCodeBuddyChatCompletionsRequest } from './codebuddy-chat-request-adapter'
 import {
   createCodeBuddySkillSelectorTransport,
-  type ProviderResponsesBridgePort
+  type ProviderResponsesToChatCompletionsBridgePort
 } from './codebuddy-skill-selector-transport'
 import {
   NativeResponsesCompatibilityProxy,
   type NativeResponsesCompatibilityTarget
 } from './native-responses-compatibility'
-import { OpenAiProviderBridge, type OpenAiProviderBridgeTarget } from './openai-provider-bridge'
-import type { ProviderRuntimeTarget } from './provider-accounts'
 import {
-  ResponsesBridge,
-  type ResponsesBridgeNamespacedTool,
-  type ResponsesBridgeOptions
-} from './responses-bridge'
-import type { ResponsesBridgeConnection, ResponsesBridgeTarget } from './responses-bridge-contract'
+  ProtocolForwardingBridge,
+  type ProtocolForwardingBridgeTarget
+} from './protocol-forwarding-bridge'
+import type { ProviderRuntimeTarget } from './provider-accounts'
+
+import {
+  ResponsesToChatCompletionsBridge,
+  type ResponsesToChatCompletionsBridgeOptions
+} from './responses-to-chat-completions-bridge'
+import type {
+  ResponsesConnection,
+  ResponsesToChatCompletionsBridgeTarget
+} from './responses-transport-contract'
 import { loopbackProxyBypassEnvironment } from './system-proxy'
 import { claudeCodeLoopbackEnv, createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { xaiNativeResponsesTargetFields } from './xai-protocol'
-type AnthropicProviderBridgePort = Pick<
-  AnthropicProviderBridge,
+import { sanitizeXaiResponsesRequest } from '@aipoch/providers/protocol'
+type MessagesBridgePort = Pick<MessagesBridge, 'start' | 'close' | 'setTarget' | 'clearErrorReplay'>
+type ProtocolForwardingBridgePort = Pick<
+  ProtocolForwardingBridge,
   'start' | 'close' | 'setTarget' | 'clearErrorReplay'
 >
-type OpenAiProviderBridgePort = Pick<
-  OpenAiProviderBridge,
-  'start' | 'close' | 'setTarget' | 'clearErrorReplay'
+type ChatCompletionsCompatibilityBridgePort = Pick<
+  ChatCompletionsCompatibilityBridge,
+  'start' | 'close'
 >
-type ChatProviderCompatibilityBridgePort = Pick<ChatProviderCompatibilityBridge, 'start' | 'close'>
 type CreateXaiOAuthProviderBridge = typeof createXaiOAuthProviderBridge
 
 const codeBuddyCompatibilityEndpoint = (
   provider: ProviderRuntimeTarget['provider'],
-  wire: ChatProviderCompatibilityTarget['wire']
+  wire: ChatCompletionsCompatibilityTarget['wire']
 ): string => {
   if (wire === 'responses') {
     const baseUrl = resolveResponsesBaseUrl(provider)
     if (!baseUrl) throw new Error('The CodeBuddy Responses provider target is incomplete.')
     return `${baseUrl}/responses`
   }
-  const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl ?? '')
+  const baseUrl = normalizeMessagesRootUrl(provider.baseUrl ?? '')
   if (!baseUrl) throw new Error('The CodeBuddy Messages provider target is incomplete.')
   return `${baseUrl}/v1/messages`
 }
 
-type ResponsesBridgeEntry = {
-  bridge: ProviderResponsesBridgePort
-  connection: Promise<ResponsesBridgeConnection>
+type ResponsesToChatCompletionsBridgeEntry = {
+  bridge: ProviderResponsesToChatCompletionsBridgePort
+  connection: Promise<ResponsesConnection>
 }
 
 type NativeResponsesProxyPort = Pick<
@@ -95,16 +99,16 @@ type NativeResponsesProxyPort = Pick<
 >
 
 type NativeResponsesProxyTarget = NativeResponsesCompatibilityTarget & {
-  reviewerScope: { namespacedTools: ResponsesBridgeNamespacedTool[] }
+  reviewerScope: { namespacedTools: ResponsesNamespacedTool[] }
 }
 
 type NativeResponsesCompatibilityEntry = {
   proxy: NativeResponsesProxyPort
-  connection: Promise<ResponsesBridgeConnection>
+  connection: Promise<ResponsesConnection>
 }
 
-type LeasedResponsesBridgeConnection = ResponsesBridgeConnection & {
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+type LeasedResponsesConnection = ResponsesConnection & {
+  lease: NonNullable<ResolvedAgentBackend['responsesTransportLease']>
   providerTransportLease?: NonNullable<ResolvedAgentBackend['providerTransportLease']>
 }
 
@@ -116,10 +120,10 @@ type ProviderTransportRequest = Readonly<{
 type ProviderTransportGeneration = Readonly<{
   provider?: ProviderRuntimeTarget['provider']
   providerModelCatalog?: readonly AgentModelCatalogEntry[]
-  responsesBridge?: LeasedResponsesBridgeConnection
+  responsesConnection?: LeasedResponsesConnection
   environment?: Record<string, string>
   providerConfiguration?: AgentProviderConfiguration
-  anthropicBridgeLease?: NonNullable<ResolvedAgentBackend['anthropicBridgeLease']>
+  messagesBridgeLease?: NonNullable<ResolvedAgentBackend['messagesBridgeLease']>
   providerTransportLease?: NonNullable<ResolvedAgentBackend['providerTransportLease']>
   release: () => Promise<void>
 }>
@@ -130,50 +134,53 @@ type ProviderTransportOwnerOptions = {
     failure: ProviderFailureObservation
   ) => Promise<void>
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
-  createResponsesBridge?: (
-    target: ResponsesBridgeTarget,
-    options?: ResponsesBridgeOptions
-  ) => ProviderResponsesBridgePort
+  createResponsesToChatCompletionsBridge?: (
+    target: ResponsesToChatCompletionsBridgeTarget,
+    options?: ResponsesToChatCompletionsBridgeOptions
+  ) => ProviderResponsesToChatCompletionsBridgePort
   createNativeResponsesProxy?: (target: NativeResponsesProxyTarget) => NativeResponsesProxyPort
-  createAnthropicProviderBridge?: (
-    targets: readonly AnthropicProviderBridgeTarget[],
+  createMessagesBridge?: (
+    targets: readonly MessagesBridgeTarget[],
     initialTargetId: string
-  ) => AnthropicProviderBridgePort
-  createOpenAiProviderBridge?: (
-    targets: readonly OpenAiProviderBridgeTarget[],
+  ) => MessagesBridgePort
+  createProtocolForwardingBridge?: (
+    targets: readonly ProtocolForwardingBridgeTarget[],
     initialTargetId: string
-  ) => OpenAiProviderBridgePort
-  createChatProviderCompatibilityBridge?: (
-    target: ChatProviderCompatibilityTarget
-  ) => ChatProviderCompatibilityBridgePort
+  ) => ProtocolForwardingBridgePort
+  createChatCompletionsCompatibilityBridge?: (
+    target: ChatCompletionsCompatibilityTarget
+  ) => ChatCompletionsCompatibilityBridgePort
   createXaiOAuthProviderBridge?: CreateXaiOAuthProviderBridge
   nextGenerationId?: () => string
 }
 
 class ProviderTransportOwner {
   private readonly onProviderFailure: ProviderTransportOwnerOptions['onProviderFailure']
-  private readonly createResponsesBridge: (
-    target: ResponsesBridgeTarget,
-    options?: ResponsesBridgeOptions
-  ) => ProviderResponsesBridgePort
+  private readonly createResponsesToChatCompletionsBridge: (
+    target: ResponsesToChatCompletionsBridgeTarget,
+    options?: ResponsesToChatCompletionsBridgeOptions
+  ) => ProviderResponsesToChatCompletionsBridgePort
   private readonly createNativeResponsesProxy: (
     target: NativeResponsesProxyTarget
   ) => NativeResponsesProxyPort
-  private readonly createAnthropicProviderBridge: (
-    targets: readonly AnthropicProviderBridgeTarget[],
+  private readonly createMessagesBridge: (
+    targets: readonly MessagesBridgeTarget[],
     initialTargetId: string
-  ) => AnthropicProviderBridgePort
-  private readonly createOpenAiProviderBridge: (
-    targets: readonly OpenAiProviderBridgeTarget[],
+  ) => MessagesBridgePort
+  private readonly createProtocolForwardingBridge: (
+    targets: readonly ProtocolForwardingBridgeTarget[],
     initialTargetId: string
-  ) => OpenAiProviderBridgePort
-  private readonly createChatProviderCompatibilityBridge: (
-    target: ChatProviderCompatibilityTarget
-  ) => ChatProviderCompatibilityBridgePort
+  ) => ProtocolForwardingBridgePort
+  private readonly createChatCompletionsCompatibilityBridge: (
+    target: ChatCompletionsCompatibilityTarget
+  ) => ChatCompletionsCompatibilityBridgePort
   private readonly createXaiOAuthProviderBridge: CreateXaiOAuthProviderBridge
   private readonly nextGenerationId: () => string
   private readonly getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
-  private readonly responsesBridges = new Map<string, ResponsesBridgeEntry>()
+  private readonly responsesToChatCompletionsBridges = new Map<
+    string,
+    ResponsesToChatCompletionsBridgeEntry
+  >()
   private readonly nativeResponsesCompatibilityProxies = new Map<
     string,
     NativeResponsesCompatibilityEntry
@@ -181,23 +188,23 @@ class ProviderTransportOwner {
 
   constructor(options: ProviderTransportOwnerOptions = {}) {
     this.onProviderFailure = options.onProviderFailure
-    this.createResponsesBridge =
-      options.createResponsesBridge ??
-      ((target, bridgeOptions) => new ResponsesBridge(target, netFetchStandard, bridgeOptions))
+    this.createResponsesToChatCompletionsBridge =
+      options.createResponsesToChatCompletionsBridge ??
+      ((target, bridgeOptions) =>
+        new ResponsesToChatCompletionsBridge(target, netFetchStandard, bridgeOptions))
     this.createNativeResponsesProxy =
       options.createNativeResponsesProxy ??
       ((target) => new NativeResponsesCompatibilityProxy(target, netFetchStandard))
-    this.createAnthropicProviderBridge =
-      options.createAnthropicProviderBridge ??
+    this.createMessagesBridge =
+      options.createMessagesBridge ??
+      ((targets, initialTargetId) => new MessagesBridge(targets, initialTargetId, netFetchStandard))
+    this.createProtocolForwardingBridge =
+      options.createProtocolForwardingBridge ??
       ((targets, initialTargetId) =>
-        new AnthropicProviderBridge(targets, initialTargetId, netFetchStandard))
-    this.createOpenAiProviderBridge =
-      options.createOpenAiProviderBridge ??
-      ((targets, initialTargetId) =>
-        new OpenAiProviderBridge(targets, initialTargetId, netFetchStandard))
-    this.createChatProviderCompatibilityBridge =
-      options.createChatProviderCompatibilityBridge ??
-      ((target) => new ChatProviderCompatibilityBridge(target, netFetchStandard))
+        new ProtocolForwardingBridge(targets, initialTargetId, netFetchStandard))
+    this.createChatCompletionsCompatibilityBridge =
+      options.createChatCompletionsCompatibilityBridge ??
+      ((target) => new ChatCompletionsCompatibilityBridge(target, netFetchStandard))
     this.createXaiOAuthProviderBridge =
       options.createXaiOAuthProviderBridge ?? createXaiOAuthProviderBridge
     this.nextGenerationId = options.nextGenerationId ?? randomUUID
@@ -221,26 +228,26 @@ class ProviderTransportOwner {
       return this.startNativeCodexTransport(input)
     }
     if (input.plan.transport.kind === 'codex-responses-compatibility') {
-      const responsesBridge = await this.startNativeResponsesCompatibility(input)
+      const responsesConnection = await this.startNativeResponsesCompatibility(input)
       return Object.freeze({
-        responsesBridge,
+        responsesConnection,
         environment: loopbackProxyBypassEnvironment(process.env),
-        ...(responsesBridge.providerTransportLease
-          ? { providerTransportLease: responsesBridge.providerTransportLease }
+        ...(responsesConnection.providerTransportLease
+          ? { providerTransportLease: responsesConnection.providerTransportLease }
           : {}),
-        release: responsesBridge.lease.release
+        release: responsesConnection.lease.release
       })
     }
     if (input.plan.transport.kind !== 'codex-chat')
       return Object.freeze({ release: async () => undefined })
-    const responsesBridge = await this.startResponsesBridge(input)
+    const responsesConnection = await this.startResponsesToChatCompletionsBridge(input)
     return Object.freeze({
-      responsesBridge,
+      responsesConnection,
       environment: loopbackProxyBypassEnvironment(process.env),
-      ...(responsesBridge.providerTransportLease
-        ? { providerTransportLease: responsesBridge.providerTransportLease }
+      ...(responsesConnection.providerTransportLease
+        ? { providerTransportLease: responsesConnection.providerTransportLease }
         : {}),
-      release: responsesBridge.lease.release
+      release: responsesConnection.lease.release
     })
   }
 
@@ -266,9 +273,9 @@ class ProviderTransportOwner {
     const targetId = JSON.stringify(['codebuddy', input.activeTarget.providerId, model])
     const transport = input.plan.transport
     const usesXaiOAuth = provider.type === 'xai-subscription'
-    const bridge: ChatProviderCompatibilityBridgePort =
+    const bridge: ChatCompletionsCompatibilityBridgePort =
       transport.kind === 'codebuddy-provider-compatibility'
-        ? this.createChatProviderCompatibilityBridge({
+        ? this.createChatCompletionsCompatibilityBridge({
             ...this.healthObservation(input.activeTarget),
             wire: transport.wire,
             endpoint: codeBuddyCompatibilityEndpoint(provider, transport.wire),
@@ -280,14 +287,14 @@ class ProviderTransportOwner {
           ? this.createXaiOAuthProviderBridge(
               [{ id: targetId, model }],
               targetId,
-              'openai',
+              'chat-completions',
               this.getXaiOAuthAccessToken,
-              { adaptOpenAiRequest: adaptCodeBuddyChatCompletionsRequest }
+              { adaptChatCompletionsRequest: adaptCodeBuddyChatCompletionsRequest }
             )
           : (() => {
-              const endpoint = openAiChatCompletionsUrl(provider)
+              const endpoint = resolveChatCompletionsUrl(provider)
               if (!endpoint) throw new Error('The CodeBuddy provider target is incomplete.')
-              return this.createOpenAiProviderBridge(
+              return this.createProtocolForwardingBridge(
                 [
                   {
                     ...this.healthObservation(input.activeTarget),
@@ -308,22 +315,26 @@ class ProviderTransportOwner {
         : createCodeBuddySkillSelectorTransport({
             activeTarget: input.activeTarget,
             ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
-            createSelector: this.createResponsesBridge
+            createSelector: this.createResponsesToChatCompletionsBridge
           })
     try {
       const connection = await bridge.start()
       const routedProvider = Object.freeze({
         ...provider,
         baseUrl: connection.baseUrl,
-        openaiBaseUrl: `${connection.baseUrl}/v1`,
+        chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
         model,
         key: connection.token,
-        apiEndpoints: ['openai'] as const
+        apiEndpoints: ['chat-completions'] as const
       })
       selector ??= createCodeBuddySkillSelectorTransport({
-        activeTarget: { ...input.activeTarget, provider: routedProvider, apiEndpoints: ['openai'] },
+        activeTarget: {
+          ...input.activeTarget,
+          provider: routedProvider,
+          apiEndpoints: ['chat-completions']
+        },
         ...(input.plan.sessionEffort ? { reasoningEffort: input.plan.sessionEffort } : {}),
-        createSelector: this.createResponsesBridge
+        createSelector: this.createResponsesToChatCompletionsBridge
       })
       let released = false
       const release = async (): Promise<void> => {
@@ -358,7 +369,7 @@ class ProviderTransportOwner {
     if (transport.kind !== 'codex-native-responses') {
       throw new Error('Native Codex provider transport is unavailable.')
     }
-    const targets = transport.targets.map((planned): OpenAiProviderBridgeTarget => {
+    const targets = transport.targets.map((planned): ProtocolForwardingBridgeTarget => {
       const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
       const baseUrl = resolveResponsesBaseUrl(candidate.provider)
@@ -376,7 +387,7 @@ class ProviderTransportOwner {
     if (!activeModel) throw new Error('The active native Responses model is unavailable.')
     const initialTargetId = transport.initialTargetId
     if (!initialTargetId) throw new Error('The active native Responses model is unavailable.')
-    const bridge = this.createOpenAiProviderBridge(targets, initialTargetId)
+    const bridge = this.createProtocolForwardingBridge(targets, initialTargetId)
     try {
       const connection = await bridge.start()
       let released = false
@@ -389,7 +400,7 @@ class ProviderTransportOwner {
         provider: Object.freeze({
           ...input.activeTarget.provider,
           baseUrl: connection.baseUrl,
-          openaiBaseUrl: `${connection.baseUrl}/v1`,
+          chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
           model: activeModel,
           key: connection.token,
           apiEndpoints: ['responses'] as const
@@ -414,7 +425,7 @@ class ProviderTransportOwner {
     if (transport.kind !== 'opencode-openai' && transport.kind !== 'opencode-anthropic') {
       throw new Error('OpenCode provider transport is unavailable.')
     }
-    const bridges: Array<AnthropicProviderBridgePort | OpenAiProviderBridgePort> = []
+    const bridges: Array<MessagesBridgePort | ProtocolForwardingBridgePort> = []
     const targetIds = new Set<string>()
     const catalog: AgentModelCatalogEntry[] = []
     let activeProvider: ProviderRuntimeTarget['provider'] | undefined
@@ -430,33 +441,33 @@ class ProviderTransportOwner {
             ? this.createXaiOAuthProviderBridge(
                 [{ id: targetId, model }],
                 targetId,
-                'openai',
+                'chat-completions',
                 this.getXaiOAuthAccessToken
               )
             : transport.kind === 'opencode-openai'
-              ? this.createOpenAiProviderBridge(
+              ? this.createProtocolForwardingBridge(
                   [
                     {
                       ...this.healthObservation(candidate),
                       id: targetId,
                       wire: 'chat-completions',
-                      endpoint: openAiChatCompletionsUrl(candidate.provider)!,
+                      endpoint: resolveChatCompletionsUrl(candidate.provider)!,
                       ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                       model
                     }
                   ],
                   targetId
                 )
-              : this.createAnthropicProviderBridge(
+              : this.createMessagesBridge(
                   [
                     {
                       ...this.healthObservation(candidate),
                       id: targetId,
-                      baseUrl: normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? ''),
+                      baseUrl: normalizeMessagesRootUrl(candidate.provider.baseUrl ?? ''),
                       ...(candidate.provider.key ? { key: candidate.provider.key } : {}),
                       model,
                       ...(candidate.provider.vendorId &&
-                      usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                      usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
                         ? { useApiKeyHeader: true }
                         : {})
                     }
@@ -466,15 +477,17 @@ class ProviderTransportOwner {
         bridges.push(bridge)
         const connection = await bridge.start()
         const apiEndpoints = [
-          transport.kind === 'opencode-openai' ? ('openai' as const) : ('anthropic' as const)
+          transport.kind === 'opencode-openai'
+            ? ('chat-completions' as const)
+            : ('messages' as const)
         ]
         const localProvider = Object.freeze({
           ...candidate.provider,
           agentProviderId: opencodeTransportProviderId(candidate.providerId, model),
           baseUrl: connection.baseUrl,
           ...(transport.kind === 'opencode-openai'
-            ? { openaiBaseUrl: `${connection.baseUrl}/v1` }
-            : { openaiBaseUrl: undefined }),
+            ? { chatCompletionsBaseUrl: `${connection.baseUrl}/v1` }
+            : { chatCompletionsBaseUrl: undefined }),
           model,
           key: connection.token,
           apiEndpoints
@@ -538,10 +551,10 @@ class ProviderTransportOwner {
         ? this.createXaiOAuthProviderBridge(
             transport.targets.map(({ id, model }) => ({ id, model })),
             transport.initialTargetId,
-            'anthropic',
+            'messages',
             this.getXaiOAuthAccessToken
           )
-        : this.createAnthropicProviderBridge(
+        : this.createMessagesBridge(
             transport.targets.map(({ runtimeTarget, ...target }) => ({
               ...target,
               ...(runtimeTarget ? this.healthObservation(runtimeTarget) : {})
@@ -570,7 +583,7 @@ class ProviderTransportOwner {
           baseUrl: connection.baseUrl,
           headers: { 'x-api-key': connection.token }
         },
-        anthropicBridgeLease: {
+        messagesBridgeLease: {
           setTarget: (targetId: string) => bridge.setTarget(targetId),
           release
         },
@@ -584,7 +597,7 @@ class ProviderTransportOwner {
 
   private async startNativeResponsesCompatibility(
     input: ProviderTransportRequest
-  ): Promise<LeasedResponsesBridgeConnection> {
+  ): Promise<LeasedResponsesConnection> {
     const transport = input.plan.transport
     if (transport.kind !== 'codex-responses-compatibility') {
       throw new Error('Native Responses compatibility transport is unavailable.')
@@ -596,7 +609,12 @@ class ProviderTransportOwner {
         ...this.healthObservation(candidate),
         baseUrl: targetBaseUrl,
         key: candidate.provider.key,
-        ...xaiNativeResponsesTargetFields(candidate.provider.type, this.getXaiOAuthAccessToken),
+        ...(candidate.provider.type === 'xai-subscription'
+          ? {
+              resolveKey: this.getXaiOAuthAccessToken,
+              sanitizeRequest: sanitizeXaiResponsesRequest
+            }
+          : {}),
         model: candidate.effectiveModel ?? candidate.provider.model,
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }
@@ -623,7 +641,7 @@ class ProviderTransportOwner {
     const entry = { proxy, connection: proxy.start() }
     this.nativeResponsesCompatibilityProxies.set(generationId, entry)
 
-    let connection: ResponsesBridgeConnection
+    let connection: ResponsesConnection
     try {
       connection = await entry.connection
     } catch (error) {
@@ -673,16 +691,16 @@ class ProviderTransportOwner {
     })
   }
 
-  private async startResponsesBridge(
+  private async startResponsesToChatCompletionsBridge(
     input: ProviderTransportRequest
-  ): Promise<LeasedResponsesBridgeConnection> {
+  ): Promise<LeasedResponsesConnection> {
     const transport = input.plan.transport
     if (transport.kind !== 'codex-chat') throw new Error('Codex Chat transport is unavailable.')
     const createTarget = (
       candidate: ProviderRuntimeTarget,
       effort: ModelReasoningEffort | undefined
-    ): ResponsesBridgeTarget => {
-      const targetBaseUrl = openAiCompletionsBase(candidate.provider)
+    ): ResponsesToChatCompletionsBridgeTarget => {
+      const targetBaseUrl = resolveChatCompletionsBaseUrl(candidate.provider)
       if (!targetBaseUrl) throw new Error('The Chat Completions provider has no base URL.')
       return {
         ...this.healthObservation(candidate),
@@ -696,7 +714,7 @@ class ProviderTransportOwner {
         reviewerScope: { namespacedTools: [...(input.plan.reviewerBridgeTools ?? [])] }
       }
     }
-    const targets = new Map<string, ResponsesBridgeTarget>()
+    const targets = new Map<string, ResponsesToChatCompletionsBridgeTarget>()
     for (const planned of transport.targets) {
       const candidate = planned.target
       const model = candidate.effectiveModel ?? candidate.provider.model
@@ -715,16 +733,16 @@ class ProviderTransportOwner {
       (initialTargetId ? targets.get(initialTargetId) : undefined) ??
       createTarget(input.activeTarget, input.plan.sessionEffort)
     const generationId = this.nextGenerationId()
-    const bridge = this.createResponsesBridge(target)
+    const bridge = this.createResponsesToChatCompletionsBridge(target)
     const entry = { bridge, connection: bridge.start() }
-    this.responsesBridges.set(generationId, entry)
+    this.responsesToChatCompletionsBridges.set(generationId, entry)
 
-    let connection: ResponsesBridgeConnection
+    let connection: ResponsesConnection
     try {
       connection = await entry.connection
     } catch (error) {
-      if (this.responsesBridges.get(generationId) === entry) {
-        this.responsesBridges.delete(generationId)
+      if (this.responsesToChatCompletionsBridges.get(generationId) === entry) {
+        this.responsesToChatCompletionsBridges.delete(generationId)
       }
       await entry.bridge.close().catch(() => undefined)
       throw error
@@ -734,8 +752,8 @@ class ProviderTransportOwner {
     const release = async (): Promise<void> => {
       if (released) return
       released = true
-      if (this.responsesBridges.get(generationId) !== entry) return
-      this.responsesBridges.delete(generationId)
+      if (this.responsesToChatCompletionsBridges.get(generationId) !== entry) return
+      this.responsesToChatCompletionsBridges.delete(generationId)
       await entry.bridge.close()
     }
     return Object.freeze({

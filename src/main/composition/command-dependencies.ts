@@ -241,7 +241,6 @@ export function composeCommandDependencies({
     literature: createLiteratureCommandOwner({
       journalAttributes: researchCatalog.journalAttributes,
       literatureBatchJobs: researchCatalog.literatureBatchJobs,
-      literatureCitationStyles: researchCatalog.literatureCitationStyles,
       literatureCitationFormatter: researchCatalog.literatureCitationFormatter,
       literatureReferenceResolver: researchCatalog.literatureReferenceResolver,
       literatureMetadataEnricher: researchCatalog.literatureMetadataEnricher,

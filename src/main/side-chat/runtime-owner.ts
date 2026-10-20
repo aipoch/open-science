@@ -90,7 +90,7 @@ type SideChatRuntimePort = Pick<
 
 type SideChatRuntimeStartRequest = SideChatStartRequest & Readonly<{ historyPreamble?: string }>
 
-type HostMessageBridge = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+type HostMessageBridge = NonNullable<ResolvedAgentBackend['responsesTransportLease']>
 
 type SideChatRuntimeOwnerOptions = Readonly<{
   appVersion: string
@@ -226,8 +226,8 @@ const deferred = (): Deferred => {
 
 const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<void> => {
   const leases = new Set([
-    backend.responsesBridgeLease,
-    backend.anthropicBridgeLease,
+    backend.responsesTransportLease,
+    backend.messagesBridgeLease,
     backend.providerTransportLease
   ])
   await Promise.all(
@@ -503,7 +503,7 @@ class SideChatRuntimeOwner {
             target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
-        const bridge = resolved.responsesBridgeLease
+        const bridge = resolved.responsesTransportLease
         if (
           bridge &&
           (!bridge.registerHostMessageSession || !bridge.unregisterHostMessageSession)
@@ -519,7 +519,7 @@ class SideChatRuntimeOwner {
       }
       backend = await resolveBackend()
       const initialBackend = backend
-      const bridge = initialBackend.responsesBridgeLease
+      const bridge = initialBackend.responsesTransportLease
 
       const runtimeRef: { current?: SideChatRuntimePort } = {}
       const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
@@ -1118,7 +1118,7 @@ class SideChatRuntimeOwner {
             target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
-        const bridge = resolved.responsesBridgeLease
+        const bridge = resolved.responsesTransportLease
         if (
           bridge &&
           (!bridge.registerHostMessageSession || !bridge.unregisterHostMessageSession)
@@ -1135,7 +1135,7 @@ class SideChatRuntimeOwner {
 
       backend = await resolveBackend()
       const initialBackend = backend
-      const bridge = initialBackend.responsesBridgeLease
+      const bridge = initialBackend.responsesTransportLease
       const runtimeRef: { current?: SideChatRuntimePort } = {}
       const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
       const runtimeOptions: AcpRuntimeOptions = {

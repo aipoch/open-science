@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useEffect, useEffectEvent, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
@@ -23,6 +24,8 @@ export function LiteratureBackgroundTasks({
   onChanged?: (itemIds: string[]) => void
   hidden?: boolean
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const statusId = useId()
   const formatDate = useDateTimeFormat()
@@ -77,7 +80,7 @@ export function LiteratureBackgroundTasks({
       }
       inFlight = true
       try {
-        const result = await window.api.literature.jobs({ action: 'list' })
+        const result = await hostApi.literature.jobs({ action: 'list' })
         if (active) {
           receive(result.summaries ?? [])
           setError(false)
@@ -115,7 +118,7 @@ export function LiteratureBackgroundTasks({
       window.removeEventListener('focus', wake)
       document.removeEventListener('visibilitychange', wake)
     }
-  }, [])
+  }, [hostApi.literature])
   const labels = {
     queued: t('Queued'),
     running: t('Running'),
@@ -275,16 +278,13 @@ export function LiteratureBackgroundTasks({
                           variant="ghost"
                           disabled={['queued', 'running', 'pausing'].includes(job.state)}
                           onClick={() => {
-                            void window.api.literature
-                              .jobs({ action: 'remove', jobId: job.id })
-                              .then(
-                                () =>
-                                  setJobs((current) => current.filter(({ id }) => id !== job.id)),
-                                () => {
-                                  setError(true)
-                                  setAnnounceCompletion(false)
-                                }
-                              )
+                            void hostApi.literature.jobs({ action: 'remove', jobId: job.id }).then(
+                              () => setJobs((current) => current.filter(({ id }) => id !== job.id)),
+                              () => {
+                                setError(true)
+                                setAnnounceCompletion(false)
+                              }
+                            )
                           }}
                         >
                           {t('Remove task')}

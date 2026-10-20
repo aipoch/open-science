@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -31,6 +32,8 @@ export function LiteratureDuplicateBatch({
   onCompleted?: (batch: NonNullable<LiteratureCatalogReceipt['batch']>) => void
   result?: LiteratureCatalogReceipt['batch']
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [batch, setBatch] = useState<LiteratureCatalogReceipt['batch']>(result)
   const [done, setDone] = useState(Boolean(result))
@@ -54,7 +57,7 @@ export function LiteratureDuplicateBatch({
       // The 21st ID marks an oversized group for review; it must never be partially merged.
       if (mode === 'preview')
         previewGroups.current = groups.map((group) => group.itemIds.slice(0, 21))
-      const receipt = await window.api.literature.transact({
+      const receipt = await hostApi.literature.transact({
         kind: 'merge-duplicates',
         mode,
         strategy,

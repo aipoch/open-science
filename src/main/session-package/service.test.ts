@@ -28,6 +28,8 @@ import { SessionProjectionAfterCommitError } from '../session-persistence/save-s
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import {
   startWorkingFileObservation,
+  completeWorkingFileEvidence,
+  maintainWorkingFileEvidence,
   deleteWorkingFileEvidenceProject
 } from '../notebook/working-file-observer'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
@@ -59,6 +61,104 @@ vi.mock('electron', () => ({
 }))
 
 const fixtures: Awaited<ReturnType<typeof createProvenanceTestFixture>>[] = []
+
+it('defers native evidence cleanup while an import publishes its marked directories', async () => {
+  const source = await createProvenanceTestFixture()
+  const target = await createProvenanceTestFixture()
+  fixtures.push(source, target)
+  initDataRoot(target.storageRoot)
+  await source.client.project.create({ data: { id: 'source', name: 'Source' } })
+  await target.client.project.create({ data: { id: 'target', name: 'Target' } })
+  await new SessionRepository(source.storageRoot).saveSession({
+    id: 'original',
+    projectId: 'source',
+    title: 'Research',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1
+  })
+  const sourceData = join(source.storageRoot, 'notebooks/source/original/data')
+  await mkdir(sourceData, { recursive: true })
+  await writeFile(join(sourceData, 'result.txt'), 'imported result')
+  const archive = join(source.storageRoot, 'history.science')
+  const exporter = new SessionPackageService({
+    storageRoot: source.storageRoot,
+    getClient: async () => source.client
+  })
+  const importer = new SessionPackageService({
+    storageRoot: target.storageRoot,
+    getClient: async () => target.client
+  })
+  const sessionRoot = join(target.storageRoot, 'notebooks/target/native')
+  const dataRoot = join(sessionRoot, 'data')
+  await mkdir(dataRoot, { recursive: true })
+  const location = {
+    storageRoot: target.storageRoot,
+    root: join(target.storageRoot, 'execution-file-evidence/target/native'),
+    storageKeyPrefix: 'execution-file-evidence/target/native'
+  }
+  const observation = await startWorkingFileObservation(
+    {
+      dataRoot,
+      notebookSessionRoot: sessionRoot,
+      runId: 'native-run',
+      fileEvidenceStorageRoot: target.storageRoot,
+      fileEvidenceRoot: location.root,
+      fileEvidenceStoragePrefix: location.storageKeyPrefix
+    },
+    {
+      watchDirectory: () => {
+        throw new Error('No watcher in fixture')
+      }
+    }
+  )
+  await writeFile(join(dataRoot, 'kept.txt'), 'kept result')
+  const { fileEvidence } = await observation.finish()
+  await completeWorkingFileEvidence(location, { runId: 'native-run', fileEvidence })
+  const orphan = 'unreferenced capture'
+  const blob = `sha256-${sha256(orphan)}`
+  const pooled = join(target.storageRoot, 'execution-file-evidence/target/blobs', blob)
+  const alias = join(location.root, 'activity-native-run/blobs', blob)
+  await writeFile(pooled, orphan)
+  await fsPromises.link(pooled, alias)
+  const owner = {
+    receiptName: 'receipt-native-run.json',
+    finalName: 'activity-native-run',
+    activityId: 'native-run',
+    activityKind: 'notebook-run' as const,
+    evidenceId: fileEvidence.evidenceId!,
+    checksum: fileEvidence.checksum!,
+    storageKey: fileEvidence.storageKey!
+  }
+  const write = fsPromises.writeFile
+  let checked = false
+  const intercept = vi.spyOn(fsPromises, 'writeFile').mockImplementation(async (...args) => {
+    await Reflect.apply(write, fsPromises, args)
+    const path = String(args[0])
+    if (
+      path.startsWith(join(target.storageRoot, 'notebooks/target') + sep) &&
+      path.endsWith(`${sep}.session-package-owner`)
+    ) {
+      // The imported directory is reserved but its children have not yet been published.
+      checked = true
+      await maintainWorkingFileEvidence(location, [owner])
+      await expect(readFile(alias, 'utf8')).resolves.toBe(orphan)
+    }
+  })
+  try {
+    await exporter.exportTo({ projectId: 'source', sessionId: 'original' }, archive)
+    await importer.importFrom(archive, undefined, undefined, undefined, { projectId: 'target' })
+    expect(checked).toBe(true)
+    await maintainWorkingFileEvidence(location, [owner])
+    await expect(stat(alias)).rejects.toMatchObject({ code: 'ENOENT' })
+  } finally {
+    intercept.mockRestore()
+    await exporter.close()
+    await importer.close()
+  }
+})
 
 it.each(['identical versions', 'identical evidence', 'small edit'] as const)(
   'preserves independent history with shared package content for %s',

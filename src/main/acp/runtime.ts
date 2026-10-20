@@ -46,7 +46,7 @@ import {
 import { resolveFileTextBudget } from '../../shared/history-preamble'
 import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { MessageAttribution } from '../../shared/session-message-contract'
 import { sanitizeSessionReferences } from '../../shared/session-persistence'
 import type {
@@ -685,11 +685,20 @@ class AcpRuntime {
     }))
   }
 
-  // A permission-blocked prompt whose authority reached durable storage is quiescent for app quit:
-  // teardown loses only the dead provider RPC, while the card remains actionable after restart.
+  // Durable human decisions survive quit; closing their provider RPC must not cancel the card.
   getQuitBlockingPromptSessions(): { projectId: string; sessionId: string }[] {
+    const durableQuestionSessions = new Set(
+      this.elicitationOwner
+        .getPendingRequests()
+        .filter((request) => request.durable)
+        .map((request) => request.sessionId)
+    )
     return this.getInFlightSessionIds()
-      .filter((sessionId) => !this.permissionContext.hasDurablePendingForSession(sessionId))
+      .filter(
+        (sessionId) =>
+          !this.permissionContext.hasDurablePendingForSession(sessionId) &&
+          !durableQuestionSessions.has(sessionId)
+      )
       .map((sessionId) => ({
         projectId: this.resolveSessionProjectId(sessionId),
         sessionId

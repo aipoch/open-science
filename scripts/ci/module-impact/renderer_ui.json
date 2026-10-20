@@ -39,6 +39,7 @@
     "src/renderer/src/components/notice.tsx",
     "src/renderer/src/lib/utils.ts",
     "src/renderer/src/pages/literature/imports/LiteratureImportDialogFrame.tsx",
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
     "src/renderer/src/components/ui/overlay-portal-container.test.tsx",
     "src/renderer/src/components/ui/overlay-portal-container.tsx"
   ],
@@ -115,6 +116,7 @@
     "src/renderer/src/components/session-package-import-menu-model.ts",
     "src/renderer/src/components/use-settings-undo-portal.tsx",
     "src/renderer/src/lib/utils.ts",
+    "src/renderer/src/components/ui/workflow-dialog-frame.tsx",
     "src/renderer/src/components/ui/overlay-portal-container.tsx"
   ],
   "consumerModules": [],

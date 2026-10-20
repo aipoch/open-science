@@ -30,6 +30,17 @@
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
 !include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
+
+# Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
+# receipt at each explicit failure exit so the detached presentation can become dismissible.
+!macro quitFailedUpdate
+  Call cleanupInstallPublication
+  Push "failed"
+  Call writeUpdateReceipt
+  SetErrorLevel 2
+  Quit
+!macroend
 
 Var perMachineInstallDirCache
 Var perUserInstallDirCache
@@ -179,8 +190,7 @@ FunctionEnd
 
 !macro quitIfDataRestoreFailed
   ${if} $dataRestoreFailed != "0"
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 
@@ -205,8 +215,7 @@ FunctionEnd
   ${if} $dataProtectionFailed != "0"
     # Undo any earlier successful move before refusing to start either old uninstaller.
     !insertmacro restoreAllNestedDataRoots
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 
@@ -320,8 +329,7 @@ FunctionEnd
 
   ${if} $dataProtectionFailed != "0"
     !insertmacro restoreAllNestedDataRoots
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
   # Page callbacks do not run in silent mode. There is no later user choice in that mode, so the
   # installMode selected by initMultiUser is already final and machine protection can run now.
@@ -350,10 +358,10 @@ FunctionEnd
 
     ensureExistingUninstallerIsWritable_retry:
       System::Call 'kernel32::SetLastError(i 0)'
-      System::Call 'kernel32::CreateFile(t "$INSTDIR\${UNINSTALL_FILENAME}", i 0x40000000, i 1, i 0, i 3, i 0x80, i 0) i.rR0 ?e'
+      System::Call 'kernel32::CreateFile(t "$INSTDIR\${UNINSTALL_FILENAME}", i 0x40000000, i 1, i 0, i 3, i 0x80, i 0) p.R0 ?e'
       Pop $R1
       StrCmp $R1 0 0 ensureExistingUninstallerIsWritable_failed
-      System::Call 'kernel32::CloseHandle(i rR0)'
+      System::Call 'kernel32::CloseHandle(p R0)'
       Return
 
     ensureExistingUninstallerIsWritable_failed:
@@ -380,8 +388,7 @@ FunctionEnd
     ensureExistingUninstallerIsWritable_cancel:
       # customInit may already have moved nested user data outside the old installation.
       !insertmacro restoreAllNestedDataRoots
-      SetErrorLevel 2
-      Quit
+      !insertmacro quitFailedUpdate
 
     ensureExistingUninstallerIsWritable_done:
       Return
@@ -402,12 +409,14 @@ FunctionEnd
   FunctionEnd
 
   Function restorePreservedOnAbort
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
     Push "failed"
     Call writeUpdateReceipt
   FunctionEnd
 
   Function .onInstFailed
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
     Push "failed"
     Call writeUpdateReceipt
@@ -454,8 +463,7 @@ FunctionEnd
         DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
         MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0$\r$\nAny data already preserved for this retry remains at:$\r$\n$retryLegacyDataBackup$\r$\n$retryBrandedDataBackup"
         !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
+        !insertmacro quitFailedUpdate
       ${endif}
     ${endif}
 
@@ -481,8 +489,7 @@ FunctionEnd
           DetailPrint `The preserved data remains at: ${BACKUP}`
           MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n${BACKUP}"
           !insertmacro restoreAllNestedDataRoots
-          SetErrorLevel 2
-          Quit
+          !insertmacro quitFailedUpdate
         ${endif}
         StrCpy ${BACKUP} ""
       ${endif}
@@ -547,14 +554,14 @@ FunctionEnd
     ${ifNot} ${Errors}
       ReadEnvStr $R3 "TEMP"
       ReadEnvStr $R4 "TMP"
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R5").rR6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R5").R6'
       ${if} $R6 != 0
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R5").rR6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R5").R6'
       ${endif}
       ${if} $R6 == 0
         # A partial environment update must not leak into the rest of the new installer.
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").rR6'
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").rR6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
         RMDir /r "$R5"
         StrCpy $R5 ""
       ${endif}
@@ -564,8 +571,8 @@ FunctionEnd
 
     ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
     ${if} $R5 != ""
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").rR6'
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").rR6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
       RMDir /r "$R5"
       ClearErrors
     ${endif}
@@ -578,8 +585,7 @@ FunctionEnd
         MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
         DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
         !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
+        !insertmacro quitFailedUpdate
       ${endif}
     ${endif}
   ${endif}
@@ -629,8 +635,7 @@ FunctionEnd
       MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
       DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
       !insertmacro restoreAllNestedDataRoots
-      SetErrorLevel 2
-      Quit
+      !insertmacro quitFailedUpdate
     ${endif}
     !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup $perUserDataBackupBranded
   ${endif}

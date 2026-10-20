@@ -14,6 +14,7 @@ import type {
   UpdateDeviceCredentialRequest
 } from '../../shared/settings'
 import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
+import { clearUnboundOAuthCredentials } from '@aipoch/connector-mcp-client'
 import { isSecureRemoteUrl } from '@aipoch/connector-core/url-admission'
 import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
@@ -309,7 +310,9 @@ export class DeviceCredentialStore {
         return undefined
       }
       assertDeviceCredentialOAuthStateLimits(parsed)
-      return parsed as StoredCustomMcpOAuthState
+      const state = parsed as StoredCustomMcpOAuthState
+      clearUnboundOAuthCredentials(state)
+      return state
     } catch {
       return undefined
     }

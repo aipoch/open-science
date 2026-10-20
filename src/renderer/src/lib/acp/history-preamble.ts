@@ -3,7 +3,7 @@ import type {
   HistoryReplayDescriptor,
   HistoryReplayTarget
 } from '../../../../shared/history-replay-contract'
-import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import { resolveModelContextWindow } from '../../../../shared/provider-model-policy'
 import { buildSessionHistoryReplay } from '../../../../shared/session-history-replay'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import {

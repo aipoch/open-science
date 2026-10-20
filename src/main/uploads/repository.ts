@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { PrismaClient } from '@prisma/client'
 
 import {
@@ -53,7 +54,11 @@ class UploadRepository {
   ) {
     this.dataRoot = dataRoot
     this.contentRepository = options.getClient
-      ? new ContentRepository({ storageRoot: dataRoot, getClient: options.getClient })
+      ? new ContentRepository({
+          references: persistentContentReferences,
+          storageRoot: dataRoot,
+          getClient: options.getClient
+        })
       : undefined
     this.transferOwner = new ActiveTransferOwner(dataRoot, options)
     this.managedUploadResolver = new ManagedUploadResolver(dataRoot, options)

@@ -10,8 +10,16 @@ import type {
   SkillReplacementPreview,
   SkillSource
 } from '@aipoch/skills/document'
-import type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
-export type { ChatApiEndpoint, ReasoningEffort } from './model-preference-contract'
+import {
+  type ModelProtocol,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { type ReasoningEffort } from './model-preference-contract'
+import { customProviderRequiresKey } from './provider-url-policy'
+import { type ReasoningEffortPresetSetting } from './reasoning-effort'
+export type { ModelProtocol } from '@aipoch/providers'
+export type { ReasoningEffort } from './model-preference-contract'
 
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
@@ -23,12 +31,7 @@ import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
 import type { NotebookNetworkSettings } from './notebook-network-settings'
 import type { PermissionProfileId } from './permission-profiles'
-import { customProviderRequiresKey } from './provider-base-url'
-import type { OfficialVendorId } from './provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from './reasoning-effort'
+
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -143,7 +146,7 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
   )
 }
 
-// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
+// The chat API a model endpoint speaks: `messages` = /v1/messages, `chat-completions` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
 // distinct: Codex requires Responses and reaches a Chat Completions provider only through its bridge.
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
@@ -151,32 +154,32 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
 // Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
 // (they must match a gateway's own documentation); only the surrounding copy is localized per
 // surface. Main and renderer share this one map so no surface keeps a private copy.
-export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
+export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
+  messages: '/v1/messages',
+  'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
 }
 
-// The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
-// the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
+// The endpoints a provider offers. Absent/empty ⇒ treat as ['messages'] (every legacy provider, and
+// the migration target for the removed 'both' apiType, which mapped to ['messages','chat-completions']).
 export const providerEndpoints = (provider: {
-  apiEndpoints?: readonly ChatApiEndpoint[]
-}): ChatApiEndpoint[] =>
+  apiEndpoints?: readonly ModelProtocol[]
+}): ModelProtocol[] =>
   provider.apiEndpoints && provider.apiEndpoints.length > 0
     ? [...provider.apiEndpoints]
-    : ['anthropic']
+    : ['messages']
 
 export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
   isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
 
 export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  apiEndpoints?: readonly ModelProtocol[]
   key?: string
   baseUrl?: string
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
-  providerEndpoints(provider).includes('anthropic') &&
+  providerEndpoints(provider).includes('messages') &&
   // A custom gateway needs credentials unless it is a loopback local model server, which serves the
   // Anthropic route without one; the transport adapters already treat the key as optional.
   (provider.type !== 'custom' ||
@@ -187,31 +190,31 @@ export const canUseClaudeProviderTransport = (provider: {
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
 // endpoints, but it makes Chat Completions providers usable through an explicit translation path.
 export const isProviderCompatibleWith = (
-  endpoints: readonly ChatApiEndpoint[],
-  frameworkEndpoints: readonly ChatApiEndpoint[]
+  endpoints: readonly ModelProtocol[],
+  frameworkEndpoints: readonly ModelProtocol[]
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
 // Codex can drive a Chat Completions-only provider through the app's local Responses bridge.
 // CodeBuddy has the inverse boundary: it always consumes Chat Completions, so providers that expose
 // only Responses or Messages require the app's Chat compatibility transport.
 export const requiresChatCompletionsBridge = (
-  provider: { apiEndpoints?: readonly ChatApiEndpoint[] },
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  provider: { apiEndpoints?: readonly ModelProtocol[] },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
   const endpoints = providerEndpoints(provider)
 
   if (framework.id === 'codex') {
     return (
       framework.supportedApiTypes.includes('responses') &&
-      endpoints.includes('openai') &&
+      endpoints.includes('chat-completions') &&
       !endpoints.includes('responses')
     )
   }
   return (
     framework.id === 'codebuddy' &&
-    framework.supportedApiTypes.includes('openai') &&
-    !endpoints.includes('openai') &&
-    (endpoints.includes('responses') || endpoints.includes('anthropic'))
+    framework.supportedApiTypes.includes('chat-completions') &&
+    !endpoints.includes('chat-completions') &&
+    (endpoints.includes('responses') || endpoints.includes('messages'))
   )
 }
 
@@ -221,8 +224,8 @@ export const requiresChatCompletionsBridge = (
 // Codex subscription providers carry their own login and can only drive Codex regardless of
 // endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
-  provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
   // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
@@ -241,8 +244,8 @@ export const isProviderUsableByFramework = (
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
-export const preferredEndpoint = <const FrameworkEndpoints extends readonly ChatApiEndpoint[]>(
-  endpoints: readonly ChatApiEndpoint[],
+export const preferredEndpoint = <const FrameworkEndpoints extends readonly ModelProtocol[]>(
+  endpoints: readonly ModelProtocol[],
   frameworkEndpoints: FrameworkEndpoints
 ): FrameworkEndpoints[number] | undefined => {
   const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
@@ -253,8 +256,8 @@ export const preferredEndpoint = <const FrameworkEndpoints extends readonly Chat
 
   return (
     shared.find((endpoint) => endpoint === 'responses') ??
-    shared.find((endpoint) => endpoint === 'openai') ??
-    shared.find((endpoint) => endpoint === 'anthropic')
+    shared.find((endpoint) => endpoint === 'chat-completions') ??
+    shared.find((endpoint) => endpoint === 'messages')
   )
 }
 
@@ -313,7 +316,7 @@ export type ClaudeDetectResult = {
 // Non-secret fingerprint for a concrete model/protocol probe. Provider-auth-only checks omit it.
 export type ProviderValidationTarget = {
   model?: string
-  endpoint?: ChatApiEndpoint
+  endpoint?: ModelProtocol
 }
 
 export type ProviderValidationFailure = {
@@ -337,8 +340,8 @@ export type ProviderView = {
   codexTransport?: CodexSubscriptionTransport
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
-  // treat as ['anthropic'] (every legacy provider).
-  apiEndpoints?: ChatApiEndpoint[]
+  // treat as ['messages'] (every legacy provider).
+  apiEndpoints?: ModelProtocol[]
   baseUrl?: string
   model?: string
   // User-configured model token limits. Context is the shared request/response budget; input/output
@@ -558,8 +561,8 @@ export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
 export type AgentFrameworkView = {
   id: AgentFrameworkId
   // Chat endpoints this framework can drive; a provider is selectable only if it shares one. Absent ⇒
-  // treat as ['anthropic'].
-  supportedApiTypes?: ChatApiEndpoint[]
+  // treat as ['messages'].
+  supportedApiTypes?: ModelProtocol[]
   displayName: string
   // Whether this framework materializes app skills; the renderer hides the skills UI when false.
   supportsSkills: boolean
@@ -756,8 +759,8 @@ export type ProviderDraft = {
   // Optional custom-gateway request shape. Absence defaults to the literal `reasoning_effort` field.
   reasoningEffortTransport?: CustomReasoningEffortTransport
   // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
-  // registry; omitted defaults to ['anthropic'].
-  apiEndpoints?: ChatApiEndpoint[]
+  // registry; omitted defaults to ['messages'].
+  apiEndpoints?: ModelProtocol[]
   // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId

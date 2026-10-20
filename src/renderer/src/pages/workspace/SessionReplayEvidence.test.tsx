@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ReplayResource, ReplaySourceIdentity, ReplayStep } from '../../../../shared/replay'
 import { indexReplayRun } from '@/lib/replay/run-index'
 import { SessionReplayEvidence } from './SessionReplayEvidence'
-vi.mock('react-i18next', () => createI18nTestStub())
+vi.mock('react-i18next', async () => {
+  const { createI18nTestStub } = await import('../../../../../test/i18n-test-stub')
+  return createI18nTestStub()
+})
 const source: ReplaySourceIdentity = {
   projectId: 'project',
   sessionId: 'source',

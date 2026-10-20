@@ -898,6 +898,11 @@ describe('ArtifactReproducibilityPanel', () => {
       })
       const detailsContent = document.body.querySelector('[data-capture-issue-details]')
       expect(detailsContent?.textContent).toContain('Areas needing attention')
+      const descriptions = detailsContent?.querySelectorAll('li p + p')
+      expect(descriptions?.length).toBeGreaterThan(0)
+      descriptions?.forEach((description) => {
+        expect(description.className).toContain('text-muted-foreground')
+      })
       expect(detailsContent?.textContent).toContain(
         'Execution recordSome execution details were not fully captured.'
       )

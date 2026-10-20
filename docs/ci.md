@@ -253,12 +253,24 @@ The generated `scripts/ci/module-derived-consumers.json` supplements explicit mo
 selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
 missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+Non-source resource changes anywhere in the repository do not reject an inherited stale index
+when the dependency reader's text inputs and recomputed consumer memberships are unchanged.
+This uses the reader's own JavaScript/TypeScript/JSON input boundary, not a documentation-path
+allowlist. The proof compares the Git merge base and candidate head, including both rename endpoints.
+Resource additions/deletions that change import resolution or invalidate runtime edges still fail.
+Parsed source, JSON configuration, registration, index and mixed changes retain strict validation.
+Standalone index audits remain unconditional; resource ownership and test routing are unchanged.
 Older bases retain legacy rules; existing explicit contracts are not retired automatically.
 Static resource imports also contribute consumer evidence. Current resource consumers are declared
 explicitly in their owning modules so trusted-base verification can preserve coverage while the
 reader is updated. Future additional consumers are captured by the generated index in its existing
 format. Resource edges add coverage without proving a complete dependency cone or authorizing
 consumer retirement.
+
+The consumer-coverage guard requires reachable coverage and a fresh derived index; it does not
+require deleting conservative explicit consumers. A newly complete dependency graph can prove
+current independence without proving historical reachability. Only the trusted base/head
+retirement checks described below authorize removing those existing obligations.
 
 ## CI control-plane approval
 
@@ -322,10 +334,25 @@ the old execution plan. Explicit contracts, non-host evidence and explicit tests
 provable old source dependency follow the split as well. Moved owner tests keep their owner
 classification in the new module; tests still reaching the remaining owner, or with incomplete
 or unproven old source evidence, must also remain registered there. Original owners containing shared/preload/package sources, full owners (before or after the split), existing-module transfers and
-mixed source/policy edits do not qualify. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
+mixed source/policy edits do not qualify for this split proof. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.
+Registration-only transfers between **existing** host owners use a separate preservation proof.
+Only module-impact JSON may change, with unchanged source and test bytes and unambiguous surviving
+paths. Both owners retain their historical interfaces, test buckets, consumer edges, overlays and
+fallback; the destination also retains its existing owner paths and inherits every source test
+obligation, consumer edge (except itself) and overlay with a compatible fallback. Existing test
+classifications stay intact, including a moved test already registered as a destination consumer.
+Only moved public interfaces must be added to the destination; unrelated source interfaces remain
+on the original owner. Trusted Integrity compares actual selected test and capability sets, including
+each revision's derived consumers, for every old source/destination owner and interface path.
+Raw registrations still prove explicit history retention; derived evidence cannot replace it.
+Any selection reduction is rejected. Shared/preload/package
+owners, full markers and mixed source/test/runtime/policy edits do not qualify. This proof grants
+owner-path transfers only: it authorizes no historical test retirement or reclassification and adds
+no manifest flags. Merge the protected policy before proposing a registration transfer that uses it.
+
 Source-changing host transfers have a separate, stricter proof. Exact surviving owner paths
 identify transfers into new or existing host modules, including targets assembled from several
 host owners. All transfers from an original owner must verify before any of its evidence can
@@ -365,10 +392,10 @@ malformed records, unsupported statuses and root-manifest changes retain ordinar
 Registration data never selects its own contract tests. No application or platform behavior
 changes in this data-only path, so it does not launch desktop or Windows runtime suites.
 
-The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
-(for example, a generated native addon or computed import). Absence from a static graph alone
-must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
-are still rejected; missing consumer coverage is still required. Package boundary checks inspect
+The consumer-evidence guard permits conservative explicit entries even when the current
+dependency cone is fully resolved. Current independence, or an incomplete cone such as a generated
+native addon or computed import, must not demand removal that trusted Integrity cannot verify.
+Derived evidence must stay fresh and reachable consumers must remain covered. Package boundary checks inspect
 the executable test plan: retained historical registrations must not make host-only source edits
 run unchanged upstream package units.
 

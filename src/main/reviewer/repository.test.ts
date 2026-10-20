@@ -197,6 +197,133 @@ describe('review repository (integration)', { timeout: WINDOWS_SQLITE_TEST_TIMEO
     expect(await client!.finding.count({ where: { reviewId: badScope.id } })).toBe(0)
   })
 
+  it('loads the UI list projection without reviewer logs while the full read keeps them', async () => {
+    const repository = await createRepository()
+    const reviewerLog = [
+      { kind: 'thought' as const, text: 'checked the captured turn' },
+      { kind: 'message' as const, text: 'done' }
+    ]
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-summary',
+      turnMessageId: 'a1',
+      scope: scope('a1'),
+      reviewerLog
+    })
+    await repository.updateReview(review.id, {
+      lifecycle: 'complete',
+      outcome: 'pass'
+    })
+    await repository.addChecks(review.id, checks())
+
+    const [summary] = await repository.getReviewSummariesForProjectSession(
+      'project-1',
+      'session-summary'
+    )
+    expect(summary).toMatchObject({
+      id: review.id,
+      lifecycle: 'complete',
+      outcome: 'pass',
+      reviewerLog: [],
+      scope: scope('a1')
+    })
+    expect(summary?.checks).toHaveLength(3)
+    expect(summary?.verificationUnavailable).toBeUndefined()
+
+    const [full] = await repository.getReviewsForProjectSession('project-1', 'session-summary')
+    expect(full?.reviewerLog).toEqual(reviewerLog)
+    expect(full?.checks).toHaveLength(3)
+  })
+
+  it('reads a single log only within its Project and Session and reports invalid persisted logs', async () => {
+    const repository = await createRepository()
+    const reviewerLog = [{ kind: 'message' as const, text: 'historical log' }]
+    const review = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-log',
+      turnMessageId: 'a1',
+      scope: scope('a1'),
+      reviewerLog
+    })
+    const request = { projectId: 'project-1', appSessionId: 'session-log', reviewId: review.id }
+    await expect(repository.getReviewLog(request)).resolves.toEqual(reviewerLog)
+    for (const mismatch of [
+      { projectId: 'project-2' },
+      { appSessionId: 'session-2' },
+      { reviewId: 'missing' }
+    ]) {
+      await expect(repository.getReviewLog({ ...request, ...mismatch })).rejects.toThrow(
+        'not found'
+      )
+    }
+    await expect(repository.getReviewLog({ ...request, projectId: undefined! })).rejects.toThrow(
+      'identity is required'
+    )
+    await client!.review.update({ where: { id: review.id }, data: { reviewerLog: '[]' } })
+    await expect(repository.getReviewLog(request)).resolves.toEqual([])
+    await client!.review.update({
+      where: { id: review.id },
+      data: { reviewerLog: '[{"kind":"message","text":7}]' }
+    })
+    await expect(repository.getReviewLog(request)).rejects.toThrow('Stored Review log is invalid')
+  })
+
+  it('does not invalidate a list summary merely because the log is absent, but still rejects a bad scope', async () => {
+    const repository = await createRepository()
+    const badLog = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-summary-invalid',
+      turnMessageId: 'a1',
+      scope: scope('a1')
+    })
+    const badScope = await repository.createReview({
+      projectId: 'project-1',
+      sessionId: 'session-summary-invalid',
+      turnMessageId: 'a2',
+      scope: scope('a2')
+    })
+    await client!.review.update({
+      where: { id: badLog.id },
+      data: {
+        lifecycle: 'complete',
+        outcome: 'pass',
+        reviewerLog: '[{"kind":"message","text":7}]'
+      }
+    })
+    await client!.review.update({
+      where: { id: badScope.id },
+      data: { scope: '{}', lifecycle: 'complete', outcome: 'pass' }
+    })
+
+    const summaries = await repository.getReviewSummariesForProjectSession(
+      'project-1',
+      'session-summary-invalid'
+    )
+    expect(summaries.find((review) => review.id === badLog.id)).toMatchObject({
+      lifecycle: 'complete',
+      outcome: 'pass',
+      reviewerLog: []
+    })
+    expect(
+      summaries.find((review) => review.id === badLog.id)?.verificationUnavailable
+    ).toBeUndefined()
+    expect(summaries.find((review) => review.id === badScope.id)).toMatchObject({
+      lifecycle: 'error',
+      outcome: null,
+      verificationUnavailable: true,
+      errorMessage: 'Stored Review data is invalid.'
+    })
+
+    const full = await repository.getReviewsForProjectSession(
+      'project-1',
+      'session-summary-invalid'
+    )
+    expect(full.find((review) => review.id === badLog.id)).toMatchObject({
+      lifecycle: 'error',
+      verificationUnavailable: true
+    })
+  })
+
   it('advances a tracked assessment when its embedded source Check changes', async () => {
     const repository = await createRepository()
     const input = {

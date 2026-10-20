@@ -1,20 +1,38 @@
 // @vitest-environment jsdom
-import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
+import { useLayoutEffect } from 'react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import type { JournalRequest } from '@aipoch/journal-catalog/contracts'
 import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalAttributes } from './JournalAttributes'
 import {
-  setJournalSourceYear,
   useJournalDatasets,
-  useJournalSourceYears
+  useJournalSourceYears,
+  useJournalStore
 } from './journals/journal-attribute-store'
+
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { render } = createLiteratureTestRenderer(
+  {
+    get api() {
+      return window.api
+    },
+    onRecovered: (listener) => {
+      recoveryListeners.add(listener)
+      return () => {
+        recoveryListeners.delete(listener)
+      }
+    }
+  },
+  Capture
+)
 
 afterEach(() => {
   cleanup()
-  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+  recoveryListeners.clear()
   window.localStorage.removeItem('open-science:journal-source-years')
 })
 const item = literatureItemInputSchema.parse({
@@ -37,7 +55,7 @@ it('does not resolve journal metadata for non-journal references', () => {
   expect(container.firstChild).toBeNull()
   expect(journals).not.toHaveBeenCalled()
 })
-it.each(['event', 'desktop'] as const)(
+it.each(['event', 'host recovery'] as const)(
   'batches visible references and refreshes all surfaces after %s dataset changes',
   async (transport) => {
     let changed: (event: LiteratureChangedEvent) => void = () => {}
@@ -108,11 +126,8 @@ it.each(['event', 'desktop'] as const)(
     value = 'Silver'
     if (transport === 'event') await act(async () => changed({ revision: 2 }))
     else {
-      for (const phase of ['disconnected', 'reconnecting', 'reconciling'] as const) {
-        await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase, epoch: 1 }))
-        expect(screen.getAllByText('Gold')).toHaveLength(2)
-      }
-      await act(async () => useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' }))
+      expect(screen.getAllByText('Gold')).toHaveLength(2)
+      await act(async () => recover())
     }
     await waitFor(() => expect(screen.getAllByText('Silver')).toHaveLength(2))
     expect(screen.queryByText('Gold')).toBeNull()
@@ -120,8 +135,7 @@ it.each(['event', 'desktop'] as const)(
     cleanup()
     journals.mockClear()
     await act(async () => {
-      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 2 })
-      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      recover()
     })
     expect(journals).not.toHaveBeenCalled()
   }
@@ -411,7 +425,7 @@ it('clears old values immediately and ignores in-flight values after changing so
   Object.defineProperty(window, 'api', { configurable: true, value: { literature: { journals } } })
   render(<JournalAttributes item={item} detail />)
   await waitFor(() => expect(pending).toHaveLength(1))
-  act(() => setJournalSourceYear('Fictional source', 2031))
+  act(() => testJournalStore.setJournalSourceYear('Fictional source', 2031))
   await act(async () =>
     pending[0].finish({
       matches: [
@@ -452,7 +466,7 @@ it('clears old values immediately and ignores in-flight values after changing so
     })
   )
   expect(await screen.findByText('12')).toBeTruthy()
-  act(() => setJournalSourceYear('Fictional source', null))
+  act(() => testJournalStore.setJournalSourceYear('Fictional source', null))
   expect(screen.queryByText('12')).toBeNull()
   await waitFor(() => expect(pending).toHaveLength(3))
   expect(pending[2].request.sourceYears).toEqual({ 'Fictional source': null })
@@ -464,11 +478,11 @@ it('synchronizes source choices from other windows without restoring removed ove
     return <output data-testid="source-years">{JSON.stringify(useJournalSourceYears())}</output>
   }
   render(<Choices />)
-  act(() => setJournalSourceYear('First source', 2031))
+  act(() => testJournalStore.setJournalSourceYear('First source', 2031))
   expect(screen.getByTestId('source-years').textContent).toContain('2031')
   // Another window restores the default before its storage event arrives here.
   localStorage.setItem('open-science:journal-source-years', '{}')
-  act(() => setJournalSourceYear('Second source', null))
+  act(() => testJournalStore.setJournalSourceYear('Second source', null))
   expect(JSON.parse(localStorage.getItem('open-science:journal-source-years')!)).toEqual({
     'Second source': null
   })
@@ -582,3 +596,12 @@ it('keeps only the most recently opened journal attribute popover', async () => 
   expect(screen.queryByRole('dialog')).toBeNull()
   await waitFor(() => expect(document.activeElement).toBe(triggers[2]))
 })
+
+let testJournalStore: ReturnType<typeof useJournalStore>
+function Capture({ children }: { children: React.ReactNode }): React.ReactNode {
+  const store = useJournalStore()
+  useLayoutEffect(() => {
+    testJournalStore = store
+  }, [store])
+  return children
+}

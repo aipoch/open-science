@@ -1,8 +1,7 @@
 import { useState } from 'react'
 import { ErrorNotice } from '@/components/error-notice'
+import type { LiteratureProject, LiteratureNavigation } from '../renderer-host'
 import { Button } from '@/components/ui/button'
-import type { useNavigationStore } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -43,16 +42,14 @@ export function LiteratureLibraryHeader({
   exportCurrentScope
 }: {
   selectedCollection: LiteratureCollectionView | undefined
-  selectedProject: ReturnType<typeof useProjectStore.getState>['projects'][number] | undefined
+  selectedProject: LiteratureProject | undefined
   section: LibrarySection
   openProject: (projectId: string) => Promise<boolean>
   smartSetup: boolean
   showLiteratureReviewAction: boolean
   reviewProjectId: string | undefined
   shouldCueLiteratureReview: boolean
-  startLiteratureReviewConversation: ReturnType<
-    typeof useNavigationStore.getState
-  >['startLiteratureReviewConversation']
+  startLiteratureReviewConversation: LiteratureNavigation['startLiteratureReviewConversation']
   setShouldCueLiteratureReview: React.Dispatch<React.SetStateAction<boolean>>
   importPdfInputRef: React.RefObject<HTMLInputElement | null>
   setPdfBatch: React.Dispatch<

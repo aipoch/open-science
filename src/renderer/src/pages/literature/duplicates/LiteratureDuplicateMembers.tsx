@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import type {
   LiteratureDuplicateGroup,
@@ -20,6 +21,8 @@ export function LiteratureDuplicateMembers({
   onReview: (itemIds: string[]) => void
   onClose: () => void
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [offset, setOffset] = useState(0)
   const [retry, setRetry] = useState(0)
@@ -30,7 +33,7 @@ export function LiteratureDuplicateMembers({
   useEffect(() => {
     let cancelled = false
     const ids = group.itemIds.slice(offset, offset + PAGE_SIZE)
-    void Promise.all(ids.map((id) => window.api.literature.get(id))).then(
+    void Promise.all(ids.map((id) => hostApi.literature.get(id))).then(
       (items) => {
         if (cancelled) return
         const available = items.filter((item, index): item is LiteratureItemView =>
@@ -45,7 +48,7 @@ export function LiteratureDuplicateMembers({
     return () => {
       cancelled = true
     }
-  }, [group.itemIds, offset, requestKey])
+  }, [group.itemIds, hostApi.literature, offset, requestKey])
 
   return (
     <section

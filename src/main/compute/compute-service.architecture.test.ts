@@ -764,6 +764,7 @@ describe('Compute service architecture', () => {
         'src/main/composition/handoff.test.ts',
         'src/main/composition/managed-execution.integration.test.ts',
         'src/main/composition/session-packages.test.ts',
+        'src/main/composition/session-packages.lifecycle.test.ts',
         'src/main/notebook/local-rpc-server.managed-execution.test.ts',
         'src/main/notebook/managed-auxiliary-output.test.ts',
         'src/main/notebook/managed-execution-collection.integration.test.ts',

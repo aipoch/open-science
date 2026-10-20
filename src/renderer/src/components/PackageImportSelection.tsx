@@ -21,11 +21,13 @@ import {
 
 export const PackageImportSelection = ({
   operation,
+  notice,
   error,
   onCancel,
   onContinue
 }: {
   operation: PackageOperationSnapshot
+  notice?: React.ReactNode
   error?: string
   onCancel: () => void
   onContinue: (target?: SessionPackageImportRequest) => Promise<void>
@@ -90,6 +92,7 @@ export const PackageImportSelection = ({
       <div
         className={`${dialogBodyClassName} min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
+        {notice}
         {preview ? (
           <>
             {preview.title ? (
@@ -229,6 +232,7 @@ export const PackageImportSelection = ({
               loaded={isLoaded}
               disabled={pending}
               alwaysShowSearch
+              scrollable={false}
               emptyContent={
                 <p className="text-sm text-muted-foreground">
                   {t('Create a project to import this Session.')}

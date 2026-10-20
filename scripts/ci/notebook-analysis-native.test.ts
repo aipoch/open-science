@@ -52,6 +52,12 @@ it('retains explicit native behavioral evidence outside ordinary module test sel
 it('ordinary discovery does not collect the native entrypoint', () => {
   const files = execFileSync(process.execPath, [vitest, 'list', '--filesOnly', '--json'], {
     cwd: root,
+    env: {
+      ...process.env,
+      VITEST_PORTABLE_CI: '0',
+      OPEN_SCIENCE_CI_EXCLUDED_PACKAGE_ROOTS: '[]',
+      OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS: '[]'
+    },
     encoding: 'utf8',
     maxBuffer: 8 * 1024 * 1024
   })
@@ -67,7 +73,7 @@ it('the dedicated configuration discovers every declared native file', () => {
   )
   expect(
     JSON.parse(output)
-      .map(({ file }: { file: string }) => file)
+      .map(({ file }: { file: string }) => resolve(file))
       .sort()
   ).toEqual(suite.testFiles.map((path) => resolve(root, path)).sort())
 }, 30000)

@@ -62,8 +62,19 @@ Function initializeUpdateReceipts
     # Get the original current-user roaming root even when installer shell context is all-users.
     SetShellVarContext current
     StrCpy $updateReceiptRoot "$APPDATA\Open-Science\UpdateHandoffs\$updateOperation"
+    StrCpy $R6 "$APPDATA\Open-Science-UpdateHandoffs\$updateOperation"
     ${if} $installMode == "all"
       SetShellVarContext all
+    ${endif}
+    # Never prefer one of two copies of the same operation. Older leases stay at the first root.
+    System::Call 'kernel32::GetFileAttributesW(w "$updateReceiptRoot") i.R0'
+    System::Call 'kernel32::GetFileAttributesW(w R6) i.R1'
+    ${if} $R0 != -1
+      ${if} $R1 != -1
+        Goto updateReceipt_invalid
+      ${endif}
+    ${else}
+      StrCpy $updateReceiptRoot $R6
     ${endif}
     IfFileExists "$updateReceiptRoot\request.json" 0 updateReceipt_invalid
     Push "accepted"

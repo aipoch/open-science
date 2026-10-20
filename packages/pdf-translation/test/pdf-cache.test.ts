@@ -85,7 +85,10 @@ async function setup() {
     }
   }
   const request = { ...input, cache: { source: 'source', checkpointKey: checkpoint.key } }
-  const owner = { readCheckpoint: vi.fn(async () => checkpoint as PdfTranslationCheckpoint | null) }
+  const owner = {
+    recordLayout: vi.fn(async () => {}),
+    readCheckpoint: vi.fn(async () => checkpoint as PdfTranslationCheckpoint | null)
+  }
   const native = new PdfTranslationWriter(() => 'unused')
   const writer = {
     valid: native.valid.bind(native),
@@ -452,4 +455,19 @@ it('publishes only after verification and survives restart; authorized source bi
   )
   expect(hit).toEqual({ data: Buffer.from('%PDF-output'), layoutFailures: [], cacheHit: true })
   expect(f.writer.generateDetailed).toHaveBeenCalledTimes(1)
+})
+
+it('records the layout before cache publication and leaves failed reports unpublished', async () => {
+  const f = await setup()
+  const result = (await f.cache.generate(f.request, f.caller))!
+  const report = f.report(result)
+  f.owner.recordLayout.mockRejectedValueOnce(new Error('report write failed'))
+  await expect(f.cache.recordLayout(report, f.caller)).rejects.toThrow('report write failed')
+  expect(await readdir(f.directory).catch(() => [])).toEqual([])
+  f.owner.recordLayout.mockImplementationOnce(async () => {
+    expect(await readdir(f.directory).catch(() => [])).toEqual([])
+  })
+  await f.cache.recordLayout(report, f.caller)
+  expect(f.owner.recordLayout).toHaveBeenLastCalledWith(report, f.caller)
+  expect((await f.cache.generate(f.request, f.caller))?.cacheHit).toBe(true)
 })

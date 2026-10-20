@@ -1422,6 +1422,89 @@ const choiceResponse = (changes: Record<string, unknown> = {}): Response =>
       usage: { input_tokens: 42, output_tokens: 5 }
     })
   )
+it.each(['success', 'timeout', 'cancel'] as const)(
+  'gives background literature classification a bounded budget beyond fast routing: %s',
+  async (scenario) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let respond!: (response: Response) => void
+    let requestSignal!: AbortSignal
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((resolve, reject) => {
+          respond = resolve
+          requestSignal = init!.signal!
+          requestSignal.addEventListener('abort', () => reject(requestSignal.reason), {
+            once: true
+          })
+          started()
+        })
+    )
+    const controller = new AbortController()
+    const result = owner
+      .classifyLiterature({ ...literatureRequest(), signal: controller.signal })
+      .then(
+        (value) => ({ value, error: undefined }),
+        (error) => ({ value: undefined, error })
+      )
+    await ready
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(requestSignal.aborted).toBe(false)
+    if (scenario === 'success') {
+      respond(choiceResponse())
+      expect((await result).value).toMatchObject({ verdict: 'match' })
+    } else if (scenario === 'timeout') {
+      await vi.advanceTimersByTimeAsync(26000)
+      expect((await result).error).toMatchObject({ category: 'timeout' })
+      expect(requestSignal.aborted).toBe(true)
+    } else {
+      controller.abort()
+      expect((await result).error).toBeDefined()
+      expect(requestSignal.aborted).toBe(true)
+    }
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
+it.each(['skills', 'reading'] as const)(
+  'keeps %s routing on its fast timeout budget',
+  async (kind) => {
+    await configure()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), {
+            once: true
+          })
+          started()
+        })
+    )
+    const result =
+      kind === 'skills'
+        ? owner.selectSkills(request())
+        : owner.selectReadingRoute({ text: 'Read the paper' })
+    await ready
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await result).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
 it('does not use capability selection as authorization to classify literature', async () => {
   await configure()
   await owner.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })

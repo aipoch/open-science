@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { randomUUID } from 'node:crypto'
 import { readFile, realpath, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -275,6 +276,7 @@ class ArtifactProvenanceRepository {
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.contentRepository = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: options.storageRoot,
       getClient: options.getClient
     })

@@ -1,3 +1,4 @@
+import { persistentContentReferences } from './prisma-content-references'
 import { discoveryJobOptions } from '../literature/discovery-adapters'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash, randomUUID } from 'node:crypto'
@@ -31,7 +32,11 @@ let config: string
 let client: PrismaClient
 const sha256 = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex')
 const contentAt = (storageRoot: string): ContentRepository =>
-  new ContentRepository({ storageRoot, getClient: async () => client })
+  new ContentRepository({
+    references: persistentContentReferences,
+    storageRoot,
+    getClient: async () => client
+  })
 const deps = (): Parameters<typeof runDataRootMigration>[0] & {
   setDataRoot: ReturnType<typeof vi.fn<(path: string) => Promise<void>>>
 } => ({

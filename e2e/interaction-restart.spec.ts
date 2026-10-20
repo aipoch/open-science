@@ -17,6 +17,89 @@ const scenarios = [
   { action: 'permission-deny', restart: true }
 ] as const
 
+for (const transition of ['live', 'restart', 'crash'] as const) {
+  test(`keeps native questions answerable after ${transition}`, async ({ app }, testInfo) => {
+    test.setTimeout(180_000)
+    await app.completeOnboarding()
+    let page = await app.configureFakeAgent()
+    await createProjectViaUi(page, 'Question authority')
+    const prompt = 'Ask a restart verification question. Include four questions.'
+    await submitPromptViaUi(page, prompt)
+    await expect(page.getByRole('status', { name: 'Question 1 of 4', exact: true })).toBeVisible()
+    const identity = await page.evaluate(async () => {
+      const session = (await window.api.sessions.loadAll()).sessions[0]
+      return { projectId: session.projectId, sessionId: session.id }
+    })
+    await expect
+      .poll(async () =>
+        page.evaluate(async (id) => {
+          const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)
+          return session?.activities?.some((a) => a.elicitation?.state === 'pending')
+        }, identity.sessionId)
+      )
+      .toBe(true)
+
+    if (transition === 'restart' || transition === 'crash') {
+      if (transition === 'crash') {
+        page = await app.restartAfterCrash({ force: true })
+      } else {
+        const quittingPage = page
+        const restarting = app.restart()
+        await quittingPage
+          .getByRole('button', { name: 'Quit', exact: true })
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => quittingPage.getByRole('button', { name: 'Quit', exact: true }).click())
+          .catch(() => undefined)
+        page = await restarting
+      }
+    }
+    if (transition !== 'live') {
+      await page
+        .getByRole('region', { name: 'Recent sessions', exact: true })
+        .getByRole('button', { name: /^Ask a restart verification question\./ })
+        .click()
+      await testInfo.attach('session-after-transition', {
+        body: JSON.stringify(
+          await page.evaluate(async (id) => {
+            const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)
+            return {
+              projectId: session?.projectId,
+              sessionId: session?.id,
+              elicitation: session?.activities?.find((a) => a.elicitation)?.elicitation
+            }
+          }, identity.sessionId),
+          null,
+          2
+        ),
+        contentType: 'application/json'
+      })
+    }
+
+    for (let index = 1; index <= 4; index += 1) {
+      await expect(
+        page.getByRole('status', { name: `Question ${index} of 4`, exact: true })
+      ).toBeVisible()
+      await page.getByText('Dataset Alpha', { exact: true }).first().click()
+      if (index < 4) await page.getByRole('button', { name: 'Next question', exact: true }).click()
+    }
+    await page.screenshot({ path: testInfo.outputPath('fourth-question.png') })
+    await page.getByRole('button', { name: 'Finish', exact: true }).click()
+    await expect(
+      page.getByText('Restart verification: Question answer delivered.', { exact: false })
+    ).toBeVisible({ timeout: 40_000 })
+    const saved = await page.evaluate(async (id) => {
+      const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)!
+      return {
+        projectId: session.projectId,
+        sessionId: session.id,
+        answerCount: session.activities?.find((a) => a.elicitation)?.elicitation?.answers?.length
+      }
+    }, identity.sessionId)
+    expect(saved).toEqual({ ...identity, answerCount: 4 })
+    await page.screenshot({ path: testInfo.outputPath('answered.png') })
+  })
+}
+
 for (const { action, restart } of scenarios) {
   test(`delivers ${action} ${restart === 'crash' ? 'after an application crash with a parked Plan' : restart ? 'after a real application restart' : 'in the live session'}`, async ({
     app

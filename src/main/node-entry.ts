@@ -434,6 +434,10 @@ async function main(): Promise<void> {
           'locale:snapshot',
           'desktop:tray-sessions',
           'desktop:open-package',
+          'desktop:browser-import',
+          'desktop:browser-import-cancel',
+          'desktop:package-operation-snapshot',
+          'desktop:browser-import-discovery',
           'settings:get-settings',
           'storage:get-status',
           'sessions:list',
@@ -473,6 +477,25 @@ async function main(): Promise<void> {
               throw new Error('Invalid Session package path.')
             runtime.openSessionPackageFile(path)
             return null
+          }
+          if (channel === 'desktop:browser-import-discovery') {
+            await runtime.startBrowserPackageImportDiscovery(
+              invocation.args[0] as number | undefined
+            )
+            return null
+          }
+          if (channel === 'desktop:package-operation-snapshot')
+            return runtime.packageOperationSnapshot()
+          if (channel === 'desktop:browser-import-cancel') {
+            const id = invocation.args[0]
+            if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id))
+              throw new Error('Invalid transfer identity.')
+            await runtime.cancelBrowserPackageImport(id)
+            return null
+          }
+          if (channel === 'desktop:browser-import') {
+            await runtime.beginBrowserPackageImport(invocation.args[0], invocation.args[1] === true)
+            return runtime.packageOperationSnapshot()
           }
           if (
             ![

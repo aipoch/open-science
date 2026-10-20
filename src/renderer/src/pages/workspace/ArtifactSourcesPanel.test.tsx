@@ -1,13 +1,20 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { setI18nLocale } from '@/i18n'
 import { useLocaleStore } from '@/stores/locale-store'
-import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { useNavigationStore } from '@/stores/navigation-store'
 import { literatureFormatDocumentRequestSchema } from '@aipoch/literature-library/contracts'
 import type { ArtifactLiteratureManifest } from '../../../../shared/artifact-literature'
 import { ArtifactSourcesPanel } from './ArtifactSourcesPanel'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const literature: ArtifactLiteratureManifest = {
   schemaVersion: 1,

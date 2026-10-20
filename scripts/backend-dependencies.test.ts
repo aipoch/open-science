@@ -1,24 +1,166 @@
 import { readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { cp, mkdir, mkdtemp, rm, symlink } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
   assertBackendImports,
+  assertStagedBackendImports,
   backendDependencyIncludes,
+  createDesktopDependencyFilter,
+  desktopBackendDependencies,
+  isElectronPackage,
   isBackendRuntimeDependency,
   isShippableDependencyPath,
-  prismaEngineFilenames,
-  assertStagedBackendImports,
-  isElectronPackage
+  prismaEngineFilenames
 } from './backend-dependencies.mjs'
 
 const directories: string[] = []
 afterEach(async () => {
   for (const directory of directories.splice(0))
     await rm(directory, { recursive: true, force: true })
+})
+
+describe('desktop-only dependency contents', () => {
+  it('omits only audited renderer roots and keeps unclassified and dynamic runtime dependencies', () => {
+    const dependencies = {
+      '@radix-ui/react-focus-scope': '1',
+      '@rc-component/qrcode': '1',
+      'react-markdown': '1',
+      'react-remove-scroll': '1',
+      tiff: '1',
+      '@anthropic-ai/claude-agent-sdk': '1',
+      '@aipoch/credential-identity-probe-native': '1',
+      'future-runtime-package': '1'
+    }
+    expect(desktopBackendDependencies(dependencies, [{ inputs: {}, outputs: {} }])).toEqual([
+      '@anthropic-ai/claude-agent-sdk',
+      '@aipoch/credential-identity-probe-native',
+      'future-runtime-package'
+    ])
+    expect(Object.keys(dependencies)).toHaveLength(8)
+  })
+
+  it('retains a renderer root when a backend worker imports its subpath', () => {
+    const dependencies = { '@rc-component/qrcode': '1', tiff: '1' }
+    expect(
+      desktopBackendDependencies(dependencies, [
+        { inputs: {}, outputs: { 'index.cjs': { imports: [] } } },
+        {
+          inputs: {},
+          outputs: {
+            'worker.cjs': {
+              imports: [{ path: '@rc-component/qrcode/lib/index', external: true }]
+            }
+          }
+        }
+      ])
+    ).toEqual(['@rc-component/qrcode'])
+  })
+
+  it.each(['/', '\\'])(
+    'prunes development files without changing standalone staging (%s)',
+    (separator) => {
+      const manifest = {
+        name: 'dependency',
+        exports: { '.': { types: './index.d.ts', default: './index.js' } }
+      }
+      const desktop = createDesktopDependencyFilter(manifest)
+      for (const file of [
+        'index.d.ts',
+        'lib/index.d.mts',
+        'index.d.cts',
+        'lib/index.d.ts.map',
+        'tests/fixture.json',
+        'examples/demo.js'
+      ]) {
+        const path = file.replaceAll('/', separator)
+        expect(backendDependencyIncludes(manifest, path)).toBe(true)
+        expect(desktop(path, false)).toBe(false)
+      }
+      for (const file of [
+        'index.js',
+        'src/index.ts',
+        'lib/test/parser.js',
+        'lib/index.js.map',
+        'README.md',
+        'resources/SKILL.md',
+        'assets/model.wasm',
+        'build/Release/addon.node',
+        'tests/LICENSE.txt',
+        'examples/licenses/third-party.txt'
+      ]) {
+        expect(desktop(file.replaceAll('/', separator), false)).toBe(true)
+      }
+    }
+  )
+
+  it('retains runtime entry roots, wildcard exports and first-party diagnostics', () => {
+    const desktop = createDesktopDependencyFilter({
+      name: 'dependency',
+      main: './tests/main.js',
+      bin: { cli: './example/cli.js' },
+      exports: { './fixtures/*': './examples/*.js', './literal': './runtime.d.ts' }
+    })
+    for (const path of [
+      'tests/main.js',
+      'tests/data.json',
+      'example/cli.js',
+      'examples/worker.js',
+      'runtime.d.ts'
+    ])
+      expect(desktop(path, false)).toBe(true)
+    const firstParty = createDesktopDependencyFilter({ name: '@aipoch/connector-core' })
+    expect(firstParty('dist/index.d.ts', false)).toBe(true)
+    expect(firstParty('dist/index.js.map', false)).toBe(true)
+    const wildcard = createDesktopDependencyFilter({ name: 'fixture', exports: { './*': './*' } })
+    expect(wildcard('tests/data.json', false)).toBe(true)
+    expect(wildcard('schema.d.ts', false)).toBe(true)
+    expect(desktop('examples/directory.d.ts', true)).toBe(true)
+  })
+
+  it('copies a real dependency tree with nested notices and loadable runtime assets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-dependency-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'desktop')
+    const manifest = { name: 'fixture', main: 'index.cjs' }
+    const files = {
+      'package.json': JSON.stringify(manifest),
+      'index.cjs':
+        "module.exports = require('node:fs').readFileSync(require('node:path').join(__dirname, 'resources/SKILL.md'), 'utf8')",
+      'resources/SKILL.md': 'Runtime instructions',
+      'index.d.ts': 'export {}',
+      'tests/test.cjs': "throw new Error('not runtime')",
+      'tests/nested/NOTICE.txt': 'Redistribution notice'
+    }
+    try {
+      for (const [file, contents] of Object.entries(files)) {
+        await mkdir(join(source, file, '..'), { recursive: true })
+        await writeFile(join(source, file), contents)
+      }
+      const desktop = createDesktopDependencyFilter(manifest)
+      await cp(source, destination, {
+        recursive: true,
+        filter: async (path) =>
+          backendDependencyIncludes(manifest, relative(source, path)) &&
+          desktop(relative(source, path), (await stat(path)).isDirectory())
+      })
+      expect(await readFile(join(destination, 'tests/nested/NOTICE.txt'), 'utf8')).toBe(
+        'Redistribution notice'
+      )
+      for (const file of ['index.d.ts', 'tests/test.cjs'])
+        await expect(readFile(join(destination, file))).rejects.toMatchObject({ code: 'ENOENT' })
+      const { createRequire } = await import('node:module')
+      expect(createRequire(join(destination, 'package.json'))('./index.cjs')).toBe(
+        'Runtime instructions'
+      )
+      expect(await readFile(join(source, 'index.d.ts'), 'utf8')).toBe('export {}')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
 })
 
 describe('standalone dependency boundary', () => {
@@ -154,6 +296,7 @@ it.each([
   'diagnostics',
   'durable-files',
   'resilient-download',
+  'providers',
   'environment',
   'notebook-analysis',
   'notebook-code-risk',

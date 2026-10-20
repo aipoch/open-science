@@ -1,3 +1,5 @@
+export const LITERATURE_PREVIEW_SESSION_ID = '__literature__'
+
 export const LITERATURE_ATTACHMENT_VERSION_REFERENCE_PREFIX = 'literature-attachment-version:'
 
 export const createLiteratureAttachmentVersionReference = (versionId: string): string => {

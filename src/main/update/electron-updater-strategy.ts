@@ -1,6 +1,5 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
-import { join } from 'node:path'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
@@ -27,11 +26,8 @@ import {
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
-import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
-import {
-  startWindowsInstallProgress,
-  type WindowsInstallProgress
-} from './windows-install-progress'
+import { type NativeTranslator } from '../locale/main-process-messages'
+import { prepareWindowsUpdateHandoff, type WindowsUpdateHandoff } from './windows-update-handoff'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -82,7 +78,7 @@ export type UpdateInstallationHooks = {
 }
 export type ElectronUpdaterDeps = UpdateInstallationHooks & {
   translate?: NativeTranslator
-  startInstallProgress?: () => Promise<WindowsInstallProgress>
+  prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
   installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
   updater?: MinimalAutoUpdater
   currentVersion?: string
@@ -256,8 +252,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly installGate?: InstallGate
   private readonly releaseInstallHandoff: () => void
   private readonly markUpdateShutdown: () => () => void
-  private readonly startInstallProgress?: () => Promise<WindowsInstallProgress>
-  private installProgress?: WindowsInstallProgress
+  private readonly prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
+  private updateHandoff?: WindowsUpdateHandoff
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
@@ -289,25 +285,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.releaseInstallHandoff = deps.releaseInstallHandoff ?? (() => undefined)
     this.markUpdateShutdown =
       deps.markUpdateShutdown ?? (() => markApplicationShutdownTrigger('update'))
-    this.startInstallProgress =
-      deps.startInstallProgress ??
+    this.prepareInstallHandoff =
+      deps.prepareInstallHandoff ??
       (this.platform === 'win32' && !deps.updater && app.isPackaged
         ? async () => {
             const installerPath = this.updater.installerPath
             if (!installerPath) throw new Error('Downloaded installer path is unavailable')
             const startupOptions = deps.getStartupOptions?.()
             if (!startupOptions) throw new Error('Update startup configuration is unavailable')
-            return startWindowsInstallProgress({
+            return prepareWindowsUpdateHandoff(app.getPath('appData'), {
               installerPath,
               applicationPath: process.execPath,
-              helperPath: join(process.resourcesPath, 'open-science-update-progress.exe'),
-              appData: app.getPath('appData'),
               profilePath: app.getPath('userData'),
               targetVersion: this.status.latest ?? '',
-              startupOptions,
-              logDirectory: app.getPath('logs'),
-              translate: deps.translate ?? englishNativeTranslator,
-              log: this.log
+              startupOptions
             })
           }
         : undefined)
@@ -450,13 +441,13 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private releaseAbortedInstallHandoff(): void {
-    const progress = this.installProgress
-    this.installProgress = undefined
+    const progress = this.updateHandoff
+    this.updateHandoff = undefined
     this.updater.openScienceUpdateOperation = undefined
     try {
       progress?.cancel()
     } catch (error) {
-      this.log.warn('update progress cancellation failed', error)
+      this.log.warn('update handoff cancellation failed', error)
     }
     try {
       this.releaseInstallHandoff()
@@ -795,11 +786,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     }
     if (!this.applying) return this.status
 
-    // Prepare presentation before stopping the backend. A missing helper must leave the current
-    // application usable, without attempting credential bootstrap while Chromium owns its files.
-    if (options.relaunch !== false && this.startInstallProgress) {
+    // Persist the next profile before stopping the backend. A failed write must leave the current
+    // application usable; NSIS alone owns the subsequent installation UI.
+    if (options.relaunch !== false && this.prepareInstallHandoff) {
       try {
-        this.installProgress = await this.startInstallProgress()
+        this.updateHandoff = await this.prepareInstallHandoff()
         if (!this.applying) {
           this.releaseAbortedInstallHandoff()
           return this.status
@@ -811,7 +802,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           ...this.status,
           state: 'error',
           reason: 'install-failed',
-          error: error instanceof Error ? error.message : 'Could not start update progress.'
+          error: error instanceof Error ? error.message : 'Could not prepare update handoff.'
         })
         operation.fail(error, { result: 'error' })
         return this.status
@@ -909,10 +900,11 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
+      // A supervised installer can exit the application before this hook returns.
+      this.updateHandoff?.handoff()
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy') {
-        this.installProgress?.handoff()
-        this.updater.openScienceUpdateOperation = this.installProgress?.operationId
+        this.updater.openScienceUpdateOperation = this.updateHandoff?.operationId
         this.updater.quitAndInstall(
           this.platform !== 'win32' || options.relaunch === false,
           options.relaunch ?? true

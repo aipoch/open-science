@@ -34,7 +34,10 @@
     "packages/reproducibility/README.md",
     "packages/reproducibility/src/output-files.test.ts"
   ],
-  "interfacePaths": ["packages/reproducibility/src/index.ts"],
+  "interfacePaths": [
+    "packages/reproducibility/src/index.ts",
+    "packages/reproducibility/src/helper-identity.ts"
+  ],
   "consumerModules": [
     "notebook_execution",
     "artifact_provenance",
@@ -55,6 +58,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/notebook/package-boundaries.architecture.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/artifacts/artifact-provenance-graph.test.ts",
@@ -499,6 +503,8 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/notebook/research-service.macos.integration.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts",
       "src/main/notebook/local-service.macos.integration.test.ts",
@@ -509,7 +515,6 @@
       "src/main/notebook/managed-shell.macos.integration.test.ts",
       "src/main/notebook/session-operation-owner.integration.test.ts",
       "src/main/composition/managed-execution.integration.test.ts",
-      "src/main/composition/session-packages.test.ts",
       "src/main/notebook/managed-execution-entrypoints.integration.test.ts",
       "src/main/session-package/headless.test.ts",
       "src/main/composition/handoff.test.ts",

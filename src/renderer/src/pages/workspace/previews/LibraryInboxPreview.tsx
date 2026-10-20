@@ -1,4 +1,4 @@
-import { literatureClient } from '../../literature/literature-read-pages'
+import { readMatchingCandidateIds } from '../../../lib/literature-queries'
 /* Hallmark · component: inbox preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Reuse semantic tokens and shared control states.
  */
@@ -21,8 +21,8 @@ import {
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
-import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
-import { useLiteratureChanges } from '../../literature/useLiteratureChanges'
+import { readLiteratureDisplayPage } from '../../../lib/literature-queries'
+import { useLiteratureChanges } from '../../literature/public/events'
 
 const PAGE_SIZE = 20
 const isCandidate = (
@@ -246,13 +246,7 @@ export function LibraryInboxPreview({
 
   // Only the exceptional Undo conflict path scans dismissed rows. Never restore an accepted row.
   const stillDismissed = async (id: string): Promise<boolean> =>
-    (
-      await literatureClient.readMatchingCandidateIds(
-        new Set([id]),
-        'dismissed',
-        () => mounted.current
-      )
-    ).has(id)
+    (await readMatchingCandidateIds(new Set([id]), 'dismissed', () => mounted.current)).has(id)
   const change = async (
     entry: UndoEntry,
     action: 'accept' | 'dismiss' | 'restore'

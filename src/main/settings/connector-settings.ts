@@ -45,7 +45,10 @@ import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe
 } from '../connectors/custom-mcp-config'
-import { hasAmbiguousCustomMcpCredentialNames } from '@aipoch/connector-mcp-client'
+import {
+  hasAmbiguousCustomMcpCredentialNames,
+  clearUnboundOAuthCredentials
+} from '@aipoch/connector-mcp-client'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
@@ -1176,9 +1179,10 @@ class ConnectorSettingsModule {
     if (!value) return undefined
     try {
       const parsed: unknown = JSON.parse(value)
-      return parsed && typeof parsed === 'object'
-        ? (parsed as StoredCustomMcpOAuthState)
-        : undefined
+      if (!parsed || typeof parsed !== 'object') return undefined
+      const state = parsed as StoredCustomMcpOAuthState
+      clearUnboundOAuthCredentials(state)
+      return state
     } catch {
       return undefined
     }

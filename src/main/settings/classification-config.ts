@@ -1,7 +1,7 @@
 import { z } from 'zod'
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import { characterCount } from './settings-resource-limits'
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
+import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
 const id = z.string().uuid()
 const providerId = z
   .string()

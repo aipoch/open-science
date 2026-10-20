@@ -237,6 +237,7 @@
       "src/main/acp/runtime-composition.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/renderer/src/pages/workspace/replay/NotebookRunObservationActions.test.tsx",

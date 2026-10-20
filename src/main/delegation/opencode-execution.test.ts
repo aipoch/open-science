@@ -36,7 +36,7 @@ const provider = {
   baseUrl: 'https://provider.example/v1',
   model: 'certification-model',
   key: 'certification-key',
-  apiEndpoints: ['openai' as const]
+  apiEndpoints: ['chat-completions' as const]
 }
 
 const modelConfig = (

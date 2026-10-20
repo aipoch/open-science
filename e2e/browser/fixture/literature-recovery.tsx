@@ -1,7 +1,9 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
 import { initI18n } from '@/i18n'
 import { LiteratureMetadataEditor } from '@/pages/literature/detail/LiteratureMetadataEditor'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { LiteratureLibraryPage } from '@/pages/literature/public/page'
 import { LiteratureBatchLookupDialog } from '@/pages/literature/workflows/LiteratureBatchLookupDialog'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
@@ -95,27 +97,29 @@ useProjectStore.setState({ projects: [], isLoaded: true })
 useTagStore.setState({ status: 'ready', revision: 1, tags: [], assignments: [] })
 const mode = new URLSearchParams(location.search).get('mode')
 createRoot(document.getElementById('root')!).render(
-  mode === 'batch' ? (
-    <LiteratureBatchLookupDialog
-      itemIds={['failed', 'ready']}
-      initialItems={[]}
-      mode="metadata"
-      jobId={job.id}
-      fieldLabel={(field) => field}
-      onClose={() => {}}
-      onChanged={() => {}}
-    />
-  ) : mode === 'editor' ? (
-    <LiteratureMetadataEditor
-      item={literatureItemInputSchema.parse({
-        title: 'Seasonal reference',
-        itemType: 'journalArticle'
-      })}
-      saving={false}
-      onCancel={() => {}}
-      onSave={(item) => Object.assign(window, { savedLiteratureItem: item })}
-    />
-  ) : (
-    <LiteratureLibraryPage />
-  )
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {mode === 'batch' ? (
+      <LiteratureBatchLookupDialog
+        itemIds={['failed', 'ready']}
+        initialItems={[]}
+        mode="metadata"
+        jobId={job.id}
+        fieldLabel={(field) => field}
+        onClose={() => {}}
+        onChanged={() => {}}
+      />
+    ) : mode === 'editor' ? (
+      <LiteratureMetadataEditor
+        item={literatureItemInputSchema.parse({
+          title: 'Seasonal reference',
+          itemType: 'journalArticle'
+        })}
+        saving={false}
+        onCancel={() => {}}
+        onSave={(item) => Object.assign(window, { savedLiteratureItem: item })}
+      />
+    ) : (
+      <LiteratureLibraryPage />
+    )}
+  </LiteratureRendererProvider>
 )

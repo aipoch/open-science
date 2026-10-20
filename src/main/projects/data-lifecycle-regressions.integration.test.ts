@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { createComputeExecution } from '@aipoch/compute/node'
 // Public lifecycle regressions derived from interrupted deletion and publication scenarios.
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
@@ -75,7 +76,11 @@ it('removes abandoned publication bytes when sweeping interrupted staging conten
         createdAt: new Date(1)
       }
     })
-    const content = new ContentRepository({ storageRoot: root, getClient: async () => client })
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot: root,
+      getClient: async () => client
+    })
     expect((await content.sweep({ createdBefore: new Date() })).removedIds).toContain(id)
     expect(await client.contentBlob.count()).toBe(0)
     await expect(readFile(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })

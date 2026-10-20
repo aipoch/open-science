@@ -467,7 +467,14 @@ export async function startDesktopRuntimeTransport(options: {
             let frame = stringifyRpcJson({ kind: 'response', id: request.id, ...response })
             // A command result can grow during JSON encoding. Reject only this response;
             // do not drop unrelated in-flight commands or retry a completed mutation.
-            if (Buffer.byteLength(frame) > MAX_FRAME_BYTES) {
+            const frameBytes = Buffer.byteLength(frame)
+            if (frameBytes > MAX_FRAME_BYTES) {
+              logger.warn('desktop runtime response exceeds transport budget', {
+                channel: 'channel' in request ? request.channel : request.kind,
+                requestId: request.id,
+                byteLength: frameBytes,
+                maxFrameBytes: MAX_FRAME_BYTES
+              })
               frame = stringifyRpcJson({
                 kind: 'response',
                 id: request.id,

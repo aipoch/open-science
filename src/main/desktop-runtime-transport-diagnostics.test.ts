@@ -86,7 +86,16 @@ it('rejects an oversized response locally without logging its contents', async (
     error: { message: 'Desktop runtime response exceeds the transport byte budget.' }
   })
   expect(socket.readyState).toBe(1)
-  expect(mocks.warn).not.toHaveBeenCalled()
+  expect(mocks.warn).toHaveBeenCalledExactlyOnceWith(
+    'desktop runtime response exceeds transport budget',
+    {
+      channel: 'projects:list',
+      requestId: 1,
+      byteLength: expect.any(Number),
+      maxFrameBytes: byteBudget
+    }
+  )
+  expect(JSON.stringify(mocks.warn.mock.calls)).not.toMatch(/private|payload/)
 })
 
 it('bounds a real outgoing burst without logging its contents', async () => {

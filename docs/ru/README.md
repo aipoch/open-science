@@ -14,8 +14,11 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
-  <a href="https://huggingface.co/datasets/phylobio/BiomniBench-DA">
-    <img alt="№ 1 в BiomniBench-DA Public 50" src="https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-f59f00?style=flat">
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="Препринт AIPOCH Open-Science на arXiv: 2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
+  <a href="#результаты-тестирования">
+    <img alt="AIPOCH Open-Science — наивысшие оценки в представленных сравнениях бенчмарков" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="Платформы macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
@@ -25,9 +28,6 @@
   </a>
   <a href="https://aipoch.com/open-science">
     <img alt="Сайт aipoch.com" src="https://img.shields.io/badge/website-aipoch.com-e8590c?style=flat">
-  </a>
-  <a href="https://discord.gg/zxQAYjReRv">
-    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=flat&logo=discord&logoColor=white">
   </a>
 </p>
 
@@ -62,6 +62,7 @@ AIPOCH Open-Science подходит для вычислительных исс�
 - [Быстрый старт](#-быстрый-старт)
 - [Обзор продукта](#обзор-продукта)
 - [Исследовательские пакеты `.science` AIPOCH Open-Science](#исследовательские-пакеты-science-aipoch-open-science)
+- [AIPOCH Open-Science: статья и цитирование](#aipoch-open-science-статья-и-цитирование)
 - [Результаты тестирования](#результаты-тестирования)
 - [Основные возможности](#основные-возможности)
 - [Поставщики моделей](#поставщики-моделей)
@@ -92,6 +93,14 @@ AIPOCH Open-Science подходит для вычислительных исс�
 ```bash
 brew install --cask open-science
 ```
+
+Для автономного CLI в macOS или Linux используйте отдельный [tap AIPOCH](https://github.com/aipoch/homebrew-tap):
+
+```bash
+brew install aipoch/tap/open-science
+```
+
+Формула включает Node и работает без настольного приложения; её версия может отличаться от настольного Cask. Требования и обновления описаны в [руководстве по автономной среде](../standalone-runtime.md).
 
 Переустановка в Windows сохраняет исследовательские данные. Для полной очистки используйте [инструмент сброса](../../scripts/windows-reset/README.md), который после подтверждения безвозвратно удаляет локальные данные.
 
@@ -166,11 +175,44 @@ brew install --cask open-science
 
 1. Экспортируйте завершённую сессию и выберите содержимое пакета.
 2. Передайте файл `.science` коллеге или на другой компьютер.
-3. Импортируйте его в проект и проверьте доступную только для чтения историю, включённые файлы, записи Notebook и свидетельства верификации.
+3. Импортируйте файл в проект. Справа **Research replay** показывает записанный процесс; в диалоге слева можно задавать вопросы и ссылаться на фиксированные шаги.
 
-Импортированные пакеты доступны только для чтения. Они не запускают код и не восстанавливают учётные данные. Продолжайте работу в новой сессии. Для повторного запуска результата по-прежнему нужны полный рецепт, необходимые входные данные и доступная среда выполнения.
+Импортированные записи остаются доступными только для чтения. Просмотр не выполняет код, не вызывает модель и не восстанавливает учётные данные. Первый вопрос создаёт связанный редактируемый диалог; **Create a copy to continue research** создаёт рабочую копию. Для повторного выполнения по-прежнему нужны полный рецепт, необходимые входные данные и доступная среда.
+
+Диалоги Side Chat, личные закладки чтения и учётные данные исключены; состав файлов зависит от выбора при экспорте. Полученные записи проверки описывают действия отправителя, а не повторный запуск на этом компьютере. См. [руководство по пакетам `.science`](https://aipoch.com/docs/guides/research-packages/).
+
+## AIPOCH Open-Science: статья и цитирование
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+Препринт arXiv · [v1](https://arxiv.org/abs/2610.17110v1) · Подан 12 октября 2026 года.
+
+Наш препринт представляет AIPOCH Open-Science — открытую исследовательскую среду с ИИ и переносимыми пакетами `.science` для обмена исследовательским контекстом, версиями артефактов и записями проверок. Подробности устройства обмена пакетами и контролируемой оценки приведены в статье.
+
+Если вы используете AIPOCH Open-Science в исследовании, можно сослаться на препринт:
+
+<details>
+<summary>Цитата BibTeX</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
 
 ## Результаты тестирования
+
+Ниже приведены исторические результаты из отчётов за август–октябрь 2026 года, а не новая оценка v1.0.0.
+
+Исходные отчёты: [29 сентября](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [12 октября](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (может потребоваться разрешение на доступ).
 
 ### 🏆 AstaBench LitQA2-FullText-Search — найдены все 10/10 целевых статей
 
@@ -217,9 +259,13 @@ AIPOCH Open-Science объединяет управление проектами
 | **Научные файлы и предварительный просмотр**   | Загружайте файлы до **10 GiB каждый**, организуйте библиотеку проекта и просматривайте научные данные, PDF, Office, изображения, код и молекулярные структуры. Это предел загрузки, а не гарантия чтения всего файла моделью: контекст, разбор вложений и предпросмотр имеют отдельные ограничения. Большие файлы обычно читают или анализируют по частям с помощью кода.                                                                                                                     |
 | **Артефакты и происхождение**                  | Сохраняйте неизменяемые версии результатов с доступными кодом генерации, входными данными, историей выполнения, средой и свидетельствами проверки. На рабочем столе воспроизводите подходящие версии при наличии полного рецепта, входных данных и рабочей среды, сравнивайте выходы и экспортируйте записи верификации. Недостаток свидетельств может препятствовать проверке, а воспроизведение не доказывает научную достоверность.                                                        |
 
+Поддерживаются постоянные PDF-аннотации и заметки документа. При настроенной модели отбора умные коллекции оценивают публикации по вашим критериям включения и исключения. Решения ИИ и человека сохраняются раздельно и помогают ручной проверке.
+
+В настольном приложении происхождение артефакта можно экспортировать как RO-Crate 1.1. Пакет среды, связанный с версией, создаёт управляемую среду только при полной записи и совместимости с целевой платформой; это не полная резервная копия компьютера.
+
 ## Поставщики моделей
 
-На уровне продукта AIPOCH Open-Science не привязан к конкретным моделям: можно подключить крупного облачного поставщика LLM, пользовательский шлюз или существующую подписку Claude либо Codex. Доступность поставщиков зависит от выбранной среды агента и поддерживаемых ею протоколов API. Модель можно подключить четырьмя способами:
+На уровне продукта AIPOCH Open-Science не привязан к конкретным моделям: можно подключить крупного облачного поставщика LLM, пользовательский шлюз или существующую подписку Claude либо Codex. Доступность поставщиков зависит от выбранной среды агента и поддерживаемых ею протоколов API. Доступны следующие способы подключения:
 
 | Режим поставщика                   | Как это работает                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ---------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -227,6 +273,7 @@ AIPOCH Open-Science объединяет управление проектами
 | **Пользовательский шлюз**          | Укажите Base URL, точный ID модели и протокол API, поддерживаемый выбранной средой агента (Messages, Chat Completions или Responses), затем проверьте соединение. Удалённым шлюзам нужны HTTPS и API-ключ. Адреса обратной петли, например `localhost`, `127.0.0.1` или `[::1]`, допускают HTTP без ключа; доступны шаблоны для Ollama, LM Studio, llama.cpp и vLLM. Формат API по умолчанию не гарантирует совместимость сервера или модели. |
 | **Подписка Codex**                 | Выберите среду агента Codex, затем укажите подписку Codex как тип поставщика.                                                                                                                                                                                                                                                                                                                                                                 |
 | **Подписка Claude**                | Войти по подписке Claude можно в двух режимах: **общем** (вход через браузер с сохранением учётных данных в стандартном профиле `~/.claude`) или **изолированном** (запуск `claude setup-token` под управлением приложения в собственном `CLAUDE_CONFIG_DIR`, полностью отделённом от `~/.claude/`; доступны вход через браузер и резервная вставка токена).                                                                                  |
+| **xAI (Grok) OAuth**               | Используйте встроенный вход по коду устройства xAI (Grok) OAuth. Доступ зависит от учётной записи xAI и протоколов выбранного бэкенда; проверьте соединение в приложении.                                                                                                                                                                                                                                                                     |
 
 Доступно 25 предустановленных вариантов провайдера, включая OpenAI, Anthropic, DeepSeek, NVIDIA Build и другие. Модели и региональные адреса зависят от установленной версии и выбранного бэкенда; проверяйте список и подключение в приложении.
 
@@ -256,7 +303,7 @@ AIPOCH Open-Science хранит данные проекта, настройки
 
 ## Разработка и сборка
 
-Веб-интерфейс работает с обычным сервером Node без Electron и графического окружения.
+AIPOCH Open-Science состоит из обычного бэкенда Node и настольного клиента Electron на React, TypeScript, Prisma/SQLite со средой агентов на основе ACP.
 
 Для разработки из исходного кода нужны:
 
@@ -292,19 +339,14 @@ npm run pack:backend
 
 Тот же локальный веб-интерфейс можно открыть с телефона или планшета после сопряжения через Remote.It. Свяжите браузер с AIPOCH Open-Science шестизначным кодом и один раз подтвердите доступ на компьютере. После этого рабочее пространство будет доступно без прямого открытия loopback-сервера. Доверие браузеру можно отозвать; смена режима или остановка сервиса немедленно завершает активные удалённые сессии.
 
+Хост должен оставаться включённым и подключённым к сети, с работающими AIPOCH Open-Science и агентом Remote.It, и быть добавлен в учётную запись Remote.It с выполненным входом. Разрешение браузера имеет срок действия и может быть отозвано; см. [руководство по удалённому доступу](../remote-control.md).
+
 ### Автономные CLI и SDK
 
 CLI для автономной работы и Node.js SDK без зависимостей используют тот же локальный демон, проекты, сессии, учётные данные и разрешения, что настольный и веб-интерфейсы. Подробная документация хранится рядом с публикуемым пакетом, чтобы справочник команд оставался единым:
 
 - [Руководство по CLI](../../packages/open-science/CLI.md) — установка, жизненный цикл сервиса, автоматизация задач, артефакты, форматы вывода и коды завершения
 - [Обзор пакета SDK](../../packages/open-science/README.md) — быстрый старт Node.js и точка входа пакета
-
-```bash
-brew install --cask open-science
-brew install aipoch/tap/open-science
-```
-
-[Homebrew / Release](../standalone-runtime.md)
 
 ## Частые вопросы
 

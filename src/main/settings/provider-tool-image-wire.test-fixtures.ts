@@ -63,7 +63,7 @@ export const OPENCODE_TOOL_IMAGE_REQUEST_FIXTURE = {
   ]
 } as const
 
-export const OPENCODE_ANTHROPIC_TOOL_IMAGE_REQUEST_FIXTURE = {
+export const OPENCODE_MESSAGES_TOOL_IMAGE_REQUEST_FIXTURE = {
   messages: [
     {
       role: 'user',

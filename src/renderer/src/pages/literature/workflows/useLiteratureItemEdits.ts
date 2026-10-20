@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import { useLayoutEffect, useMemo, useRef } from 'react'
 import type {
@@ -52,6 +53,8 @@ export function useLiteratureItemEdits({
     onPersisted?: (reload: () => Promise<LiteratureItemView>) => void
   ) => Promise<void>
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   // Each query visit owns an identity; locale/callback changes keep that visit intact.
   const scope = useMemo(() => ({ key: scopeKey }), [scopeKey])
@@ -89,7 +92,7 @@ export function useLiteratureItemEdits({
     }
     setProjectLinkError(undefined)
     try {
-      await window.api.literature.transact({
+      await hostApi.literature.transact({
         kind: 'set-project-item',
         projectId: targetProjectId,
         itemId,
@@ -144,7 +147,7 @@ export function useLiteratureItemEdits({
     }
     setCollectionLinkError(undefined)
     try {
-      await window.api.literature.transact({
+      await hostApi.literature.transact({
         kind: 'set-collection-item',
         collectionId: targetCollectionId,
         itemId,
@@ -184,7 +187,7 @@ export function useLiteratureItemEdits({
       return
     let persisted = false
     try {
-      await window.api.literature.transact({
+      await hostApi.literature.transact({
         kind: 'update-item',
         itemId: entry.id,
         expectedMetadataRevision: entry.metadataRevision,

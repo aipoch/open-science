@@ -1,5 +1,6 @@
 import type { ReasoningEffort } from '../../shared/model-preference-contract'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
+
 import type { AgentFrameworkId } from '../../shared/settings'
 
 export type ExplicitAgentBackendTarget = Readonly<{

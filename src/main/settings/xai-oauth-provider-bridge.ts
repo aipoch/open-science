@@ -2,28 +2,32 @@ import type { ServerResponse } from 'node:http'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { netFetchStandard } from '../network-fetch'
 
-import { DEFAULT_MAX_PROVIDER_RESPONSE_BYTES, readBoundedResponseText } from './bounded-response'
+import {
+  DEFAULT_MAX_PROVIDER_RESPONSE_BYTES,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
 import {
   ProviderLoopbackHttpHost,
   ProviderLoopbackRequestError,
   writeProviderLoopbackJson as json,
   type ProviderLoopbackHttpRequest
 } from './provider-loopback-http-host'
-import { fetchProviderRequest } from './provider-fetch'
-import {
-  anthropicToResponses,
-  chatToResponses,
-  countAnthropicInputTokens,
-  responsesToAnthropic,
-  responsesToChat
-} from './xai-protocol'
 
-type Wire = 'anthropic' | 'openai'
+import {
+  messagesToResponses,
+  chatCompletionsToResponses,
+  countMessagesInputTokens,
+  responsesToMessages,
+  responsesToChatCompletions
+} from '@aipoch/providers/protocol'
+
+type Wire = 'messages' | 'chat-completions'
 export type XaiOAuthBridgeTarget = Readonly<{ id: string; model: string }>
 export type XaiOAuthBridgeConnection = Readonly<{ baseUrl: string; token: string }>
 type XaiOAuthProviderBridgeOptions = Readonly<{
   fetchImpl?: typeof fetch
-  adaptOpenAiRequest?: (request: Record<string, unknown>) => Record<string, unknown>
+  adaptChatCompletionsRequest?: (request: Record<string, unknown>) => Record<string, unknown>
 }>
 
 const log = createLogger('xai-oauth-bridge')
@@ -55,9 +59,7 @@ const CLAUDE_CODE_COMPAT_MODEL_IDS = Object.freeze([
   'claude-haiku-4-5-20251001'
 ])
 
-const anthropicModel = (
-  id: string
-): Readonly<{ id: string; type: 'model'; display_name: string }> =>
+const messagesModel = (id: string): Readonly<{ id: string; type: 'model'; display_name: string }> =>
   Object.freeze({ id, type: 'model', display_name: id })
 
 export class XaiOAuthProviderBridge {
@@ -72,7 +74,7 @@ export class XaiOAuthProviderBridge {
     private readonly wire: Wire,
     private readonly getAccessToken: (forceRefresh?: boolean) => Promise<string>,
     private readonly fetchImpl: typeof fetch = fetch,
-    private readonly adaptOpenAiRequest?: (
+    private readonly adaptChatCompletionsRequest?: (
       request: Record<string, unknown>
     ) => Record<string, unknown>
   ) {
@@ -81,7 +83,7 @@ export class XaiOAuthProviderBridge {
     if (!initial) throw new Error('The initial xAI OAuth bridge target is not registered.')
     this.target = initial
     this.advertisedIds = new Set(
-      this.wire === 'anthropic'
+      this.wire === 'messages'
         ? [...CLAUDE_CODE_STABLE_ALIASES, ...CLAUDE_CODE_COMPAT_MODEL_IDS]
         : []
     )
@@ -132,17 +134,17 @@ export class XaiOAuthProviderBridge {
     }
     if (request.method !== 'POST')
       return json(response, 405, { error: { message: 'Method not allowed' } })
-    const expected = this.wire === 'anthropic' ? '/v1/messages' : '/v1/chat/completions'
-    if (this.wire === 'anthropic' && pathname === '/v1/messages/count_tokens') {
+    const expected = this.wire === 'messages' ? '/v1/messages' : '/v1/chat/completions'
+    if (this.wire === 'messages' && pathname === '/v1/messages/count_tokens') {
       return json(response, 200, {
-        input_tokens: countAnthropicInputTokens(await request.readJsonObject())
+        input_tokens: countMessagesInputTokens(await request.readJsonObject())
       })
     }
     if (pathname !== expected) return json(response, 404, { error: { message: 'Not found' } })
     const receivedBody = await request.readJsonObject()
     const body =
-      this.wire === 'openai' && this.adaptOpenAiRequest
-        ? this.adaptOpenAiRequest(receivedBody)
+      this.wire === 'chat-completions' && this.adaptChatCompletionsRequest
+        ? this.adaptChatCompletionsRequest(receivedBody)
         : receivedBody
     const requestModel =
       typeof body.model === 'string' && body.model ? body.model : this.target.model
@@ -155,9 +157,9 @@ export class XaiOAuthProviderBridge {
     })
     const wantsStream = body.stream === true
     const upstreamBody =
-      this.wire === 'anthropic'
-        ? anthropicToResponses(body, this.target.model)
-        : chatToResponses(body, this.target.model)
+      this.wire === 'messages'
+        ? messagesToResponses(body, this.target.model)
+        : chatCompletionsToResponses(body, this.target.model)
     let upstream = await this.request(upstreamBody, request, false)
     if (upstream.status === 401) upstream = await this.request(upstreamBody, request, true)
     const payload = JSON.parse(
@@ -178,12 +180,12 @@ export class XaiOAuthProviderBridge {
       return json(response, upstream.status, payload)
     }
     const translated =
-      this.wire === 'anthropic'
-        ? responsesToAnthropic(payload, requestModel)
-        : responsesToChat(payload, requestModel)
+      this.wire === 'messages'
+        ? responsesToMessages(payload, requestModel)
+        : responsesToChatCompletions(payload, requestModel)
     if (!wantsStream) return json(response, 200, translated)
     response.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' })
-    if (this.wire === 'anthropic') this.writeAnthropicStream(response, translated)
+    if (this.wire === 'messages') this.writeMessagesStream(response, translated)
     else
       this.writeChatStream(
         response,
@@ -202,12 +204,12 @@ export class XaiOAuthProviderBridge {
   private writeModels(response: ServerResponse, pathname: string): void {
     if (pathname === '/v1/models') {
       const models = [...this.advertisedIds].map((id) =>
-        this.wire === 'anthropic' ? anthropicModel(id) : { id, object: 'model', owned_by: 'xai' }
+        this.wire === 'messages' ? messagesModel(id) : { id, object: 'model', owned_by: 'xai' }
       )
       return json(
         response,
         200,
-        this.wire === 'anthropic'
+        this.wire === 'messages'
           ? { data: models, has_more: false }
           : { object: 'list', data: models }
       )
@@ -218,12 +220,12 @@ export class XaiOAuthProviderBridge {
         error: { type: 'not_found_error', message: 'Model not found' }
       })
     }
-    if (this.wire === 'anthropic' || this.advertisedIds.has(id)) {
+    if (this.wire === 'messages' || this.advertisedIds.has(id)) {
       this.advertise(id)
       return json(
         response,
         200,
-        this.wire === 'anthropic' ? anthropicModel(id) : { id, object: 'model', owned_by: 'xai' }
+        this.wire === 'messages' ? messagesModel(id) : { id, object: 'model', owned_by: 'xai' }
       )
     }
     return json(response, 404, {
@@ -245,7 +247,7 @@ export class XaiOAuthProviderBridge {
     })
   }
 
-  private writeAnthropicStream(response: ServerResponse, message: Record<string, unknown>): void {
+  private writeMessagesStream(response: ServerResponse, message: Record<string, unknown>): void {
     const content = Array.isArray(message.content) ? message.content : []
     const event = (type: string, data: unknown): void => {
       response.write(`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`)
@@ -352,6 +354,6 @@ export const createXaiOAuthProviderBridge = (
     wire,
     getAccessToken,
     options.fetchImpl ?? netFetchStandard,
-    options.adaptOpenAiRequest
+    options.adaptChatCompletionsRequest
   )
 }

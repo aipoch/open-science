@@ -102,6 +102,7 @@
       "src/main/acp/runtime-composition.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/composition/session-packages.test.ts",
+      "src/main/composition/session-packages.lifecycle.test.ts",
       "src/main/composition/artifact-surfaces.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",

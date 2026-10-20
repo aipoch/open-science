@@ -77,7 +77,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
       name: 'Claude shared',
-      apiEndpoints: ['anthropic']
+      apiEndpoints: ['messages']
     })
     codexAuth = {
       getStatus: vi.fn(async (mode: CodexAuthStatus['mode'] = 'isolated') => ({
@@ -181,7 +181,7 @@ describe('ProviderAuthLifecycleOwner', () => {
         name: 'Ollama (local)',
         baseUrl: 'http://localhost:11434',
         model: 'qwen3:14b',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     ).resolves.toBe(true)
 
@@ -279,7 +279,7 @@ describe('ProviderAuthLifecycleOwner', () => {
     await owner.loginClaudeShared()
     const reconnected = (await repository.getSettings()).providers[0]
     await expect(owner.isProviderKeyUsable(reconnected)).resolves.toBe(true)
-    expect(reconnected.lastValidatedTarget).toEqual({ endpoint: 'anthropic' })
+    expect(reconnected.lastValidatedTarget).toEqual({ endpoint: 'messages' })
     expect(claudeSharedAuth.getStatus).toHaveBeenCalledTimes(2)
   })
 
@@ -364,7 +364,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
       name: 'Open-Science Claude login',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       keyRef: 'plain:old-token'
     })
     vi.mocked(claudeIsolatedAuth.loginIsolated).mockResolvedValueOnce({
@@ -390,7 +390,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
       name: 'Open-Science Claude login',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       expiresAt: 123,
       lastValidatedAt: 456
     })
@@ -450,7 +450,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
       name: 'Open-Science Claude login',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       keyRef: 'plain:setup-token'
     })
     vi.mocked(claudeIsolatedAuth.getStatus).mockResolvedValueOnce({
@@ -470,7 +470,7 @@ describe('ProviderAuthLifecycleOwner', () => {
       id: CLAUDE_ISOLATED_PROVIDER_ID,
       type: 'claude-isolated',
       name: 'Open-Science Claude login',
-      apiEndpoints: ['anthropic']
+      apiEndpoints: ['messages']
     })
     vi.mocked(claudeIsolatedAuth.loginIsolatedBrowser).mockResolvedValueOnce({
       supported: true,

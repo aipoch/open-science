@@ -440,7 +440,7 @@ test('normalizes OpenCode inline thinking before publishing sanitized message im
     const settings = await window.api.settings.upsertProvider({
       type: 'custom',
       name: 'Inline thinking replay',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       baseUrl: 'http://127.0.0.1:9/v1',
       model: 'MiniMax-M3',
       key: 'e2e-key',

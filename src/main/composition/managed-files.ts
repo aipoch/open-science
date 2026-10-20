@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
 import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
@@ -94,6 +95,7 @@ export function composeManagedFiles({
     loadSession: (projectId, appSessionId) => sessionRepository.loadSession(projectId, appSessionId)
   })
   const contentRepository = new ContentRepository({
+    references: persistentContentReferences,
     storageRoot: resolveDataRoot(),
     getClient: () => getProjectDbClient(resolveConfigRoot())
   })
