@@ -923,6 +923,47 @@ const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
   }
   return activityBlobPath
 }
+
+const releaseUnusedInitialBlobs = (initialRelations, retainedGenerations, blobPool, request) => {
+  const retainedChecksums = new Set(retainedGenerations.map((generation) => generation.checksum))
+  const unused = new Map(
+    initialRelations.flatMap(({ generation }) =>
+      generation && !retainedChecksums.has(generation.checksum)
+        ? [[generation.checksum, generation]]
+        : []
+    )
+  )
+  if (unused.size === 0) return
+  const directoryIdentity = entryIdentity(ACTIVITY_BLOBS_DIRECTORY)
+  if (!directoryIdentity) throw new Error('File-evidence Activity blob directory is unsafe.')
+  for (const generation of unused.values()) {
+    const name = `sha256-${generation.checksum}`
+    if (
+      !BLOB_NAME.test(name) ||
+      generation.contentStorageKey !==
+        `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${name}`
+    ) {
+      throw new Error('Unused file-evidence generation has an invalid storage key.')
+    }
+    const path = join(ACTIVITY_BLOBS_DIRECTORY, name)
+    const metadata = lstatSync(path)
+    const pooled = lstatSync(join(blobPool.path, name))
+    if (
+      !sameIdentity(entryIdentity(ACTIVITY_BLOBS_DIRECTORY), directoryIdentity) ||
+      !sameIdentity(entryIdentity(blobPool.path), blobPool.identity) ||
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      pooled.isSymbolicLink() ||
+      !pooled.isFile() ||
+      !sameIdentity(identity(metadata), identity(pooled))
+    ) {
+      throw new Error('Unused file-evidence blob no longer matches its owned pool.')
+    }
+    rmSync(path)
+  }
+  syncDirectoryPath(ACTIVITY_BLOBS_DIRECTORY)
+  sweepBlobPool(blobPool)
+}
 const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   const hash = createHash('sha256')
   let position = 0
@@ -1371,7 +1412,21 @@ const persist = (request) => {
         ? ['initial-file-generations-not-captured']
         : [])
     ]
-    let bytesUsed = Number(capture.bytesUsed) || 0
+    // Keep predecessor bytes even when the final read set excludes their initial relation.
+    const retainedInitialIds = new Set([
+      ...relations.flatMap(({ generation }) => (generation ? [generation.generationId] : [])),
+      ...request.changes.flatMap(({ change }) => {
+        const previous = change.before && baselineByPath.get(change.relativePath)
+        return previous ? [previous.generationId] : []
+      })
+    ])
+    const retainedInitialGenerations = capture.relations.flatMap(({ generation }) =>
+      generation && retainedInitialIds.has(generation.generationId) ? [generation] : []
+    )
+    let bytesUsed = retainedInitialGenerations.reduce(
+      (sum, generation) => sum + generation.sizeBytes,
+      0
+    )
     let newBytesUsed = 0
     for (const item of request.changes) {
       const change = item.change
@@ -1475,6 +1530,16 @@ const persist = (request) => {
     rmSync(CAPTURE_FILE, { force: true })
     writeExclusiveFile('evidence.json', serialized)
     syncDirectory()
+
+    releaseUnusedInitialBlobs(
+      capture.relations,
+      [
+        ...retainedInitialGenerations,
+        ...relations.flatMap(({ generation }) => (generation ? [generation] : []))
+      ],
+      blobPool,
+      request
+    )
 
     process.chdir('..')
     assertBoundRoot(request.expectedRootIdentity)

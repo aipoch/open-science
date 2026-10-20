@@ -1168,7 +1168,7 @@ describe('working-file evidence', () => {
 
   it('does not make a write-only overwrite depend on the previous file generation', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
-    await writeFile(join(dataRoot, 'result.csv'), 'old result')
+    await writeFile(join(dataRoot, 'result.csv'), 'old result'.padEnd(4000, '.'))
     const observation = await startWorkingFileObservation(
       {
         dataRoot,
@@ -1178,7 +1178,7 @@ describe('working-file evidence', () => {
         language: 'python',
         runId: 'run-corroborated-overwrite'
       },
-      { watchDirectory: watcherUnavailable }
+      { watchDirectory: watcherUnavailable, maxActivityBytes: 4096 }
     )
     await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
 
@@ -1195,7 +1195,163 @@ describe('working-file evidence', () => {
       expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
     ])
     expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
+    const outputName = `sha256-${createHash('sha256').update('x\n1\n').digest('hex')}`
+    await expect(
+      readdir(
+        join(
+          storageRoot!,
+          'execution-file-evidence',
+          'activity-run-corroborated-overwrite',
+          'blobs'
+        )
+      )
+    ).resolves.toEqual([outputName])
+    await expect(readdir(join(storageRoot!, 'execution-file-evidence-blobs'))).resolves.toEqual([
+      outputName
+    ])
   })
+
+  it('does not capture unrelated files when only write destinations are uncertain', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    await writeFile(join(dataRoot, 'input.csv'), 'x\n1\n')
+    await writeFile(join(dataRoot, 'unrelated.bin'), Buffer.alloc(1024 * 1024))
+    let capturedPaths: string[] = []
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        language: 'r',
+        code: 'values <- read.csv("input.csv"); draw <- function(file) { png(file); plot(1); dev.off() }; draw("page-%03d.png")',
+        runId: 'uncertain-write-path'
+      },
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: async (root, request, signal) => {
+          if (request.operation === 'begin') {
+            capturedPaths = request.initialFiles.map(({ file }) => file.relativePath)
+          }
+          return runEvidenceWorker(root, request, signal)
+        }
+      }
+    )
+    await writeFile(join(dataRoot, 'page-001.png'), 'new plot')
+    const result = await observation.finish()
+    expect(result.fileEvidence.fileReads).toBe('complete')
+    expect(result.fileEvidence.writerAttribution).toBe('partial')
+    expect(capturedPaths).toEqual(['data/input.csv'])
+  })
+
+  it.each(['unused', 'read', 'predecessor', 'shared'] as const)(
+    'retains only needed initial content after publication: %s',
+    async (usage) => {
+      const { dataRoot } = await createRoots()
+      const evidenceRoot = join(storageRoot!, 'execution-file-evidence')
+      await mkdir(evidenceRoot)
+      const root = await stat(evidenceRoot)
+      const blobPool = await createWorkerBlobPool()
+      const retainedNames: string[] = []
+      for (let index = 0; index < 3; index++) {
+        const path = join(dataRoot, 'changing.csv')
+        const content = `same large body, different revision ${usage === 'shared' ? 0 : index}`
+        const retainedRead = usage === 'read' || (usage === 'shared' && index === 0)
+        const retained = retainedRead || usage === 'predecessor'
+        await writeFile(path, content)
+        const metadata = await stat(path)
+        const file = {
+          physicalPath: path,
+          path,
+          relativePath: 'data/changing.csv',
+          kind: 'other' as const,
+          size: metadata.size,
+          mtimeMs: metadata.mtimeMs,
+          ctimeMs: metadata.ctimeMs,
+          dev: metadata.dev,
+          ino: metadata.ino
+        }
+        const request = {
+          ...blobPool,
+          expectedRootIdentity: { dev: root.dev, ino: root.ino },
+          receiptName: `receipt-retention-${index}.json`,
+          stagingName: `staging-retention-${index}`,
+          finalName: `activity-retention-${index}`,
+          activityId: `retention-${index}`,
+          activityKind: 'notebook-run' as const,
+          evidenceId: `execution-file-evidence-retention-${index}`,
+          storageKeyPrefix: 'execution-file-evidence',
+          maxGenerationBytes: 1024,
+          maxActivityBytes: 64 * 1024,
+          diskReserveBytes: 0,
+          availableBytes: 1024 * 1024,
+          captureCancelled: false
+        }
+        await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'begin',
+          initialViewState: 'complete',
+          initialFiles: [
+            {
+              file,
+              generation: {
+                generationId: `generation-${index}`,
+                capturedAt: '2026-10-20T00:00:00.000Z'
+              }
+            }
+          ]
+        })
+        const result = await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'persist',
+          rootKinds: ['data'],
+          rootsAvailable: true,
+          fileReads: 'complete',
+          readPaths: retainedRead ? [file.relativePath] : [],
+          reasonCodes: [],
+          scientificOutputs: [],
+          changes:
+            usage === 'predecessor'
+              ? [
+                  {
+                    change: { relation: 'deleted', relativePath: file.relativePath, before: file },
+                    generation: { generationId: '', capturedAt: '2026-10-20T00:00:00.000Z' }
+                  }
+                ]
+              : []
+        })
+        if (!('fileEvidence' in result)) throw new Error('Missing published evidence')
+        await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'complete',
+          checksum: result.fileEvidence.checksum!,
+          storageKey: result.fileEvidence.storageKey!
+        })
+        const sidecar = JSON.parse(
+          await readFile(join(evidenceRoot, request.finalName, 'evidence.json'), 'utf8')
+        )
+        expect(sidecar.relations).toHaveLength(retained ? 1 : 0)
+        if (usage === 'predecessor') {
+          expect(sidecar.relations[0].previousGenerationId).toBe(`generation-${index}`)
+        }
+        const name = `sha256-${createHash('sha256').update(content).digest('hex')}`
+        const expected = retained ? [name] : []
+        await expect(readdir(join(evidenceRoot, request.finalName, 'blobs'))).resolves.toEqual(
+          expected
+        )
+        retainedNames.push(...expected)
+        expect((await readdir(blobPool.blobRoot)).sort()).toEqual([...retainedNames].sort())
+        if (retained) {
+          await expect(
+            readFile(join(evidenceRoot, request.finalName, 'blobs', name), 'utf8')
+          ).resolves.toBe(content)
+        }
+      }
+      if (usage === 'shared') {
+        await expect(
+          readFile(join(evidenceRoot, 'activity-retention-0', 'blobs', retainedNames[0]), 'utf8')
+        ).resolves.toBe('same large body, different revision 0')
+      }
+    }
+  )
 
   it.each(volcanoCells.filter((cell) => ['20', '21', '22', '25'].includes(cell.runId)))(
     'captures the RDS input without chaining earlier PNG generations for volcano run $runId',

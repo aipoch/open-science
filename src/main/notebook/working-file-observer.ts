@@ -1642,7 +1642,8 @@ function selectInitialFilesForCapture(
   initialFiles: readonly SnapshotEntry[],
   access: WorkingFileObservationRequest['sourceFileAccess']
 ): readonly SnapshotEntry[] {
-  if (!access || access.readState !== 'complete' || access.writeState !== 'complete') {
+  // Unknown write destinations do not make unrelated files possible inputs.
+  if (!access || access.readState !== 'complete') {
     return initialFiles
   }
   const paths = new Set([...access.reads, ...access.writes])
