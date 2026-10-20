@@ -1,4 +1,4 @@
-import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import {
   BackendShutdownOutcomeError,
   QUIT_SHUTDOWN_BUDGET_MS,
@@ -243,6 +243,10 @@ class RuntimeModuleBuilder implements ApplicationModuleBuilder {
           )
         }
       } catch (error) {
+        createLogger('application-runtime').error('module disposal failed', {
+          module: module.name ?? `module-${this.modules.length - index}`,
+          ...diagnosticErrorFields(error)
+        })
         failures.push(error)
       }
     }
