@@ -34,3 +34,5 @@
 - La revisión automatizada espera a que los servidores MCP estén listos y verifica la autenticación enrutada antes de continuar. (#3597, #3627)
 - La persistencia de guardar-como-skill está limitada a la sesión que la creó. (#3594)
 - La edición de sesiones en móvil mantiene su comportamiento de doble clic. (#3651)
+- Al recrear el entorno de ejecución del agente en medio de una sesión, las nuevas actividades de skills ya no colisionan con las históricas — una colisión anterior bloqueaba la liquidación del turno y los mensajes posteriores. (#3682)
+- Las sesiones con muchas revisiones vuelven a cargar su historial de revisiones: antes, el historial completo superaba el presupuesto de transporte y bloqueaba el panel de revisiones; ahora los registros de revisión individuales se abren bajo demanda. (#3677)

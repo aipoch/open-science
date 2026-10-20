@@ -34,3 +34,5 @@
 - Die automatisierte Prüfung wartet darauf, dass MCP-Server bereit sind, und verifiziert die geroutete Authentifizierung, bevor sie fortfährt. (#3597, #3627)
 - Die Persistenz von „Als Skill speichern" ist auf die Session beschränkt, die ihn erstellt hat. (#3594)
 - Das mobile Session-Bearbeiten behält sein Doppelklick-Verhalten. (#3651)
+- Die erneute Erstellung der Agent-Laufzeit mitten in einer Session führt nicht mehr dazu, dass neue Skill-Aktivitäten mit historischen kollidieren — eine solche Kollision hat zuvor die Turn-Abwicklung und weitere Nachrichten blockiert. (#3682)
+- Sessions mit vielen Reviews laden ihren Review-Verlauf wieder — der vollständige Verlauf hat zuvor das Transportbudget überschritten und das Review-Panel blockiert; einzelne Review-Protokolle werden nun bei Bedarf geöffnet. (#3677)

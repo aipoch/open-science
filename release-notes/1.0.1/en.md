@@ -24,6 +24,7 @@
 - Quitting the app while a provider-native question was waiting no longer permanently cancels that question — after relaunch it can still be answered. (#3672)
 - Stopping a conversation while its new message was being persisted no longer lets that stopped message reach the provider. (#3660)
 - Repeated MCP startup activity identifiers no longer block conversation changes from being saved. (#3628)
+- Recreating the agent runtime mid-session no longer lets new skill activities collide with historical ones — a collision previously blocked turn settlement and further messages. (#3682)
 - Startup recovery keeps its retry authority, recovered library views refresh, and recovery dialogs no longer stack on top of each other. (#3579)
 - Memory edits made while a save is pending are preserved instead of discarded, and completed notebook runs are no longer misreported as interrupted after a restart. (#3571)
 - Manual terminal commands stay visible in the Main Agent view even when a subagent is selected. (#3611)
@@ -33,4 +34,5 @@
 - Editing a skill's body no longer overwrites separately edited names or descriptions, and antibody searches respect their configured result limits. (#3570)
 - Automated review waits for MCP servers to be ready and verifies routed authentication before proceeding. (#3597, #3627)
 - Save-as-skill persistence is scoped to the session that created it. (#3594)
+- Sessions with many reviews load their review history again — the full history previously exceeded the transport budget and blocked the review panel; individual review logs now open on demand. (#3677)
 - Mobile session editing keeps its double-click behavior. (#3651)

@@ -34,3 +34,5 @@
 - La révision automatisée attend que les serveurs MCP soient prêts et vérifie l'authentification routée avant de continuer. (#3597, #3627)
 - La persistance de l'enregistrement en tant que skill est limitée à la session qui l'a créé. (#3594)
 - L'édition de session mobile conserve son comportement de double-clic. (#3651)
+- Recréer le runtime de l'agent en pleine session ne laisse plus les nouvelles activités de skills entrer en collision avec les anciennes — une telle collision bloquait auparavant la clôture du tour et les messages suivants. (#3682)
+- Les sessions comportant de nombreuses révisions chargent à nouveau leur historique de révisions — l'historique complet dépassait auparavant le budget de transport et bloquait le panneau de révision ; les journaux de révision individuels s'ouvrent désormais à la demande. (#3677)
