@@ -8,6 +8,8 @@ param(
 # lives in NSIS's private plugin directory, not in the installed application or user profile.
 $ErrorActionPreference = 'Stop'
 Set-StrictMode -Version Latest
+# Unicode NSIS nsExec detects UTF-16LE. The default console code page loses profile characters.
+[Console]::OutputEncoding = [Text.Encoding]::Unicode
 $handles = [Collections.Generic.List[IDisposable]]::new()
 $stageHandle = $null
 $createdStage = $null

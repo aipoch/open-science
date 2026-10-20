@@ -79,7 +79,7 @@ function action(
       f.state
     ],
     {
-      encoding: 'utf8',
+      encoding: 'utf16le',
       windowsHide: true,
       env,
       timeout: 60_000
@@ -120,8 +120,10 @@ describe.skipIf(process.platform !== 'win32')('real Windows payload publication'
     const temporary = join(f.root, 'profile 数据 with spaces', 'Temp')
     mkdirSync(temporary, { recursive: true })
     const env = { ...process.env, TEMP: temporary, TMP: temporary }
+    f.state = join(temporary, 'state.json')
     const prepared = action(f, 'prepare', env)
     expect(prepared.status, prepared.stdout + prepared.stderr).toBe(0)
+    expect(prepared.stdout).toBe(JSON.parse(readFileSync(f.state, 'utf8')).stage)
     expect(action(f, 'cleanup', env).status).toBe(0)
   }, 30_000)
 
@@ -383,7 +385,7 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
               '!macro quitFailedUpdate',
               'FileOpen $0 "$EXEDIR\\failure.txt" w',
-              'FileWrite $0 "$publicationResult $publicationOutput"',
+              'FileWrite $0 "$publicationResult $publicationOutput | stage=$publicationDirectory"',
               'FileClose $0',
               'Call cleanupInstallPublication',
               'SetErrorLevel 2',
