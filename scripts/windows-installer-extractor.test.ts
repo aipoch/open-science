@@ -86,7 +86,7 @@ describe('verified Windows installer extractor', () => {
           return
         }
         expect(file).toBe(destination)
-        expect(readFileSync(file)).toEqual(original)
+        expect(readFileSync(file).equals(original)).toBe(true)
         writeFileSync(file, Buffer.concat([original, Buffer.from('test-signature')]))
       })
       const context = {
@@ -102,7 +102,7 @@ describe('verified Windows installer extractor', () => {
         join(root, 'build/windows-install-publication.cs'),
         join(root, 'out/windows-installer/x64/windows-install-publication.dll')
       )
-      expect(readFileSync(join(toolDirectory!, 'x64/7za.exe'))).toEqual(original)
+      expect(readFileSync(join(toolDirectory!, 'x64/7za.exe')).equals(original)).toBe(true)
       expect(readFileSync(join(root, 'app/resources/7zip-LICENSE.txt'))).toEqual(
         readFileSync(join(toolDirectory!, 'License.txt'))
       )
