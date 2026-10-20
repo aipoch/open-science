@@ -75,6 +75,69 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it('retains uncertainty on figures with a crop and native source evidence', async () => {
+    const value = raw()
+    Object.assign((value.figures as Record<string, unknown>[])[0], {
+      issue: 'uncertain-region',
+      sourceItems: [{ pageNumber: 1, index: 7, text: 'Observed count' }]
+    })
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0].issues).toEqual([
+      { code: 'uncertain-region', detail: 'uncertain-region' }
+    ])
+  })
+  it('preserves proved figure label origins through worker and public cache decoding', async () => {
+    const value = raw(),
+      sourceItems = [{ pageNumber: 1, index: 7, text: 'Observed count' }]
+    Object.assign((value.figures as Record<string, unknown>[])[0], { sourceItems })
+    await save(value)
+    const result = await readWorkerResult(root, identity, new Map())
+    expect(result.elements[0]).toMatchObject({ sourceItems })
+    expect(parsePdfStructureResult(result, identity)).toEqual(result)
+    for (const invalid of [
+      [],
+      [{ pageNumber: 2, index: 7, text: 'Observed count' }],
+      [{ pageNumber: 1, index: -1, text: 'Observed count' }],
+      [sourceItems[0], sourceItems[0]]
+    ]) {
+      const bad = structuredClone(result)
+      bad.elements[0].sourceItems = invalid
+      expect(() => parsePdfStructureResult(bad, identity)).toThrow()
+    }
+    const algorithm = structuredClone(result)
+    algorithm.elements[0].kind = 'algorithm'
+    expect(() => parsePdfStructureResult(algorithm, identity)).toThrow()
+    const duplicate = structuredClone(result)
+    duplicate.elements.push({ ...structuredClone(result.elements[0]), id: 'other-figure' })
+    expect(() => parsePdfStructureResult(duplicate, identity)).toThrow(/multiple owners/)
+    const conflict = structuredClone(result)
+    conflict.elements.push({
+      id: 'competing-table',
+      kind: 'table',
+      regions: structuredClone(result.elements[0].regions),
+      issues: [],
+      table: {
+        rowCount: 1,
+        columnCount: 1,
+        issues: [],
+        unassignedText: [],
+        cells: [
+          {
+            row: 0,
+            column: 0,
+            rowSpan: 1,
+            columnSpan: 1,
+            text: 'Observed count',
+            regions: structuredClone(result.elements[0].regions),
+            sourceItems
+          }
+        ]
+      }
+    })
+    expect(() => parsePdfStructureResult(conflict, identity)).toThrow(/both a figure and a table/)
+  })
+
   it('keeps repaired display text separate from exact raw origins on a rotated page', async () => {
     const table = rawTable()
     await save({

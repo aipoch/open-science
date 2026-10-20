@@ -38,7 +38,7 @@ const step = (job: Job, name: string): Step =>
 const suites = [
   ['renderer_layout', 'test:e2e:browser', 0],
   ['e2e_functional_windows', 'test:e2e:journey', 3],
-  ['e2e_workspace_windows', 'test:e2e:workspace', 2]
+  ['e2e_workspace_windows', 'test:e2e:workspace', 3]
 ] as const
 
 it('schedules independent complete Windows E2E and keeps the manual full entry point', () => {
@@ -252,20 +252,26 @@ it('discovers the reviewed mainline subset and retains every other case in the f
     return visit((JSON.parse(result.stdout) as JSONReport).suites).sort()
   }
   // New regression cases stay untagged unless the reviewed representative journey changes.
-  for (const [group, title] of Object.entries({
-    projects:
-      'electron-foundation.spec.ts: creates a project through the desktop stack and reloads it after relaunch',
-    conversation:
-      'workspace-conversation.spec.ts: resolves Agent permission requests through both Allow and Deny decisions',
-    files:
-      'workspace-files.spec.ts: edits uploaded Markdown versions and keeps diff navigation coherent',
-    notebook:
-      'electron-foundation.spec.ts: analyzes uploaded data in Python and reopens the saved research',
-    windows:
+  for (const [group, titles] of Object.entries({
+    projects: [
+      'electron-foundation.spec.ts: creates a project through the desktop stack and reloads it after relaunch'
+    ],
+    conversation: [
+      'workspace-conversation.spec.ts: expands the selected table across repeated portal lifecycles',
+      'workspace-conversation.spec.ts: resolves Agent permission requests through both Allow and Deny decisions'
+    ],
+    files: [
+      'workspace-files.spec.ts: edits uploaded Markdown versions and keeps diff navigation coherent'
+    ],
+    notebook: [
+      'electron-foundation.spec.ts: analyzes uploaded data in Python and reopens the saved research'
+    ],
+    windows: [
       'windows-window-system.spec.ts: persists minimize-to-tray across titlebar close, relaunch, and Ctrl+W'
+    ]
   })) {
     const selected = collect('test:e2e', `@pr-mainline-${group}(?:\\s|$)`)
-    expect(selected).toEqual([`${title} @pr-mainline-${group}`])
+    expect(selected).toEqual(titles.map((title) => `${title} @pr-mainline-${group}`).sort())
   }
   for (const [, command, count] of suites) {
     const full = collect(command)

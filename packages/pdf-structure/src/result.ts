@@ -174,6 +174,8 @@ const element = z
     id,
     kind: z.enum(['figure', 'table', 'algorithm']),
     regions: z.array(region).min(1),
+    // Optional, independently proved native figure labels; never inferred from a crop box.
+    sourceItems: pdfTableSourceItemsSchema.optional(),
     caption: z
       .object({ text: z.string(), regions: z.array(region).min(1) })
       .strict()
@@ -189,6 +191,10 @@ const element = z
     issues: z.array(issue)
   })
   .strict()
+  .refine(
+    (value) => !value.sourceItems || value.kind === 'figure',
+    'Only figures may own element-level native text.'
+  )
   .refine(
     (value) => value.kind === 'table' || (!value.table && !value.tableParts && !value.tableNotes),
     'Non-table element has table data.'
@@ -364,6 +370,18 @@ export const parsePdfStructureResult = (
   const sourceTexts = new Map<string, string>()
   const sourceRanges = new Map<string, Array<{ start: number; end: number }>>()
   const wholeSources = new Set<string>()
+  const figureSources = new Set<string>()
+  for (const element of result.elements)
+    for (const item of element.sourceItems ?? []) {
+      const key = `${item.pageNumber}:${item.index}`
+      if (
+        !processed.has(item.pageNumber) ||
+        !element.regions.some((r) => r.page === item.pageNumber)
+      )
+        throw new Error('PDF figure source item does not belong to its figure page.')
+      if (figureSources.has(key)) throw new Error('PDF figure source item has multiple owners.')
+      figureSources.add(key)
+    }
   for (const element of result.elements) {
     const tables =
       element.tableParts?.map((part) => part.table) ?? (element.table ? [element.table] : [])
@@ -382,6 +400,8 @@ export const parsePdfStructureResult = (
         )
           throw new Error('PDF table source item does not belong to its cell page.')
         const key = `${item.pageNumber}:${item.index}`
+        if (figureSources.has(key))
+          throw new Error('PDF text belongs to both a figure and a table.')
         if (sourceTexts.has(key) && sourceTexts.get(key) !== item.text)
           throw new Error('PDF table source item has conflicting original text.')
         sourceTexts.set(key, item.text)

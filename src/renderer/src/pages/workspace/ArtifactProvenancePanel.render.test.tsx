@@ -1,16 +1,26 @@
-import { waitFor } from '@testing-library/react'
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { waitFor } from '@testing-library/react'
 import { act, useState } from 'react'
 import { useArtifactEnvironmentLockStore } from './artifact-environment-lock-store'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import {
   createInitialPreviewWorkbenchState,
   type PreviewFileItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import type { ArtifactVersionProvenance } from '../../../../shared/artifact-provenance'
+import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
+import { PreviewFileSurface } from './PreviewFileSurface'
+import { buildBoundedExecutionSnapshot } from '../../../../main/artifacts/provenance-execution-evidence'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const notebookEvidenceProbe = vi.hoisted(() => ({ enabled: false }))
 const reviewerCardSpy = vi.hoisted(() => vi.fn())
@@ -81,10 +91,6 @@ vi.mock('./WorkspaceActivityGroup', () => ({
     return <div data-testid="workspace-activity">{props.group.title}</div>
   }
 }))
-
-import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
-import { PreviewFileSurface } from './PreviewFileSurface'
-import { buildBoundedExecutionSnapshot } from '../../../../main/artifacts/provenance-execution-evidence'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 

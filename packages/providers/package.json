@@ -1,0 +1,56 @@
+{
+  "name": "@aipoch/providers",
+  "version": "0.1.0",
+  "description": "Provider definitions, protocol conversion and bounded direct text generation",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "exports": {
+    "./protocol": {
+      "types": "./dist/protocol.d.ts",
+      "default": "./dist/protocol.js"
+    },
+    "./client": {
+      "types": "./dist/client.d.ts",
+      "default": "./dist/client.js"
+    },
+    ".": {
+      "types": "./dist/providers.d.ts",
+      "default": "./dist/providers.js"
+    },
+    "./errors": {
+      "types": "./dist/errors.d.ts",
+      "default": "./dist/errors.js"
+    },
+    "./transport": {
+      "types": "./dist/transport.d.ts",
+      "default": "./dist/transport.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "test-ownership.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build",
+    "build:assets": "node build.mjs --assets-only"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "esbuild": "0.25.12"
+  },
+  "dependencies": {
+    "@aipoch/diagnostics": "0.1.0",
+    "zod": "^4.6.5",
+    "js-tiktoken": "^1.0.21"
+  }
+}

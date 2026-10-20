@@ -60,7 +60,8 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
       await json(`packages/${name}/package.json`, {
         name: `fixture-${name}`,
         main: './dist/index.js',
-        types: './dist/index.d.ts'
+        types: './dist/index.d.ts',
+        scripts: { 'build:assets': 'node assets.cjs' }
       })
       await json(`packages/${name}/tsconfig.json`, {
         compilerOptions: {
@@ -99,6 +100,21 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
       join(root, 'node_modules/fixture-core'),
       process.platform === 'win32' ? 'junction' : 'dir'
     )
+    await put(
+      'packages/core/assets.cjs',
+      `
+      const fs = require('node:fs')
+      fs.writeFileSync('dist/asset.json', JSON.stringify(require('./dist/index.js').value))
+    `
+    )
+    await put(
+      'packages/consumer/assets.cjs',
+      `
+      const fs = require('node:fs')
+      const asset = JSON.parse(fs.readFileSync('../core/dist/asset.json', 'utf8'))
+      if (asset !== require('./dist/index.js').result) throw new Error('Dependency assets must build first')
+    `
+    )
     await put('packages/core/src/index.ts', 'export const value = "before"')
     await put('packages/core/src/obsolete.ts', 'export const unused = 1')
     await put(
@@ -107,8 +123,12 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
     )
     await build()
     const output = join(root, 'packages/consumer/dist/index.js')
+    const asset = join(root, 'packages/core/dist/asset.json')
+    expect(JSON.parse(await readFile(asset, 'utf8'))).toBe('before')
+    await rm(asset)
     const previous = await stat(output)
     await build()
+    expect(JSON.parse(await readFile(asset, 'utf8'))).toBe('before')
     expect((await stat(output)).mtimeMs).toBe(previous.mtimeMs)
     expect((await stat(output)).ctimeMs).toBe(previous.ctimeMs)
     await put('packages/core/src/index.ts', 'export const value = "after"')
@@ -119,8 +139,11 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
       { cwd: root, encoding: 'utf8' }
     )
     expect(result.trim()).toBe('after')
+    expect(JSON.parse(await readFile(asset, 'utf8'))).toBe('after')
     await put('packages/core/src/index.ts', 'export const value = 42')
+    const beforeFailure = await stat(asset)
     await expect(build()).rejects.toThrow('Package build failed')
+    expect((await stat(asset)).mtimeMs).toBe(beforeFailure.mtimeMs)
     await put('packages/core/src/index.ts', 'export const value = "fixed"')
     await rm(join(root, 'packages/core/src/obsolete.ts'))
     await build()
@@ -146,9 +169,17 @@ it('skips unchanged output, propagates dependency edits, rejects errors and repa
     await put('packages/consumer/dist/stale.js', 'obsolete')
     await buildDevPackages({ root, clean: true, log: () => {} })
     expect(await readFile(output, 'utf8')).toBe(beforeClean)
+    expect(JSON.parse(await readFile(asset, 'utf8'))).toBe('fixed')
+    await rm(asset)
+    await buildDevPackages({ root, packages: ['consumer'], force: true, log: () => {} })
+    expect(JSON.parse(await readFile(asset, 'utf8'))).toBe('fixed')
     await expect(stat(join(root, 'packages/consumer/dist/stale.js'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+    await put('packages/consumer/assets.cjs', 'process.exit(1)')
+    await buildDevPackages({ root, packages: ['core'], log: () => {} })
+    await put('packages/core/assets.cjs', 'process.exit(1)')
+    await expect(build()).rejects.toThrow('Package assets failed for fixture-core')
     await expect(buildDevPackages({ root, packages: ['missing'], log: () => {} })).rejects.toThrow(
       'Unknown package'
     )

@@ -58,7 +58,7 @@ type WorkflowHarness = {
   updateReasoningEffort: ReturnType<typeof vi.fn>
   updateAggregateModel: ReturnType<typeof vi.fn>
   setProviderTransportTarget: ReturnType<typeof vi.fn>
-  setAnthropicBridgeTarget: ReturnType<typeof vi.fn>
+  setMessagesBridgeTarget: ReturnType<typeof vi.fn>
   setBridgeReasoningEffort: ReturnType<typeof vi.fn>
   applyLiveEffort: ReturnType<typeof vi.fn>
   clearContext: ReturnType<typeof vi.fn>
@@ -153,7 +153,7 @@ const createHarness = (): WorkflowHarness => {
   } as Pick<AcpBackendGenerationOwner, 'current' | 'updateModel' | 'updateReasoningEffort'>
 
   const setProviderTransportTarget = vi.fn(() => true)
-  const setAnthropicBridgeTarget = vi.fn(() => true)
+  const setMessagesBridgeTarget = vi.fn(() => true)
   const setBridgeReasoningEffort = vi.fn()
   const connectionResources = {
     epoch: 1,
@@ -163,7 +163,7 @@ const createHarness = (): WorkflowHarness => {
     get isShuttingDown() {
       return false
     },
-    get anthropicBridgeAvailable() {
+    get messagesBridgeAvailable() {
       return false
     },
     get providerTransportAvailable() {
@@ -171,7 +171,7 @@ const createHarness = (): WorkflowHarness => {
     },
     assertCurrentConnection: vi.fn(),
     setProviderTransportTarget,
-    setAnthropicBridgeTarget,
+    setMessagesBridgeTarget,
     setBridgeModelTarget: vi.fn(() => true),
     setBridgeReasoningEffort
   } as Pick<
@@ -179,11 +179,11 @@ const createHarness = (): WorkflowHarness => {
     | 'epoch'
     | 'connection'
     | 'isShuttingDown'
-    | 'anthropicBridgeAvailable'
+    | 'messagesBridgeAvailable'
     | 'providerTransportAvailable'
     | 'assertCurrentConnection'
     | 'setProviderTransportTarget'
-    | 'setAnthropicBridgeTarget'
+    | 'setMessagesBridgeTarget'
     | 'setBridgeModelTarget'
     | 'setBridgeReasoningEffort'
   >
@@ -226,7 +226,7 @@ const createHarness = (): WorkflowHarness => {
     updateReasoningEffort,
     updateAggregateModel,
     setProviderTransportTarget,
-    setAnthropicBridgeTarget,
+    setMessagesBridgeTarget,
     setBridgeReasoningEffort,
     applyLiveEffort,
     clearContext,
@@ -336,13 +336,13 @@ describe('ACP model-change workflow', () => {
 
   it('reconnects when the current generation lacks a projected Anthropic target', async () => {
     const harness = createHarness()
-    harness.setAnthropicBridgeTarget.mockReturnValue(false)
+    harness.setMessagesBridgeTarget.mockReturnValue(false)
 
     await expect(
-      harness.workflow.apply(target('model-b', { anthropicBridgeTargetId: 'provider/model-b' }))
+      harness.workflow.apply(target('model-b', { messagesBridgeTargetId: 'provider/model-b' }))
     ).resolves.toBe(true)
 
-    expect(harness.setAnthropicBridgeTarget).toHaveBeenCalledWith('provider/model-b')
+    expect(harness.setMessagesBridgeTarget).toHaveBeenCalledWith('provider/model-b')
     expect(harness.requestReconnect).toHaveBeenCalledOnce()
     expect(harness.updateModel).not.toHaveBeenCalled()
   })

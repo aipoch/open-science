@@ -32,7 +32,8 @@
     "src/main/storage/electron-profile.test.ts",
     "src/main/storage/electron-profile.ts",
     "src/main/storage/initialize-location.ts",
-    "src/main/storage/migration-target-race.test.ts"
+    "src/main/storage/migration-target-race.test.ts",
+    "src/main/storage/prisma-content-references.ts"
   ],
   "interfacePaths": [
     "src/main/storage/wsl-npm-migration.ts",
@@ -58,7 +59,8 @@
     "src/main/storage/data-root-selection.ts",
     "src/main/storage/electron-profile.ts",
     "src/main/storage/initialize-location.ts",
-    "src/main/storage/location-evidence.ts"
+    "src/main/storage/location-evidence.ts",
+    "src/main/storage/prisma-content-references.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -603,7 +605,7 @@
       "src/main/settings/provider-runtime-projection.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/repository.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
@@ -703,6 +705,7 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
       "src/main/session-diagnostics/desktop-log-paths.test.ts"
     ]
   },

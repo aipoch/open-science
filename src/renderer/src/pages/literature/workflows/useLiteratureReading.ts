@@ -1,16 +1,20 @@
-import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
-import { useNavigationStore, type PdfReadingDocument } from '@/stores/navigation-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { useProjectStore } from '@/stores/project-store'
+import type {
+  LiteraturePreviewItem,
+  LiteratureReadingDocument,
+  LiteratureProject,
+  LiteratureProjectCreation
+} from '../renderer-host'
+import { useLiteratureHost } from '../renderer-host'
+
 import type {
   LiteratureCatalogSearchRequest,
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { resolvePdfContextTarget } from '../../workspace/use-pdf-context-action'
-import { readLiteratureSelectionPage } from '../literature-read-pages'
-type PendingLiteratureReading = readonly PdfReadingDocument[]
+
+import { useLiteratureClient } from '../literature-read-pages'
+type PendingLiteratureReading = readonly LiteratureReadingDocument[]
 const isItem = (entry: unknown): entry is LiteratureItemView =>
   typeof entry === 'object' && entry !== null && 'item' in entry && 'metadataRevision' in entry
 
@@ -27,8 +31,8 @@ export function useLiteratureReading({
   detailController,
   buildEntriesRequest
 }: {
-  selectedProject: ReturnType<typeof useProjectStore.getState>['projects'][number] | undefined
-  setPreviewItem: React.Dispatch<React.SetStateAction<PreviewFileItem | undefined>>
+  selectedProject: LiteratureProject | undefined
+  setPreviewItem: React.Dispatch<React.SetStateAction<LiteraturePreviewItem | undefined>>
   isBatching: boolean
   selectionStore: LiteratureSelectionStore
   items: LiteratureItemView[]
@@ -54,10 +58,16 @@ export function useLiteratureReading({
     targetProjectId: string,
     reading?: PendingLiteratureReading | undefined
   ) => Promise<void>
-  requestReadWithAgent: (item: PreviewFileItem) => void
-  readingProjectFormDialog: ReturnType<typeof useProjectFormDialog>
+  requestReadWithAgent: (item: LiteraturePreviewItem) => void
+  readingProjectFormDialog: LiteratureProjectCreation
   requestReadSelection: () => Promise<void>
 } {
+  const { readLiteratureSelectionPage } = useLiteratureClient()
+
+  const { useNavigationStore, resolvePdfContextTarget, useProjectFormDialog } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const startPdfReadingConversation = useNavigationStore(
     (state) => state.startPdfReadingConversation
@@ -88,7 +98,7 @@ export function useLiteratureReading({
       setStartingReadingProjectId(targetProjectId)
       setReadingProjectError(undefined)
       try {
-        const result = await window.api.sessions.filterPdfContextCandidates({
+        const result = await hostApi.sessions.filterPdfContextCandidates({
           projectId: targetProjectId,
           sources: reading.map(({ source }) => source)
         })
@@ -126,6 +136,7 @@ export function useLiteratureReading({
     [
       pendingLiteratureReading,
       startingReadingProjectId,
+      hostApi.sessions,
       startPdfReadingConversation,
       startPdfReadingConversations,
       t
@@ -133,7 +144,7 @@ export function useLiteratureReading({
   )
   const selectedReadingProjectId = selectedProject?.id
   const requestReadWithAgent = useCallback(
-    (item: PreviewFileItem): void => {
+    (item: LiteraturePreviewItem): void => {
       setReadingSelectionEntries(undefined)
       const source = resolvePdfContextTarget(item)
       if (!source) return
@@ -147,7 +158,7 @@ export function useLiteratureReading({
       setReadingProjectQuery('')
       setPendingLiteratureReading(reading)
     },
-    [selectedReadingProjectId, startReadingInProject, setPreviewItem]
+    [resolvePdfContextTarget, setPreviewItem, selectedReadingProjectId, startReadingInProject]
   )
   const readingProjectFormDialog = useProjectFormDialog({
     onCreated: (project) => void startReadingInProject(project.id)

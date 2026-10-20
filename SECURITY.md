@@ -4,6 +4,10 @@ Open-Science is a local-first research workbench that runs AI agents, executes c
 connects to external services, and stores research data and credentials on the user's
 computer. We appreciate coordinated reports that help us protect those trust boundaries.
 
+For operating precautions, see [intended use](docs/usage-scope.md), the
+[security model](docs/security.md), and [known limitations](docs/known-limitations.md).
+The limitations register does not exclude reports of implemented-control failures.
+
 ## Supported versions
 
 Security fixes are provided for the latest stable release and the `main` branch only.

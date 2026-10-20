@@ -124,3 +124,44 @@ it.each(['regressions', 'delegation'])(
     }
   }
 )
+
+it('partitions complete supplemental discovery into capacity and three disjoint ordinary shards', () => {
+  const scripts = JSON.parse(readFileSync('package.json', 'utf8')).scripts as Record<string, string>
+  const args = scripts['test:e2e:regressions'].split(/\s+/).slice(2)
+  const collect = (selection: string[]): string[] => {
+    const run = spawnSync(
+      process.execPath,
+      [
+        require.resolve('@playwright/test/cli'),
+        'test',
+        ...args,
+        '--list',
+        '--reporter=json',
+        ...selection
+      ],
+      {
+        encoding: 'utf8',
+        timeout: 30_000,
+        maxBuffer: 10 * 1024 * 1024
+      }
+    )
+    expect(run.status, run.stderr).toBe(0)
+    const visit = (suites: JSONReport['suites']): string[] =>
+      suites.flatMap((suite) => [
+        ...suite.specs.flatMap((spec) =>
+          spec.tests.map((test) => `${spec.id}:${test.projectName}`)
+        ),
+        ...visit(suite.suites ?? [])
+      ])
+    return visit((JSON.parse(run.stdout) as JSONReport).suites)
+  }
+  const original = collect([])
+  const groups = [
+    collect(['--grep', '@capacity']),
+    ...[1, 2, 3].map((shard) => collect(['--grep-invert', '@capacity', `--shard=${shard}/3`]))
+  ]
+  for (const group of groups) expect(group.length).toBeGreaterThan(0)
+  const partition = groups.flat()
+  expect(new Set(partition).size).toBe(partition.length)
+  expect(partition.sort()).toEqual(original.sort())
+}, 90_000)

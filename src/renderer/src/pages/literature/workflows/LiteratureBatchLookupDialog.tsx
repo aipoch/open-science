@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import * as Dialog from '@/components/ui/dialog'
@@ -26,7 +27,7 @@ import { useEffect, useEffectEvent, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { formatBytes } from '../../../../../shared/update'
 import { LiteratureOversizedNotice } from '../list/LiteratureOversizedNotice'
-import { readLiteratureJobPages } from '../literature-read-pages'
+import { useLiteratureClient } from '../literature-read-pages'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 
 type BatchLookupMode = 'metadata' | 'full-text'
@@ -52,6 +53,10 @@ export const LiteratureBatchLookupDialog = ({
   onClose: () => void
   onChanged: (itemIds: string[]) => void
 }): React.JSX.Element => {
+  const { readLiteratureJobPages } = useLiteratureClient()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [requestId] = useState(() => crypto.randomUUID())
   const [job, setJob] = useState<Job>()
@@ -130,7 +135,7 @@ export const LiteratureBatchLookupDialog = ({
       inFlight = true
       try {
         const result = await readLiteratureJobPages(
-          await window.api.literature.jobs(
+          await hostApi.literature.jobs(
             id
               ? { action: 'get', jobId: id, ifUpdatedAt: jobRef.current?.updatedAt }
               : { action: 'create', mode, itemIds, requestId }
@@ -176,7 +181,7 @@ export const LiteratureBatchLookupDialog = ({
       window.removeEventListener('focus', wake)
       window.removeEventListener('literature-job-refresh', wake)
     }
-  }, [existingJobId, requestId, mode, itemIds])
+  }, [existingJobId, requestId, mode, itemIds, readLiteratureJobPages, hostApi.literature])
   const busy = !job || ['queued', 'running', 'pausing'].includes(job.state) || sending
   const stopping = job?.state === 'pausing'
   const progress = job?.progress?.value
@@ -187,7 +192,7 @@ export const LiteratureBatchLookupDialog = ({
       const selections = [...pendingDrafts.current.values()]
       if (!currentJob || selections.length === 0) return
       const result = await readLiteratureJobPages(
-        await window.api.literature.jobs({
+        await hostApi.literature.jobs({
           action: 'review',
           jobId: currentJob.id,
           selections
@@ -225,7 +230,7 @@ export const LiteratureBatchLookupDialog = ({
     try {
       failedCommand.current = request
       await saveDrafts()
-      const result = await readLiteratureJobPages(await window.api.literature.jobs(request))
+      const result = await readLiteratureJobPages(await hostApi.literature.jobs(request))
       if (result.jobs[0]) receive(result.jobs[0])
       failedCommand.current = undefined
       setError(false)

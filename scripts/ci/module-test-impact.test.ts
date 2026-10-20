@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 
@@ -16,6 +16,25 @@ import {
   formatModuleTestPlan,
   runModuleTestCli
 } from './module-test-impact.mjs'
+
+type NpmInvocation = (command: string, args: string[], options: object) => { status: number }
+
+// Selection assertions inspect the same logical npm invocation for either transport.
+function captureNpmInvocation(): {
+  spawn: NpmInvocation
+  invocation: ReturnType<typeof vi.fn<NpmInvocation>>
+} {
+  const invocation = vi.fn<NpmInvocation>(() => ({ status: 0 }))
+  const spawn: NpmInvocation = (command, args, options) => {
+    const script = args.indexOf('test:module:arguments')
+    if (script !== -1) {
+      const restored = JSON.parse(readFileSync(args[script + 2], 'utf8')) as string[]
+      args = [...args.slice(0, script - 1), 'test', '--', ...restored.slice(1)]
+    }
+    return invocation(command, args, options)
+  }
+  return { spawn, invocation }
+}
 
 const currentStatus = JSON.stringify({
   initialized: true,
@@ -38,7 +57,7 @@ describe('module test impact commands', () => {
       expect(plan.testFiles).toEqual(
         expect.arrayContaining([
           'packages/pdf-translation/test/writer.test.ts',
-          'src/main/settings/provider-text-generation.test.ts',
+          'src/main/literature/pdf-translation/api-target.test.ts',
           'packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts',
           'packages/pdf-translation/test/recovery.test.ts',
           'test/pdf-translation-native-verification.test.ts'
@@ -58,7 +77,7 @@ describe('module test impact commands', () => {
     expect(mixed.testFiles).toEqual(expect.arrayContaining(sourcePlan.testFiles))
     const packageFixture = createAffectedTestPlan(
       [
-        { path: 'src/main/settings/provider-text-generation.ts', status: 'modified' },
+        { path: 'src/main/literature/pdf-translation/api-target.ts', status: 'modified' },
         { path: 'test/fixtures/pdf-translation/new-regression-case.jsonl', status: 'modified' }
       ],
       graph
@@ -93,7 +112,7 @@ describe('module test impact commands', () => {
 
   it('collects an empty shard report without discovering the full suite for an empty selection', () => {
     const plan = createAffectedTestPlan([], { status: 'unavailable-manifest-only', testFiles: [] })
-    const spawn = vi.fn(() => ({ status: 0 }))
+    const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     const testArguments = ['--shard=1/3', '--reporter=blob', '--outputFile=reports/blob-1.json']
     try {
@@ -104,17 +123,17 @@ describe('module test impact commands', () => {
         environment: { npm_execpath: '/npm/bin/npm-cli.js' },
         nodeExecutable: '/node'
       })
-      expect(spawn).toHaveBeenCalledWith(
+      expect(invocation).toHaveBeenCalledWith(
         '/node',
         ['/npm/bin/npm-cli.js', 'test', '--', ...testArguments, '__no_selected_module_tests__'],
         expect.anything()
       )
-      spawn.mockClear()
+      invocation.mockClear()
       // Ordinary local invocations still do no work for an empty selection. Pass a controlled
       // environment: under CI the job exports OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS, and an
       // ambient non-empty selection would make the plan spawn despite the empty module list.
       executeModuleTestPlan(plan, { spawn, environment: {} })
-      expect(spawn).not.toHaveBeenCalled()
+      expect(invocation).not.toHaveBeenCalled()
     } finally {
       write.mockRestore()
     }
@@ -123,7 +142,7 @@ describe('module test impact commands', () => {
   it.each(['package.json', 'src/shared/unregistered.ts'])(
     'blocks unexpected full execution for %s in an explicitly selective job',
     async (source) => {
-      const spawn = vi.fn(() => ({ status: 0 }))
+      const { spawn, invocation } = captureNpmInvocation()
       const options = {
         execute: (command: string, args: string[]) => {
           if (command === 'git' && args[0] === 'merge-base') return 'base\n'
@@ -137,10 +156,10 @@ describe('module test impact commands', () => {
       await expect(runModuleTestCli([...args, '--require-selective'], options)).rejects.toThrow(
         'Selective test plan required; refusing full execution.'
       )
-      expect(spawn).not.toHaveBeenCalled()
+      expect(invocation).not.toHaveBeenCalled()
       // Local and explicit full callers retain the existing fallback.
       expect(await runModuleTestCli(args, options)).toBe(0)
-      expect(spawn).toHaveBeenCalledOnce()
+      expect(invocation).toHaveBeenCalledOnce()
     }
   )
 
@@ -161,7 +180,7 @@ describe('module test impact commands', () => {
   ])(
     'preserves module selection and changed coverage when forwarding %j',
     async (...vitestArguments) => {
-      const spawn = vi.fn(() => ({ status: 0 }))
+      const { spawn, invocation } = captureNpmInvocation()
       const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
       const source = 'src/main/notebook/mcp-server.ts'
       const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
@@ -193,7 +212,7 @@ describe('module test impact commands', () => {
           }
         )
         const merging = vitestArguments[0].startsWith('--merge-reports')
-        expect(spawn.mock.calls[0]?.[1]).toEqual([
+        expect(invocation.mock.calls[0]?.[1]).toEqual([
           '/npm/bin/npm-cli.js',
           ...(merging ? ['exec', '--', 'vitest', 'run'] : ['test', '--']),
           '--coverage',
@@ -201,7 +220,7 @@ describe('module test impact commands', () => {
           ...vitestArguments,
           ...(merging ? [] : plan.testFiles)
         ])
-        expect(spawn.mock.calls[0]?.[2]?.env).toMatchObject({
+        expect(invocation.mock.calls[0]?.[2]?.env).toMatchObject({
           VITEST_CHANGED_COVERAGE_THRESHOLDS: '1'
         })
       } finally {
@@ -551,7 +570,7 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'src/main/settings/responses-bridge.ts',
+      'src/main/settings/responses-to-chat-completions-bridge.ts',
       [
         'artifact_provenance',
         'project_lifecycle',
@@ -565,45 +584,135 @@ describe('module test impact commands', () => {
       ]
     ],
     [
-      'src/main/settings/responses-request-adapter.ts',
+      'packages/providers/src/responses/request.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
-      'src/main/settings/responses-response-adapter.ts',
+      'packages/providers/src/responses/response.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
-      'src/main/settings/responses-protocol-types.ts',
+      'packages/providers/src/responses/types.ts',
       [
+        'acp_runtime',
         'artifact_provenance',
+        'compute_service',
+        'desktop_composition',
+        'host_command_runtime',
+        'main_agent_framework',
+        'main_pdf_translation',
+        'main_session_details',
+        'main_web_service',
         'project_lifecycle',
+        'provider_credentials',
+        'provider_transport',
+        'providers_package',
+        'renderer_acp',
+        'renderer_model_selection',
+        'renderer_settings_state',
         'reviewer_orchestrator',
+        'reviewer_tool_contracts',
         'session_persistence',
         'session_replay',
         'settings_backend_resolution',
+        'settings_model_owners',
+        'settings_model_presentation',
+        'settings_operations',
+        'settings_page_composition',
+        'settings_presentation_primitives',
+        'settings_provider_accounts',
+        'settings_provider_resolution',
+        'settings_record_contracts',
+        'settings_repository',
         'settings_service_facade',
+        'shared_application_contracts',
+        'shared_conversation_contracts',
+        'web_renderer_bridge',
+        'workspace_conversation',
         'workspace_page',
-        'workspace_runtime'
+        'workspace_previews',
+        'workspace_runtime',
+        'workspace_shell'
       ]
     ],
     [
@@ -618,16 +727,14 @@ describe('module test impact commands', () => {
 
     expect(plan.mode).toBe('selective')
     expect([...plan.modules].sort()).toEqual(expectedModules)
-    const rootModule =
-      path === 'src/main/settings/repository.ts' ||
-      path === 'src/main/settings/compute-grant-port.ts'
+    const rootModule = path.startsWith('packages/providers/')
+      ? 'providers_package'
+      : path === 'src/main/settings/repository.ts' ||
+          path === 'src/main/settings/compute-grant-port.ts'
         ? 'settings_repository'
         : path === 'src/main/settings/provider-accounts.ts'
           ? 'settings_provider_accounts'
-          : path === 'src/main/settings/responses-bridge.ts' ||
-              path === 'src/main/settings/responses-protocol-types.ts' ||
-              path === 'src/main/settings/responses-request-adapter.ts' ||
-              path === 'src/main/settings/responses-response-adapter.ts'
+          : path === 'src/main/settings/responses-to-chat-completions-bridge.ts'
             ? 'settings_backend_resolution'
             : 'settings_service_facade'
     expect(plan.reasonChains).toEqual(
@@ -731,18 +838,173 @@ describe('module test impact commands', () => {
     })
   })
 
+  it.each(['win32', 'darwin', 'linux'])(
+    'transports large selections without dropping filters or options on %s',
+    (platform) => {
+      const plan = createModuleTestPlan('upload_repository')
+      plan.testFiles = Array.from(
+        { length: 2200 },
+        (_, index) => `src/renderer/src/components/long-consumer-${index}.test.ts`
+      )
+      plan.deferredPackageRoots = ['packages/compute']
+      plan.testFiles.push('packages/compute/deferred.test.ts')
+      const testArguments = [
+        '--shard=1/3',
+        '--coverage',
+        '--coverage.include=src/shared/pdf-text.ts'
+      ]
+      let argumentFile = ''
+      const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+      try {
+        const spawn = vi.fn((_command: string, args: string[]) => {
+          expect(args.slice(0, 4)).toEqual([
+            '/npm/bin/npm-cli.js',
+            'run',
+            'test:module:arguments',
+            '--'
+          ])
+          expect(JSON.stringify(args).length).toBeLessThan(6000)
+          argumentFile = args[4]
+          expect(JSON.parse(readFileSync(argumentFile, 'utf8'))).toEqual([
+            'run',
+            ...testArguments,
+            '--exclude=packages/compute/**',
+            ...plan.testFiles.filter((file) => !file.startsWith('packages/compute/')).sort()
+          ])
+          return { status: 7 }
+        })
+        expect(
+          executeModuleTestPlan(plan, {
+            platform,
+            spawn,
+            environment: { npm_execpath: '/npm/bin/npm-cli.js' },
+            testArguments
+          })
+        ).toBe(7)
+        expect(spawn).toHaveBeenCalledTimes(1)
+        expect(existsSync(argumentFile)).toBe(false)
+        expect(existsSync(resolve(argumentFile, '..'))).toBe(false)
+      } finally {
+        write.mockRestore()
+      }
+    }
+  )
+
+  it.each(['return', 'throw'])('cleans temporary arguments when spawn errors %s', (failure) => {
+    const plan = createModuleTestPlan('upload_repository')
+    plan.testFiles = ['x'.repeat(10000) + '.test.ts']
+    let argumentFile = ''
+    const error = new Error('spawn failed')
+    const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
+    try {
+      expect(() =>
+        executeModuleTestPlan(plan, {
+          environment: {},
+          platform: 'linux',
+          spawn: (_command: string, args: string[]) => {
+            argumentFile = args[3]
+            expect(existsSync(argumentFile)).toBe(true)
+            if (failure === 'throw') throw error
+            return { error }
+          }
+        })
+      ).toThrow(error)
+      expect(existsSync(resolve(argumentFile, '..'))).toBe(false)
+    } finally {
+      write.mockRestore()
+    }
+  })
+
+  it.each([
+    ['passes', 0],
+    ['fails', 1]
+  ] as const)(
+    'runs the real Vitest CLI from a large argument file when a selected test %s',
+    (name, status) => {
+      const directory = mkdtempSync(resolve(tmpdir(), 'vitest-argument-test-'))
+      try {
+        const config = resolve(directory, 'vitest.config.mjs')
+        writeFileSync(config, 'export default { test: { globals: true } }')
+        writeFileSync(
+          resolve(directory, 'selected file.test.js'),
+          "it('passes', () => expect(1).toBe(1)); it('fails', () => expect(1).toBe(2))"
+        )
+        writeFileSync(
+          resolve(directory, 'excluded.test.js'),
+          "throw new Error('excluded file ran')"
+        )
+        const argumentFile = resolve(directory, 'arguments.json')
+        writeFileSync(
+          argumentFile,
+          JSON.stringify([
+            'run',
+            '--config',
+            config,
+            '--root',
+            directory,
+            '--testNamePattern',
+            name,
+            '--exclude=**/excluded.test.js',
+            directory,
+            ...Array.from(
+              { length: 2200 },
+              (_, index) => `never-selected/long-consumer-${index}.test.ts`
+            )
+          ])
+        )
+        const result = spawnSync(
+          process.execPath,
+          ['scripts/ci/run-vitest-arguments.mjs', argumentFile],
+          {
+            encoding: 'utf8',
+            timeout: 30000
+          }
+        )
+        expect(result.error).toBeUndefined()
+        expect(result.status, result.stdout + result.stderr).toBe(status)
+        expect(result.stdout + result.stderr).not.toContain('excluded file ran')
+        expect(result.stdout).toContain('1 skipped')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    },
+    40000
+  )
+
+  it.each([{}, [], ['watch'], ['run', null], ['run', 'bad\0argument']].map((value) => [value]))(
+    'rejects malformed argument files before test discovery: %j',
+    (value) => {
+      const directory = mkdtempSync(resolve(tmpdir(), 'invalid-vitest-arguments-'))
+      try {
+        const argumentFile = resolve(directory, 'arguments.json')
+        writeFileSync(argumentFile, JSON.stringify(value))
+        const result = spawnSync(
+          process.execPath,
+          ['scripts/ci/run-vitest-arguments.mjs', argumentFile],
+          {
+            encoding: 'utf8'
+          }
+        )
+        expect(result.status).not.toBe(0)
+        expect(result.stderr).toContain('Expected a Vitest run argument array')
+      } finally {
+        rmSync(directory, { recursive: true, force: true })
+      }
+    }
+  )
+
   it.each(['npm_execpath', 'NPM_EXECPATH', 'Npm_ExecPath'])(
     'launches npm through Node with the Windows environment key %s',
     (key) => {
       const plan = createModuleTestPlan('upload_repository')
-      const spawn = vi.fn(() => ({ status: 0 }))
+      const { spawn, invocation } = captureNpmInvocation()
       executeModuleTestPlan(plan, {
         platform: 'win32',
         environment: { [key]: '/npm/bin/npm-cli.js' },
         nodeExecutable: '/node',
         spawn
       })
-      expect(spawn).toHaveBeenCalledWith(
+      expect(invocation).toHaveBeenCalledWith(
         '/node',
         ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
         expect.anything()
@@ -752,7 +1014,7 @@ describe('module test impact commands', () => {
 
   it('prints the exact file list before invoking portable npm test arguments', () => {
     const plan = createModuleTestPlan('upload_repository')
-    const spawn = vi.fn(() => ({ status: 0 }))
+    const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
     expect(
@@ -764,12 +1026,14 @@ describe('module test impact commands', () => {
       })
     ).toBe(0)
     expect(write).toHaveBeenCalledWith(formatModuleTestPlan(plan))
-    expect(spawn).toHaveBeenCalledWith(
+    expect(invocation).toHaveBeenCalledWith(
       '/node',
       ['/npm/bin/npm-cli.js', 'test', '--', ...plan.testFiles],
       expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
     )
-    expect(spawn.mock.calls[0]?.[2]?.env).not.toHaveProperty('VITEST_CHANGED_COVERAGE_THRESHOLDS')
+    expect(invocation.mock.calls[0]?.[2]?.env).not.toHaveProperty(
+      'VITEST_CHANGED_COVERAGE_THRESHOLDS'
+    )
     write.mockRestore()
   })
 
@@ -799,7 +1063,7 @@ describe('module test impact commands', () => {
       git('merge', '--no-edit', main)
       // Vitest coverage.changed compares with checkout HEAD, including this unrelated file.
       expect(git('diff', '--name-only', `${base}...HEAD`)).toContain('src/main-only.ts')
-      const spawn = vi.fn(() => ({ status: 0 }))
+      const { spawn, invocation } = captureNpmInvocation()
       await runModuleTestCli(
         ['affected', '--base', base, '--head', head, '--coverage-changed', base],
         {
@@ -812,7 +1076,7 @@ describe('module test impact commands', () => {
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
-      const args = spawn.mock.calls[0]?.[1]
+      const args = invocation.mock.calls[0]?.[1]
       expect(args).toContain(`--coverage.include=${changed}`)
       expect(args).not.toContain('--coverage.changed')
       expect(args).not.toContain('--coverage.include=src/main-only.ts')
@@ -834,7 +1098,7 @@ describe('module test impact commands', () => {
       include: 'src/renderer/src/stores/renamed.ts'
     }
   ])('scopes coverage for $name', async ({ diff, include }) => {
-    const spawn = vi.fn(() => ({ status: 0 }))
+    const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     try {
       await runModuleTestCli(
@@ -849,8 +1113,8 @@ describe('module test impact commands', () => {
           environment: { npm_execpath: '/npm/bin/npm-cli.js' }
         }
       )
-      expect(spawn.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
-      expect(spawn.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
+      expect(invocation.mock.calls[0]?.[1]).toContain(`--coverage.include=${include}`)
+      expect(invocation.mock.calls[0]?.[1]).not.toContain('--coverage.changed')
     } finally {
       write.mockRestore()
     }
@@ -871,7 +1135,7 @@ describe('module test impact commands', () => {
       }
       throw new Error(`Unexpected command: ${command} ${arguments_.join(' ')}`)
     })
-    const spawn = vi.fn(() => ({ status: 0 }))
+    const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
     const environment = { npm_execpath: '/npm/bin/npm-cli.js' }
     const expectedPlan = createAffectedTestPlan(
@@ -891,7 +1155,7 @@ describe('module test impact commands', () => {
         }
       )
     ).toBe(0)
-    expect(spawn).toHaveBeenCalledWith(
+    expect(invocation).toHaveBeenCalledWith(
       '/node',
       [
         '/npm/bin/npm-cli.js',
@@ -915,7 +1179,7 @@ describe('module test impact commands', () => {
       ['merge-base', coverageBase, head],
       expect.objectContaining({ cwd: '/repo' })
     )
-    expect(spawn.mock.calls[0]?.[1]).toContain('src/main/reviewer/ipc.test.ts')
+    expect(invocation.mock.calls[0]?.[1]).toContain('src/main/reviewer/ipc.test.ts')
     expect(environment).toEqual({ npm_execpath: '/npm/bin/npm-cli.js' })
     write.mockRestore()
   })
@@ -938,7 +1202,7 @@ describe('module test impact commands', () => {
 
   it('retains the PATH-based npm fallback for direct POSIX execution', () => {
     const plan = createModuleTestPlan('artifact_storage')
-    const spawn = vi.fn(() => ({ status: 0 }))
+    const { spawn, invocation } = captureNpmInvocation()
     const write = vi.spyOn(process.stdout, 'write').mockImplementation(() => true)
 
     expect(
@@ -949,7 +1213,7 @@ describe('module test impact commands', () => {
         platform: 'linux'
       })
     ).toBe(0)
-    expect(spawn).toHaveBeenCalledWith(
+    expect(invocation).toHaveBeenCalledWith(
       'npm',
       ['test', '--', ...plan.testFiles],
       expect.objectContaining({ cwd: '/repo', stdio: 'inherit' })
@@ -967,6 +1231,10 @@ describe('module test impact commands', () => {
     const packageJson = JSON.parse(readFileSync(resolve('package.json'), 'utf8'))
 
     expect(packageJson.scripts.test).toBe('vitest run')
+    expect(packageJson.scripts['pretest:module:arguments']).toBe('npm run pretest')
+    expect(packageJson.scripts['test:module:arguments']).toBe(
+      'node scripts/ci/run-vitest-arguments.mjs'
+    )
     expect(packageJson.scripts['test:module']).toContain('module-test-impact.mjs module')
     expect(packageJson.scripts['test:affected']).toContain('module-test-impact.mjs affected')
   })
@@ -1119,14 +1387,7 @@ describe('Notebook package module boundaries', () => {
     const units = [
       'input-path-analysis.test.ts',
       'input-resource-analysis.test.ts',
-      'dependency-projection.r-packages.test.ts',
-      'dependency-analysis.chord.native.test.ts',
-      'dependency-analysis.circlize.native.test.ts',
-      'dependency-analysis.filesystem-diagnostics.native.test.ts',
-      'dependency-analysis.iteration-snapshots.native.test.ts',
-      'dependency-analysis.structured-results.native.test.ts',
-      'dependency-analysis.r-directory.native.test.ts',
-      'dependency-analysis.r-pipelines.native.test.ts'
+      'dependency-projection.r-packages.test.ts'
     ].map((name) => `packages/notebook-analysis/src/${name}`)
     expect(manifest.modules.notebook_analysis_engine.testFiles.owner).toEqual(
       expect.arrayContaining(units)

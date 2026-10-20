@@ -16,6 +16,34 @@ contracts, caller leases, permission prompts and navigation revocation remain in
 requests travel back to Electron for dialogs, notifications and rendering. This is one business
 implementation, with transport and native adapters, rather than two server implementations.
 
+Desktop packaging first runs `node scripts/build-backend.mjs --desktop` into
+`out/desktop-backend-build`, then builds a separate `out/desktop-backend` tree with
+`node scripts/stage-backend.mjs --desktop`. The default backend build still writes
+`out/backend` for development and CLI/SDK staging. Its dependency filter follows
+[electron-builder's runtime packaging exclusions](https://www.electron.build/v26/docs/contents/)
+and the explicit-exception approach in [VS Code's module rules](https://github.com/microsoft/vscode/blob/main/build/.moduleignore):
+third-party declarations and package-root tests/examples are omitted, while declared runtime
+entry roots, licenses/notices, first-party artifacts, maps and dynamic resources remain under
+the existing dependency policies. README files are retained because they can contain license
+notices. This tree is not the npm SDK publication artifact. The default staging command still
+builds `out/standalone` with its CLI/SDK declarations intact; desktop packaging neither prunes
+that tree nor reads a stale copy of it. Installed CLI commands remain available.
+Desktop staging also omits the audited renderer-only dependency roots already compiled into
+`out/web`. Backend and worker import metadata can retain any such root, and transitive runtime
+dependencies are still copied normally. Unknown dependencies remain included. The desktop
+build selectively inlines the audited i18next 25.10.10 CJS implementation and retains its
+license. Build metadata must prove it was bundled before staging removes the external package;
+staging rejects any external consumer that would require a second copy. Other versions stay
+external. Resource-bearing and native dependencies retain their existing module paths.
+Desktop staging also excludes the audited type-only API SDK peer of Claude Agent SDK 0.3.232;
+the Agent SDK runtime remains included, and other versions or incoming edges remain intact.
+
+Before unattended operation, review [intended use](usage-scope.md), the
+[security model](security.md), and [known limitations](known-limitations.md). A headless service
+retains the host's configured permissions and data recipients; absence of a desktop window does not
+establish isolation or offline operation. Protect its profile and service credentials, and confirm
+task/job cancellation separately from stopping a client wait.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on

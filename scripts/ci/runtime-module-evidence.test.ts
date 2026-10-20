@@ -154,7 +154,8 @@ it('isolates the manual diagnostic from full runs, publication and scheduled iss
     path: 'coverage/runtime-module-evidence/',
     'retention-days': 7
   })
-  expect(workflow.jobs.regression.if).toContain("inputs.mode != 'runtime-evidence'")
+  expect(workflow.jobs.macos_setup.if).toContain("inputs.mode != 'runtime-evidence'")
+  expect(workflow.jobs.regression.if).toContain("needs.macos_setup.result == 'success'")
   for (const name of ['portable', 'portable_report', 'packages', 'report']) {
     expect(workflow.jobs[name].if).not.toContain('runtime-evidence')
     expect(workflow.jobs[name].if).not.toContain("github.event_name == 'workflow_dispatch'")

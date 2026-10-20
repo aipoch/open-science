@@ -2,20 +2,33 @@ import { spawnSync } from 'node:child_process'
 import { readFileSync, statSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { join } from 'node:path'
+import { credentialSystemCode, type CredentialDiagnostic } from './diagnostic'
 import { CredentialIdentityError } from './selection'
 
-export type WindowsKeyValidation = 'valid' | 'access-blocked' | 'error' | 'unsupported'
+export type WindowsKeyValidation = {
+  status: 'valid' | 'access-blocked' | 'error' | 'unsupported'
+  diagnostic?: CredentialDiagnostic
+}
 
-// This is a real key-read check after backend selection, never a metadata probe. Only ciphertext
-// crosses stdin; the helper clears its decrypted buffer and returns a fixed result, not a key.
+// Only ciphertext crosses stdin; the helper clears plaintext and returns a fixed result.
 export const validateWindowsKey = (ciphertext: Buffer): WindowsKeyValidation => {
-  if (process.platform !== 'win32') return 'unsupported'
+  if (process.platform !== 'win32')
+    return { status: 'unsupported', diagnostic: { code: 'validator-unsupported' } }
+  let executable: string
   try {
     const { validatorExecutablePath } = createRequire(import.meta.url)(
       '@aipoch/credential-identity-probe-native'
     ) as { validatorExecutablePath: string }
-    const executable = validatorExecutablePath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1')
-    const result = spawnSync(executable, [], {
+    executable = validatorExecutablePath.replace(/app\.asar([/\\])/u, 'app.asar.unpacked$1')
+  } catch (error) {
+    return {
+      status: 'error',
+      diagnostic: { code: 'validator-start-failed', systemCode: credentialSystemCode(error) }
+    }
+  }
+  let result: ReturnType<typeof spawnSync>
+  try {
+    result = spawnSync(executable, [], {
       input: ciphertext,
       encoding: 'utf8',
       timeout: 10_000,
@@ -23,55 +36,123 @@ export const validateWindowsKey = (ciphertext: Buffer): WindowsKeyValidation => 
       windowsHide: true,
       stdio: ['pipe', 'pipe', 'ignore']
     })
-    if (result.error || result.status !== 0 || result.signal) return 'error'
-    const value: unknown = JSON.parse(result.stdout)
-    if (!value || typeof value !== 'object') return 'error'
+  } catch (error) {
+    return {
+      status: 'error',
+      diagnostic: { code: 'validator-start-failed', systemCode: credentialSystemCode(error) }
+    }
+  }
+  if (result.error) {
+    const systemCode = credentialSystemCode(result.error)
+    return {
+      status: 'error',
+      diagnostic: {
+        code: systemCode === 'ETIMEDOUT' ? 'validator-timeout' : 'validator-start-failed',
+        systemCode
+      }
+    }
+  }
+  if (result.status !== 0 || result.signal)
+    return {
+      status: 'error',
+      diagnostic: {
+        code: 'validator-failed',
+        ...(Number.isInteger(result.status) ? { exitCode: result.status! } : {})
+      }
+    }
+  const invalid: WindowsKeyValidation = {
+    status: 'error',
+    diagnostic: { code: 'validator-invalid-response' }
+  }
+  try {
+    const value: unknown = JSON.parse(String(result.stdout))
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return invalid
     const output = value as Record<string, unknown>
-    if (output.schemaVersion !== 1 || output.platform !== 'win32') return 'error'
-    return ['valid', 'access-blocked', 'error', 'unsupported'].includes(String(output.status))
-      ? (output.status as WindowsKeyValidation)
-      : 'error'
+    if (output.schemaVersion !== 1 || output.platform !== 'win32') return invalid
+    if (output.status === 'valid') return { status: 'valid' }
+    if (!['access-blocked', 'error', 'unsupported'].includes(String(output.status))) return invalid
+    const code: CredentialDiagnostic['code'] =
+      output.reason === 'dpapi-unprotect-failed'
+        ? 'dpapi-unprotect-failed'
+        : output.reason === 'invalid-key-size'
+          ? 'profile-key-invalid'
+          : [
+                'input-read-failed',
+                'invalid-ciphertext-size',
+                'binary-input-mode-unavailable'
+              ].includes(String(output.reason))
+            ? 'validator-input-failed'
+            : output.status === 'unsupported'
+              ? 'validator-unsupported'
+              : 'validator-failed'
+    const osStatus =
+      code === 'dpapi-unprotect-failed' &&
+      typeof output.errorCode === 'number' &&
+      Number.isInteger(output.errorCode) &&
+      output.errorCode > 0 &&
+      output.errorCode <= 0xffffffff
+        ? output.errorCode
+        : undefined
+    return {
+      status: output.status as WindowsKeyValidation['status'],
+      diagnostic: { code, ...(osStatus !== undefined ? { osStatus } : {}) }
+    }
   } catch {
-    return 'error'
+    return invalid
   }
 }
 
-// Electron's Windows OSCrypt Init can replace an unreadable Local State key before ready. Stop
-// first if its existing DPAPI envelope cannot be read by this user; never write Local State here.
+// Stop before Electron can replace an unreadable Local State key. Never write the profile here.
 export const validateWindowsProfileKey = (options: {
   profilePath: string
   hasCiphertexts: boolean
   validate?: (ciphertext: Buffer) => WindowsKeyValidation
 }): void => {
   const path = join(options.profilePath, 'Local State')
+  const fail = (diagnostic: CredentialDiagnostic): never => {
+    throw new CredentialIdentityError('windows-profile-key-unavailable', undefined, diagnostic)
+  }
+  let original: Buffer
   try {
-    let original: Buffer
-    try {
-      if (statSync(path).size > 8 * 1024 * 1024) throw new Error('Local State is too large')
-      original = readFileSync(path)
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code === 'ENOENT' && !options.hasCiphertexts) return
-      throw error
-    }
-    const value: unknown = JSON.parse(original.toString('utf8'))
-    if (!value || typeof value !== 'object' || Array.isArray(value))
-      throw new Error('Invalid Local State')
-    const key = (value as { os_crypt?: { encrypted_key?: unknown } }).os_crypt?.encrypted_key
-    if (key === undefined && !options.hasCiphertexts) return
-    if (typeof key !== 'string') throw new Error('Missing DPAPI key')
-    const bytes = Buffer.from(key, 'base64')
-    if (
-      bytes.toString('base64') !== key ||
-      bytes.length <= 5 ||
-      bytes.length > 65541 ||
-      bytes.subarray(0, 5).toString('ascii') !== 'DPAPI'
-    )
-      throw new Error('Invalid DPAPI key envelope')
-    if ((options.validate ?? validateWindowsKey)(bytes.subarray(5)) !== 'valid')
-      throw new Error('Existing DPAPI key cannot be verified')
-    if (!readFileSync(path).equals(original))
-      throw new Error('Local State changed during validation')
+    if (statSync(path).size > 8 * 1024 * 1024) fail({ code: 'profile-too-large' })
+    original = readFileSync(path)
+  } catch (error) {
+    if (error instanceof CredentialIdentityError) throw error
+    const systemCode = credentialSystemCode(error)
+    if (systemCode === 'ENOENT' && !options.hasCiphertexts) return
+    return fail({ code: 'profile-read-failed', systemCode })
+  }
+  let value: unknown
+  try {
+    value = JSON.parse(original.toString('utf8'))
   } catch {
-    throw new CredentialIdentityError('windows-profile-key-unavailable')
+    return fail({ code: 'profile-invalid-json' })
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    return fail({ code: 'profile-invalid-shape' })
+  const key = (value as { os_crypt?: { encrypted_key?: unknown } }).os_crypt?.encrypted_key
+  if (key === undefined && !options.hasCiphertexts) return
+  if (typeof key !== 'string') return fail({ code: 'profile-key-missing' })
+  const bytes = Buffer.from(key, 'base64')
+  if (
+    bytes.toString('base64') !== key ||
+    bytes.length <= 5 ||
+    bytes.length > 65541 ||
+    bytes.subarray(0, 5).toString('ascii') !== 'DPAPI'
+  )
+    return fail({ code: 'profile-key-invalid' })
+  let validation: WindowsKeyValidation
+  try {
+    validation = (options.validate ?? validateWindowsKey)(bytes.subarray(5))
+  } catch {
+    return fail({ code: 'validator-failed' })
+  }
+  if (validation.status !== 'valid')
+    return fail(validation.diagnostic ?? { code: 'validator-failed' })
+  try {
+    if (!readFileSync(path).equals(original)) fail({ code: 'profile-changed' })
+  } catch (error) {
+    if (error instanceof CredentialIdentityError) throw error
+    fail({ code: 'profile-read-failed', systemCode: credentialSystemCode(error) })
   }
 }

@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 import { SkillRegistry, type BundledSkill } from '@aipoch/skills'
+import * as environment from '@aipoch/environment'
 import type { UserSkillRepository } from './user-skill-repository'
 import { NotebookHelperModuleHost } from '../notebook/helper-module-host'
 import { NotebookKernelExecutor } from '../notebook/kernel-executor'
@@ -30,6 +31,7 @@ const python3 = ['/usr/bin/python3', '/opt/homebrew/bin/python3', '/usr/local/bi
 const pythonGate = python3 ? describe : describe.skip
 
 afterEach(async () => {
+  vi.restoreAllMocks()
   await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
 })
 
@@ -141,6 +143,9 @@ describe('SkillCatalogModule registered helper projection', () => {
   })
 
   it('derives Built-in, Personal and Imported helpers from one catalog', async () => {
+    // This case owns catalog projection and authorization. Real interpreter validation is
+    // covered by registered-helper-catalog.test.ts and the environment package tests.
+    const validate = vi.spyOn(environment, 'validateNotebookHelperExports').mockResolvedValue()
     const storageRoot = await mkdtemp(join(tmpdir(), 'helper-skill-catalog-'))
     roots.push(storageRoot)
     await mkdir(storageRoot, { recursive: true })
@@ -168,6 +173,14 @@ describe('SkillCatalogModule registered helper projection', () => {
       skillId: 'imported-skill',
       origin: 'imported'
     })
+    for (const id of ['personal-skill', 'imported-skill']) {
+      expect(validate).toHaveBeenCalledWith(
+        `${id}-helper`,
+        `def ${id.replaceAll('-', '_')}():\n    return 1\n`,
+        [id.replaceAll('-', '_')],
+        {}
+      )
+    }
 
     const executions: NotebookExecutionRequest[] = []
     const notebook = new NotebookRuntimeService({

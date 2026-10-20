@@ -111,6 +111,43 @@ it('completes a native keyed plot plate including headings, vertical labels, and
   expect(found.rect![3]).toBeGreaterThan(158)
 })
 
+it('keeps proved running-head fonts out of keyed plot completion', () => {
+  const f = fixture('keyedPlotBand'),
+    expected = associate(f)[0].rect
+  const header = [
+    { text: 'Anonymous author', rect: [54, 36, 144, 46] },
+    { text: '1', rect: [550, 36, 556, 46] }
+  ]
+  f.page.lines.push({
+    text: 'Anonymous author 1',
+    x: 54,
+    y: 36,
+    width: 502,
+    height: 10,
+    fontSize: 10
+  })
+  f.nativeTokens.push(
+    ...header.map((t) => ({ ...t, height: 10, baseline: 46, horizontal: true, fontDescent: -0.2 }))
+  )
+  f.rules.push([50, 52, 560, 52])
+  const snapshot = structuredClone(f)
+  expect(associate(f)[0].rect).toEqual(expected)
+  expect(f).toEqual(snapshot)
+  const withLabel = structuredClone(f)
+  withLabel.page.lines.push({ text: 'X', x: 280, y: 38, width: 8, height: 8, fontSize: 8 })
+  withLabel.nativeTokens.push({
+    text: 'X',
+    rect: [280, 38, 288, 46],
+    height: 8,
+    baseline: 46,
+    horizontal: true,
+    fontDescent: -0.2
+  })
+  expect(associate(withLabel)[0].rect![1]).toBeLessThanOrEqual(38)
+  f.rules.pop()
+  expect(associate(f)[0].rect![1]).toBeLessThanOrEqual(36)
+})
+
 it('preserves an already complete four-panel native plate through later local plot matching', () => {
   const f = fixture('completeKeyedPlot'),
     before = structuredClone(f)

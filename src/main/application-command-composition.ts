@@ -130,9 +130,13 @@ type NotebookEnvironmentDependencies = Parameters<
 >[1]
 type PermissionGrantDependencies = Parameters<typeof registerPermissionGrantApplicationCommands>[1]
 
+type CommandModuleInstallation = ApplicationCommandInstallation & {
+  whenIdle?: () => Promise<void>
+}
+
 type ApplicationCommandModuleDescriptor = Readonly<{
   groups: readonly AnyApplicationCommandGroup[]
-  install: (registrar: ApplicationCommandRegistrar) => ApplicationCommandInstallation
+  install: (registrar: ApplicationCommandRegistrar) => CommandModuleInstallation
 }>
 
 type ApplicationCommandCompositionDependencies = Readonly<{
@@ -525,8 +529,8 @@ const createApplicationCommandComposition = (
   const modules = createApplicationCommandModules(dependencies, remoteAccess.owner)
   const certified = certifyInventory(modules.flatMap(({ groups }) => groups))
   const router = createApplicationCommandRouter(onDiagnostic)
-  const installations: ApplicationCommandInstallation[] = []
-  let disposed = false
+  const installations: CommandModuleInstallation[] = []
+  let disposal: Promise<void> | undefined
 
   try {
     for (const module of modules) installations.push(module.install(router.registrar))
@@ -605,26 +609,38 @@ const createApplicationCommandComposition = (
     remoteWeb,
     task,
     bindRemoteAccess: remoteAccess.bind,
-    dispose: (): void => {
-      if (disposed) return
-      disposed = true
+    dispose: (): Promise<void> => {
+      if (disposal) return disposal
+      const completion = Promise.withResolvers<void>()
+      disposal = completion.promise
       const failures: unknown[] = []
-      for (const installation of [...installations].reverse()) {
+      const reverseInstallations = [...installations].reverse()
+      for (const installation of reverseInstallations) {
         try {
           installation.uninstall()
         } catch (error) {
           failures.push(error)
         }
       }
-      try {
-        router.dispose()
-      } catch (error) {
-        failures.push(error)
-      }
       remoteAccess.dispose()
-      if (failures.length > 0) {
-        throw new AggregateError(failures, 'Application command composition cleanup failed.')
-      }
+      void (async (): Promise<void> => {
+        for (const installation of reverseInstallations) {
+          try {
+            await installation.whenIdle?.()
+          } catch (error) {
+            failures.push(error)
+          }
+        }
+        try {
+          router.dispose()
+        } catch (error) {
+          failures.push(error)
+        }
+        if (failures.length > 0) {
+          throw new AggregateError(failures, 'Application command composition cleanup failed.')
+        }
+      })().then(completion.resolve, completion.reject)
+      return disposal
     }
   })
 }

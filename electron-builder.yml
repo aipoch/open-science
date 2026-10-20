@@ -1,4 +1,8 @@
 appId: com.aipoch.open-science
+protocols:
+  - name: Open-Science browser import
+    schemes:
+      - open-science
 productName: Open-Science
 copyright: Copyright © 2026 AIPOCH
 directories:
@@ -13,7 +17,7 @@ files:
   # Runtime code and resources are compiled/staged separately; repository tooling is not app data.
   - '!{scripts,test,e2e,docs,release-notes,patches,prisma}{,/**/*}'
   # CLI release archives and staging files can remain after a prior packaging run.
-  - '!out/{backend,standalone,node-runtime,web,cli-artifacts}{,/**/*}'
+  - '!out/{backend,standalone,desktop-backend,desktop-backend-build,node-runtime,web,cli-artifacts,windows-installer}{,/**/*}'
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
   # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
@@ -63,11 +67,11 @@ asarUnpack:
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
-  - from: out/standalone
+  - from: out/desktop-backend
     to: backend
   # electron-builder excludes a source root's node_modules even for extraResources.
   # Copy that directory explicitly so ordinary Node can resolve its staged dependencies.
-  - from: out/standalone/node_modules
+  - from: out/desktop-backend/node_modules
     to: backend/node_modules
   - from: out/node-runtime/${platform}-${arch}
     to: node-runtime
@@ -131,8 +135,6 @@ win:
       to: windows-runtime-cache-uninstall.ps1
     - from: build/windows-notebook-sandbox-uninstall.ps1
       to: windows-notebook-sandbox-uninstall.ps1
-    - from: build/windows-update-progress/build/Release/open-science-update-progress.exe
-      to: open-science-update-progress.exe
     - from: packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe
       to: notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe
     - from: packages/notebook-network-sandbox/vendor/wsl2/manifest.json

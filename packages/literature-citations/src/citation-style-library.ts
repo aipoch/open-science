@@ -169,6 +169,12 @@ const parseCitationStyle = (
 class LiteratureCitationStyleLibrary {
   private builtInSourcesPromise: Promise<CitationStyleSource[]> | undefined
 
+  private currentRevision = 0
+
+  get revision(): number {
+    return this.currentRevision
+  }
+
   constructor(private readonly customDirectory: string) {}
 
   private customPath(styleId: string): string {
@@ -253,7 +259,10 @@ class LiteratureCitationStyleLibrary {
       if (error.code !== 'ENOENT') throw error
       return undefined
     })
-    if (existing?.equals(Buffer.from(content, 'utf8'))) return styleId
+    if (existing?.equals(Buffer.from(content, 'utf8'))) {
+      this.currentRevision += 1
+      return styleId
+    }
     // Publish complete bytes, including when reimport repairs a damaged content-addressed file.
     const temporaryPath = `${path}.${randomUUID()}.tmp`
     try {
@@ -262,6 +271,7 @@ class LiteratureCitationStyleLibrary {
     } finally {
       await rm(temporaryPath, { force: true })
     }
+    this.currentRevision += 1
     return styleId
   }
 
@@ -269,6 +279,7 @@ class LiteratureCitationStyleLibrary {
     await unlink(this.customPath(styleId)).catch((error: NodeJS.ErrnoException) => {
       if (error.code !== 'ENOENT') throw error
     })
+    this.currentRevision += 1
   }
 }
 

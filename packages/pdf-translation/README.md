@@ -18,10 +18,64 @@ layout, output generation, checkpoints, usage recording and generated-PDF cachin
 Import only these capability entries. Internal file paths are not API. Each entry has generated
 TypeScript declarations. Required interface changes migrate in-repository consumers together.
 
+## Standalone backends
+
+Supply only the backend you use: `captureTarget` + `runner` for Agent translation,
+`captureApiTarget` + `apiRunner` for direct API translation, or `localRunner` for a local model.
+No Agent runner, profile cleanup or application settings are required for API-only or local-only use.
+`begin` rejects an unavailable route with `PdfTranslationError.code === 'unsupported-model'`
+before admitting work. An omitted `targetId` still selects Agent translation for compatibility.
+Shutdown drains work and closes the configured runners; usage recovery/flush applies to every route.
+
+```ts
+import { PdfTranslationOwner } from '@aipoch/pdf-translation'
+
+const owner = new PdfTranslationOwner({
+  usage, // Transactional usage sink owned by this consumer.
+  captureApiTarget: async () => ({ providerId: 'my-provider', model: 'my-model' }),
+  apiRunner: {
+    supportsTarget: () => true,
+    run: ({ prompt, systemPrompt, signal }) => translate({ prompt, systemPrompt, signal })
+  }
+})
+try {
+  const operation = await owner.begin(
+    {
+      targetId: 'api',
+      resourceRequestKey: 'document:1',
+      fingerprint: sourceFingerprint,
+      language: '中文',
+      glossary: [],
+      sources: ['Cell growth is measured.']
+    },
+    callerLease
+  )
+  const translated = await owner.translate(
+    {
+      operationId: operation.operationId,
+      sourceIndex: 0,
+      source: 'Cell growth is measured.'
+    },
+    callerLease
+  )
+} finally {
+  await owner.shutdown()
+}
+```
+
+`translate` above is the consumer's inference implementation; it returns `{ text, stopReason, usage? }`.
+The consumer supplies a stable source fingerprint and a caller lease whose signal is aborted on
+cancellation. The packed consumer test is a complete executable example using deterministic
+inference, and exercises both single-backend configurations through the public package name.
+
 ## Ownership and integration
 
 Create one translation owner per service. It owns job state, cancellation, checkpoint progression
-and recovery; the writer owns its workers. Shut down the owners before releasing their host
+and recovery; the writer owns its workers. `PdfTranslationPdfCache.recordLayout` persists the report
+through its owner before confirming cache publication; callers must not assemble that ordering.
+`confirm` remains a low-level operation for consumers that already own durable report persistence.
+Use `pdfTranslationWorkerPath()` when a platform needs to remap a packaged worker path (for example,
+Electron ASAR unpacking); do not construct package-internal filenames. Shut down the owners before releasing their host
 capabilities. A caller lease invalidated by reload or disconnect stops that caller's operation.
 Package tests exercise success, failure, cancellation, retries and cleanup.
 
@@ -36,12 +90,39 @@ source authorization, application paths and storage connections. Model/account/A
 credential access, global usage aggregation, process supervision and application shutdown stay
 in the host. Do not place domain decisions in these adapters.
 
-The storage implementation owns translation checkpoint and usage rules. Callers supply opaque
-source IDs, source authorization and a transactional repository. Its transaction includes source
-validation/registration and checkpoint writes; compare-and-swap conflicts and cancellation roll
-back all mutations. The package contains no SQL, application table names or source taxonomy.
-The host adapter translates existing database payloads and source contracts without a migration.
+`PdfTranslationOwner` can run without persistence. Consumers that want resumable editions can
+inject `TranslationCheckpointStore`, or use the optional `PdfTranslationCheckpoints` coordinator
+with a `TranslationDatabase` implementation. The coordinator owns checkpoint progression,
+validation, conflict handling and layout-report reconciliation. Its port exchanges typed domain
+snapshots and opaque source/content identities, never SQL statements, database rows or JSON fields.
+
+Consumers own serialization, schema/migrations, connections and resource lifetimes. Transactions
+must atomically include source authorization/registration and checkpoint updates; cancellation,
+exceptions and failed revision comparisons leave no partial changes. `changedBlock` is an optional
+write optimization; a consumer can store complete snapshots. During incremental updates it must
+preserve independently pinned layouts and layout reports, unless the commit explicitly replaces
+reports. `test/support/checkpoint-memory.ts` demonstrates an object-only transactional consumer;
+package workflow tests cover resume, stale writers, authorization and cancellation without a host.
+
+The Open Science SQLite adapter lives in the host. It owns historical identity encoding, JSON
+projections, revision sentinel rows and incremental writes, and retains the existing disk format.
+The package neither imports nor exports that adapter. Changing a consumer's storage engine or the
+package's internal algorithm does not require changing the other side while the public contract
+and behavior stay compatible.
 Structural results come through the declared `@aipoch/pdf-structure/result` dependency.
+
+## Safety and integration
+
+- **Scope:** PDF translation orchestration and output generation through host-supplied inference and storage.
+- **Controls:** Source authorization contracts, caller leases, transactional checkpoints, cancellation,
+  and bounded workflow processing preserve the documented ownership rules.
+- **Remaining risks:** The inference recipient can receive prepared document content. Translation
+  and layout can change meaning, omit text, or misrepresent numbers and units. Checkpoints and usage
+  records do not establish translation accuracy or provider-side deletion.
+- **Safe integration:** The host must review inference destinations and data permissions, protect
+  source/cache/output storage, and enforce execution policy. Retain the original PDF and compare
+  consequential passages, tables, and figures before use. See the application's
+  [data-recipient notice](https://github.com/aipoch/open-science/blob/main/docs/security.md#data-recipients).
 
 ## Build and verification
 

@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
+    "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
@@ -11,9 +13,13 @@
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx"
+    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
+    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts",
+    "src/renderer/src/pages/workspace/LiteratureToolReferenceList.tsx",
+    "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/LiteratureCandidateStatus.tsx",
     "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceLiteratureToolCard.tsx",
     "src/renderer/src/pages/workspace/WorkspaceManagePackagesActivityRow.tsx",
@@ -21,14 +27,17 @@
     "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolActivityRowButton.tsx",
     "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.tsx",
-    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx"
+    "src/renderer/src/pages/workspace/WorkspaceWebSearchActivityRow.tsx",
+    "src/renderer/src/pages/workspace/literature-candidate-session-context.ts"
   ],
   "testFiles": {
     "owner": [
+      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceContextCompactionActivityRow.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePlanActivityRecord.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSkillLoadRow.render.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx"
+      "src/renderer/src/pages/workspace/WorkspaceToolDetailsRow.render.test.tsx",
+      "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx"
     ],
     "contract": [],
     "consumer": [

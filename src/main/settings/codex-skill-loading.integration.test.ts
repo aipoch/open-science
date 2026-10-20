@@ -10,7 +10,7 @@ import { buildSync } from 'esbuild'
 import { createCodexFramework } from '../agent-framework/codex'
 import { terminateProcessTree } from '../process-tree'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 
 const adapter = process.env.CODEX_ACP_PATH
 const native = process.env.CODEX_NATIVE_PATH
@@ -163,19 +163,19 @@ it.runIf(Boolean(adapter && native)).each([
     const target = { baseUrl: 'https://vendor.invalid/v1', model: 'probe-native-model' }
     const proxy =
       route === 'bridge'
-        ? new ResponsesBridge(target, upstream)
+        ? new ResponsesToChatCompletionsBridge(target, upstream)
         : new NativeResponsesCompatibilityProxy(target, upstream)
     const connection = await proxy.start()
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: route === 'bridge' ? ['openai'] : ['responses'],
+        apiEndpoints: route === 'bridge' ? ['chat-completions'] : ['responses'],
         baseUrl: 'https://vendor.invalid/v1',
         model: 'probe-native-model',
         contextWindow: 128_000
       },
-      { storageRoot: root, executablePath: adapter!, responsesBridge: connection }
+      { storageRoot: root, executablePath: adapter!, responsesConnection: connection }
     )
     const setup = framework.buildSessionSetup({
       systemPromptAppends: [],

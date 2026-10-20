@@ -3,11 +3,11 @@ import {
   reconcilePdfTranslationCheckpoint,
   pdfTranslationSourceIndices
 } from '@aipoch/pdf-translation/text'
+import { providerErrorDetails } from '../../../../../../shared/provider-error'
 import {
-  providerErrorDetails,
   providerTextGenerationFailure,
   type ProviderTextGenerationFailure
-} from '../../../../../../shared/provider-text-generation-failure'
+} from '@aipoch/providers/errors'
 
 import {
   type PdfTranslationGlossary,

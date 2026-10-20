@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { within } from '@testing-library/dom'
+import { fireEvent, within } from '@testing-library/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -2261,5 +2261,54 @@ describe('HomePage recent session ordering', () => {
     await setSessions([first, { ...second, updatedAt: 300 }])
     await renderHome()
     expect(titles()).toEqual(['First analysis', 'Second analysis'])
+  })
+})
+
+describe('HomePage package drop', () => {
+  it('accepts a package without using the previously active Project and clears its overlay', async () => {
+    const importPackage = vi.fn(async () => null)
+    Object.defineProperty(window.api, 'sessions', { value: { importPackage } })
+    useNavigationStore.setState({ activeProjectId: project.id })
+    await act(async () => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+    const home = within(container).getByRole('main')
+    const file = new File(['fixture'], 'research.science')
+    const dataTransfer = { types: ['Files'], files: [file], dropEffect: 'none' }
+    act(() => {
+      fireEvent.dragEnter(home, { dataTransfer })
+      fireEvent.dragOver(home, { dataTransfer })
+    })
+    expect(dataTransfer.dropEffect).toBe('copy')
+    expect(within(container).getByText('Drop a .science file to import')).toBeTruthy()
+    await act(async () => {
+      fireEvent.drop(home, { dataTransfer })
+    })
+    expect(importPackage).toHaveBeenCalledExactlyOnceWith({}, file)
+    expect(within(container).queryByText('Drop a .science file to import')).toBeNull()
+  })
+
+  it('rejects a mixed batch on Home without starting a partial import', async () => {
+    const importPackage = vi.fn(async () => null)
+    Object.defineProperty(window.api, 'sessions', { value: { importPackage } })
+    await act(async () => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+    act(() => {
+      fireEvent.drop(within(container).getByRole('main'), {
+        dataTransfer: {
+          types: ['Files'],
+          files: [new File([''], 'research.science'), new File([''], 'data.csv')]
+        }
+      })
+    })
+    expect(importPackage).not.toHaveBeenCalled()
+    expect(
+      within(container).getByText('Drop one .science file at a time. No files were added.')
+    ).toBeTruthy()
   })
 })

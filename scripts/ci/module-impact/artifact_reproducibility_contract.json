@@ -377,7 +377,7 @@
       "src/main/settings/network-proxy-settings.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
@@ -475,7 +475,8 @@
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/desktop-runtime-controller.integration.test.ts"
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": ["session_persistence"],

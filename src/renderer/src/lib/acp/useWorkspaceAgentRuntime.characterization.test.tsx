@@ -361,7 +361,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -369,7 +369,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'provider',
           type: 'custom',
           name: 'Provider',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           baseUrl: 'https://example.test/v1',
           model: 'model-a',
           models: ['model-a', 'model-b'],
@@ -477,7 +477,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -486,7 +486,7 @@ describe('workspace Agent Runtime hook contract', () => {
           type: 'official',
           vendorId: 'deepseek',
           name: 'DeepSeek',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           model: 'deepseek-v4-pro',
           models: ['deepseek-v4-pro', 'deepseek-v4-flash-vision-exp'],
           supportsImageInput: false,
@@ -523,7 +523,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -532,7 +532,7 @@ describe('workspace Agent Runtime hook contract', () => {
           type: 'official',
           vendorId: 'deepseek',
           name: 'DeepSeek',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           model: 'deepseek-v4-pro',
           models: ['deepseek-v4-pro'],
           supportsImageInput: false,
@@ -544,7 +544,7 @@ describe('workspace Agent Runtime hook contract', () => {
           type: 'official',
           vendorId: 'anthropic',
           name: 'Legacy',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           model: 'legacy-model',
           models: ['legacy-model'],
           supportsImageInput: true,
@@ -591,7 +591,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -599,7 +599,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'custom',
           type: 'custom',
           name: 'Custom',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           baseUrl: 'https://example.test/v1',
           model: 'provider-base',
           models: ['provider-base', 'settings-selected'],
@@ -645,7 +645,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -653,7 +653,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'incompatible',
           type: 'custom',
           name: 'Incompatible',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: 'https://example.test/v1',
           model: 'other',
           models: ['other'],
@@ -697,7 +697,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -705,7 +705,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'session-provider',
           type: 'custom',
           name: 'Session',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           baseUrl: 'https://example.test/v1',
           model: 'session-model',
           models: ['session-model'],
@@ -1002,7 +1002,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -1010,7 +1010,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'session-provider',
           type: 'custom',
           name: 'Session',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           baseUrl: 'https://example.test/v1',
           model: 'session-model',
           models: ['session-model'],
@@ -1249,7 +1249,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'claude-code',
           displayName: 'Claude Code',
           supportsSkills: true,
-          supportedApiTypes: ['anthropic']
+          supportedApiTypes: ['messages']
         }
       ],
       providers: [
@@ -1257,7 +1257,7 @@ describe('workspace Agent Runtime hook contract', () => {
           id: 'session-provider',
           type: 'custom',
           name: 'Session',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           baseUrl: 'https://example.test/v1',
           model: 'session-model',
           models: ['session-model'],

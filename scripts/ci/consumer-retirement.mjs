@@ -5,6 +5,10 @@ import ts from 'typescript'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
+export function isConsumerSourcePath(path) {
+  return /\.(?:[cm]?[jt]sx?|json)$/.test(path)
+}
+
 // Read immutable Git objects, never materialize or execute candidate code. A bounded
 // batch also avoids one subprocess per dependency when inspecting a renderer cone.
 export function sourceSnapshot(revision, cwd) {
@@ -24,8 +28,7 @@ export function sourceSnapshot(revision, cwd) {
     ...new Set(
       [...entries]
         .filter(
-          ([path, entry]) =>
-            /\.(?:[cm]?[jt]sx?|json)$/.test(path) && /^100(?:644|755)$/.test(entry.mode)
+          ([path, entry]) => isConsumerSourcePath(path) && /^100(?:644|755)$/.test(entry.mode)
         )
         .map(([, entry]) => entry.oid)
     )
@@ -136,6 +139,22 @@ export function createConsumerDependencyReader(
   }
   const resolutionCache = ts.createModuleResolutionCache(root, (path) => path, options)
   const parsed = new Map()
+  const assetPath = (specifier, importer) => {
+    const match =
+      /^([^?#]+\.(?:svg|png|jpe?g|gif|webp|avif|ico|css))(?:\?(?:raw|url|inline|no-inline))?(?:#[^?]*)?$/.exec(
+        specifier
+      )
+    if (!match) return undefined
+    const path = match[1]
+    const candidate = path.startsWith('@/')
+      ? posix.join('src/renderer/src', path.slice(2))
+      : path.startsWith('@renderer/')
+        ? posix.join('src/renderer/src', path.slice(10))
+        : path.startsWith('.')
+          ? posix.join(posix.dirname(importer), path)
+          : undefined
+    return candidate && source.files.has(candidate) ? candidate : undefined
+  }
   const explicit = new Map()
   for (const [target, consumers] of runtimeEdges) {
     for (const consumer of consumers) {
@@ -147,6 +166,12 @@ export function createConsumerDependencyReader(
     if (parsed.has(path)) return parsed.get(path)
     const result = { paths: new Set(explicit.get(path)), complete: true }
     parsed.set(path, result)
+    // Resources can contain further URLs/imports. Their known edges add coverage, but
+    // never prove that unrelated consumers can retire; do not parse binary data as TS.
+    if (!isConsumerSourcePath(path)) {
+      result.complete = false
+      return result
+    }
     const text = source.read(path)
     if (text === undefined) {
       result.complete = false
@@ -318,6 +343,12 @@ export function createConsumerDependencyReader(
     }
     visit(ast)
     for (const spec of specs) {
+      const asset = assetPath(spec, path)
+      if (asset) {
+        result.paths.add(asset)
+        result.complete = false
+        continue
+      }
       const resolved = ts.resolveModuleName(
         spec,
         posix.join(root, path),
@@ -488,6 +519,26 @@ export function verifiedPromiseIdentityOwnerSplit(
   )
 }
 
+export function verifiedFuzzyMatchOwnerSplit(base, head, baseManifest, headManifest, options = {}) {
+  // Its existing behavior suite belongs to the composer facade and must keep that owner.
+  if (
+    !headManifest.modules.shared_fuzzy_match?.testFiles.consumer.includes(
+      'src/renderer/src/pages/workspace/composer/fuzzy-match.test.ts'
+    )
+  )
+    return new Set()
+  return verifiedPureHelperSplit(
+    base,
+    head,
+    baseManifest,
+    headManifest,
+    'shared_fuzzy_match',
+    'fuzzy-match',
+    options,
+    false
+  )
+}
+
 function verifiedPureHelperSplit(
   base,
   head,
@@ -495,10 +546,12 @@ function verifiedPureHelperSplit(
   headManifest,
   targetId,
   file,
-  { cwd = process.cwd() } = {}
+  { cwd = process.cwd() } = {},
+  includeOwnerTest = true
 ) {
   const originalId = 'shared_application_contracts'
-  const paths = [`src/shared/${file}.ts`, `src/shared/${file}.test.ts`]
+  const paths = [`src/shared/${file}.ts`]
+  if (includeOwnerTest) paths.push(`src/shared/${file}.test.ts`)
   const original = baseManifest.modules[originalId]
   const remaining = headManifest.modules[originalId]
   const target = headManifest.modules[targetId]
@@ -525,7 +578,7 @@ function verifiedPureHelperSplit(
       !paths
         .filter((path) => original.interfacePaths.includes(path))
         .every((path) => target.interfacePaths.includes(path)) ||
-      !target.testFiles.owner.includes(paths[1]) ||
+      (includeOwnerTest && !target.testFiles.owner.includes(paths[1])) ||
       target.fallbackCapability !== original.fallbackCapability ||
       !original.capabilityOverlays.every((overlay) =>
         target.capabilityOverlays.includes(overlay)
@@ -551,7 +604,10 @@ function verifiedPureHelperSplit(
     if (inspectors.some((inspect) => !inspect(paths[0], new Set()).complete)) return new Set()
     const evidence = new Set(Object.values(target.testFiles).flat())
     const originalEvidence = Object.values(original.testFiles).flat()
-    if (originalEvidence.some((test) => !evidence.has(test))) return new Set()
+    // Legacy paired source/test exceptions retain their full evidence inheritance.
+    // The source-only fuzzy boundary uses the required composer suite and the complete
+    // reachability proof below; ordinary checks still protect the remaining full owner.
+    if (includeOwnerTest && originalEvidence.some((test) => !evidence.has(test))) return new Set()
     const owners = new Set(paths)
     // Keep the existing trusted package direction: host-only edits do not run independent
     // upstream package suites. Candidate registry changes are forbidden in this transition.

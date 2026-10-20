@@ -2022,7 +2022,11 @@ if (process.argv.includes('--version')) {
         ) {
           reply = 'Restart verification: Plan feedback delivered.'
         } else if (
-          prompt.includes('The user answered the pending question: Restart verification dataset?')
+          prompt.includes(
+            'The user answered the pending question: Restart verification dataset?'
+          ) ||
+          (prompt.includes('The user answered the pending questions:') &&
+            prompt.includes('Restart verification dataset?'))
         ) {
           reply = 'Restart verification: Question answer delivered.'
         } else if (prompt.includes('Create a restart verification Plan.')) {
@@ -2083,6 +2087,42 @@ if (process.argv.includes('--version')) {
             update: { sessionUpdate: 'tool_call_update', toolCallId, status: 'completed' }
           })
           reply = 'Restart verification: Plan review returned.'
+        } else if (
+          prompt.includes('Ask a restart verification question. Include four questions.')
+        ) {
+          const response = await context.client.request(acp.methods.client.elicitation.create, {
+            mode: 'form',
+            sessionId: context.params.sessionId,
+            toolCallId: 'e2e-four-native-questions',
+            message: 'Please answer the following questions.',
+            requestedSchema: {
+              type: 'object',
+              properties: Object.fromEntries(
+                Array.from({ length: 4 }, (_, index) => [
+                  [
+                    `question_${index}`,
+                    {
+                      type: 'string',
+                      title: `Dataset ${index + 1}`,
+                      description:
+                        index === 0
+                          ? 'Restart verification dataset?'
+                          : `Restart verification dataset ${index + 1}?`,
+                      oneOf: [
+                        { const: 'Dataset Alpha', title: 'Dataset Alpha' },
+                        { const: 'Dataset Beta', title: 'Dataset Beta' }
+                      ]
+                    }
+                  ],
+                  [`question_${index}_custom`, { type: 'string', title: 'Other' }]
+                ]).flat()
+              )
+            }
+          })
+          reply =
+            response.action === 'accept'
+              ? 'Restart verification: Question answer delivered.'
+              : 'Restart verification: Question declined.'
         } else if (prompt.includes('Ask a restart verification question.')) {
           await withMcpClient(context.params.sessionId, 'open-science-notebook', async (client) =>
             toolResult(
@@ -2518,6 +2558,9 @@ if (process.argv.includes('--version')) {
         } else if (prompt.includes(CITATION_PREVIEW_PROMPT)) {
           reply =
             'The fixture evidence supports this claim ([Torre et al. 2026](https://citation.example/paper "Fixture study")), with an independent replication ([Chen et al. 2026](https://citation.example/replication "Replication study")).'
+        } else if (prompt.includes('Expand distinct tables.')) {
+          reply =
+            '| First header | Value |\n| --- | --- |\n| alpha | 1 |\n\n| Second header | Value |\n| --- | --- |\n| beta | 2 |'
         } else if (prompt.includes('Expand a table with source links.')) {
           reply =
             '| PMID | Journal |\n| --- | --- |\n| [42668673](https://citation.example/paper) | Bioact Mater |\n| [42537459](https://unadmitted.example/paper) | Biomaterials |'

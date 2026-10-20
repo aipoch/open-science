@@ -5,6 +5,29 @@ model combines application controls with the operating system, selected service
 providers, and the user's approval decisions. This document describes those boundaries;
 the [security policy](../SECURITY.md) explains how to report a suspected vulnerability.
 
+Start with [intended use and safe operation](usage-scope.md) for workflow precautions and the
+[known limitations register](known-limitations.md) for versioned boundaries and verification gaps.
+These documents describe capabilities and precautions without adding license conditions.
+
+## Data flows, controls, and remaining risks
+
+| Surface                          | Data or authority involved                                                                 | Implemented control                                                                                    | Remaining risk and user action                                                                                                                           |
+| -------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Models and scenario models       | Prepared messages, history, attachments, or scenario inputs go to selected endpoints       | Provider configuration, HTTPS for remote custom model endpoints, metadata-minimized vision derivatives | Recipients may differ by scenario. Review each endpoint/account policy; metadata removal does not anonymize visible content.                             |
+| Connectors and MCP               | Tool arguments, queries, and selected credentials reach services or local server processes | Scoped application tool permissions and credential handling                                            | Read-only calls still disclose arguments. Review server code, destinations, OAuth scopes, and least-privilege credentials.                               |
+| Notebook and Shell               | Code acts on projected files and permitted network destinations                            | Source-risk review plus platform-specific process controls                                             | Source inspection can miss side effects; approved writable data remains mutable. Windows standard mode and Agent-native tools have different boundaries. |
+| SSH and Slurm                    | Scripts and selected inputs reach the configured remote account                            | Permission admission and remote execution lifecycle tracking                                           | Remote account permissions and host controls determine isolation; confirm cancellation, cleanup, and resource use remotely.                              |
+| Previews and external media      | Rendered content may request remote resources                                              | Constrained previews, media activation, and renderer controls                                          | Browser networking differs from Notebook policy; Mermaid HTML-label images have the documented coverage gap below.                                       |
+| Remote Web UI                    | A trusted browser can operate the host workspace and upload files to it                    | Opt-in route, pairing approval, trusted-browser sessions, and revocation                               | Browser-profile compromise can expose workspace authority. Review and revoke trust; disable remote access when unused.                                   |
+| Local data and credentials       | Research records, settings, tokens, and logs reside on the host                            | OS-backed storage for covered secrets; masked renderer projections                                     | Research files and some authentication files rely on OS access protection. Explicit file credential mode is not encryption.                              |
+| Diagnostics and research exports | Selected logs, records, code, and files are shared with recipients                         | Diagnostic report preview/consent and credential redaction mechanisms                                  | Embedded secrets and identifying content may remain. Review the actual payload or selected export before sharing.                                        |
+
+Approval controls authority to act; it does not make the approved content safe. Untrusted documents,
+tool responses, and extension instructions can attempt to redirect an Agent. Limit what its actual
+processes and credentials can access even when prompts or source-risk checks report no concern.
+Checksums, signatures, and provenance establish their respective integrity or origin properties,
+not scientific correctness, regulatory approval, or absence of malicious behavior.
+
 ## Agent actions and permissions
 
 Agent-driven side effects route through Open-Science's permission system. Grants can be
@@ -34,7 +57,9 @@ public DNS hosts on port 443, inspecting TLS through a per-command local CA. The
 target is limited to 8192 bytes, with no per-command request-count quota. Explicitly blocked
 destinations do not use this path. The read channel is prepared by default when the local CA
 is available, except on the separate WSL2 path; there is no user-facing switch. This is not
-an allowlist-only network boundary. Windows standard mode inherits the host user's
+an allowlist-only network boundary. Paths and query parameters in a GET/HEAD request can still
+disclose sensitive information; a request-size limit is not an aggregate exfiltration limit.
+Windows standard mode inherits the host user's
 filesystem access; its proxy applies only to software that honors proxy settings and
 cannot guarantee network enforcement. Enable protected mode before treating those Windows
 rules as security boundaries. A bypass of an enforced boundary is in scope under the

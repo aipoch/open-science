@@ -20,15 +20,17 @@ import {
 } from '@/components/ui/select'
 import {
   getOfficialVendor,
-  getOfficialVendorModelIds,
-  resolveVendorApiKeyUrl
-} from '../../../../shared/provider-registry'
+  resolveVendorApiKeyUrl,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
-  type CustomReasoningEffortTransport,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
+import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
+
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
@@ -43,7 +45,7 @@ import {
   type ProviderFormValue,
   type ProviderKind
 } from './provider-form-value'
-import { customProviderRequiresKey } from '../../../../shared/provider-base-url'
+
 import {
   ENDPOINT_PATHS,
   isProviderUsableByFramework,
@@ -96,16 +98,17 @@ const CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS = [
 // locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
 // to match against a gateway's own documentation.
 const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
-  openai: 'Chat Completions (/v1/chat/completions) — GPT / DeepSeek / OpenAI-compatible',
-  anthropic: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
+  'chat-completions':
+    'Chat Completions (/v1/chat/completions) — GPT / DeepSeek / OpenAI-compatible',
+  messages: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
   responses: 'Responses (/v1/responses) — GPT / OpenAI'
 }
 
 // Custom gateways declare exactly one protocol. Official vendors may serve several endpoints; that
 // multi-endpoint set lives in the registry and is not a selectable custom option.
 const selectableApiFormats = (): ProviderFormValue['apiEndpoint'][] => [
-  'openai',
-  'anthropic',
+  'chat-completions',
+  'messages',
   'responses'
 ]
 
@@ -259,7 +262,7 @@ const ProviderForm = ({
   encryptionAvailable = true,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
-  defaultCustomApiEndpoint = 'anthropic',
+  defaultCustomApiEndpoint = 'messages',
   framework
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -423,6 +426,7 @@ const ProviderForm = ({
         </div>
         <Select
           value={selectedKey}
+          disabled={disabled}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label={t('Provider type')}>
@@ -865,7 +869,10 @@ const ProviderForm = ({
             {value.reasoningEffortPreset !== 'unsupported' ? (
               <div className="space-y-3 border-t border-border-200 pt-3">
                 <div
-                  className={cn('grid gap-3', value.apiEndpoint === 'openai' && 'sm:grid-cols-2')}
+                  className={cn(
+                    'grid gap-3',
+                    value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
+                  )}
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1">
@@ -884,7 +891,7 @@ const ProviderForm = ({
                                 'Examples reflect common native model APIs. A gateway may use different mappings.'
                               )}
                             </span>
-                            {value.apiEndpoint === 'anthropic' ? (
+                            {value.apiEndpoint === 'messages' ? (
                               <span className="mt-1 block">
                                 {t(
                                   "Messages API uses the framework's Anthropic-compatible thinking request automatically."
@@ -929,7 +936,7 @@ const ProviderForm = ({
                     </Select>
                   </div>
 
-                  {value.apiEndpoint === 'openai' ? (
+                  {value.apiEndpoint === 'chat-completions' ? (
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1">
                         <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
@@ -1010,6 +1017,7 @@ const ProviderForm = ({
               <span className={fieldLabelClassName}>{t('Endpoint')}</span>
               <Select
                 value={value.region ?? vendor.regions[0]?.id}
+                disabled={disabled}
                 onValueChange={(region) => onChange({ region })}
               >
                 <SelectTrigger aria-label={t('Endpoint')}>

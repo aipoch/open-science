@@ -101,8 +101,10 @@ describe('Provider transport ownership', () => {
 
     const resolver = readSource(resolverPath)
     expect(resolver).not.toMatch(
-      /responsesBridges|nativeResponsesCompatibilityProxies|nextGenerationId|createResponsesBridge|createNativeResponsesProxy|createAnthropicProviderBridge|createOpenAiProviderBridge/
+      /responsesToChatCompletionsBridges|nativeResponsesCompatibilityProxies|nextGenerationId|createResponsesToChatCompletionsBridge|createNativeResponsesProxy|createMessagesBridge|createProtocolForwardingBridge/
     )
-    expect(resolver).not.toMatch(/new\s+(?:ResponsesBridge|NativeResponsesCompatibilityProxy)/)
+    expect(resolver).not.toMatch(
+      /new\s+(?:ResponsesToChatCompletionsBridge|NativeResponsesCompatibilityProxy)/
+    )
   })
 })

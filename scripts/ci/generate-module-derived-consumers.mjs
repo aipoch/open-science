@@ -4,7 +4,11 @@ import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
-import { createConsumerDependencyReader, sourceSnapshot } from './consumer-retirement.mjs'
+import {
+  createConsumerDependencyReader,
+  isConsumerSourcePath,
+  sourceSnapshot
+} from './consumer-retirement.mjs'
 import {
   loadModuleImpactManifest,
   loadModuleImpactManifestAtRevision
@@ -84,6 +88,30 @@ export function checkDerivedConsumersAtRevision(revision, cwd = process.cwd()) {
   checkDerivedConsumers(source, loadModuleImpactManifestAtRevision(revision, { cwd }))
 }
 
+function derivedConsumerInputsUnchanged(base, head, cwd) {
+  const git = (...args) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+  // Disable rename detection so both the old and new paths must qualify.
+  const paths = git('diff', '--no-renames', '--name-only', '-z', base, head)
+    .split('\0')
+    .filter(Boolean)
+  if (!paths.length || paths.some(isConsumerSourcePath)) return false
+
+  // Reuse the reader's input boundary, not a documentation directory/extension allowlist.
+  // Source text, JSON configuration, registrations and the index itself are unchanged.
+  const manifest = loadModuleImpactManifestAtRevision(base, { cwd })
+  const runtime = JSON.parse(git('show', `${base}:scripts/ci/module-runtime-consumers.json`))
+
+  // Resource presence still affects import resolution and runtime edges. Recompute both
+  // snapshots to catch additions/deletions, including images shadowing icon.svg.ts.
+  const expectedAt = (revision) =>
+    generateDerivedConsumers(
+      manifest,
+      consumerDependencyGraph(sourceSnapshot(revision, cwd), Object.entries(runtime)).reverse
+    )
+  return isDeepStrictEqual(expectedAt(base), expectedAt(head))
+}
+
 // Older bases without an index remain supported; once introduced it cannot disappear.
 export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
   const hasIndex = (revision) =>
@@ -95,7 +123,10 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
     cwd,
     encoding: 'utf8'
   }).trim()
-  if (hasIndex(mergeBase) || hasIndex(head)) checkDerivedConsumersAtRevision(head, cwd)
+  if (hasIndex(mergeBase) || hasIndex(head)) {
+    if (derivedConsumerInputsUnchanged(mergeBase, head, cwd)) return
+    checkDerivedConsumersAtRevision(head, cwd)
+  }
 }
 
 export function workingConsumerSource(cwd = process.cwd()) {

@@ -104,6 +104,72 @@ it('keeps known edges in opaque cones without claiming coverage of computed impo
   expect(generateDerivedConsumers(manifest(), graph.reverse)).toEqual(expected)
 })
 
+it.each([
+  ['./icon.svg', 'src/main/icon.svg'],
+  ['./icon.svg?raw', 'src/main/icon.svg'],
+  ['./icon.svg?url#mark', 'src/main/icon.svg'],
+  ['@/assets/logo.png', 'src/renderer/src/assets/logo.png'],
+  ['@renderer/assets/logo.png?inline', 'src/renderer/src/assets/logo.png'],
+  ['../renderer/src/annotations/controls.css', 'src/renderer/src/annotations/controls.css']
+])(
+  'selects resource consumers through %s without proving the cone complete',
+  (specifier, asset) => {
+    const registration = manifest()
+    registration.modules.owner.ownerPaths = [asset, ownerTest]
+    registration.modules.owner.interfacePaths = [asset]
+    const input = source({
+      [asset]: 'not JavaScript',
+      'src/main/bridge.ts': `import asset from '${specifier}'; export { asset }`
+    })
+    const graph = consumerDependencyGraph(input, [])
+    const index = generateDerivedConsumers(registration, graph.reverse)
+    expect(index.modules.owner).toContain(consumer)
+    expect(graph.inspect(consumer, new Set([asset])).reachable).toBe(true)
+    expect(graph.inspect(consumer, new Set(['unrelated.ts'])).complete).toBe(false)
+    const effective = withDerivedConsumers(registration, index)
+    expect(createModuleTestPlan('owner', effective).testFiles).toContain(consumer)
+    expect(createModuleTestPlan('owner', effective).reasonChains).toContain(
+      `owner -> derived dependency evidence -> ${consumer}`
+    )
+  }
+)
+
+it.each(['./missing.svg', './icon.svg?unknown', './icon.svg?raw&plugin', '../escape.svg'])(
+  'does not invent resource edges for %s',
+  (specifier) => {
+    const graph = consumerDependencyGraph(
+      source({
+        [consumer]: `import '${specifier}'`,
+        'src/main/icon.svg': '<svg />'
+      }),
+      []
+    )
+    expect([...graph.inspect.dependencies(consumer).paths]).toEqual([])
+    expect(graph.inspect.dependencies(consumer).complete).toBe(false)
+  }
+)
+
+it('requires resource consumers in the existing index or explicit module evidence', () => {
+  const asset = 'src/main/icon.svg'
+  const registration = manifest()
+  registration.modules.owner.ownerPaths = [asset, ownerTest]
+  registration.modules.owner.interfacePaths = [asset]
+  const input = source({ [asset]: '<svg />', 'src/main/bridge.ts': "import './icon.svg'" })
+  const empty = { schemaVersion: 1, modules: {} }
+  const withIndex = (index: object) => ({
+    ...input,
+    read: (path: string) =>
+      path === derivedConsumersPath ? JSON.stringify(index) : input.read(path)
+  })
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).toThrow('Stale')
+  const index = generateDerivedConsumers(registration, consumerDependencyGraph(input, []).reverse)
+  expect(index).toEqual(expected)
+  expect(() => checkDerivedConsumers(withIndex(index), registration)).not.toThrow()
+  registration.modules.owner.testFiles.consumer.push(consumer)
+  expect(() => checkDerivedConsumers(withIndex(empty), registration)).not.toThrow()
+  expect(createModuleTestPlan('owner', registration).testFiles).toContain(consumer)
+})
+
 it('requires shared test helpers to be interfaces before propagating their consumers', () => {
   const input = source({
     [consumer]: "import './owner.test'",
@@ -335,3 +401,141 @@ it('does not treat target-branch introduction as a deletion by an older candidat
   const head = f.commit()
   expect(() => checkDerivedConsumerRevisions(newerBase, head, f.root)).not.toThrow()
 }, 30_000)
+
+it('does not charge unrelated documentation changes for an inherited stale index', () => {
+  const f = repository()
+  f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
+  f.put('docs/old-badge.svg', '<svg />')
+  const base = f.commit()
+  f.put('README.md', 'Updated reference')
+  f.put('docs/zh-Hans/README.md', 'Updated translation')
+  f.put('docs/images/badge.svg', '<svg />')
+  f.put('docs/images/badge.LICENSE.txt', 'CC0')
+  f.git('mv', 'docs/old-badge.svg', 'docs/renamed-badge.svg')
+  const head = f.commit()
+  expect(() => checkDerivedConsumerRevisions(base, head, f.root)).not.toThrow()
+  // Standalone audits still detect the pre-existing problem.
+  expect(() => runDerivedConsumersCli(['--check'], f.root)).toThrow('Stale')
+  expect(() => checkDerivedConsumerRevisions(base, base, f.root)).toThrow('Stale')
+  const integrity = spawnSync(
+    process.execPath,
+    [resolve('scripts/ci/check-ci-integrity.mjs'), '--base', base, '--head', head],
+    { cwd: f.root, encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '' } }
+  )
+  expect(integrity.status, integrity.stderr + integrity.stdout).toBe(0)
+}, 30_000)
+
+it.each([
+  owner,
+  consumer,
+  'docs/example.ts',
+  'docs/config.json',
+  'package.json',
+  'package-lock.json',
+  'tsconfig.json',
+  'scripts/ci/generate-module-derived-consumers.mjs',
+  'scripts/ci/module-runtime-consumers.json',
+  'scripts/ci/module-impact.json',
+  derivedConsumersPath
+])('still checks inherited stale evidence when a mixed diff changes %s', (path) => {
+  const f = repository()
+  f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
+  const base = f.commit()
+  f.put('README.md', 'Documentation cannot authorize a bypass')
+  const existing = source().read(path)
+  const text =
+    path === 'scripts/ci/module-impact.json'
+      ? JSON.stringify(manifest())
+      : path === derivedConsumersPath
+        ? JSON.stringify({ schemaVersion: 1, modules: {} })
+        : (existing ?? '{}')
+  f.put(path, text + '\n')
+  const head = f.commit()
+  expect(() => checkDerivedConsumerRevisions(base, head, f.root)).toThrow('Stale')
+})
+
+it.each(['owner', 'runtime target', 'runtime consumer'])(
+  'accepts unchanged dependencies when resource content is registered as a %s',
+  (role) => {
+    const f = repository()
+    const asset = 'docs/icon.svg'
+    f.put(asset, '<svg />')
+    if (role === 'owner') {
+      const registered = manifest()
+      registered.modules.owner.ownerPaths.push(asset)
+      f.put('scripts/ci/module-impact.json', JSON.stringify(registered))
+    } else {
+      const edges = role === 'runtime target' ? { [asset]: [consumer] } : { [owner]: [asset] }
+      f.put('scripts/ci/module-runtime-consumers.json', JSON.stringify(edges))
+    }
+    f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
+    const base = f.commit()
+    f.put(asset, '<svg><!-- changed --></svg>')
+    expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).not.toThrow()
+  }
+)
+
+it.each([
+  'LICENSE',
+  'packages/example/README.md',
+  'resources/templates/report.html',
+  'resources/templates/report.tex',
+  'src/renderer/src/theme.css',
+  'src/renderer/src/icon.svg',
+  'test/fixtures/example.bin'
+])('handles non-source resource changes outside documentation: %s', (path) => {
+  const f = repository()
+  f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
+  const base = f.commit()
+  f.put(path, 'Static content')
+  const added = f.commit()
+  expect(() => checkDerivedConsumerRevisions(base, added, f.root)).not.toThrow()
+  f.put(path, 'Updated static content')
+  const modified = f.commit()
+  expect(() => checkDerivedConsumerRevisions(added, modified, f.root)).not.toThrow()
+  rmSync(join(f.root, path))
+  expect(() => checkDerivedConsumerRevisions(modified, f.commit(), f.root)).not.toThrow()
+})
+
+it.each(['target', 'consumer'])('rejects deleting a declared runtime %s resource', (role) => {
+  const f = repository()
+  const resource = 'resources/worker.bin'
+  f.put(resource, 'Runtime resource')
+  const edges = role === 'target' ? { [resource]: [consumer] } : { [owner]: [resource] }
+  f.put('scripts/ci/module-runtime-consumers.json', JSON.stringify(edges))
+  runDerivedConsumersCli(['--write'], f.root)
+  const base = f.commit()
+  rmSync(join(f.root, resource))
+  expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow(
+    'Invalid runtime consumer edge'
+  )
+})
+
+it('does not hide a source deletion behind a rename into documentation', () => {
+  const f = repository()
+  runDerivedConsumersCli(['--write'], f.root)
+  const base = f.commit()
+  f.git('mv', consumer, 'README.md')
+  expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow('Stale')
+})
+
+it.each(['add', 'delete'])(
+  'detects dependency changes when docs images %s a resolution shadow',
+  (action) => {
+    const f = repository()
+    const asset = 'docs/icon.svg'
+    const implementation = `${asset}.ts`
+    const registered = manifest()
+    registered.modules.owner.ownerPaths.push(implementation)
+    f.put('scripts/ci/module-impact.json', JSON.stringify(registered))
+    f.put(implementation, 'export const icon = 1')
+    f.put(consumer, "import '../../docs/icon.svg'")
+    if (action === 'delete') f.put(asset, '<svg />')
+    runDerivedConsumersCli(['--write'], f.root)
+    const base = f.commit()
+    expect(() => checkDerivedConsumerRevisions(base, base, f.root)).not.toThrow()
+    if (action === 'delete') rmSync(join(f.root, asset))
+    else f.put(asset, '<svg />')
+    expect(() => checkDerivedConsumerRevisions(base, f.commit(), f.root)).toThrow('Stale')
+  }
+)

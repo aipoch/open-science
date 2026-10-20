@@ -1,21 +1,22 @@
-import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
+import {
+  type ModelProtocol,
+  OFFICIAL_VENDORS,
+  getOfficialVendor,
+  resolveVendorModelApiEndpoints,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  getOfficialVendorModelIds
+} from '../../../../shared/provider-model-policy'
 import {
   customProviderRequiresKey,
   getCustomProviderBaseUrlError,
   type CustomProviderBaseUrlError
-} from '../../../../shared/provider-base-url'
-import {
-  OFFICIAL_VENDORS,
-  defaultVendorModel,
-  getOfficialVendor,
-  getOfficialVendorModelIds,
-  resolveVendorModelApiEndpoints,
-  type OfficialVendorId
-} from '../../../../shared/provider-registry'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from '../../../../shared/reasoning-effort'
+} from '../../../../shared/provider-url-policy'
+import { type ReasoningEffortPresetSetting } from '../../../../shared/reasoning-effort'
+
 import {
   claudeIsolatedProviderIdentity,
   codexSubscriptionProviderIdentity,
@@ -42,7 +43,7 @@ export type ProviderFormValue = {
   // Which chat API a custom gateway speaks; drives which agent frameworks can use it. Defaults to
   // 'anthropic'. A custom provider serves exactly one endpoint (official providers take theirs from
   // the registry); it is stored as the single-entry apiEndpoints array.
-  apiEndpoint: ChatApiEndpoint
+  apiEndpoint: ModelProtocol
   // Form-only state: protects any user-edited onboarding draft when the step remounts or the active
   // framework changes. It is intentionally omitted from the persisted provider request.
   providerFormTouched: boolean
@@ -71,7 +72,7 @@ export const createEmptyProviderFormValue = (
   contextWindow: '',
   maxInputTokens: '',
   maxOutputTokens: '',
-  apiEndpoint: 'anthropic',
+  apiEndpoint: 'messages',
   providerFormTouched: false,
   supportsImageInput: false,
   reasoningEffortPreset: 'unsupported',
@@ -122,7 +123,7 @@ export const localModelPresetPatch = (
 
   return {
     baseUrl: preset.baseUrl,
-    apiEndpoint: 'openai',
+    apiEndpoint: 'chat-completions',
     ...(value.name.trim() ? {} : { name: preset.label })
   }
 }
@@ -142,20 +143,20 @@ export const providerFormTokenLimits = (value: ProviderFormValue): ProviderFormT
 // endpoint selection: Responses wins when available, then Chat Completions, then Messages. The
 // legacy Messages default remains the safe fallback while framework capabilities are still loading.
 export const defaultCustomApiEndpoint = (
-  frameworkEndpoints: readonly ChatApiEndpoint[]
-): ChatApiEndpoint => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'anthropic'
+  frameworkEndpoints: readonly ModelProtocol[]
+): ModelProtocol => preferredEndpoint(frameworkEndpoints, frameworkEndpoints) ?? 'messages'
 
 // Built-in providers resolve the exact protocol for the selected/default model. `apiEndpoint` only
 // represents the single format selected for a custom gateway and may be stale after switching
 // provider kinds.
-export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpoint[] => {
+export const providerFormApiEndpoints = (value: ProviderFormValue): ModelProtocol[] => {
   if (value.type === 'official' && value.vendorId) {
     return resolveVendorModelApiEndpoints(
       value.vendorId,
       value.model.trim() || defaultVendorModel(value.vendorId, value.region)
     )
   }
-  if (value.type === 'xai-subscription') return ['anthropic', 'openai', 'responses']
+  if (value.type === 'xai-subscription') return ['messages', 'chat-completions', 'responses']
   return [value.apiEndpoint]
 }
 
@@ -164,7 +165,7 @@ export const providerFormApiEndpoints = (value: ProviderFormValue): ChatApiEndpo
 // gate can reject the pair (or allow Codex's Chat bridge).
 export const providerFormModelForFramework = (
   value: ProviderFormValue,
-  frameworkEndpoints: readonly ChatApiEndpoint[]
+  frameworkEndpoints: readonly ModelProtocol[]
 ): string | undefined => {
   const selectedModel = value.model.trim()
   if (selectedModel || value.type !== 'official' || !value.vendorId) {
@@ -369,7 +370,7 @@ export const PROVIDER_KINDS: ProviderKind[] = [
 // active framework's preferred endpoint.
 export const providerKindPatch = (
   key: string,
-  customApiEndpoint: ChatApiEndpoint = 'anthropic'
+  customApiEndpoint: ModelProtocol = 'messages'
 ): Partial<ProviderFormValue> => {
   if (key === 'codex-subscription') {
     const identity = codexSubscriptionProviderIdentity()
@@ -393,7 +394,7 @@ export const providerKindPatch = (
     return {
       type: 'claude-shared',
       name: identity.name,
-      apiEndpoint: 'anthropic',
+      apiEndpoint: 'messages',
       baseUrl: '',
       model: '',
       contextWindow: '',

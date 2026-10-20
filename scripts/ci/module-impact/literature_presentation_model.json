@@ -6,21 +6,39 @@
     "src/renderer/src/pages/literature/literature-read-pages.test.ts",
     "src/renderer/src/pages/literature/literature-read-pages.ts",
     "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx",
-    "src/renderer/src/pages/literature/useLiteratureChanges.ts"
+    "src/renderer/src/pages/literature/useLiteratureChanges.ts",
+    "src/renderer/src/pages/literature/public/queries.ts",
+    "src/renderer/src/pages/literature/public/events.ts",
+    "src/renderer/src/pages/literature/public/components.ts",
+    "src/renderer/src/pages/literature/renderer-host.ts",
+    "src/renderer/src/pages/literature/renderer-host.test.tsx",
+    "src/renderer/src/pages/literature/public/host.ts",
+    "src/renderer/src/pages/literature/queries.ts",
+    "src/renderer/src/lib/literature-queries.ts",
+    "src/renderer/src/pages/literature/renderer-provider.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/JournalAttributes.tsx",
     "src/renderer/src/pages/literature/journals/journal-attribute-store.ts",
     "src/renderer/src/pages/literature/literature-read-pages.ts",
-    "src/renderer/src/pages/literature/useLiteratureChanges.ts"
+    "src/renderer/src/pages/literature/useLiteratureChanges.ts",
+    "src/renderer/src/pages/literature/public/queries.ts",
+    "src/renderer/src/pages/literature/public/events.ts",
+    "src/renderer/src/pages/literature/public/components.ts",
+    "src/renderer/src/pages/literature/renderer-host.ts",
+    "src/renderer/src/pages/literature/public/host.ts",
+    "src/renderer/src/pages/literature/queries.ts",
+    "src/renderer/src/lib/literature-queries.ts",
+    "src/renderer/src/pages/literature/renderer-provider.tsx"
   ],
   "testFiles": {
     "owner": [
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
       "src/renderer/src/pages/literature/literature-read-pages.test.ts",
-      "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx"
+      "src/renderer/src/pages/literature/useLiteratureChanges.test.tsx",
+      "src/renderer/src/pages/literature/renderer-host.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/renderer/src/pages/literature/public-boundary.architecture.test.ts"],
     "consumer": [
       "src/main/literature/catalog.test.ts",
       "src/main/literature/journal-attributes.scale.test.ts",

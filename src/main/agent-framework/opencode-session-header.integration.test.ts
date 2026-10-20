@@ -9,7 +9,7 @@ import { Readable, Writable } from 'node:stream'
 import * as acp from '@agentclientprotocol/sdk'
 import { expect, it } from 'vitest'
 
-import { OpenAiProviderBridge } from '../settings/openai-provider-bridge'
+import { ProtocolForwardingBridge } from '../settings/protocol-forwarding-bridge'
 import { createOpencodeFramework } from './opencode'
 
 const opencodePath = process.env.OPENCODE_ACP_PATH
@@ -94,7 +94,7 @@ it.runIf(opencodePath)(
       })
     })
     const upstreamBaseUrl = `${await listen(upstream)}/v1`
-    const bridge = new OpenAiProviderBridge(
+    const bridge = new ProtocolForwardingBridge(
       [
         {
           id: 'opencode-go/probe-model',
@@ -114,8 +114,8 @@ it.runIf(opencodePath)(
         vendorId: 'opencode-go',
         agentProviderId: 'open-science-opencode-go-probe',
         baseUrl: connection.baseUrl,
-        openaiBaseUrl: `${connection.baseUrl}/v1`,
-        apiEndpoints: ['openai'],
+        chatCompletionsBaseUrl: `${connection.baseUrl}/v1`,
+        apiEndpoints: ['chat-completions'],
         model: 'probe-model',
         key: connection.token
       },

@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { FullTextRateLimitError } from '@aipoch/literature-discovery/download'
 import { literatureCandidateInputSchema } from '@aipoch/literature-library/contracts'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
@@ -324,7 +325,11 @@ it('removes newly published unreferenced bytes when cancellation prevents Inbox 
   const controller = new AbortController()
   try {
     await migrateApplicationDatabase(client)
-    const content = new ContentRepository({ storageRoot, getClient: async () => client })
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot,
+      getClient: async () => client
+    })
     const catalog = new LiteratureCatalog(async () => client)
     const open = content.open.bind(content)
     let publishedPath: string | undefined

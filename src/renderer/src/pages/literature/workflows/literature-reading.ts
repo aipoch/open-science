@@ -1,11 +1,11 @@
-import type { PdfReadingDocument } from '@/stores/navigation-store'
+import type { LiteratureReadingDocument } from '../renderer-host'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
-import { LITERATURE_PREVIEW_SESSION_ID } from '../../workspace/preview-file-item'
+import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../../shared/literature-attachment-reference'
 
 export const literatureReadingDocument = (
   entry: LiteratureItemView
-): PdfReadingDocument | undefined => {
+): LiteratureReadingDocument | undefined => {
   const attachments = [
     ...entry.attachments.filter(({ kind }) => kind === 'fullText'),
     ...entry.attachments.filter(({ kind }) => kind !== 'fullText')

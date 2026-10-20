@@ -101,7 +101,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": [],

@@ -12,7 +12,8 @@ import {
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
-  flushLogs
+  flushLogs,
+  initLogger
 } from '@aipoch/diagnostics/node'
 import { readFileSync, realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -115,6 +116,8 @@ async function main(): Promise<void> {
   const ownership = new RuntimeDirectoryOwnership()
   ownership.acquireSync(configRoot)
   configureRuntimeDirectoryOwnership(ownership)
+  // Credential preflight can fail before full application diagnostics are initialized.
+  initLogger({ logDir: join(configRoot, 'logs') })
   const network = createNodeRuntimeNetwork()
   configureRuntimeNetwork(network)
   let runtime: Awaited<ReturnType<typeof import('./core-runtime').createCoreRuntime>> | undefined
@@ -431,6 +434,10 @@ async function main(): Promise<void> {
           'locale:snapshot',
           'desktop:tray-sessions',
           'desktop:open-package',
+          'desktop:browser-import',
+          'desktop:browser-import-cancel',
+          'desktop:package-operation-snapshot',
+          'desktop:browser-import-discovery',
           'settings:get-settings',
           'storage:get-status',
           'sessions:list',
@@ -470,6 +477,25 @@ async function main(): Promise<void> {
               throw new Error('Invalid Session package path.')
             runtime.openSessionPackageFile(path)
             return null
+          }
+          if (channel === 'desktop:browser-import-discovery') {
+            await runtime.startBrowserPackageImportDiscovery(
+              invocation.args[0] as number | undefined
+            )
+            return null
+          }
+          if (channel === 'desktop:package-operation-snapshot')
+            return runtime.packageOperationSnapshot()
+          if (channel === 'desktop:browser-import-cancel') {
+            const id = invocation.args[0]
+            if (typeof id !== 'string' || !/^[a-f0-9]{64}$/.test(id))
+              throw new Error('Invalid transfer identity.')
+            await runtime.cancelBrowserPackageImport(id)
+            return null
+          }
+          if (channel === 'desktop:browser-import') {
+            await runtime.beginBrowserPackageImport(invocation.args[0], invocation.args[1] === true)
+            return runtime.packageOperationSnapshot()
           }
           if (
             ![
@@ -670,7 +696,11 @@ void main().catch((error: unknown) => {
     ...diagnosticErrorFields(error),
     ...errorLogFields(error),
     ...(error instanceof CredentialIdentityError
-      ? { recoveryReason: error.reason, identityProbe: error.probe }
+      ? {
+          recoveryReason: error.reason,
+          identityProbe: error.probe,
+          validationDiagnostic: error.diagnostic
+        }
       : {})
   })
   process.exitCode = error instanceof RuntimeOwnershipConflict ? 75 : 1

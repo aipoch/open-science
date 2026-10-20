@@ -61,8 +61,8 @@ const deferred = (): Pick<ActiveRun, 'done' | 'finish'> => {
 
 const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<void> => {
   const owned: Array<{ release: () => Promise<void> }> = []
-  if (backend.responsesBridgeLease) owned.push(backend.responsesBridgeLease)
-  if (backend.anthropicBridgeLease) owned.push(backend.anthropicBridgeLease)
+  if (backend.responsesTransportLease) owned.push(backend.responsesTransportLease)
+  if (backend.messagesBridgeLease) owned.push(backend.messagesBridgeLease)
   if (backend.providerTransportLease) owned.push(backend.providerTransportLease)
   await Promise.all([...new Set(owned)].map((lease) => lease.release().catch(() => undefined)))
 }
@@ -210,7 +210,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       })
       backend = resolvedBackend
       ensureActive()
-      const bridge = resolvedBackend.responsesBridgeLease
+      const bridge = resolvedBackend.responsesTransportLease
       const nativeCodexSubscriptionToolingDisabled =
         resolvedBackend.framework.id === 'codex' && nativeCodexSubscriptionAllowed
       if (
@@ -309,7 +309,7 @@ class RestrictedInferenceRunner implements RestrictedInferenceClient {
       input.signal?.removeEventListener('abort', forwardAbort)
       active.controller.signal.removeEventListener('abort', onAbort)
       if (sessionId && toolLessBridgeScopeRegistered) {
-        backend?.responsesBridgeLease?.unregisterToolLessSession?.(sessionId)
+        backend?.responsesTransportLease?.unregisterToolLessSession?.(sessionId)
       }
       await runtime?.shutdownForQuit().catch(() => undefined)
       if (backend && !backendTransferred) await releaseUnattachedBackend(backend)

@@ -1,11 +1,11 @@
+import {
+  getVendorModelReasoningCapability,
+  type OfficialVendorId,
+  type ModelReasoningEffort,
+  type ResolvedReasoningEffort,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
 import type { ReasoningEffort } from './model-preference-contract'
-
-export type ModelReasoningEffort =
-  'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max' | 'ultra'
-
-// The concrete value delivered to an agent/model adapter after the active model profile projects
-// the app's five intent slots. `default` is the explicit sentinel for omitting an effort parameter.
-export type ResolvedReasoningEffort = ModelReasoningEffort | 'default'
 
 export type ReasoningEffortPresetId =
   | 'standard-5'
@@ -31,9 +31,6 @@ export type ReasoningEffortPresetSetting = ReasoningEffortPresetId | 'unsupporte
 // Custom gateways can expose the same model-effort vocabulary through different wire shapes. Keep
 // this explicit instead of guessing from a user-entered URL or model id: a compatible proxy may use
 // any hostname while still requiring its upstream provider's native request body.
-export type CustomReasoningEffortTransport =
-  'reasoning-effort' | 'deepseek' | 'minimax' | 'xiaomimimo' | 'openrouter'
-
 export const CUSTOM_REASONING_EFFORT_TRANSPORTS: ReadonlyArray<{
   id: CustomReasoningEffortTransport
   label: string
@@ -78,10 +75,10 @@ export const CUSTOM_REASONING_EFFORT_PRESETS: ReadonlyArray<{
 ]
 
 export type ReasoningEffortProfile =
-  | { supported: false }
+  | { readonly supported: false }
   | {
-      supported: true
-      slots: readonly [
+      readonly supported: true
+      readonly slots: readonly [
         ModelReasoningEffort,
         ModelReasoningEffort,
         ModelReasoningEffort,
@@ -261,4 +258,24 @@ export const projectReasoningEffortIntent = (
     return optionDistance < selectedDistance ? option : selected
   }, undefined)
   return nearest?.intent ?? 'default'
+}
+
+/** Project concrete provider values into the persisted five-intent product preference. */
+export function resolveVendorModelReasoningEffort(
+  id: OfficialVendorId,
+  modelId: string | undefined
+): ReasoningEffortProfile {
+  const capability = getVendorModelReasoningCapability(id, modelId)
+  if (!capability.supported || capability.values.length === 0) return { supported: false }
+  const values = capability.values
+  return {
+    supported: true,
+    slots: [
+      values[0],
+      values[1] ?? values[0],
+      values[2] ?? values.at(-1)!,
+      values[3] ?? values.at(-1)!,
+      values[4] ?? values.at(-1)!
+    ]
+  }
 }

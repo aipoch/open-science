@@ -78,7 +78,7 @@ export const claudeCodeFramework: AgentFramework = {
   // sessions via applyFlagSettings — no respawn needed.
   supportsLiveEffortChange: true,
   // Claude Code speaks only Anthropic /v1/messages.
-  supportedApiTypes: ['anthropic'],
+  supportedApiTypes: ['messages'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // Still routes through the existing spawner; env carries the resolved provider overrides.

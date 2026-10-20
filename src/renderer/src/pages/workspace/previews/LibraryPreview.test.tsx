@@ -1,12 +1,20 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { PdfAnnotationsProvider } from '../pdf-annotations/PdfAnnotationsProvider'
 import { LibraryReferenceActionsContext } from './library-reference-actions'
 import LibraryPreview from './LibraryPreview'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const navigation = vi.hoisted(() => ({
   openProjectLiterature: vi.fn(),

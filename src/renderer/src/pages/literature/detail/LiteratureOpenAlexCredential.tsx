@@ -1,10 +1,11 @@
+import { useLiteratureHost } from '../renderer-host'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { useFileCredentialNotice } from '../../settings/use-file-credential-notice'
 import { useEffect, useId, useState } from 'react'
 import { Check, Settings2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
-import { useSettingsStore } from '@/stores/settings-store'
+
 import { MaskedPasswordField } from '../../settings/MaskedPasswordField'
 
 export const LiteratureOpenAlexCredential = ({
@@ -16,6 +17,8 @@ export const LiteratureOpenAlexCredential = ({
   onSaved: () => void
   onBusyChange: (busy: boolean) => void
 }): React.JSX.Element => {
+  const { useSettingsStore } = useLiteratureHost()
+
   const { t } = useTranslation()
   const fileCredentialNotice = useFileCredentialNotice()
   const id = useId()

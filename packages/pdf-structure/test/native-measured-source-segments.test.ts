@@ -9,7 +9,7 @@ const { splitPdfNumericRuns } = await import(
 const { tableTextToken } = await import(
   pathToFileURL(resolve('resources/literature-pdf-orientation.mjs')).href
 )
-const { attachMeasuredTableSourceSegments } = await import(
+const { attachMeasuredTableSourceSegments, refineMeasuredAssignedNumericSegments } = await import(
   pathToFileURL(resolve('resources/literature-pdf-source-segments.mjs')).href
 )
 
@@ -270,3 +270,309 @@ it('retains token-only competing provenance from an incomplete cell', () => {
   attachMeasuredTableSourceSegments({ parts: [{ cells }, { cells: [other] }] }, tokens)
   expect(cells[0].sourceSegments).toBeUndefined()
 })
+
+// Final assignment already owns these exact native leaves; only provenance may change.
+function assignedMeasuredLeaves(
+  text = 'Beta field Beta field',
+  leaves = ['Beta field', 'Beta field'],
+  gapIndexes = [4, 9, 13]
+): {
+  table: {
+    grid: string[][]
+    cells: Array<
+      Cell & {
+        row: number
+        column: number
+        rowSpan: number
+        colSpan: number
+        rect: number[]
+        textRuns?: Array<{ text: string; position: string }>
+      }
+    >
+  }
+  tokens: Array<Token & { horizontal: boolean; height: number; baseline: number }>
+  observations: Array<{
+    text: string
+    rect: number[]
+    literalGlyphs: string[]
+    glyphRuns: number[]
+    gaps: Array<{ index: number; left: number; right: number }>
+  }>
+} {
+  const origin = { pageNumber: 1, index: 7, text }
+  return {
+    table: {
+      grid: [leaves.slice()],
+      cells: leaves.map((text, column) => ({
+        row: 0,
+        column,
+        rowSpan: 1,
+        colSpan: 1,
+        rect: [10 + column * 55, 5, 65 + column * 55, 25],
+        text,
+        sourceItems: [{ ...origin }],
+        sourceRects: [[10 + column * 55, 10, 55 + column * 55, 20]],
+        sourceTokens: [{ text, rect: [10 + column * 55, 10, 55 + column * 55, 20] }]
+      }))
+    },
+    tokens: [
+      {
+        text,
+        sourceItem: origin,
+        rect: [10, 10, 110, 20],
+        horizontal: true,
+        height: 10,
+        baseline: 20
+      }
+    ],
+    observations: [
+      {
+        text,
+        rect: [10, 10, 110, 20],
+        literalGlyphs: Array.from(text.replace(/\s/gu, '')),
+        glyphRuns: Array(Array.from(text.replace(/\s/gu, '')).length).fill(1),
+        gaps: [
+          { index: gapIndexes[0], left: 30, right: 32 },
+          { index: gapIndexes[1], left: 55, right: 65 },
+          { index: gapIndexes[2], left: 85, right: 87 }
+        ]
+      }
+    ]
+  }
+}
+
+it.each([
+  {
+    text: 'Beta field Beta field',
+    leaves: ['Beta field', 'Beta field'],
+    gaps: [4, 9, 13],
+    ranges: [
+      [0, 10],
+      [11, 21]
+    ]
+  },
+  {
+    text: '1e-2 (3e-4) 1e-2 (3e-4)',
+    leaves: ['1e-2 (3e-4)', '1e-2 (3e-4)'],
+    gaps: [4, 10, 14],
+    ranges: [
+      [0, 11],
+      [12, 23]
+    ]
+  },
+  {
+    text: ' 😀Beta field Beta field  ',
+    leaves: ['😀Beta field', 'Beta field'],
+    gaps: [5, 10, 14],
+    ranges: [
+      [1, 13],
+      [14, 24]
+    ]
+  }
+])(
+  'annotates complete measured leaves without changing text or geometry: $text',
+  ({ text, leaves, gaps, ranges }) => {
+    const f = assignedMeasuredLeaves(text, leaves, gaps),
+      before = structuredClone(f)
+    refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+    expect(f.table.cells.map((c) => c.sourceSegments?.map((s) => [s.start, s.end]))).toEqual(
+      ranges.map((r) => [r])
+    )
+    for (const [index, cell] of f.table.cells.entries()) {
+      expect(cell.sourceItems).toBeUndefined()
+      expect(cell.sourceSegments).toEqual([
+        {
+          pageNumber: 1,
+          index: 7,
+          text,
+          start: ranges[index][0],
+          end: ranges[index][1],
+          rect: before.table.cells[index].sourceRects[0]
+        }
+      ])
+      const actual = { ...cell },
+        expected = { ...before.table.cells[index] }
+      delete actual.sourceSegments
+      delete expected.sourceItems
+      expect(actual).toEqual(expected)
+    }
+    expect(f.tokens).toEqual(before.tokens)
+    expect(f.observations).toEqual(before.observations)
+    expect(f.table.grid).toEqual(before.table.grid)
+  }
+)
+
+it.each([
+  'missing-leaf',
+  'wrong-last-rect',
+  'wrong-grid',
+  'wrong-rich-runs',
+  'extra-owner',
+  'deep-carrier',
+  'wrong-glyph'
+])('rejects incomplete measured parent evidence atomically: %s', (variant) => {
+  const f = assignedMeasuredLeaves()
+  if (variant === 'missing-leaf') f.table.cells.pop()
+  if (variant === 'wrong-last-rect') f.table.cells[1].sourceRects[0][0] += 0.001
+  if (variant === 'wrong-grid') f.table.grid[0][1] = 'other'
+  if (variant === 'wrong-rich-runs')
+    f.table.cells[1].textRuns = [{ text: 'other', position: 'normal' }]
+  if (variant === 'extra-owner')
+    f.table.cells.push({
+      ...structuredClone(f.table.cells[0]),
+      row: 5,
+      sourceRects: [[200, 200, 245, 210]]
+    })
+  if (variant === 'deep-carrier')
+    Object.assign(f.table.cells[1].sourceTokens[0], {
+      sourceToken: { sourceToken: { sourceItem: { ...f.tokens[0].sourceItem } } }
+    })
+  if (variant === 'wrong-glyph') f.observations[0].literalGlyphs[0] = 'X'
+  const before = structuredClone(f)
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(f).toEqual(before)
+})
+
+it.each(['direct', 'nested', 'plural'])(
+  'rejects a geometry-distant source alias: %s',
+  (variant) => {
+    const f = assignedMeasuredLeaves(),
+      alias = {
+        text: 'away',
+        rect: [200, 200, 230, 210],
+        horizontal: true,
+        height: 10,
+        baseline: 210
+      }
+    const origin = { ...f.tokens[0].sourceItem! }
+    if (variant === 'direct') Object.assign(alias, { sourceItem: origin })
+    if (variant === 'nested')
+      Object.assign(alias, { sourceToken: { sourceSegment: { ...origin, start: 0, end: 4 } } })
+    if (variant === 'plural') Object.assign(alias, { sourceItems: [origin] })
+    f.tokens.push(alias)
+    const before = structuredClone(f)
+    refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+    expect(f).toEqual(before)
+  }
+)
+
+it('accepts an unrelated outside identity without changing it', () => {
+  const f = assignedMeasuredLeaves(),
+    outside = {
+      text: 'away',
+      rect: [200, 200, 230, 210],
+      horizontal: true,
+      height: 10,
+      baseline: 210,
+      sourceItem: { pageNumber: 1, index: 99, text: 'away' }
+    }
+  f.tokens.push(outside)
+  const before = structuredClone(f.tokens)
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(f.table.cells.every((c) => c.sourceSegments?.length === 1)).toBe(true)
+  expect(f.tokens).toEqual(before)
+})
+
+function assignedSharedDescriptor(): ReturnType<typeof assignedMeasuredLeaves> {
+  const f = assignedMeasuredLeaves()
+  f.table.cells[0].rowSpan = 3
+  f.table.cells[0].rect[3] = 65
+  for (let row = 1; row < 3; row++) {
+    const text = `Class${row}`,
+      rect = [65, 10 + row * 20, 110, 20 + row * 20],
+      sourceItem = { pageNumber: 1, index: 20 + row, text }
+    f.tokens.push({ text, rect, sourceItem, horizontal: true, height: 10, baseline: rect[3] })
+    f.table.grid.push(['', text])
+    f.table.cells.push({
+      row,
+      column: 1,
+      rowSpan: 1,
+      colSpan: 1,
+      text,
+      rect: [65, 5 + row * 20, 120, 25 + row * 20],
+      sourceItems: [{ ...sourceItem }],
+      sourceRects: [[...rect]],
+      sourceTokens: [{ text, rect: [...rect] }]
+    })
+  }
+  return f
+}
+
+it('partitions a measured descriptor while preserving a complete existing shared-row owner', () => {
+  const f = assignedSharedDescriptor(),
+    before = structuredClone(f)
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(
+    f.table.cells.slice(0, 2).map((c) => c.sourceSegments?.map((s) => [s.start, s.end]))
+  ).toEqual([[[0, 10]], [[11, 21]]])
+  expect(f.table.cells[0].rowSpan).toBe(3)
+  expect(f.table.cells.slice(2)).toEqual(before.table.cells.slice(2))
+  expect(f.table.grid).toEqual(before.table.grid)
+  expect(f.tokens).toEqual(before.tokens)
+})
+
+it('uses exact native peer baselines when model row edges cross font ascenders', () => {
+  const f = assignedSharedDescriptor()
+  f.table.cells[2].rect[1] = 32
+  refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+  expect(f.table.cells.slice(0, 2).every((c) => c.sourceSegments?.length === 1)).toBe(true)
+})
+
+it.each([
+  'covered-slot-owner',
+  'covered-grid-text',
+  'missing-peer',
+  'peer-source-alias',
+  'peer-source-literal',
+  'peer-carrier-alias',
+  'peer-baseline-outside',
+  'unknown-parent-ink',
+  'peer-overlap',
+  'span-outside-grid',
+  'second-leaf-spans'
+])(
+  'does not transport a measured descriptor across an unproved shared-row assignment: %s',
+  (variant) => {
+    const f = assignedSharedDescriptor()
+    if (variant === 'covered-slot-owner')
+      f.table.cells.push({ ...structuredClone(f.table.cells[2]), column: 0 })
+    if (variant === 'covered-grid-text') f.table.grid[1][0] = 'Other'
+    if (variant === 'missing-peer') f.table.cells.splice(2, 1)
+    if (variant === 'peer-source-alias') f.tokens.push(structuredClone(f.tokens[1]))
+    if (variant === 'peer-source-literal') f.table.cells[2].sourceItems![0].text = 'Other'
+    if (variant === 'peer-carrier-alias')
+      Object.assign(f.table.cells[2].sourceTokens[0], { sourceItems: [f.tokens[0].sourceItem] })
+    if (variant === 'peer-baseline-outside') f.table.cells[2].rect[3] = 39
+    if (variant === 'unknown-parent-ink')
+      f.tokens.push({
+        text: 'Other',
+        rect: [20, 30, 50, 40],
+        horizontal: true,
+        height: 10,
+        baseline: 40
+      })
+    if (variant === 'peer-overlap') f.table.cells[2].sourceRects[0][1] = 19
+    if (variant === 'span-outside-grid') f.table.cells[0].rowSpan = 4
+    if (variant === 'second-leaf-spans') f.table.cells[1].rowSpan = 2
+    const before = structuredClone(f)
+    refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+    expect(f).toEqual(before)
+  }
+)
+
+it.each([false, true])(
+  'preserves the existing numeric gap rule (extra internal gap: %s)',
+  (extraGap) => {
+    const f = assignedMeasuredLeaves('12.5 12.5', ['12.5', '12.5'])
+    f.observations[0].gaps = [{ index: 4, left: 55, right: 65 }]
+    if (extraGap) f.observations[0].gaps.unshift({ index: 2, left: 30, right: 31 })
+    const before = structuredClone(f)
+    refineMeasuredAssignedNumericSegments(f.table, f.tokens, f.observations)
+    if (extraGap) expect(f).toEqual(before)
+    else
+      expect(f.table.cells.map((c) => c.sourceSegments?.map((s) => [s.start, s.end]))).toEqual([
+        [[0, 4]],
+        [[5, 9]]
+      ])
+  }
+)

@@ -1,16 +1,24 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-
 import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
-
 import { CitationStylesView } from './CitationStylesView'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 afterEach(cleanup)
 
 it('animates only cold hover openings while preserving the shared warm window', async () => {
   vi.useFakeTimers()
+  const previousApi = window.api
+  window.api = { literature: { citationStyles: vi.fn() } } as unknown as Window['api']
   try {
     render(
       <CitationStylesView
@@ -33,6 +41,11 @@ it('animates only cold hover openings while preserving the shared warm window', 
     expect(screen.queryByRole('dialog')).toBeNull()
     await act(() => vi.advanceTimersByTimeAsync(1))
     expect(skipsEntry()).toBe('false')
+    for (const label of ['In-text citation', 'Reference']) {
+      expect(within(screen.getByRole('dialog')).getByText(label).className).toContain(
+        'text-muted-foreground'
+      )
+    }
     fireEvent.pointerLeave(first, { pointerType: 'mouse' })
     fireEvent.pointerEnter(second, { pointerType: 'mouse' })
     expect(skipsEntry()).toBe('true')
@@ -54,6 +67,7 @@ it('animates only cold hover openings while preserving the shared warm window', 
     expect(skipsEntry()).toBe('false')
   } finally {
     cleanup()
+    window.api = previousApi
     vi.useRealTimers()
   }
 })

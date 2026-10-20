@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Check, Copy } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -38,6 +39,8 @@ const LiteratureCitationPanel = ({
   onStyleChange,
   styles
 }: LiteratureCitationPanelProps): React.JSX.Element => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [style, setStyle] = useState(initialStyle)
   const [formatState, setFormatState] = useState<{
@@ -58,7 +61,7 @@ const LiteratureCitationPanel = ({
 
   useEffect(() => {
     let active = true
-    void window.api.literature.formatReferences({ itemIds: [itemId], styleId: style, locale }).then(
+    void hostApi.literature.formatReferences({ itemIds: [itemId], styleId: style, locale }).then(
       (value) => {
         if (!active) return
         setFormatState(
@@ -75,7 +78,7 @@ const LiteratureCitationPanel = ({
     return () => {
       active = false
     }
-  }, [itemId, locale, requestKey, style, t])
+  }, [hostApi.literature, itemId, locale, requestKey, style, t])
 
   const copyCitation = async (kind: CitationCopyKind): Promise<void> => {
     const text =

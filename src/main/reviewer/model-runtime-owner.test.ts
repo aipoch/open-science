@@ -150,7 +150,7 @@ describe('ReviewerModelRuntimeOwner', () => {
             framework: { id: 'claude-code' },
             executablePath: '/agent',
             env: {},
-            responsesBridgeLease: { release: releaseBridge }
+            responsesTransportLease: { release: releaseBridge }
           }) as unknown as ResolvedAgentBackend
       ),
       createRuntime: () => fixedRuntime
@@ -202,7 +202,7 @@ describe('ReviewerModelRuntimeOwner', () => {
       framework: { id: 'claude-code' },
       executablePath: '/agent',
       env: {},
-      responsesBridgeLease: { release: releaseBridge }
+      responsesTransportLease: { release: releaseBridge }
     } as unknown as ResolvedAgentBackend)
 
     await expect(admission).rejects.toThrow('shutting down')

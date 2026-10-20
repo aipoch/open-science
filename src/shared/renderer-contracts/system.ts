@@ -1,3 +1,4 @@
+import type { PackageOperationSnapshot } from '../session-package'
 import { RUNTIME_STARTUP_CHANNELS, type RuntimeStartupState } from '../runtime-startup'
 import {
   DESKTOP_RUNTIME_RECOVERY_CHANNELS,
@@ -41,6 +42,19 @@ export const cliGetStatusContracts = {
 } as const
 
 export const databaseStartupGetStateContracts = {
+  'packagePresentation.getState': callable<() => Promise<PackageOperationSnapshot | null>>()(
+    'sessions',
+    ['package-presentation:get-state', ELECTRON],
+    { optionalRoot: true }
+  ),
+  'packagePresentation.onStateChanged': callable<
+    (listener: AcpListener<PackageOperationSnapshot | null>) => RemoveListener
+  >()('sessions', ['package-presentation:changed', ELECTRON_EVENT], { optionalRoot: true }),
+  'packagePresentation.cancelTransfer': callable<(id: string) => Promise<void>>()(
+    'sessions',
+    ['package-presentation:cancel-transfer', ELECTRON],
+    { optionalRoot: true }
+  ),
   'runtimeStartup.getState': callable<() => Promise<RuntimeStartupState>>()(
     'runtime-startup',
     [RUNTIME_STARTUP_CHANNELS.getState, ELECTRON],

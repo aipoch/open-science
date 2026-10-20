@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 
 // The caller has already established caption paragraph ownership. Rejoin only
@@ -338,6 +339,10 @@ export function nativeCaptionOwnedInlineFragments(page, caption, ownedLines, rul
 // source edge owner. Letters and unknown glyphs stay literal; proven numeric
 // superscripts retain the established plain-caption superscript representation.
 export function nativeCaptionLiteralFragments(page, caption) {
+  return captionLiteralFragments(page, caption)
+}
+
+function captionLiteralFragments(page, caption, controlOwners) {
   if (
     caption.lines.length < 3 ||
     !/^(?:Table|Tab\.?|Fig\.?|Figure\.?)\s+[AS]?\d+(?:[.-]\d+)*[.:]\s/iu.test(caption.lines[0])
@@ -423,7 +428,9 @@ export function nativeCaptionLiteralFragments(page, caption) {
     scripts.get(parent).push(s)
   }
   for (const part of source.filter((l) => !small.includes(l))) {
-    const matches = rows.flatMap((r, index) => (Math.abs(r.head.y - part.y) < 0.1 ? [index] : []))
+    const matches = controlOwners?.has(part)
+      ? [controlOwners.get(part)]
+      : rows.flatMap((r, index) => (Math.abs(r.head.y - part.y) < 0.1 ? [index] : []))
     if (!owners.has(part)) {
       if (matches.length !== 1) return
       owners.set(part, matches[0])
@@ -521,4 +528,370 @@ export function nativeCaptionRaisedIndexLines(page, caption) {
     } else result.push(part.text)
   }
   return used ? result : undefined
+}
+
+// A paired literal control fragment may straddle the nominal prose baseline.
+// Admit it only through the complete original-item and selected-font stream,
+// with unique neighbours in one existing caption row. Never decode its glyph.
+export function nativeCaptionProvenControlFragments(page, caption, fonts, context) {
+  const owners = nativeControlRowOwners(page, caption, fonts, context)
+  return owners ? captionLiteralFragments(page, caption, owners) : undefined
+}
+
+function nativeControlRowOwners(page, caption, fonts, context) {
+  const finite = (r, n) => Array.isArray(r) && r.length === n && r.every(Number.isFinite)
+  const literal = (s) => s.replace(/\s/gu, '')
+  const control = (s) =>
+    s.length === 1 && (s.charCodeAt(0) <= 8 || (s.charCodeAt(0) >= 14 && s.charCodeAt(0) <= 31))
+  if (
+    !caption ||
+    !Number.isSafeInteger(page.pageNumber) ||
+    page.pageNumber < 1 ||
+    caption.page !== page.pageNumber ||
+    caption.regions ||
+    !Array.isArray(caption.lines) ||
+    caption.lines.length < 3 ||
+    !/^(?:Fig(?:ure)?\.?)\s+[A-Z]?\d+[.:]\s/iu.test(caption.lines[0]) ||
+    page.renderRotation !== 0 ||
+    !(
+      Number.isFinite(page.width) &&
+      page.width > 0 &&
+      Number.isFinite(page.height) &&
+      page.height > 0
+    ) ||
+    page.invalidGraphicsBounds !== 0 ||
+    !Array.isArray(page.graphicsBounds) ||
+    !finite(caption.rect, 4) ||
+    !Array.isArray(context?.content?.items) ||
+    !Array.isArray(context.inventory) ||
+    !Array.isArray(fonts) ||
+    !Array.isArray(context.associations) ||
+    context.associations.length !== 1
+  )
+    return
+  const association = context.associations[0]
+  if (
+    association.captionLines ||
+    association.captionRect ||
+    JSON.stringify(association.caption) !== JSON.stringify(caption) ||
+    !finite(association.rect, 4) ||
+    association.rect[3] >= caption.rect[1]
+  )
+    return
+  const v = context.viewport?.transform,
+    ops = context.operators,
+    raw = context.content.items
+  if (
+    !finite(v, 6) ||
+    v[0] !== 1 ||
+    v[1] !== 0 ||
+    v[2] !== 0 ||
+    v[3] !== -1 ||
+    !Array.isArray(ops?.fnArray) ||
+    !Array.isArray(ops.argsArray) ||
+    ops.fnArray.length !== ops.argsArray.length
+  )
+    return
+  const first = page.lines.find(
+    (l) =>
+      caption.lines[0].startsWith(l.text) &&
+      Math.abs(l.x - caption.rect[0]) < 0.1 &&
+      Math.abs(l.y - caption.rect[1]) < l.fontSize * 0.3
+  )
+  if (!first) return
+  const em = first.fontSize,
+    frame = [
+      caption.rect[0],
+      Math.min(caption.rect[1], first.y - em * 0.3),
+      caption.rect[2],
+      caption.rect[3] + em * 0.4
+    ]
+  const intersects = (r) => r[0] < frame[2] && r[2] > frame[0] && r[1] < frame[3] && r[3] > frame[1]
+  const within = (r) =>
+    r[0] >= frame[0] - 0.1 &&
+    r[2] <= frame[2] + 0.1 &&
+    r[1] >= frame[1] - 0.1 &&
+    r[3] <= frame[3] + 0.1
+  if (
+    !Array.isArray(context.rules) ||
+    context.rules.some(
+      (r) =>
+        !finite(r, 4) ||
+        intersects([
+          Math.min(r[0], r[2]),
+          Math.min(r[1], r[3]),
+          Math.max(r[0], r[2]),
+          Math.max(r[1], r[3])
+        ])
+    )
+  )
+    return
+  if (
+    page.graphicsBounds.some(
+      (g) =>
+        !['path', 'image'].includes(g.kind) ||
+        !finite(g.normalizedRect, 4) ||
+        g.normalizedRect.some((v) => v < 0 || v > 1) ||
+        g.normalizedRect[2] < g.normalizedRect[0] ||
+        g.normalizedRect[3] < g.normalizedRect[1] ||
+        intersects(g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width)))
+    )
+  )
+    return
+  const source = page.lines.filter(
+    (l) => l.text.trim() && intersects([l.x, l.y, l.x + l.width, l.y + l.height])
+  )
+  const selected = source.filter((l) => control(l.text))
+  if (
+    selected.length !== 2 ||
+    selected.some((l) => Math.abs(l.fontSize - em) > 0.1) ||
+    Math.abs(selected[0].y - selected[1].y) > 0.02
+  )
+    return
+  // Unknown extra source carriers are never treated as harmless aliases.
+  const carriers = (value) => {
+    const counts = new Map(),
+      active = new Set()
+    const walk = (x) => {
+      if (!x || typeof x !== 'object') return true
+      if (active.has(x)) return false
+      active.add(x)
+      if (Number.isSafeInteger(x.pageNumber) && Number.isSafeInteger(x.index)) {
+        const k = x.pageNumber + ':' + x.index
+        counts.set(k, (counts.get(k) ?? 0) + 1)
+      }
+      for (const y of Object.values(x)) if (!walk(y)) return false
+      active.delete(x)
+      return true
+    }
+    return walk(value) ? counts : undefined
+  }
+  const rc = carriers(context.content),
+    ic = carriers(context.inventory),
+    fc = carriers(fonts)
+  if (!rc || !ic || !fc) return
+  const byIndex = new Map(),
+    native = []
+  for (const t of context.inventory) {
+    const s = t.sourceItem,
+      r = raw[s?.index],
+      key = s?.pageNumber + ':' + s?.index
+    if (
+      !s ||
+      s.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(s.index) ||
+      s.index < 0 ||
+      byIndex.has(s.index) ||
+      r?.str !== t.text ||
+      s.text !== t.text ||
+      r.fontName !== t.fontName ||
+      rc.get(key) !== 1 ||
+      ic.get(key) !== 1 ||
+      !finite(t.rect, 4) ||
+      !finite(r.transform, 6) ||
+      r.sourceItem?.index !== s.index ||
+      r.sourceItem.pageNumber !== s.pageNumber ||
+      r.sourceItem.text !== s.text ||
+      ['sourceToken', 'sourceSegment', 'sourceItems', 'sourceSegments'].some(
+        (k) => r[k] !== undefined || t[k] !== undefined
+      )
+    )
+      return
+    byIndex.set(s.index, t)
+    const [a, b, c, d, x, y] = r.transform,
+      point = [v[0] * x + v[2] * y + v[4], v[1] * x + v[3] * y + v[5]],
+      rect = [point[0], point[1] - r.height, point[0] + r.width, point[1]]
+    if (!intersects(rect)) continue
+    if (
+      !(a > 0 && d > 0 && r.width > 0 && r.height > 0) ||
+      b !== 0 ||
+      c !== 0 ||
+      !within(rect) ||
+      rect.some((z, i) => Math.abs(z - t.rect[i]) > 1e-7) ||
+      t.horizontal !== true
+    )
+      return
+    const f = fonts.filter(
+      (f) => f.sourceItem?.index === s.index && f.sourceItem?.pageNumber === s.pageNumber
+    )
+    if (
+      f.length !== 1 ||
+      fc.get(key) !== 1 ||
+      f[0].text !== r.str ||
+      f[0].sourceItem.text !== r.str ||
+      !finite(f[0].rect, 4) ||
+      f[0].rect.some((z, i) => Math.abs(z - rect[i]) > 1e-7) ||
+      ['sourceToken', 'sourceSegment', 'sourceItems', 'sourceSegments'].some(
+        (k) => f[0][k] !== undefined
+      )
+    )
+      return
+    native.push({ r, rect, index: s.index })
+  }
+  if (byIndex.size !== raw.filter((r) => typeof r.str === 'string' && r.str.trim()).length) return
+  const chars = (s) => [...literal(s)].sort().join('')
+  if (chars(source.map((l) => l.text).join('')) !== chars(native.map((n) => n.r.str).join('')))
+    return
+  const heads = source
+    .filter((l) => Math.abs(l.x - first.x) < em * 0.1 && Math.abs(l.fontSize - em) < 0.1)
+    .sort((a, b) => a.y - b.y)
+  const bases = source.filter((l) => l.fontSize > em * 0.8),
+    owners = new Map(),
+    chosen = []
+  const nonblank = raw.flatMap((r, index) =>
+    typeof r.str === 'string' && r.str.trim() ? [{ r, index }] : []
+  )
+  // An exact contiguous original-item interval must also fit the complete native line.
+  const anchor = (at, step, line) => {
+    let text = '',
+      parts = []
+    for (let i = at; i >= 0 && i < nonblank.length; i += step) {
+      const n = nonblank[i],
+        t = byIndex.get(n.index)
+      if (!t) return false
+      text = step < 0 ? literal(n.r.str) + text : text + literal(n.r.str)
+      parts.push(t)
+      if (text.length >= literal(line.text).length) break
+    }
+    return (
+      text === literal(line.text) &&
+      parts.length > 0 &&
+      parts.every(
+        (t) =>
+          t.rect[0] >= line.x - 0.02 &&
+          t.rect[2] <= line.x + line.width + 0.02 &&
+          t.rect[1] >= line.y - 0.02 &&
+          t.rect[3] <= line.y + line.height + 0.02
+      )
+    )
+  }
+  for (const line of selected) {
+    const i = bases.indexOf(line),
+      left = bases[i - 1],
+      right = bases[i + 1]
+    if (
+      !left ||
+      !right ||
+      control(left.text) ||
+      control(right.text) ||
+      Math.abs(left.y - right.y) > 0.02 ||
+      !(line.y < left.y && line.y + line.height > left.y) ||
+      line.x - left.x - left.width < -0.02 ||
+      line.x - left.x - left.width >= em * 0.5 ||
+      right.x - line.x - line.width < -0.02 ||
+      right.x - line.x - line.width >= em * 0.5
+    )
+      return
+    const rows = heads.flatMap((h, i) => (Math.abs(h.y - left.y) < 0.1 ? [i] : []))
+    if (rows.length !== 1) return
+    const matched = native.filter(
+      (n) =>
+        n.r.str === line.text &&
+        Math.abs(n.rect[0] - line.x) < 0.02 &&
+        Math.abs(n.rect[1] - line.y) < 0.02 &&
+        Math.abs(n.rect[2] - line.x - line.width) < 0.02 &&
+        Math.abs(n.rect[3] - line.y - line.height) < 0.02
+    )
+    if (matched.length !== 1) return
+    const n = matched[0],
+      pos = nonblank.findIndex((t) => t.index === n.index),
+      style = context.content.styles?.[n.r.fontName]
+    if (
+      !style ||
+      style.vertical !== false ||
+      !Number.isFinite(style.ascent) ||
+      !Number.isFinite(style.descent) ||
+      !anchor(pos - 1, -1, left) ||
+      !anchor(pos + 1, 1, right)
+    )
+      return
+    chosen.push(n)
+    owners.set(line, rows[0])
+  }
+  if (chosen[0].r.fontName !== chosen[1].r.fontName || chosen[0].index >= chosen[1].index) return
+  const fontName = chosen[0].r.fontName,
+    shown = [],
+    stack = []
+  let active
+  for (let i = 0; i < ops.fnArray.length; i++) {
+    const op = ops.fnArray[i],
+      a = ops.argsArray[i]
+    if ([OPS.save, OPS.paintFormXObjectBegin, OPS.beginGroup].includes(op))
+      stack.push({ operation: op, font: active })
+    else if ([OPS.restore, OPS.paintFormXObjectEnd, OPS.endGroup].includes(op)) {
+      if (!stack.length) return
+      const saved = stack.pop()
+      const expected =
+        op === OPS.restore
+          ? OPS.save
+          : op === OPS.paintFormXObjectEnd
+            ? OPS.paintFormXObjectBegin
+            : OPS.beginGroup
+      if (saved.operation !== expected) return
+      active = saved.font
+    } else if (op === OPS.setFont) {
+      if (!Array.isArray(a) || typeof a[0] !== 'string') return
+      active = a[0]
+    } else if (op === OPS.setGState) {
+      if (
+        !Array.isArray(a?.[0]) ||
+        a[0].some((entry) => !Array.isArray(entry) || entry.length !== 2)
+      )
+        return
+      for (const [k, value] of a[0])
+        if (k === 'Font') {
+          if (!Array.isArray(value) || typeof value[0] !== 'string') return
+          active = value[0]
+        }
+    } else if (
+      [
+        OPS.showText,
+        OPS.showSpacedText,
+        OPS.nextLineShowText,
+        OPS.nextLineSetSpacingShowText
+      ].includes(op) &&
+      active === fontName
+    ) {
+      if (!Array.isArray(a)) return
+      for (const glyph of a.flat()) {
+        if (typeof glyph === 'number' && Number.isFinite(glyph)) continue
+        if (!glyph || typeof glyph !== 'object' || typeof glyph.unicode !== 'string') return
+        shown.push({ glyph, operationIndex: i })
+      }
+    }
+  }
+  if (stack.length) return
+  const nativeFont = nonblank.filter((n) => n.r.fontName === fontName)
+  if (
+    literal(nativeFont.map((n) => n.r.str).join('')) !==
+    literal(shown.map((s) => s.glyph.unicode).join(''))
+  )
+    return
+  for (const n of chosen) {
+    const start = literal(
+      nativeFont
+        .filter((t) => t.index < n.index)
+        .map((t) => t.r.str)
+        .join('')
+    ).length
+    let offset = 0,
+      matched = []
+    for (const s of shown) {
+      const text = literal(s.glyph.unicode),
+        from = offset
+      offset += text.length
+      if (offset > start && from < start + 1) matched.push(s)
+    }
+    if (matched.length !== 1) return
+    const g = matched[0].glyph
+    if (
+      g.unicode !== n.r.str ||
+      g.originalCharCode !== n.r.str.charCodeAt(0) ||
+      g.isInFont !== true ||
+      g.isSpace ||
+      g.accent
+    )
+      return
+  }
+  return owners
 }

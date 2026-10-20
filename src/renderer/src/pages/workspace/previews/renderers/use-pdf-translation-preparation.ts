@@ -6,6 +6,7 @@ import {
   extractPdfTranslationSource,
   type PdfTranslationExtraction,
   applyCachedPdfTableSources,
+  applyCachedPdfFigureSources,
   type PdfTranslationSourceIdentity
 } from '@aipoch/pdf-translation/reader'
 import { useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react'
@@ -101,7 +102,7 @@ export function usePdfTranslationPreparation(
       onProgress: (pagesRead) => publish({ status: 'running', pagesRead })
     })
       .then(async (extraction) => {
-        const prepared =
+        let prepared =
           attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached
             ? await applyCachedPdfTableSources({
                 extraction,
@@ -113,6 +114,16 @@ export function usePdfTranslationPreparation(
                   window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
               })
             : extraction
+        if (attachmentVersionId && sourceIdentity && window.api.pdfStructure?.readCached)
+          prepared = await applyCachedPdfFigureSources({
+            extraction: prepared,
+            document,
+            sourceId: attachmentVersionId,
+            sourceIdentity,
+            signal: controller.signal,
+            readCached: ({ sourceId, page }) =>
+              window.api.pdfStructure.readCached({ attachmentVersionId: sourceId, page })
+          })
         controller.signal.throwIfAborted()
         rememberPdfTranslationExtraction(prepared)
         if (checkpoint && !checkpoint.layoutSnapshot && window.api.pdfTranslation?.saveSnapshot) {

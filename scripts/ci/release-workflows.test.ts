@@ -268,7 +268,6 @@ describe('release and scheduled workflow topology', () => {
       'packages/notebook-analysis/src/dependency-analysis.test.ts',
       'src/main/notebook/working-file-observer.analysis-contract.integration.test.ts',
       'packages/notebook-analysis/src/dependency-analysis.chord.test.ts',
-      'packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts',
       'packages/notebook-analysis/src/dependency-analysis.path-plot.test.ts',
       'packages/notebook-analysis/src/dependency-analysis.anndata.test.ts',
       'src/main/artifacts/artifact-reproducibility-outputs.test.ts',
@@ -989,7 +988,7 @@ if ($artifactSaveBase -eq $artifactSaveCommit) {
     const advisory = name === 'nightly.yml' ? " || steps.advisory.outputs.ok != 'true'" : ''
     expect(script.env?.CONCLUSION).toBe(
       name === 'source-regression.yml'
-        ? "${{ needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}"
+        ? "${{ needs.macos_setup.result == 'success' && needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}"
         : `\${{ (contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')${advisory}) && 'failure' || 'success' }}`
     )
     if (name === 'nightly.yml') {

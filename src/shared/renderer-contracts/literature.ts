@@ -51,7 +51,12 @@ import type {
   LiteratureSourceRecordView
 } from '@aipoch/literature-library/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
-import type { LiteratureCatalogSearchPage, LiteraturePdfImportRequest } from '../literature'
+import type {
+  LiteratureCatalogSearchPage,
+  LiteraturePdfImportRequest,
+  LiteratureCandidateStatesRequest,
+  LiteratureCandidateStatesResult
+} from '../literature'
 
 import {
   callable,
@@ -64,6 +69,15 @@ import {
 } from './definition'
 
 export const contracts = {
+  'literature.getCandidateStates': callable<
+    (request: LiteratureCandidateStatesRequest) => Promise<LiteratureCandidateStatesResult>
+  >()('literature', [
+    'literature:get-candidate-states',
+    WEB,
+    undefined,
+    undefined,
+    RUNTIME_VALIDATED
+  ]),
   'literature.journals': callable<(request: JournalRequest) => Promise<JournalResult>>()(
     'literature',
     ['literature:journals', WEB, undefined, undefined, RUNTIME_VALIDATED]

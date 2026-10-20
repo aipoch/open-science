@@ -97,6 +97,10 @@
     {
       "root": "packages/test-impact",
       "dependencies": []
+    },
+    {
+      "root": "packages/providers",
+      "dependencies": ["packages/diagnostics"]
     }
   ]
 }

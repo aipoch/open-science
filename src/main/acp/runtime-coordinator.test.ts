@@ -271,17 +271,11 @@ const createFakeRuntime = (options: {
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
-  const sessionEfforts = new Map<
-    string,
-    import('../../shared/reasoning-effort').ResolvedReasoningEffort
-  >()
+  const sessionEfforts = new Map<string, import('@aipoch/providers').ResolvedReasoningEffort>()
   const runtime = {
     getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
     applySessionReasoningEffortChange: vi.fn(
-      async (
-        id: string,
-        effort: import('../../shared/reasoning-effort').ResolvedReasoningEffort
-      ) => {
+      async (id: string, effort: import('@aipoch/providers').ResolvedReasoningEffort) => {
         sessionEfforts.set(id, effort)
         return true
       }
@@ -6498,7 +6492,7 @@ it('does not reopen a newer quit when an older cancelled cleanup settles', async
 })
 
 it('defers cancelled quit admission until late cleanup settles', async () => {
-  const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
+  const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
     await import('../lifecycle-shutdown')
   vi.useFakeTimers()
   const cleanup = createDeferred<{ reaped: boolean }>()
@@ -6530,7 +6524,7 @@ it('defers cancelled quit admission until late cleanup settles', async () => {
     })
     await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
     const preparation = shutdown.runForQuitPreparation()
-    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+    await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
     await expect(preparation).resolves.toBe('timeout')
     coordinator.abortQuitPreparation()
     await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
@@ -6552,7 +6546,7 @@ it('defers cancelled quit admission until late cleanup settles', async () => {
 it.each(['reaped', 'unreaped', 'rejected'] as const)(
   'keeps new session routing and its next quit owner after late %s cleanup',
   async (outcome) => {
-    const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
+    const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
       await import('../lifecycle-shutdown')
     const child = spawn(process.execPath, ['-e', 'process.on("message", () => process.exit(0))'], {
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
@@ -6607,7 +6601,7 @@ it.each(['reaped', 'unreaped', 'rejected'] as const)(
       })
       await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
       const preparation = shutdown.runForQuitPreparation()
-      await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+      await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
       await expect(preparation).resolves.toBe('timeout')
       coordinator.abortQuitPreparation()
       await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
@@ -6776,7 +6770,7 @@ describe('bounded ACP admission fences', () => {
 })
 
 it('admits a new Codex runtime after cancelled quit cleanup settles', async () => {
-  const { BackendShutdownCoordinator, QUIT_SHUTDOWN_BUDGET_MS } =
+  const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
     await import('../lifecycle-shutdown')
   vi.useFakeTimers()
   const cleanup = createDeferred<{ reaped: boolean }>()
@@ -6808,7 +6802,7 @@ it('admits a new Codex runtime after cancelled quit cleanup settles', async () =
     })
     await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
     const preparation = shutdown.runForQuitPreparation()
-    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+    await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
     await expect(preparation).resolves.toBe('timeout')
     coordinator.abortQuitPreparation()
     await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')

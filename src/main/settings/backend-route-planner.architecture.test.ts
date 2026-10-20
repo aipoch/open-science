@@ -83,7 +83,7 @@ describe('Backend route planning ownership', () => {
   it('keeps the pure planner free of live resource ownership', () => {
     const source = readSource(plannerPath)
     expect(source).not.toMatch(
-      /new\s+(?:ResponsesBridge|NativeResponsesCompatibilityProxy|AnthropicProviderBridge|OpenAiProviderBridge)|\.start\(|\.close\(|\blease\b|nextGenerationId|randomUUID|new\s+Map|responsesBridges|nativeResponsesCompatibilityProxies/
+      /new\s+(?:ResponsesToChatCompletionsBridge|NativeResponsesCompatibilityProxy|MessagesBridge|ProtocolForwardingBridge)|\.start\(|\.close\(|\blease\b|nextGenerationId|randomUUID|new\s+Map|responsesToChatCompletionsBridges|nativeResponsesCompatibilityProxies/
     )
     expect(source).not.toMatch(/console\.|JSON\.stringify\([^\n]*(?:key|token|credential)/i)
   })

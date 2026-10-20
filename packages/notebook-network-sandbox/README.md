@@ -29,6 +29,8 @@ their separate routing behavior.
 
 ## Architecture
 
+See [safety and integration](#safety-and-integration) for the limits of these controls.
+
 ```text
 Settings > Network
   ├─ built-in automatic-access groups
@@ -215,6 +217,21 @@ does not add a setting or change the ownership receipt format.
 
 Packaged callers pass `join(process.resourcesPath, 'notebook-network-sandbox')` as `resources.root`.
 Development callers point it at this package's `vendor` directory.
+
+## Safety and integration
+
+- **Scope:** Application-owned Notebook and package-management processes. Agent-native tools,
+  renderer/browser requests, model transports, Connectors, and remote hosts have separate boundaries.
+- **Controls:** Declared filesystem roots, command-attributed network policy, environment projection,
+  and the platform mechanisms described above. Windows enforcement requires protected-mode setup.
+- **Remaining risks:** Standard Windows proxy settings are not hard isolation. Public HTTPS GET/HEAD
+  admission is not allowlist-only; paths and queries can disclose data. A per-request size limit
+  does not bound total disclosure. Persistent-kernel background work shares its process principal.
+  Granted writable files remain subject to code side effects.
+- **Safe integration:** Supply minimal roots and environments, review mode/readiness for new processes,
+  retain backups, and release process/proxy resources on shutdown. Use an externally enforced
+  restricted environment when requirements exceed these boundaries. See the application's
+  [known limitations](https://github.com/aipoch/open-science/blob/main/docs/known-limitations.md).
 
 ## Native host builds
 

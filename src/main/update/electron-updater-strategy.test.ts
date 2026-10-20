@@ -1,4 +1,4 @@
-import type { WindowsInstallProgress } from './windows-install-progress'
+import type { WindowsUpdateHandoff } from './windows-update-handoff'
 import { UPDATE_INSTALLATION_REQUIRED } from '../../shared/update'
 import { EventEmitter } from 'node:events'
 
@@ -1549,25 +1549,26 @@ describe('ElectronUpdaterStrategy', () => {
   })
 })
 
-describe('Windows update window handoff', () => {
-  it('keeps the application alive until the independent window acknowledges readiness', async () => {
+describe('Windows native installer handoff', () => {
+  const platform = 'win32' as const
+  it('keeps the application alive until its profile handoff is durably prepared', async () => {
     const updater = new FakeUpdater()
-    let acknowledge!: (value: WindowsInstallProgress) => void
-    const startInstallProgress = vi.fn(
+    let acknowledge!: (value: WindowsUpdateHandoff) => void
+    const prepareInstallHandoff = vi.fn(
       () =>
-        new Promise<WindowsInstallProgress>((resolve) => {
+        new Promise<WindowsUpdateHandoff>((resolve) => {
           acknowledge = resolve
         })
     )
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
-      startInstallProgress
+      prepareInstallHandoff
     })
     await markUpdateReady(strategy, updater)
     const apply = strategy.apply()
-    await vi.waitFor(() => expect(startInstallProgress).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(prepareInstallHandoff).toHaveBeenCalledOnce())
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
     acknowledge({
       operationId: '00000000-0000-4000-8000-000000000001',
@@ -1578,25 +1579,25 @@ describe('Windows update window handoff', () => {
     expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
   })
 
-  it('refuses installation before backend shutdown when the independent window cannot start', async () => {
+  it('refuses installation before backend shutdown when the profile handoff cannot be prepared', async () => {
     const updater = new FakeUpdater()
     const installGate = vi.fn(async () => ({ completed: true, reaped: true }))
     const releaseInstallHandoff = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
       releaseInstallHandoff,
       installGate,
-      startInstallProgress: async () => {
-        throw new Error('Window readiness failed')
+      prepareInstallHandoff: async () => {
+        throw new Error('Handoff preparation failed')
       }
     })
     await markUpdateReady(strategy, updater)
     expect(await strategy.apply()).toMatchObject({
       state: 'error',
       reason: 'install-failed',
-      error: 'Window readiness failed'
+      error: 'Handoff preparation failed'
     })
     expect(installGate).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).not.toHaveBeenCalled()
@@ -1604,14 +1605,14 @@ describe('Windows update window handoff', () => {
     expect(currentApplicationShutdownTrigger()).not.toBe('update')
   })
 
-  it('notifies the progress companion when installer handoff is uncertain', async () => {
+  it('retains an uncertain handoff when the installer reports a submission error', async () => {
     const updater = new FakeUpdater()
     const cancel = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
-      startInstallProgress: async () => ({
+      prepareInstallHandoff: async () => ({
         operationId: '00000000-0000-4000-8000-000000000001',
         handoff: vi.fn(),
         cancel
@@ -1624,18 +1625,73 @@ describe('Windows update window handoff', () => {
     expect(strategy.getStatus()).toMatchObject({ state: 'error' })
   })
 
-  it('does not show an interactive window for non-relaunching updates', async () => {
+  it.each(['custom', 'legacy', 'failure'] as const)(
+    'commits the profile handoff before the custom installer can exit the application: %s',
+    async (outcome) => {
+      const updater = new FakeUpdater()
+      const handoff = vi.fn()
+      const cancel = vi.fn()
+      const executeInstall = vi.fn(async () => {
+        expect(handoff).toHaveBeenCalledOnce()
+        if (outcome === 'failure') throw new Error('Installer acknowledgement unavailable')
+        return outcome === 'legacy' ? ('legacy' as const) : undefined
+      })
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        platform,
+        broadcast: vi.fn(),
+        executeInstall,
+        prepareInstallHandoff: async () => ({ operationId: 'test-operation', handoff, cancel })
+      })
+      await markUpdateReady(strategy, updater)
+      await strategy.apply()
+      expect(executeInstall).toHaveBeenCalledOnce()
+      expect(handoff).toHaveBeenCalledOnce()
+      expect(updater.quitAndInstall).toHaveBeenCalledTimes(outcome === 'legacy' ? 1 : 0)
+      expect(cancel).toHaveBeenCalledTimes(outcome === 'failure' ? 1 : 0)
+      if (outcome === 'failure')
+        expect(strategy.getStatus()).toMatchObject({
+          reason: 'install-failed',
+          error: 'Installer acknowledgement unavailable'
+        })
+    }
+  )
+
+  it('cancels the prepared profile handoff when final preparation fails', async () => {
     const updater = new FakeUpdater()
-    const startInstallProgress = vi.fn()
+    const handoff = vi.fn()
+    const cancel = vi.fn()
+    const executeInstall = vi.fn()
     const strategy = new ElectronUpdaterStrategy({
       updater,
-      platform: 'win32',
+      platform,
       broadcast: vi.fn(),
-      startInstallProgress
+      executeInstall,
+      beforeInstallHandoff: async () => {
+        throw new Error('Preparation failed')
+      },
+      prepareInstallHandoff: async () => ({ operationId: 'test-operation', handoff, cancel })
+    })
+    await markUpdateReady(strategy, updater)
+    await strategy.apply()
+    expect(cancel).toHaveBeenCalledOnce()
+    expect(handoff).not.toHaveBeenCalled()
+    expect(executeInstall).not.toHaveBeenCalled()
+    expect(updater.quitAndInstall).not.toHaveBeenCalled()
+  })
+
+  it('does not prepare a successor profile for non-relaunching updates', async () => {
+    const updater = new FakeUpdater()
+    const prepareInstallHandoff = vi.fn()
+    const strategy = new ElectronUpdaterStrategy({
+      updater,
+      platform,
+      broadcast: vi.fn(),
+      prepareInstallHandoff
     })
     await markUpdateReady(strategy, updater)
     await strategy.apply({ relaunch: false })
-    expect(startInstallProgress).not.toHaveBeenCalled()
+    expect(prepareInstallHandoff).not.toHaveBeenCalled()
     expect(updater.quitAndInstall).toHaveBeenCalledWith(true, false)
   })
 })

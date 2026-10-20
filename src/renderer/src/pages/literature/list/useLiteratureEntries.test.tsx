@@ -1,12 +1,19 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook, type RenderHookResult } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { act, cleanup, type RenderHookResult } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import type { LiteratureCatalogSearchRequest } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
 import { useLiteratureEntries } from './useLiteratureEntries'
+
+const { renderHook } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const page: LiteratureCatalogSearchPage = { entries: [], totalCount: 0 }
 const search =

@@ -1,9 +1,17 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { StrictMode } from 'react'
-import { act, cleanup, render, screen } from '@testing-library/react'
+import { act, cleanup, screen } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureLibraryCount } from './LiteratureLibraryCount'
 import type { LiteratureCatalogSearchPage } from '../../../../../shared/literature'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 afterEach(cleanup)
 

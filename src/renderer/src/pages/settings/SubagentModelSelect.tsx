@@ -16,12 +16,13 @@ import {
   parseConfiguredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import type { ReasoningEffort } from '../../../../shared/model-preference-contract'
-import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
   projectReasoningEffortIntent,
   resolveReasoningEffortControl
 } from '../../../../shared/reasoning-effort'
+import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+
 import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { providerKindKey } from './provider-form-value'
 import { ProviderKindIcon } from './provider-icons'

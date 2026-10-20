@@ -56,7 +56,7 @@ import {
   type AcpRuntimeEvent,
   type AcpStateSnapshot
 } from '../../shared/acp'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import { terminateProcessTree } from '../process-tree'
 import { AgentMcpHttpHost } from './mcp-http-host'
 import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
@@ -183,7 +183,7 @@ const asAgentProcess = (process: FakeAgentProcess): ChildProcessWithoutNullStrea
 
 const createBackendLeaseHarness = (): {
   release: () => Promise<void>
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  lease: NonNullable<ResolvedAgentBackend['responsesTransportLease']>
 } => {
   const release = vi.fn(async () => undefined)
   return {
@@ -583,7 +583,7 @@ const startPendingReviewerRace = async (
   sessionIds: string[]
 ): Promise<{
   fakeAgent: ReturnType<typeof startFakeAgent>
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  lease: NonNullable<ResolvedAgentBackend['responsesTransportLease']>
   runtime: AcpRuntime
   reviewer: ReturnType<AcpRuntime['buildReviewerSession']>
   request: Parameters<AcpRuntime['buildReviewerSession']>[0]
@@ -612,7 +612,7 @@ const startPendingReviewerRace = async (
       framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
       executablePath: '/bin/codex-acp',
       env: {},
-      responsesBridgeLease: lease
+      responsesTransportLease: lease
     })
   })
   const request = {
@@ -647,7 +647,7 @@ const startPendingPrimaryRace = async (
   startPrimary: StartPrimarySession
 ): Promise<{
   fakeAgent: ReturnType<typeof startFakeAgent>
-  lease: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+  lease: NonNullable<ResolvedAgentBackend['responsesTransportLease']>
   runtime: AcpRuntime
   primary: ReturnType<AcpRuntime['createSession']>
   reviewer: ReturnType<AcpRuntime['buildReviewerSession']>
@@ -676,7 +676,7 @@ const startPendingPrimaryRace = async (
       framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
       executablePath: '/bin/codex-acp',
       env: {},
-      responsesBridgeLease: lease
+      responsesTransportLease: lease
     })
   })
   const primary = startPrimary(runtime)
@@ -1989,7 +1989,7 @@ describe('unattended permission prompt ownership', () => {
           executablePath: '/bin/agent',
           env: {},
           ...(modelRoute === 'codex-bridge'
-            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
             : {})
         })
       })
@@ -2064,7 +2064,7 @@ describe('ACP runtime provider prompt acceptance', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -2128,7 +2128,7 @@ describe('ACP runtime incremental publication routes', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -2198,7 +2198,7 @@ describe('host-owned Notebook code-risk review receipts', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
       const session = await runtime.createSession({ cwd: '/workspace', permissionProfile: 'ask' })
@@ -2325,7 +2325,7 @@ describe('ACP Notebook permission presentation contract', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -2501,7 +2501,7 @@ describe('ACP Notebook permission presentation contract', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -2691,7 +2691,7 @@ describe('ACP Notebook permission presentation contract', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -3139,7 +3139,7 @@ describe('ACP runtime restored permission continuation', () => {
           executablePath: '/bin/agent',
           env: {},
           ...(modelRoute === 'codex-bridge'
-            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
             : {})
         })
       })
@@ -3568,7 +3568,7 @@ describe('ACP runtime restored permission continuation', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
       await runtime.createSession({ cwd: '/workspace', projectId: 'project-1' })
@@ -3911,7 +3911,7 @@ describe('ACP runtime restored permission continuation', () => {
           env: {},
           contextWindow: 200_000,
           supportsImageInput,
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -5927,7 +5927,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -6649,7 +6649,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -6674,7 +6674,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -7361,6 +7361,110 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      [
+        { nativeChoice: true, action: 'quit' },
+        { nativeChoice: true, action: 'stop' },
+        { nativeChoice: false, action: 'quit' }
+      ].map((scenario) => ({ name, framework, modelRoute, backendId, ...scenario }))
+    )
+  )(
+    'settles native-question lifecycle through $name (nativeChoice: $nativeChoice, action: $action)',
+    async ({ framework, modelRoute, backendId, nativeChoice, action }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['native-quit-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'native-quit-question',
+          message: 'Choose an approach',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              question_0: { type: 'string', title: 'Approach', enum: ['Focused', 'Broad'] },
+              ...(nativeChoice ? { question_0_custom: { type: 'string', title: 'Other' } } : {})
+            }
+          }
+        })
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => ({
+              framework: { ...framework, spawn: () => asAgentProcess(process) },
+              backendId,
+              modelRoute,
+              executablePath: '/bin/agent',
+              env: {},
+              ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+            })
+          })
+      )
+      let prompting: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1'
+        })
+        prompting = coordinator.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'Ask before proceeding',
+          provenanceContext: { promptMessageId: 'prompt-native-quit' }
+        })
+        void prompting.catch(() => undefined)
+        await vi.waitFor(() =>
+          expect(coordinator.getSnapshot().pendingElicitations).toHaveLength(1)
+        )
+        const request = coordinator.getSnapshot().pendingElicitations![0]
+        expect(Boolean(request.durable)).toBe(nativeChoice)
+        expect(coordinator.getActivePromptSessions()).toEqual([
+          { projectId: 'project-1', sessionId: session.sessionId }
+        ])
+
+        if (action === 'quit') await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+        else await coordinator.cancelPrompt({ sessionId: session.sessionId })
+
+        const preserved = nativeChoice && action === 'quit'
+        expect(
+          coordinator
+            .getSnapshot()
+            .events.filter((event) => event.toolCallId === 'native-quit-question')
+            .at(-1)?.elicitation?.state
+        ).toBe(preserved ? 'pending' : 'cancelled')
+        if (preserved) {
+          expect(fakeAgent.cancelledSessions).toEqual([])
+          expect(coordinator.getQuitBlockingPromptSessions()).toEqual([])
+          expect(coordinator.getActivePromptSessions()).toHaveLength(1)
+          coordinator.abortQuitPreparation()
+          await coordinator.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Focused' }]
+          })
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Focused' } }
+          ])
+        } else {
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+      } finally {
+        await coordinator.shutdownForQuit()
+        await prompting?.catch(() => undefined)
+      }
+    }
+  )
+
   it('makes a provider-native AskUserQuestion form durable for restore and revision', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['native-choice-session'], {
@@ -7826,7 +7930,7 @@ describe('ACP runtime session management', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
       const session = await runtime.createSession({ cwd: '/workspace' })
@@ -8809,7 +8913,7 @@ describe('ACP runtime session management', () => {
           env: {},
           contextWindow: 200_000,
           supportsImageInput: true,
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
 
@@ -9925,7 +10029,7 @@ describe('ACP runtime session management', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {}),
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {}),
           ...(framework.id === 'opencode'
             ? { opencodeUsageApi: { baseUrl: 'http://localhost:4242', authorization: 'test' } }
             : {})
@@ -13221,7 +13325,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     const internal = runtime as unknown as { connectionAdapter: AcpAgentConnectionAdapter }
@@ -14183,7 +14287,7 @@ describe('ACP runtime session management', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         }),
         artifacts: {
           configRoot: root,
@@ -16271,7 +16375,7 @@ describe('ACP runtime session management', () => {
             },
             executablePath: '/bin/codex-acp',
             env: {},
-            responsesBridgeLease: useOld ? oldBridge.lease : newBridge.lease
+            responsesTransportLease: useOld ? oldBridge.lease : newBridge.lease
           }
         }
       })
@@ -16363,7 +16467,7 @@ describe('ACP runtime session management', () => {
           },
           executablePath: '/bin/codex-acp',
           env: {},
-          responsesBridgeLease: useOld ? oldBridge.lease : newBridge.lease
+          responsesTransportLease: useOld ? oldBridge.lease : newBridge.lease
         }
       }
     })
@@ -16416,7 +16520,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     const reviewerRequest: Parameters<AcpRuntime['buildReviewerSession']>[0] = {
@@ -16478,7 +16582,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -16514,7 +16618,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -16559,7 +16663,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     await runtime.connect({ cwd: '/workspace' })
@@ -17104,7 +17208,7 @@ describe('ACP runtime session management', () => {
           },
           executablePath: '/bin/agent',
           env: {},
-          responsesBridgeLease: useOld ? oldBridge.lease : newBridge.lease
+          responsesTransportLease: useOld ? oldBridge.lease : newBridge.lease
         }
       }
     })
@@ -17565,7 +17669,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     await runtime.connect({ cwd: '/workspace' })
@@ -17667,7 +17771,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     await runtime.connect({ cwd: '/workspace' })
@@ -17826,7 +17930,7 @@ describe('ACP runtime session management', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
     await runtime.createSession({ cwd: '/workspace' })
@@ -22272,7 +22376,7 @@ describe('ACP runtime session management', () => {
           baseUrl: 'http://127.0.0.1:1/v1',
           headers: { authorization: 'Bearer bridge' }
         },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession,
           unregisterReviewerSession,
@@ -22322,7 +22426,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/claude',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession,
           unregisterReviewerSession,
@@ -22369,7 +22473,7 @@ describe('ACP runtime session management', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
@@ -25038,7 +25142,7 @@ describe('ACP runtime session management', () => {
           executablePath: '/bin/agent',
           env: {},
           ...(modelRoute === 'codex-bridge'
-            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
             : {})
         }),
         artifacts: {
@@ -26249,7 +26353,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         },
         executablePath: '/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex' },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills,
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -26319,7 +26423,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex' },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills,
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -26385,7 +26489,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         },
         executablePath: '/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex' },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => Promise.reject(new Error('selector unavailable'))),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -26439,7 +26543,7 @@ describe('ACP runtime skill force-load + nudge', () => {
         },
         executablePath: '/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex' },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills,
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -26737,7 +26841,7 @@ describe('ACP runtime — agent process lifecycle logging', () => {
           modelRoute,
           executablePath: '/bin/agent',
           env: {},
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         }),
         callbacks: { onEvent: (event) => events.push(event) }
       })
@@ -26817,7 +26921,7 @@ describe('ACP runtime — agent process lifecycle logging', () => {
           executablePath: '/bin/agent',
           env: {},
           ...(modelRoute === 'codex-bridge'
-            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
             : {})
         }),
         callbacks: { onEvent: (event) => events.push(event) }
@@ -27156,7 +27260,7 @@ describe('ACP runtime — connect failure logging', () => {
         },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -27198,7 +27302,7 @@ describe('ACP runtime — connect failure logging', () => {
         },
         executablePath: '/bin/opencode',
         env: {},
-        responsesBridgeLease: lease
+        responsesTransportLease: lease
       })
     })
 
@@ -27244,7 +27348,7 @@ describe('ACP runtime — connect failure logging', () => {
           framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
           executablePath: '/bin/agent',
           env: {},
-          responsesBridgeLease: lease
+          responsesTransportLease: lease
         }
       }
     })
@@ -27476,7 +27580,7 @@ describe('ACP runtime — model hot switch', () => {
         sessionModel: 'model-a',
         supportsImageInput: false,
         contextUsageModel: 'model-a',
-        anthropicBridgeLease: {
+        messagesBridgeLease: {
           setTarget,
           release: vi.fn(async () => undefined)
         }
@@ -27489,7 +27593,7 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-b', {
           backendId: 'claude-code:provider-b',
-          anthropicBridgeTargetId: 'provider-b/model-b',
+          messagesBridgeTargetId: 'provider-b/model-b',
           supportsImageInput: false
         })
       )
@@ -27498,7 +27602,7 @@ describe('ACP runtime — model hot switch', () => {
       runtime.applyModelChange(
         modelTarget('model-a', {
           backendId: 'claude-code:provider-a',
-          anthropicBridgeTargetId: 'provider-a/model-a',
+          messagesBridgeTargetId: 'provider-a/model-a',
           supportsImageInput: false
         })
       )
@@ -27673,7 +27777,7 @@ describe('ACP runtime — model hot switch', () => {
         sessionModel: CODEX_BRIDGE_MODEL,
         supportsImageInput: true,
         contextUsageModel: 'model-a',
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -27759,7 +27863,7 @@ describe('ACP runtime — model hot switch', () => {
         sessionModel: CODEX_BRIDGE_MODEL,
         supportsImageInput: false,
         contextUsageModel: 'model-a',
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -28104,7 +28208,7 @@ describe('ACP runtime — model hot switch', () => {
         sessionModel: 'model-a',
         supportsImageInput: true,
         contextUsageModel: 'model-a',
-        anthropicBridgeLease: {
+        messagesBridgeLease: {
           setTarget,
           release: vi.fn(async () => undefined)
         }
@@ -28121,7 +28225,7 @@ describe('ACP runtime — model hot switch', () => {
     await runtime.applyModelChange(
       modelTarget('model-b', {
         backendId: 'claude-code:provider-b',
-        anthropicBridgeTargetId: 'provider-b/model-b'
+        messagesBridgeTargetId: 'provider-b/model-b'
       })
     )
 
@@ -28464,7 +28568,7 @@ describe('ACP runtime — session effort', () => {
         framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/claude',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -28505,7 +28609,7 @@ describe('ACP runtime — session effort', () => {
         },
         executablePath: '/bin/claude',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
@@ -28557,7 +28661,7 @@ describe('ACP runtime — session effort', () => {
           executablePath: '/bin/codex',
           env: {},
           sessionEffort: 'xhigh',
-          ...(bridgeLease ? { responsesBridgeLease: bridgeLease } : {})
+          ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
         })
       })
       await runtime.createSession({ cwd: '/workspace' })
@@ -29091,7 +29195,7 @@ describe('ACP runtime — session-creation and spawn diagnostics', () => {
         },
         executablePath: '/bin/agent',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => true),
@@ -29865,7 +29969,7 @@ describe('Specialist Skill scoping', () => {
               }
             : {}),
           ...(modelRoute === 'codex-bridge'
-            ? { responsesBridgeLease: createBackendLeaseHarness().lease }
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
             : {})
         }),
         resolveSpecialistIdentity: async () => ({ append: '', prefix: 'New Specialist identity' })
@@ -29928,7 +30032,7 @@ describe('Specialist Skill scoping', () => {
         framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
         executablePath: '/bin/codex-acp',
         env: { CODEX_HOME: '/data/codex' },
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills,
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),

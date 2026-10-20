@@ -753,14 +753,13 @@
       "src/main/settings/provider-protocol-regressions.test.ts",
       "src/main/settings/provider-runtime-health-owner.test.ts",
       "src/main/settings/provider-runtime-projection.test.ts",
-      "src/main/settings/provider-text-generation.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/record-codec.test.ts",
       "src/main/settings/repository.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
-      "src/main/settings/responses-bridge.plan-tools.test.ts",
-      "src/main/settings/responses-bridge.skill-loading.test.ts",
-      "src/main/settings/responses-bridge.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.plan-tools.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.skill-loading.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.test.ts",
       "src/main/settings/responses-reasoning-replay.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
@@ -1344,7 +1343,8 @@
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-stop-deadline.integration.test.ts",
       "src/main/desktop-update-integration.test.ts",
-      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [],

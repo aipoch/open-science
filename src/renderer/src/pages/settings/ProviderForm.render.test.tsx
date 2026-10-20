@@ -40,6 +40,7 @@ const render = (
     hasStoredKey = false,
     showCodexSubscriptions = false,
     showClaudeIsolated = false,
+    disabled = false,
     framework
   }: {
     onChange?: () => void
@@ -48,6 +49,7 @@ const render = (
     hasStoredKey?: boolean
     showCodexSubscriptions?: boolean
     showClaudeIsolated?: boolean
+    disabled?: boolean
     framework?: AgentFrameworkView
   } = {}
 ): void => {
@@ -61,6 +63,7 @@ const render = (
         hasStoredKey={hasStoredKey}
         showCodexSubscriptions={showCodexSubscriptions}
         showClaudeIsolated={showClaudeIsolated}
+        disabled={disabled}
         framework={framework}
       />
     )
@@ -68,6 +71,28 @@ const render = (
 }
 
 describe('ProviderForm field switching', () => {
+  it.each(['Provider type', 'Endpoint'])(
+    'locks %s while saving and restores it after saving settles',
+    (label) => {
+      const value = createEmptyProviderFormValue({
+        type: 'official',
+        vendorId: 'bailian',
+        region: 'china'
+      })
+      const onChange = vi.fn()
+      render(value, { disabled: true, onChange })
+      const trigger = container.querySelector<HTMLButtonElement>(`[aria-label="${label}"]`)!
+      expect(trigger).not.toBeNull()
+      expect(trigger.disabled).toBe(true)
+      act(() => trigger.click())
+      expect(document.querySelector('[role="listbox"]')).toBeNull()
+      expect(onChange).not.toHaveBeenCalled()
+
+      render(value, { disabled: false, onChange })
+      expect(trigger.disabled).toBe(false)
+    }
+  )
+
   it('quick-fills a local model preset into the draft on tap', () => {
     // The seed/revert patch semantics are pinned as unit tests on localModelPresetPatch; this
     // smoke test only wires the preset buttons to onChange.
@@ -86,7 +111,7 @@ describe('ProviderForm field switching', () => {
 
     expect(onChange).toHaveBeenCalledWith({
       baseUrl: 'http://localhost:11434',
-      apiEndpoint: 'openai',
+      apiEndpoint: 'chat-completions',
       name: 'Ollama'
     })
   })
@@ -163,13 +188,13 @@ describe('ProviderForm field switching', () => {
       type: 'custom',
       baseUrl: 'http://localhost:11434',
       model: 'qwen3:14b',
-      apiEndpoint: 'openai'
+      apiEndpoint: 'chat-completions'
     })
     render(value, {
       framework: {
         id: 'claude-code',
         displayName: 'Claude Code',
-        supportedApiTypes: ['anthropic'],
+        supportedApiTypes: ['messages'],
         supportsSkills: true
       }
     })
@@ -182,7 +207,7 @@ describe('ProviderForm field switching', () => {
       framework: {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['anthropic', 'openai'],
+        supportedApiTypes: ['messages', 'chat-completions'],
         supportsSkills: true
       }
     })
@@ -400,7 +425,7 @@ describe('ProviderForm field switching', () => {
         type: 'official',
         name: 'Bailian for Plan',
         vendorId: 'bailianplan',
-        apiEndpoint: 'openai'
+        apiEndpoint: 'chat-completions'
       })
     )
 
@@ -438,7 +463,7 @@ describe('ProviderForm field switching', () => {
     render(
       createEmptyProviderFormValue({
         type: 'custom',
-        apiEndpoint: 'openai',
+        apiEndpoint: 'chat-completions',
         reasoningEffortPreset: 'none-high',
         reasoningEffortTransport: 'deepseek'
       })
@@ -490,7 +515,7 @@ describe('ProviderForm field switching', () => {
 
   it.each([
     [
-      'anthropic' as const,
+      'messages' as const,
       "Messages API uses the framework's Anthropic-compatible thinking request automatically."
     ],
     ['responses' as const, 'Responses API uses its native reasoning request automatically.']
@@ -573,7 +598,7 @@ describe('ProviderForm field switching', () => {
       createEmptyProviderFormValue({
         type: 'claude-isolated',
         name: 'Claude subscription',
-        apiEndpoint: 'anthropic'
+        apiEndpoint: 'messages'
       }),
       { showClaudeIsolated: true }
     )

@@ -562,7 +562,8 @@
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
       "src/main/node-entry.test.ts",
-      "src/main/notebook-payload.integration.test.ts"
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "consumerModules": [],

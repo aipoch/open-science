@@ -241,7 +241,11 @@ describe('shared credential recovery', () => {
       )
       const credentials = new DeviceCredentialStore(dir)
       await credentials.saveOAuthState(createdCredential.id, {
-        tokens: { access_token: 'token', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'token',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
       for (const id of ['first', 'second']) {
         await settings.addCustomServer({

@@ -30,7 +30,7 @@ import type {
 } from '../../shared/acp'
 import { MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
 import type { AgentUserChoiceRequest, AgentUserChoiceResult } from '../../shared/elicitation'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { MessageAttribution } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import type { AgentModelChangeTarget } from '../agent-framework'
@@ -528,10 +528,10 @@ class AcpRuntimeCoordinator {
     const quitBlockingSessionIds = new Set(
       this.getQuitBlockingPromptSessions().map(({ sessionId }) => sessionId)
     )
-    const durablePermissionWaitSessionIds = new Set(
+    const durableWaitSessionIds = new Set(
       [...activePromptSessionIds].filter((sessionId) => !quitBlockingSessionIds.has(sessionId))
     )
-    for (const sessionId of durablePermissionWaitSessionIds) {
+    for (const sessionId of durableWaitSessionIds) {
       this.durableQuitDetachedSessionIds.add(sessionId)
     }
     const sessionIds = Array.from(
@@ -540,7 +540,7 @@ class AcpRuntimeCoordinator {
         ...this.pendingPromptStarts.keys(),
         ...this.getSnapshot().promptInFlightSessionIds
       ])
-    ).filter((sessionId) => !durablePermissionWaitSessionIds.has(sessionId))
+    ).filter((sessionId) => !durableWaitSessionIds.has(sessionId))
     if (sessionIds.length === 0 && !this.delegatedWork) return 'completed'
 
     const cancelAndDrain = async (): Promise<void> => {

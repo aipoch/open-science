@@ -89,6 +89,7 @@ export const WEB_INVOKE_CHANNELS = {
   'literature.formatReferences': 'literature:format-references',
   'literature.fullText': 'literature:full-text',
   'literature.get': 'literature:get',
+  'literature.getCandidateStates': 'literature:get-candidate-states',
   'literature.importPdf': 'literature:import-pdf',
   'literature.importRecords': 'literature:import-records',
   'literature.jobs': 'literature:jobs',

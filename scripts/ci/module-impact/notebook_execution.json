@@ -653,7 +653,7 @@
       "src/main/settings/provider-completion-races.test.ts",
       "src/main/settings/provider-transport-owner.test.ts",
       "src/main/settings/repository.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
       "src/main/settings/runtime-application-commands.test.ts",
       "src/main/settings/service.connectors.test.ts",
       "src/main/settings/service.providers.test.ts",
@@ -828,7 +828,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

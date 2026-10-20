@@ -520,7 +520,7 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/reviewer/reviewer-resilience.test.ts",
-      "src/main/settings/responses-bridge.integration.test.ts",
+      "src/main/settings/responses-to-chat-completions-bridge.integration.test.ts",
       "src/main/reviewer/reviewer-orchestrator.architecture.test.ts",
       "src/main/artifacts/provenance-helper-evidence.test.ts",
       "src/main/node-process-host.test.ts",
@@ -695,7 +695,9 @@
       "src/main/runtime-network-node.integration.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts",
+      "src/main/settings/list-models.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

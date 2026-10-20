@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import Papa from 'papaparse'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,7 +11,7 @@ import {
   type JournalResult
 } from '@aipoch/journal-catalog/contracts'
 
-import { refreshJournalAttributes } from './journal-attribute-store'
+import { useJournalStore } from './journal-attribute-store'
 import { importJournalBundle, readJournalBundle } from '@aipoch/journal-catalog/files'
 import {
   journalColumns,
@@ -112,8 +113,12 @@ export function useJournalImport({
   disposeParser: () => void
   cancelImport: () => void
 } {
+  const { refreshJournalAttributes } = useJournalStore()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
-  const api = window.api.literature.journals
+  const api = hostApi.literature.journals
   const [file, setFile] = useState<File>()
   const [sheet, setSheet] = useState<JournalSheet>()
   const [header, setHeader] = useState(-1)
@@ -533,7 +538,7 @@ export function useJournalImport({
         bytes.set(chunk, position)
         position += chunk.length
       }
-      await window.api.saveBlobFile({
+      await hostApi.saveBlobFile({
         suggestedName: 'journal-import-problems.csv',
         mimeType: 'text/csv;charset=utf-8',
         data: bytes.buffer

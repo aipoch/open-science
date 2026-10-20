@@ -2394,7 +2394,7 @@ export const ArtifactReproducibilityPanel = ({
                             {run.environmentName ? ` · ${run.environmentName}` : ''}
                           </p>
                           {details.map((detail, index) => (
-                            <p key={index} className="mt-1 leading-4 text-bg-000/75">
+                            <p key={index} className="mt-1 leading-4 text-muted-foreground">
                               {detail}
                             </p>
                           ))}
@@ -2403,7 +2403,9 @@ export const ArtifactReproducibilityPanel = ({
                       {checkIssues.map((issue) => (
                         <li key={issue.category} data-capture-issue={issue.category}>
                           <p className="font-medium leading-4">{issue.label}</p>
-                          <p className="mt-0.5 leading-4 text-bg-000/75">{issue.description}</p>
+                          <p className="mt-0.5 leading-4 text-muted-foreground">
+                            {issue.description}
+                          </p>
                         </li>
                       ))}
                     </ul>

@@ -1,17 +1,15 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { ChatProviderCompatibilityBridge } from './chat-provider-compatibility'
+import { ChatCompletionsCompatibilityBridge } from './chat-completions-compatibility'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { normalizeOpenAiChatModelStepUsage } from './openai-chat-usage'
+import { normalizeChatCompletionsUsage, createResponsesAdapter } from '@aipoch/providers/protocol'
 import {
   CAPTURED_TOOL_IMAGE_PNG_BASE64,
   CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE,
   CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE
 } from './provider-tool-image-wire.test-fixtures'
-import { ResponsesBridge } from './responses-bridge'
-import { responsesToChatRequest } from './responses-request-adapter'
-import { streamChatToResponses } from './responses-response-adapter'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
+
 import { createXaiOAuthProviderBridge } from './xai-oauth-provider-bridge'
-import { anthropicToResponses, chatToResponses, sanitizeXaiResponsesRequest } from './xai-protocol'
 
 type Json = Record<string, unknown>
 const bridges: { close(): Promise<void> }[] = []
@@ -48,7 +46,7 @@ const responsePayload = {
   usage: { input_tokens: 12, input_tokens_details: { cached_tokens: 5 }, output_tokens: 2 }
 }
 const xai = (
-  wire: 'anthropic' | 'openai',
+  wire: 'messages' | 'chat-completions',
   upstream: typeof fetch
 ): ReturnType<typeof createXaiOAuthProviderBridge> =>
   createXaiOAuthProviderBridge(
@@ -58,9 +56,9 @@ const xai = (
     async () => 'test-token',
     upstream
   )
-const chat = (payload: Json): ChatProviderCompatibilityBridge =>
-  new ChatProviderCompatibilityBridge(
-    { wire: 'anthropic', endpoint: 'https://provider.example/v1/messages', model: 'test-model' },
+const chat = (payload: Json): ChatCompletionsCompatibilityBridge =>
+  new ChatCompletionsCompatibilityBridge(
+    { wire: 'messages', endpoint: 'https://provider.example/v1/messages', model: 'test-model' },
     async () => Response.json(payload)
   )
 const textRequest = { messages: [{ role: 'user', content: 'Continue' }] }
@@ -83,7 +81,7 @@ describe('provider protocol report regressions', () => {
         choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }]
       })
     )
-    const bridge = new ResponsesBridge(
+    const bridge = new ResponsesToChatCompletionsBridge(
       { baseUrl: 'https://provider.example/v1', model: 'test' },
       upstream
     )
@@ -108,7 +106,7 @@ describe('provider protocol report regressions', () => {
 
   it('R01b preserves a captured Claude tool image through the xAI HTTP bridge', async () => {
     const upstream = vi.fn<typeof fetch>(async () => Response.json(responsePayload))
-    const response = await post(xai('anthropic', upstream), '/v1/messages', {
+    const response = await post(xai('messages', upstream), '/v1/messages', {
       ...CLAUDE_CODE_TOOL_IMAGE_REQUEST_FIXTURE,
       max_tokens: 128
     })
@@ -138,7 +136,10 @@ describe('provider protocol report regressions', () => {
           : Response.json(completion)
       )
       const response = await post(
-        new ResponsesBridge({ baseUrl: 'https://provider.example/v1', model: 'test' }, upstream),
+        new ResponsesToChatCompletionsBridge(
+          { baseUrl: 'https://provider.example/v1', model: 'test' },
+          upstream
+        ),
         '/responses',
         { input: 'continue', stream }
       )
@@ -148,7 +149,7 @@ describe('provider protocol report regressions', () => {
     }
   )
 
-  it.each(['anthropic', 'openai'] as const)(
+  it.each(['messages', 'chat-completions'] as const)(
     'R02 Responses incomplete preserves truncation for %s',
     async (wire) => {
       const response = await post(
@@ -159,13 +160,13 @@ describe('provider protocol report regressions', () => {
             incomplete_details: { reason: 'max_output_tokens' }
           })
         ),
-        wire === 'anthropic' ? '/v1/messages' : '/v1/chat/completions',
+        wire === 'messages' ? '/v1/messages' : '/v1/chat/completions',
         textRequest
       )
       expect(response.status).toBe(200)
       const payload = await response.json()
-      expect(wire === 'anthropic' ? payload.stop_reason : payload.choices[0].finish_reason).toBe(
-        wire === 'anthropic' ? 'max_tokens' : 'length'
+      expect(wire === 'messages' ? payload.stop_reason : payload.choices[0].finish_reason).toBe(
+        wire === 'messages' ? 'max_tokens' : 'length'
       )
     }
   )
@@ -200,7 +201,7 @@ describe('provider protocol report regressions', () => {
     expect
       .soft(payload.usage)
       .toMatchObject({ prompt_tokens: 17, total_tokens: 19, completion_tokens: 2 })
-    expect(normalizeOpenAiChatModelStepUsage(payload.usage)).toEqual({
+    expect(normalizeChatCompletionsUsage(payload.usage)).toEqual({
       inputTokens: 3,
       cachedReadTokens: 10,
       cachedWriteTokens: 4,
@@ -210,7 +211,7 @@ describe('provider protocol report regressions', () => {
   })
 
   it('R04 emits requested SSE usage matching the same xAI JSON response', async () => {
-    const bridge = xai('openai', async () => Response.json(responsePayload))
+    const bridge = xai('chat-completions', async () => Response.json(responsePayload))
     const json = await post(bridge, '/v1/chat/completions', textRequest)
     expect(json.status).toBe(200)
     const payload = await json.json()
@@ -247,19 +248,10 @@ describe('provider protocol report regressions', () => {
     const body = await response.text()
     const calls = sse(body).flatMap((chunk) => chunk.choices?.[0]?.delta?.tool_calls ?? [])
     expect.soft(calls.map((call) => call.index)).toEqual([0, 1])
-    let converted = ''
-    await streamChatToResponses(
-      new Response(body, { headers: { 'content-type': 'text/event-stream' } }),
-      {
-        writeHead: vi.fn(),
-        write: (chunk) => {
-          converted += chunk
-          return true
-        },
-        end: vi.fn()
-      },
-      'test-model'
-    )
+    const adapter = createResponsesAdapter()
+    const turn = adapter.prepare({ body: { model: 'test-model', input: '', stream: true } })
+    const converted = await (await turn.convert(new Response(body))).text()
+    adapter.dispose()
     expect(
       sse(converted)
         .at(-1)
@@ -274,7 +266,7 @@ describe('provider protocol report regressions', () => {
     'R06 rejects invalid tool arguments instead of emitting an empty call (%s)',
     async (status) => {
       const response = await post(
-        xai('anthropic', async () =>
+        xai('messages', async () =>
           Response.json({
             ...responsePayload,
             status,
@@ -303,7 +295,7 @@ describe('provider protocol report regressions', () => {
 
   it('R06 control preserves a legitimate empty-object call', async () => {
     const response = await post(
-      xai('anthropic', async () =>
+      xai('messages', async () =>
         Response.json({
           ...responsePayload,
           output: [{ type: 'function_call', call_id: 'call_ok', name: 'get_time', arguments: '{}' }]
@@ -386,129 +378,14 @@ describe('provider protocol report regressions', () => {
       })
     }
   )
-
-  it.each(['native', 'anthropic', 'chat'])(
-    'R08 preserves business schema names and null constraints (%s)',
-    (wire) => {
-      const schema = {
-        type: 'object',
-        properties: {
-          safety_identifier: { type: 'string' },
-          external_web_access: { type: 'boolean' },
-          prompt_cache_retention: { type: 'string' },
-          nullable: { const: null }
-        },
-        required: ['safety_identifier', 'nullable'],
-        additionalProperties: false
-      }
-      const original = structuredClone(schema)
-      const request =
-        wire === 'native'
-          ? sanitizeXaiResponsesRequest({
-              safety_identifier: 'metadata',
-              tools: [{ type: 'function', name: 'audit', parameters: schema }]
-            })
-          : wire === 'anthropic'
-            ? anthropicToResponses(
-                { messages: [], tools: [{ name: 'audit', input_schema: schema }] },
-                'test'
-              )
-            : chatToResponses(
-                {
-                  messages: [],
-                  tools: [{ type: 'function', function: { name: 'audit', parameters: schema } }]
-                },
-                'test'
-              )
-      expect(request).not.toHaveProperty('safety_identifier')
-      expect(schema).toEqual(original)
-      expect(request.tools).toEqual([expect.objectContaining({ parameters: original })])
-    }
-  )
 })
 
 describe('provider protocol regression edge contracts', () => {
-  it('R01 keeps parallel Codex results together and associates images without mutating replay', () => {
-    const image = {
-      type: 'input_image',
-      image_url: 'https://example.test/image.png',
-      detail: 'high'
-    }
-    const body = {
-      input: [
-        { type: 'function_call', call_id: 'call_parallel_alpha', name: 'first', arguments: '{}' },
-        { type: 'function_call', call_id: 'call_parallel_beta', name: 'second', arguments: '{}' },
-        {
-          type: 'function_call_output',
-          call_id: 'call_parallel_alpha',
-          output: [{ type: 'input_text', text: 'first result' }, image]
-        },
-        {
-          type: 'function_call_output',
-          call_id: 'call_parallel_beta',
-          output: [{ type: 'input_text', text: 'second result' }, image]
-        },
-        { type: 'message', role: 'assistant', content: 'I see both images.' }
-      ]
-    }
-    const original = structuredClone(body)
-    const result = responsesToChatRequest(body, 'test')
-    expect(result.messages.slice(0, 3)).toMatchObject([
-      {
-        role: 'assistant',
-        tool_calls: [{ id: 'call_parallel_alpha' }, { id: 'call_parallel_beta' }]
-      },
-      { role: 'tool', tool_call_id: 'call_parallel_alpha', content: 'first result' },
-      { role: 'tool', tool_call_id: 'call_parallel_beta', content: 'second result' }
-    ])
-    const media = result.messages.slice(3, -1)
-    expect(imageParts(media)).toEqual([
-      { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } },
-      { type: 'image_url', image_url: { url: image.image_url, detail: 'high' } }
-    ])
-    expect(JSON.stringify(media)).toContain('call_parallel_alpha')
-    expect(JSON.stringify(media)).toContain('call_parallel_beta')
-    expect(body).toEqual(original)
-    expect(responsesToChatRequest(body, 'test')).toEqual(result)
-  })
-
-  it('R01 preserves URL images in Claude tool results and their call association', () => {
-    const result = anthropicToResponses(
-      {
-        messages: [
-          {
-            role: 'user',
-            content: [
-              {
-                type: 'tool_result',
-                tool_use_id: 'url_call',
-                content: [
-                  { type: 'text', text: 'image result' },
-                  { type: 'image', source: { type: 'url', url: 'https://example.test/tool.png' } }
-                ]
-              },
-              { type: 'tool_result', tool_use_id: 'other_call', content: 'other result' }
-            ]
-          }
-        ]
-      },
-      'test'
-    )
-    expect((result.input as Json[]).slice(0, 2)).toEqual([
-      { type: 'function_call_output', call_id: 'url_call', output: 'image result' },
-      { type: 'function_call_output', call_id: 'other_call', output: 'other result' }
-    ])
-    expect(imageParts(result)).toEqual([
-      { type: 'input_image', image_url: 'https://example.test/tool.png' }
-    ])
-    expect(JSON.stringify((result.input as Json[]).slice(2))).toContain('url_call')
-  })
-
   it.each([false, true])(
     'R02 truncation overrides tool-call completion (Messages stream=%s)',
     async (stream) => {
       const response = await post(
-        xai('anthropic', async () =>
+        xai('messages', async () =>
           Response.json({
             ...responsePayload,
             status: 'incomplete',
@@ -534,7 +411,7 @@ describe('provider protocol regression edge contracts', () => {
     'R02 rejects an explicit %s Responses result',
     async (status) => {
       const response = await post(
-        xai('openai', async () => Response.json({ ...responsePayload, status })),
+        xai('chat-completions', async () => Response.json({ ...responsePayload, status })),
         '/v1/chat/completions',
         textRequest
       )
@@ -552,7 +429,10 @@ describe('provider protocol regression edge contracts', () => {
           )
         : Response.json({ choices: [{ message: { content: 'partial' }, finish_reason: 'length' }] })
     const response = await post(
-      new ResponsesBridge({ baseUrl: 'https://provider.example/v1', model: 'test' }, upstream),
+      new ResponsesToChatCompletionsBridge(
+        { baseUrl: 'https://provider.example/v1', model: 'test' },
+        upstream
+      ),
       '/responses',
       { input: 'continue', stream }
     )
@@ -567,7 +447,7 @@ describe('provider protocol regression edge contracts', () => {
 
   it.each([undefined, false])('R04 keeps usage opt-in (include_usage=%s)', async (includeUsage) => {
     const response = await post(
-      xai('openai', async () => Response.json(responsePayload)),
+      xai('chat-completions', async () => Response.json(responsePayload)),
       '/v1/chat/completions',
       {
         ...textRequest,
@@ -583,7 +463,7 @@ describe('provider protocol regression edge contracts', () => {
     'R06 rejects non-object or missing arguments before SSE (%s)',
     async (arguments_) => {
       const response = await post(
-        xai('anthropic', async () =>
+        xai('messages', async () =>
           Response.json({
             ...responsePayload,
             output: [{ type: 'function_call', call_id: 'bad', name: 'run', arguments: arguments_ }]
@@ -597,40 +477,6 @@ describe('provider protocol regression edge contracts', () => {
       expect(await response.json()).toHaveProperty('error')
     }
   )
-
-  it('R08 leaves schema defaults, enums, metadata and tool output business values opaque', () => {
-    const data = {
-      safety_identifier: null,
-      external_web_access: false,
-      prompt_cache_retention: 'business'
-    }
-    const body = {
-      prompt_cache_retention: '24h',
-      safety_identifier: 'wire',
-      external_web_access: true,
-      previous_response_id: null,
-      metadata: data,
-      input: [{ type: 'function_call_output', call_id: 'a', output: data }],
-      additional_tools: [
-        {
-          type: 'function',
-          name: 'audit',
-          parameters: {
-            type: 'object',
-            properties: { value: { enum: [null, 'present'], default: null } }
-          }
-        }
-      ]
-    }
-    const expected = structuredClone(body)
-    const result = sanitizeXaiResponsesRequest(body)
-    expect(result).toEqual({
-      metadata: expected.metadata,
-      input: expected.input,
-      tools: expected.additional_tools
-    })
-    expect(body).toEqual(expected)
-  })
 })
 
 describe('provider termination rejection contracts', () => {
@@ -647,7 +493,7 @@ describe('provider termination rejection contracts', () => {
     }
   )
 
-  it.each(['anthropic', 'openai'] as const)(
+  it.each(['messages', 'chat-completions'] as const)(
     'R02 retains content filtering for %s',
     async (wire) => {
       const response = await post(
@@ -658,13 +504,13 @@ describe('provider termination rejection contracts', () => {
             incomplete_details: { reason: 'content_filter' }
           })
         ),
-        wire === 'anthropic' ? '/v1/messages' : '/v1/chat/completions',
+        wire === 'messages' ? '/v1/messages' : '/v1/chat/completions',
         textRequest
       )
       expect(response.status).toBe(200)
       const payload = await response.json()
-      expect(wire === 'anthropic' ? payload.stop_reason : payload.choices[0].finish_reason).toBe(
-        wire === 'anthropic' ? 'refusal' : 'content_filter'
+      expect(wire === 'messages' ? payload.stop_reason : payload.choices[0].finish_reason).toBe(
+        wire === 'messages' ? 'refusal' : 'content_filter'
       )
     }
   )

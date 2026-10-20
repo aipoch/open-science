@@ -39,13 +39,13 @@ const FRAMEWORKS: AgentFrameworkView[] = [
     id: 'claude-code',
     displayName: 'Claude Code',
     supportsSkills: true,
-    supportedApiTypes: ['anthropic']
+    supportedApiTypes: ['messages']
   },
   {
     id: 'opencode',
     displayName: 'OpenCode',
     supportsSkills: true,
-    supportedApiTypes: ['anthropic', 'openai']
+    supportedApiTypes: ['messages', 'chat-completions']
   },
   {
     id: 'codex',
@@ -64,7 +64,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiEndpoints: ['openai'] })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['chat-completions'] })],
       activeProviderId: undefined
     })
     render()
@@ -76,7 +76,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiEndpoints: ['anthropic'] })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['messages'] })],
       activeProviderId: 'p1'
     })
     render()
@@ -89,7 +89,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'] })],
+      providers: [provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['chat-completions'] })],
       activeProviderId: 'p1'
     })
     render()
@@ -107,7 +107,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
       agentFrameworkId: 'codex',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['m'] })
+        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['chat-completions'], models: ['m'] })
       ],
       activeProviderId: 'p1',
       activeModel: 'm'
@@ -121,7 +121,7 @@ describe('ModelFrameworkCompatibilityAlert', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
-      providers: [provider({ id: 'p1', apiEndpoints: ['openai'] })],
+      providers: [provider({ id: 'p1', apiEndpoints: ['chat-completions'] })],
       activeProviderId: 'p1'
     })
     render()

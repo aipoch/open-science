@@ -93,7 +93,7 @@ it.runIf(executable)(
     const config = createOpencodeFramework().prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         model: 'probe-model',
         key: 'test-key',
         baseUrl: `http://127.0.0.1:${(server.address() as AddressInfo).port}/v1`

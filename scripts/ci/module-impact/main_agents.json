@@ -371,7 +371,8 @@
       "src/main/web-service/internal-web-event-stream.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
-      "src/main/desktop-update-integration.test.ts"
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

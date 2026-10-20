@@ -46,7 +46,6 @@
     "packages/notebook-analysis/src/dependency-analysis.r-callbacks.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-composition.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-deseq2.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-file-map-runtime.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-file-map.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-graphics.test.ts",
     "packages/notebook-analysis/src/dependency-analysis.r-hdf5array.test.ts",
@@ -209,13 +208,16 @@
     "packages/notebook-analysis/src/reported-r-package-replay.fixture.R",
     "packages/notebook-analysis/src/reported-r-theme-plots.fixture.ts",
     "packages/notebook-analysis/src/reported-venn-device.fixture.json",
-    "packages/notebook-analysis/src/dependency-analysis.structured-results.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.filesystem-diagnostics.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-directory.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.iteration-snapshots.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
-    "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
+    "packages/notebook-analysis/test/native/dependency-analysis.chord.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.circlize.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.filesystem-diagnostics.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.iteration-snapshots.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.r-directory.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.r-file-map-runtime.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.r-pipelines.suite.ts",
+    "packages/notebook-analysis/test/native/dependency-analysis.structured-results.suite.ts",
+    "packages/notebook-analysis/test/native/setup.ts",
+    "packages/notebook-analysis/test/native/vitest.config.ts"
   ],
   "interfacePaths": [
     "packages/notebook-analysis/src/analysis-test-support.ts",
@@ -294,7 +296,6 @@
       "packages/notebook-analysis/src/dependency-analysis.r-callbacks.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-composition.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-deseq2.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-file-map-runtime.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-file-map.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-graphics.test.ts",
       "packages/notebook-analysis/src/dependency-analysis.r-hdf5array.test.ts",
@@ -372,14 +373,7 @@
       "packages/notebook-analysis/src/dependency-analysis.venn-device.test.ts",
       "packages/notebook-analysis/src/dependency-projection.r-packages.test.ts",
       "packages/notebook-analysis/src/input-path-analysis.test.ts",
-      "packages/notebook-analysis/src/input-resource-analysis.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.structured-results.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.filesystem-diagnostics.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.chord.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-directory.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.iteration-snapshots.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.circlize.native.test.ts",
-      "packages/notebook-analysis/src/dependency-analysis.r-pipelines.native.test.ts"
+      "packages/notebook-analysis/src/input-resource-analysis.test.ts"
     ],
     "contract": ["src/main/notebook/package-boundaries.architecture.test.ts"],
     "consumer": [
@@ -795,7 +789,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [

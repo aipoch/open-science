@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { parseApplicationCommandError } from '../../../../../shared/application-command-contract'
@@ -36,8 +37,10 @@ export function useJournalEntries({
   entriesLoading: boolean
   entriesFailed: boolean
 } {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
-  const api = window.api.literature.journals
+  const api = hostApi.literature.journals
   const [loadedEntries, setEntries] = useState<{
     datasetId: string
     offset: number

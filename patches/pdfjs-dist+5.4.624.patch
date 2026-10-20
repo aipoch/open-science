@@ -1,8 +1,40 @@
 diff --git a/node_modules/pdfjs-dist/build/pdf.worker.mjs b/node_modules/pdfjs-dist/build/pdf.worker.mjs
-index b911637..3b8677b 100644
 --- a/node_modules/pdfjs-dist/build/pdf.worker.mjs
 +++ b/node_modules/pdfjs-dist/build/pdf.worker.mjs
-@@ -34656,6 +34656,11 @@ class PartialEvaluator {
+@@ -32960,6 +32960,32 @@ class PartialEvaluator {
+       const isAddToPathSet = !!(state.textRenderingMode & TextRenderingMode.ADD_TO_PATH_FLAG);
+       if (isAddToPathSet || state.fillColorSpace.name === "Pattern" || state.strokeColorSpace.name === "Pattern" || font.disableFontFace) {
+         PartialEvaluator.buildFontPaths(font, glyphs, this.handler, this.options);
++      } else if (this.options.fontExtraProperties && !font.missingFile &&
++                 !font.isType3Font && !font.vertical) {
++        // Optional diagnostics need the real outline even with browser fonts.
++        // Expose only missing-map control fallbacks, without disabling FontFace
++        // or changing the text operators, Unicode values, or normal font paths.
++        const map = font.toUnicode?._map;
++        if (map && typeof map === "object") {
++          const unrepresented = glyphs.filter(glyph =>
++            glyph.isInFont === true && glyph.isSpace !== true && !glyph.accent &&
++            Number.isSafeInteger(glyph.originalCharCode) &&
++            glyph.originalCharCode >= 0 && glyph.originalCharCode <= 65535 &&
++            typeof glyph.unicode === "string" && !glyph.unicode.trim() &&
++            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
++            typeof glyph.fontChar === "string" && glyph.fontChar.length > 0 &&
++            !Object.hasOwn(map, glyph.originalCharCode) &&
++            map[glyph.originalCharCode] === undefined
++          );
++          if (unrepresented.length) {
++            try {
++              PartialEvaluator.buildFontPaths(font, unrepresented, this.handler, this.options);
++            } catch {
++              // Missing diagnostic evidence must not fail otherwise valid text,
++              // including documents loaded with stopAtErrors: true.
++            }
++          }
++        }
+       }
+     }
+     return glyphs;
+@@ -34656,6 +34682,11 @@ class PartialEvaluator {
                  xObjStateManager.transform(matrix);
                }
                const localResources = dict.get("Resources");
@@ -15,10 +47,42 @@ index b911637..3b8677b 100644
                const sinkWrapper = {
                  enqueueInvoked: false,
 diff --git a/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs b/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
-index b7416c4..6fe811e 100644
 --- a/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
 +++ b/node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs
-@@ -40650,6 +40650,11 @@ class PartialEvaluator {
+@@ -38954,6 +38954,32 @@ class PartialEvaluator {
+       const isAddToPathSet = !!(state.textRenderingMode & TextRenderingMode.ADD_TO_PATH_FLAG);
+       if (isAddToPathSet || state.fillColorSpace.name === "Pattern" || state.strokeColorSpace.name === "Pattern" || font.disableFontFace) {
+         PartialEvaluator.buildFontPaths(font, glyphs, this.handler, this.options);
++      } else if (this.options.fontExtraProperties && !font.missingFile &&
++                 !font.isType3Font && !font.vertical) {
++        // Optional diagnostics need the real outline even with browser fonts.
++        // Expose only missing-map control fallbacks, without disabling FontFace
++        // or changing the text operators, Unicode values, or normal font paths.
++        const map = font.toUnicode?._map;
++        if (map && typeof map === "object") {
++          const unrepresented = glyphs.filter(glyph =>
++            glyph.isInFont === true && glyph.isSpace !== true && !glyph.accent &&
++            Number.isSafeInteger(glyph.originalCharCode) &&
++            glyph.originalCharCode >= 0 && glyph.originalCharCode <= 65535 &&
++            typeof glyph.unicode === "string" && !glyph.unicode.trim() &&
++            glyph.unicode === String.fromCharCode(glyph.originalCharCode) &&
++            typeof glyph.fontChar === "string" && glyph.fontChar.length > 0 &&
++            !Object.hasOwn(map, glyph.originalCharCode) &&
++            map[glyph.originalCharCode] === undefined
++          );
++          if (unrepresented.length) {
++            try {
++              PartialEvaluator.buildFontPaths(font, unrepresented, this.handler, this.options);
++            } catch {
++              // Missing diagnostic evidence must not fail otherwise valid text,
++              // including documents loaded with stopAtErrors: true.
++            }
++          }
++        }
+       }
+     }
+     return glyphs;
+@@ -40650,6 +40676,11 @@ class PartialEvaluator {
                  xObjStateManager.transform(matrix);
                }
                const localResources = dict.get("Resources");
@@ -30,3 +94,754 @@ index b7416c4..6fe811e 100644
                enqueueChunk();
                const sinkWrapper = {
                  enqueueInvoked: false,
+diff --git a/node_modules/pdfjs-dist/build/pdf.mjs b/node_modules/pdfjs-dist/build/pdf.mjs
+index 82a98011c..aa06f861e 100644
+--- a/node_modules/pdfjs-dist/build/pdf.mjs
++++ b/node_modules/pdfjs-dist/build/pdf.mjs
+@@ -1855,58 +1855,58 @@ function makePathFromDrawOPS(data) {
+   return path;
+ }
+ class PagesMapper {
+-  static #idToPageNumber = null;
+-  static #pageNumberToId = null;
+-  static #prevIdToPageNumber = null;
+-  static #pagesNumber = 0;
+-  static #listeners = [];
++  #idToPageNumber = null;
++  #pageNumberToId = null;
++  #prevIdToPageNumber = null;
++  #pagesNumber = 0;
++  #listeners = [];
+   get pagesNumber() {
+-    return PagesMapper.#pagesNumber;
++    return this.#pagesNumber;
+   }
+   set pagesNumber(n) {
+-    if (PagesMapper.#pagesNumber === n) {
++    if (this.#pagesNumber === n) {
+       return;
+     }
+-    PagesMapper.#pagesNumber = n;
++    this.#pagesNumber = n;
+     if (n === 0) {
+-      PagesMapper.#pageNumberToId = null;
+-      PagesMapper.#idToPageNumber = null;
++      this.#pageNumberToId = null;
++      this.#idToPageNumber = null;
+     }
+   }
+   addListener(listener) {
+-    PagesMapper.#listeners.push(listener);
++    this.#listeners.push(listener);
+   }
+   removeListener(listener) {
+-    const index = PagesMapper.#listeners.indexOf(listener);
++    const index = this.#listeners.indexOf(listener);
+     if (index >= 0) {
+-      PagesMapper.#listeners.splice(index, 1);
++      this.#listeners.splice(index, 1);
+     }
+   }
+   #updateListeners() {
+-    for (const listener of PagesMapper.#listeners) {
++    for (const listener of this.#listeners) {
+       listener();
+     }
+   }
+   #init(mustInit) {
+-    if (PagesMapper.#pageNumberToId) {
++    if (this.#pageNumberToId) {
+       return;
+     }
+-    const n = PagesMapper.#pagesNumber;
++    const n = this.#pagesNumber;
+     const array = new Uint32Array(3 * n);
+-    const pageNumberToId = PagesMapper.#pageNumberToId = array.subarray(0, n);
+-    const idToPageNumber = PagesMapper.#idToPageNumber = array.subarray(n, 2 * n);
++    const pageNumberToId = this.#pageNumberToId = array.subarray(0, n);
++    const idToPageNumber = this.#idToPageNumber = array.subarray(n, 2 * n);
+     if (mustInit) {
+       for (let i = 0; i < n; i++) {
+         pageNumberToId[i] = idToPageNumber[i] = i + 1;
+       }
+     }
+-    PagesMapper.#prevIdToPageNumber = array.subarray(2 * n);
++    this.#prevIdToPageNumber = array.subarray(2 * n);
+   }
+   movePages(selectedPages, pagesToMove, index) {
+     this.#init(true);
+-    const pageNumberToId = PagesMapper.#pageNumberToId;
+-    const idToPageNumber = PagesMapper.#idToPageNumber;
+-    PagesMapper.#prevIdToPageNumber.set(idToPageNumber);
++    const pageNumberToId = this.#pageNumberToId;
++    const idToPageNumber = this.#idToPageNumber;
++    this.#prevIdToPageNumber.set(idToPageNumber);
+     const movedCount = pagesToMove.length;
+     const mappedPagesToMove = new Uint32Array(movedCount);
+     let removedBeforeTarget = 0;
+@@ -1917,7 +1917,7 @@ class PagesMapper {
+         removedBeforeTarget += 1;
+       }
+     }
+-    const pagesNumber = PagesMapper.#pagesNumber;
++    const pagesNumber = this.#pagesNumber;
+     let adjustedTarget = index - removedBeforeTarget;
+     const remainingLen = pagesNumber - movedCount;
+     adjustedTarget = MathClamp(adjustedTarget, 0, remainingLen);
+@@ -1940,27 +1940,24 @@ class PagesMapper {
+     }
+   }
+   hasBeenAltered() {
+-    return PagesMapper.#pageNumberToId !== null;
++    return this.#pageNumberToId !== null;
+   }
+   getPageMappingForSaving() {
+     return {
+-      pageIndices: PagesMapper.#idToPageNumber ? PagesMapper.#idToPageNumber.map(x => x - 1) : null
++      pageIndices: this.#idToPageNumber ? this.#idToPageNumber.map(x => x - 1) : null
+     };
+   }
+   getPrevPageNumber(pageNumber) {
+-    return PagesMapper.#prevIdToPageNumber[PagesMapper.#pageNumberToId[pageNumber - 1] - 1];
++    return this.#prevIdToPageNumber[this.#pageNumberToId[pageNumber - 1] - 1];
+   }
+   getPageNumber(id) {
+-    return PagesMapper.#idToPageNumber?.[id - 1] ?? id;
++    return this.#idToPageNumber?.[id - 1] ?? id;
+   }
+   getPageId(pageNumber) {
+-    return PagesMapper.#pageNumberToId?.[pageNumber - 1] ?? pageNumber;
+-  }
+-  static get instance() {
+-    return shadow(this, "instance", new PagesMapper());
++    return this.#pageNumberToId?.[pageNumber - 1] ?? pageNumber;
+   }
+   getMapping() {
+-    return PagesMapper.#pageNumberToId.subarray(0, this.pagesNumber);
++    return this.#pageNumberToId.subarray(0, this.pagesNumber);
+   }
+ }
+ 
+@@ -14394,6 +14391,7 @@ function getDocument(src = {}) {
+   const FilterFactory = src.FilterFactory || (isNodeJS ? NodeFilterFactory : DOMFilterFactory);
+   const enableHWA = src.enableHWA === true;
+   const useWasm = src.useWasm !== false;
++  const pagesMapper = src.pagesMapper || new PagesMapper();
+   const length = rangeTransport ? rangeTransport.length : src.length ?? NaN;
+   const useSystemFonts = typeof src.useSystemFonts === "boolean" ? src.useSystemFonts : !isNodeJS && !disableFontFace;
+   const useWorkerFetch = typeof src.useWorkerFetch === "boolean" ? src.useWorkerFetch : !!(CMapReaderFactory === DOMCMapReaderFactory && StandardFontDataFactory === DOMStandardFontDataFactory && WasmFactory === DOMWasmFactory && cMapUrl && standardFontDataUrl && wasmUrl && isValidFetchUrl(cMapUrl, document.baseURI) && isValidFetchUrl(standardFontDataUrl, document.baseURI) && isValidFetchUrl(wasmUrl, document.baseURI));
+@@ -14502,7 +14500,7 @@ function getDocument(src = {}) {
+         throw new Error("Worker was destroyed");
+       }
+       const messageHandler = new MessageHandler(docId, workerId, worker.port);
+-      const transport = new WorkerTransport(messageHandler, task, networkStream, transportParams, transportFactory);
++      const transport = new WorkerTransport(messageHandler, task, networkStream, transportParams, transportFactory, pagesMapper);
+       task._transport = transport;
+       messageHandler.send("Ready", null);
+     });
+@@ -14605,6 +14603,9 @@ class PDFDocumentProxy {
+     this._pdfInfo = pdfInfo;
+     this._transport = transport;
+   }
++  get pagesMapper() {
++    return this._transport.pagesMapper;
++  }
+   get annotationStorage() {
+     return this._transport.annotationStorage;
+   }
+@@ -14721,8 +14722,8 @@ class PDFDocumentProxy {
+ }
+ class PDFPageProxy {
+   #pendingCleanup = false;
+-  #pagesMapper = PagesMapper.instance;
+-  constructor(pageIndex, pageInfo, transport, pdfBug = false) {
++  #pagesMapper = null;
++  constructor(pageIndex, pageInfo, transport, pagesMapper, pdfBug = false) {
+     this._pageIndex = pageIndex;
+     this._pageInfo = pageInfo;
+     this._transport = transport;
+@@ -14733,6 +14734,7 @@ class PDFPageProxy {
+     this._intentStates = new Map();
+     this.destroyed = false;
+     this.recordedBBoxes = null;
++    this.#pagesMapper = pagesMapper;
+   }
+   get pageNumber() {
+     return this._pageIndex + 1;
+@@ -15390,8 +15392,7 @@ class WorkerTransport {
+   #pagePromises = new Map();
+   #pageRefCache = new Map();
+   #passwordCapability = null;
+-  #pagesMapper = PagesMapper.instance;
+-  constructor(messageHandler, loadingTask, networkStream, params, factory) {
++  constructor(messageHandler, loadingTask, networkStream, params, factory, pagesMapper) {
+     this.messageHandler = messageHandler;
+     this.loadingTask = loadingTask;
+     this.#networkStream = networkStream;
+@@ -15411,13 +15412,14 @@ class WorkerTransport {
+     this.destroyed = false;
+     this.destroyCapability = null;
+     this.setupMessageHandler();
+-    this.#pagesMapper.addListener(this.#updateCaches.bind(this));
++    this.pagesMapper = pagesMapper;
++    this.pagesMapper.addListener(this.#updateCaches.bind(this));
+   }
+   #updateCaches() {
+     const newPageCache = new Map();
+     const newPromiseCache = new Map();
+-    for (let i = 0, ii = this.#pagesMapper.pagesNumber; i < ii; i++) {
+-      const prevPageIndex = this.#pagesMapper.getPrevPageNumber(i + 1) - 1;
++    for (let i = 0, ii = this.pagesMapper.pagesNumber; i < ii; i++) {
++      const prevPageIndex = this.pagesMapper.getPrevPageNumber(i + 1) - 1;
+       const page = this.#pageCache.get(prevPageIndex);
+       if (page) {
+         newPageCache.set(i, page);
+@@ -15619,7 +15621,7 @@ class WorkerTransport {
+     messageHandler.on("GetDoc", ({
+       pdfInfo
+     }) => {
+-      this.#pagesMapper.pagesNumber = pdfInfo.numPages;
++      this.pagesMapper.pagesNumber = pdfInfo.numPages;
+       this._numPages = pdfInfo.numPages;
+       this._htmlForXfa = pdfInfo.htmlForXfa;
+       delete pdfInfo.htmlForXfa;
+@@ -15787,11 +15789,11 @@ class WorkerTransport {
+     });
+   }
+   getPage(pageNumber) {
+-    if (!Number.isInteger(pageNumber) || pageNumber <= 0 || pageNumber > this.#pagesMapper.pagesNumber) {
++    if (!Number.isInteger(pageNumber) || pageNumber <= 0 || pageNumber > this.pagesMapper.pagesNumber) {
+       return Promise.reject(new Error("Invalid page request."));
+     }
+     const pageIndex = pageNumber - 1;
+-    const newPageIndex = this.#pagesMapper.getPageId(pageNumber) - 1;
++    const newPageIndex = this.pagesMapper.getPageId(pageNumber) - 1;
+     const cachedPromise = this.#pagePromises.get(pageIndex);
+     if (cachedPromise) {
+       return cachedPromise;
+@@ -15805,7 +15807,7 @@ class WorkerTransport {
+       if (pageInfo.refStr) {
+         this.#pageRefCache.set(pageInfo.refStr, newPageIndex);
+       }
+-      const page = new PDFPageProxy(pageIndex, pageInfo, this, this._params.pdfBug);
++      const page = new PDFPageProxy(pageIndex, pageInfo, this, this.pagesMapper, this._params.pdfBug);
+       this.#pageCache.set(pageIndex, page);
+       return page;
+     });
+@@ -15820,11 +15822,11 @@ class WorkerTransport {
+       num: ref.num,
+       gen: ref.gen
+     });
+-    return this.#pagesMapper.getPageNumber(index + 1) - 1;
++    return this.pagesMapper.getPageNumber(index + 1) - 1;
+   }
+   getAnnotations(pageIndex, intent) {
+     return this.messageHandler.sendWithPromise("GetAnnotations", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1,
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1,
+       intent
+     });
+   }
+@@ -15877,12 +15879,12 @@ class WorkerTransport {
+   }
+   getPageJSActions(pageIndex) {
+     return this.messageHandler.sendWithPromise("GetPageJSActions", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1
+     });
+   }
+   getStructTree(pageIndex) {
+     return this.messageHandler.sendWithPromise("GetStructTree", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1
+     });
+   }
+   getOutline() {
+@@ -15938,7 +15940,7 @@ class WorkerTransport {
+     }
+     const refStr = ref.gen === 0 ? `${ref.num}R` : `${ref.num}R${ref.gen}`;
+     const pageIndex = this.#pageRefCache.get(refStr);
+-    return pageIndex >= 0 ? this.#pagesMapper.getPageNumber(pageIndex + 1) : null;
++    return pageIndex >= 0 ? this.pagesMapper.getPageNumber(pageIndex + 1) : null;
+   }
+ }
+ class RenderTask {
+@@ -26341,7 +26343,6 @@ globalThis.pdfjsLib = {
+   normalizeUnicode: normalizeUnicode,
+   OPS: OPS,
+   OutputScale: OutputScale,
+-  PagesMapper: PagesMapper,
+   PasswordResponses: PasswordResponses,
+   PDFDataRangeTransport: PDFDataRangeTransport,
+   PDFDateString: PDFDateString,
+@@ -26365,6 +26366,6 @@ globalThis.pdfjsLib = {
+   XfaLayer: XfaLayer
+ };
+ 
+-export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, CSSConstants, ColorPicker, DOMSVGFactory, DrawLayer, util_FeatureTest as FeatureTest, GlobalWorkerOptions, util_ImageKind as ImageKind, InvalidPDFException, MathClamp, OPS, OutputScale, PDFDataRangeTransport, PDFDateString, PDFWorker, PagesMapper, PasswordResponses, PermissionFlag, PixelsPerInch, RenderingCancelledException, ResponseException, SignatureExtractor, SupportedImageMimeTypes, TextLayer, TouchManager, Util, VerbosityLevel, XfaLayer, applyOpacity, build, createValidAbsoluteUrl, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, isDataScheme, isPdfFile, isValidExplicitDest, noContextMenu, normalizeUnicode, renderRichText, setLayerDimensions, shadow, stopEvent, updateUrlHash, version };
++export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, CSSConstants, ColorPicker, DOMSVGFactory, DrawLayer, util_FeatureTest as FeatureTest, GlobalWorkerOptions, util_ImageKind as ImageKind, InvalidPDFException, MathClamp, OPS, OutputScale, PDFDataRangeTransport, PDFDateString, PDFWorker, PasswordResponses, PermissionFlag, PixelsPerInch, RenderingCancelledException, ResponseException, SignatureExtractor, SupportedImageMimeTypes, TextLayer, TouchManager, Util, VerbosityLevel, XfaLayer, applyOpacity, build, createValidAbsoluteUrl, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, isDataScheme, isPdfFile, isValidExplicitDest, noContextMenu, normalizeUnicode, renderRichText, setLayerDimensions, shadow, stopEvent, updateUrlHash, version };
+ 
+ //# sourceMappingURL=pdf.mjs.map
+\ No newline at end of file
+diff --git a/node_modules/pdfjs-dist/legacy/build/pdf.mjs b/node_modules/pdfjs-dist/legacy/build/pdf.mjs
+index 06ae86565..5b1d19442 100644
+--- a/node_modules/pdfjs-dist/legacy/build/pdf.mjs
++++ b/node_modules/pdfjs-dist/legacy/build/pdf.mjs
+@@ -7896,58 +7896,58 @@ function makePathFromDrawOPS(data) {
+   return path;
+ }
+ class PagesMapper {
+-  static #idToPageNumber = null;
+-  static #pageNumberToId = null;
+-  static #prevIdToPageNumber = null;
+-  static #pagesNumber = 0;
+-  static #listeners = [];
++  #idToPageNumber = null;
++  #pageNumberToId = null;
++  #prevIdToPageNumber = null;
++  #pagesNumber = 0;
++  #listeners = [];
+   get pagesNumber() {
+-    return PagesMapper.#pagesNumber;
++    return this.#pagesNumber;
+   }
+   set pagesNumber(n) {
+-    if (PagesMapper.#pagesNumber === n) {
++    if (this.#pagesNumber === n) {
+       return;
+     }
+-    PagesMapper.#pagesNumber = n;
++    this.#pagesNumber = n;
+     if (n === 0) {
+-      PagesMapper.#pageNumberToId = null;
+-      PagesMapper.#idToPageNumber = null;
++      this.#pageNumberToId = null;
++      this.#idToPageNumber = null;
+     }
+   }
+   addListener(listener) {
+-    PagesMapper.#listeners.push(listener);
++    this.#listeners.push(listener);
+   }
+   removeListener(listener) {
+-    const index = PagesMapper.#listeners.indexOf(listener);
++    const index = this.#listeners.indexOf(listener);
+     if (index >= 0) {
+-      PagesMapper.#listeners.splice(index, 1);
++      this.#listeners.splice(index, 1);
+     }
+   }
+   #updateListeners() {
+-    for (const listener of PagesMapper.#listeners) {
++    for (const listener of this.#listeners) {
+       listener();
+     }
+   }
+   #init(mustInit) {
+-    if (PagesMapper.#pageNumberToId) {
++    if (this.#pageNumberToId) {
+       return;
+     }
+-    const n = PagesMapper.#pagesNumber;
++    const n = this.#pagesNumber;
+     const array = new Uint32Array(3 * n);
+-    const pageNumberToId = PagesMapper.#pageNumberToId = array.subarray(0, n);
+-    const idToPageNumber = PagesMapper.#idToPageNumber = array.subarray(n, 2 * n);
++    const pageNumberToId = this.#pageNumberToId = array.subarray(0, n);
++    const idToPageNumber = this.#idToPageNumber = array.subarray(n, 2 * n);
+     if (mustInit) {
+       for (let i = 0; i < n; i++) {
+         pageNumberToId[i] = idToPageNumber[i] = i + 1;
+       }
+     }
+-    PagesMapper.#prevIdToPageNumber = array.subarray(2 * n);
++    this.#prevIdToPageNumber = array.subarray(2 * n);
+   }
+   movePages(selectedPages, pagesToMove, index) {
+     this.#init(true);
+-    const pageNumberToId = PagesMapper.#pageNumberToId;
+-    const idToPageNumber = PagesMapper.#idToPageNumber;
+-    PagesMapper.#prevIdToPageNumber.set(idToPageNumber);
++    const pageNumberToId = this.#pageNumberToId;
++    const idToPageNumber = this.#idToPageNumber;
++    this.#prevIdToPageNumber.set(idToPageNumber);
+     const movedCount = pagesToMove.length;
+     const mappedPagesToMove = new Uint32Array(movedCount);
+     let removedBeforeTarget = 0;
+@@ -7958,7 +7958,7 @@ class PagesMapper {
+         removedBeforeTarget += 1;
+       }
+     }
+-    const pagesNumber = PagesMapper.#pagesNumber;
++    const pagesNumber = this.#pagesNumber;
+     let adjustedTarget = index - removedBeforeTarget;
+     const remainingLen = pagesNumber - movedCount;
+     adjustedTarget = MathClamp(adjustedTarget, 0, remainingLen);
+@@ -7981,27 +7981,24 @@ class PagesMapper {
+     }
+   }
+   hasBeenAltered() {
+-    return PagesMapper.#pageNumberToId !== null;
++    return this.#pageNumberToId !== null;
+   }
+   getPageMappingForSaving() {
+     return {
+-      pageIndices: PagesMapper.#idToPageNumber ? PagesMapper.#idToPageNumber.map(x => x - 1) : null
++      pageIndices: this.#idToPageNumber ? this.#idToPageNumber.map(x => x - 1) : null
+     };
+   }
+   getPrevPageNumber(pageNumber) {
+-    return PagesMapper.#prevIdToPageNumber[PagesMapper.#pageNumberToId[pageNumber - 1] - 1];
++    return this.#prevIdToPageNumber[this.#pageNumberToId[pageNumber - 1] - 1];
+   }
+   getPageNumber(id) {
+-    return PagesMapper.#idToPageNumber?.[id - 1] ?? id;
++    return this.#idToPageNumber?.[id - 1] ?? id;
+   }
+   getPageId(pageNumber) {
+-    return PagesMapper.#pageNumberToId?.[pageNumber - 1] ?? pageNumber;
+-  }
+-  static get instance() {
+-    return shadow(this, "instance", new PagesMapper());
++    return this.#pageNumberToId?.[pageNumber - 1] ?? pageNumber;
+   }
+   getMapping() {
+-    return PagesMapper.#pageNumberToId.subarray(0, this.pagesNumber);
++    return this.#pageNumberToId.subarray(0, this.pagesNumber);
+   }
+ }
+ 
+@@ -20731,6 +20728,7 @@ function getDocument(src = {}) {
+   const FilterFactory = src.FilterFactory || (isNodeJS ? NodeFilterFactory : DOMFilterFactory);
+   const enableHWA = src.enableHWA === true;
+   const useWasm = src.useWasm !== false;
++  const pagesMapper = src.pagesMapper || new PagesMapper();
+   const length = rangeTransport ? rangeTransport.length : src.length ?? NaN;
+   const useSystemFonts = typeof src.useSystemFonts === "boolean" ? src.useSystemFonts : !isNodeJS && !disableFontFace;
+   const useWorkerFetch = typeof src.useWorkerFetch === "boolean" ? src.useWorkerFetch : !!(CMapReaderFactory === DOMCMapReaderFactory && StandardFontDataFactory === DOMStandardFontDataFactory && WasmFactory === DOMWasmFactory && cMapUrl && standardFontDataUrl && wasmUrl && isValidFetchUrl(cMapUrl, document.baseURI) && isValidFetchUrl(standardFontDataUrl, document.baseURI) && isValidFetchUrl(wasmUrl, document.baseURI));
+@@ -20839,7 +20837,7 @@ function getDocument(src = {}) {
+         throw new Error("Worker was destroyed");
+       }
+       const messageHandler = new MessageHandler(docId, workerId, worker.port);
+-      const transport = new WorkerTransport(messageHandler, task, networkStream, transportParams, transportFactory);
++      const transport = new WorkerTransport(messageHandler, task, networkStream, transportParams, transportFactory, pagesMapper);
+       task._transport = transport;
+       messageHandler.send("Ready", null);
+     });
+@@ -20942,6 +20940,9 @@ class PDFDocumentProxy {
+     this._pdfInfo = pdfInfo;
+     this._transport = transport;
+   }
++  get pagesMapper() {
++    return this._transport.pagesMapper;
++  }
+   get annotationStorage() {
+     return this._transport.annotationStorage;
+   }
+@@ -21058,8 +21059,8 @@ class PDFDocumentProxy {
+ }
+ class PDFPageProxy {
+   #pendingCleanup = false;
+-  #pagesMapper = PagesMapper.instance;
+-  constructor(pageIndex, pageInfo, transport, pdfBug = false) {
++  #pagesMapper = null;
++  constructor(pageIndex, pageInfo, transport, pagesMapper, pdfBug = false) {
+     this._pageIndex = pageIndex;
+     this._pageInfo = pageInfo;
+     this._transport = transport;
+@@ -21070,6 +21071,7 @@ class PDFPageProxy {
+     this._intentStates = new Map();
+     this.destroyed = false;
+     this.recordedBBoxes = null;
++    this.#pagesMapper = pagesMapper;
+   }
+   get pageNumber() {
+     return this._pageIndex + 1;
+@@ -21727,8 +21729,7 @@ class WorkerTransport {
+   #pagePromises = new Map();
+   #pageRefCache = new Map();
+   #passwordCapability = null;
+-  #pagesMapper = PagesMapper.instance;
+-  constructor(messageHandler, loadingTask, networkStream, params, factory) {
++  constructor(messageHandler, loadingTask, networkStream, params, factory, pagesMapper) {
+     this.messageHandler = messageHandler;
+     this.loadingTask = loadingTask;
+     this.#networkStream = networkStream;
+@@ -21748,13 +21749,14 @@ class WorkerTransport {
+     this.destroyed = false;
+     this.destroyCapability = null;
+     this.setupMessageHandler();
+-    this.#pagesMapper.addListener(this.#updateCaches.bind(this));
++    this.pagesMapper = pagesMapper;
++    this.pagesMapper.addListener(this.#updateCaches.bind(this));
+   }
+   #updateCaches() {
+     const newPageCache = new Map();
+     const newPromiseCache = new Map();
+-    for (let i = 0, ii = this.#pagesMapper.pagesNumber; i < ii; i++) {
+-      const prevPageIndex = this.#pagesMapper.getPrevPageNumber(i + 1) - 1;
++    for (let i = 0, ii = this.pagesMapper.pagesNumber; i < ii; i++) {
++      const prevPageIndex = this.pagesMapper.getPrevPageNumber(i + 1) - 1;
+       const page = this.#pageCache.get(prevPageIndex);
+       if (page) {
+         newPageCache.set(i, page);
+@@ -21956,7 +21958,7 @@ class WorkerTransport {
+     messageHandler.on("GetDoc", ({
+       pdfInfo
+     }) => {
+-      this.#pagesMapper.pagesNumber = pdfInfo.numPages;
++      this.pagesMapper.pagesNumber = pdfInfo.numPages;
+       this._numPages = pdfInfo.numPages;
+       this._htmlForXfa = pdfInfo.htmlForXfa;
+       delete pdfInfo.htmlForXfa;
+@@ -22124,11 +22126,11 @@ class WorkerTransport {
+     });
+   }
+   getPage(pageNumber) {
+-    if (!Number.isInteger(pageNumber) || pageNumber <= 0 || pageNumber > this.#pagesMapper.pagesNumber) {
++    if (!Number.isInteger(pageNumber) || pageNumber <= 0 || pageNumber > this.pagesMapper.pagesNumber) {
+       return Promise.reject(new Error("Invalid page request."));
+     }
+     const pageIndex = pageNumber - 1;
+-    const newPageIndex = this.#pagesMapper.getPageId(pageNumber) - 1;
++    const newPageIndex = this.pagesMapper.getPageId(pageNumber) - 1;
+     const cachedPromise = this.#pagePromises.get(pageIndex);
+     if (cachedPromise) {
+       return cachedPromise;
+@@ -22142,7 +22144,7 @@ class WorkerTransport {
+       if (pageInfo.refStr) {
+         this.#pageRefCache.set(pageInfo.refStr, newPageIndex);
+       }
+-      const page = new PDFPageProxy(pageIndex, pageInfo, this, this._params.pdfBug);
++      const page = new PDFPageProxy(pageIndex, pageInfo, this, this.pagesMapper, this._params.pdfBug);
+       this.#pageCache.set(pageIndex, page);
+       return page;
+     });
+@@ -22157,11 +22159,11 @@ class WorkerTransport {
+       num: ref.num,
+       gen: ref.gen
+     });
+-    return this.#pagesMapper.getPageNumber(index + 1) - 1;
++    return this.pagesMapper.getPageNumber(index + 1) - 1;
+   }
+   getAnnotations(pageIndex, intent) {
+     return this.messageHandler.sendWithPromise("GetAnnotations", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1,
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1,
+       intent
+     });
+   }
+@@ -22214,12 +22216,12 @@ class WorkerTransport {
+   }
+   getPageJSActions(pageIndex) {
+     return this.messageHandler.sendWithPromise("GetPageJSActions", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1
+     });
+   }
+   getStructTree(pageIndex) {
+     return this.messageHandler.sendWithPromise("GetStructTree", {
+-      pageIndex: this.#pagesMapper.getPageId(pageIndex + 1) - 1
++      pageIndex: this.pagesMapper.getPageId(pageIndex + 1) - 1
+     });
+   }
+   getOutline() {
+@@ -22275,7 +22277,7 @@ class WorkerTransport {
+     }
+     const refStr = ref.gen === 0 ? `${ref.num}R` : `${ref.num}R${ref.gen}`;
+     const pageIndex = this.#pageRefCache.get(refStr);
+-    return pageIndex >= 0 ? this.#pagesMapper.getPageNumber(pageIndex + 1) : null;
++    return pageIndex >= 0 ? this.pagesMapper.getPageNumber(pageIndex + 1) : null;
+   }
+ }
+ class RenderTask {
+@@ -32770,7 +32772,6 @@ globalThis.pdfjsLib = {
+   normalizeUnicode: normalizeUnicode,
+   OPS: OPS,
+   OutputScale: OutputScale,
+-  PagesMapper: PagesMapper,
+   PasswordResponses: PasswordResponses,
+   PDFDataRangeTransport: PDFDataRangeTransport,
+   PDFDateString: PDFDateString,
+@@ -32794,6 +32795,6 @@ globalThis.pdfjsLib = {
+   XfaLayer: XfaLayer
+ };
+ 
+-export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, CSSConstants, ColorPicker, DOMSVGFactory, DrawLayer, util_FeatureTest as FeatureTest, GlobalWorkerOptions, util_ImageKind as ImageKind, InvalidPDFException, MathClamp, OPS, OutputScale, PDFDataRangeTransport, PDFDateString, PDFWorker, PagesMapper, PasswordResponses, PermissionFlag, PixelsPerInch, RenderingCancelledException, ResponseException, SignatureExtractor, SupportedImageMimeTypes, TextLayer, TouchManager, Util, VerbosityLevel, XfaLayer, applyOpacity, build, createValidAbsoluteUrl, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, isDataScheme, isPdfFile, isValidExplicitDest, noContextMenu, normalizeUnicode, renderRichText, setLayerDimensions, shadow, stopEvent, updateUrlHash, version };
++export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, CSSConstants, ColorPicker, DOMSVGFactory, DrawLayer, util_FeatureTest as FeatureTest, GlobalWorkerOptions, util_ImageKind as ImageKind, InvalidPDFException, MathClamp, OPS, OutputScale, PDFDataRangeTransport, PDFDateString, PDFWorker, PasswordResponses, PermissionFlag, PixelsPerInch, RenderingCancelledException, ResponseException, SignatureExtractor, SupportedImageMimeTypes, TextLayer, TouchManager, Util, VerbosityLevel, XfaLayer, applyOpacity, build, createValidAbsoluteUrl, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, isDataScheme, isPdfFile, isValidExplicitDest, noContextMenu, normalizeUnicode, renderRichText, setLayerDimensions, shadow, stopEvent, updateUrlHash, version };
+ 
+ //# sourceMappingURL=pdf.mjs.map
+\ No newline at end of file
+diff --git a/node_modules/pdfjs-dist/web/pdf_viewer.mjs b/node_modules/pdfjs-dist/web/pdf_viewer.mjs
+index a565f0281..12bb81bfc 100644
+--- a/node_modules/pdfjs-dist/web/pdf_viewer.mjs
++++ b/node_modules/pdfjs-dist/web/pdf_viewer.mjs
+@@ -85,7 +85,6 @@ const {
+   normalizeUnicode,
+   OPS,
+   OutputScale,
+-  PagesMapper,
+   PasswordResponses,
+   PDFDataRangeTransport,
+   PDFDateString,
+@@ -7752,7 +7751,6 @@ class PDFViewer {
+   #supportsPinchToZoom = true;
+   #textLayerMode = TextLayerMode.ENABLE;
+   #viewerAlert = null;
+-  #pagesMapper = PagesMapper.instance;
+   constructor(options) {
+     const viewerVersion = "5.4.624";
+     if (version !== viewerVersion) {
+@@ -8136,7 +8134,6 @@ class PDFViewer {
+       this.#annotationEditorUIManager = null;
+       this.#annotationEditorMode = AnnotationEditorType.NONE;
+       this.#printingAllowed = true;
+-      this.#pagesMapper.pagesNumber = 0;
+     }
+     this.pdfDocument = pdfDocument;
+     if (!pdfDocument) {
+diff --git a/node_modules/pdfjs-dist/legacy/web/pdf_viewer.mjs b/node_modules/pdfjs-dist/legacy/web/pdf_viewer.mjs
+index ece566060..ccfe54579 100644
+--- a/node_modules/pdfjs-dist/legacy/web/pdf_viewer.mjs
++++ b/node_modules/pdfjs-dist/legacy/web/pdf_viewer.mjs
+@@ -4935,7 +4935,6 @@ const {
+   normalizeUnicode,
+   OPS,
+   OutputScale,
+-  PagesMapper,
+   PasswordResponses,
+   PDFDataRangeTransport,
+   PDFDateString,
+@@ -12740,7 +12739,6 @@ class PDFViewer {
+   #supportsPinchToZoom = true;
+   #textLayerMode = TextLayerMode.ENABLE;
+   #viewerAlert = null;
+-  #pagesMapper = PagesMapper.instance;
+   constructor(options) {
+     const viewerVersion = "5.4.624";
+     if (version !== viewerVersion) {
+@@ -13124,7 +13122,6 @@ class PDFViewer {
+       this.#annotationEditorUIManager = null;
+       this.#annotationEditorMode = AnnotationEditorType.NONE;
+       this.#printingAllowed = true;
+-      this.#pagesMapper.pagesNumber = 0;
+     }
+     this.pdfDocument = pdfDocument;
+     if (!pdfDocument) {
+diff --git a/node_modules/pdfjs-dist/types/src/display/display_utils.d.ts b/node_modules/pdfjs-dist/types/src/display/display_utils.d.ts
+index 34cbc6f3d..ca8c6ca5a 100644
+--- a/node_modules/pdfjs-dist/types/src/display/display_utils.d.ts
++++ b/node_modules/pdfjs-dist/types/src/display/display_utils.d.ts
+@@ -146,36 +146,6 @@ export class OutputScale {
+  * in the PDF document doesn't match the default sequential ordering.
+  */
+ export class PagesMapper {
+-    /**
+-     * Maps page IDs to their corresponding page numbers.
+-     * @type {Uint32Array|null}
+-     */
+-    static "__#private@#idToPageNumber": Uint32Array | null;
+-    /**
+-     * Maps page numbers to their corresponding page IDs.
+-     * @type {Uint32Array|null}
+-     */
+-    static "__#private@#pageNumberToId": Uint32Array | null;
+-    /**
+-     * Previous mapping of page IDs to page numbers.
+-     * @type {Uint32Array|null}
+-     */
+-    static "__#private@#prevIdToPageNumber": Uint32Array | null;
+-    /**
+-     * The total number of pages.
+-     * @type {number}
+-     */
+-    static "__#private@#pagesNumber": number;
+-    /**
+-     * Listeners for page changes.
+-     * @type {Array<function>}
+-     */
+-    static "__#private@#listeners": Array<Function>;
+-    /**
+-     * Gets or creates a singleton instance of PagesMapper.
+-     * @returns {PagesMapper} The singleton instance.
+-     */
+-    static get instance(): PagesMapper;
+     /**
+      * Sets the total number of pages and initializes default mappings
+      * where page IDs equal page numbers (1-indexed).
+diff --git a/node_modules/pdfjs-dist/types/src/display/api.d.ts b/node_modules/pdfjs-dist/types/src/display/api.d.ts
+index 245d86d17..d52aeaab0 100644
+--- a/node_modules/pdfjs-dist/types/src/display/api.d.ts
++++ b/node_modules/pdfjs-dist/types/src/display/api.d.ts
+@@ -251,6 +251,8 @@ export type DocumentInitParameters = {
+      * rendering. The default value is `false`.
+      */
+     enableHWA?: boolean | undefined;
++    /** Document-owned page reordering mapper. */
++    pagesMapper?: PagesMapper | undefined;
+ };
+ export type OnProgressParameters = {
+     /**
+@@ -892,6 +894,10 @@ export class PDFDocumentProxy {
+     constructor(pdfInfo: any, transport: any);
+     _pdfInfo: any;
+     _transport: any;
++    /**
++     * @type {PagesMapper} The document-owned pages mapper instance.
++     */
++    get pagesMapper(): PagesMapper;
+     /**
+      * @type {AnnotationStorage} Storage for annotation data in forms.
+      */
+@@ -1374,7 +1380,7 @@ export class PDFDocumentProxy {
+  * Proxy to a `PDFPage` in the worker thread.
+  */
+ export class PDFPageProxy {
+-    constructor(pageIndex: any, pageInfo: any, transport: any, pdfBug?: boolean);
++    constructor(pageIndex: any, pageInfo: any, transport: any, pagesMapper: PagesMapper, pdfBug?: boolean);
+     _pageIndex: any;
+     _pageInfo: any;
+     _transport: any;
+@@ -1628,3 +1634,5 @@ import { Metadata } from "./metadata.js";
+ import { StatTimer } from "./display_utils.js";
+ import { PDFObjects } from "./pdf_objects.js";
+ import { MessageHandler } from "../shared/message_handler.js";
++
++import { PagesMapper } from "./display_utils.js";
+diff --git a/node_modules/pdfjs-dist/types/src/pdf.d.ts b/node_modules/pdfjs-dist/types/src/pdf.d.ts
+index f07f3f9a8..0c7db38e4 100644
+--- a/node_modules/pdfjs-dist/types/src/pdf.d.ts
++++ b/node_modules/pdfjs-dist/types/src/pdf.d.ts
+@@ -39,7 +39,6 @@ import { noContextMenu } from "./display/display_utils.js";
+ import { normalizeUnicode } from "./shared/util.js";
+ import { OPS } from "./shared/util.js";
+ import { OutputScale } from "./display/display_utils.js";
+-import { PagesMapper } from "./display/display_utils.js";
+ import { PasswordResponses } from "./shared/util.js";
+ import { PDFDataRangeTransport } from "./display/api.js";
+ import { PDFDateString } from "./display/display_utils.js";
+@@ -61,4 +60,4 @@ import { Util } from "./shared/util.js";
+ import { VerbosityLevel } from "./shared/util.js";
+ import { version } from "./display/api.js";
+ import { XfaLayer } from "./display/xfa_layer.js";
+-export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, applyOpacity, build, ColorPicker, createValidAbsoluteUrl, CSSConstants, DOMSVGFactory, DrawLayer, FeatureTest, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, GlobalWorkerOptions, ImageKind, InvalidPDFException, isDataScheme, isPdfFile, isValidExplicitDest, MathClamp, noContextMenu, normalizeUnicode, OPS, OutputScale, PagesMapper, PasswordResponses, PDFDataRangeTransport, PDFDateString, PDFWorker, PermissionFlag, PixelsPerInch, RenderingCancelledException, renderRichText, ResponseException, setLayerDimensions, shadow, SignatureExtractor, stopEvent, SupportedImageMimeTypes, TextLayer, TouchManager, updateUrlHash, Util, VerbosityLevel, version, XfaLayer };
++export { AbortException, AnnotationEditorLayer, AnnotationEditorParamsType, AnnotationEditorType, AnnotationEditorUIManager, AnnotationLayer, AnnotationMode, AnnotationType, applyOpacity, build, ColorPicker, createValidAbsoluteUrl, CSSConstants, DOMSVGFactory, DrawLayer, FeatureTest, fetchData, findContrastColor, getDocument, getFilenameFromUrl, getPdfFilenameFromUrl, getRGB, getUuid, getXfaPageViewport, GlobalWorkerOptions, ImageKind, InvalidPDFException, isDataScheme, isPdfFile, isValidExplicitDest, MathClamp, noContextMenu, normalizeUnicode, OPS, OutputScale, PasswordResponses, PDFDataRangeTransport, PDFDateString, PDFWorker, PermissionFlag, PixelsPerInch, RenderingCancelledException, renderRichText, ResponseException, setLayerDimensions, shadow, SignatureExtractor, stopEvent, SupportedImageMimeTypes, TextLayer, TouchManager, updateUrlHash, Util, VerbosityLevel, version, XfaLayer };
+diff --git a/node_modules/pdfjs-dist/types/web/pdf_viewer.d.ts b/node_modules/pdfjs-dist/types/web/pdf_viewer.d.ts
+index 82ef967c7..f1d09fdec 100644
+--- a/node_modules/pdfjs-dist/types/web/pdf_viewer.d.ts
++++ b/node_modules/pdfjs-dist/types/web/pdf_viewer.d.ts
+@@ -246,7 +246,6 @@ export class PDFViewer {
+      * @param {PDFViewerOptions} options
+      */
+     constructor(options: PDFViewerOptions);
+-    pagesMapper: PagesMapper | undefined;
+     container: HTMLDivElement;
+     viewer: Element | null;
+     eventBus: import("./event_utils").EventBus;
+@@ -620,6 +619,5 @@ export class PDFViewer {
+     #private;
+ }
+ import { PDFRenderingQueue } from "./pdf_rendering_queue.js";
+-import { PagesMapper } from "../src/pdf";
+ import { SimpleLinkService } from "./pdf_link_service.js";
+ import { GenericL10n } from "./genericl10n";

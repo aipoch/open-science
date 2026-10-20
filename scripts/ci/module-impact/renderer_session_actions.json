@@ -5,7 +5,8 @@
     "src/renderer/src/lib/session-fork.test.ts",
     "src/renderer/src/lib/session-fork.ts",
     "src/renderer/src/lib/session-package-export.test.ts",
-    "src/renderer/src/lib/session-package-export.ts"
+    "src/renderer/src/lib/session-package-export.ts",
+    "src/renderer/src/lib/package-operation-presentation.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/components/ActionToast.tsx",

@@ -179,6 +179,28 @@ export function nativeCaptionedPlotBand(
     frames.push(...next)
   }
   if (frames.length < 2 || frames.length > 24) return
+  // Separate captions uniquely anchored below separate closed faces establish
+  // independent figures. Completing one of them must not absorb its neighbor.
+  const captionFrame = (candidate) => {
+    const matches = frames.filter(
+      (frame) =>
+        candidate.rect[1] >= frame[3] &&
+        candidate.rect[1] - frame[3] < font * 6 &&
+        Math.min(candidate.rect[2], frame[2]) - Math.max(candidate.rect[0], frame[0]) >=
+          Math.min(candidate.rect[2] - candidate.rect[0], frame[2] - frame[0]) * 0.5
+    )
+    return matches.length === 1 ? matches[0] : undefined
+  }
+  const ownFrame = captionFrame(caption)
+  if (
+    ownFrame &&
+    ownCaps.some((candidate) => {
+      if (candidate === caption) return false
+      const otherFrame = captionFrame(candidate)
+      return otherFrame && otherFrame !== ownFrame
+    })
+  )
+    return
   const b = union(frames)
   const horizontal = frames.every(
       (r) =>
@@ -210,11 +232,33 @@ export function nativeCaptionedPlotBand(
             )
           })
     )
+  const intervalGrid =
+    !keyed &&
+    !horizontal &&
+    !vertical &&
+    !grid &&
+    nativeTitledIntervalColumns(page, rows, closedFrames, nativeTokens, font)
   if (
-    (!keyed && !horizontal && !vertical && !grid) ||
+    (!keyed && !horizontal && !vertical && !grid && !intervalGrid) ||
     ownCaps.some((c) => c !== caption && intersection(c.rect, b) > 0)
   )
     return
+  // Two explicitly described curve panels have independent closed native
+  // frames as well as the ordinary tick/ink proof. They need not contain a
+  // third curve merely to distinguish their shared plate from surrounding text.
+  const describedCurvePair =
+    vertical &&
+    frames.length === 2 &&
+    /\btop:\s+\S[\s\S]*\bbottom:\s+\S/i.test(caption.lines.join(' ')) &&
+    Math.abs(frames[0][3] - frames[0][1] - frames[1][3] + frames[1][1]) < 0.01 &&
+    Math.max(frames[0][1], frames[1][1]) - Math.min(frames[0][3], frames[1][3]) > 0 &&
+    Math.max(frames[0][1], frames[1][1]) - Math.min(frames[0][3], frames[1][3]) < font * 2 &&
+    frames.every(
+      (r) =>
+        r[0] >= caption.rect[0] &&
+        r[2] <= caption.rect[2] &&
+        closedFrames.filter((f) => f.every((v, n) => Math.abs(v - r[n]) < 0.01)).length === 1
+    )
   if (
     frames.some((r) => {
       const ticks = page.lines.filter(
@@ -241,7 +285,7 @@ export function nativeCaptionedPlotBand(
             x[2] - x[0] > font * 3 &&
             x[3] - x[1] > font * 0.3
         )
-      return ticks.length < (unequal ? 1 : 4) || inside.length < 3
+      return ticks.length < (unequal ? 1 : 4) || inside.length < (describedCurvePair ? 2 : 3)
     })
   )
     return
@@ -276,6 +320,7 @@ export function nativeCaptionedPlotBand(
     ...(translated?.legend ? [translated.legend] : [])
   ])
   if (
+    (intervalGrid && ownCaps.some((c) => c !== caption && intersection(c.rect, rect) > 0)) ||
     tables.some((t) => intersection(t, rect) > 0) ||
     page.lines.some(
       (l) =>
@@ -298,7 +343,89 @@ export function nativeCaptionedPlotBand(
         font
       )
     : undefined
-  return { caption, rect: measured ?? rect, graphicsCount: frames.length }
+  return {
+    caption,
+    rect: measured ?? rect,
+    graphicsCount: frames.length,
+    ...(describedCurvePair ? { reason: 'native-described-curve-pair' } : {})
+  }
+}
+
+// Complete shared title rows and disjoint column intervals independently prove
+// trimmed panel widths. Legacy equal-width, tick and paint checks stay intact.
+function nativeTitledIntervalColumns(page, rows, frames, tokens, font) {
+  const contains = (a, b, epsilon = 1e-7) =>
+    b.every((v, i) => (i < 2 ? v >= a[i] - epsilon : v <= a[i] + epsilon))
+  if (page.invalidGraphicsBounds !== 0 || rows.length < 2 || rows.length > 6) return false
+  const sorted = rows.map((row) => row.slice().sort((a, b) => a[0] - b[0]))
+  const width = sorted[0].length
+  if (width < 2 || width > 6 || sorted.some((row) => row.length !== width)) return false
+  const faces = sorted.flat(),
+    columns = sorted[0].map((_, i) => sorted.map((row) => row[i]))
+  if (
+    faces.some(
+      (f) =>
+        f[2] - f[0] < font * 6 ||
+        f[3] - f[1] < font * 6 ||
+        frames.filter((r) => r.every((v, i) => Math.abs(v - f[i]) <= 0.01)).length !== 1
+    )
+  )
+    return false
+  if (
+    sorted.some((row, j) =>
+      row.some(
+        (r, i) =>
+          Math.abs(r[1] - row[0][1]) > 1e-7 ||
+          Math.abs(r[3] - row[0][3]) > 1e-7 ||
+          (j && (r[1] <= sorted[j - 1][i][3] || r[1] - sorted[j - 1][i][3] > font * 8))
+      )
+    )
+  )
+    return false
+  if (
+    columns.some(
+      (column, i) =>
+        Math.max(...column.map((r) => r[0])) >= Math.min(...column.map((r) => r[2])) ||
+        (i && Math.min(...column.map((r) => r[0])) <= Math.max(...columns[i - 1].map((r) => r[2])))
+    )
+  )
+    return false
+  const b = union(faces)
+  if (
+    frames.some(
+      (r) => intersection(r, b) > 0 && faces.filter((f) => contains(f, r, 0.01)).length !== 1
+    )
+  )
+    return false
+  const titles = []
+  for (let j = 0; j < sorted.length; j++) {
+    const rowTitles = []
+    for (let i = 0; i < width; i++) {
+      const f = sorted[j][i],
+        column = columns[i]
+      const matches = page.lines.filter(
+        (l) =>
+          l.fontSize > 0 &&
+          l.fontSize <= font &&
+          l.text.length < 60 &&
+          /\p{L}/u.test(l.text) &&
+          (!titles.length || Math.abs(l.fontSize - titles[0].fontSize) < 1e-7) &&
+          Math.abs(l.height - l.fontSize) < 1e-7 &&
+          l.y + l.height <= f[1] &&
+          f[1] - l.y - l.height <= font * 2 &&
+          l.x >= Math.max(...column.map((r) => r[0])) &&
+          l.x + l.width <= Math.min(...column.map((r) => r[2]))
+      )
+      if (matches.length !== 1 || !completeNativePlotLine(matches[0], tokens)) return false
+      rowTitles.push(matches[0])
+    }
+    if (rowTitles.some((l) => Math.abs(l.y - rowTitles[0].y) > 1e-7)) return false
+    titles.push(...rowTitles)
+  }
+  return (
+    new Set(titles.map((l) => l.text)).size === faces.length &&
+    titles.every((l) => Math.abs(l.fontSize - titles[0].fontSize) < 1e-7)
+  )
 }
 
 function completeNativePlotLine(line, tokens) {
@@ -1396,6 +1523,7 @@ export function nativeFigureRunningHead(page, captions, tokens = [], rules = [],
     ? tokens
         .filter((t) => t.horizontal && t.rect?.every(Number.isFinite) && area(t.rect) > 0)
         .map((t) => ({
+          token: t,
           text: t.text,
           x: t.rect[0],
           y: t.rect[1],
@@ -1575,7 +1703,12 @@ export function nativeFigureRunningHead(page, captions, tokens = [], rules = [],
           .map((t) => t.text.replace(/\s/g, ''))
           .join('')
   )
-  return { lines: printed.length ? printed : lines, bar, decorations }
+  return {
+    lines: printed.length ? printed : lines,
+    tokens: lines.map((line) => line.token).filter(Boolean),
+    bar,
+    decorations
+  }
 }
 
 // A captioned pair of closed, populated plots can use complete keyed titles

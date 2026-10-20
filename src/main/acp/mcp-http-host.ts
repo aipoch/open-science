@@ -64,8 +64,8 @@ type SessionEntry = {
   plan?: PlanMcpEnvironment
   planRouteToken?: string
   hostMessage?: HostMessageMcpHandler
-  library?: LiteratureLibraryMcpHandler
-  literature?: LiteratureMcpHandler
+  library?: { handler: LiteratureLibraryMcpHandler; token: symbol }
+  literature?: { handler: LiteratureMcpHandler; token: symbol }
 }
 
 const writeJson = (response: ServerResponse, statusCode: number, payload: unknown): void => {
@@ -206,16 +206,45 @@ class AgentMcpHttpHost {
     this.sessions.set(routingId, entry)
   }
 
-  registerLiterature(routingId: string, handler: LiteratureMcpHandler): void {
+  registerLiterature(routingId: string, handler: LiteratureMcpHandler): () => void {
+    this.cancelLiteratureRoute('literature', routingId)
     const entry = this.sessions.get(routingId) ?? {}
-    entry.literature = handler
+    const token = Symbol('literature')
+    entry.literature = { handler, token }
     this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.literature?.token !== token) return
+      delete current.literature
+      this.cancelLiteratureRoute('literature', routingId)
+    }
   }
 
-  registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): void {
+  registerLiteratureLibrary(routingId: string, handler: LiteratureLibraryMcpHandler): () => void {
+    this.cancelLiteratureRoute('library', routingId)
     const entry = this.sessions.get(routingId) ?? {}
-    entry.library = handler
+    const token = Symbol('library')
+    entry.library = { handler, token }
     this.sessions.set(routingId, entry)
+    return () => {
+      const current = this.sessions.get(routingId)
+      if (current?.library?.token !== token) return
+      delete current.library
+      this.cancelLiteratureRoute('library', routingId)
+    }
+  }
+
+  private cancelLiteratureRoute(kind: 'literature' | 'library', routingId: string): void {
+    for (const [response, pending] of this.readingToolRequests) {
+      if (pending.routingId !== routingId || pending.kind !== kind) continue
+      this.readingToolRequests.delete(response)
+      response.destroy()
+    }
+    for (const [key, active] of this.toolRequests) {
+      if (active.routingId !== routingId || active.kind !== kind) continue
+      this.toolRequests.delete(key)
+      active.response.destroy()
+    }
   }
 
   // Drops a routing id's registered environments once its session is gone.
@@ -293,11 +322,11 @@ class AgentMcpHttpHost {
     }
 
     if (kind === 'literature') {
-      return entry.literature ? createLiteratureMcpServer(entry.literature) : undefined
+      return entry.literature ? createLiteratureMcpServer(entry.literature.handler) : undefined
     }
 
     if (kind === 'library') {
-      return entry.library ? createLiteratureLibraryMcpServer(entry.library) : undefined
+      return entry.library ? createLiteratureLibraryMcpServer(entry.library.handler) : undefined
     }
 
     const skillImportEnvironment = entry.skillImport

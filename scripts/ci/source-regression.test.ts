@@ -1,4 +1,4 @@
-import { spawnSync } from 'node:child_process'
+import { spawnSync, type SpawnSyncReturns } from 'node:child_process'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -25,7 +25,7 @@ type Job = {
   'timeout-minutes'?: number
   env?: Record<string, string>
   if?: string
-  needs?: string
+  needs?: string | string[]
   'runs-on': string
   'continue-on-error'?: boolean
   steps: Step[]
@@ -198,6 +198,17 @@ describe('trusted supplemental selection', () => {
     )
   })
 
+  it('installs Chromium before every Mac group that launches a browser', () => {
+    const steps = scheduled.jobs.regression.steps
+    const install = steps.find(({ name }) => name === 'Install headless Chromium')!
+    expect(install.run).toBe('npx playwright install chromium --only-shell')
+    expect(install.if).toBe(
+      "${{ matrix.group == 'functional' || matrix.group == 'presentation' || matrix.group == 'presentation-screening' }}"
+    )
+    for (const id of ['functional', 'presentation', 'presentation_screening'])
+      expect(steps.indexOf(install)).toBeLessThan(steps.findIndex((step) => step.id === id))
+  })
+
   it.skipIf(process.platform === 'win32')(
     'requires the complete Windows browser regression on every scheduled shard',
     () => {
@@ -284,301 +295,295 @@ describe('trusted supplemental selection', () => {
   })
 })
 
+it('shares one immutable setup across independent Mac jobs', () => {
+  expect(scheduled.jobs.macos_setup).toBeDefined()
+  expect(scheduled.jobs.regression.needs).toEqual(['macos_setup'])
+  expect(scheduled.jobs.regression.strategy).toMatchObject({ 'fail-fast': false })
+  expect(
+    scheduled.jobs.regression.steps.some(({ run }) =>
+      run?.includes('e2e-setup-snapshot.mjs restore')
+    )
+  ).toBe(true)
+})
+
 describe('independent source regression', () => {
+  const select = scheduled.jobs.macos_setup.steps.find(({ id }) => id === 'select')!
+  const enforce = scheduled.jobs.regression.steps.find(
+    ({ name }) => name === 'Enforce selected Mac suite'
+  )!
+  const regression = action.runs.steps.find(({ name }) => name === 'Run supplemental regressions')!
+  const full = [
+    { group: 'functional', shard: 1 },
+    { group: 'workspace', shard: 1 },
+    { group: 'presentation', shard: 1 },
+    ...[1, 2, 3].map((shard) => ({ group: 'regressions', shard })),
+    { group: 'capacity', shard: 1 },
+    { group: 'delegation', shard: 1 }
+  ]
+  const selectGroups = (
+    mode: string,
+    shard = 'all'
+  ): { status: number | null; matrix?: unknown } => {
+    const dir = mkdtempSync(join(tmpdir(), 'mac-regression-selection-'))
+    try {
+      const output = join(dir, 'output')
+      const result = spawnSync(process.execPath, ['-e', select.run!], {
+        env: { ...process.env, MODE: mode, SHARD: shard, GITHUB_OUTPUT: output },
+        encoding: 'utf8'
+      })
+      return {
+        status: result.status,
+        matrix:
+          result.status === 0
+            ? JSON.parse(readFileSync(output, 'utf8').trim().slice('matrix='.length))
+            : undefined
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+
+  it('selects all eight jobs for full coverage even with a diagnostic shard input', () => {
+    for (const shard of ['all', '1', '2', '3'])
+      expect(selectGroups('full', shard)).toEqual({ status: 0, matrix: { include: full } })
+    expect(scheduled.jobs.regression.strategy?.matrix).toBe(
+      '${{ fromJSON(needs.macos_setup.outputs.matrix) }}'
+    )
+    expect(select.env).toEqual({
+      MODE: "${{ inputs.mode || 'full' }}",
+      SHARD: "${{ inputs.shard || 'all' }}"
+    })
+  })
+
+  it('runs focused modes through the same jobs without unrelated groups', () => {
+    for (const group of [
+      'functional',
+      'workspace',
+      'presentation',
+      'capacity',
+      'delegation',
+      'scheduled-fixes',
+      'workspace-images',
+      'presentation-screening'
+    ])
+      expect(selectGroups(group)).toEqual({ status: 0, matrix: { include: [{ group, shard: 1 }] } })
+    for (const shard of ['1', '2', '3'])
+      expect(selectGroups('regressions', shard)).toEqual({
+        status: 0,
+        matrix: { include: [{ group: 'regressions', shard: Number(shard) }] }
+      })
+    expect(selectGroups('regressions').matrix).toEqual({
+      include: full.filter(({ group }) => group === 'regressions')
+    })
+    for (const [mode, shard] of [
+      ['invalid', 'all'],
+      ['full', '4'],
+      ['full', '$(exit 0)']
+    ])
+      expect(selectGroups(mode, shard).status).not.toBe(0)
+  })
+
+  it('retains both daily rounds and diagnostic modes without publication', () => {
+    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
+    const dispatch = scheduled.on.workflow_dispatch as {
+      inputs: { mode: { options: string[] }; shard: { options: string[] } }
+    }
+    expect(dispatch.inputs.mode.options).toEqual([
+      'full',
+      'portable',
+      'functional',
+      'workspace',
+      'regressions',
+      'capacity',
+      'delegation',
+      'scheduled-fixes',
+      'presentation',
+      'workspace-images',
+      'presentation-screening',
+      'runtime-evidence',
+      'static-impact'
+    ])
+    expect(dispatch.inputs.shard.options).toEqual(['all', '1', '2', '3'])
+    expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
+    expect(scheduled.on).not.toHaveProperty('push')
+    expect(scheduled.jobs).not.toHaveProperty('plan')
+    expect(scheduled.jobs.macos_setup.if).toBe(
+      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
+    )
+    expect(scheduled.concurrency).toEqual({
+      group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
+      'cancel-in-progress': true
+    })
+    expect(scheduled.jobs.report.if).toBe("${{ always() && github.event_name == 'schedule' }}")
+  })
+
+  it('builds once and restores the exact producer snapshot and Node version in every Mac job', () => {
+    const setup = scheduled.jobs.macos_setup
+    const consumer = scheduled.jobs.regression
+    expect(setup['runs-on']).toBe('macos-15')
+    expect(consumer['runs-on']).toBe(setup['runs-on'])
+    expect(setup.needs).toBeUndefined()
+    expect(setup.steps.filter(({ run }) => run === 'npm run build:e2e')).toHaveLength(1)
+    expect(setup.steps.filter(({ run }) => run === 'npm run build:web')).toHaveLength(1)
+    expect(
+      consumer.steps.some(({ run }) => run?.includes('npm-ci') || run?.includes('npm run build:'))
+    ).toBe(false)
+    expect(consumer.steps.find(({ name }) => name === 'Setup Node')?.with?.['node-version']).toBe(
+      '${{ needs.macos_setup.outputs.node_version }}'
+    )
+    expect(
+      consumer.steps.find(({ name }) => name === 'Download E2E setup')?.with?.['artifact-ids']
+    ).toBe('${{ needs.macos_setup.outputs.artifact_id }}')
+    expect(consumer.if).toBe("${{ !cancelled() && needs.macos_setup.result == 'success' }}")
+    const upload = consumer.steps.find(({ name }) => name === 'Upload diagnostics')!
+    expect(upload.if).toBe('always()')
+    expect(upload.with?.name).toBe(
+      'source-regression-${{ matrix.group }}-${{ matrix.shard }}-${{ github.run_attempt }}'
+    )
+    expect(upload.with?.['if-no-files-found']).toBe('error')
+  })
+
   it.skipIf(process.platform === 'win32')(
-    'selects nightly profiling explicitly and rejects invalid selections',
+    'preserves PR defaults and separates capacity from all three ordinary shards',
     () => {
-      const command = action.runs.steps.find(
-        (step) => step.name === 'Run supplemental regressions'
-      )!
+      const run = (group: string, capacity: string, shard = ''): SpawnSyncReturns<string> =>
+        spawnSync('bash', ['-e', '-c', 'npm() { printf "%s\\n" "$@"; };\n' + regression.run!], {
+          env: { ...process.env, GROUP: group, INCLUDE_CAPACITY: capacity, SHARD: shard },
+          encoding: 'utf8'
+        })
       expect(
         pr.jobs.macos_e2e.steps.find((step) => step.with?.group === 'regressions')?.with?.[
           'include-capacity'
         ]
       ).toBe('false')
-      expect(
-        scheduled.jobs.regression.steps.find((step) => step.with?.group === 'regressions')?.with?.[
-          'include-capacity'
-        ]
-      ).toBe('true')
-      for (const selection of ['true', 'false', '', 'invalid']) {
-        const result = spawnSync(
-          'bash',
-          ['-e', '-c', 'npm() { printf "%s\\n" "$@"; };\n' + command.run!],
-          {
-            encoding: 'utf8',
-            env: { ...process.env, INCLUDE_CAPACITY: selection }
-          }
-        )
-        expect(result.status).toBe(['true', 'false'].includes(selection) ? 0 : 1)
-        if (selection === 'true') {
-          expect(result.stdout).toContain('--global-timeout=4500000')
-          expect(result.stdout).not.toContain('--grep-invert')
-        }
-        if (selection === 'false') {
-          expect(result.stdout).toContain('--global-timeout=1200000')
-          expect(result.stdout).toContain('--grep-invert\n@capacity')
-        }
+      expect(run('regressions', 'true').stdout).toContain('--global-timeout=4500000')
+      const ordinary = run('regressions', 'false')
+      expect(ordinary.status).toBe(0)
+      expect(ordinary.stdout).toContain('--grep-invert\n@capacity')
+      expect(ordinary.stdout).toContain('--global-timeout=1200000')
+      for (const shard of ['1/3', '2/3', '3/3']) {
+        const result = run('regressions', 'false', shard)
+        expect(result.status).toBe(0)
+        expect(result.stdout).toContain(`--shard=${shard}`)
+        expect(result.stdout).toContain('--grep-invert\n@capacity')
+        expect(result.stdout).toContain('--global-timeout=1800000')
       }
+      const capacity = run('capacity', 'false')
+      expect(capacity.status).toBe(0)
+      expect(capacity.stdout).toContain('--grep\n@capacity')
+      expect(capacity.stdout).not.toContain('--grep-invert')
+      expect(capacity.stdout).not.toContain('--shard')
+      for (const [group, capacity, shard] of [
+        ['regressions', '', ''],
+        ['regressions', 'false', '4/3'],
+        ['regressions', 'false', '$(exit 0)'],
+        ['capacity', 'false', '1/3']
+      ])
+        expect(run(group, capacity, shard).status).not.toBe(0)
+      const call = scheduled.jobs.regression.steps.find(({ id }) => id === 'regressions')!
+      expect(call.uses).toBe('./.github/actions/source-regression')
+      expect(call.with).toEqual({
+        group: '${{ matrix.group }}',
+        'include-capacity': 'false',
+        shard: "${{ matrix.group == 'regressions' && format('{0}/3', matrix.shard) || '' }}"
+      })
     }
   )
 
-  it('batches main on a read-only schedule with one native runner and no package prerequisite', () => {
-    expect(scheduled.on.schedule).toEqual([{ cron: '37 5,17 * * *' }])
-    expect(scheduled.on).toHaveProperty('workflow_dispatch')
-    expect(scheduled.on.workflow_dispatch).toEqual({
-      inputs: {
-        mode: {
-          description: 'Validation scope',
-          required: true,
-          type: 'choice',
-          default: 'full',
-          options: [
-            'full',
-            'portable',
-            'scheduled-fixes',
-            'presentation',
-            'workspace-images',
-            'presentation-screening',
-            'runtime-evidence',
-            'static-impact'
-          ]
-        }
-      }
-    })
-    expect(scheduled.on).not.toHaveProperty('push')
-    expect(scheduled.permissions).toEqual({ actions: 'read', contents: 'read' })
-    expect(scheduled.jobs.regression.if).toContain("github.ref == 'refs/heads/main'")
-    expect(scheduled.concurrency).toEqual({
-      group: 'source-regression-${{ github.event_name }}-${{ github.ref }}',
-      'cancel-in-progress': true
-    })
-    expect(Object.keys(scheduled.jobs)).toEqual([
-      'static_impact',
-      'runtime_evidence',
-      'regression',
-      'portable',
-      'portable_report',
-      'packages',
-      'report'
-    ])
-    expect(scheduled.jobs.regression.needs).toBeUndefined()
-    expect(scheduled.jobs.regression['runs-on']).toBe(pr.jobs.macos_e2e['runs-on'])
-    expect(scheduled.jobs.regression['continue-on-error']).toBeUndefined()
-    expect(
-      scheduled.jobs.regression.steps.filter((step) => step.run === 'npm run build:e2e')
-    ).toHaveLength(1)
-  })
-
-  it.each(['regressions', 'delegation'])(
-    'shares actual %s execution between PR and main',
-    (group) => {
-      expect(action.runs.using).toBe('composite')
-      const command = action.runs.steps.find((step) => step.name === `Run supplemental ${group}`)!
-      if (group === 'regressions') {
-        expect(command.run).toContain(
-          'npm run test:e2e:regressions -- --fail-on-flaky-tests --global-timeout="$regression_timeout" --output=test-results/regressions_macos'
-        )
-        expect(command.run).toContain('regression_timeout=1200000')
-        expect(command.run).toContain('true) regression_timeout=4500000')
-      } else {
-        expect(command.run).toContain(
-          'npm run test:e2e:delegation -- --fail-on-flaky-tests --global-timeout=1200000 --output=test-results/delegation_macos'
-        )
-      }
-      for (const job of [pr.jobs.macos_e2e, scheduled.jobs.regression]) {
-        expect(job.steps.find((step) => step.with?.group === group)?.uses).toBe(
-          './.github/actions/source-regression'
-        )
-      }
-    }
-  )
-
-  it('leaves setup and upload time beyond all serial suite budgets including accessibility', () => {
-    const coreBudgets = scheduled.jobs.regression.steps
-      .filter((step) => step.if?.includes("inputs.mode == 'full'"))
-      .flatMap(({ run }) => [...(run ?? '').matchAll(/--global-timeout=(\d+)/g)])
-      .map((match) => Number(match[1]))
-    const regressions = action.runs.steps.find(
-      ({ name }) => name === 'Run supplemental regressions'
-    )!.run!
-    const delegation = action.runs.steps.find(
-      ({ name }) => name === 'Run supplemental delegation'
-    )!.run!
-    const accessibility = readFileSync('e2e/playwright.accessibility.config.ts', 'utf8')
-    const budgets = [
-      ...coreBudgets,
-      Number(accessibility.match(/globalTimeout:\s*([\d_]+)/)![1].replaceAll('_', '')),
-      Number(regressions.match(/true\) regression_timeout=(\d+)/)![1]),
-      Number(delegation.match(/--global-timeout=(\d+)/)![1])
-    ]
-    expect(budgets).toEqual([900000, 1500000, 900000, 600000, 600000, 4500000, 1200000])
-    expect(
-      scheduled.jobs.regression['timeout-minutes']! * 60000 -
-        budgets.reduce((total, budget) => total + budget, 0)
-    ).toBeGreaterThanOrEqual(20 * 60000)
-  })
-
-  it('runs both scheduled rounds even when main has not changed', () => {
-    expect(scheduled.jobs).not.toHaveProperty('plan')
-    expect(scheduled.jobs.regression.if).toBe(
-      "${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}"
-    )
-    expect(scheduled.jobs.regression.steps.some(({ run }) => run?.includes('previous'))).toBe(false)
-  })
-
-  it('keeps the workspace image dry-run focused and blocking', () => {
-    const steps = scheduled.jobs.regression.steps
-    const focused = steps.find(({ name }) => name === 'Test workspace message images')!
-    const gate = steps.find(({ name }) => name === 'Enforce workspace image dry-run')!
-    expect(focused.if).toContain("inputs.mode == 'workspace-images'")
-    expect(focused.run).toContain('e2e/workspace-files.spec.ts')
-    expect(focused.run).toContain('--fail-on-flaky-tests')
-    expect(gate.if).toContain("inputs.mode == 'workspace-images'")
-    expect(gate.env?.WORKSPACE_IMAGES).toBe('${{ steps.workspace_images.outcome }}')
-    expect(gate.run).toContain('"$WORKSPACE_IMAGES" == "success"')
-    for (const name of [
-      'Build web application',
-      'Install headless Chromium',
-      'Run complete Mac functional journeys',
-      'Run complete Mac workspace journeys',
-      'Run complete Mac browser and visual coverage',
-      'Run complete Mac accessibility checks',
-      'Run supplemental regressions',
-      'Run supplemental delegation',
-      'Enforce complete Mac core and presentation suites',
-      'Enforce both supplemental suites'
+  it.skipIf(process.platform === 'win32')('rejects invalid action groups', () => {
+    const validate = action.runs.steps.find(({ name }) => name === 'Validate suite')!
+    for (const group of [
+      'regressions',
+      'capacity',
+      'delegation',
+      'unknown',
+      '$(exit 0)',
+      'regressions; exit 0'
     ]) {
-      expect(steps.find((step) => step.name === name)?.if).toContain("inputs.mode == 'full'")
+      const result = spawnSync('bash', ['-e', '-c', validate.run!], {
+        env: { ...process.env, GROUP: group }
+      })
+      expect(result.status).toBe(['regressions', 'capacity', 'delegation'].includes(group) ? 0 : 1)
     }
   })
 
   it.skipIf(process.platform === 'win32')(
-    'collects visual evidence after a browser failure and blocks either failure',
+    'fails each selected job on failed, cancelled or absent suite execution',
     () => {
-      const command = scheduled.jobs.regression.steps.find(
-        ({ name }) => name === 'Run complete Mac browser and visual coverage'
-      )!
-      for (const browser of [0, 1]) {
+      const required = {
+        functional: ['FUNCTIONAL'],
+        workspace: ['WORKSPACE'],
+        presentation: ['PRESENTATION', 'ACCESSIBILITY'],
+        regressions: ['REGRESSIONS'],
+        capacity: ['REGRESSIONS'],
+        delegation: ['DELEGATION'],
+        'scheduled-fixes': ['SCHEDULED_FIXES'],
+        'workspace-images': ['WORKSPACE_IMAGES'],
+        'presentation-screening': ['PRESENTATION_SCREENING']
+      }
+      expect(enforce.if).toBe('always()')
+      for (const [group, keys] of Object.entries(required)) {
+        const env = {
+          ...process.env,
+          ...Object.fromEntries(Object.keys(enforce.env!).map((key) => [key, 'skipped'])),
+          GROUP: group,
+          ...Object.fromEntries(keys.map((key) => [key, 'success']))
+        }
+        expect(spawnSync('bash', ['-e', '-c', enforce.run!], { env }).status).toBe(0)
+        for (const key of keys)
+          for (const result of ['failure', 'cancelled', 'skipped', ''])
+            expect(
+              spawnSync('bash', ['-e', '-c', enforce.run!], { env: { ...env, [key]: result } })
+                .status
+            ).toBe(1)
+      }
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'runs visual coverage after browser failure and fails either result',
+    () => {
+      const step = scheduled.jobs.regression.steps.find(({ id }) => id === 'presentation')!
+      for (const browser of [0, 1])
         for (const visual of [0, 1]) {
           const result = spawnSync(
             'bash',
             [
               '-e',
               '-c',
-              `npx() { echo "browser $*"; return ${browser}; }\nnpm() { echo "visual $*"; return ${visual}; }\n${command.run}`
+              `npx() { echo browser; return ${browser}; }\nnpm() { echo visual; return ${visual}; }\n${step.run}`
             ],
             { encoding: 'utf8' }
           )
-          expect(result.stdout).toContain('browser playwright test')
-          expect(result.stdout).toContain('--global-timeout=900000')
-          expect(result.stdout).toContain('visual run test:e2e:visual')
-          expect(result.stdout).toContain('--global-timeout=600000')
+          expect(result.stdout).toContain('visual')
           expect(result.status).toBe(browser || visual)
         }
-      }
+      expect(step.run).toContain('blob-report/browser')
+      expect(step.run).toContain('blob-report/visual')
+      expect(
+        scheduled.jobs.regression.steps.find(({ id }) => id === 'accessibility')?.env
+          ?.PLAYWRIGHT_BLOB_OUTPUT_DIR
+      ).toBe('blob-report/accessibility')
+      expect(
+        scheduled.jobs.regression['timeout-minutes']! * 60000 - (900000 + 600000 + 600000)
+      ).toBeGreaterThanOrEqual(10 * 60000)
     }
   )
 
-  it.skipIf(process.platform === 'win32')(
-    'keeps the presentation dry-run focused and blocking',
-    () => {
-      const steps = scheduled.jobs.regression.steps
-      for (const name of [
-        'Install headless Chromium',
-        'Run complete Mac browser and visual coverage',
-        'Run complete Mac accessibility checks'
-      ]) {
-        expect(steps.find((step) => step.name === name)?.if).toContain(
-          "inputs.mode == 'presentation'"
-        )
-      }
-      for (const name of [
-        'Run complete Mac functional journeys',
-        'Run complete Mac workspace journeys',
-        'Run supplemental regressions',
-        'Run supplemental delegation'
-      ]) {
-        expect(steps.find((step) => step.name === name)?.if).not.toContain(
-          "inputs.mode == 'presentation'"
-        )
-      }
-      const gate = steps.find(({ name }) => name === 'Enforce presentation dry-run')!
-      expect(gate.if).toContain("inputs.mode == 'presentation'")
-      expect(gate.env).toEqual({
-        PRESENTATION: '${{ steps.presentation.outcome }}',
-        ACCESSIBILITY: '${{ steps.accessibility.outcome }}'
-      })
-      for (const presentation of ['success', 'failure', 'cancelled', 'skipped', '']) {
-        for (const accessibility of ['success', 'failure', 'cancelled', 'skipped', '']) {
-          const result = spawnSync('bash', ['-e', '-c', gate.run!], {
-            env: { ...process.env, PRESENTATION: presentation, ACCESSIBILITY: accessibility }
-          })
-          expect(result.status).toBe(
-            presentation === 'success' && accessibility === 'success' ? 0 : 1
-          )
-        }
-      }
-    }
-  )
-
-  it('keeps the screening flight dry-run focused and blocking', () => {
+  it('retains focused regression, workspace image and screening commands', () => {
     const steps = scheduled.jobs.regression.steps
-    const focused = steps.find(({ name }) => name === 'Test concurrent screening flights')!
-    const gate = steps.find(({ name }) => name === 'Enforce screening flight dry-run')!
-    expect(focused.if).toContain("inputs.mode == 'presentation-screening'")
-    expect(focused.run).toContain('e2e/browser/smart-screening.spec.ts')
-    expect(focused.run).toContain('--repeat-each=5')
-    expect(focused.run).toContain('--fail-on-flaky-tests')
-    expect(gate.if).toContain("inputs.mode == 'presentation-screening'")
-    expect(gate.env?.PRESENTATION_SCREENING).toBe('${{ steps.presentation_screening.outcome }}')
-    expect(gate.run).toContain('"$PRESENTATION_SCREENING" == "success"')
-    expect(steps.find(({ name }) => name === 'Build Electron application')?.if).toContain(
-      "inputs.mode != 'presentation-screening'"
-    )
-    expect(steps.find(({ name }) => name === 'Install headless Chromium')?.if).toContain(
-      "inputs.mode == 'presentation-screening'"
-    )
+    const cases = [
+      ['scheduled_fixes', 'scheduled-fixes', 'e2e/desktop-runtime-restart.spec.ts'],
+      ['workspace_images', 'workspace-images', 'normalizes OpenCode inline thinking'],
+      ['presentation_screening', 'presentation-screening', '--repeat-each=5']
+    ]
+    for (const [id, group, command] of cases) {
+      const step = steps.find((step) => step.id === id)!
+      expect(step.if).toBe(`\${{ matrix.group == '${group}' }}`)
+      expect(step.run).toContain(command)
+      expect(step.run).toContain('--fail-on-flaky-tests')
+    }
   })
-
-  it.skipIf(process.platform === 'win32')(
-    'cannot pass when either scheduled suite fails, cancels or never executes',
-    () => {
-      const enforce = scheduled.jobs.regression.steps.find(
-        ({ name }) => name === 'Enforce both supplemental suites'
-      )!
-      expect(enforce.if).toBe(
-        "${{ always() && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}"
-      )
-      for (const regressions of ['success', 'failure', 'cancelled', 'skipped', '']) {
-        for (const delegation of ['success', 'failure', 'cancelled', 'skipped', '']) {
-          const result = spawnSync('bash', ['-e', '-c', enforce.run!], {
-            env: { ...process.env, REGRESSIONS: regressions, DELEGATION: delegation }
-          })
-          expect(result.status).toBe(regressions === 'success' && delegation === 'success' ? 0 : 1)
-        }
-      }
-    }
-  )
-
-  it.skipIf(process.platform === 'win32')(
-    'validates action inputs without executing injected shell text',
-    () => {
-      const validate = action.runs.steps.find(({ name }) => name === 'Validate suite')!
-      for (const group of [
-        'regressions',
-        'delegation',
-        'unknown',
-        '$(exit 0)',
-        'regressions; exit 0'
-      ]) {
-        const result = spawnSync('bash', ['-e', '-c', validate.run!], {
-          env: { ...process.env, GROUP: group }
-        })
-        expect(result.status).toBe(['regressions', 'delegation'].includes(group) ? 0 : 1)
-      }
-    }
-  )
 
   it.skipIf(process.platform === 'win32')(
     'uses the real PR jobs for the focused supplemental dry-run',
@@ -626,6 +631,7 @@ it('shares complete installed-consumer checks with queue/manual runs and reports
     scheduled.jobs.packages.steps.some((step) => step.uses === './.github/actions/verify-packages')
   ).toBe(true)
   expect(scheduled.jobs.report.needs).toEqual([
+    'macos_setup',
     'regression',
     'packages',
     'portable',
@@ -689,7 +695,7 @@ it('runs complete portable discovery with no package exclusions and defers thres
   const outcome = scheduled.jobs.report.steps.find(({ env }) => env?.CONCLUSION)?.env?.CONCLUSION
   for (const job of ['regression', 'packages', 'portable', 'portable_report'])
     expect(outcome).toContain(`needs.${job}.result == 'success'`)
-  expect(scheduled.jobs.regression.if).toContain("inputs.mode != 'portable'")
+  expect(scheduled.jobs.macos_setup.if).toContain("inputs.mode != 'portable'")
   expect(scheduled.jobs.packages.if).not.toContain("inputs.mode == 'portable'")
 })
 
@@ -754,7 +760,7 @@ it('runs the same isolated test-impact verifier on three operating systems only 
       (step) => step.uses?.startsWith('actions/setup-node@') && step.with?.['node-version'] === 24
     )
   ).toBe(true)
-  expect(scheduled.jobs.regression.if).toContain("inputs.mode != 'static-impact'")
+  expect(scheduled.jobs.macos_setup.if).toContain("inputs.mode != 'static-impact'")
   for (const name of ['portable', 'portable_report', 'packages', 'report'])
     expect(scheduled.jobs[name].if).not.toContain('static-impact')
 })
@@ -763,7 +769,7 @@ it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
   const step = scheduled.jobs.regression.steps.find(
     ({ name }) => name === 'Test scheduled regression fixes'
   )!
-  expect(step.if).toContain("inputs.mode == 'scheduled-fixes'")
+  expect(step.if).toContain("matrix.group == 'scheduled-fixes'")
   for (const file of [
     'session-turn-outcome',
     'auto-review-stop-resume',
@@ -772,5 +778,5 @@ it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
   ])
     expect(step.run).toContain(`e2e/${file}.spec.ts`)
   expect(step.run).toContain('--retries=0 --fail-on-flaky-tests')
-  expect(step['continue-on-error']).toBeUndefined()
+  expect(step['continue-on-error']).toBe(true)
 })

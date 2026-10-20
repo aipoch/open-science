@@ -1,4 +1,4 @@
-import { JournalAttributes } from '@/pages/literature/JournalAttributes'
+import { JournalAttributes } from '@/pages/literature/public/components'
 /* Hallmark · component: library preview · genre: modern-minimal · theme: existing workspace
  * Pre-emit critique: P5 H4 E4 S5 R5 V4. Preserve project tokens and native control states.
  */
@@ -35,8 +35,8 @@ import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 're
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { type LiteratureCatalogSearchPage } from '../../../../../shared/literature'
-import { readLiteratureDisplayPage } from '../../literature/literature-read-pages'
-import { useLiteratureChanges } from '../../literature/useLiteratureChanges'
+import { readLiteratureDisplayPage } from '../../../lib/literature-queries'
+import { useLiteratureChanges } from '../../literature/public/events'
 import { ArtifactLiteratureDetailDialog } from '../ArtifactLiteratureDetailDialog'
 import { literatureItemToMentionOption } from '../literature-pdf-options'
 import { LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'

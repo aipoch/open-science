@@ -10,11 +10,11 @@ import {
 const projectRoot = resolve(__dirname, '../../..')
 const hostPath = resolve(__dirname, 'provider-loopback-http-host.ts')
 const adapterPaths = [
-  resolve(__dirname, 'anthropic-provider-bridge.ts'),
-  resolve(__dirname, 'chat-provider-compatibility.ts'),
+  resolve(__dirname, 'messages-bridge.ts'),
+  resolve(__dirname, 'chat-completions-compatibility.ts'),
   resolve(__dirname, 'native-responses-compatibility.ts'),
-  resolve(__dirname, 'openai-provider-bridge.ts'),
-  resolve(__dirname, 'responses-bridge.ts'),
+  resolve(__dirname, 'protocol-forwarding-bridge.ts'),
+  resolve(__dirname, 'responses-to-chat-completions-bridge.ts'),
   resolve(__dirname, 'xai-oauth-provider-bridge.ts')
 ]
 const readSource = (path: string): string => readProductionSource(path, projectRoot)

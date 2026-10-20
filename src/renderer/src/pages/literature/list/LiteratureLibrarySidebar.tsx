@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { SmartCollectionIcon } from '@/components/app-icons/custom-glyphs'
 import {
   ArrowLeft,
@@ -17,7 +18,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
-import { useNavigationStore } from '@/stores/navigation-store'
+
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import {
   LiteratureDuplicateCount,
@@ -70,6 +71,10 @@ export function LiteratureLibrarySidebar({
   returnLabel: string
   openCreateCollection: () => void
 }): React.JSX.Element {
+  const { useNavigationStore } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const returnFromLibrary = useNavigationStore((state) => state.returnFromLibrary)
   const {
@@ -134,7 +139,7 @@ export function LiteratureLibrarySidebar({
                   }
                   aria-expanded={!sidebarCollapsed}
                   aria-controls="literature-sidebar-navigation"
-                  aria-keyshortcuts={window.api?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
+                  aria-keyshortcuts={hostApi?.platform === 'darwin' ? 'Meta+B' : 'Control+B'}
                   onClick={toggleSidebar}
                 >
                   <PanelLeft className="size-4" aria-hidden="true" />

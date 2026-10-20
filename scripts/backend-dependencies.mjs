@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { builtinModules } from 'node:module'
+import { posix } from 'node:path'
 
 export const isElectronPackage = (name) =>
   /^(?:electron(?:$|\/|-)|@electron(?:-toolkit)?\/)/.test(name)
@@ -29,12 +30,107 @@ export const prismaEngineFilenames = (platform = process.platform, arch = proces
 const packageName = (specifier) =>
   specifier.startsWith('@') ? specifier.split('/').slice(0, 2).join('/') : specifier.split('/')[0]
 
+// These renderer imports are already compiled into out/web. Only omit their direct backend
+// roots: the dependency walker must still retain them if another runtime package needs them.
+export function desktopBackendDependencies(dependencies, metafiles) {
+  assertBackendImports(metafiles, dependencies)
+  const bundled = desktopBundledDependencies(metafiles)
+  const rendererRoots = new Set([
+    '@radix-ui/react-focus-scope',
+    '@rc-component/qrcode',
+    'react-markdown',
+    'react-remove-scroll',
+    'tiff'
+  ])
+  const runtimeImports = new Set(
+    metafiles.flatMap((meta) =>
+      Object.values(meta.outputs).flatMap((output) =>
+        output.imports.filter((item) => item.external).map((item) => packageName(item.path))
+      )
+    )
+  )
+  return Object.keys(dependencies).filter(
+    (name) => !bundled.has(name) && (!rendererRoots.has(name) || runtimeImports.has(name))
+  )
+}
+
+// Use the actual build graph, never an assumed build mode, to remove a runtime root.
+// A mixed bundled/external copy would create independent module instances in one process.
+export function desktopBundledDependencies(metafiles) {
+  const bundled = new Set()
+  if (
+    metafiles.some((meta) =>
+      Object.keys(meta.inputs).some((path) => /(?:^|[\\/])node_modules[\\/]i18next[\\/]/.test(path))
+    )
+  ) {
+    for (const meta of metafiles)
+      for (const output of Object.values(meta.outputs))
+        if (output.imports.some((item) => item.external && packageName(item.path) === 'i18next'))
+          throw new Error('Desktop backend cannot mix bundled and external i18next.')
+    bundled.add('i18next')
+  }
+  return bundled
+}
+
+// Agent SDK 0.3.232 refers to the API SDK only from its .d.ts files. Desktop consumers
+// execute the prebuilt JavaScript; standalone/SDK staging retains the published type contract.
+// Keep unknown versions and every other incoming edge until separately audited.
+export function desktopBackendPeerDependencies(manifest) {
+  return Object.keys(manifest.peerDependencies ?? {}).filter(
+    (name) =>
+      !(
+        manifest.name === '@anthropic-ai/claude-agent-sdk' &&
+        manifest.version === '0.3.232' &&
+        name === '@anthropic-ai/sdk'
+      )
+  )
+}
+
 // node-gyp keeps compiler intermediates (e.g. *.o) in build/Release/obj.target. They are dead
 // weight at runtime and, being unsigned Mach-O objects, break packaged signature verification —
 // so dependency copies for the standalone backend must never include them.
 export const isShippableDependencyPath = (relativePath) => {
   const parts = relativePath.split(/[\\/]/)
   return parts[0] !== 'node_modules' && parts[0] !== '.git' && !parts.includes('obj.target')
+}
+
+// extraResources bypasses electron-builder's NodeModuleCopyHelper exclusions. Apply a
+// conservative subset to desktop dependencies only; npm/SDK staging keeps its type contract.
+// See https://www.electron.build/v26/docs/contents/ and VS Code's build/.moduleignore.
+export function createDesktopDependencyFilter(manifest) {
+  const runtimeEntries = []
+  const collect = (value) => {
+    if (typeof value === 'string') runtimeEntries.push(value.replace(/^\.\//, ''))
+    else if (value && typeof value === 'object')
+      for (const [key, entry] of Object.entries(value))
+        if (key !== 'types' && !key.startsWith('types@')) collect(entry)
+  }
+  for (const field of ['main', 'module', 'bin', 'exports', 'imports', 'browser'])
+    collect(manifest[field])
+  const exportedRoots = new Set(runtimeEntries.map((entry) => entry.split('/')[0]))
+  const developmentRoots = new Set([
+    'test',
+    'tests',
+    '__tests__',
+    'powered-test',
+    'example',
+    'examples'
+  ])
+  return (relativePath, isDirectory) => {
+    // Traverse excluded roots so nested redistribution notices are not lost. Keep first-party
+    // artifacts, SDK declarations and diagnostic maps under their existing files allowlists.
+    if (isDirectory || manifest.name?.startsWith('@aipoch/')) return true
+    const parts = relativePath.split(/[\\/]/)
+    const path = parts.join('/')
+    if (parts.some((part) => /^(?:licen[cs]es?|notices?|copying|copyright)(?:[._-]|$)/i.test(part)))
+      return true
+    if (runtimeEntries.some((entry) => posix.matchesGlob(path, entry))) return true
+    if (/\.d\.(?:ts|mts|cts)(?:\.map)?$/.test(path)) return false
+    return (
+      !developmentRoots.has(parts[0]) ||
+      [...exportedRoots].some((entry) => posix.matchesGlob(parts[0], entry))
+    )
+  }
 }
 
 // esbuild inputs cover the entire reachable source/worker graph; outputs record actual external
@@ -129,6 +225,7 @@ export function backendDependencyIncludes(
       '@aipoch/connector-core',
       '@aipoch/connector-mcp-client',
       '@aipoch/diagnostics',
+      '@aipoch/providers',
       '@aipoch/environment',
       '@aipoch/notebook-analysis',
       '@aipoch/notebook-code-risk',

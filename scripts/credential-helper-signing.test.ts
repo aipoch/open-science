@@ -21,7 +21,11 @@ function loadHook(file: string): (context: unknown) => Promise<void> {
     __dirname: dirname(file),
     console,
     require: (id: string) =>
-      id === './verify-native-components.cjs' ? async () => new Set() : require(id)
+      id === './verify-native-components.cjs'
+        ? async () => new Set()
+        : id === './stage-windows-extractor.cjs'
+          ? async () => undefined
+          : require(id)
   })
   return exports.default!
 }
@@ -103,6 +107,7 @@ it('preserves pinned credential signatures while signing other resources and the
     console: { log: vi.fn() },
     require: (id: string) => {
       if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === './stage-windows-extractor.cjs') return async () => undefined
       if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return posix
       if (id === 'node:fs')
@@ -183,6 +188,7 @@ it('signs every unsigned bundled Windows PE while preserving vendor signatures',
     console: { log: vi.fn() },
     require: (id: string) => {
       if (id === './verify-native-components.cjs') return async () => new Set()
+      if (id === './stage-windows-extractor.cjs') return async () => undefined
       if (id === 'builder-util') return { Arch: { 1: 'x64' } }
       if (id === 'node:path') return nodePath
       if (id === 'node:fs') return fs

@@ -16,8 +16,9 @@ import { useTranslation } from 'react-i18next'
 
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
-import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
-import { defaultVendorModel, getOfficialVendor } from '../../../../shared/provider-registry'
+import { type ModelProtocol, getOfficialVendor } from '@aipoch/providers'
+import { defaultVendorModel } from '../../../../shared/provider-model-policy'
+
 import type {
   AgentFrameworkId,
   ClaudeSubscriptionProviderId,
@@ -52,7 +53,7 @@ type ProviderListProps = {
   activeProviderId: string | undefined
   activeModel?: string
   agentFrameworkId?: AgentFrameworkId
-  frameworkEndpoints?: readonly ChatApiEndpoint[]
+  frameworkEndpoints?: readonly ModelProtocol[]
   // Display name of the active agent framework, for the per-card "not usable" tag. Falls back to
   // the framework id when omitted.
   frameworkName?: string
@@ -125,7 +126,7 @@ const describeValidationFailure = (failure: ProviderValidationFailure, t: TFunct
   }
 }
 
-const DEFAULT_FRAMEWORK_ENDPOINTS = ['anthropic'] as const
+const DEFAULT_FRAMEWORK_ENDPOINTS = ['messages'] as const
 
 // Human label for a provider type badge: the vendor name for official providers, else a type name.
 // Vendor names and the Codex identity are proper nouns and stay as the registry supplies them.
@@ -236,7 +237,7 @@ const ProviderList = ({
               isXaiSubscriptionProvider(provider.type)
                 ? (['responses'] as const)
                 : agentFrameworkId === 'codex'
-                  ? (['anthropic', 'openai', 'responses'] as const)
+                  ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: providerRoutes }, activeFramework)
                     ? providerRoutes
                     : frameworkEndpoints

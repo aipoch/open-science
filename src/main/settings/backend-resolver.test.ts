@@ -24,20 +24,20 @@ import {
   type AgentBackendRuntimePort
 } from './backend-resolver'
 
-type ResponsesBridgeFactory = NonNullable<AgentBackendResolverOptions['createResponsesBridge']>
-type ResponsesBridgeDouble = ReturnType<ResponsesBridgeFactory>
+type ResponsesToChatCompletionsBridgeFactory = NonNullable<
+  AgentBackendResolverOptions['createResponsesToChatCompletionsBridge']
+>
+type ResponsesToChatCompletionsBridgeDouble = ReturnType<ResponsesToChatCompletionsBridgeFactory>
 type NativeResponsesProxyFactory = NonNullable<
   AgentBackendResolverOptions['createNativeResponsesProxy']
 >
 type NativeResponsesProxyDouble = ReturnType<NativeResponsesProxyFactory>
-type AnthropicProviderBridgeFactory = NonNullable<
-  AgentBackendResolverOptions['createAnthropicProviderBridge']
+type MessagesBridgeFactory = NonNullable<AgentBackendResolverOptions['createMessagesBridge']>
+type MessagesBridgeDouble = ReturnType<MessagesBridgeFactory>
+type ProtocolForwardingBridgeFactory = NonNullable<
+  AgentBackendResolverOptions['createProtocolForwardingBridge']
 >
-type AnthropicProviderBridgeDouble = ReturnType<AnthropicProviderBridgeFactory>
-type OpenAiProviderBridgeFactory = NonNullable<
-  AgentBackendResolverOptions['createOpenAiProviderBridge']
->
-type OpenAiProviderBridgeDouble = ReturnType<OpenAiProviderBridgeFactory>
+type ProtocolForwardingBridgeDouble = ReturnType<ProtocolForwardingBridgeFactory>
 type ResolveRuntimeTarget = AgentBackendProviderPort['resolveRuntimeTarget']
 type ResolveRuntimeModelCatalog = AgentBackendProviderPort['resolveRuntimeModelCatalog']
 type TargetOverride = Omit<Partial<ProviderRuntimeTarget>, 'provider'> & {
@@ -52,7 +52,7 @@ const makeStoredProvider = (
   id,
   type: 'custom',
   name: id,
-  apiEndpoints: ['anthropic', 'openai', 'responses'],
+  apiEndpoints: ['messages', 'chat-completions', 'responses'],
   baseUrl: 'https://gateway.example/v1',
   model,
   keyRef
@@ -82,12 +82,12 @@ const effectiveModelFor = (
   return provider.model ?? 'provider-default-model'
 }
 
-const makeResponsesBridgeDouble = (
+const makeResponsesToChatCompletionsBridgeDouble = (
   options: {
     startError?: Error
     closeError?: Error
   } = {}
-): ResponsesBridgeDouble => ({
+): ResponsesToChatCompletionsBridgeDouble => ({
   start: vi.fn(async () => {
     if (options.startError) throw options.startError
     return { baseUrl: 'http://127.0.0.1:41001/v1', token: 'bridge-token' }
@@ -135,7 +135,7 @@ const makeNativeResponsesProxyDouble = (
   setModelTarget: vi.fn()
 })
 
-const makeAnthropicProviderBridgeDouble = (): AnthropicProviderBridgeDouble => ({
+const makeMessagesBridgeDouble = (): MessagesBridgeDouble => ({
   start: vi.fn(async () => ({
     baseUrl: 'http://127.0.0.1:41003',
     token: 'anthropic-bridge-token'
@@ -145,7 +145,7 @@ const makeAnthropicProviderBridgeDouble = (): AnthropicProviderBridgeDouble => (
   clearErrorReplay: vi.fn()
 })
 
-const makeOpenAiProviderBridgeDouble = (index: number): OpenAiProviderBridgeDouble => ({
+const makeProtocolForwardingBridgeDouble = (index: number): ProtocolForwardingBridgeDouble => ({
   start: vi.fn(async () => ({
     baseUrl: `http://127.0.0.1:${42000 + index}`,
     token: `openai-bridge-token-${index}`
@@ -168,10 +168,12 @@ type HarnessOptions = {
     selection: RuntimeProviderModelSelection,
     frameworkId: AgentFrameworkId
   ) => TargetOverride
-  responsesBridgeBuilder?: (index: number) => ResponsesBridgeDouble
+  responsesToChatCompletionsBridgeBuilder?: (
+    index: number
+  ) => ResponsesToChatCompletionsBridgeDouble
   nativeResponsesProxyBuilder?: (index: number) => NativeResponsesProxyDouble
-  anthropicProviderBridgeBuilder?: (index: number) => AnthropicProviderBridgeDouble
-  openAiProviderBridgeBuilder?: (index: number) => OpenAiProviderBridgeDouble
+  messagesBridgeBuilder?: (index: number) => MessagesBridgeDouble
+  protocolForwardingBridgeBuilder?: (index: number) => ProtocolForwardingBridgeDouble
   nextGenerationId?: () => string
   getXaiOAuthAccessToken?: (forceRefresh?: boolean) => Promise<string>
 }
@@ -199,10 +201,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
       const provider: ResolvedProvider = {
         type: storedProvider.type,
         baseUrl: storedProvider.baseUrl ?? 'https://gateway.example/v1',
-        openaiBaseUrl: storedProvider.baseUrl ?? 'https://gateway.example/v1',
+        chatCompletionsBaseUrl: storedProvider.baseUrl ?? 'https://gateway.example/v1',
         model: effectiveModel,
         contextWindow: 128_000,
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         ...(storedProvider.keyRef ? { key: `plain:${storedProvider.keyRef}` } : {})
       }
       const override = options.targetOverride?.(storedProvider, selection, framework.id)
@@ -211,7 +213,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         providerId: storedProvider.id,
         providerType: storedProvider.type,
         effectiveModel,
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         provider: { ...provider, ...providerOverride },
         reasoningEffortProfile: {
           supported: true,
@@ -219,7 +221,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
         },
         frameworkCompatible: true,
         modelBridgeSupported: true,
-        needsChatResponsesBridge: false,
+        needsChatResponsesToChatCompletionsBridge: false,
         needsNativeResponsesCompatibility: false,
         ...targetOverride
       }
@@ -281,13 +283,17 @@ const makeHarness = (options: HarnessOptions = {}) => {
     )
   } satisfies AgentBackendConnectorPort
 
-  const responsesBridges: ResponsesBridgeDouble[] = []
-  const createResponsesBridge = vi.fn((): ResponsesBridgeDouble => {
-    const bridge =
-      options.responsesBridgeBuilder?.(responsesBridges.length) ?? makeResponsesBridgeDouble()
-    responsesBridges.push(bridge)
-    return bridge
-  })
+  const responsesToChatCompletionsBridges: ResponsesToChatCompletionsBridgeDouble[] = []
+  const createResponsesToChatCompletionsBridge = vi.fn(
+    (): ResponsesToChatCompletionsBridgeDouble => {
+      const bridge =
+        options.responsesToChatCompletionsBridgeBuilder?.(
+          responsesToChatCompletionsBridges.length
+        ) ?? makeResponsesToChatCompletionsBridgeDouble()
+      responsesToChatCompletionsBridges.push(bridge)
+      return bridge
+    }
+  )
   const nativeResponsesProxies: NativeResponsesProxyDouble[] = []
   const createNativeResponsesProxy = vi.fn((): NativeResponsesProxyDouble => {
     const proxy =
@@ -296,20 +302,19 @@ const makeHarness = (options: HarnessOptions = {}) => {
     nativeResponsesProxies.push(proxy)
     return proxy
   })
-  const anthropicProviderBridges: AnthropicProviderBridgeDouble[] = []
-  const createAnthropicProviderBridge = vi.fn((): AnthropicProviderBridgeDouble => {
+  const messagesBridges: MessagesBridgeDouble[] = []
+  const createMessagesBridge = vi.fn((): MessagesBridgeDouble => {
     const bridge =
-      options.anthropicProviderBridgeBuilder?.(anthropicProviderBridges.length) ??
-      makeAnthropicProviderBridgeDouble()
-    anthropicProviderBridges.push(bridge)
+      options.messagesBridgeBuilder?.(messagesBridges.length) ?? makeMessagesBridgeDouble()
+    messagesBridges.push(bridge)
     return bridge
   })
-  const openAiProviderBridges: OpenAiProviderBridgeDouble[] = []
-  const createOpenAiProviderBridge = vi.fn((): OpenAiProviderBridgeDouble => {
+  const protocolForwardingBridges: ProtocolForwardingBridgeDouble[] = []
+  const createProtocolForwardingBridge = vi.fn((): ProtocolForwardingBridgeDouble => {
     const bridge =
-      options.openAiProviderBridgeBuilder?.(openAiProviderBridges.length) ??
-      makeOpenAiProviderBridgeDouble(openAiProviderBridges.length)
-    openAiProviderBridges.push(bridge)
+      options.protocolForwardingBridgeBuilder?.(protocolForwardingBridges.length) ??
+      makeProtocolForwardingBridgeDouble(protocolForwardingBridges.length)
+    protocolForwardingBridges.push(bridge)
     return bridge
   })
 
@@ -322,10 +327,10 @@ const makeHarness = (options: HarnessOptions = {}) => {
     userClaudeDir: '/user/.claude',
     skillRuntimeMcpEntryPath: '/app/main.js',
     readFrameworkOverride,
-    createResponsesBridge,
+    createResponsesToChatCompletionsBridge,
     createNativeResponsesProxy,
-    createAnthropicProviderBridge,
-    createOpenAiProviderBridge,
+    createMessagesBridge,
+    createProtocolForwardingBridge,
     ensureCodexSubscriptionHome,
     nextGenerationId,
     ...(options.getXaiOAuthAccessToken
@@ -344,14 +349,14 @@ const makeHarness = (options: HarnessOptions = {}) => {
     resolveRuntimeReasoningEffortProfile,
     runtime,
     connectors,
-    createResponsesBridge,
+    createResponsesToChatCompletionsBridge,
     createNativeResponsesProxy,
-    createAnthropicProviderBridge,
-    createOpenAiProviderBridge,
-    responsesBridges,
+    createMessagesBridge,
+    createProtocolForwardingBridge,
+    responsesToChatCompletionsBridges,
     nativeResponsesProxies,
-    anthropicProviderBridges,
-    openAiProviderBridges,
+    messagesBridges,
+    protocolForwardingBridges,
     getSettings: () => currentSettings,
     setSettings: (settings: StoredSettings) => {
       currentSettings = settings
@@ -382,9 +387,9 @@ describe('AgentBackendResolver construction and selection', () => {
     expect(harness.resolveRuntimeTarget).not.toHaveBeenCalled()
     expect(harness.resolveRuntimeReasoningEffortProfile).not.toHaveBeenCalled()
     expect(harness.connectors.connectorSkillNames).not.toHaveBeenCalled()
-    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+    expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
-    expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
+    expect(harness.createMessagesBridge).not.toHaveBeenCalled()
     expect(harness.ensureCodexSubscriptionHome).not.toHaveBeenCalled()
     expect(harness.nextGenerationId).not.toHaveBeenCalled()
     expectRuntimeNotStarted(harness.runtime)
@@ -415,7 +420,7 @@ describe('AgentBackendResolver construction and selection', () => {
 
 describe('AgentBackendResolver configured and explicit targets', () => {
   it('fails closed instead of rerouting an admitted backend after endpoint compatibility changes', async () => {
-    let apiEndpoints: ProviderRuntimeTarget['apiEndpoints'] = ['openai']
+    let apiEndpoints: ProviderRuntimeTarget['apiEndpoints'] = ['chat-completions']
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'opencode' }),
       targetOverride: () => ({
@@ -437,7 +442,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       modelRoute: 'opencode-openai'
     })
 
-    apiEndpoints = ['anthropic']
+    apiEndpoints = ['messages']
     await expect(harness.resolver.resolveAdmittedTarget(admitted)).rejects.toThrow(
       'changed since admission'
     )
@@ -463,7 +468,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       settings: makeSettings({ agentFrameworkId: 'codex' }),
       targetOverride: () => ({
         apiEndpoints: ['responses'],
-        needsChatResponsesBridge: false,
+        needsChatResponsesToChatCompletionsBridge: false,
         needsNativeResponsesCompatibility: false,
         provider: { apiEndpoints: ['responses'] }
       })
@@ -481,9 +486,9 @@ describe('AgentBackendResolver configured and explicit targets', () => {
 
     expect(backend.modelRoute).toBe('codex-responses-compatibility')
     expect(harness.createNativeResponsesProxy).toHaveBeenCalledOnce()
-    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
-    expect(backend.responsesBridgeLease).toBeDefined()
-    await backend.responsesBridgeLease?.release()
+    expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
+    expect(backend.responsesTransportLease).toBeDefined()
+    await backend.responsesTransportLease?.release()
   })
 
   it.each(['start', 'resume'] as const)(
@@ -634,7 +639,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         )
         expect(prepared?.providerId).toBe(provider.id)
         expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
-        expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+        expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
       } finally {
         await owner.shutdown()
         await rm(root, { recursive: true, force: true })
@@ -782,8 +787,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         agentFrameworkId: 'claude-code'
       }),
       targetOverride: () => ({
-        apiEndpoints: ['anthropic'],
-        provider: { type: 'custom', apiEndpoints: ['anthropic'], vendorId: 'deepseek' }
+        apiEndpoints: ['messages'],
+        provider: { type: 'custom', apiEndpoints: ['messages'], vendorId: 'deepseek' }
       })
     })
     harness.resolveRuntimeModelCatalog.mockImplementation((storedProvider, framework) =>
@@ -822,7 +827,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       id: 'builtin-xai-subscription',
       type: 'xai-subscription',
       name: 'xAI (Grok) OAuth',
-      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      apiEndpoints: ['messages', 'chat-completions', 'responses'],
       model: 'grok-4.6'
     }
     const harness = makeHarness({
@@ -834,11 +839,11 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       }),
       getXaiOAuthAccessToken: vi.fn(async () => 'xai-access'),
       targetOverride: () => ({
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         provider: {
           type: 'xai-subscription',
           vendorId: 'xai',
-          apiEndpoints: ['anthropic', 'openai', 'responses'],
+          apiEndpoints: ['messages', 'chat-completions', 'responses'],
           model: 'grok-4.6',
           key: undefined
         }
@@ -878,7 +883,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       })
       expect(backend.env).not.toHaveProperty('ANTHROPIC_CUSTOM_MODEL_OPTION')
     } finally {
-      await backend.anthropicBridgeLease?.release()
+      await backend.messagesBridgeLease?.release()
     }
   })
 
@@ -982,7 +987,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     expect(backend.systemPromptAppends?.join('\n')).not.toContain(
       'Stable Open-Science app guidance.'
     )
-    await backend.anthropicBridgeLease?.release()
+    await backend.messagesBridgeLease?.release()
   })
 
   it('persists application guidance before user Skill directories for OpenCode', async () => {
@@ -1055,8 +1060,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         false
       )
     }
-    await backend.anthropicBridgeLease?.release()
-    await backend.responsesBridgeLease?.release()
+    await backend.messagesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
     await backend.providerTransportLease?.release()
   })
 
@@ -1064,8 +1069,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const harness = makeHarness()
     const backend = await harness.resolver.resolveActiveBackend()
 
-    expect(backend.anthropicBridgeLease).toBeDefined()
-    expect(harness.createAnthropicProviderBridge).toHaveBeenCalledWith(
+    expect(backend.messagesBridgeLease).toBeDefined()
+    expect(harness.createMessagesBridge).toHaveBeenCalledWith(
       [
         {
           id: JSON.stringify(['provider-a', 'model-a']),
@@ -1077,9 +1082,9 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       JSON.stringify(['provider-a', 'model-a'])
     )
     await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
-      anthropicBridgeTargetId: JSON.stringify(['provider-a', 'model-a'])
+      messagesBridgeTargetId: JSON.stringify(['provider-a', 'model-a'])
     })
-    await backend.anthropicBridgeLease?.release()
+    await backend.messagesBridgeLease?.release()
   })
 
   it('routes configured Claude API providers through one retargetable loopback generation', async () => {
@@ -1099,14 +1104,14 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         agentFrameworkId: 'claude-code'
       }),
       targetOverride: (_provider, _selection, frameworkId) => ({
-        apiEndpoints: frameworkId === 'claude-code' ? ['anthropic'] : ['openai'],
-        provider: { apiEndpoints: ['anthropic'] }
+        apiEndpoints: frameworkId === 'claude-code' ? ['messages'] : ['chat-completions'],
+        provider: { apiEndpoints: ['messages'] }
       })
     })
 
     const backend = await harness.resolver.resolveActiveBackend()
 
-    expect(harness.createAnthropicProviderBridge).toHaveBeenCalledWith(
+    expect(harness.createMessagesBridge).toHaveBeenCalledWith(
       [
         {
           id: JSON.stringify(['deepseek', 'deepseek-v4-pro']),
@@ -1138,25 +1143,25 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     await expect(harness.resolver.resolveActiveModelChangeTarget()).resolves.toMatchObject({
       backendId: 'claude-code:kimi',
       model: 'kimi-k3',
-      anthropicBridgeTargetId: JSON.stringify(['kimi', 'kimi-k3'])
+      messagesBridgeTargetId: JSON.stringify(['kimi', 'kimi-k3'])
     })
 
-    backend.anthropicBridgeLease?.setTarget(JSON.stringify(['kimi', 'kimi-k3']))
-    expect(harness.anthropicProviderBridges[0].setTarget).toHaveBeenCalledWith(
+    backend.messagesBridgeLease?.setTarget(JSON.stringify(['kimi', 'kimi-k3']))
+    expect(harness.messagesBridges[0].setTarget).toHaveBeenCalledWith(
       JSON.stringify(['kimi', 'kimi-k3'])
     )
-    await backend.anthropicBridgeLease?.release()
-    expect(harness.anthropicProviderBridges[0].close).toHaveBeenCalledOnce()
+    await backend.messagesBridgeLease?.release()
+    expect(harness.messagesBridges[0].close).toHaveBeenCalledOnce()
   })
 
   it('resolves a secret-free live model target without starting runtime resources', async () => {
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'codex', reasoningEffort: 'max' }),
       targetOverride: () => ({
-        apiEndpoints: ['openai'],
-        needsChatResponsesBridge: true,
+        apiEndpoints: ['chat-completions'],
+        needsChatResponsesToChatCompletionsBridge: true,
         provider: {
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           vendorId: 'deepseek',
           supportsImageInput: true,
           reasoningEffortTransport: 'deepseek'
@@ -1184,7 +1189,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       }
     })
     expect(JSON.stringify(target)).not.toContain('plain:key-a')
-    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+    expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
     expectRuntimeNotStarted(harness.runtime)
   })
 
@@ -1192,8 +1197,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const harness = makeHarness({
       settings: makeSettings({ agentFrameworkId: 'opencode' }),
       targetOverride: () => ({
-        apiEndpoints: ['openai'],
-        provider: { apiEndpoints: ['openai'] }
+        apiEndpoints: ['chat-completions'],
+        provider: { apiEndpoints: ['chat-completions'] }
       })
     })
 
@@ -1219,8 +1224,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         agentFrameworkId: 'opencode'
       }),
       targetOverride: () => ({
-        apiEndpoints: ['openai'],
-        provider: { apiEndpoints: ['openai'] }
+        apiEndpoints: ['chat-completions'],
+        provider: { apiEndpoints: ['chat-completions'] }
       })
     })
 
@@ -1230,7 +1235,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const configFiles = harness.runtime.materializeAgentConfigFiles.mock.calls[0]?.[0] ?? []
     const opencodeConfig = configFiles.find((file) => file.path.endsWith('opencode.json'))
 
-    expect(harness.createOpenAiProviderBridge).toHaveBeenNthCalledWith(
+    expect(harness.createProtocolForwardingBridge).toHaveBeenNthCalledWith(
       1,
       [
         {
@@ -1243,7 +1248,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       ],
       JSON.stringify(['opencode', 'provider-a', 'model-a'])
     )
-    expect(harness.createOpenAiProviderBridge).toHaveBeenNthCalledWith(
+    expect(harness.createProtocolForwardingBridge).toHaveBeenNthCalledWith(
       2,
       [
         {
@@ -1280,8 +1285,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     })
 
     await backend.providerTransportLease?.release()
-    expect(harness.openAiProviderBridges[0].close).toHaveBeenCalledOnce()
-    expect(harness.openAiProviderBridges[1].close).toHaveBeenCalledOnce()
+    expect(harness.protocolForwardingBridges[0].close).toHaveBeenCalledOnce()
+    expect(harness.protocolForwardingBridges[1].close).toHaveBeenCalledOnce()
   })
 
   it('pre-registers immutable Anthropic routes for OpenCode providers', async () => {
@@ -1301,8 +1306,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         agentFrameworkId: 'opencode'
       }),
       targetOverride: () => ({
-        apiEndpoints: ['anthropic'],
-        provider: { apiEndpoints: ['anthropic'] }
+        apiEndpoints: ['messages'],
+        provider: { apiEndpoints: ['messages'] }
       })
     })
 
@@ -1310,7 +1315,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const providerATargetId = JSON.stringify(['opencode', 'provider-a', 'model-a'])
     const providerBTargetId = JSON.stringify(['opencode', 'provider-b', 'model-b'])
 
-    expect(harness.createAnthropicProviderBridge).toHaveBeenNthCalledWith(
+    expect(harness.createMessagesBridge).toHaveBeenNthCalledWith(
       1,
       [
         {
@@ -1322,7 +1327,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       ],
       providerATargetId
     )
-    expect(harness.createAnthropicProviderBridge).toHaveBeenNthCalledWith(
+    expect(harness.createMessagesBridge).toHaveBeenNthCalledWith(
       2,
       [
         {
@@ -1356,9 +1361,9 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         agentFrameworkId: 'codex'
       }),
       targetOverride: () => ({
-        apiEndpoints: ['openai'],
-        needsChatResponsesBridge: true,
-        provider: { apiEndpoints: ['openai'] }
+        apiEndpoints: ['chat-completions'],
+        needsChatResponsesToChatCompletionsBridge: true,
+        provider: { apiEndpoints: ['chat-completions'] }
       })
     })
 
@@ -1366,7 +1371,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const providerBTargetId = JSON.stringify(['codex', 'provider-b', 'model-b'])
 
     expect(backend.providerTransportLease?.setTarget(providerBTargetId)).toBe(true)
-    expect(harness.responsesBridges[0].setTarget).toHaveBeenCalledWith(
+    expect(harness.responsesToChatCompletionsBridges[0].setTarget).toHaveBeenCalledWith(
       expect.objectContaining({
         baseUrl: 'https://provider-b.example/custom',
         key: 'plain:provider-b-key-ref',
@@ -1448,7 +1453,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     const providerATargetId = JSON.stringify(['codex', 'provider-a', 'model-a'])
     const providerBTargetId = JSON.stringify(['codex', 'provider-b', 'model-b'])
 
-    expect(harness.createOpenAiProviderBridge).toHaveBeenCalledWith(
+    expect(harness.createProtocolForwardingBridge).toHaveBeenCalledWith(
       [
         {
           id: providerATargetId,
@@ -1472,7 +1477,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       _meta: { 'api-key': { apiKey: 'openai-bridge-token-0' } }
     })
     expect(backend.providerTransportLease?.setTarget(providerBTargetId)).toBe(true)
-    expect(harness.openAiProviderBridges[0].setTarget).toHaveBeenCalledWith(providerBTargetId)
+    expect(harness.protocolForwardingBridges[0].setTarget).toHaveBeenCalledWith(providerBTargetId)
     expect(JSON.stringify(backend)).not.toContain('plain:provider-a-key-ref')
     expect(JSON.stringify(backend)).not.toContain('plain:provider-b-key-ref')
   })
@@ -1489,8 +1494,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
       reasoningEffort: 'high'
     })
 
-    const { anthropicBridgeLease: configuredLease, ...configuredStable } = configured
-    const { anthropicBridgeLease: explicitLease, ...explicitStable } = explicit
+    const { messagesBridgeLease: configuredLease, ...configuredStable } = configured
+    const { messagesBridgeLease: explicitLease, ...explicitStable } = explicit
     expect(explicitStable).toEqual(configuredStable)
     expect(configuredLease).toBeDefined()
     expect(explicitLease).toBeDefined()
@@ -1588,7 +1593,7 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     ).rejects.toThrow('required model unavailable: missing-model')
 
     expect(harness.getSettings()).toEqual(before)
-    expect(harness.createResponsesBridge).not.toHaveBeenCalled()
+    expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
     expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
     expect(harness.nextGenerationId).not.toHaveBeenCalled()
     expectRuntimeNotStarted(harness.runtime)
@@ -1737,8 +1742,8 @@ describe('AgentBackendResolver bridge predicates', () => {
       name: 'Codex bridge',
       frameworkId: 'codex' as const,
       target: {
-        needsChatResponsesBridge: true,
-        provider: { apiEndpoints: ['openai'] as const }
+        needsChatResponsesToChatCompletionsBridge: true,
+        provider: { apiEndpoints: ['chat-completions'] as const }
       }
     }
   ])('provides the fixed Personal and Imported Skill paths to $name', async (testCase) => {
@@ -1769,8 +1774,8 @@ describe('AgentBackendResolver bridge predicates', () => {
     expect(instructions).not.toContain('Do not use names beginning with')
     expect(instructions).not.toContain('copy over bundled Skill names or ids')
     expect(instructions).not.toContain('reuse another user Skill id')
-    await backend.anthropicBridgeLease?.release()
-    await backend.responsesBridgeLease?.release()
+    await backend.messagesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
     await backend.providerTransportLease?.release()
   })
 
@@ -1786,8 +1791,8 @@ describe('AgentBackendResolver bridge predicates', () => {
       name: 'Codex bridge',
       frameworkId: 'codex' as const,
       target: {
-        needsChatResponsesBridge: true,
-        provider: { apiEndpoints: ['openai'] as const }
+        needsChatResponsesToChatCompletionsBridge: true,
+        provider: { apiEndpoints: ['chat-completions'] as const }
       }
     }
   ])(
@@ -1806,8 +1811,8 @@ describe('AgentBackendResolver bridge predicates', () => {
       }
 
       const previousBackend = await harness.resolver.resolveExplicitTarget(target)
-      await previousBackend.anthropicBridgeLease?.release()
-      await previousBackend.responsesBridgeLease?.release()
+      await previousBackend.messagesBridgeLease?.release()
+      await previousBackend.responsesTransportLease?.release()
       await previousBackend.providerTransportLease?.release()
 
       const backend = await harness.resolver.resolveExplicitTarget(target)
@@ -1828,8 +1833,8 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledTimes(
         testCase.frameworkId === 'claude-code' ? 0 : 2
       )
-      await backend.anthropicBridgeLease?.release()
-      await backend.responsesBridgeLease?.release()
+      await backend.messagesBridgeLease?.release()
+      await backend.responsesTransportLease?.release()
       await backend.providerTransportLease?.release()
     }
   )
@@ -1864,7 +1869,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       CODEBUDDY_BASE_URL: 'http://127.0.0.1:42000/v1',
       OPEN_SCIENCE_CODEBUDDY_CHAT_COMPLETIONS_URL: 'http://127.0.0.1:42000/v1/chat/completions'
     })
-    expect(harness.createOpenAiProviderBridge).toHaveBeenCalledWith(
+    expect(harness.createProtocolForwardingBridge).toHaveBeenCalledWith(
       [
         expect.objectContaining({
           wire: 'chat-completions',
@@ -1877,7 +1882,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect.any(String)
     )
     await backend.providerTransportLease?.release()
-    expect(harness.openAiProviderBridges[0]?.close).toHaveBeenCalledOnce()
+    expect(harness.protocolForwardingBridges[0]?.close).toHaveBeenCalledOnce()
   })
 
   it('keeps the isolated CodeBuddy Skill runtime available without enabled Connectors', async () => {
@@ -1915,8 +1920,8 @@ describe('AgentBackendResolver bridge predicates', () => {
       name: 'Codex bridge',
       frameworkId: 'codex' as const,
       target: {
-        needsChatResponsesBridge: true,
-        provider: { apiEndpoints: ['openai'] as const }
+        needsChatResponsesToChatCompletionsBridge: true,
+        provider: { apiEndpoints: ['chat-completions'] as const }
       }
     }
   ])(
@@ -1937,15 +1942,15 @@ describe('AgentBackendResolver bridge predicates', () => {
 
       expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
       expect(backend.persistentSystemPrompt).not.toContain('`mcp-xt`')
-      await backend.anthropicBridgeLease?.release()
-      await backend.responsesBridgeLease?.release()
+      await backend.messagesBridgeLease?.release()
+      await backend.responsesTransportLease?.release()
       await backend.providerTransportLease?.release()
     }
   )
 
   it.each([
     { name: 'direct Responses', chat: false, native: false, apiEndpoints: ['responses'] as const },
-    { name: 'Chat bridge', chat: true, native: false, apiEndpoints: ['openai'] as const },
+    { name: 'Chat bridge', chat: true, native: false, apiEndpoints: ['chat-completions'] as const },
     {
       name: 'Responses compatibility',
       chat: false,
@@ -1958,7 +1963,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       const harness = makeHarness({
         connectorIds: ['pubmed'],
         targetOverride: () => ({
-          needsChatResponsesBridge: testCase.chat,
+          needsChatResponsesToChatCompletionsBridge: testCase.chat,
           needsNativeResponsesCompatibility: testCase.native,
           provider: { apiEndpoints: [...testCase.apiEndpoints] }
         })
@@ -2002,7 +2007,7 @@ describe('AgentBackendResolver bridge predicates', () => {
         }
       })
       expect(backend.systemPromptAppends).toBeUndefined()
-      await backend.responsesBridgeLease?.release()
+      await backend.responsesTransportLease?.release()
     }
   )
 
@@ -2025,7 +2030,7 @@ describe('AgentBackendResolver bridge predicates', () => {
   ])('honors the provider-owned $name predicate', async (testCase) => {
     const harness = makeHarness({
       targetOverride: () => ({
-        needsChatResponsesBridge: testCase.chat,
+        needsChatResponsesToChatCompletionsBridge: testCase.chat,
         needsNativeResponsesCompatibility: testCase.native
       })
     })
@@ -2037,12 +2042,14 @@ describe('AgentBackendResolver bridge predicates', () => {
       reasoningEffort: 'high'
     })
 
-    expect(harness.createResponsesBridge).toHaveBeenCalledTimes(testCase.responseCalls)
+    expect(harness.createResponsesToChatCompletionsBridge).toHaveBeenCalledTimes(
+      testCase.responseCalls
+    )
     expect(harness.createNativeResponsesProxy).toHaveBeenCalledTimes(testCase.nativeCalls)
-    expect(backend.responsesBridgeLease === undefined).toBe(
+    expect(backend.responsesTransportLease === undefined).toBe(
       testCase.responseCalls + testCase.nativeCalls === 0
     )
-    await backend.responsesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
   })
 
   it('bypasses loopback without disabling inherited proxies for native Responses compatibility', async () => {
@@ -2069,7 +2076,7 @@ describe('AgentBackendResolver bridge predicates', () => {
       expect(backend.env.no_proxy?.split(',')).toEqual(
         expect.arrayContaining(['metadata.example.test', 'existing.internal', ...loopbackBypass])
       )
-      await backend.responsesBridgeLease?.release()
+      await backend.responsesTransportLease?.release()
     } finally {
       vi.unstubAllEnvs()
     }
@@ -2080,7 +2087,7 @@ describe('AgentBackendResolver bridge generations', () => {
   it('creates unique generations and releases each lease idempotently', async () => {
     let generation = 0
     const harness = makeHarness({
-      targetOverride: () => ({ needsChatResponsesBridge: true }),
+      targetOverride: () => ({ needsChatResponsesToChatCompletionsBridge: true }),
       nextGenerationId: () => `generation-${++generation}`
     })
     const target = {
@@ -2092,39 +2099,51 @@ describe('AgentBackendResolver bridge generations', () => {
 
     const first = await harness.resolver.resolveExplicitTarget(target)
     const second = await harness.resolver.resolveExplicitTarget(target)
-    first.responsesBridgeLease?.setReasoningEffort?.('low')
-    second.responsesBridgeLease?.setReasoningEffort?.('max')
-    first.responsesBridgeLease?.registerReviewerSession('first-reviewer')
-    second.responsesBridgeLease?.registerReviewerSession('second-reviewer')
-    await first.responsesBridgeLease?.release()
-    await first.responsesBridgeLease?.release()
-    await second.responsesBridgeLease?.release()
+    first.responsesTransportLease?.setReasoningEffort?.('low')
+    second.responsesTransportLease?.setReasoningEffort?.('max')
+    first.responsesTransportLease?.registerReviewerSession('first-reviewer')
+    second.responsesTransportLease?.registerReviewerSession('second-reviewer')
+    await first.responsesTransportLease?.release()
+    await first.responsesTransportLease?.release()
+    await second.responsesTransportLease?.release()
 
     expect(harness.nextGenerationId).toHaveBeenCalledTimes(2)
     expect(harness.nextGenerationId).toHaveNthReturnedWith(1, 'generation-1')
     expect(harness.nextGenerationId).toHaveNthReturnedWith(2, 'generation-2')
-    expect(harness.createResponsesBridge).toHaveBeenCalledTimes(2)
-    expect(harness.responsesBridges).toHaveLength(2)
-    expect(harness.responsesBridges[0]?.close).toHaveBeenCalledTimes(1)
-    expect(harness.responsesBridges[1]?.close).toHaveBeenCalledTimes(1)
-    expect(harness.responsesBridges[0]?.setReasoningEffort).toHaveBeenCalledWith('low')
-    expect(harness.responsesBridges[0]?.setReasoningEffort).not.toHaveBeenCalledWith('max')
-    expect(harness.responsesBridges[1]?.setReasoningEffort).toHaveBeenCalledWith('max')
-    expect(harness.responsesBridges[1]?.setReasoningEffort).not.toHaveBeenCalledWith('low')
-    expect(harness.responsesBridges[0]?.registerReviewerSession).toHaveBeenCalledWith(
-      'first-reviewer'
+    expect(harness.createResponsesToChatCompletionsBridge).toHaveBeenCalledTimes(2)
+    expect(harness.responsesToChatCompletionsBridges).toHaveLength(2)
+    expect(harness.responsesToChatCompletionsBridges[0]?.close).toHaveBeenCalledTimes(1)
+    expect(harness.responsesToChatCompletionsBridges[1]?.close).toHaveBeenCalledTimes(1)
+    expect(harness.responsesToChatCompletionsBridges[0]?.setReasoningEffort).toHaveBeenCalledWith(
+      'low'
     )
-    expect(harness.responsesBridges[0]?.registerReviewerSession).toHaveBeenCalledTimes(1)
-    expect(harness.responsesBridges[0]?.registerReviewerSession).not.toHaveBeenCalledWith(
-      'second-reviewer'
+    expect(
+      harness.responsesToChatCompletionsBridges[0]?.setReasoningEffort
+    ).not.toHaveBeenCalledWith('max')
+    expect(harness.responsesToChatCompletionsBridges[1]?.setReasoningEffort).toHaveBeenCalledWith(
+      'max'
     )
-    expect(harness.responsesBridges[1]?.registerReviewerSession).toHaveBeenCalledWith(
-      'second-reviewer'
-    )
-    expect(harness.responsesBridges[1]?.registerReviewerSession).toHaveBeenCalledTimes(1)
-    expect(harness.responsesBridges[1]?.registerReviewerSession).not.toHaveBeenCalledWith(
-      'first-reviewer'
-    )
+    expect(
+      harness.responsesToChatCompletionsBridges[1]?.setReasoningEffort
+    ).not.toHaveBeenCalledWith('low')
+    expect(
+      harness.responsesToChatCompletionsBridges[0]?.registerReviewerSession
+    ).toHaveBeenCalledWith('first-reviewer')
+    expect(
+      harness.responsesToChatCompletionsBridges[0]?.registerReviewerSession
+    ).toHaveBeenCalledTimes(1)
+    expect(
+      harness.responsesToChatCompletionsBridges[0]?.registerReviewerSession
+    ).not.toHaveBeenCalledWith('second-reviewer')
+    expect(
+      harness.responsesToChatCompletionsBridges[1]?.registerReviewerSession
+    ).toHaveBeenCalledWith('second-reviewer')
+    expect(
+      harness.responsesToChatCompletionsBridges[1]?.registerReviewerSession
+    ).toHaveBeenCalledTimes(1)
+    expect(
+      harness.responsesToChatCompletionsBridges[1]?.registerReviewerSession
+    ).not.toHaveBeenCalledWith('first-reviewer')
   })
 })
 
@@ -2136,15 +2155,18 @@ describe('AgentBackendResolver bridge cleanup', () => {
       const closeError = new Error(`${protocol} close failed`)
       const resource =
         protocol === 'chat'
-          ? makeResponsesBridgeDouble({ startError, closeError })
+          ? makeResponsesToChatCompletionsBridgeDouble({ startError, closeError })
           : makeNativeResponsesProxyDouble({ startError, closeError })
       const harness = makeHarness({
         targetOverride: () => ({
-          needsChatResponsesBridge: protocol === 'chat',
+          needsChatResponsesToChatCompletionsBridge: protocol === 'chat',
           needsNativeResponsesCompatibility: protocol === 'native'
         }),
         ...(protocol === 'chat'
-          ? { responsesBridgeBuilder: () => resource as ResponsesBridgeDouble }
+          ? {
+              responsesToChatCompletionsBridgeBuilder: () =>
+                resource as ResponsesToChatCompletionsBridgeDouble
+            }
           : { nativeResponsesProxyBuilder: () => resource as NativeResponsesProxyDouble })
       })
 
@@ -2167,14 +2189,19 @@ describe('AgentBackendResolver bridge cleanup', () => {
     async (protocol) => {
       const preparationError = new Error(`${protocol} preparation failed`)
       const resource =
-        protocol === 'chat' ? makeResponsesBridgeDouble() : makeNativeResponsesProxyDouble()
+        protocol === 'chat'
+          ? makeResponsesToChatCompletionsBridgeDouble()
+          : makeNativeResponsesProxyDouble()
       const harness = makeHarness({
         targetOverride: () => ({
-          needsChatResponsesBridge: protocol === 'chat',
+          needsChatResponsesToChatCompletionsBridge: protocol === 'chat',
           needsNativeResponsesCompatibility: protocol === 'native'
         }),
         ...(protocol === 'chat'
-          ? { responsesBridgeBuilder: () => resource as ResponsesBridgeDouble }
+          ? {
+              responsesToChatCompletionsBridgeBuilder: () =>
+                resource as ResponsesToChatCompletionsBridgeDouble
+            }
           : { nativeResponsesProxyBuilder: () => resource as NativeResponsesProxyDouble })
       })
       harness.runtime.materializeAgentConfigFiles.mockRejectedValueOnce(preparationError)
@@ -2200,15 +2227,18 @@ describe('AgentBackendResolver bridge cleanup', () => {
       const closeError = new Error(`${protocol} close failed`)
       const resource =
         protocol === 'chat'
-          ? makeResponsesBridgeDouble({ closeError })
+          ? makeResponsesToChatCompletionsBridgeDouble({ closeError })
           : makeNativeResponsesProxyDouble({ closeError })
       const harness = makeHarness({
         targetOverride: () => ({
-          needsChatResponsesBridge: protocol === 'chat',
+          needsChatResponsesToChatCompletionsBridge: protocol === 'chat',
           needsNativeResponsesCompatibility: protocol === 'native'
         }),
         ...(protocol === 'chat'
-          ? { responsesBridgeBuilder: () => resource as ResponsesBridgeDouble }
+          ? {
+              responsesToChatCompletionsBridgeBuilder: () =>
+                resource as ResponsesToChatCompletionsBridgeDouble
+            }
           : { nativeResponsesProxyBuilder: () => resource as NativeResponsesProxyDouble })
       })
       harness.runtime.materializeAgentConfigFiles.mockRejectedValueOnce(preparationError)
@@ -2239,9 +2269,9 @@ describe('direct provider resolution', () => {
         reasoningEffort: 'default'
       })
       expect(result).toMatchObject({ providerId: 'provider-a', provider: { model: 'model-a' } })
-      expect(harness.createResponsesBridge).not.toHaveBeenCalled()
-      expect(harness.createAnthropicProviderBridge).not.toHaveBeenCalled()
-      expect(harness.createOpenAiProviderBridge).not.toHaveBeenCalled()
+      expect(harness.createResponsesToChatCompletionsBridge).not.toHaveBeenCalled()
+      expect(harness.createMessagesBridge).not.toHaveBeenCalled()
+      expect(harness.createProtocolForwardingBridge).not.toHaveBeenCalled()
       expect(harness.createNativeResponsesProxy).not.toHaveBeenCalled()
       expect(harness.runtime.resolveClaudeExecutable).not.toHaveBeenCalled()
       expect(harness.runtime.resolveCodexExecutable).not.toHaveBeenCalled()
@@ -2260,7 +2290,7 @@ it.each([undefined, 'unsupported', 'none-high'] as const)(
       name: 'Gateway',
       model: 'model-a',
       baseUrl: 'https://api.example',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       reasoningEffortPreset
     }
     const profile =

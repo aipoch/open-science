@@ -5,7 +5,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 
 import { recoverAnchoredRemoval, removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import type { ManagedFileReadLease } from '../managed-file-versions/read-port'
 import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import {
@@ -54,9 +54,16 @@ type PublishContentRequest = {
   commit?: (content: OpenedContent) => Promise<void>
 }
 
+// Both reads must fail closed. The final check runs inside the deletion transaction.
+export type ContentReferences<Context> = {
+  findReferencedIds(context: Context, contentIds?: readonly string[]): Promise<ReadonlySet<string>>
+  hasReferences(context: Context, contentId: string): Promise<boolean>
+}
+
 type ContentRepositoryOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
+  references: ContentReferences<Prisma.TransactionClient>
 }
 
 class ContentOpenError extends Error {
@@ -151,7 +158,9 @@ const withContentLifecycle = async <T>(
 class ContentRepository {
   private readonly verifiedContent = new Map<string, { fingerprint: string; checksum: string }>()
 
-  constructor(private readonly options: ContentRepositoryOptions) {}
+  constructor(private readonly options: ContentRepositoryOptions) {
+    if (!options.references) throw new Error('Content reference protection is required.')
+  }
 
   async publish(request: PublishContentRequest): Promise<OpenedContent> {
     return this.publishContent(request)
@@ -527,29 +536,9 @@ class ContentRepository {
       orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
     })
     if (candidates.length === 0) return { removedIds: [], retainedIds: [], failedIds: [] }
-    const where = request.contentIds
-      ? { contentBlobId: { in: candidates.map(({ id }) => id) } }
-      : undefined
-    const [uploadReferences, artifactReferences, literatureReferences, inboxReferences] =
-      await Promise.all([
-        client.uploadVersion.findMany({
-          where: where ?? { contentBlobId: { not: null } },
-          select: { contentBlobId: true }
-        }),
-        client.artifactVersion.findMany({
-          where: where ?? { contentBlobId: { not: null } },
-          select: { contentBlobId: true }
-        }),
-        client.literatureAttachmentVersion.findMany({ where, select: { contentBlobId: true } }),
-        client.literatureInboxPdf.findMany({ where, select: { contentBlobId: true } })
-      ])
-    const referencedIds = new Set(
-      [
-        ...uploadReferences,
-        ...artifactReferences,
-        ...literatureReferences,
-        ...inboxReferences
-      ].flatMap((reference) => (reference.contentBlobId ? [reference.contentBlobId] : []))
+    const referencedIds = await this.options.references.findReferencedIds(
+      client,
+      request.contentIds ? candidates.map(({ id }) => id) : undefined
     )
     const receipt: ContentSweepReceipt = { removedIds: [], retainedIds: [], failedIds: [] }
 
@@ -659,13 +648,7 @@ class ContentRepository {
     const claimed = await client.$transaction(async (transaction) => {
       const current = await transaction.contentBlob.findUnique({ where: { id: contentId } })
       if (!current || (createdBefore && current.createdAt >= createdBefore)) return undefined
-      const counts = await Promise.all([
-        transaction.uploadVersion.count({ where: { contentBlobId: contentId } }),
-        transaction.artifactVersion.count({ where: { contentBlobId: contentId } }),
-        transaction.literatureAttachmentVersion.count({ where: { contentBlobId: contentId } }),
-        transaction.literatureInboxPdf.count({ where: { contentBlobId: contentId } })
-      ])
-      if (counts.some((count) => count > 0)) return undefined
+      if (await this.options.references.hasReferences(transaction, contentId)) return undefined
       await transaction.contentBlob.update({
         where: { id: contentId },
         data: { state: 'quarantined' }

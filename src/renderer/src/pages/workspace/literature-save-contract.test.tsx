@@ -1,11 +1,62 @@
 // @vitest-environment jsdom
-import { cleanup, render, fireEvent } from '@testing-library/react'
-import { expect, it, vi } from 'vitest'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { cleanup, fireEvent } from '@testing-library/react'
+import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { buildLiteratureLibraryToolSummary } from './literature-tool-presentation'
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
+import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { useNavigationStore } from '../../stores/navigation-store'
-it('does not describe an existing library receipt as an Inbox save', () => {
+
+const { render: renderComponent } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
+const reference = (id: string): LiteratureItemView => ({
+  id,
+  metadataRevision: 1,
+  item: literatureItemInputSchema.parse({ itemType: 'journalArticle', title: `Reference ${id}` }),
+  attachments: [],
+  collectionIds: [],
+  projectIds: [],
+  createdAt: 1,
+  updatedAt: 1
+})
+const previousApi = window.api
+beforeEach(() => {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      literature: {
+        search: vi.fn(async ({ itemIds }: { itemIds: string[] }) => ({
+          entries: itemIds.map(reference)
+        })),
+        get: vi.fn(async (id: string) => reference(id)),
+        getCandidateStates: vi.fn(async ({ candidateIds }: { candidateIds: string[] }) => ({
+          candidates: candidateIds.map((candidateId) => ({ candidateId, state: 'pending' }))
+        })),
+        onChanged: () => () => {}
+      }
+    }
+  })
+})
+afterEach(() => {
+  cleanup()
+  Object.defineProperty(window, 'api', { configurable: true, value: previousApi })
+})
+const render = (node: React.ReactNode): ReturnType<typeof renderComponent> =>
+  renderComponent(
+    <LiteratureCandidateSessionContext.Provider value={{ sessionId: 'session' }}>
+      {node}
+    </LiteratureCandidateSessionContext.Provider>
+  )
+
+it('does not describe an existing library receipt as an Inbox save', async () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',
     { refs: ['doi:10.1234/existing'] },
@@ -37,15 +88,16 @@ it('does not describe an existing library receipt as an Inbox save', () => {
     const card = rendered.getByTestId('literature-tool-card')
     expect(card.textContent).not.toContain('Inbox')
     expect(card.textContent).toContain('Already in library: 1')
-    fireEvent.click(rendered.getByRole('button', { name: 'Open reference' }))
-    expect(navigate).toHaveBeenCalledWith('existing', 'user')
+    fireEvent.click(await rendered.findByRole('button', { name: 'Reference existing' }))
+    expect(await rendered.findByRole('dialog', { name: 'Reference existing' })).toBeDefined()
+    expect(navigate).not.toHaveBeenCalled()
   } finally {
     cleanup()
     navigate.mockRestore()
   }
 })
 
-it('shows mixed outcomes and opens the corresponding destinations', () => {
+it('shows mixed outcomes and opens the corresponding destinations', async () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',
     { candidates: [{}, {}, {}, {}, {}] },
@@ -64,7 +116,7 @@ it('shows mixed outcomes and opens the corresponding destinations', () => {
     .mockImplementation(() => {})
   try {
     const rendered = render(<WorkspaceLiteratureToolCard summary={summary} />)
-    expect(rendered.getByText('Pending review: 1')).toBeDefined()
+    expect(await rendered.findByText('Pending review: 1')).toBeDefined()
     expect(rendered.getByText('Already in library: 1')).toBeDefined()
     expect(rendered.getByText('Repeated inputs: 1')).toBeDefined()
     expect(rendered.getByText('Not attempted: 1')).toBeDefined()
@@ -73,8 +125,9 @@ it('shows mixed outcomes and opens the corresponding destinations', () => {
     ).toBeDefined()
     fireEvent.click(rendered.getByRole('button', { name: 'Open Inbox' }))
     expect(inbox).toHaveBeenCalledWith('user')
-    fireEvent.click(rendered.getByRole('button', { name: 'Open existing reference 1' }))
-    expect(existing).toHaveBeenCalledWith('existing', 'user')
+    fireEvent.click(await rendered.findByRole('button', { name: 'Reference existing' }))
+    expect(await rendered.findByRole('dialog', { name: 'Reference existing' })).toBeDefined()
+    expect(existing).not.toHaveBeenCalled()
   } finally {
     cleanup()
     inbox.mockRestore()
@@ -109,7 +162,7 @@ it('does not label dismissed receipts as pending review', () => {
   expect(summary).toMatchObject({ savedCount: 0, otherCount: 1, existingItemIds: [] })
 })
 
-it('opens Inbox from a downloaded PDF receipt delivered through MCP text content', () => {
+it('opens Inbox from a downloaded PDF receipt delivered through MCP text content', async () => {
   const summary = buildLiteratureLibraryToolSummary(
     'save',
     {},
@@ -123,7 +176,7 @@ it('opens Inbox from a downloaded PDF receipt delivered through MCP text content
   try {
     const rendered = render(<WorkspaceLiteratureToolCard summary={summary} />)
     expect(rendered.getByText('PDF downloaded to Inbox')).toBeDefined()
-    expect(rendered.getByText('Pending review: 1')).toBeDefined()
+    expect(await rendered.findByText('Pending review: 1')).toBeDefined()
     fireEvent.click(rendered.getByRole('button', { name: 'Open Inbox' }))
     expect(inbox).toHaveBeenCalledWith('user')
   } finally {
@@ -132,7 +185,7 @@ it('opens Inbox from a downloaded PDF receipt delivered through MCP text content
   }
 })
 
-it('opens the contextual Preview Inbox without navigating away or inferring a new destination', () => {
+it('opens the contextual Preview Inbox without navigating away or inferring a new destination', async () => {
   const openPreview = vi.fn()
   const navigate = vi
     .spyOn(useNavigationStore.getState(), 'openLibrary')
@@ -148,8 +201,8 @@ it('opens the contextual Preview Inbox without navigating away or inferring a ne
         <WorkspaceLiteratureToolCard summary={summary} />
       </LibraryPreviewNavigationContext.Provider>
     )
-    fireEvent.click(view.getByRole('button', { name: 'Open Inbox' }))
-    fireEvent.click(view.getByRole('button', { name: 'Open Inbox' }))
+    fireEvent.click(await view.findByRole('button', { name: 'Open Inbox' }))
+    fireEvent.click(await view.findByRole('button', { name: 'Open Inbox' }))
     expect(openPreview.mock.calls).toEqual([[{ section: 'inbox' }], [{ section: 'inbox' }]])
     expect(navigate).not.toHaveBeenCalled()
   } finally {

@@ -635,7 +635,9 @@
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/runtime-network-node.test.ts",
-      "src/main/session-diagnostics/desktop-log-paths.test.ts"
+      "src/main/composition/session-packages.test.ts",
+      "src/main/session-diagnostics/desktop-log-paths.test.ts",
+      "src/main/settings/list-models.test.ts"
     ]
   },
   "capabilityOverlays": [],

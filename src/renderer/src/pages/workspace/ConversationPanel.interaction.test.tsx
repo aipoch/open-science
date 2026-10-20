@@ -964,6 +964,30 @@ const dispatchDrag = (
 }
 
 describe('ConversationPanel header spacing', () => {
+  it('opens Model settings for an unavailable Subagent configuration', () => {
+    useSettingsStore.setState({ isLoaded: true })
+    renderPanel({
+      subagents: {
+        unavailable: {
+          kind: 'unavailable',
+          reason: 'The configured Subagent model is unavailable.'
+        }
+      }
+    })
+
+    const settingsButton = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[role="status"] button')
+    ).find((button) => button.textContent === 'Open Settings')
+    expect(settingsButton).toBeDefined()
+    act(() => settingsButton!.click())
+
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
+  })
+
   it('keeps a storage-limit explanation local to the blocked conversation', () => {
     renderPanel({ view: { persistenceBlocked: true } })
     expect(container.textContent).toContain('Conversation storage limit reached')

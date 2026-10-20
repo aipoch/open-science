@@ -2213,13 +2213,10 @@ it('reports restoration costs without logging document or translation text', asy
     storageMs: expect.any(Number),
     decodeMs: expect.any(Number),
     sourceCount: 2,
-    blockCount: expect.any(Number),
-    payloadChars: expect.any(Number),
-    layoutSnapshotChars: expect.any(Number)
+    translatedCount: 1
   })
   expect(report.data.storageMs).toBeGreaterThanOrEqual(0)
   expect(report.data.decodeMs).toBeGreaterThanOrEqual(0)
-  expect(report.data.layoutSnapshotChars).toBeGreaterThan(0)
 })
 
 it('deletes only the authorized edition across shared sources and preserves the PDF and other editions after reopening', async () => {

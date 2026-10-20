@@ -71,6 +71,20 @@ const fixture = (): {
 beforeEach(() => vi.clearAllMocks())
 
 describe('Literature command workflows', () => {
+  it('routes exact candidate reads through the catalog without publishing mutations', async () => {
+    const result = {
+      candidates: [{ candidateId: 'a', state: 'accepted', acceptedItemId: 'paper' }]
+    }
+    const getCandidateStates = vi.fn().mockResolvedValue(result)
+    const owner = createLiteratureCommandOwner({
+      literatureCatalog: { getCandidateStates }
+    } as unknown as Services)
+    const request = { candidateIds: ['a'] }
+    await expect(owner.getCandidateStates(request)).resolves.toBe(result)
+    expect(getCandidateStates).toHaveBeenCalledWith(request)
+    expect(broadcastToRenderers).not.toHaveBeenCalled()
+  })
+
   it('routes journal requests through the dataset service', async () => {
     const result = { datasets: [] }
     const journalAttributes = { run: vi.fn().mockResolvedValue(result) }
@@ -180,8 +194,8 @@ it('maps package style errors to the existing application command error envelope
   const { toApplicationCommandErrorEnvelope } =
     await import('../../shared/application-command-contract')
   const owner = createLiteratureCommandOwner({
-    literatureCitationStyles: {
-      import: async () => {
+    literatureCitationFormatter: {
+      citationStyles: async () => {
         throw new CitationStyleError('csl-undefined-macro', 'Unknown macro', { macro: 'missing' })
       }
     }

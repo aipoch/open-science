@@ -15,12 +15,22 @@ on:
         options:
           - full
           - portable
+          - functional
+          - workspace
+          - regressions
+          - capacity
+          - delegation
           - scheduled-fixes
           - presentation
           - workspace-images
           - presentation-screening
           - runtime-evidence
           - static-impact
+      shard:
+        description: Regression shard for a focused regressions dry-run
+        type: choice
+        default: all
+        options: [all, '1', '2', '3']
 
 permissions:
   actions: read
@@ -82,12 +92,74 @@ jobs:
           retention-days: 7
           if-no-files-found: warn
 
-  regression:
-    name: Complete source regression (macOS)
+  macos_setup:
+    name: Prepare complete Mac source regression
     if: ${{ (github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/main') && inputs.mode != 'portable' && inputs.mode != 'runtime-evidence' && inputs.mode != 'static-impact' }}
     runs-on: macos-15
-    # Serial suites, including accessibility, total 170 minutes; reserve setup and upload time.
-    timeout-minutes: 190
+    timeout-minutes: 20
+    outputs:
+      matrix: ${{ steps.select.outputs.matrix }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+      node_version: ${{ steps.node.outputs.node-version }}
+    steps:
+      - name: Select Mac suites
+        id: select
+        shell: node {0}
+        env:
+          MODE: ${{ inputs.mode || 'full' }}
+          SHARD: ${{ inputs.shard || 'all' }}
+        run: |
+          const { appendFileSync } = require('node:fs')
+          const groups = ['functional', 'workspace', 'presentation', 'regressions', 'capacity', 'delegation']
+          const diagnostics = ['scheduled-fixes', 'workspace-images', 'presentation-screening']
+          const { MODE: mode, SHARD: shard } = process.env
+          if (!['full', ...groups, ...diagnostics].includes(mode)) throw new Error('Invalid Mac scope')
+          if (!['all', '1', '2', '3'].includes(shard)) throw new Error('Invalid regression shard')
+          const selected = mode === 'full' ? groups : [mode]
+          const include = selected.flatMap(group => group === 'regressions'
+            ? (mode === 'regressions' && shard !== 'all' ? [Number(shard)] : [1, 2, 3]).map(shard => ({ group, shard }))
+            : [{ group, shard: 1 }])
+          appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        id: node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Build web application
+        run: npm run build:web
+      - name: Test snapshot transport
+        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
+      - name: Pack E2E setup
+        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
+      - name: Upload E2E setup
+        id: upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: source-regression-setup-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/e2e-setup/
+          retention-days: 1
+          compression-level: 0
+          if-no-files-found: error
+
+  regression:
+    name: Mac source (${{ matrix.group }}, shard ${{ matrix.shard }})
+    needs: [macos_setup]
+    if: ${{ !cancelled() && needs.macos_setup.result == 'success' }}
+    runs-on: macos-15
+    # Presentation has up to 35 minutes of suite budgets; reserve restore/upload time.
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.macos_setup.outputs.matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -96,29 +168,32 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 24
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs
-      - name: Build Electron application
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode != 'presentation-screening' }}
-        run: npm run build:e2e
-      - name: Build web application
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
-        run: npm run build:web
+          node-version: ${{ needs.macos_setup.outputs.node_version }}
+          package-manager-cache: false
+      - name: Download E2E setup
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.macos_setup.outputs.artifact_id }}
+          path: ${{ runner.temp }}/e2e-setup/
+          merge-multiple: true
+      - name: Restore E2E setup
+        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
       - name: Install headless Chromium
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' || inputs.mode == 'presentation-screening' }}
+        if: ${{ matrix.group == 'functional' || matrix.group == 'presentation' || matrix.group == 'presentation-screening' }}
         run: npx playwright install chromium --only-shell
       - name: Test scheduled regression fixes
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}
+        id: scheduled_fixes
+        continue-on-error: true
+        if: ${{ matrix.group == 'scheduled-fixes' }}
         run: >-
           npx playwright test e2e/session-turn-outcome.spec.ts
           e2e/auto-review-stop-resume.spec.ts e2e/transcript-capacity.spec.ts
-          e2e/desktop-runtime-restart.spec.ts
+          e2e/desktop-runtime-restart.spec.ts e2e/desktop-runtime-preview-recovery.spec.ts
+          e2e/pdf-workspace-translation.spec.ts
           --retries=0 --fail-on-flaky-tests --global-timeout=1200000
       - name: Run complete Mac functional journeys
         id: functional
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ matrix.group == 'functional' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional
@@ -127,7 +202,7 @@ jobs:
         run: npm run test:e2e:journey -- --fail-on-flaky-tests --global-timeout=900000
       - name: Run complete Mac workspace journeys
         id: workspace
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ matrix.group == 'workspace' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace
@@ -135,48 +210,51 @@ jobs:
         run: npm run test:e2e:workspace -- --fail-on-flaky-tests --global-timeout=1500000
       - name: Test workspace message images
         id: workspace_images
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
+        if: ${{ matrix.group == 'workspace-images' }}
         run: >-
           npx playwright test e2e/workspace-files.spec.ts
           --grep 'normalizes OpenCode inline thinking before publishing sanitized message images'
           --fail-on-flaky-tests
       - name: Run complete Mac browser and visual coverage
         id: presentation
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' }}
         continue-on-error: true
         run: |
           # All 462 browser tests passed before the 10-minute budget expired in
           # teardown. Keep visual's separate budget and collect both outcomes.
           browser_status=0
-          npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=900000 || browser_status=$?
-          npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=600000
+          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts --fail-on-flaky-tests --global-timeout=900000 || browser_status=$?
+          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/visual PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/visual.json npm run test:e2e:visual -- --fail-on-flaky-tests --global-timeout=600000 --output=test-results/visual
           exit "$browser_status"
       - name: Test concurrent screening flights
         id: presentation_screening
-        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
+        if: ${{ matrix.group == 'presentation-screening' }}
         run: >-
-          npx playwright test --config e2e/playwright.browser.config.ts
+          PLAYWRIGHT_BLOB_OUTPUT_DIR=blob-report/browser PLAYWRIGHT_JSON_OUTPUT_NAME=test-results/browser.json npx playwright test --config e2e/playwright.browser.config.ts
           e2e/browser/smart-screening.spec.ts
           --grep 'flies all four committed papers per second concurrently into the same pile'
           --repeat-each=5
           --fail-on-flaky-tests
       - name: Run complete Mac accessibility checks
         id: accessibility
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'presentation' }}
+        if: ${{ matrix.group == 'presentation' }}
         continue-on-error: true
+        env:
+          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/accessibility
+          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/accessibility.json
         run: npm run test:e2e:accessibility:signal
-      # Collect both outcomes using one build and one macOS slot. Neither failure is advisory.
       - name: Run supplemental regressions
         id: regressions
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ matrix.group == 'regressions' || matrix.group == 'capacity' }}
         continue-on-error: true
         uses: ./.github/actions/source-regression
         with:
-          group: regressions
-          include-capacity: 'true'
+          group: ${{ matrix.group }}
+          include-capacity: 'false'
+          shard: ${{ matrix.group == 'regressions' && format('{0}/3', matrix.shard) || '' }}
       - name: Run supplemental delegation
         id: delegation
-        if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'full' }}
+        if: ${{ matrix.group == 'delegation' }}
         continue-on-error: true
         uses: ./.github/actions/source-regression
         with:
@@ -185,50 +263,39 @@ jobs:
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: source-regression-${{ github.run_attempt }}
+          name: source-regression-${{ matrix.group }}-${{ matrix.shard }}-${{ github.run_attempt }}
           retention-days: 5
           path: |
             blob-report/
             test-results/
             playwright-report/
-          if-no-files-found: warn
-      - name: Enforce complete Mac core and presentation suites
-        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
+          if-no-files-found: error
+      - name: Enforce selected Mac suite
+        if: always()
         shell: bash
         env:
+          GROUP: ${{ matrix.group }}
           FUNCTIONAL: ${{ steps.functional.outcome }}
           WORKSPACE: ${{ steps.workspace.outcome }}
           PRESENTATION: ${{ steps.presentation.outcome }}
           ACCESSIBILITY: ${{ steps.accessibility.outcome }}
-        run: |
-          [[ "$FUNCTIONAL" == "success" && "$WORKSPACE" == "success" && "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]
-      - name: Enforce both supplemental suites
-        if: ${{ always() && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full') }}
-        shell: bash
-        env:
           REGRESSIONS: ${{ steps.regressions.outcome }}
           DELEGATION: ${{ steps.delegation.outcome }}
-        run: |
-          [[ "$REGRESSIONS" == "success" && "$DELEGATION" == "success" ]]
-      - name: Enforce presentation dry-run
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation' }}
-        shell: bash
-        env:
-          PRESENTATION: ${{ steps.presentation.outcome }}
-          ACCESSIBILITY: ${{ steps.accessibility.outcome }}
-        run: '[[ "$PRESENTATION" == "success" && "$ACCESSIBILITY" == "success" ]]'
-      - name: Enforce workspace image dry-run
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'workspace-images' }}
-        shell: bash
-        env:
+          SCHEDULED_FIXES: ${{ steps.scheduled_fixes.outcome }}
           WORKSPACE_IMAGES: ${{ steps.workspace_images.outcome }}
-        run: '[[ "$WORKSPACE_IMAGES" == "success" ]]'
-      - name: Enforce screening flight dry-run
-        if: ${{ always() && github.event_name == 'workflow_dispatch' && inputs.mode == 'presentation-screening' }}
-        shell: bash
-        env:
           PRESENTATION_SCREENING: ${{ steps.presentation_screening.outcome }}
-        run: '[[ "$PRESENTATION_SCREENING" == "success" ]]'
+        run: |
+          case "$GROUP" in
+            functional) test "$FUNCTIONAL" = success ;;
+            workspace) test "$WORKSPACE" = success ;;
+            presentation) [[ "$PRESENTATION" == success && "$ACCESSIBILITY" == success ]] ;;
+            regressions|capacity) test "$REGRESSIONS" = success ;;
+            delegation) test "$DELEGATION" = success ;;
+            scheduled-fixes) test "$SCHEDULED_FIXES" = success ;;
+            workspace-images) test "$WORKSPACE_IMAGES" = success ;;
+            presentation-screening) test "$PRESENTATION_SCREENING" = success ;;
+            *) exit 1 ;;
+          esac
 
   portable:
     name: Complete portable ${{ matrix.scope }} tests (Ubuntu, shard ${{ matrix.shard }}/${{ matrix.total }})
@@ -350,7 +417,7 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [regression, packages, portable, portable_report]
+    needs: [macos_setup, regression, packages, portable, portable_report]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -367,7 +434,7 @@ jobs:
       - name: Open, refresh, or close the tracking issue
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
         env:
-          CONCLUSION: ${{ needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}
+          CONCLUSION: ${{ needs.macos_setup.result == 'success' && needs.regression.result == 'success' && needs.packages.result == 'success' && needs.portable.result == 'success' && needs.portable_report.result == 'success' && 'success' || 'failure' }}
         with:
           script: |
             const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)

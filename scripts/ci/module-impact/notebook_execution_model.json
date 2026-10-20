@@ -12,7 +12,8 @@
     "src/main/notebook/repl-cell-bindings.ts",
     "src/main/notebook/session-aggregate.test.ts",
     "src/main/notebook/session-aggregate.ts",
-    "src/main/notebook/timeout-controller.ts"
+    "src/main/notebook/timeout-controller.ts",
+    "src/main/notebook/execution-model-contract.ts"
   ],
   "interfacePaths": [
     "src/main/notebook/content-limits.ts",
@@ -21,7 +22,8 @@
     "src/main/notebook/lane-identity.ts",
     "src/main/notebook/loop-output-mapper.ts",
     "src/main/notebook/session-aggregate.ts",
-    "src/main/notebook/timeout-controller.ts"
+    "src/main/notebook/timeout-controller.ts",
+    "src/main/notebook/execution-model-contract.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -522,7 +524,8 @@
       "src/main/node-entry.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -392,6 +392,7 @@ roles remain explicit in the tables above.
 
 - Use DropdownMenu for action menus, Popover for lightweight auxiliary layers, and Select for single-value selection.
 - `DropdownMenuContent`: `overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
+- Shared `PopoverContent` uses `border border-border bg-popover text-popover-foreground shadow-menu`. Nested notices, forms and secondary copy use normal foreground and muted tokens; do not depend on inverse Tooltip colors. Compact Tooltips retain the shared theme-aware inverse treatment; callers must not replace it with fixed black/white colors.
 - Shared menu label: `px-2 py-1 text-xs text-muted-foreground`.
 - Shared menu items have `min-h-8`, 8px horizontal padding and 6px vertical padding; labels may wrap without a forced 32px height.
 - Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
@@ -720,6 +721,9 @@ The upper-right pin toggles the current Session through the shared Session contr
   filenames. Ordinary files use the existing composer intake and remain draft attachments until
   submission; one `.science` package opens the existing Project import flow. Reject mixed package
   batches without partially attaching or importing. Respect blocked composer and Project availability.
+- Project Home also accepts one `.science` package across its content area with the same bounded
+  overlay. Dropping opens the existing destination Project picker, followed by the existing import
+  preview and confirmation; Home does not preselect the previously visited Project.
 - Keep the new-Session `.science` import guide and keyboard-accessible picker visible at rest.
   Ordinary file drags must not highlight that package-only guide. Clear hover feedback on leave,
   drop, cancellation, or window blur.

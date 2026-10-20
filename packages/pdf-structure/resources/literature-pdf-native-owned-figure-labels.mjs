@@ -1,6 +1,255 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { union, area, intersection, lineRect } from './literature-pdf-page-geometry.mjs'
 import { OPS, Util, version } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { proveNativeUniqueWholeFonts } from './literature-pdf-table-evidence.mjs'
+
+// The same proved margin exclusion must reach face association and completion.
+// Otherwise a later label pass can reattach the printed page number. An explicit
+// PDF page label can witness offset numbering; never infer an offset or fall back
+// to the physical number against that label.
+export function nativeFigureMarginPageNumber(page, tokens, captions, tables) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  if (
+    !Number.isSafeInteger(page?.pageNumber) ||
+    page.pageNumber < 1 ||
+    ![page.width, page.height].every((n) => Number.isFinite(n) && n > 0) ||
+    page.rotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    ![tokens, captions, tables, page.lines, page.graphicsBounds].every(Array.isArray) ||
+    !page.graphicsBounds.length ||
+    tokens.some((t) => !t || typeof t.text !== 'string' || (t.text.trim() && !valid(t.rect)))
+  )
+    return
+  const pageLabel = page.pageLabel === undefined ? String(page.pageNumber) : page.pageLabel
+  if (
+    typeof pageLabel !== 'string' ||
+    !/^[1-9]\d*$/.test(pageLabel) ||
+    !Number.isSafeInteger(Number(pageLabel))
+  )
+    return
+  const candidates = tokens.filter(
+    (t) =>
+      t.text === pageLabel &&
+      t.sourceItem?.index === 0 &&
+      t.sourceItem.pageNumber === page.pageNumber &&
+      t.horizontal === true &&
+      Number.isFinite(t.height) &&
+      t.height > 0 &&
+      Math.abs(t.rect[3] - t.rect[1] - t.height) < 1e-6 &&
+      Math.abs(t.rect[3] - t.baseline) < 1e-6 &&
+      t.rect[1] > 0 &&
+      t.rect[1] < page.height * 0.07 &&
+      (t.rect[2] < page.width * 0.15 || t.rect[0] > page.width * 0.85)
+  )
+  if (candidates.length !== 1 || !proveNativeUniqueWholeFonts(candidates, tokens)) return
+  const token = candidates[0],
+    bottom = token.rect[3] + token.height * 0.5
+  if (
+    tokens.some((t) => t !== token && t.text.trim() && t.rect[1] <= bottom) ||
+    page.graphicsBounds.some(
+      (g) =>
+        !['path', 'image'].includes(g.kind) ||
+        !valid(g.normalizedRect) ||
+        g.normalizedRect.some((n) => n < 0 || n > 1) ||
+        g.normalizedRect[1] * page.height <= bottom
+    ) ||
+    captions.some((c) => c.page === page.pageNumber && (!valid(c.rect) || c.rect[1] <= bottom)) ||
+    tables.some((r) => !valid(r) || r[1] <= bottom)
+  )
+    return
+  const lines = page.lines.filter(
+    (line) =>
+      line.text === token.text && lineRect(line).every((v, n) => Math.abs(v - token.rect[n]) < 1e-6)
+  )
+  if (
+    lines.length !== 1 ||
+    page.lines.some(
+      (line) =>
+        line !== lines[0] && line.text?.trim() && (!valid(lineRect(line)) || line.y <= bottom)
+    )
+  )
+    return
+  return { line: lines[0], token }
+}
+// Complete a resolved raster grid's column headings only when every raster
+// belongs to the same repeated columns and each key has one original source.
+// This does not expand the raster ownership or remove labels from body text.
+export function nativeOwnedRasterColumnHeadings(
+  page,
+  figure,
+  captions,
+  tables,
+  tokens,
+  foreignOwns
+) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const inside = (a, b) => b.every((v, n) => (n < 2 ? v >= a[n] - 1e-6 : v <= a[n] + 1e-6))
+  if (
+    figure?.reason !== 'native-raster-composite-grid' ||
+    page?.invalidGraphicsBounds !== 0 ||
+    !Number.isSafeInteger(page.pageNumber) ||
+    ![page.width, page.height].every((n) => Number.isFinite(n) && n > 0) ||
+    ![captions, tables, tokens, page.graphicsBounds].every(Array.isArray) ||
+    typeof foreignOwns !== 'function'
+  )
+    return
+  const rect = figure.rect,
+    caption = figure.caption
+  if (
+    !valid(rect) ||
+    !valid(caption?.rect) ||
+    caption.page !== page.pageNumber ||
+    captions.filter((c) => c === caption).length !== 1 ||
+    !caption.lines?.length ||
+    caption.lines.some((s) => typeof s !== 'string' || !s.trim()) ||
+    captions.some((c) => !valid(c.rect)) ||
+    tables.some((r) => !valid(r)) ||
+    !inside([0, 0, page.width, page.height], rect)
+  )
+    return
+  if (tokens.some((t) => !t || typeof t.text !== 'string' || (t.text.trim() && !valid(t.rect))))
+    return
+  const uniqueSource = (t) => {
+    const source = t.sourceItem
+    if (
+      t.sourceSegment != null ||
+      t.sourceToken != null ||
+      source?.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(source.index) ||
+      source.index < 0 ||
+      source.text !== t.text
+    )
+      return false
+    // Count all original source carriers across tokens, including rotated aliases
+    // and partial ranges outside this band; geometry cannot establish identity.
+    return (
+      tokens
+        .flatMap((other) => [
+          other.sourceItem,
+          other.sourceSegment,
+          other.sourceToken,
+          other.sourceToken?.sourceItem,
+          other.sourceToken?.sourceSegment
+        ])
+        .filter((s) => s?.pageNumber === source.pageNumber && s.index === source.index).length === 1
+    )
+  }
+  const captionTokens = tokens.filter((t) => t.text.trim() && inside(caption.rect, t.rect))
+  if (
+    !captionTokens.length ||
+    captionTokens.some((t) => !uniqueSource(t)) ||
+    captionTokens
+      .map((t) => t.text)
+      .join('')
+      .replace(/\s/gu, '') !== caption.lines.join('').replace(/\s/gu, '')
+  )
+    return
+  const em = Math.max(...captionTokens.map((t) => t.height))
+  if (
+    !(em > 0) ||
+    !Number.isFinite(em) ||
+    caption.rect[1] < rect[3] ||
+    caption.rect[1] - rect[3] > em * 5
+  )
+    return
+  const operationIds = new Set(),
+    images = []
+  for (const g of page.graphicsBounds) {
+    if (
+      g?.kind !== 'image' ||
+      !Number.isSafeInteger(g.operationIndex) ||
+      g.operationIndex < 0 ||
+      operationIds.has(g.operationIndex) ||
+      !valid(g.normalizedRect) ||
+      !valid(g.paintedNormalizedRect) ||
+      !inside([0, 0, 1, 1], g.normalizedRect) ||
+      !inside(g.normalizedRect, g.paintedNormalizedRect)
+    )
+      return
+    operationIds.add(g.operationIndex)
+    const r = g.paintedNormalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width))
+    if (!inside(rect, r) || r[2] - r[0] < em * 4 || r[3] - r[1] < em * 4) return
+    images.push(r)
+  }
+  const columns = []
+  for (const r of images.sort((a, b) => a[0] - b[0] || a[1] - b[1])) {
+    const matches = columns.filter(
+      (c) => Math.abs(c[0][0] - r[0]) <= em && Math.abs(c[0][2] - r[2]) <= em
+    )
+    if (matches.length > 1) return
+    if (matches.length) matches[0].push(r)
+    else columns.push([r])
+  }
+  if (columns.length < 2 || columns.length > 6 || columns[0].length < 2) return
+  for (const [i, col] of columns.entries()) {
+    col.sort((a, b) => a[1] - b[1])
+    if (col.length !== columns[0].length || (i && col[0][0] <= columns[i - 1][0][2])) return
+    for (const [row, r] of col.entries()) {
+      if (
+        Math.abs(r[1] - columns[0][row][1]) > em ||
+        Math.abs(r[3] - columns[0][row][3]) > em ||
+        (row && r[1] <= col[row - 1][3])
+      )
+        return
+    }
+  }
+  const labels = tokens
+    .filter(
+      (t) =>
+        t.text.trim() &&
+        t.rect[1] < rect[1] &&
+        t.rect[3] <= rect[1] &&
+        rect[1] - t.rect[3] <= em * 2 &&
+        t.rect[0] >= rect[0] &&
+        t.rect[2] <= rect[2]
+    )
+    .sort((a, b) => a.rect[0] - b.rect[0])
+  if (labels.length !== columns.length) return
+  const captionText = caption.lines.join(' ')
+  for (const [i, t] of labels.entries()) {
+    const key = String.fromCharCode(97 + i),
+      title = t.text.match(/^\(([a-z])\)\s+\p{L}[^.!?]*$/u),
+      col = columns[i][0]
+    if (
+      !title ||
+      title[1] !== key ||
+      !uniqueSource(t) ||
+      t.horizontal !== true ||
+      ![t.height, t.baseline, t.fontDescent].every(Number.isFinite) ||
+      t.height <= 0 ||
+      t.fontDescent > 0 ||
+      t.fontDescent < -0.5 ||
+      Math.abs(t.height - em) > em * 0.05 ||
+      Math.abs(t.rect[3] - t.baseline) > 1e-6 ||
+      Math.abs(t.rect[3] - t.rect[1] - t.height) > 1e-6 ||
+      Math.abs(t.baseline - labels[0].baseline) > em * 0.1 ||
+      t.rect[0] < col[0] ||
+      t.rect[2] > col[2] ||
+      Math.abs((t.rect[0] + t.rect[2] - col[0] - col[2]) / 2) > em ||
+      !new RegExp(`\\(${key}\\)|\\bcolumn\\s+${key}\\b`, 'i').test(captionText)
+    )
+      return
+  }
+  const boxes = labels.map((t) => [
+    t.rect[0],
+    t.rect[1],
+    t.rect[2],
+    t.baseline - t.fontDescent * t.height
+  ])
+  const extension = [rect[0], Math.min(...boxes.map((r) => r[1])), rect[2], rect[1]]
+  if (
+    extension[1] < 0 ||
+    boxes.some((r) => r[3] > rect[1]) ||
+    foreignOwns(extension) ||
+    captions.some((c) => c.page === page.pageNumber && intersection(c.rect, extension) > 0) ||
+    tables.some((r) => intersection(r, extension) > 0) ||
+    tokens.some((t) => t.text.trim() && !labels.includes(t) && intersection(t.rect, extension) > 0)
+  )
+    return
+  return boxes
+}
 // Repeated raster rows own a uniquely aligned short left label band. Every
 // row needs its own witness; one detached label or an intervening paragraph
 // cannot expand a plate's boundary.

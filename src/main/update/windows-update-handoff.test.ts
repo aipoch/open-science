@@ -1,6 +1,17 @@
 import { EventEmitter } from 'node:events'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { mkdtemp, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import {
+  cp,
+  mkdtemp,
+  mkdir,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  symlink,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { verifyDesktopRecoveryReadiness } from '../desktop-recovery-readiness'
@@ -9,6 +20,7 @@ import {
   acknowledgeWindowsUpdateReady,
   cleanupWindowsUpdateHandoffs,
   createWindowsUpdateRequest,
+  prepareWindowsUpdateHandoff,
   windowsUpdateOperation,
   windowsUpdateReceipt,
   windowsUpdateHandoffRoot,
@@ -18,8 +30,14 @@ import {
   waitForWindowsUpdateWindow
 } from './windows-update-handoff'
 
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return { ...actual, rename: vi.fn(actual.rename) }
+})
+
 let root: string
 beforeEach(async () => {
+  vi.mocked(rename).mockReset()
   root = await mkdtemp(join(tmpdir(), 'update-receipts-'))
 })
 afterEach(async () => {
@@ -47,9 +65,10 @@ async function setup(): Promise<{
   ready: Parameters<typeof acknowledgeWindowsUpdateReady>[0]
 }> {
   const startupOptions = config()
+  await mkdir(join(root, 'installation'), { recursive: true })
   const { directory, request } = await createWindowsUpdateRequest(root, {
     targetVersion: '1.0.2',
-    applicationPath: join(root, 'app.exe'),
+    applicationPath: join(root, 'installation', 'app.exe'),
     installerPath: join(root, 'installer.exe'),
     profilePath: startupOptions.profilePath,
     startupOptions
@@ -75,6 +94,161 @@ async function setup(): Promise<{
 }
 
 describe('Windows update presentation receipts', () => {
+  it.each(['Open-Science', 'Open-Science/UpdateHandoffs'])(
+    'restores the profile from safe fallback storage when installed at %s',
+    async (installation) => {
+      const applicationDirectory = join(root, installation)
+      await mkdir(applicationDirectory, { recursive: true })
+      const applicationPath = join(applicationDirectory, 'app.exe')
+      const handoff = await prepareWindowsUpdateHandoff(root, {
+        targetVersion: '1.0.2',
+        applicationPath,
+        installerPath: join(root, 'installer.exe'),
+        profilePath: config().profilePath,
+        startupOptions: config()
+      })
+      const directory = join(root, 'Open-Science-UpdateHandoffs', handoff.operationId)
+      handoff.handoff()
+      await writeFile(
+        join(directory, 'installed.receipt'),
+        windowsUpdateReceipt(handoff.operationId, 'installed')
+      )
+      const identity = {
+        appData: root,
+        args: [WINDOWS_UPDATE_OPERATION_ARG + handoff.operationId],
+        version: '1.0.2',
+        applicationPath
+      }
+      expect(await resolveWindowsUpdateStartup(identity)).toEqual({
+        startupOptions: config(),
+        confirmed: false
+      })
+      expect(
+        await acknowledgeWindowsUpdateReady({
+          ...identity,
+          profilePath: config().profilePath,
+          waitForPresentation: async () => {},
+          verifyReady: async () => {}
+        })
+      ).toBe(true)
+      expect((await resolveWindowsUpdateStartup(identity))?.confirmed).toBe(true)
+      expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+    }
+  )
+
+  it.each(['.'])(
+    'rejects handoff storage inside the installation at %s before shutdown',
+    async (installation) => {
+      const applicationDirectory = join(root, installation)
+      await mkdir(applicationDirectory, { recursive: true })
+      await expect(
+        prepareWindowsUpdateHandoff(root, {
+          targetVersion: '1.0.2',
+          applicationPath: join(applicationDirectory, 'app.exe'),
+          installerPath: join(root, 'installer.exe'),
+          profilePath: config().profilePath,
+          startupOptions: config()
+        })
+      ).rejects.toThrow('Update handoff storage must be outside the installation')
+      expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+      expect(await readdir(join(root, 'Open-Science-UpdateHandoffs'))).toEqual([])
+    }
+  )
+
+  it('uses the resolved installation location when selecting fallback storage', async () => {
+    const installation = join(root, 'Open-Science')
+    const alias = join(root, 'installation-alias')
+    await mkdir(installation)
+    await symlink(installation, alias, process.platform === 'win32' ? 'junction' : 'dir')
+    const handoff = await prepareWindowsUpdateHandoff(root, {
+      targetVersion: '1.0.2',
+      applicationPath: join(alias, 'app.exe'),
+      installerPath: join(root, 'installer.exe'),
+      profilePath: config().profilePath,
+      startupOptions: config()
+    })
+    expect(await readdir(join(root, 'Open-Science-UpdateHandoffs', handoff.operationId))).toEqual([
+      'request.json'
+    ])
+    expect(await readdir(windowsUpdateHandoffRoot(root))).toEqual([])
+  })
+
+  it('prepares a native installer handoff without copying or starting a helper', async () => {
+    const startupOptions = config()
+    await mkdir(join(root, 'installation'))
+    const handoff = await prepareWindowsUpdateHandoff(root, {
+      targetVersion: '1.0.2',
+      applicationPath: join(root, 'installation', 'app.exe'),
+      installerPath: join(root, 'installer.exe'),
+      profilePath: startupOptions.profilePath,
+      startupOptions
+    })
+    const directory = join(windowsUpdateHandoffRoot(root), handoff.operationId)
+    expect(await readdir(directory)).toEqual(['request.json'])
+    expect(JSON.parse(await readFile(join(directory, 'request.json'), 'utf8'))).not.toHaveProperty(
+      'helperPid'
+    )
+    handoff.handoff()
+    expect(await readFile(join(directory, 'handoff.receipt'), 'utf8')).toBe(
+      windowsUpdateReceipt(handoff.operationId, 'handoff')
+    )
+    handoff.cancel()
+    expect(await readFile(join(directory, 'unconfirmed.receipt'), 'utf8')).toBe(
+      windowsUpdateReceipt(handoff.operationId, 'unconfirmed')
+    )
+    expect(await readdir(directory)).not.toContain('closed.receipt')
+  })
+
+  it('rejects duplicate operations across both fixed roots before restoring or acknowledging', async () => {
+    const { directory, operationId, ready } = await setup()
+    const duplicate = join(root, 'Open-Science-UpdateHandoffs', operationId)
+    await cp(directory, duplicate, { recursive: true })
+    await expect(resolveWindowsUpdateStartup(ready)).rejects.toThrow('ambiguous')
+    await expect(acknowledgeWindowsUpdateReady(ready)).rejects.toThrow('ambiguous')
+    expect(ready.verifyReady).not.toHaveBeenCalled()
+    for (const path of [directory, duplicate])
+      expect(await readdir(path)).not.toContain('ready.receipt')
+  })
+
+  it('checks successor identity and cleans failed leases in fallback storage', async () => {
+    const { directory, operationId, ready } = await setup()
+    const fallbackRoot = join(root, 'Open-Science-UpdateHandoffs')
+    await mkdir(fallbackRoot)
+    const fallback = join(fallbackRoot, operationId)
+    await rename(directory, fallback)
+    await expect(resolveWindowsUpdateStartup({ ...ready, version: 'other' })).rejects.toThrow(
+      'does not match'
+    )
+    await expect(
+      acknowledgeWindowsUpdateReady({ ...ready, profilePath: join(root, 'other') })
+    ).rejects.toThrow('does not match')
+    expect(ready.verifyReady).not.toHaveBeenCalled()
+    await writeFile(join(fallback, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('not running'), { code: 'ESRCH' })
+    })
+    await cleanupWindowsUpdateHandoffs(root)
+    expect(await readdir(fallbackRoot)).toEqual([])
+  })
+
+  it('records an aborted request when installation admission fails before handoff', async () => {
+    const startupOptions = config()
+    await mkdir(join(root, 'installation'))
+    const handoff = await prepareWindowsUpdateHandoff(root, {
+      targetVersion: '1.0.2',
+      applicationPath: join(root, 'installation', 'app.exe'),
+      installerPath: join(root, 'installer.exe'),
+      profilePath: startupOptions.profilePath,
+      startupOptions
+    })
+    handoff.cancel()
+    const directory = join(windowsUpdateHandoffRoot(root), handoff.operationId)
+    expect(await readFile(join(directory, 'aborted.receipt'), 'utf8')).toBe(
+      windowsUpdateReceipt(handoff.operationId, 'aborted')
+    )
+    expect(await readdir(directory)).not.toContain('helper.exe')
+  })
+
   it('requires exact operation, target, profile and backend/data readiness before acknowledging', async () => {
     const { directory, operationId, ready } = await setup()
     let finish!: () => void
@@ -229,6 +403,70 @@ describe('Windows update presentation receipts', () => {
     await expect(writeWindowsUpdateFile(conflict, 'cannot replace a directory')).rejects.toThrow()
     expect((await readdir(root)).filter((name) => name.endsWith('.tmp'))).toEqual([])
   })
+  it.skipIf(process.platform !== 'win32')(
+    'publishes the request after a real Windows reader releases the failed replacement',
+    async () => {
+      const path = join(root, 'request.json')
+      const previous = JSON.stringify({ operationId: 'same-operation', parentPid: 100 })
+      const next = JSON.stringify({ operationId: 'same-operation', parentPid: 100, helperPid: 101 })
+      await writeFile(path, previous)
+      const reader = await open(path, 'r')
+      const actual = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      let observedConflict = false
+      vi.mocked(rename).mockImplementationOnce(async (source, destination) => {
+        try {
+          await actual.rename(source, destination)
+        } catch (error) {
+          expect(error).toMatchObject({ code: 'EPERM' })
+          expect(await reader.readFile('utf8')).toBe(previous)
+          expect(await readFile(path, 'utf8')).toBe(previous)
+          observedConflict = true
+          await reader.close()
+          throw error
+        }
+      })
+      try {
+        await writeWindowsUpdateFile(path, next)
+        expect(observedConflict).toBe(true)
+        expect(rename).toHaveBeenCalledTimes(2)
+        expect(await readFile(path, 'utf8')).toBe(next)
+        expect(await readdir(root)).toEqual(['request.json'])
+      } finally {
+        await reader.close()
+      }
+    }
+  )
+  it.skipIf(process.platform !== 'win32')(
+    'rejects a persistently held Windows request without changing it or leaking the temporary file',
+    async () => {
+      const path = join(root, 'request.json')
+      const previous = '{"operationId":"same-operation","parentPid":100}'
+      await writeFile(path, previous)
+      const reader = await open(path, 'r')
+      try {
+        await expect(writeWindowsUpdateFile(path, '{"helperPid":101}')).rejects.toMatchObject({
+          code: 'EPERM'
+        })
+        expect(rename).toHaveBeenCalledTimes(6)
+        expect(await reader.readFile('utf8')).toBe(previous)
+        expect(await readFile(path, 'utf8')).toBe(previous)
+        expect(await readdir(root)).toEqual(['request.json'])
+      } finally {
+        await reader.close()
+      }
+    }
+  )
+  it('preserves the original request and error without retrying a non-contention failure', async () => {
+    const path = join(root, 'request.json')
+    const previous = '{"operationId":"same-operation"}'
+    await writeFile(path, previous)
+    const failure = Object.assign(new Error('device failure'), { code: 'EIO' })
+    vi.mocked(rename).mockRejectedValueOnce(failure)
+    await expect(writeWindowsUpdateFile(path, '{"helperPid":101}')).rejects.toBe(failure)
+    expect(rename).toHaveBeenCalledOnce()
+    expect(await readFile(path, 'utf8')).toBe(previous)
+    expect(await readdir(root)).toEqual(['request.json'])
+  })
   it('removes an aborted dead attempt including owned publication leftovers', async () => {
     const { directory, operationId } = await setup()
     await writeFile(join(directory, 'closed.receipt'), windowsUpdateReceipt(operationId, 'closed'))
@@ -245,6 +483,29 @@ describe('Windows update presentation receipts', () => {
     await expect(readFile(join(directory, 'request.json'))).rejects.toMatchObject({
       code: 'ENOENT'
     })
+  })
+  it('cleans a native-only failed attempt without requiring a nonexistent helper receipt', async () => {
+    const { directory, operationId } = await setup()
+    await writeFile(join(directory, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+    })
+    await cleanupWindowsUpdateHandoffs(root)
+    await expect(readFile(join(directory, 'request.json'))).rejects.toMatchObject({
+      code: 'ENOENT'
+    })
+  })
+  it('still preserves an unclosed legacy helper attempt even when its PID is gone', async () => {
+    const { directory, operationId } = await setup()
+    const path = join(directory, 'request.json')
+    const request = JSON.parse(await readFile(path, 'utf8'))
+    await writeFile(path, JSON.stringify({ ...request, helperPid: 123 }))
+    await writeFile(join(directory, 'failed.receipt'), windowsUpdateReceipt(operationId, 'failed'))
+    vi.spyOn(process, 'kill').mockImplementation(() => {
+      throw Object.assign(new Error('gone'), { code: 'ESRCH' })
+    })
+    await cleanupWindowsUpdateHandoffs(root)
+    expect(JSON.parse(await readFile(path, 'utf8')).helperPid).toBe(123)
   })
   it('removes only closed terminal operations with no live owner and preserves unknown resources', async () => {
     const complete = await setup(),

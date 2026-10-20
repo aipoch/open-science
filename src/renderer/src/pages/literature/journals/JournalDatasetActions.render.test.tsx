@@ -1,8 +1,16 @@
 // @vitest-environment jsdom
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { JournalDatasetActions } from './JournalDatasetActions'
 import type { JournalDataset } from '@aipoch/journal-catalog/contracts'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 afterEach(cleanup)
 const dataset: JournalDataset = {

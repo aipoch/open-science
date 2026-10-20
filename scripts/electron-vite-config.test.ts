@@ -35,6 +35,9 @@ describe('electron-vite renderer dependency optimization', () => {
         '@aipoch/connector-mcp-client/oauth-redirect',
         '@aipoch/compute',
         '@aipoch/diagnostics',
+        '@aipoch/providers',
+        '@aipoch/providers/errors',
+        '@aipoch/providers/transport',
         '@aipoch/skills/document',
         '@aipoch/notebook-analysis/contracts',
         '@aipoch/environment/contracts',
@@ -55,6 +58,13 @@ describe('electron-vite renderer dependency optimization', () => {
       ]
     })
     expect(webConfig.optimizeDeps?.include).toContain('@aipoch/compute')
+    expect(webConfig.optimizeDeps?.include).toEqual(
+      expect.arrayContaining([
+        '@aipoch/providers',
+        '@aipoch/providers/errors',
+        '@aipoch/providers/transport'
+      ])
+    )
     expect(resolvedConfig.renderer?.optimizeDeps).toBeUndefined()
     expect(dev.renderer?.build).toEqual(resolvedConfig.renderer?.build)
     expect(dev.renderer?.worker).toEqual(resolvedConfig.renderer?.worker)
@@ -146,6 +156,49 @@ describe('linked Reproducibility package browser consumption', () => {
         true,
         false,
         false
+      ])
+    }
+  )
+})
+
+describe('linked Providers package browser consumption', () => {
+  it.each(['renderer', 'web'] as const)(
+    'bundles the public API with the %s production CJS policy',
+    async (surface) => {
+      const entry = resolve('providers-browser-contract.js')
+      const result = await build({
+        configFile: false,
+        logLevel: 'silent',
+        plugins: [
+          {
+            name: 'providers-browser-contract',
+            resolveId: (id) => (normalizePath(id) === normalizePath(entry) ? entry : undefined),
+            load: (id) =>
+              normalizePath(id) === normalizePath(entry)
+                ? `
+          import { getOfficialVendor, getVendorModelReasoningCapability } from '@aipoch/providers'
+          export const actual = [getOfficialVendor('openai').id, getVendorModelReasoningCapability('openai', 'gpt-6.1-sol').values[2]]
+        `
+                : undefined
+          }
+        ],
+        build: {
+          write: false,
+          minify: false,
+          commonjsOptions: (surface === 'web' ? webConfig : resolvedConfig[surface])?.build
+            ?.commonjsOptions,
+          lib: { entry, name: 'ProvidersContract', formats: ['iife'] }
+        }
+      })
+      const outputs = (Array.isArray(result) ? result : [result]).flatMap((output) =>
+        'output' in output ? output.output : []
+      )
+      const chunk = outputs.find((output) => output.type === 'chunk')
+      expect(chunk).toBeDefined()
+      // A browser-like realm has no require, process or Node globals; execute the actual bundle.
+      expect(runInNewContext(chunk!.code + '; ProvidersContract.actual')).toEqual([
+        'openai',
+        'high'
       ])
     }
   )

@@ -29,6 +29,19 @@ This package owns common diagnostic mechanics and their tests. The host supplies
 
 Diagnose inspection, Session export, database queries, Session/Notebook/settings projections, archive creation, cancellation, worker orchestration and their fixtures remain in the application's `session-diagnostics` module. There is no Session package entry, database schema, application storage reader, `tar` dependency or host repository dependency here. Changing a business table or persisted document does not require updating this package.
 
+## Safety and integration
+
+- **Scope:** Local diagnostic mechanics and generic credential redaction, not domain-specific anonymization.
+- **Controls:** Credential-pattern masking, bounded output, rotation, and flush behavior reduce
+  accidental exposure and resource use for the supplied log events.
+- **Remaining risks:** Patient identifiers, unpublished findings, private paths, or secrets in
+  unexpected formats may remain. The configured directory contains readable files, and console
+  mirroring can disclose records to another collector. Redaction is not export consent or encryption.
+- **Safe integration:** Log only necessary business fields, protect the log directory, review console
+  destinations, and inspect the exact content before sharing. The host owns retention and report
+  authorization. See the application's
+  [diagnostic precautions](https://github.com/aipoch/open-science/blob/main/docs/security.md#diagnostics).
+
 ## Development and acceptance
 
 ```sh
