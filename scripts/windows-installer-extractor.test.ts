@@ -19,15 +19,23 @@ function fixture(): string {
 function loadStage(cache: string): {
   stage: (context: unknown) => Promise<void>
   download: ReturnType<typeof vi.fn>
+  compile: ReturnType<typeof vi.fn>
 } {
   const download = vi.fn(async () => cache)
+  const compile = vi.fn((_source: string, destination: string) => {
+    writeFileSync(destination, 'compiled helper')
+  })
   const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
   runInNewContext(script, {
     module,
     require: (id: string) =>
-      id === 'app-builder-lib/out/binDownload' ? { getBinFromCustomLoc: download } : require(id)
+      id === 'app-builder-lib/out/binDownload'
+        ? { getBinFromCustomLoc: download }
+        : id === './compile-windows-install-publication.cjs'
+          ? compile
+          : require(id)
   })
-  return { stage: module.exports, download }
+  return { stage: module.exports, download, compile }
 }
 
 describe('verified Windows installer extractor', () => {
@@ -70,9 +78,13 @@ describe('verified Windows installer extractor', () => {
     async () => {
       const root = fixture()
       const original = readFileSync(join(toolDirectory!, 'x64/7za.exe'))
-      const { stage } = loadStage(toolDirectory!)
+      const { stage, compile } = loadStage(toolDirectory!)
       const destination = join(root, 'out/windows-installer/x64/7za.exe')
       const signIf = vi.fn(async (file: string) => {
+        if (file.endsWith('.dll')) {
+          expect(readFileSync(file, 'utf8')).toBe('compiled helper')
+          return
+        }
         expect(file).toBe(destination)
         expect(readFileSync(file)).toEqual(original)
         writeFileSync(file, Buffer.concat([original, Buffer.from('test-signature')]))
@@ -85,7 +97,11 @@ describe('verified Windows installer extractor', () => {
       }
       await stage(context)
       await stage(context)
-      expect(signIf).toHaveBeenCalledTimes(2)
+      expect(signIf).toHaveBeenCalledTimes(4)
+      expect(compile).toHaveBeenCalledWith(
+        join(root, 'build/windows-install-publication.cs'),
+        join(root, 'out/windows-installer/x64/windows-install-publication.dll')
+      )
       expect(readFileSync(join(toolDirectory!, 'x64/7za.exe'))).toEqual(original)
       expect(readFileSync(join(root, 'app/resources/7zip-LICENSE.txt'))).toEqual(
         readFileSync(join(toolDirectory!, 'License.txt'))

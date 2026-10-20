@@ -7,6 +7,8 @@ on:
       - '.github/workflows/windows-upgrade-diagnostics.yml'
       - 'scripts/windows-upgrade-diagnostics/**'
       - 'build/windows-install-publication.*'
+      - 'build/compile-windows-install-publication.cjs'
+      - 'build/stage-windows-extractor.cjs'
       - 'scripts/windows-install-publication.test.ts'
   workflow_dispatch:
 
@@ -100,8 +102,12 @@ jobs:
           }
           prepare().catch(error => { console.error(error); process.exitCode = 1 })
           NODE
+      # This elevated runner covers Unicode profiles, copy publication and extractor failures.
+      # Move-only and absolute-path-boundary fixtures require their ordinary-user environment.
       - name: Test native installer publication
-        run: npx vitest run scripts/windows-install-publication.test.ts
+        run: >-
+          npx vitest run scripts/windows-install-publication.test.ts
+          -t "real Windows payload publication|handles (unicode-profile|valid|copy-fallback|truncated|corrupt|warning|cancelled|launch-failure|universal-x64) archives"
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: always()
         with:

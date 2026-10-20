@@ -9,10 +9,24 @@ import {
   unlinkSync,
   writeFileSync
 } from 'node:fs'
+import { createRequire } from 'node:module'
 import { join, resolve } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { beforeAll, describe, expect, it } from 'vitest'
 
-const script = resolve('build/windows-install-publication.ps1')
+let script = resolve('build/windows-install-publication.ps1')
+let helper: string
+beforeAll(() => {
+  if (process.platform !== 'win32') return
+  const root = fixture().root
+  helper = join(root, 'windows-install-publication.dll')
+  createRequire(import.meta.url)('../build/compile-windows-install-publication.cjs')(
+    resolve('build/windows-install-publication.cs'),
+    helper
+  )
+  const source = readFileSync(script)
+  script = join(root, 'windows-install-publication.ps1')
+  writeFileSync(script, source)
+}, 30_000)
 const powershell = join(
   process.env.SystemRoot || 'C:\\Windows',
   'System32/WindowsPowerShell/v1.0/powershell.exe'
@@ -317,10 +331,18 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
         mkdirSync(extractorDirectory, { recursive: true })
         const extractor = join(extractorDirectory, '7za.exe')
         writeFileSync(extractor, readFileSync(sevenZip!))
+        writeFileSync(
+          join(extractorDirectory, 'windows-install-publication.dll'),
+          readFileSync(helper)
+        )
         if (mode === 'universal-x64') {
           mkdirSync(join(f.root, 'out/windows-installer/arm64'), { recursive: true })
           // Wrong selection must fail to launch instead of accidentally passing on x64.
           writeFileSync(join(f.root, 'out/windows-installer/arm64/7za.exe'), 'not an x64 tool')
+          writeFileSync(
+            join(f.root, 'out/windows-installer/arm64/windows-install-publication.dll'),
+            'wrong helper'
+          )
         }
         if (mode === 'launch-failure') writeFileSync(extractor, 'not an executable')
         if (mode === 'warning' || mode === 'cancelled') {
@@ -360,8 +382,8 @@ describe.skipIf(process.platform !== 'win32' || !compiler || !sevenZip)(
               ...(mode === 'universal-x64' ? [`!define APP_ARM64 "${archive}"`] : []),
               `!define BUILD_RESOURCES_DIR "${resolve('build')}"`,
               '!macro quitFailedUpdate',
-              'FileOpen $0 \"$EXEDIR\\failure.txt\" w',
-              'FileWrite $0 \"$publicationResult $publicationOutput\"',
+              'FileOpen $0 "$EXEDIR\\failure.txt" w',
+              'FileWrite $0 "$publicationResult $publicationOutput"',
               'FileClose $0',
               'Call cleanupInstallPublication',
               'SetErrorLevel 2',

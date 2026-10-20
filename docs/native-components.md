@@ -195,6 +195,12 @@ signing identity to that copy. The shared cache stays unchanged. The tool runs o
 synchronous installer child; it is not an installed updater or service. Its license and upstream
 source notice accompany the application.
 
+The same hook compiles `windows-install-publication.cs` with the Windows .NET Framework C#
+compiler into an AnyCPU DLL and signs it. NSIS embeds it beside the publication PowerShell script
+in its private plugin directory. Installation loads this assembly without invoking a compiler,
+including when the user profile or temporary directory contains Unicode. The directory identity,
+ACL and reparse-point checks are unchanged; the DLL is not installed in the application.
+
 Only extractor exit code zero permits publication. CRC errors, truncated archives, write errors,
 warnings and cancellation results fail installation. The native installer shows an extraction
 stage instead of the old plugin's independent percentage. Download and installer-signature checks,
