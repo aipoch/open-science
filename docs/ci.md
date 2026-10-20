@@ -377,10 +377,10 @@ malformed records, unsupported statuses and root-manifest changes retain ordinar
 Registration data never selects its own contract tests. No application or platform behavior
 changes in this data-only path, so it does not launch desktop or Windows runtime suites.
 
-The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
-(for example, a generated native addon or computed import). Absence from a static graph alone
-must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
-are still rejected; missing consumer coverage is still required. Package boundary checks inspect
+The consumer-evidence guard permits conservative explicit entries even when the current
+dependency cone is fully resolved. Current independence, or an incomplete cone such as a generated
+native addon or computed import, must not demand removal that trusted Integrity cannot verify.
+Derived evidence must stay fresh and reachable consumers must remain covered. Package boundary checks inspect
 the executable test plan: retained historical registrations must not make host-only source edits
 run unchanged upstream package units.
 
