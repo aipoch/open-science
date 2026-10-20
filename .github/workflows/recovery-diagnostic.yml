@@ -1,0 +1,70 @@
+name: Linux recovery diagnostic
+on:
+  workflow_dispatch:
+  push:
+    branches: [fix/delegation-recovery-test]
+permissions:
+  contents: read
+jobs:
+  verify_tests:
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/6)
+    runs-on: ubuntu-latest
+    env:
+      VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
+      VITEST_PORTABLE_CI: '1'
+    # Six shards reduce per-runner load; retain headroom for coverage and runner variability.
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [3]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Test complete suite shard
+        id: verify_shard
+        continue-on-error: true
+        # The static lane owns i18n; the native lane retains the original macOS sandbox checks.
+        # PR Gate separately verifies real Linux isolation with its required system dependencies.
+        # Repository-wide architecture scans exceeded 30s under full-suite coverage load.
+        run: >-
+          npx vitest run
+          --coverage
+          --coverage.reporter=text-summary
+          --testTimeout=60000
+          --shard=${{ matrix.shard }}/6
+          --reporter=blob
+          --reporter=github-actions
+          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+      - name: Upload full-suite blob report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: build-test-blob-${{ matrix.shard }}
+          path: vitest-reports/
+          overwrite: true
+          retention-days: 7
+          if-no-files-found: error
+      - name: Enforce full-suite shard
+        if: ${{ always() }}
+        shell: bash
+        env:
+          VERIFY_SHARD_OUTCOME: ${{ steps.verify_shard.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          if [[ "$VERIFY_SHARD_OUTCOME" != "success" ]]; then
+            echo "verify_shard ended with $VERIFY_SHARD_OUTCOME" >&2
+            failed=1
+          fi
+          exit "$failed"
+

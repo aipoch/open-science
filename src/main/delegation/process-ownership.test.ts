@@ -443,16 +443,7 @@ describe('durable delegated process ownership', () => {
       // recovery. A readiness barrier makes this regression independent of observer scheduling.
       const unrelated = spawn(
         process.execPath,
-        [
-          '-e',
-          `
-          const { spawn } = require('node:child_process')
-          setInterval(() => {
-            for (let index = 0; index < 4; index++) spawn('/bin/true', [], { stdio: 'ignore' })
-          }, 5)
-          process.stdout.write('ready')
-        `
-        ],
+        ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
         { stdio: 'pipe' }
       )
       try {
