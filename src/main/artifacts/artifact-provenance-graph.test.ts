@@ -2748,6 +2748,50 @@ describe('artifact provenance graph', () => {
     }
   )
 
+  it.each(['mapped', 'conflicting', 'unused'] as const)(
+    'validates predecessor generation mappings: %s',
+    (condition) => {
+      const activity = notebookActivity('run-2', 2, [
+        {
+          relation: 'modified',
+          relativePath: 'result.csv',
+          pathPortability: 'relative',
+          authority: 'advisory',
+          previousGenerationId: 'g-before',
+          generation: generation('g-target', 'result.csv', checksum('b'))
+        }
+      ])
+      const sidecar = JSON.parse(activity.evidenceJson!)
+      sidecar.predecessorGenerations = [generation('g-before', 'result.csv', checksum('a'))]
+      if (condition === 'conflicting')
+        sidecar.predecessorGenerations.push(generation('g-before', 'result.csv', checksum('c')))
+      if (condition === 'unused')
+        sidecar.predecessorGenerations.push(generation('g-unused', 'result.csv', checksum('c')))
+      activity.evidenceJson = JSON.stringify(sidecar)
+      activity.run.fileEvidence!.checksum = sha256(activity.evidenceJson)
+      const graph = sealArtifactProvenanceGraph({
+        target: target(),
+        notebookActivities: [activity],
+        computeActivities: []
+      })
+      if (condition === 'mapped') {
+        expect(graph.edges).toContainEqual(
+          expect.objectContaining({
+            kind: 'used',
+            activityId: 'run-2',
+            entityId: 'file-generation:g-before'
+          })
+        )
+      } else {
+        expect(
+          graph.edges.some(
+            (edge) => 'entityId' in edge && edge.entityId === 'file-generation:g-before'
+          )
+        ).toBe(false)
+      }
+    }
+  )
+
   it.each(['modified', 'deleted', 'created', 'harvested-output'] as const)(
     'does not reconnect an old intermediate after its path was %s',
     (relation) => {

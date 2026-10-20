@@ -65,6 +65,7 @@ export type PackageSelectableFile = PackageExcludedFile & {
   groupId: string
   source: 'artifact' | 'upload' | 'reproducibility' | 'literature'
   versionNumber: number
+  checksum?: string
   requiredForEvidence?: boolean
   dependentFiles: string[]
 }
@@ -76,9 +77,26 @@ export type PackageFileSelection = {
 
 export type PackageSelectionSummary = {
   pdfNotesAvailable?: boolean
-  retainedFiles: PackageExcludedFile[]
+  retainedFiles: Array<PackageExcludedFile & { checksum?: string }>
   metadataBytes: number
 }
+
+export const packageContentIdentity = (file: {
+  storageKey: string
+  sizeBytes: number
+  checksum?: string
+}): string =>
+  file.checksum && /^[a-f0-9]{64}$/.test(file.checksum)
+    ? `${file.sizeBytes}:${file.checksum}`
+    : `path:${file.storageKey}`
+
+export const packageContentBytes = (
+  files: readonly { storageKey: string; sizeBytes: number; checksum?: string }[]
+): number =>
+  [...new Map(files.map((file) => [packageContentIdentity(file), file.sizeBytes])).values()].reduce(
+    (sum, size) => sum + size,
+    0
+  )
 
 export type PackageProgress = {
   phase:
@@ -364,6 +382,7 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     files: z
       .array(
         packageExcludedFileSchema.extend({
+          checksum: checksum.optional(),
           groupId: z.string(),
           source: z.enum(['artifact', 'upload', 'reproducibility', 'literature']),
           versionNumber: z.number().int().positive(),
@@ -375,7 +394,9 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .optional(),
     summary: z
       .object({
-        retainedFiles: z.array(packageExcludedFileSchema).max(10000),
+        retainedFiles: z
+          .array(packageExcludedFileSchema.extend({ checksum: checksum.optional() }))
+          .max(10000),
         metadataBytes: z.number().nonnegative(),
         pdfNotesAvailable: z.boolean().optional()
       })

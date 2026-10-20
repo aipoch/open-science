@@ -67,3 +67,29 @@ it('requires a bounded operation identity for an explicit sensitive-content expo
   ])
     expect(packageOperationRequestSchema.safeParse(request).success).toBe(false)
 })
+
+it('preserves verified selection digests through the transport and accepts old snapshots', () => {
+  const file = { storageKey: 'evidence/p/blob', filename: 'blob', sizeBytes: 42 }
+  for (const checksum of [undefined, 'a'.repeat(64)]) {
+    const snapshot = {
+      id: 'operation',
+      kind: 'export',
+      state: 'awaiting-selection',
+      progress: { phase: 'selecting' },
+      files: [
+        { ...file, checksum, groupId: 'a', source: 'upload', versionNumber: 1, dependentFiles: [] }
+      ],
+      summary: { metadataBytes: 0, retainedFiles: [{ ...file, checksum }] }
+    }
+    expect(sessionPackageCommandContracts.operation.result.parse(snapshot)).toEqual(snapshot)
+  }
+  expect(() =>
+    sessionPackageCommandContracts.operation.result.parse({
+      id: 'operation',
+      kind: 'export',
+      state: 'awaiting-selection',
+      progress: { phase: 'selecting' },
+      summary: { metadataBytes: 0, retainedFiles: [{ ...file, checksum: 'invalid' }] }
+    })
+  ).toThrow()
+})

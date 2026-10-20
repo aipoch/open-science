@@ -34,6 +34,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { assertDiskReserve, digestFileWithinBudget } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
 import { createRootNotebookLane } from './lane-identity'
 import { notebookPromptInputPath } from './prompt-input-materialization'
@@ -145,6 +146,7 @@ type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
     generation: { generationId: string; capturedAt: string }
     relation?: 'present-before' | 'staged-input'
     registeredInput?: Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'>
+    immutableSource?: FileIdentity & { physicalPath: string }
   }>
   maxGenerationBytes: number
   maxActivityBytes: number
@@ -225,6 +227,12 @@ type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
     storageKey: string
   }>
 }
+type EvidenceWorkerHistoryRequest = EvidenceWorkerBlobPoolBinding & {
+  operation: 'compact-history'
+  expectedRootIdentity: FileIdentity
+  storageKeyPrefix: string
+  retained: EvidenceWorkerReconcileRequest['retained']
+}
 type EvidenceWorkerProjectReconcileRequest = {
   operation: 'reconcile-compute-project'
   expectedRootIdentity: FileIdentity
@@ -265,6 +273,7 @@ type EvidenceWorkerEnsureProjectRequest = {
 }
 type EvidenceWorkerRequest =
   | EvidenceWorkerBeginRequest
+  | EvidenceWorkerHistoryRequest
   | EvidenceWorkerEnsureCaptureRequest
   | EvidenceWorkerPersistRequest
   | EvidenceWorkerRecoverPublishedRequest
@@ -301,6 +310,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
+  | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
   evidenceRoot: { path: string; identity: FileIdentity }
@@ -422,7 +432,8 @@ const assertEvidenceRootIdentity = async (path: string, expected: FileIdentity):
 
 const secureEvidenceRoot = async (
   storageRoot: string,
-  requestedEvidenceRoot: string
+  requestedEvidenceRoot: string,
+  create = true
 ): Promise<{ path: string; identity: FileIdentity }> => {
   const resolvedStorageRoot = resolve(storageRoot)
   await assertRealDirectory(resolvedStorageRoot)
@@ -434,7 +445,8 @@ const secureEvidenceRoot = async (
   let evidenceRoot = canonicalStorageRoot
   for (const segment of nested.split(sep)) {
     evidenceRoot = join(evidenceRoot, segment)
-    await ensureRealDirectory(evidenceRoot)
+    if (create) await ensureRealDirectory(evidenceRoot)
+    else await assertRealDirectory(evidenceRoot)
     if ((await realpath(evidenceRoot)) !== evidenceRoot) {
       throw new UnsafeEvidencePathError('Execution file-evidence root resolves through a symlink.')
     }
@@ -626,6 +638,81 @@ const runSerializedEvidenceWorker = async (
   }
 }
 
+const evidenceReaders = new Map<string, number>()
+const historyCursors = new Map<string, number>()
+const historyMaintenance = new Map<string, Promise<void>>()
+const evidenceProjectKey = (storageRoot: string, projectId: string): string =>
+  `${resolve(storageRoot)}\0${projectId}`
+
+// Establish the barrier before draining queued mutations, including maintenance already queued.
+export const withWorkingFileEvidenceRead = async <T>(
+  storageRoot: string,
+  projectId: string,
+  read: () => Promise<T>
+): Promise<T> => {
+  const key = evidenceProjectKey(storageRoot, projectId)
+  evidenceReaders.set(key, (evidenceReaders.get(key) ?? 0) + 1)
+  try {
+    await evidenceMutationTail.catch(() => undefined)
+    return await read()
+  } finally {
+    const remaining = (evidenceReaders.get(key) ?? 1) - 1
+    if (remaining) evidenceReaders.set(key, remaining)
+    else evidenceReaders.delete(key)
+  }
+}
+
+export const maintainWorkingFileEvidence = (
+  location: WorkingFileEvidenceLocation,
+  retained: EvidenceWorkerReconcileRequest['retained']
+): Promise<void> => {
+  const project = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!project || retained.length === 0) return Promise.resolve()
+  const projectKey = evidenceProjectKey(location.storageRoot, project.projectId)
+  if (evidenceReaders.has(projectKey)) return Promise.resolve()
+  const key = resolve(location.root)
+  const pending = historyMaintenance.get(key)
+  if (pending) return pending
+  const operation = (async () => {
+    const root = await secureEvidenceRoot(location.storageRoot, location.root, false)
+    const pool = await secureEvidenceRoot(
+      location.storageRoot,
+      join(project.projectRoot, 'blobs'),
+      false
+    )
+    const cursor = (historyCursors.get(key) ?? 0) % retained.length
+    const batch = [...retained.slice(cursor), ...retained.slice(0, cursor)].slice(0, 32)
+    historyCursors.set(key, (cursor + batch.length) % retained.length)
+    if (historyCursors.size > 256) historyCursors.delete(historyCursors.keys().next().value!)
+    await runSerializedEvidenceWorker(
+      async (...args) =>
+        evidenceReaders.has(projectKey)
+          ? { ok: true, maintainedFiles: 0 }
+          : runEvidenceWorker(...args),
+      root.path,
+      {
+        operation: 'compact-history',
+        expectedRootIdentity: root.identity,
+        blobRoot: pool.path,
+        expectedBlobRootIdentity: pool.identity,
+        blobStorageKeyPrefix: project.blobStorageKeyPrefix,
+        storageKeyPrefix: location.storageKeyPrefix,
+        retained: batch
+      }
+    )
+  })()
+    .catch((error) => {
+      log.debug('Historical evidence maintenance deferred', diagnosticErrorFields(error))
+    })
+    .finally(() => historyMaintenance.delete(key))
+  historyMaintenance.set(key, operation)
+  return operation
+}
+
 const ensureWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string,
@@ -747,6 +834,17 @@ const completeWorkingFileEvidence = async (
   if (!('removedStagingEntries' in result)) {
     throw new Error('File-evidence completion returned an invalid result.')
   }
+  await maintainWorkingFileEvidence(location, [
+    {
+      receiptName: receiptNameForActivity(run.runId),
+      finalName,
+      activityId: run.runId,
+      activityKind: 'notebook-run',
+      evidenceId: evidence.evidenceId,
+      checksum: evidence.checksum,
+      storageKey: evidence.storageKey
+    }
+  ])
 }
 
 const reconcileEvidenceReceipts = async (
@@ -910,6 +1008,7 @@ const reconcileWorkingFileEvidence = async (
     ['compute-job'],
     []
   )
+  await maintainWorkingFileEvidence(location, retainedNotebookRuns)
   const legacy = await reconcileLegacyNotebookEvidence(location, runs)
   return {
     removedStagingEntries: current.removedStagingEntries + legacy.removedStagingEntries,
@@ -1069,6 +1168,13 @@ const reconcileComputeJobFileEvidence = async (
       }
       removedStagingEntries += result.removedStagingEntries
       removedActivityEntries += result.removedActivityEntries
+    }
+    for (const session of projectSessions) {
+      if (session.deferredActivityIds.length === 0)
+        await maintainWorkingFileEvidence(
+          computeEvidenceLocation(storageRoot, projectName, session.sessionName),
+          session.retained
+        )
     }
   }
   return { removedStagingEntries, removedActivityEntries }
@@ -1456,22 +1562,10 @@ const beginEvidenceCapture = async (
     observations.flatMap((observation) => observation.initialFiles),
     request.sourceFileAccess
   )
-  const registeredInputsByPath = new Map<
-    string,
-    Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'> | undefined
-  >()
+  const registeredInputsByPath = new Map<string, NotebookRunInputFile | undefined>()
   for (const input of request.registeredInputFiles ?? []) {
     const path = `data/${notebookPromptInputPath(input.filename, input.checksum)}`
-    registeredInputsByPath.set(
-      path,
-      registeredInputsByPath.has(path)
-        ? undefined
-        : {
-            sourceKind: input.sourceKind,
-            inputFileVersionId: input.inputFileVersionId,
-            checksum: input.checksum
-          }
-    )
+    registeredInputsByPath.set(path, registeredInputsByPath.has(path) ? undefined : input)
   }
   const initialViewState: ExecutionFileEvidenceCoverage = observations.every(
     (observation) => observation.initialAvailable
@@ -1497,6 +1591,61 @@ const beginEvidenceCapture = async (
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
     const capturedAt = new Date((dependencies.now ?? Date.now)()).toISOString()
+    const versionFiles = new NodeVersionFileOperator({ storageRoot: fileEvidenceStorageRoot })
+    const files: EvidenceWorkerBeginRequest['initialFiles'] = []
+    for (const file of initialFiles) {
+      const input = registeredInputsByPath.get(file.relativePath)
+      let immutableSource: EvidenceWorkerBeginRequest['initialFiles'][number]['immutableSource']
+      // Ready Versions and evidence share the Project deletion boundary. Never link a working
+      // input, a cross-Project Version or an arbitrary registered path into immutable evidence.
+      const kind = input?.sourceKind === 'upload-version' ? 'uploads' : 'artifacts'
+      if (
+        input &&
+        projectScope &&
+        input.sourceProjectId === projectScope.projectId &&
+        input.storageKey.startsWith(`${kind}/${projectScope.projectId}/`) &&
+        input.sizeBytes === file.size &&
+        input.sizeBytes <= capture.maxGenerationBytes &&
+        /^[a-f0-9]{64}$/u.test(input.checksum) &&
+        !existsSync(join(blobRoot.path, `sha256-${input.checksum}`))
+      ) {
+        try {
+          const lease = await versionFiles.openImmutable(input.storageKey, {
+            checksum: input.checksum,
+            sizeBytes: input.sizeBytes
+          })
+          try {
+            if (
+              Number.isSafeInteger(lease.fileIdentity.dev) &&
+              Number.isSafeInteger(lease.fileIdentity.ino)
+            ) {
+              immutableSource = { physicalPath: lease.localPath, ...lease.fileIdentity }
+            }
+          } finally {
+            await lease.close()
+          }
+        } catch (error) {
+          // Sharing is optional; the observed working input remains the snapshot authority.
+          log.debug('Immutable input cannot seed evidence content; freezing the working copy', {
+            ...diagnosticErrorFields(error)
+          })
+        }
+      }
+      files.push({
+        file,
+        generation: { generationId: (dependencies.createId ?? randomUUID)(), capturedAt },
+        ...(input
+          ? {
+              registeredInput: {
+                sourceKind: input.sourceKind,
+                inputFileVersionId: input.inputFileVersionId,
+                checksum: input.checksum
+              }
+            }
+          : {}),
+        ...(immutableSource ? { immutableSource } : {})
+      })
+    }
     const result = await runSerializedEvidenceWorker(
       dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
@@ -1514,16 +1663,7 @@ const beginEvidenceCapture = async (
         expectedBlobRootIdentity: capture.blobRoot.identity,
         blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         initialViewState,
-        initialFiles: initialFiles.map((file) => ({
-          file,
-          generation: {
-            generationId: (dependencies.createId ?? randomUUID)(),
-            capturedAt
-          },
-          ...(registeredInputsByPath.get(file.relativePath)
-            ? { registeredInput: registeredInputsByPath.get(file.relativePath) }
-            : {})
-        })),
+        initialFiles: files,
         maxGenerationBytes: capture.maxGenerationBytes,
         maxActivityBytes: capture.maxActivityBytes,
         maxEvidenceBytes: capture.maxEvidenceBytes,
@@ -1642,7 +1782,8 @@ function selectInitialFilesForCapture(
   initialFiles: readonly SnapshotEntry[],
   access: WorkingFileObservationRequest['sourceFileAccess']
 ): readonly SnapshotEntry[] {
-  if (!access || access.readState !== 'complete' || access.writeState !== 'complete') {
+  // Unknown write destinations do not make unrelated files possible inputs.
+  if (!access || access.readState !== 'complete') {
     return initialFiles
   }
   const paths = new Set([...access.reads, ...access.writes])
@@ -2494,6 +2635,18 @@ const settleComputeJobFileEvidence = async (request: {
     checksum: evidence.checksum,
     storageKey: evidence.storageKey
   })
+  await maintainWorkingFileEvidence(location, [
+    {
+      receiptName: receiptNameForActivity(request.jobId),
+      finalName,
+      activityId: request.jobId,
+      activityKind: 'compute-job',
+      ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+      evidenceId: evidence.evidenceId,
+      checksum: evidence.checksum,
+      storageKey: evidence.storageKey
+    }
+  ])
 }
 
 export {

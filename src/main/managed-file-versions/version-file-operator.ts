@@ -489,7 +489,7 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
     storageRef: string,
     expectedIntegrity: Integrity,
     options?: OpenImmutableOptions
-  ): Promise<ReadLease> {
+  ): Promise<ReadLease & { fileIdentity: { dev: number; ino: number } }> {
     const localPath = this.resolveStorageRef(storageRef)
     if (
       !Number.isSafeInteger(expectedIntegrity.sizeBytes) ||
@@ -727,8 +727,9 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
       }
 
       const versionTokenMatch = /^v([a-z0-9]{8})_/u.exec(posix.basename(storageRef))
-      const lease: ReadLease = {
+      const lease: ReadLease & { fileIdentity: { dev: number; ino: number } } = {
         localPath,
+        fileIdentity: { dev: Number(snapshot.dev), ino: Number(snapshot.ino) },
         sizeBytes: expectedIntegrity.sizeBytes,
         checksum: expectedIntegrity.checksum,
         ...(versionTokenMatch ? { versionToken: versionTokenMatch[1] } : {}),
