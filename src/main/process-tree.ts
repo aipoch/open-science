@@ -1207,13 +1207,6 @@ const scanForOwnedDescendants = async (
           // Permission denied: check if this process could be a setuid descendant
           const pid = parseInt(pidStr, 10)
           if (couldBeDescendant(pid)) {
-            if (process.env.OPEN_SCIENCE_RECOVERY_DIAGNOSTIC === '1')
-              console.error('[DEBUG-recovery-ci] unreadable candidate', {
-                pid,
-                code,
-                spawnedAt,
-                processStart: startTimeMap.get(pid)
-              })
             hadRelevantPermissionDenied = true
           }
         }
@@ -1285,18 +1278,11 @@ export const proveRecordedPosixLeaderGone = async (
   signal?: NodeJS.Signals,
   log?: ProcessTreeLogger
 ): Promise<PosixLeaderRecoveryOutcome> => {
-  const blocked = (reason: string): PosixLeaderRecoveryOutcome => {
-    if (process.env.OPEN_SCIENCE_RECOVERY_DIAGNOSTIC === '1')
-      console.error('[DEBUG-recovery-ci] blocked', { reason, leader, spawnedAt })
-    return 'blocked'
-  }
-
-  if (process.platform !== 'linux' && process.platform !== 'darwin')
-    return blocked('unsupported-platform')
-  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return blocked('invalid-pid')
+  if (process.platform !== 'linux' && process.platform !== 'darwin') return 'blocked'
+  if (!Number.isSafeInteger(leader.pid) || leader.pid <= 0) return 'blocked'
   // Without a recorded birth token any pid match would be a guess, and pid absence alone cannot
   // rule out a descendant that outlived the leader. Retain the receipt instead.
-  if (leader.birthToken === undefined) return blocked('missing-birth-token')
+  if (leader.birthToken === undefined) return 'blocked'
   const recorded: PosixProcessIdentity = {
     pid: leader.pid,
     ppid: 0,
@@ -1308,14 +1294,14 @@ export const proveRecordedPosixLeaderGone = async (
   }
   const snapshot = await collectPosixProcessTable()
   // An incomplete snapshot cannot prove absence: the recorded leader may simply be unreadable.
-  if (!snapshot.complete) return blocked('incomplete-snapshot')
+  if (!snapshot.complete) return 'blocked'
   if (!samePosixIdentity(recorded, snapshot.processes.get(leader.pid))) {
     // The leader pid is absent or reused by an unrelated process. This is cold recovery: the tree
     // disappeared outside of our control. Before declaring the tree gone, verify the owned group
     // (kill -0 against -pid) is also absent. If the group is still alive but the leader is gone,
     // the numeric group id may have been reused — never signal a group that cannot be tied back
     // to the recorded identity. (Mirrors notebook shell-ownership.)
-    if (isProcessGroupAlive(leader.pid)) return blocked('leader-gone-group-alive')
+    if (isProcessGroupAlive(leader.pid)) return 'blocked'
 
     // Leader and its original group are both gone. If we have an ownership marker, scan the process
     // table for any descendants that may have escaped to a new session but still carry the marker.
@@ -1334,9 +1320,9 @@ export const proveRecordedPosixLeaderGone = async (
     if (marker) {
       const descendants = await scanForOwnedDescendants(marker, spawnedAt)
       // undefined means incomplete scan (permission denied for same-UID process, binding failed)
-      if (descendants === undefined) return blocked('incomplete-marker-scan')
+      if (descendants === undefined) return 'blocked'
       // Found descendants with marker → definitely blocked
-      if (descendants.length > 0) return blocked('marked-descendants')
+      if (descendants.length > 0) return 'blocked'
       // Complete same-UID scan with no marker found → sufficient proof per documented contract
     }
 
@@ -1349,7 +1335,7 @@ export const proveRecordedPosixLeaderGone = async (
   const liveLeader = snapshot.processes.get(leader.pid)
   if (!liveLeader || liveLeader.pgid !== leader.pid) {
     // Leader exists but is no longer a group leader, or pgid was reused. Cannot safely signal.
-    return blocked('leader-not-group-leader')
+    return 'blocked'
   }
   // Its detached group is still addressable by the persisted id, so terminate it and require
   // confirmed exit before releasing ownership.
@@ -1358,9 +1344,9 @@ export const proveRecordedPosixLeaderGone = async (
     signal,
     log
   )
-  if (!result.reaped) return blocked('group-not-reaped')
+  if (!result.reaped) return 'blocked'
   const confirmation = await collectPosixProcessTable()
-  if (!confirmation.complete) return blocked('incomplete-confirmation')
+  if (!confirmation.complete) return 'blocked'
   // Leader and group are confirmed gone. Before returning 'gone', scan for escaped descendants
   // that may have daemonized into a new session before teardown but still carry the marker.
   // In the live-teardown path (we actively signaled the group), a clean marker scan after
@@ -1368,8 +1354,8 @@ export const proveRecordedPosixLeaderGone = async (
   // marked descendants remain visible.
   if (marker) {
     const descendants = await scanForOwnedDescendants(marker, spawnedAt)
-    if (descendants === undefined) return blocked('incomplete-post-stop-marker-scan') // incomplete scan
-    if (descendants.length > 0) return blocked('post-stop-marked-descendants') // found escaped descendants
+    if (descendants === undefined) return 'blocked' // incomplete scan
+    if (descendants.length > 0) return 'blocked' // found escaped descendants
     // Clean scan after live teardown: sufficient proof
   }
   // No marker or clean scan: leader confirmation as final check
