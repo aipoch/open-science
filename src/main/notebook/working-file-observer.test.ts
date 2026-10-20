@@ -1111,14 +1111,15 @@ describe('working-file evidence', () => {
               const item = request.initialFiles[0]!
               if (condition === 'cross-project') expect(item.immutableSource).toBeUndefined()
               else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
-              if (condition === 'missing') await rm(originalPath)
+              // Keep the old inode allocated so Linux cannot reuse it for the frozen copy.
+              if (condition === 'missing') await rename(originalPath, `${originalPath}.old`)
               if (condition === 'replaced') {
                 await rename(originalPath, `${originalPath}.old`)
                 await writeFile(originalPath, content)
               }
               if (condition === 'corrupt') await writeFile(originalPath, 'x\n2\n')
               if (condition === 'symlink') {
-                await rm(originalPath)
+                await rename(originalPath, `${originalPath}.old`)
                 await symlink(workingPath, originalPath)
               }
               if (condition === 'working-file')
