@@ -159,6 +159,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
+    "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
     "Preparing to receive package…": "Подготовка к получению пакета…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",
     "Update preparation failed": "Не удалось подготовить обновление",

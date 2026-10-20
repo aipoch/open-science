@@ -196,7 +196,15 @@ class NotebookInputRegistry {
           projectId: request.projectId,
           appSessionId: request.appSessionId,
           input,
-          stagedPath: await this.options.inputAuthority.stageContent(input, request.appSessionId)
+          copyContent: async (destination) => {
+            const lease = await this.options.inputAuthority.openContent(input)
+            try {
+              await lease.copyTo(destination, { exclusive: true })
+              await lease.verifyUnchanged()
+            } finally {
+              await lease.close()
+            }
+          }
         })
       )
     )

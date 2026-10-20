@@ -18,6 +18,16 @@ import ts, {
 } from 'typescript'
 import { expect, it } from 'vitest'
 
+it('reads helper evidence identity through the lightweight package entry', () => {
+  const imports = preProcessFile(
+    readFileSync(resolve(__dirname, 'helper-evidence.ts'), 'utf8'),
+    true,
+    true
+  ).importedFiles.map(({ fileName }) => fileName)
+  expect(imports).toContain('@aipoch/reproducibility/helper-identity')
+  expect(imports).not.toContain('@aipoch/reproducibility')
+})
+
 it('consumes Notebook packages only through exports and keeps packages independent of host source', () => {
   const root = resolve(__dirname, '../../..')
   const resolutionOptions = ['tsconfig.node.json', 'tsconfig.web.json'].map((name) => ({

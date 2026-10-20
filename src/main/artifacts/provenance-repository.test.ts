@@ -67,7 +67,177 @@ afterEach(async () => {
   }
 })
 
+const createPdfTransactionFixture = async (): Promise<{
+  client: ReturnType<typeof createProjectDbClient>
+  compatibilityRepository: ArtifactRepository
+  repository: ArtifactProvenanceRepository
+  request: Parameters<ArtifactProvenanceRepository['createVersion']>[0]
+  content: Buffer
+}> => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'artifact-pdf-transaction-'))
+  const client = createProjectDbClient(storageRoot)
+  disconnect = () => client.$disconnect()
+  await migrateApplicationDatabase(client)
+  const compatibilityRepository = new ArtifactRepository(storageRoot)
+  const repository = new ArtifactProvenanceRepository({
+    storageRoot,
+    getClient: async () => client,
+    compatibilityRepository
+  })
+  const request = {
+    projectId: 'project-1',
+    appSessionId: 'session-1',
+    artifactStorageSessionId: 'artifact-session-1',
+    artifactRunId: 'artifact-run-1',
+    writeOperationId: 'write-pdf-transaction',
+    writeRequestChecksum: 'b'.repeat(64),
+    rootFrameId: 'root-frame-1',
+    agentFrameId: 'agent-frame-1',
+    messageBranchId: 'branch-1',
+    runtimeSegmentId: 'runtime-segment-1',
+    promptMessageId: 'prompt-1',
+    filename: 'paper.pdf',
+    contentType: 'application/pdf'
+  }
+  // Publication validates the signature and hashes immutable bytes; it does not parse PDF pages.
+  const content = Buffer.from('%PDF-1.7\ntransaction fixture\n%%EOF\n')
+  await compatibilityRepository.writePendingFile({
+    projectId: request.projectId,
+    sessionId: request.artifactStorageSessionId,
+    runId: request.artifactRunId,
+    filename: request.filename,
+    mimeType: request.contentType,
+    source: { kind: 'inline', content: content.toString('base64'), encoding: 'base64' }
+  })
+  return { client, compatibilityRepository, repository, request, content }
+}
+
+const rejectPdfBindingInsert = `CREATE TRIGGER reject_pdf_binding AFTER INSERT ON PdfAnnotationSourceBinding
+  BEGIN SELECT RAISE(ABORT, 'injected PDF binding failure'); END`
+
 describe('artifact provenance repository', () => {
+  it.each(['publication', 'staging recovery'] as const)(
+    'rolls back PDF binding and Version promotion during %s, then retries the same bytes',
+    async (path) => {
+      const { client, compatibilityRepository, repository, request, content } =
+        await createPdfTransactionFixture()
+      if (path === 'staging recovery') {
+        const interrupted = new ArtifactProvenanceRepository({
+          storageRoot: storageRoot!,
+          getClient: async () => client,
+          compatibilityRepository,
+          durability: {
+            syncFile: async () => undefined,
+            syncDirectory: async (directory) => {
+              if (!directory.includes(`${sep}.staging${sep}`))
+                throw new Error('interrupted before PDF publication')
+            }
+          }
+        })
+        await expect(interrupted.createVersion(request)).rejects.toThrow(
+          'interrupted before PDF publication'
+        )
+      }
+      await client.$executeRawUnsafe(rejectPdfBindingInsert)
+      // Prisma exposes SQLite trigger constraint aborts as P2003, without the trigger message.
+      const bindingFailure = { code: 'P2003', meta: { modelName: 'PdfAnnotationSourceBinding' } }
+      await expect(repository.createVersion(request)).rejects.toMatchObject(
+        path === 'publication' ? { cause: bindingFailure } : bindingFailure
+      )
+      const staged = await client.artifactVersion.findUniqueOrThrow({
+        where: { writeOperationId: request.writeOperationId }
+      })
+      expect(staged.state).toBe('staging')
+      expect(await client.contentBlob.count()).toBe(0)
+      expect(await client.pdfDocument.count()).toBe(0)
+      expect(await client.pdfAnnotationDocument.count()).toBe(0)
+      expect(await client.pdfAnnotationSourceBinding.count()).toBe(0)
+      await expect(
+        readFile(join(storageRoot!, ...staged.contentStorageKey.split('/')))
+      ).resolves.toEqual(content)
+
+      await client.$executeRawUnsafe('DROP TRIGGER reject_pdf_binding')
+      const recovered = await repository.createVersion(request)
+      expect(recovered.versionId).toBe(staged.id)
+      expect(await client.artifactVersion.count()).toBe(1)
+      expect(
+        await client.artifactVersion.findUniqueOrThrow({ where: { id: staged.id } })
+      ).toMatchObject({ state: 'pending' })
+      expect(
+        await client.contentBlob.findUniqueOrThrow({ where: { id: staged.contentBlobId! } })
+      ).toMatchObject({ state: 'available', pdfDocumentId: expect.any(String) })
+      expect(await client.pdfDocument.count()).toBe(1)
+      expect(await client.pdfAnnotationDocument.count()).toBe(1)
+      expect(await client.pdfAnnotationSourceBinding.findMany()).toMatchObject([
+        { sourceKind: 'artifact-version', versionId: staged.id, checksum: staged.checksum }
+      ])
+      await expect(readFile(recovered.path)).resolves.toEqual(content)
+    }
+  )
+
+  it.each([false, true])(
+    'reconstructs unindexed PDF authority atomically (binding rejected: %s)',
+    async (rejectBinding) => {
+      const { client, repository, request, content } = await createPdfTransactionFixture()
+      const version = await repository.createVersion(request)
+      // Keep the real immutable bytes and routing sidecar; simulate loss of the SQLite authority.
+      await client.$transaction(async (tx) => {
+        await tx.artifactLineage.delete({ where: { id: version.artifactId } })
+        await tx.contentBlob.deleteMany()
+        await tx.pdfDocument.deleteMany()
+        await tx.fileOriginSession.deleteMany()
+      })
+      if (rejectBinding) await client.$executeRawUnsafe(rejectPdfBindingInsert)
+      const result = await repository.reconcileSession(request.projectId, request.appSessionId)
+      if (rejectBinding) {
+        expect(result.recoveredVersionIds).toEqual([])
+        // Existing unindexed recovery quarantines a still-unowned directory after this failure.
+        expect(result.quarantinedVersionIds).toEqual([version.versionId])
+        expect(await client.fileOriginSession.count()).toBe(0)
+        expect(await client.artifactLineage.count()).toBe(0)
+        expect(await client.artifactVersion.count()).toBe(0)
+        expect(await client.contentBlob.count()).toBe(0)
+        expect(await client.pdfDocument.count()).toBe(0)
+        expect(await client.pdfAnnotationDocument.count()).toBe(0)
+        expect(await client.pdfAnnotationSourceBinding.count()).toBe(0)
+        const quarantine = join(
+          storageRoot!,
+          'artifacts',
+          request.projectId,
+          request.appSessionId,
+          '.provenance',
+          '.quarantine',
+          'recovered-unlinked',
+          version.artifactId
+        )
+        const directories = await readdir(quarantine)
+        expect(directories).toHaveLength(1)
+        await expect(readFile(join(quarantine, directories[0], 'content'))).resolves.toEqual(
+          content
+        )
+      } else {
+        expect(result.recoveredVersionIds).toEqual([version.versionId])
+        expect(result.quarantinedVersionIds).toEqual([])
+        expect(
+          await client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
+        ).toMatchObject({ state: 'pending' })
+        expect(await client.fileOriginSession.count()).toBe(1)
+        expect(await client.artifactLineage.count()).toBe(1)
+        expect(await client.contentBlob.count()).toBe(1)
+        expect(await client.pdfDocument.count()).toBe(1)
+        expect(await client.pdfAnnotationDocument.count()).toBe(1)
+        expect(await client.pdfAnnotationSourceBinding.findMany()).toMatchObject([
+          {
+            sourceKind: 'artifact-version',
+            versionId: version.versionId,
+            checksum: version.checksum
+          }
+        ])
+        await expect(readFile(version.path)).resolves.toEqual(content)
+      }
+    }
+  )
+
   it('pages lineage history while resolving an old selected Version independently', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-lineage-history-'))
     const client = createProjectDbClient(storageRoot)

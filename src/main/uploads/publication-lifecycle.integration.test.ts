@@ -86,6 +86,87 @@ describe('upload publication lifecycle (SQLite + filesystem)', () => {
     updatedAt: 1
   })
 
+  it('rolls back PDF binding, ready state and visibility together, then recovers the same bytes', async () => {
+    const repository = new UploadRepository(root, { getClient: async () => client })
+    const bytes = Buffer.from('%PDF-1.7\ntransaction fixture\n%%EOF\n')
+    const [pending] = await stageUploadFixtures(repository, {
+      files: [{ name: 'paper.pdf', mimeType: 'application/pdf', content: bytes.toString('base64') }]
+    })
+    const versionId = 'pdf-recovery-version'
+    const checksum = createHash('sha256').update(bytes).digest('hex')
+    const storageKey = [
+      'uploads',
+      projectId,
+      sessionId,
+      pending.id,
+      'versions',
+      versionId,
+      'content'
+    ].join('/')
+    await client.fileOriginSession.create({ data: { projectId, sessionId } })
+    await client.uploadFile.create({
+      data: {
+        id: pending.id,
+        projectId,
+        sessionId,
+        filename: pending.name,
+        originalFilename: pending.originalName,
+        versions: {
+          create: {
+            id: versionId,
+            versionNumber: 1,
+            state: 'staging',
+            contentStorageKey: storageKey,
+            filename: pending.name,
+            originalFilename: pending.originalName,
+            contentType: pending.mimeType,
+            sizeBytes: BigInt(bytes.length),
+            checksum
+          }
+        }
+      }
+    })
+    await client.$executeRawUnsafe(`CREATE TRIGGER reject_pdf_binding AFTER INSERT ON PdfAnnotationSourceBinding
+      BEGIN SELECT RAISE(ABORT, 'injected PDF binding failure'); END`)
+    await expect(repository.recoverStagingUploads()).rejects.toMatchObject({
+      errors: [{ code: 'P2003', meta: { modelName: 'PdfAnnotationSourceBinding' } }]
+    })
+    expect(
+      await client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
+    ).toMatchObject({ state: 'staging', contentBlobId: null })
+    expect(await client.uploadFile.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({
+      currentVersionId: null
+    })
+    expect(await client.managedFile.count()).toBe(0)
+    expect(await client.contentBlob.count()).toBe(0)
+    expect(await client.pdfDocument.count()).toBe(0)
+    expect(await client.pdfAnnotationDocument.count()).toBe(0)
+    expect(await client.pdfAnnotationSourceBinding.count()).toBe(0)
+    await expect(readFile(join(root, ...storageKey.split('/')))).resolves.toEqual(bytes)
+
+    await client.$executeRawUnsafe('DROP TRIGGER reject_pdf_binding')
+    await repository.recoverStagingUploads()
+    expect(await client.uploadVersion.count()).toBe(1)
+    expect(
+      await client.uploadVersion.findUniqueOrThrow({ where: { id: versionId } })
+    ).toMatchObject({ state: 'ready', contentBlobId: expect.any(String) })
+    expect(await client.uploadFile.findUniqueOrThrow({ where: { id: pending.id } })).toMatchObject({
+      currentVersionId: versionId
+    })
+    expect(await client.managedFile.findMany()).toMatchObject([
+      { sourceVersionId: versionId, storageKey }
+    ])
+    expect(await client.contentBlob.findMany()).toMatchObject([
+      { state: 'available', pdfDocumentId: expect.any(String) }
+    ])
+    expect(await client.pdfDocument.count()).toBe(1)
+    expect(await client.pdfAnnotationDocument.count()).toBe(1)
+    expect(await client.pdfAnnotationSourceBinding.findMany()).toMatchObject([
+      { sourceKind: 'upload-version', versionId, checksum }
+    ])
+    await expect(readFile(join(root, ...storageKey.split('/')))).resolves.toEqual(bytes)
+  })
+
   it('publishes an active project and origin through the public repository', async () => {
     const repository = new UploadRepository(root, { getClient: async () => client })
     const [published] = await repository.finalizePendingSessionUploads(

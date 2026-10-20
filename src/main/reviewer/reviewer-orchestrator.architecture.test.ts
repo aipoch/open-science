@@ -368,6 +368,7 @@ describe('Reviewer orchestrator architecture', () => {
     ).toEqual([
       { publicPath: 'reviewer.abortFixLoop', channel: 'reviewer:abort-fix-loop', kind: 'method' },
       { publicPath: 'reviewer.getForSession', channel: 'reviewer:get-for-session', kind: 'method' },
+      { publicPath: 'reviewer.getReviewLog', channel: 'reviewer:get-review-log', kind: 'method' },
       { publicPath: 'reviewer.onFixLoopEnd', channel: 'reviewer:fix-loop-end', kind: 'event' },
       { publicPath: 'reviewer.onFixLoopStart', channel: 'reviewer:fix-loop-start', kind: 'event' },
       {

@@ -248,6 +248,8 @@ describe('release and scheduled workflow topology', () => {
       'src/main/session-package/literature.test.ts',
       'src/main/session-plan/plan-context-file.test.ts',
       'test/config/vitest.config.test.ts',
+      'scripts/ci/notebook-analysis-native.test.ts',
+      'scripts/pdf-package-fixtures.test.ts',
       'scripts/ci/release-workflows.test.ts',
       'scripts/windows-release-workflows.test.ts',
       'src/main/database/database-null-and-version-bounds.test.ts',
@@ -1036,20 +1038,20 @@ describe('website mirror publication intent', () => {
 })
 
 describe('build verification throughput', () => {
-  it('runs Ubuntu static checks independently from four complete portable shards', () => {
+  it('runs Ubuntu static checks independently from six complete portable shards', () => {
     const { verify, verify_tests: tests, verify_macos: macos } = workflow('build.yml').jobs
     expect(verify['runs-on']).toBe('ubuntu-latest')
     expect(verify.needs).toBeUndefined()
     expect(tests.needs).toBeUndefined()
     expect(tests['runs-on']).toBe('ubuntu-latest')
-    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4])
+    expect(tests.strategy?.matrix?.shard).toEqual([1, 2, 3, 4, 5, 6])
     expect(tests['timeout-minutes']).toBe(60)
     expect(step(tests, 'Test complete suite shard').run).toContain('--testTimeout=60000')
     expect(tests.env).toEqual({
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1',
       VITEST_PORTABLE_CI: '1'
     })
-    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/4')
+    expect(step(tests, 'Test complete suite shard').run).toContain('--shard=${{ matrix.shard }}/6')
     expect(step(tests, 'Test complete suite shard').run).toContain('--coverage')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=blob')
     expect(step(tests, 'Test complete suite shard').run).toContain('--reporter=github-actions')
@@ -1098,7 +1100,7 @@ describe('build verification throughput', () => {
     const guard = step(job, 'Require complete successful shards')
     expect(guard.env).toEqual({ SHARDS_RESULT: '${{ needs.verify_tests.result }}' })
     expect(guard.run).toContain('test "$SHARDS_RESULT" = success')
-    expect(guard.run).toContain('for shard in 1 2 3 4; do')
+    expect(guard.run).toContain('for shard in 1 2 3 4 5 6; do')
     expect(guard.run).toContain('test -s "vitest-reports/blob-$shard.json"')
     expect(step(job, 'Merge test reports and enforce coverage').run).toBe(
       'npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests'
@@ -1109,40 +1111,46 @@ describe('build verification throughput', () => {
     })
   })
 
-  it.each(['complete', 'missing-fourth', 'empty-fourth', 'failed-shard'])(
-    'checks actual shard artifacts before coverage: %s',
-    (scenario) => {
-      const cwd = mkdtempSync(join(tmpdir(), 'build-coverage-guard-'))
-      try {
-        mkdirSync(join(cwd, 'vitest-reports'))
-        for (const shard of [1, 2, 3, 4]) {
-          if (shard === 4 && scenario === 'missing-fourth') continue
-          writeFileSync(
-            join(cwd, `vitest-reports/blob-${shard}.json`),
-            shard === 4 && scenario === 'empty-fourth' ? '' : '{}'
-          )
-        }
-        const guard = step(
-          workflow('build.yml').jobs.verify_coverage,
-          'Require complete successful shards'
+  it.each([
+    'complete',
+    'missing-4',
+    'empty-4',
+    'missing-5',
+    'empty-5',
+    'missing-6',
+    'empty-6',
+    'failed-shard'
+  ])('checks actual shard artifacts before coverage: %s', (scenario) => {
+    const cwd = mkdtempSync(join(tmpdir(), 'build-coverage-guard-'))
+    try {
+      mkdirSync(join(cwd, 'vitest-reports'))
+      for (const shard of [1, 2, 3, 4, 5, 6]) {
+        if (scenario === `missing-${shard}`) continue
+        writeFileSync(
+          join(cwd, `vitest-reports/blob-${shard}.json`),
+          scenario === `empty-${shard}` ? '' : '{}'
         )
-        const run = (): void => {
-          execFileSync('bash', ['-e', '-c', guard.run!], {
-            cwd,
-            env: {
-              ...process.env,
-              SHARDS_RESULT: scenario === 'failed-shard' ? 'failure' : 'success'
-            },
-            stdio: 'pipe'
-          })
-        }
-        if (scenario === 'complete') expect(run).not.toThrow()
-        else expect(run).toThrow()
-      } finally {
-        rmSync(cwd, { recursive: true, force: true })
       }
+      const guard = step(
+        workflow('build.yml').jobs.verify_coverage,
+        'Require complete successful shards'
+      )
+      const run = (): void => {
+        execFileSync('bash', ['-e', '-c', guard.run!], {
+          cwd,
+          env: {
+            ...process.env,
+            SHARDS_RESULT: scenario === 'failed-shard' ? 'failure' : 'success'
+          },
+          stdio: 'pipe'
+        })
+      }
+      if (scenario === 'complete') expect(run).not.toThrow()
+      else expect(run).toThrow()
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
     }
-  )
+  })
 
   it('reuses real verification for a manual release dry-run without packaging or publication', () => {
     const release = workflow('release.yml')

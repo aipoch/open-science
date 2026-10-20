@@ -16,7 +16,7 @@ import {
   UserRound,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -334,17 +334,25 @@ const NoteEditor = ({
   const { t } = useTranslation()
   const [value, setValue] = useState(initialValue)
   const [saving, setSaving] = useState(false)
+  const mounted = useRef(false)
+
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const save = async (): Promise<void> => {
     if (!value.trim() || saving) return
     setSaving(true)
     try {
       await onSave(value)
-      onCancel()
+      if (mounted.current) onCancel()
     } catch {
       // The store exposes the user-facing error and the editor stays open for retry.
     } finally {
-      setSaving(false)
+      if (mounted.current) setSaving(false)
     }
   }
 
@@ -353,6 +361,7 @@ const NoteEditor = ({
       <Textarea
         autoFocus
         value={value}
+        disabled={saving}
         required
         maxLength={MEMORY_ENTRY_MAX_LENGTH}
         aria-label={t('Memory note')}
@@ -361,7 +370,7 @@ const NoteEditor = ({
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void save()
-          if (event.key === 'Escape') onCancel()
+          if (event.key === 'Escape' && !saving) onCancel()
         }}
       />
       {latestValue !== undefined ? (
@@ -374,7 +383,7 @@ const NoteEditor = ({
         </section>
       ) : null}
       <div className="mt-2 flex justify-end gap-1.5">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
           {t('Cancel')}
         </Button>
         <Button

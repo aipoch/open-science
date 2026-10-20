@@ -156,6 +156,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "当前应用版本不支持此加密数据格式。请使用兼容的应用版本或恢复原始配置文件。现有凭据未被替换。"
   },
   "renderer": {
+    "Could not load Reviewer log.": "无法加载审阅器日志。",
     "Preparing to receive package…": "正在准备接收包…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "无法准备浏览器导入。请解决启动错误后重试。",
     "Update preparation failed": "更新准备失败",

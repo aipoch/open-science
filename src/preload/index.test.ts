@@ -550,6 +550,7 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.setMode',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',
+      'reviewer.getReviewLog',
       'reviewer.onFixLoopEnd',
       'reviewer.onFixLoopStart',
       'reviewer.onSuppressNextAutoReview',

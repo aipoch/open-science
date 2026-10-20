@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
-import { provablyStaleConsumerTests } from './consumer-retirement.mjs'
 import {
   checkDerivedConsumers,
   workingConsumerSource
@@ -13,7 +12,7 @@ import { loadModuleImpactManifest } from './load-module-impact.mjs'
 export function checkModuleConsumerCoverage() {
   const source = workingConsumerSource()
   const manifest = loadModuleImpactManifest()
-  const { reverse, inspect: inspectConsumer } = checkDerivedConsumers(source, manifest)
+  const { reverse } = checkDerivedConsumers(source, manifest)
   const { modules } = withDerivedConsumers(manifest, loadDerivedConsumers())
   const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')
   for (const [path, consumers] of reverse) {
@@ -39,21 +38,8 @@ export function checkModuleConsumerCoverage() {
         pending.push(consumer)
       }
     }
-    // Reject proven stale package consumers, but preserve evidence whose dependency cone is opaque.
-    // This matches Integrity: native or dynamic loading cannot prove safe retirement.
-    if (['skill_package', 'specialist_package'].includes(id)) {
-      assert.deepEqual(
-        provablyStaleConsumerTests(
-          {
-            ownerPaths: module.ownerPaths,
-            testFiles: { consumer: module.testFiles.consumer.filter((path) => !visited.has(path)) }
-          },
-          inspectConsumer
-        ),
-        [],
-        `${id} consumer evidence must have a dependency path or incomplete dependency evidence`
-      )
-    }
+    // Require complete coverage, not minimal coverage. Only trusted base/head evidence can
+    // authorize retirement; current independence alone cannot remove historical host contracts.
     const declared = new Set(Object.values(module.testFiles).flat())
     for (const path of visited)
       if (isTest(path) && !declared.has(path)) missing.push(`${id} -> ${path}`)

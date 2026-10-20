@@ -158,6 +158,7 @@
     "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Esta versión de la aplicación no admite este formato de datos cifrados. Utilice una versión compatible o restaure el perfil original. Las credenciales existentes no se han reemplazado."
   },
   "renderer": {
+    "Could not load Reviewer log.": "No se pudo cargar el registro del revisor.",
     "Preparing to receive package…": "Preparando la recepción del paquete…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "No se pudo preparar la importación desde el navegador. Resuelva el error de inicio e inténtelo de nuevo.",
     "Update preparation failed": "Error al preparar la actualización",

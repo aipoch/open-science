@@ -267,6 +267,11 @@ reader is updated. Future additional consumers are captured by the generated ind
 format. Resource edges add coverage without proving a complete dependency cone or authorizing
 consumer retirement.
 
+The consumer-coverage guard requires reachable coverage and a fresh derived index; it does not
+require deleting conservative explicit consumers. A newly complete dependency graph can prove
+current independence without proving historical reachability. Only the trusted base/head
+retirement checks described below authorize removing those existing obligations.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
@@ -329,10 +334,25 @@ the old execution plan. Explicit contracts, non-host evidence and explicit tests
 provable old source dependency follow the split as well. Moved owner tests keep their owner
 classification in the new module; tests still reaching the remaining owner, or with incomplete
 or unproven old source evidence, must also remain registered there. Original owners containing shared/preload/package sources, full owners (before or after the split), existing-module transfers and
-mixed source/policy edits do not qualify. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
+mixed source/policy edits do not qualify for this split proof. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.
+Registration-only transfers between **existing** host owners use a separate preservation proof.
+Only module-impact JSON may change, with unchanged source and test bytes and unambiguous surviving
+paths. Both owners retain their historical interfaces, test buckets, consumer edges, overlays and
+fallback; the destination also retains its existing owner paths and inherits every source test
+obligation, consumer edge (except itself) and overlay with a compatible fallback. Existing test
+classifications stay intact, including a moved test already registered as a destination consumer.
+Only moved public interfaces must be added to the destination; unrelated source interfaces remain
+on the original owner. Trusted Integrity compares actual selected test and capability sets, including
+each revision's derived consumers, for every old source/destination owner and interface path.
+Raw registrations still prove explicit history retention; derived evidence cannot replace it.
+Any selection reduction is rejected. Shared/preload/package
+owners, full markers and mixed source/test/runtime/policy edits do not qualify. This proof grants
+owner-path transfers only: it authorizes no historical test retirement or reclassification and adds
+no manifest flags. Merge the protected policy before proposing a registration transfer that uses it.
+
 Source-changing host transfers have a separate, stricter proof. Exact surviving owner paths
 identify transfers into new or existing host modules, including targets assembled from several
 host owners. All transfers from an original owner must verify before any of its evidence can
@@ -372,10 +392,10 @@ malformed records, unsupported statuses and root-manifest changes retain ordinar
 Registration data never selects its own contract tests. No application or platform behavior
 changes in this data-only path, so it does not launch desktop or Windows runtime suites.
 
-The exact consumer-evidence guard also retains entries when a dependency cone is incomplete
-(for example, a generated native addon or computed import). Absence from a static graph alone
-must not demand removal that trusted Integrity cannot verify. Fully resolved obsolete consumers
-are still rejected; missing consumer coverage is still required. Package boundary checks inspect
+The consumer-evidence guard permits conservative explicit entries even when the current
+dependency cone is fully resolved. Current independence, or an incomplete cone such as a generated
+native addon or computed import, must not demand removal that trusted Integrity cannot verify.
+Derived evidence must stay fresh and reachable consumers must remain covered. Package boundary checks inspect
 the executable test plan: retained historical registrations must not make host-only source edits
 run unchanged upstream package units.
 

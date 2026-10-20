@@ -531,6 +531,48 @@ class ManagedFileVersionService {
     )
   }
 
+  // Opens one exact finalized version from metadata already checked by the project catalog batch.
+  // Used by the reviewer staleness pass to avoid a per-version logical-file/version lookup while
+  // preserving the operator's size/checksum verification and verifyUnchanged() lease contract.
+  async openExactVersionContent(record: {
+    contentStorageKey: string
+    sizeBytes: number
+    checksum: string
+    filename: string
+    contentType?: string
+  }): Promise<{
+    path: string
+    filename: string
+    contentType?: string
+    checksum: string
+    size: number
+    readRange: (begin: number, end: number) => Promise<Uint8Array>
+    verifyUnchanged: () => Promise<void>
+    close: () => Promise<void>
+  }> {
+    try {
+      const lease = await this.versionFileOperator.openImmutable(record.contentStorageKey, {
+        sizeBytes: record.sizeBytes,
+        checksum: record.checksum
+      })
+      return {
+        path: lease.localPath,
+        filename: record.filename,
+        ...(record.contentType ? { contentType: record.contentType } : {}),
+        checksum: record.checksum,
+        size: lease.sizeBytes,
+        readRange: lease.readRange,
+        verifyUnchanged: lease.verifyUnchanged,
+        close: lease.close
+      }
+    } catch (error) {
+      throw translateVersionFileError(
+        error,
+        'Managed file version content is unavailable or corrupt.'
+      )
+    }
+  }
+
   async openProducerVersion(
     projectId: string,
     versionId: string,

@@ -43,6 +43,12 @@ module.exports = async (context) => {
   // Use the same configured signing identity as the installer. Unsigned development builds
   // retain electron-builder's normal behavior; never mutate the shared downloaded binary.
   await context.packager.signIf(tool)
+  const helper = path.join(directory, 'windows-install-publication.dll')
+  require('./compile-windows-install-publication.cjs')(
+    path.join(__dirname, 'windows-install-publication.cs'),
+    helper
+  )
+  await context.packager.signIf(helper)
   await fs.writeFile(path.join(directory, '7zip-LICENSE.txt'), license)
   const resources = path.join(context.appOutDir, 'resources')
   await fs.mkdir(resources, { recursive: true })

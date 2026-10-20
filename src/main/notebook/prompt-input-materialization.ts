@@ -1,6 +1,6 @@
-import { createHash } from 'node:crypto'
-import { constants, createReadStream } from 'node:fs'
-import { chmod, copyFile, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises'
+import { createHash, randomUUID } from 'node:crypto'
+import { createReadStream } from 'node:fs'
+import { chmod, lstat, mkdir, readdir, realpath, rm } from 'node:fs/promises'
 import {
   basename,
   dirname,
@@ -15,6 +15,7 @@ import {
 
 import type { NotebookPromptInput, NotebookRunInputFile } from '../../shared/notebook'
 import { toSafeUploadFilename } from '../uploads/storage-helpers'
+import { publishNoReplace } from '../uploads/atomic-no-replace-publisher'
 import { getNotebookDataRoot, getNotebookSessionRoot } from './repository'
 
 const INPUTS_DIR = 'inputs'
@@ -170,7 +171,7 @@ const materializeNotebookPromptInput = async (request: {
   projectId: string
   appSessionId: string
   input: NotebookRunInputFile
-  stagedPath: string
+  copyContent: (destination: string) => Promise<void>
 }): Promise<NotebookPromptInput> => {
   const inputsRoot = await ensureInputDirectory(
     request.storageRoot,
@@ -192,14 +193,38 @@ const materializeNotebookPromptInput = async (request: {
       throw new Error('Notebook input path changed outside trusted Notebook storage.')
     }
     const destination = join(inputsRoot, candidate)
-    try {
-      await copyFile(request.stagedPath, destination, constants.COPYFILE_EXCL)
-      try {
-        await chmod(destination, 0o444)
-      } catch (error) {
-        await rm(destination, { force: true })
+    if (
+      await matchesInput(destination, request.input).catch((error) => {
+        if (isMissingFileError(error)) return false
         throw error
+      })
+    ) {
+      await chmod(destination, 0o444)
+      return {
+        sourceKind: request.input.sourceKind,
+        inputFileVersionId: request.input.inputFileVersionId,
+        filename: request.input.filename,
+        notebookPath: posix.join(INPUTS_DIR, candidate)
       }
+    }
+    const temporaryName = `.input-${randomUUID()}`
+    const temporaryPath = join(inputsRoot, temporaryName)
+    try {
+      await request.copyContent(temporaryPath)
+      if (!(await matchesInput(temporaryPath, request.input))) {
+        throw new Error('Notebook input copy does not match its immutable Version.')
+      }
+      await chmod(temporaryPath, 0o444)
+      if (
+        (await ensureInputDirectory(
+          request.storageRoot,
+          request.projectId,
+          request.appSessionId
+        )) !== inputsRoot
+      ) {
+        throw new Error('Notebook input path changed outside trusted Notebook storage.')
+      }
+      publishNoReplace(await realpath(request.storageRoot), inputsRoot, temporaryName, candidate)
       return {
         sourceKind: request.input.sourceKind,
         inputFileVersionId: request.input.inputFileVersionId,
@@ -217,6 +242,8 @@ const materializeNotebookPromptInput = async (request: {
           notebookPath: posix.join(INPUTS_DIR, candidate)
         }
       }
+    } finally {
+      await rm(temporaryPath, { force: true })
     }
   }
 

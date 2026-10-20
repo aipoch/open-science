@@ -1,5 +1,7 @@
 import type {
   ReviewWithChecks,
+  ReviewLogRequest,
+  ReviewerLogEntry,
   ReviewRunRequest,
   ReviewRunResult,
   ReviewSessionRequest,
@@ -17,6 +19,10 @@ export const contracts = {
   'reviewer.getForSession': callable<
     (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
   >()('reviewer', ['reviewer:get-for-session']),
+  'reviewer.getReviewLog': callable<(request: ReviewLogRequest) => Promise<ReviewerLogEntry[]>>()(
+    'reviewer',
+    ['reviewer:get-review-log']
+  ),
   'reviewer.onFixLoopEnd': callable<
     (listener: AcpListener<ReviewSessionRequest>) => RemoveListener
   >()('reviewer', ['reviewer:fix-loop-end', EVENT]),

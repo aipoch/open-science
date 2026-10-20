@@ -1,3 +1,4 @@
+import { ErrorNotice } from '@/components/error-notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
 // SessionReviewerPanel: the dedicated Session reviewer page rendered inside the PreviewPanel.
 // Opened by clicking "Go to transcript" on any check in the ReviewerCard. Shows:
@@ -339,6 +340,56 @@ const ReviewerLogSection = ({ log }: { log: ReviewerLogEntry[] }): React.JSX.Ele
   )
 }
 
+// Mounted only for a detail view whose list summary has no captured log. The keyed owner keeps
+// completed empty logs distinct from unloaded logs and drops late results after navigation.
+const StoredReviewerLog = ({ review }: { review: ReviewWithChecks }): React.JSX.Element | null => {
+  const { t } = useTranslation()
+  const [result, setResult] = useState<{ log: ReviewerLogEntry[] } | { failed: true }>()
+  const [attempt, setAttempt] = useState(0)
+  const { projectId, sessionId, id } = review
+  useEffect(() => {
+    let active = true
+    void (async () => {
+      try {
+        const log = await window.api.reviewer.getReviewLog({
+          projectId,
+          appSessionId: sessionId,
+          reviewId: id
+        })
+        if (active) setResult({ log })
+      } catch {
+        if (active) setResult({ failed: true })
+      }
+    })()
+    return () => {
+      active = false
+    }
+  }, [projectId, sessionId, id, attempt])
+
+  if (!result)
+    return (
+      <p role="status" className="text-xs text-text-400">
+        {t('Loading…')}
+      </p>
+    )
+  if ('failed' in result)
+    return (
+      <ErrorNotice
+        inline
+        role="alert"
+        description={t('Could not load Reviewer log.')}
+        primaryButton={{
+          label: t('Retry'),
+          onClick: () => {
+            setResult(undefined)
+            setAttempt((value) => value + 1)
+          }
+        }}
+      />
+    )
+  return <ReviewerLogSection log={result.log} />
+}
+
 // The Session reviewer panel, rendered inside the right PreviewPanel when toolKind === 'reviewer'.
 const SessionReviewerPanel = ({
   review,
@@ -400,7 +451,21 @@ const SessionReviewerPanel = ({
         </section>
 
         {/* Reviewer log section — replaces the old "Full reasoning" prose block */}
-        {!historical ? <ReviewerLogSection log={review.reviewerLog ?? []} /> : null}
+        {!historical ? (
+          review.reviewerLog.length > 0 ? (
+            <ReviewerLogSection log={review.reviewerLog} />
+          ) : (
+            <StoredReviewerLog
+              key={JSON.stringify([
+                review.projectId,
+                review.sessionId,
+                review.id,
+                review.updatedAt
+              ])}
+              review={review}
+            />
+          )
+        ) : null}
       </div>
     </div>
   )

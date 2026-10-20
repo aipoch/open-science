@@ -172,6 +172,7 @@ const createDependencies = (): HostApplicationCommandDependencies => ({
   reviewer: {
     run: vi.fn(async () => ({ started: true })),
     getForSession: vi.fn(async () => []),
+    getReviewLog: vi.fn(async () => []),
     abort: vi.fn(() => undefined),
     abortFixLoop: vi.fn(() => undefined)
   },
@@ -250,7 +251,7 @@ const commandByName = (name: string): ApplicationCommand<string, readonly unknow
 }
 
 describe('Host application commands', () => {
-  it('defines the exact 79 desktop request channels in their existing capability groups', () => {
+  it('defines the exact 80 desktop request channels in their existing capability groups', () => {
     const expected = RENDERER_CONTRACT_GROUPS.filter(({ capability }) =>
       HOST_CAPABILITIES.includes(capability as (typeof HOST_CAPABILITIES)[number])
     ).map(({ capability, contracts }) => {
@@ -298,7 +299,7 @@ describe('Host application commands', () => {
       .find(({ capability }) => capability === 'notifications')!
       .channels.push('notifications:get-desktop-availability', 'notifications:send-test')
     for (const group of expected) group.channels.sort()
-    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(79)
+    expect(expected.flatMap(({ channels }) => channels)).toHaveLength(80)
     expect(
       hostApplicationCommandGroups.map(({ name, commands }) => ({
         capability: name,
@@ -314,7 +315,7 @@ describe('Host application commands', () => {
       {} as HostApplicationCommandDependencies
     )
 
-    expect(router.dispatcher.commandNames()).toHaveLength(79)
+    expect(router.dispatcher.commandNames()).toHaveLength(80)
     installation.uninstall()
     expect(router.dispatcher.commandNames()).toEqual([])
   })
@@ -331,6 +332,7 @@ describe('Host application commands', () => {
       origin: 'manual' as const
     }
     const reviewSession = { projectId: 'project-1', appSessionId: 'session-1' }
+    const reviewLog = { ...reviewSession, reviewId: 'review-1' }
     const parent = { parent: '/target' }
     const root = { parent: '/target', markOnboarding: true }
     const flushResponse = { requestId: 'flush-1', status: 'completed' as const }
@@ -434,6 +436,10 @@ describe('Host application commands', () => {
     await router.dispatcher.invoke(
       hostApplicationCommands.reviewer.getForSession,
       invocation([reviewSession])
+    )
+    await router.dispatcher.invoke(
+      hostApplicationCommands.reviewer.getReviewLog,
+      invocation([reviewLog])
     )
     await router.dispatcher.invoke(hostApplicationCommands.reviewer.run, invocation([reviewRun]))
     await router.dispatcher.invoke(
@@ -542,6 +548,7 @@ describe('Host application commands', () => {
     expect(dependencies.remoteAccess.setMode).toHaveBeenCalledWith('remoteit')
     expect(dependencies.reviewer.run).toHaveBeenCalledWith(reviewRun)
     expect(dependencies.reviewer.getForSession).toHaveBeenCalledWith(reviewSession)
+    expect(dependencies.reviewer.getReviewLog).toHaveBeenCalledWith(reviewLog)
     expect(dependencies.reviewer.abort).toHaveBeenCalledWith(reviewSession)
     expect(dependencies.storage.acknowledgeDataRootHandoffFlush).toHaveBeenCalledWith(
       flushResponse,

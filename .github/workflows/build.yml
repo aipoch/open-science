@@ -74,7 +74,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: d94051c765788a57bd447ef133e6427617cb5b4d
+          ref: 3251f85524d0332eee746801958c5f1b8377f9db
           persist-credentials: false
 
       - name: Setup Node
@@ -104,23 +104,23 @@ jobs:
         run: npm run check:cli-package
 
   verify_tests:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/6)
     if: ${{ !inputs.skip_verify }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    # Three-shard runs reached ~36m; leave headroom for coverage and runner load.
+    # Six shards reduce per-runner load; retain headroom for coverage and runner variability.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: d94051c765788a57bd447ef133e6427617cb5b4d
+          ref: 3251f85524d0332eee746801958c5f1b8377f9db
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -140,7 +140,7 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=60000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/6
           --reporter=blob
           --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
@@ -177,7 +177,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: d94051c765788a57bd447ef133e6427617cb5b4d
+          ref: 3251f85524d0332eee746801958c5f1b8377f9db
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -197,7 +197,7 @@ jobs:
           SHARDS_RESULT: ${{ needs.verify_tests.result }}
         run: |
           test "$SHARDS_RESULT" = success
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6; do
             test -s "vitest-reports/blob-$shard.json"
           done
       - name: Merge test reports and enforce coverage
@@ -221,7 +221,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: d94051c765788a57bd447ef133e6427617cb5b4d
+          ref: 3251f85524d0332eee746801958c5f1b8377f9db
           persist-credentials: false
       - name: Setup Node
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
@@ -331,7 +331,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
-          ref: d94051c765788a57bd447ef133e6427617cb5b4d
+          ref: 3251f85524d0332eee746801958c5f1b8377f9db
           persist-credentials: false
 
       - name: Setup Node
@@ -348,7 +348,7 @@ jobs:
           set -euo pipefail
           git diff --exit-code
           # Diagnostic artifact only: same pinned candidate code, greater stable version for real updater checks.
-          test "$(git rev-parse HEAD)" = "d94051c765788a57bd447ef133e6427617cb5b4d"
+          test "$(git rev-parse HEAD)" = "3251f85524d0332eee746801958c5f1b8377f9db"
           test "$(node -p "require('./package.json').version")" = "1.0.0"
           case "$UPGRADE_VERSION" in 1.0.0|1.0.1|1.0.2) ;; *) exit 1 ;; esac
           if [ "$UPGRADE_VERSION" != "1.0.0" ]; then npm version --no-git-tag-version --ignore-scripts "$UPGRADE_VERSION"; fi

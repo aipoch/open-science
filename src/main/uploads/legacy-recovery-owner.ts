@@ -1,4 +1,4 @@
-import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
+import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
