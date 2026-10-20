@@ -1,6 +1,6 @@
 import { providerValidationFailed, type SubagentModelConfiguration } from '../../shared/settings'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import { createDelegateExecutionBackendLease } from '../delegation/execution-backend-lease'
 import type { DelegatedExecutionModelAdmission } from '../delegation/execution-port'
 import {

@@ -1,4 +1,5 @@
-import { dialog, type App } from 'electron'
+import { desktopInteraction } from '../desktop-interaction'
+import type { App } from 'electron'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { currentApplicationShutdownTrigger } from '../application-shutdown-trigger'
@@ -305,7 +306,7 @@ export const waitForDataRootWriters = (): Promise<void> => {
 // quit anyway. Kept as the injectable default so the guard's control flow stays unit-testable
 // without a real Electron dialog.
 const defaultConfirmQuit = (translate: NativeTranslator): boolean =>
-  dialog.showMessageBoxSync({
+  desktopInteraction('Confirm desktop action').confirmSync({
     type: 'warning',
     buttons: [translate('Keep waiting'), translate('Quit anyway')],
     defaultId: 0,

@@ -1,0 +1,46 @@
+{
+  "description": "Reduced native-model failure and repair from live workflows: RDS exists but a GlobalEnv training constant does not survive a fresh kernel. Original model transcripts and scientific datasets are omitted.",
+  "input": "x,y\n1,3\n2,5\n3,7\n4,9\n",
+  "cells": [
+    {
+      "language": "r",
+      "kernel_epoch": 0,
+      "status": "completed",
+      "code": "records <- read.csv('inputs/calibration.csv')\ncenter <- mean(records$x)\nfit <- stats::lm(y ~ I(x - center), data=records)\nsaveRDS(fit, 'outputs/model.rds')\nwriteLines('warm-only', 'outputs/report.txt')",
+      "reads": ["inputs/calibration.csv"],
+      "writes": ["outputs/model.rds", "outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 1,
+      "status": "failed",
+      "code": "restored <- readRDS('outputs/model.rds')\nwriteLines('cold-pending', 'outputs/report.txt')\nprediction <- stats::predict(restored, newdata=data.frame(x=c(2,4)))",
+      "reads": ["outputs/model.rds"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "python",
+      "kernel_epoch": 0,
+      "status": "completed",
+      "code": "from pathlib import Path\nreport = Path('outputs/report.txt')\nassert report.read_text(encoding='utf-8') == 'cold-pending\\n'\nreport.write_text('failure-observed\\n', encoding='utf-8')",
+      "reads": ["outputs/report.txt"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 1,
+      "status": "completed",
+      "code": "fit_factory <- function(frame) {\n  training_center <- mean(frame$x)\n  stats::lm(y ~ I(x - training_center), data=frame)\n}\nrepaired <- fit_factory(read.csv('inputs/calibration.csv'))\nsaveRDS(repaired, 'outputs/model.rds')\nprediction <- stats::predict(repaired, newdata=data.frame(x=c(2,4)))\nstopifnot(max(abs(prediction-c(5,9))) < 1e-10)\nwrite(prediction, 'outputs/report.txt', ncolumns=2)",
+      "reads": ["inputs/calibration.csv"],
+      "writes": ["outputs/model.rds", "outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "kernel_epoch": 2,
+      "status": "completed",
+      "code": "restored <- readRDS('outputs/model.rds')\nprevious <- scan('outputs/report.txt', quiet=TRUE)\nstopifnot(max(abs(previous-c(5,9))) < 1e-10)\nrecipe <- environment(formula(restored))\nstopifnot(!identical(recipe, globalenv()), exists('frame', recipe, inherits=FALSE), exists('training_center', recipe, inherits=FALSE))\nstopifnot(nrow(eval(restored$call$data, recipe)) == 4)\nreversed <- stats::predict(restored, newdata=data.frame(x=c(4,2)))\nsingleton <- stats::predict(restored, newdata=data.frame(x=2))\nempty <- stats::predict(restored, newdata=data.frame(x=numeric(0)))\nstopifnot(max(abs(reversed-c(9,5))) < 1e-10, abs(singleton-5) < 1e-10, is.numeric(empty), length(empty) == 0)\nbase::write(reversed, file='outputs/report.txt', ncolumns=2)",
+      "reads": ["outputs/model.rds", "outputs/report.txt"],
+      "writes": ["outputs/report.txt"]
+    }
+  ]
+}

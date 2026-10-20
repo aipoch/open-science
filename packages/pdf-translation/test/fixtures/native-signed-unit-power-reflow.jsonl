@@ -1,0 +1,4 @@
+{"name":"signed-units-with-publisher-spaces","translation":"速率为kg−1、min−1和h−1。","valid":true}
+{"name":"signed-units-can-change-sentence-order","translation":"速率为h−1、kg−1和min−1。","valid":true}
+{"name":"changed-unit-power-is-rejected","translation":"速率为kg−1、min−2和h−1。","valid":false}
+{"name":"duplicate-unit-power-is-ambiguous","translation":"速率为kg−1、min−1、min−1和h−1。","valid":false}

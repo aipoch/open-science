@@ -5,6 +5,18 @@ import { createLucideIcon } from 'lucide-react'
 // createLucideIcon makes them full LucideIcon citizens, so the shared registry can hold
 // Lucide exports and these glyphs interchangeably.
 
+// A collection folder containing narrowing filter lines.
+export const SmartCollectionIcon = createLucideIcon('SmartCollection', [
+  [
+    'path',
+    {
+      key: 'folder',
+      d: 'M20 20H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h5l2 2h9a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2Z'
+    }
+  ],
+  ['path', { key: 'filter', d: 'M8 10h8M10 13h4M11.5 16h1' }]
+])
+
 // Petri dish with colonies.
 export const PetriDishIcon = createLucideIcon('PetriDish', [
   ['ellipse', { cx: '12', cy: '6.5', rx: '8.5', ry: '3' }],

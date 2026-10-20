@@ -7,7 +7,7 @@ import {
   outputComparisonPolicySchema,
   type OutputComparisonPolicy,
   type OutputComparisonReport
-} from '../../../../shared/output-comparison'
+} from '@aipoch/reproducibility/comparison'
 
 const scientificPolicyFromForm = (form: FormData): unknown => {
   const text = (key: string): string => String(form.get(key) ?? '').trim()

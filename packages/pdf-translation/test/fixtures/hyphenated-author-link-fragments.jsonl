@@ -1,0 +1,4 @@
+{"name": "joined-author-links-preserve-complete-identity", "accepted": true, "first": "Alpha-", "second": "beta et al.", "sourceReference": "Alphabeta et al.", "targetReference": "Alphabeta 等人"}
+{"name": "same-prefix-cannot-change-hyphenated-author", "accepted": false, "first": "Alpha-", "second": "beta et al.", "sourceReference": "Alphabeta et al.", "targetReference": "Alphagamma 等人"}
+{"name": "wrapped-second-author-preserves-pair", "first": "Baker & Frost-", "second": "wood", "sourceReference": "Baker & Frostwood", "targetReference": "Baker 和 Frostwood", "accepted": true}
+{"name": "wrapped-second-author-rejects-changed-pair", "first": "Baker & Frost-", "second": "wood", "sourceReference": "Baker & Frostwood", "targetReference": "Baker 和 Frostfield", "accepted": false}

@@ -21,7 +21,7 @@ import type {
   ProvenanceMessage,
   ProvenanceMessagePart
 } from '../../shared/artifact-provenance'
-import { defaultArtifactDurability, type ArtifactDurability } from './durability'
+import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import { requireAgentArtifactVersion } from './provenance-version-kind'
 
 type ProvenanceMessageSnapshotOptions = {
@@ -29,7 +29,7 @@ type ProvenanceMessageSnapshotOptions = {
   getClient: () => Promise<PrismaClient>
   createId?: () => string
   now?: () => Date
-  durability?: ArtifactDurability
+  durability?: FileDurability
 }
 
 type SessionDeletionReceipt =
@@ -169,12 +169,12 @@ const projectMessage = (
 class ProvenanceMessageSnapshotRepository {
   private readonly createId: () => string
   private readonly now: () => Date
-  private readonly durability: ArtifactDurability
+  private readonly durability: FileDurability
 
   constructor(private readonly options: ProvenanceMessageSnapshotOptions) {
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
-    this.durability = options.durability ?? defaultArtifactDurability
+    this.durability = options.durability ?? defaultFileDurability
   }
 
   private async syncDirectoryTrees(leaves: string[]): Promise<void> {

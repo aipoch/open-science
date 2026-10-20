@@ -6,6 +6,8 @@ import { ipcMainHandle } from '../ipc-handler-registry'
 
 import type {
   ReviewWithChecks,
+  ReviewLogRequest,
+  ReviewerLogEntry,
   ReviewRunRequest,
   ReviewRunResult,
   ReviewUpdateEvent,
@@ -14,8 +16,13 @@ import type {
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import { REVIEWER_IPC } from '../../shared/reviewer'
-import { createLogger } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { runReview as RunReview } from './orchestrator'
+import {
+  resolveCorrectionResume,
+  isCorrectionResumeScopeCurrent,
+  type CorrectionResume
+} from './correction-resume'
 import { flagStaleReviews } from './stale-reviews'
 import { ReviewRepository } from './repository'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -25,6 +32,7 @@ import { getProjectDbClient } from '../projects/prisma-client'
 import { SessionRepository } from '../session-persistence/repository'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
+import type { HostArtifactVersionRecord } from '../project-files/repository'
 import { acquireDataRootWriter } from '../storage/migration-state'
 import { ReviewerProjectRuntimeOwner, type ReviewerProjectAdmission } from './project-runtime-owner'
 import {
@@ -123,7 +131,8 @@ type ReviewerIpcOptions = {
   storageRoot?: string
   // Optional override for the data root (artifacts) (for testing).
   dataRoot?: string
-  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
+  managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'> &
+    Partial<Pick<ManagedFileVersionService, 'openExactVersionContent'>>
   artifactCatalog?: {
     readHostArtifactCatalog(request: {
       projectId: string
@@ -137,6 +146,11 @@ type ReviewerIpcOptions = {
         versionId: string
       }>
     >
+    // Optional so existing test doubles keep the per-version fallback.
+    readHostArtifactVersionRecords?(request: {
+      projectId: string
+      versionIds: readonly string[]
+    }): Promise<HostArtifactVersionRecord[]>
   }
   artifactProvenanceRepository?: Pick<ArtifactProvenanceRepository, 'getReviewerVersionTrace'> &
     Partial<Pick<ArtifactProvenanceRepository, 'resolveReviewerTurnFileEvidence'>>
@@ -177,9 +191,11 @@ type ReviewerIpcOptions = {
 }
 
 type ReviewerCommandOwner = Readonly<{
+  onSessionUpdated: (session: PersistedChatSession) => Promise<void>
   run: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   triggerReview: (request: ReviewRunRequest) => Promise<ReviewRunResult>
   getForSession: (request: ReviewSessionRequest) => Promise<ReviewWithChecks[]>
+  getReviewLog: (request: ReviewLogRequest) => Promise<ReviewerLogEntry[]>
   abort: (request: ReviewSessionRequest) => void
   abortFixLoop: (request: ReviewSessionRequest) => void
 }>
@@ -206,6 +222,7 @@ const createInFlightReviewStart = (): InFlightReviewStart => {
 // Owns reviewer arbitration and fix-loop cancellation independently from any command transport.
 // The triggerReview alias preserves the existing direct-call result returned by IPC registration.
 const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerCommandOwner => {
+  const reviewSettlements = new Map<string, Set<Promise<void>>>()
   const storageRoot = options.storageRoot ?? resolveConfigRoot()
   const dataRoot = options.dataRoot ?? resolveDataRoot()
   const artifactProvenanceRepository = options.artifactProvenanceRepository
@@ -283,6 +300,51 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
           }
         }
       : undefined
+  // The list load batches the exact versions referenced by the returned Reviews. The project catalog
+  // only exposes current heads, so historical reviewed versions still need this exact-version path.
+  // Any miss (or a batch failure) falls back to the per-version resolver above.
+  const createLoadArtifactVersionResolver = (
+    reviews: ReviewWithChecks[]
+  ): ArtifactVersionContentResolver | undefined => {
+    if (!resolveArtifactVersion) return undefined
+    const readBatch = options.artifactCatalog?.readHostArtifactVersionRecords
+    const openExact = options.managedFileVersions?.openExactVersionContent
+    const projectId = reviews[0]?.projectId
+    if (!readBatch || !openExact || !projectId) return resolveArtifactVersion
+    const versionIds = [...new Set(reviews.flatMap((review) => review.scope.artifactVersionIds))]
+    if (versionIds.length === 0) return resolveArtifactVersion
+
+    let batch: Promise<Map<string, HostArtifactVersionRecord>> | undefined
+    const loadBatch = (): Promise<Map<string, HostArtifactVersionRecord>> => {
+      batch ??= readBatch
+        .call(options.artifactCatalog, { projectId, versionIds })
+        .then((records) => new Map(records.map((record) => [record.versionId, record])))
+        .catch((error: unknown) => {
+          log.warn('review staleness batch lookup failed', { error: toErrorMessage(error) })
+          return new Map<string, HostArtifactVersionRecord>()
+        })
+      return batch
+    }
+
+    return async (request) => {
+      const record = (await loadBatch()).get(request.versionId)
+      if (!record) return resolveArtifactVersion(request)
+      if (request.sessionId && record.sessionId !== request.sessionId) {
+        return resolveArtifactVersion(request)
+      }
+      const lease = await openExact.call(options.managedFileVersions, record)
+      return {
+        path: lease.path,
+        filename: lease.filename,
+        ...(lease.contentType ? { contentType: lease.contentType } : {}),
+        checksum: lease.checksum,
+        size: lease.size,
+        readRange: lease.readRange,
+        verifyUnchanged: lease.verifyUnchanged,
+        close: lease.close
+      }
+    }
+  }
   const projectRuntime = options.projectRuntime ?? new ReviewerProjectRuntimeOwner()
   // Per-session abort capabilities for active and queued fix loops. Keyed by the main session id
   // (not the reviewer session id). Project deletion owns the same signal, so user cancellation and
@@ -304,20 +366,36 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // audited turn has since changed (e.g. an artifact was edited after the review completed) so the UI
   // does not present a stale verdict as current.
   const getForSession = async (request: ReviewSessionRequest): Promise<ReviewWithChecks[]> => {
-    await ensureRecovery()
-    const reviews = await reviewRepository.getReviewsForProjectSession(
-      request.projectId,
-      request.appSessionId
-    )
-    let session: PersistedChatSession | undefined
     try {
-      session = await sessionReader.loadSession(request.projectId, request.appSessionId)
-    } catch {
-      return reviews.map((review) =>
-        review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+      await ensureRecovery()
+      const reviews = await reviewRepository.getReviewSummariesForProjectSession(
+        request.projectId,
+        request.appSessionId
       )
+      let session: PersistedChatSession | undefined
+      try {
+        session = await sessionReader.loadSession(request.projectId, request.appSessionId)
+      } catch {
+        return reviews.map((review) =>
+          review.lifecycle === 'complete' ? { ...review, verificationUnavailable: true } : review
+        )
+      }
+      return flagStaleReviews(
+        reviews,
+        session,
+        dataRoot,
+        createLoadArtifactVersionResolver(reviews)
+      )
+    } catch (error) {
+      // Preserve the rejection for the caller, but keep the cause diagnosable. The transport's
+      // response-byte budget failure happens after this handler resolves and is logged separately.
+      log.error('review history load failed', {
+        projectId: request.projectId,
+        sessionId: request.appSessionId,
+        ...errorLogFields(error)
+      })
+      throw error
     }
-    return flagStaleReviews(reviews, session, dataRoot, resolveArtifactVersion)
   }
 
   const abortFixLoop = (request: ReviewSessionRequest): void => {
@@ -348,7 +426,8 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
   // of us fabricating a non-retriable error review.
   const triggerAdmittedReview = async (
     request: ReviewRunRequest,
-    projectAdmission: ReviewerProjectAdmission
+    projectAdmission: ReviewerProjectAdmission,
+    correctionResume?: CorrectionResume
   ): Promise<ReviewRunResult> => {
     const {
       sessionId,
@@ -396,7 +475,7 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     // store check could only approximate (that check races across processes). If any review already
     // exists for this turn, an auto request is a duplicate → refuse. Manual re-runs (Request review,
     // stale/error Re-run) set origin='manual' and skip this so the user can force a fresh review.
-    if (request.origin === 'auto') {
+    if (request.origin === 'auto' && !correctionResume) {
       try {
         const existing = await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
         if (existing.some((review) => review.turnMessageId === turnMessageId)) {
@@ -478,6 +557,31 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
       return finishBeforeBackground({ started: false, reason: 'run-failed' })
     }
 
+    if (correctionResume) {
+      try {
+        const current = resolveCorrectionResume(
+          session,
+          await reviewRepository.getReviewsForProjectSession(projectId, sessionId)
+        )
+        if (
+          !current ||
+          current.resumeCorrection.turnMessageId !== correctionResume.resumeCorrection.turnMessageId
+        ) {
+          return finishBeforeBackground({ started: false, reason: 'already-reviewed' })
+        }
+        if (!(await isCorrectionResumeScopeCurrent(current, dataRoot, resolveArtifactVersion))) {
+          return finishBeforeBackground({ started: false, reason: 'run-failed' })
+        }
+        correctionResume = current
+      } catch (error) {
+        log.warn('correction resume scope validation failed', {
+          sessionId,
+          error: toErrorMessage(error)
+        })
+        return finishBeforeBackground({ started: false, reason: 'load-failed' })
+      }
+    }
+
     log.info('review triggered', { sessionId, turnMessageId })
 
     let runReview: typeof RunReview
@@ -540,10 +644,18 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         activeReviewAbortControllers.get(effectiveMainSessionKey) ?? new Set<() => void>()
       activeControllers.add(projectAdmission.abort)
       activeReviewAbortControllers.set(effectiveMainSessionKey, activeControllers)
+      let settleReview!: () => void
+      const settlement = new Promise<void>((resolve) => {
+        settleReview = resolve
+      })
+      const settlements = reviewSettlements.get(effectiveMainSessionKey) ?? new Set<Promise<void>>()
+      settlements.add(settlement)
+      reviewSettlements.set(effectiveMainSessionKey, settlements)
       let releaseFixLoop: (() => void) | undefined
       let fixLoopBroadcastStarted = false
 
       void runReview({
+        correctionResume,
         sessionId,
         turnMessageId,
         scopeTurnMessageId,
@@ -673,6 +785,9 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
               })
             })
             projectAdmission.release()
+            settlements.delete(settlement)
+            if (settlements.size === 0) reviewSettlements.delete(effectiveMainSessionKey)
+            settleReview()
           }
         })
     }
@@ -682,7 +797,10 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
     return await inFlightStart.promise
   }
 
-  const triggerReview = (request: ReviewRunRequest): Promise<ReviewRunResult> => {
+  const triggerReview = (
+    request: ReviewRunRequest,
+    correctionResume?: CorrectionResume
+  ): Promise<ReviewRunResult> => {
     const admitReview = (): Promise<ReviewRunResult> => {
       let projectAdmission: ReviewerProjectAdmission
       const releases: (() => void)[] = []
@@ -707,17 +825,67 @@ const createReviewerCommandOwner = (options: ReviewerIpcOptions): ReviewerComman
         releases.forEach((release) => release())
         return Promise.reject(error)
       }
-      return triggerAdmittedReview(request, projectAdmission).catch((error: unknown) => {
-        projectAdmission.release()
-        throw error
-      })
+      return triggerAdmittedReview(request, projectAdmission, correctionResume).catch(
+        (error: unknown) => {
+          projectAdmission.release()
+          throw error
+        }
+      )
     }
     return options.withProjectAvailable
       ? options.withProjectAvailable(request.projectId, admitReview)
       : admitReview()
   }
 
-  return { run: triggerReview, triggerReview, getForSession, abort, abortFixLoop }
+  const pendingCompletions = new Set<string>()
+  const onSessionUpdated = async (hint: PersistedChatSession): Promise<void> => {
+    if (
+      !hint.runtimeTranscriptLastRun ||
+      hint.activeRun ||
+      hint.resumeRecovery ||
+      hint.autoReviewEnabled !== true
+    )
+      return
+    const key = `${hint.projectId}\0${hint.id}`
+    if (pendingCompletions.has(key)) return
+    pendingCompletions.add(key)
+    try {
+      // Normal completion remains owned by its running loop. Stop/Resume may finish before the
+      // aborted owner releases; never let its finally block unlock or erase the new owner.
+      await Promise.all(reviewSettlements.get(key) ?? [])
+      const session = await sessionReader.loadSession(hint.projectId, hint.id)
+      if (!session) return
+      const reviews = await reviewRepository.getReviewsForProjectSession(hint.projectId, hint.id)
+      const resume = resolveCorrectionResume(session, reviews)
+      if (!resume) return
+      await triggerReview(
+        {
+          projectId: session.projectId,
+          sessionId: session.id,
+          mainSessionId: session.id,
+          turnMessageId: resume.sourceReview.turnMessageId,
+          origin: 'auto'
+        },
+        resume
+      )
+    } catch (error) {
+      log.error('correction resume assessment failed to start', {
+        sessionId: hint.id,
+        error: toErrorMessage(error)
+      })
+    } finally {
+      pendingCompletions.delete(key)
+    }
+  }
+  return {
+    run: (request) => triggerReview(request),
+    triggerReview: (request) => triggerReview(request),
+    onSessionUpdated,
+    getForSession,
+    getReviewLog: (request) => reviewRepository.getReviewLog(request),
+    abort,
+    abortFixLoop
+  }
 }
 
 // Registers the legacy Electron adapter against an injectable owner. A future Host command
@@ -729,6 +897,9 @@ const registerReviewerIpcHandlers = (
   ipcMainHandle(REVIEWER_IPC.RUN, (_event, request: ReviewRunRequest) => owner.run(request))
   ipcMainHandle(REVIEWER_IPC.GET_FOR_SESSION, (_event, request: ReviewSessionRequest) =>
     owner.getForSession(request)
+  )
+  ipcMainHandle(REVIEWER_IPC.GET_REVIEW_LOG, (_event, request: ReviewLogRequest) =>
+    owner.getReviewLog(request)
   )
   ipcMainHandle(REVIEWER_IPC.ABORT_FIX_LOOP, (_event, request: ReviewSessionRequest) =>
     owner.abortFixLoop(request)

@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
-import { defaultDiscoveryDeps } from './environment-discovery'
+import { defaultDiscoveryDeps } from '@aipoch/environment'
 import { NotebookKernelExecutor } from './kernel-executor'
 
 const prefix = process.env.OPEN_SCIENCE_TEST_R_CONDA_PREFIX
@@ -93,7 +93,7 @@ it.skipIf(process.platform !== 'win32' || !prefix)(
   async () => {
     const { cp } = await import('node:fs/promises')
     const { existsSync } = await import('node:fs')
-    const { verifyExecutable } = await import('./provisioner-runtime')
+    const { verifyExecutable } = await import('./environment-process')
     const root = await mkdtemp(join(tmpdir(), 'os-partial-r-verification-'))
     const rHome = join(root, 'Lib', 'R')
     const bin = join(rHome, 'bin', 'x64')

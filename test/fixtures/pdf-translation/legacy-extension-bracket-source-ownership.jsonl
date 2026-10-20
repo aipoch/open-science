@@ -1,0 +1,4 @@
+{"name":"legacy-opening-bracket-is-not-an-hour-unit","symbol":"h","extension":true}
+{"name":"legacy-closing-bracket-is-not-a-literal-letter","symbol":"i","extension":true}
+{"name":"ordinary-hour-unit-remains-translatable","symbol":"h","extension":false}
+{"name":"ordinary-letter-label-retains-its-source","symbol":"i","extension":false}

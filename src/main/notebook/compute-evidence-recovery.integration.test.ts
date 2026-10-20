@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
 import {
   mkdir,
@@ -367,3 +368,5 @@ fs.rmSync = function (path, options) {
     }
   )
 })
+
+configureTestRuntimeMetadata()

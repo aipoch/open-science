@@ -1,14 +1,10 @@
 import { z } from 'zod'
+import type { TextAnnotationAnchor, TextAnnotationSource } from './annotation-contract'
+import { ANNOTATION_LIMITS, resolveManagedProjectFileAnnotationIdentity } from './annotations'
 import { defineApplicationCommandContract, validationCodec } from './application-command-contract'
 import {
-  ANNOTATION_LIMITS,
-  resolveManagedProjectFileAnnotationIdentity,
-  type TextAnnotationSource,
-  type TextAnnotationAnchor
-} from './annotations'
-import {
-  sanitizePdfBookmarkTarget,
   sanitizePdfBookmarkSource,
+  sanitizePdfBookmarkTarget,
   type PdfBookmarkSource,
   type PdfBookmarkTarget
 } from './pdf-bookmarks'

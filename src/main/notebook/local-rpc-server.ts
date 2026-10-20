@@ -1,118 +1,62 @@
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { artifactSaveRequestSchema } from '../artifacts/save-request'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
+import {
+  NotebookExecutionStopError,
+  isNotebookKernelStopResolved,
+  notebookErrorRecovery
+} from '../../shared/notebook-execution-error'
+import { artifactSaveRequestSchema } from '../artifacts/save-request'
+import { executionRecoveryContext } from './execution-recovery'
+import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
-import {
-  computeProbeSnapshot,
-  type AgentComputeHostSummary,
-  type ComputeHost,
-  type ComputeHostDetails
-} from '../../shared/compute'
-import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
-import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import {
-  NotebookBackgroundRunError,
-  type NotebookRunProvenanceContext
-} from '../../shared/notebook'
-import type { HostArtifactCatalogItem } from '../../shared/project-files'
-import {
-  createArtifactVersionLocator,
-  parseArtifactVersionLocator
-} from '../../shared/artifact-provenance'
-import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
-import type { NotebookRpcConnection } from './mcp-server'
-import { NotebookControlCompletionCapturedError } from './execution-owner'
-import {
-  NOTEBOOK_LOCAL_RPC_METHODS,
-  isNotebookLocalRpcMethod,
-  opensNotebookInputRun,
-  resolveNotebookLocalRpcHandler,
-  type NotebookLocalRpcCapability
-} from './local-rpc-notebook-adapter'
-import type {
-  NotebookInputRegistry,
-  NotebookInputRunLease,
-  PreparedNotebookTurnInputs,
-  RegisterNotebookTurnInputsRequest
-} from './input-registry'
-import type {
-  ConversationSkillImporter,
-  ConversationSkillImportRequest
-} from '../skills/conversation-import'
-import type {
-  ArtifactRpcCapabilityBinding,
-  SaveArtifactVersionRequest,
-  ArtifactWriteSourceScope,
-  ArtifactRpcMethod,
-  ArtifactWriteReservation,
-  ArtifactVersionFile,
-  CreateArtifactVersionRequest,
-  ReleaseArtifactWriteReservationRequest,
-  ReserveArtifactWriteRequest,
-  ReplayArtifactVersionRequest
-} from '../../shared/artifact-provenance'
-import {
-  sanitizeAgentUserChoiceRequest,
-  type AgentUserChoiceRequest,
-  type AgentUserChoiceResult
-} from '../../shared/elicitation'
+import { computeProbeSnapshot, type ComputeHost, type ComputeHostDetails } from '@aipoch/compute'
+import { type AgentComputeHostSummary } from '../../shared/compute'
+
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import {
   stripAgentsReservedParams,
   type TrustedCallingSession,
   type TrustedControlInvocationIdentity
 } from '../../shared/agents-contract'
-import {
-  NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS,
-  NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
-  type NotebookExecutionRpcMethod
-} from '../../shared/notebook'
-import {
-  listenForLocalRpc,
-  localRpcServerLogFields,
-  type LocalRpcListenOptions
-} from '../local-rpc-transport'
-import { createLogger, errorLogFields } from '../logger'
-import {
-  LOCAL_RESOURCE_BUDGETS,
-  ResourceBudgetExceededError,
-  PendingRequestBudget,
-  PendingRequestLimitError,
-  readBoundedJsonBody
-} from '../resource-budget'
-import { PlanCommandError } from '../../shared/session-plan/contract'
-import type { HostLlmCallInput, HostLlmResult, HostLlmBatchItem } from './host-model-service'
 import type {
-  AuthenticatedDelegateCaller,
-  DurableDelegateRequest,
-  DurableDelegatedWork
-} from '../delegation/durable-delegated-work'
+  ArtifactRpcCapabilityBinding,
+  ArtifactRpcMethod,
+  ArtifactVersionFile,
+  ArtifactWriteReservation,
+  ArtifactWriteSourceScope,
+  CreateArtifactVersionRequest,
+  ReleaseArtifactWriteReservationRequest,
+  ReplayArtifactVersionRequest,
+  ReserveArtifactWriteRequest,
+  SaveArtifactVersionRequest
+} from '../../shared/artifact-provenance'
 import {
-  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
-  assertDelegateInputShape,
-  assertDelegateRequestShape
-} from '../delegation/delegated-work-admission'
-import { hostSdkHelp } from '../host-sdk/help'
-import {
-  projectHostCapabilities,
-  type HostCapabilityProjection
-} from '../host-sdk/capability-projection'
-import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../shared/artifact-version-locator'
 import { createNestedDelegateInvocationId } from '../../shared/delegated-caller-source'
-import { StructuredOutputError } from '../delegation/structured-output'
-import type {
-  HostViewImageContext,
-  HostViewImageResult,
-  TransientViewImage
-} from './host-view-image-service'
+import {
+  sanitizeAgentUserChoiceRequest,
+  type AgentUserChoiceRequest,
+  type AgentUserChoiceResult
+} from '../../shared/elicitation'
+import type { HostLineageGraph, HostLineageVersion } from '../../shared/host-lineage'
+import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   memoryAgentRememberRequestSchema,
   memoryAgentSearchRequestSchema,
   type MemoryAgentContext
 } from '../../shared/memory'
-import type { MemoryService } from '../memory/service'
-import { withDataRootWrite } from '../storage/migration-state'
-import { isRecord } from '../value-guards'
+import {
+  NOTEBOOK_REPL_DEFAULT_TIMEOUT_MS,
+  NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS,
+  NotebookBackgroundRunError,
+  type NotebookExecutionRpcMethod,
+  type NotebookRunProvenanceContext
+} from '../../shared/notebook'
+import type { HostArtifactCatalogItem } from '../../shared/project-files'
+import { PlanCommandError } from '../../shared/session-plan/contract'
+import { createUploadVersionReference, parseUploadVersionReference } from '../../shared/uploads'
 import type {
   OpenWslTerminalRequest,
   SelectWslProfileRequest,
@@ -121,6 +65,62 @@ import type {
   WslSetupStatus,
   WslSupportHandoff
 } from '../../shared/wsl-setup'
+import type { AuthenticatedDelegateCaller } from '../delegation/authenticated-delegate-caller'
+import type { DurableDelegateRequest } from '../delegation/delegate-request-contract'
+import {
+  DELEGATION_INPUT_UNAVAILABLE_MESSAGE,
+  assertDelegateInputShape,
+  assertDelegateRequestShape
+} from '../delegation/delegated-work-admission'
+import type { DurableDelegatedWork } from '../delegation/durable-delegated-work-contract'
+import { StructuredOutputError } from '../delegation/structured-output'
+import {
+  projectHostCapabilities,
+  type HostCapabilityProjection
+} from '../host-sdk/capability-projection'
+import { parseCollectRpcCall, parseDelegateRpcCall } from '../host-sdk/delegate-contract'
+import { hostSdkHelp } from '../host-sdk/help'
+import {
+  listenForLocalRpc,
+  localRpcServerLogFields,
+  type LocalRpcListenOptions
+} from '../local-rpc-transport'
+import type { MemoryService } from '../memory/service'
+import {
+  LOCAL_RESOURCE_BUDGETS,
+  PendingRequestBudget,
+  PendingRequestLimitError,
+  ResourceBudgetExceededError,
+  readBoundedJsonBody
+} from '../resource-budget'
+import type {
+  ConversationSkillImportRequest,
+  ConversationSkillImporter
+} from '../skills/conversation-import'
+import { withDataRootWrite } from '../storage/migration-state'
+import { isRecord } from '../value-guards'
+import { NotebookControlCompletionCapturedError } from './execution-owner'
+import type { HostLlmBatchItem, HostLlmCallInput, HostLlmResult } from './host-model-contract'
+import type {
+  HostViewImageContext,
+  HostViewImageResult,
+  TransientViewImage
+} from './host-view-image-service'
+import type {
+  NotebookInputRegistry,
+  NotebookInputRunLease,
+  PreparedNotebookTurnInputs,
+  RegisterNotebookTurnInputsRequest
+} from './input-registry'
+import {
+  NOTEBOOK_LOCAL_RPC_METHODS,
+  isNotebookLocalRpcMethod,
+  markRuntimeBindingHostAdmission,
+  opensNotebookInputRun,
+  resolveNotebookLocalRpcHandler,
+  type NotebookLocalRpcCapability
+} from './local-rpc-notebook-adapter'
+import type { NotebookRpcConnection } from './mcp-server'
 
 const log = createLogger('notebook:local-rpc')
 const MAX_COMPLETED_COMPUTE_SUBMISSIONS_PER_SESSION = 100
@@ -225,7 +225,7 @@ type NotebookLocalRpcServerOptions = {
       active_count: number
       queued_count: number
       provider_ceilings: Record<string, number>
-      queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
+      queue_blocked_reason?: import('@aipoch/compute').ComputeQueueBlockedReason
     }>
   }
   skillImporter?: Pick<ConversationSkillImporter, 'request'>
@@ -297,6 +297,11 @@ type NotebookLocalRpcServerOptions = {
     ): Promise<unknown>
   }
   hostSessions?: {
+    read?(
+      sessionId: unknown,
+      options: unknown,
+      context: { projectId: string; sessionId: string; callerRole: 'main' }
+    ): Promise<unknown>
     list(
       options: unknown,
       context: { projectId: string; sessionId: string; callerRole: 'main' }
@@ -443,6 +448,8 @@ type DelegatedNotebookConnection = NotebookRpcConnection & {
 type BoundArtifactTurn = ActiveArtifactTurnBinding & {
   pendingRequests: Set<Promise<void>>
   stopFailure?: NotebookExecutionStopError
+  // Keep every failure identity: a newer epoch must not hide an older unresolved process.
+  kernelStopFailures?: Set<NotebookExecutionStopError>
 }
 
 type NotebookRpcRequestLifecycle = {
@@ -705,6 +712,19 @@ class NotebookLocalRpcServer {
   private static readonly artifactRequestBudget = new PendingRequestBudget()
   private readonly artifactRpcCapabilities = new Map<string, ArtifactRpcCapability>()
   private readonly drainingArtifactRpcCapabilities = new Map<string, Promise<void>>()
+  private readonly runtimeBindingAdmissions = new Map<
+    string,
+    Map<
+      string,
+      {
+        promptMessageId: string
+        language: string
+        runtimeId: string
+        agentFrameId: string
+        attemptId?: string
+      }
+    >
+  >()
   private readonly executionAuthorizations = new Map<
     string,
     Map<NotebookExecutionRpcMethod, NotebookExecutionAuthorization | 'ambiguous'>
@@ -885,6 +905,7 @@ class NotebookLocalRpcServer {
     this.hostViewImage?.shutdown()
     this.sessionRpcTokens.clear()
     this.skillImportRpcTokens.clear()
+    this.runtimeBindingAdmissions.clear()
     this.executionAuthorizations.clear()
     this.claimedDurableExecutionAuthorizations.clear()
     this.consumedExecutionToolCalls.clear()
@@ -1029,7 +1050,15 @@ class NotebookLocalRpcServer {
   }
 
   private revokeSessionCapability(token: string): void {
-    this.sessionRpcCapabilities.get(token)?.capabilityLifetime?.abort()
+    const capability = this.sessionRpcCapabilities.get(token)
+    capability?.capabilityLifetime?.abort()
+    if (capability?.agentFrameId) {
+      this.releaseRuntimeBindingAdmissions(
+        capability.sessionId,
+        capability.agentFrameId,
+        capability.delegatedNotebook?.attemptId
+      )
+    }
     this.codeWriteProducers.get(token)?.controller.abort()
     this.codeWriteProducers.delete(token)
     this.sessionRpcCapabilities.delete(token)
@@ -1091,6 +1120,7 @@ class NotebookLocalRpcServer {
     for (const ownedSessionId of ownedSessionIds) {
       this.cancelCodeWriteProducers(ownedSessionId)
       this.sessionSpecialists.delete(ownedSessionId)
+      this.releaseRuntimeBindingAdmissions(ownedSessionId)
       this.executionAuthorizations.delete(ownedSessionId)
       this.claimedDurableExecutionAuthorizations.delete(ownedSessionId)
       this.consumedExecutionToolCalls.delete(ownedSessionId)
@@ -1102,6 +1132,134 @@ class NotebookLocalRpcServer {
       }
     }
     this.onSessionReleased?.(sessionId)
+  }
+
+  private releaseRuntimeBindingAdmissions(
+    sessionId: string,
+    agentFrameId?: string,
+    attemptId?: string
+  ): void {
+    const receipts = this.runtimeBindingAdmissions.get(sessionId)
+    if (!receipts) return
+    for (const [key, receipt] of receipts) {
+      // Main turn cleanup must leave independently running delegated Attempts fenced.
+      if (
+        receipt.attemptId === attemptId &&
+        (!agentFrameId || receipt.agentFrameId === agentFrameId)
+      )
+        receipts.delete(key)
+    }
+    if (receipts.size === 0) this.runtimeBindingAdmissions.delete(sessionId)
+  }
+
+  // Resolve the same host-owned lane used by authenticated RPC; a child runtime's local ACP
+  // Session identity is never sufficient to select its parent Session or Notebook Frame.
+  runtimeBindingAdmissionRequest(
+    request: import('../../shared/notebook').NotebookSessionRequest & {
+      language: import('../../shared/notebook').NotebookLanguage
+      runtimeId: string
+    },
+    connection?: NotebookRpcConnection
+  ): (typeof request & { delegatedWorkAttemptId?: string }) | undefined {
+    const capability = connection ? this.sessionRpcCapabilities.get(connection.token) : undefined
+    if (connection && !capability) return undefined
+    const delegated = capability?.delegatedNotebook
+    if (delegated) {
+      if (delegated.revoked) return undefined
+      return {
+        ...request,
+        sessionId: capability.sessionId,
+        projectId: capability.projectId,
+        workspaceCwd: delegated.workspaceCwd,
+        provenanceContext: delegated.provenanceContext,
+        delegatedWorkAttemptId: delegated.attemptId
+      }
+    }
+    const sessionId = this.sessionAliases.get(request.sessionId) ?? request.sessionId
+    const turn = this.activeArtifactTurnBindings.get(sessionId)
+    return turn
+      ? {
+          ...request,
+          sessionId,
+          projectId: turn.projectId,
+          provenanceContext: turn.provenanceContext
+        }
+      : undefined
+  }
+
+  // Receipts only require a fresh host decision; they never authorize execution or a binding.
+  authorizeRuntimeBindingAdmission(
+    admission: {
+      sessionId: string
+      toolCallId: string
+      promptMessageId: string
+      language: import('../../shared/notebook').NotebookLanguage
+      runtimeId: string
+    },
+    connection?: NotebookRpcConnection
+  ): boolean {
+    const request = this.runtimeBindingAdmissionRequest(
+      { ...admission, workspaceCwd: '' },
+      connection
+    )
+    const context = request?.provenanceContext
+    if (!request || !context || context.promptMessageId !== admission.promptMessageId) return false
+    const receipts = this.runtimeBindingAdmissions.get(request.sessionId) ?? new Map()
+    const key = JSON.stringify([
+      context.agentFrameId,
+      request.delegatedWorkAttemptId,
+      admission.toolCallId
+    ])
+    const receipt = {
+      promptMessageId: admission.promptMessageId,
+      language: admission.language,
+      runtimeId: admission.runtimeId,
+      agentFrameId: context.agentFrameId,
+      attemptId: request.delegatedWorkAttemptId
+    }
+    const existing = receipts.get(key)
+    if (existing && JSON.stringify(existing) !== JSON.stringify(receipt)) return false
+    receipts.set(key, receipt)
+    this.runtimeBindingAdmissions.set(request.sessionId, receipts)
+    return true
+  }
+
+  private claimRuntimeBindingAdmission(
+    sessionId: string,
+    params: Record<string, unknown>,
+    capability: NotebookRpcSessionBinding
+  ): boolean {
+    const receipts = this.runtimeBindingAdmissions.get(sessionId)
+    if (!receipts?.size) return false
+    const context =
+      capability.delegatedNotebook?.provenanceContext ??
+      this.activeArtifactTurnBindings.get(sessionId)?.provenanceContext
+    const attemptId = capability.delegatedNotebook?.attemptId
+    let ownsReceipt = false
+    for (const [key, receipt] of receipts) {
+      if (
+        receipt.agentFrameId !== capability.agentFrameId ||
+        receipt.attemptId !== attemptId ||
+        receipt.language !== params.language
+      )
+        continue
+      ownsReceipt = true
+      if (
+        receipt.promptMessageId === context?.promptMessageId &&
+        receipt.language === params.language &&
+        receipt.runtimeId === params.runtimeId
+      ) {
+        receipts.delete(key)
+        if (receipts.size === 0) this.runtimeBindingAdmissions.delete(sessionId)
+        return true
+      }
+    }
+    if (ownsReceipt)
+      throw new RpcHttpError(
+        409,
+        'Notebook Runtime binding does not match its pending host admission.'
+      )
+    return false
   }
 
   // Creates the app-owned half of an exact ACP-tool/Notebook-Run join before permission is released.
@@ -1348,6 +1506,7 @@ class NotebookLocalRpcServer {
       ]),
       delegatedWorkRole: 'delegate',
       delegatedWorkAttemptId: scope.attemptId,
+      capabilityLifetime: new AbortController(),
       delegatedNotebook
     })
     let revokePromise: Promise<void> | undefined
@@ -1451,6 +1610,7 @@ class NotebookLocalRpcServer {
       beginControlInvocation(context: TrustedControlInvocationIdentity): () => void
       completeControlInvocation(controlInvocationId: string): Promise<readonly TransientViewImage[]>
       discardControlInvocation(controlInvocationId: string): void
+      revoke: () => void
       release: () => void
     }
   > {
@@ -1509,6 +1669,9 @@ class NotebookLocalRpcServer {
         this.hostViewImage?.discard(controlInvocationId)
         ownedControlInvocationIds.delete(controlInvocationId)
       },
+      // Epoch retirement closes RPC admission immediately; already produced images remain owned
+      // by their invocation until its completion gate accepts or discards them.
+      revoke: () => this.revokeSessionCapability(token),
       release: () => {
         for (const controlInvocationId of ownedControlInvocationIds) {
           this.hostViewImage?.discard(controlInvocationId)
@@ -1534,6 +1697,7 @@ class NotebookLocalRpcServer {
         previous.provenanceContext.promptMessageId !== binding.provenanceContext.promptMessageId)
     ) {
       this.cancelCodeWriteProducers(sessionId)
+      this.releaseRuntimeBindingAdmissions(sessionId, previous.provenanceContext.agentFrameId)
       this.executionAuthorizations.delete(sessionId)
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
@@ -1574,6 +1738,7 @@ class NotebookLocalRpcServer {
     if (this.activeArtifactTurnBindings.get(sessionId) === binding) {
       this.cancelCodeWriteProducers(sessionId)
       this.activeArtifactTurnBindings.delete(sessionId)
+      this.releaseRuntimeBindingAdmissions(sessionId, binding.provenanceContext.agentFrameId)
       this.executionAuthorizations.delete(sessionId)
       this.claimedDurableExecutionAuthorizations.delete(sessionId)
       this.consumedExecutionToolCalls.delete(sessionId)
@@ -1584,6 +1749,10 @@ class NotebookLocalRpcServer {
       if (ownedTurns.size === 0) this.artifactTurnBindingsByExecution.delete(sessionId)
     }
     if (binding.stopFailure) throw binding.stopFailure
+    const unresolvedKernel = [...(binding.kernelStopFailures?.values() ?? [])].find(
+      (failure) => !isNotebookKernelStopResolved(failure)
+    )
+    if (unresolvedKernel) throw unresolvedKernel
   }
 
   async prepareNotebookTurnInputs(
@@ -1779,7 +1948,12 @@ class NotebookLocalRpcServer {
     }
     const recordStopFailure = (error: unknown): void => {
       if (error instanceof NotebookExecutionStopError && activeRequest.foregroundTurn) {
-        activeRequest.foregroundTurn.binding.stopFailure ??= error
+        const binding = activeRequest.foregroundTurn.binding
+        const kernel = notebookErrorRecovery(error)?.kernel
+        if (kernel) {
+          binding.kernelStopFailures ??= new Set()
+          binding.kernelStopFailures.add(error)
+        } else binding.stopFailure ??= error
       }
     }
     lifecycle.activeRequests.add(activeRequest)
@@ -1831,6 +2005,7 @@ class NotebookLocalRpcServer {
       // A session capability can outlive its turn. Snapshot before reading the body so a
       // slow request cannot acquire a later turn's authority after cleanup has returned.
       const initialSessionBinding = this.sessionRpcCapabilities.get(bearerToken)
+      const initialControlInvocation = initialSessionBinding?.activeControlInvocation
       const initialSessionId = initialSessionBinding
         ? (this.sessionAliases.get(initialSessionBinding.sessionId) ??
           initialSessionBinding.sessionId)
@@ -1882,7 +2057,7 @@ class NotebookLocalRpcServer {
             !sessionBinding.delegatedNotebook &&
             sessionBinding.delegatedWorkRole !== 'delegate' &&
             params.background !== true &&
-            ['execute', 'runCell', 'executeControl', 'executeShell'].includes(method)
+            ['execute', 'runCell', 'executeControl', 'executeShell', 'restart'].includes(method)
           ) {
             const sessionId =
               this.sessionAliases.get(sessionBinding.sessionId) ?? sessionBinding.sessionId
@@ -2042,8 +2217,9 @@ class NotebookLocalRpcServer {
             !sessionBinding.delegatedNotebook &&
             (!sessionBinding.projectId ||
               !sessionBinding.agentFrameId ||
-              !sessionBinding.activeControlInvocation?.toolInvocationId ||
-              !sessionBinding.activeControlInvocation.originatingUserMessageId)
+              sessionBinding.activeControlInvocation !== initialControlInvocation ||
+              !initialControlInvocation?.toolInvocationId ||
+              !initialControlInvocation.originatingUserMessageId)
           ) {
             throw new RpcHttpError(
               403,
@@ -2124,6 +2300,7 @@ class NotebookLocalRpcServer {
                   frame_id: sessionBinding.agentFrameId,
                   caller_role: sessionBinding.delegatedWorkRole,
                   attempt_id: sessionBinding.delegatedWorkAttemptId,
+                  root_execution_id: initialControlInvocation?.rootExecutionId,
                   permissionPrompts: sessionBinding.delegatedNotebook?.permissionPrompts,
                   origin_message_id:
                     sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
@@ -2140,6 +2317,7 @@ class NotebookLocalRpcServer {
                     session_id: sessionBinding.sessionId,
                     frame_id: sessionBinding.agentFrameId,
                     attempt_id: sessionBinding.delegatedWorkAttemptId,
+                    root_execution_id: initialControlInvocation?.rootExecutionId,
                     origin_message_id:
                       sessionBinding.delegatedNotebook?.provenanceContext.promptMessageId ??
                       sessionBinding.activeControlInvocation?.originatingUserMessageId
@@ -2180,6 +2358,16 @@ class NotebookLocalRpcServer {
       // Resolve pre-session aliases before the runtime service looks up persistent state.
       if (method === 'planCall' && lifecycle.closing) disconnect.abort()
       let resolvedParams = { ...this.resolveSessionAlias(params) }
+      delete resolvedParams.rootExecutionId
+      // Background control runs also retain their submitting execution; they must never borrow
+      // a later foreground turn's delegation authority when their queued work starts.
+      if (
+        method === 'executeControl' &&
+        initialTurn &&
+        initialSessionBinding?.delegatedWorkRole !== 'delegate'
+      ) {
+        resolvedParams.rootExecutionId = initialTurn.ownerExecutionId
+      }
       delete resolvedParams.executionInvocationId
       delete resolvedParams.registeredHelperSkillIds
       const authenticatedBinding = authenticatedSessionBinding
@@ -2249,6 +2437,24 @@ class NotebookLocalRpcServer {
           resolvedParams = { ...resolvedParams, executionInvocationId }
         }
       }
+      if (
+        authenticatedBinding &&
+        method === 'bindRuntime' &&
+        typeof resolvedParams.sessionId === 'string' &&
+        this.claimRuntimeBindingAdmission(
+          resolvedParams.sessionId,
+          resolvedParams,
+          authenticatedBinding
+        )
+      ) {
+        markRuntimeBindingHostAdmission(resolvedParams)
+      }
+      if (authenticatedBinding?.delegatedNotebook && isNotebookLocalRpcMethod(method)) {
+        markTrustedNotebookBindingPermissionPrompts(
+          resolvedParams,
+          authenticatedBinding.delegatedNotebook.permissionPrompts
+        )
+      }
       writeProducerSignal?.throwIfAborted()
       const dispatchSignals = [
         disconnect.signal,
@@ -2298,8 +2504,10 @@ class NotebookLocalRpcServer {
       }
       if (response.destroyed) return
       const message = error instanceof Error ? error.message : String(error)
-      const serializedError =
-        error instanceof NotebookBackgroundRunError
+      const recovery = executionRecoveryContext(notebookErrorRecovery(error))
+      const serializedError = recovery
+        ? { code: 'notebook-kernel-exited', message, recovery }
+        : error instanceof NotebookBackgroundRunError
           ? { ...error.detail, message }
           : error instanceof BackgroundHostMethodUnsafeError
             ? error.detail
@@ -2626,6 +2834,8 @@ class NotebookLocalRpcServer {
       const context = { projectId, sessionId, callerRole: 'main' as const }
       if (params.op === 'list') return this.hostSessions.list(params.options, context)
       if (params.op === 'inspect') return this.hostSessions.inspect(params.session_id, context)
+      if (params.op === 'read' && this.hostSessions.read)
+        return this.hostSessions.read(params.session_id, params.options, context)
       throw new RpcHttpError(400, 'Unknown host Session operation.')
     }
 
@@ -3161,6 +3371,9 @@ class NotebookLocalRpcServer {
       }
       const parentSpecialistId = this.sessionSpecialists.get(sessionId)
       const caller: AuthenticatedDelegateCaller = {
+        ...(typeof params.root_execution_id === 'string'
+          ? { rootExecutionId: params.root_execution_id }
+          : {}),
         permissionPrompts: params.permissionPrompts === 'none' ? 'none' : undefined,
         session: { projectId, sessionId },
         frameId,

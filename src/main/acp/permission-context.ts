@@ -5,43 +5,45 @@ import type {
 } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
-  AcpPermissionGrant,
-  AcpPermissionRequest,
   AcpPermissionResponse,
-  AcpRuntimeEvent,
-  AcpPermissionSettlementState
+  AcpPermissionSettlementState,
+  AcpRuntimeEvent
 } from '../../shared/acp'
-import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { AcpPermissionGrant, AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import type { NotebookExecutionRpcMethod, ShellRuntimeBinding } from '../../shared/notebook'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
+import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { getAgentFramework, type AgentFramework } from '../agent-framework'
-import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import type { SessionPermissionRuntimeContext } from '../../shared/session-persistence'
-import type { NotebookExecutionRpcMethod } from '../../shared/notebook'
-import type { ShellRuntimeBinding } from '../../shared/notebook'
-import { shellRuntimeDialect } from '../notebook/shell-runtime'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
-import { createLogger } from '../logger'
+import { shellRuntimeDialect } from '../notebook/shell-runtime'
+import { logPermissionDiagnostic } from '../permission-grants/diagnostics'
+import type { PermissionGrantRegistry } from '../permission-grants/registry'
+import { isRecord } from '../value-guards'
+import { APP_AUTO_OPERATION_IDENTITIES } from './auto-operation-policy'
 import {
   AcpPermissionBroker,
   ConversationPermissionGrantStore,
   permissionRequestFingerprint,
   resolveNotebookPermissionContext,
   type AppPermissionRequest,
-  type PermissionWaitHooks
+  type PermissionWaitHooks,
+  type RestoredPermissionContinuation
 } from './permission-broker'
 import type { PermissionPolicyContext } from './permission-policy'
 import {
+  isMcpToolName,
   isNativeWebFetchCandidate,
   isNativeWebSearchCandidate,
-  isMcpToolName,
   trustedMcpToolIdentity,
+  withTrustedAutoOperation,
   withTrustedMcpToolIdentity,
   withTrustedNativeToolIdentity
 } from './permission-policy'
 import { extractProviderToolName, toAcpRuntimeEvent } from './runtime-events'
-import { isRecord } from '../value-guards'
 
 const log = createLogger('acp')
 
@@ -99,6 +101,7 @@ type AcpPermissionContextOptions = {
     sessionSnapshot: (sessionId: string) =>
       | {
           cwd?: string
+          modelRoute?: import('../agent-framework/types').AgentModelRoute
           frameworkId?: AgentFrameworkId
           permissionProfile?: Readonly<
             Pick<SessionPermissionProfileState, 'selectedProfile' | 'autoReviewStrategy'> &
@@ -124,6 +127,19 @@ type AcpPermissionContextOptions = {
     currentInteractionSequence: (sessionId: string) => number | undefined
     mcpServerNamesFor: (sessionId: string) => readonly string[]
     shellRuntimeBindingFor?: (sessionId: string) => ShellRuntimeBinding | undefined
+    authorizeRuntimeBindingAdmission?: (admission: {
+      sessionId: string
+      toolCallId: string
+      promptMessageId: string
+      language: import('../../shared/notebook').NotebookLanguage
+      runtimeId: string
+    }) => boolean
+    canOwnRuntimeBindingDecision?: (
+      request: import('../../shared/notebook').NotebookSessionRequest & {
+        language: import('../../shared/notebook').NotebookLanguage
+        runtimeId: string
+      }
+    ) => Promise<boolean>
     reviewerContextFor: (providerSessionId: string) =>
       | {
           frameworkId: AgentFrameworkId
@@ -250,17 +266,29 @@ const errorMessage = (error: unknown): string => {
   }
 }
 
-const isOpenCodeNativeSkillToolCall = (update: SessionNotification['update']): boolean => {
-  if (update.sessionUpdate !== 'tool_call' || update.kind !== 'other') return false
+// false retains a pending Skill candidate; true means its native identity is ready.
+// Store only the readiness bit, never a Skill name or input payload.
+const openCodeNativeSkillContext = (
+  update: SessionNotification['update'],
+  previous: boolean | undefined
+): boolean | undefined => {
+  if (update.sessionUpdate !== 'tool_call' && update.sessionUpdate !== 'tool_call_update') {
+    return undefined
+  }
+  const inheritsIdentity = update.sessionUpdate === 'tool_call_update' && previous !== undefined
+  const kind = update.kind ?? (inheritsIdentity ? 'other' : undefined)
+  const title = update.title?.trim().toLowerCase() ?? (inheritsIdentity ? 'skill' : undefined)
   const providerToolName = extractProviderToolName(update)?.trim().toLowerCase()
-  if (providerToolName !== undefined) return providerToolName === 'skill'
+  if (
+    kind !== 'other' ||
+    (providerToolName !== undefined ? providerToolName !== 'skill' : title !== 'skill')
+  )
+    return undefined
 
   const rawInput = isRecord(update.rawInput) ? update.rawInput : undefined
-  return (
-    update.title?.trim().toLowerCase() === 'skill' &&
-    typeof rawInput?.name === 'string' &&
-    rawInput.name.trim().length > 0
-  )
+  const hasSkillName = typeof rawInput?.name === 'string' && rawInput.name.trim().length > 0
+  if (providerToolName === 'skill' || hasSkillName || (inheritsIdentity && previous)) return true
+  return update.sessionUpdate === 'tool_call' || inheritsIdentity ? false : undefined
 }
 
 const boundedNotebookPermissionInput = (
@@ -372,7 +400,7 @@ class AcpPermissionContext {
   private readonly opencodeMcpToolInputs = new Map<string, Map<string, OpenCodeMcpToolInput>>()
   private readonly notebookExecutionInputs = new Map<string, Map<string, Record<string, unknown>>>()
   private readonly nativeNotebookExecutionAuthorizations = new Map<string, Set<string>>()
-  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, true>>()
+  private readonly opencodeNativeSkillToolCalls = new Map<string, Map<string, boolean>>()
   private readonly seenNativeWebSearchCalls = new Map<string, Set<string>>()
   private readonly nativeWebToolCalls = new Map<
     string,
@@ -420,7 +448,7 @@ class AcpPermissionContext {
       options.permissionWaitHooks
     )
     this.unsubscribePermissionGrants = options.permissionGrantRegistry?.subscribe(() => {
-      void this.broker.releaseGrantedWebSearchRequests()
+      void this.broker.releaseGrantedRequests()
     })
     this.setTimer = options.setTimer ?? setTimeout
     this.clearTimer = options.clearTimer ?? clearTimeout
@@ -467,20 +495,6 @@ class AcpPermissionContext {
     }
     const executionMethod = notebookExecutionMethod(trustedMcpToolIdentity(normalizedParams))
 
-    // Keep the audit record useful without logging titles, URLs, raw input, or provider payloads.
-    const toolName = extractProviderToolName(normalizedParams.toolCall)
-    const isMcp =
-      isMcpToolName(normalizedParams.toolCall.title, mcpServerNames) ||
-      isMcpToolName(toolName, mcpServerNames)
-    log.info('permission request received', {
-      tool:
-        this.toolIdentityForDiagnostics(toolName, appSessionId) ?? normalizedParams.toolCall.kind,
-      isMcp,
-      toolCallId: normalizedParams.toolCall.toolCallId,
-      sessionId: params.sessionId,
-      optionCount: params.options.length
-    })
-
     try {
       if (reviewerContext) {
         const response = routing.resolveReviewerPermission(normalizedParams)
@@ -506,9 +520,45 @@ class AcpPermissionContext {
         executionMethod === 'executeShell'
           ? routing.shellRuntimeBindingFor?.(appSessionId)
           : undefined
+      const bindingIdentity = trustedMcpToolIdentity(normalizedParams)
+      const bindingInput = isRecord(normalizedParams.toolCall.rawInput)
+        ? normalizedParams.toolCall.rawInput
+        : undefined
+      const bindingArguments = isRecord(bindingInput?.arguments)
+        ? bindingInput.arguments
+        : bindingInput
+      const notebookBindingHostAdmission =
+        /^open[-_]science[-_]notebook\/notebook_bind_runtime$/.test(bindingIdentity ?? '') &&
+        (bindingArguments?.language === 'python' || bindingArguments?.language === 'r') &&
+        typeof bindingArguments.runtimeId === 'string' &&
+        aggregateSnapshot?.cwd !== undefined &&
+        promptInteraction?.promptMessageId !== undefined &&
+        (await routing.canOwnRuntimeBindingDecision?.({
+          sessionId: appSessionId,
+          projectId: routing.resolveProjectId(appSessionId),
+          workspaceCwd: aggregateSnapshot.cwd,
+          language: bindingArguments.language,
+          runtimeId: bindingArguments.runtimeId
+        })) === true &&
+        routing.capturePrompt(appSessionId)?.promptMessageId ===
+          promptInteraction.promptMessageId &&
+        promptInteraction.isCancellationAccepted() !== true &&
+        routing.authorizeRuntimeBindingAdmission !== undefined
+      if (
+        promptInteraction?.promptMessageId &&
+        (routing.capturePrompt(appSessionId)?.promptMessageId !==
+          promptInteraction.promptMessageId ||
+          promptInteraction.isCancellationAccepted())
+      )
+        return { outcome: { outcome: 'cancelled' } }
+      // The authenticated Notebook host reviews finalized code at dispatch. Do not ask for a
+      // language-wide grant here, or create a second approval before the host's one-shot decision.
       const response = await this.requestPermission(routedParams, {
+        notebookHostAdmission: Boolean(executionMethod),
+        notebookBindingHostAdmission,
         profile: profileState?.selectedProfile ?? DEFAULT_PERMISSION_PROFILE,
         frameworkId,
+        modelRoute: aggregateSnapshot?.modelRoute,
         shellDialect: notebookShellRuntime
           ? shellRuntimeDialect(notebookShellRuntime)
           : permissionFramework.commandShellDialect,
@@ -525,6 +575,7 @@ class AcpPermissionContext {
           this.options.permissionGrantContext?.projectId ?? routing.resolveProjectId(appSessionId),
         permissionGrantSessionId: this.options.permissionGrantContext?.sessionId,
         promptMessageId: promptInteraction?.promptMessageId,
+        interactionSequence: promptInteraction?.sequence,
         permissionPrompts: promptInteraction?.permissionPrompts
       })
       const selectedOptionId =
@@ -532,6 +583,28 @@ class AcpPermissionContext {
       const selectedOption = selectedOptionId
         ? routedParams.options.find((option) => option.optionId === selectedOptionId)
         : undefined
+      if (notebookBindingHostAdmission && selectedOption?.kind === 'allow_once') {
+        // Register only a positively released provider call, before returning that response. A
+        // cancelled/no-one-call request must not leave a receipt blocking another Runtime target.
+        const language = bindingArguments?.language
+        const runtimeId = bindingArguments?.runtimeId
+        if (
+          (language !== 'python' && language !== 'r') ||
+          typeof runtimeId !== 'string' ||
+          !promptInteraction?.promptMessageId ||
+          routing.capturePrompt(appSessionId)?.promptMessageId !==
+            promptInteraction.promptMessageId ||
+          promptInteraction.isCancellationAccepted() ||
+          routing.authorizeRuntimeBindingAdmission?.({
+            sessionId: appSessionId,
+            toolCallId: routedParams.toolCall.toolCallId,
+            promptMessageId: promptInteraction.promptMessageId,
+            language,
+            runtimeId
+          }) !== true
+        )
+          return { outcome: { outcome: 'cancelled' } }
+      }
       if (
         selectedOption?.kind.toLowerCase().startsWith('allow_') &&
         promptInteraction?.promptMessageId
@@ -621,23 +694,26 @@ class AcpPermissionContext {
   prepareRestoredDecision(
     permission: SessionPermissionRuntimeContext,
     option: AcpPermissionRequest['options'][number] | undefined,
-    projectId: string
+    projectId: string,
+    continuation?: RestoredPermissionContinuation
   ): Promise<void> {
-    return this.broker.prepareRestoredDecision(permission, option, projectId).then(() => {
-      const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
-      if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
-        this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
-        return
-      }
-      this.restoredNotebookPresentationCandidates.set(permission.request.sessionId, {
-        originalToolCallId: permission.request.toolCallId,
-        fingerprint: permission.fingerprint
+    return this.broker
+      .prepareRestoredDecision(permission, option, projectId, continuation)
+      .then(() => {
+        const allowsReplay = option?.kind.toLowerCase().startsWith('allow_') === true
+        if (!allowsReplay || !notebookExecutionMethod(permission.request.mcpIdentity)) {
+          this.restoredNotebookPresentationCandidates.delete(permission.request.sessionId)
+          return
+        }
+        this.restoredNotebookPresentationCandidates.set(permission.request.sessionId, {
+          originalToolCallId: permission.request.toolCallId,
+          fingerprint: permission.fingerprint
+        })
       })
-    })
   }
 
-  clearRestoredDecision(sessionId: string): void {
-    this.broker.clearRestoredDecision(sessionId)
+  clearRestoredDecision(sessionId: string, continuation?: RestoredPermissionContinuation): void {
+    if (!this.broker.clearRestoredDecision(sessionId, continuation)) return
     this.restoredNotebookPresentationCandidates.delete(sessionId)
   }
 
@@ -678,6 +754,7 @@ class AcpPermissionContext {
       profile,
       isCurrent
     )
+    if (isCurrent()) this.logProfileCoverage(sessionId, profile)
     for (const requestId of resolvedRequestIds) this.humanOnlyRequestIds.delete(requestId)
   }
 
@@ -687,6 +764,7 @@ class AcpPermissionContext {
     isCurrent: () => boolean = () => true
   ): void {
     this.broker.setLivePermissionProfile(sessionId, profile, isCurrent)
+    this.logProfileCoverage(sessionId, profile)
   }
 
   beginPermissionProfileTransition(
@@ -701,7 +779,9 @@ class AcpPermissionContext {
     sessionId: string,
     profile: Readonly<SessionPermissionProfileState>
   ): boolean {
-    return this.broker.setProviderPermissionProfile(sessionId, profile)
+    const applied = this.broker.setProviderPermissionProfile(sessionId, profile)
+    if (applied) this.logProfileCoverage(sessionId, profile)
+    return applied
   }
 
   clearLivePermissionProfile(sessionId: string): void {
@@ -914,13 +994,25 @@ class AcpPermissionContext {
       closedToolCalls?.delete(event.toolCallId)
       if (closedToolCalls?.size === 0) this.closedOpenCodeToolCalls.delete(sessionId)
     }
-    if (isOpenCodeNativeSkillToolCall(update)) {
-      const calls = this.opencodeNativeSkillToolCalls.get(sessionId) ?? new Map<string, true>()
-      this.setBounded(calls, event.toolCallId, true, MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION)
+    const skillCalls = this.opencodeNativeSkillToolCalls.get(sessionId)
+    const skillContext = openCodeNativeSkillContext(update, skillCalls?.get(event.toolCallId))
+    if (
+      !this.closedOpenCodeToolCalls.get(sessionId)?.has(event.toolCallId) &&
+      skillContext !== undefined
+    ) {
+      const calls = skillCalls ?? new Map<string, boolean>()
+      this.setBounded(
+        calls,
+        event.toolCallId,
+        skillContext,
+        MAX_OPENCODE_MCP_TOOL_INPUTS_PER_SESSION
+      )
       this.opencodeNativeSkillToolCalls.set(sessionId, calls)
-      this.resolveOpenCodeWaiters(sessionId, event.toolCallId)
+      if (skillContext) this.resolveOpenCodeWaiters(sessionId, event.toolCallId)
       return
     }
+    skillCalls?.delete(event.toolCallId)
+    if (skillCalls?.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
 
     const originalRawInput =
       update.sessionUpdate === 'tool_call' || update.sessionUpdate === 'tool_call_update'
@@ -1001,6 +1093,22 @@ class AcpPermissionContext {
     if (framework === 'claude-code') {
       return this.restoreClaudeCodeMcpToolInput(params, sessionId, mcpServerNames)
     }
+    if (framework === 'codebuddy') {
+      // Repair identity correlation only for this Auto change. Restoring unrelated CodeBuddy
+      // metadata would also change existing automatic rules and remembered-grant matching.
+      const inputs = this.claudeCodeMcpToolInputs.get(sessionId)
+      const input = inputs?.get(params.toolCall.toolCallId)
+      if (
+        !input ||
+        input.title !== params.toolCall.title ||
+        !isMcpToolName(input.title, mcpServerNames) ||
+        !APP_AUTO_OPERATION_IDENTITIES.has(input.mcpIdentity)
+      )
+        return params
+      inputs?.delete(params.toolCall.toolCallId)
+      if (inputs?.size === 0) this.claudeCodeMcpToolInputs.delete(sessionId)
+      return withTrustedAutoOperation(params, input.mcpIdentity, input.rawInput)
+    }
     if (framework === 'opencode') {
       if (this.isOpenCodeRequestCancelled(sessionId, params.toolCall.toolCallId, context)) {
         return undefined
@@ -1013,10 +1121,16 @@ class AcpPermissionContext {
       const isNativeSkillCandidate =
         params.toolCall.kind === 'other' && params.toolCall.title?.trim().toLowerCase() === 'skill'
       if (!isMcpRequest && !isNativeSkillCandidate) return restored
+      // A binding handoff requires the matching provider observation, even when the permission
+      // request already has arguments. Notifications and requests may reach their handlers apart.
+      const isNotebookBindingCandidate =
+        resolveCanonicalMcpToolIdentity(params.toolCall.title ?? '', mcpServerNames) ===
+        'open-science-notebook/notebook_bind_runtime'
       if (
         isMcpRequest &&
         isRecord(restored.toolCall.rawInput) &&
-        Object.keys(restored.toolCall.rawInput).length > 0
+        Object.keys(restored.toolCall.rawInput).length > 0 &&
+        (!isNotebookBindingCandidate || trustedMcpToolIdentity(restored) !== undefined)
       ) {
         return restored
       }
@@ -1026,6 +1140,15 @@ class AcpPermissionContext {
         params.toolCall.toolCallId,
         context
       )
+      logPermissionDiagnostic({
+        stage: 'context',
+        sessionId,
+        toolCallId: params.toolCall.toolCallId,
+        frameworkId: 'opencode',
+        reason: `context_${outcome}`,
+        fallback: outcome === 'timeout',
+        waitMs: outcome === 'timeout' ? OPENCODE_PERMISSION_CONTEXT_WAIT_MS : undefined
+      })
       if (outcome === 'cancelled') return undefined
       if (outcome === 'timeout') {
         this.options.onOpenCodeWaitTimeout?.({
@@ -1256,7 +1379,8 @@ class AcpPermissionContext {
     sessionId: string
   ): RequestPermissionRequest {
     const calls = this.opencodeNativeSkillToolCalls.get(sessionId)
-    if (!calls?.delete(params.toolCall.toolCallId)) return params
+    if (calls?.get(params.toolCall.toolCallId) !== true) return params
+    calls.delete(params.toolCall.toolCallId)
     if (calls.size === 0) this.opencodeNativeSkillToolCalls.delete(sessionId)
 
     const providerToolName = extractProviderToolName(params.toolCall)?.trim().toLowerCase()
@@ -1278,7 +1402,7 @@ class AcpPermissionContext {
     if (this.isOpenCodeRequestCancelled(sessionId, toolCallId, context)) {
       return Promise.resolve('cancelled')
     }
-    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+    if (this.opencodeNativeSkillToolCalls.get(sessionId)?.get(toolCallId) === true) {
       return Promise.resolve('ready')
     }
     const rawInput = this.opencodeMcpToolInputs.get(sessionId)?.get(toolCallId)?.rawInput
@@ -1309,7 +1433,7 @@ class AcpPermissionContext {
         finish('cancelled')
         return
       }
-      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.has(toolCallId)) {
+      if (this.opencodeNativeSkillToolCalls.get(sessionId)?.get(toolCallId) === true) {
         finish('ready')
         return
       }
@@ -1613,6 +1737,33 @@ class AcpPermissionContext {
       this.nativeNotebookExecutionAuthorizations.delete(sessionId)
     }
     this.resolveOpenCodeWaiters(sessionId, toolCallId, 'cancelled')
+  }
+
+  private logProfileCoverage(
+    sessionId: string,
+    profile: Readonly<SessionPermissionProfileState>
+  ): void {
+    try {
+      const snapshot = this.options.routing.sessionSnapshot(sessionId)
+      const framework = snapshot?.frameworkId ?? this.options.routing.currentFramework().id
+      const native =
+        profile.autoReviewStrategy === 'native' ||
+        usesNativeFullAccess(getAgentFramework(framework), profile)
+      logPermissionDiagnostic({
+        stage: 'profile',
+        sessionId,
+        frameworkId: framework,
+        modelRoute: snapshot?.modelRoute,
+        profile: profile.selectedProfile,
+        authority: native ? 'provider_native' : 'automatic_policy',
+        reason: native
+          ? 'provider_interception_unavailable'
+          : 'provider_read_policy_and_host_gates',
+        fallback: native
+      })
+    } catch {
+      // Coverage reporting is diagnostic only; never interrupt a profile transition.
+    }
   }
 
   private toolIdentityForDiagnostics(

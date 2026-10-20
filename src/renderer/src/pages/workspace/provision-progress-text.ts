@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 
-import type { ProvisionProgressEvent } from '../../../../shared/notebook-env'
+import type { ProvisionProgressEvent } from '@aipoch/environment/contracts'
 
 export const provisionProgressText = (
   t: TFunction,

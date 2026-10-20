@@ -1,28 +1,21 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
-import {
-  ArrowRight,
-  BookOpenText,
-  Clock3,
-  FileText,
-  Inbox,
-  Link2,
-  Search,
-  TriangleAlert
-} from 'lucide-react'
+import { BookOpenText, FileText, Inbox, Link2, Search, TriangleAlert } from 'lucide-react'
+import { LiteratureToolReferenceList } from './LiteratureToolReferenceList'
+import { LiteratureCandidateStatus } from './LiteratureCandidateStatus'
 import { useTranslation } from 'react-i18next'
 
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
-import { useNavigationStore } from '@/stores/navigation-store'
 
 import type { LiteratureToolSummary } from './literature-tool-presentation'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 
 const WorkspaceLiteratureToolCard = ({
   summary,
+  activityId,
   isApproval = false
 }: {
   summary: LiteratureToolSummary
+  activityId?: string
   isApproval?: boolean
 }): React.JSX.Element => {
   const { t } = useTranslation()
@@ -42,7 +35,11 @@ const WorkspaceLiteratureToolCard = ({
       : summary.pdfElements
         ? t('PDF figures and tables')
         : summary.action === 'save'
-          ? t('Save')
+          ? canOpenInbox
+            ? summary.pdfDownloaded
+              ? t('PDF downloaded to Inbox')
+              : t('Saved to Inbox')
+            : t('Save')
           : summary.action === 'search'
             ? t('Search')
             : summary.action === 'format'
@@ -97,62 +94,43 @@ const WorkspaceLiteratureToolCard = ({
 
   const content = (
     <>
-      <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-4">
-        <span className="inline-flex size-11 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary">
-          <Icon className="size-5" aria-hidden="true" />
+      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-2">
+        <span className="inline-flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+          <Icon className="size-4" aria-hidden="true" />
         </span>
         <div className="min-w-0 flex-1 basis-28">
-          <div className="text-sm font-semibold text-text-000">{title}</div>
-          <div className="mt-0.5 text-xs text-text-300">{subtitle}</div>
+          <div className="text-[13px] font-medium text-text-000">{title}</div>
+          {summary.action !== 'save' || isApproval ? (
+            <div className="text-xs text-text-200">{subtitle}</div>
+          ) : null}
         </div>
-        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-3">
-          {canOpenInbox ? (
-            <>
-              <span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
-                <Clock3 className="size-3.5 shrink-0" aria-hidden="true" />
-                {t('Pending review: {{total}}', { total: summary.savedCount })}
-              </span>
-              <Button
-                size="default"
-                className="gap-2 px-3.5"
-                title={t('Review in Inbox to add to your library.')}
-                onClick={() => useNavigationStore.getState().openLibrary('user')}
-              >
-                {t('Open Inbox')}
-                <ArrowRight className="size-4" aria-hidden="true" />
-              </Button>
-            </>
+        <div className="flex max-w-full shrink-0 flex-wrap items-center gap-2">
+          {!summary.documentNames.length &&
+          !summary.itemTitles?.length &&
+          summary.documentCount > 0 ? (
+            <span className="text-[11px] tabular-nums text-text-300">
+              {t('{{count}} linked PDFs', {
+                count: summary.documentCount,
+                defaultValue_one: '{{count}} linked PDF'
+              })}
+            </span>
           ) : null}
           {isLibrary && summary.action === 'search' && searchRangeLabel ? (
-            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
               {searchRangeLabel}
             </span>
           ) : null}
           {summary.existingItemIds && summary.existingItemIds.length > 0 ? (
-            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
               {t('Already in library: {{total}}', { total: summary.existingItemIds.length })}
             </span>
-          ) : null}
-          {summary.action === 'save' && summary.existingItemIds?.length === 1 && !canOpenInbox ? (
-            <Button
-              size="default"
-              className="gap-2 px-3.5"
-              onClick={() =>
-                useNavigationStore
-                  .getState()
-                  .openLiteratureItem(summary.existingItemIds![0], 'user')
-              }
-            >
-              {t('Open reference')}
-              <ArrowRight className="size-4" aria-hidden="true" />
-            </Button>
           ) : null}
           {isLibrary &&
           (summary.action === 'format' ||
             summary.action === 'read' ||
             (isApproval && summary.action === 'save')) &&
           summary.itemCount !== undefined ? (
-            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-xs font-medium tabular-nums text-primary">
+            <span className="rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium tabular-nums text-primary">
               {t('{{count}} references', {
                 count: summary.itemCount,
                 defaultValue_one: '{{count}} reference'
@@ -183,6 +161,12 @@ const WorkspaceLiteratureToolCard = ({
           ) : null}
         </div>
       </div>
+
+      {!isApproval &&
+      summary.action === 'save' &&
+      (summary.candidateIds?.length || (summary.savedCount ?? 0) > 0) ? (
+        <LiteratureCandidateStatus candidateIds={summary.candidateIds} activityId={activityId} />
+      ) : null}
 
       {summary.pdfElements ? (
         <div className="space-y-2 text-[12px] leading-5 text-text-200">
@@ -282,20 +266,11 @@ const WorkspaceLiteratureToolCard = ({
               }
             />
           ) : null}
-          {summary.existingItemIds?.length &&
-          (canOpenInbox || summary.existingItemIds.length > 1) ? (
-            <div className="flex flex-wrap gap-2">
-              {summary.existingItemIds?.map((id, index) => (
-                <Button
-                  key={id}
-                  variant="outline"
-                  size="sm"
-                  onClick={() => useNavigationStore.getState().openLiteratureItem(id, 'user')}
-                >
-                  {t('Open existing reference {{number}}', { number: index + 1 })}
-                </Button>
-              ))}
-            </div>
+          {!isApproval && summary.existingItemIds?.length ? (
+            <LiteratureToolReferenceList
+              itemIds={summary.existingItemIds}
+              activityId={activityId}
+            />
           ) : null}
         </>
       ) : null}
@@ -316,7 +291,7 @@ const WorkspaceLiteratureToolCard = ({
       ) : null}
 
       {summary.documentNames.length > 0 || summary.itemTitles?.length ? (
-        <div className="flex min-w-0 items-center gap-2 border-t border-border-200 pt-3.5 text-xs text-text-300">
+        <div className="flex min-w-0 items-center gap-2 border-t border-border-200 pt-2 text-xs text-text-300">
           <Link2 className="size-3.5 shrink-0" aria-hidden="true" />
           <span className="shrink-0">{t('Sources')}</span>
           <span aria-hidden="true">·</span>
@@ -330,13 +305,6 @@ const WorkspaceLiteratureToolCard = ({
                 ))
               : summary.itemTitles?.join(' · ')}
           </span>
-        </div>
-      ) : summary.documentCount > 0 ? (
-        <div className="text-[11px] tabular-nums text-text-300">
-          {t('{{count}} linked PDFs', {
-            count: summary.documentCount,
-            defaultValue_one: '{{count}} linked PDF'
-          })}
         </div>
       ) : null}
 
@@ -356,7 +324,7 @@ const WorkspaceLiteratureToolCard = ({
   )
 
   const className =
-    'flex min-w-0 flex-col gap-4 rounded-xl border border-border-200 bg-bg-000 p-4 text-left shadow-sm'
+    'flex min-w-0 flex-col gap-2 rounded-lg border border-border-200 bg-bg-000 p-2.5 text-left'
 
   return (
     <section

@@ -1,3 +1,4 @@
+import { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
 import type { PreviewFileItem, PreviewFileSource } from '@/stores/preview-workbench-store'
 import type { ChatSession } from '@/stores/session-store'
 import type { ArtifactFile } from '../../../../shared/artifacts'
@@ -6,7 +7,9 @@ import type { MessagePart, SessionPdfBinding } from '../../../../shared/session-
 import { sessionPdfBindingToFileReference } from '../../../../shared/session-pdf-context'
 import {
   createArtifactVersionLocator,
-  parseArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from '../../../../shared/artifact-version-locator'
+import {
   type ArtifactLineageProvenance,
   type ArtifactVersionDescriptor
 } from '../../../../shared/artifact-provenance'
@@ -310,7 +313,9 @@ export const createPreviewFileItemFromPdfContext = (
   return createPreviewFileItem({
     id: isArtifact
       ? context.sourceFileId
-      : `${isLiterature ? 'literature' : 'upload'}:${context.sourceFileId}`,
+      : `${isLiterature ? 'literature' : 'upload'}:${
+          isLiterature ? context.sourceVersionId : context.sourceFileId
+        }`,
     projectId,
     sessionId: context.sourceSessionId ?? LITERATURE_PREVIEW_SESSION_ID,
     path: reference.path,
@@ -328,7 +333,7 @@ export const createPreviewFileItemFromPdfContext = (
 // session, so they use a stable non-session key (mirrors the project-files tool's sentinel) — this
 // keeps them out of removeSessionItems cleanup when a real session is deleted.
 export const LOCAL_PREVIEW_SESSION_ID = '__local_files__'
-export const LITERATURE_PREVIEW_SESSION_ID = '__literature__'
+export { LITERATURE_PREVIEW_SESSION_ID } from '../../../../shared/literature-attachment-reference'
 
 // Builds a preview tab for a local ("This computer") file. The path is an absolute filesystem
 // path; the id is namespaced by path so re-opening the same file re-activates its tab. sessionId

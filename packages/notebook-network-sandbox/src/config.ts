@@ -1,3 +1,4 @@
+import { validPrivateDestination } from '../runtime/src/gateway/address-policy.js'
 import { homedir } from 'node:os'
 import { readdirSync } from 'node:fs'
 import { join } from 'node:path'
@@ -73,6 +74,14 @@ const validateDomainPattern = (pattern: string, allowFlexibleWildcard: boolean):
 }
 
 const normalizePolicy = (policy: NotebookNetworkPolicy): NotebookNetworkPolicy => ({
+  ...(policy.trustedPrivateDestinations
+    ? {
+        trustedPrivateDestinations: policy.trustedPrivateDestinations.map((entry) => {
+          if (!validPrivateDestination(entry)) throw new Error('Invalid trusted private service.')
+          return { ...entry, approvedAddresses: [...entry.approvedAddresses] }
+        })
+      }
+    : {}),
   allowedDomains: normalizeDomains(policy.allowedDomains),
   ...(policy.askDomains ? { askDomains: normalizeDomains(policy.askDomains) } : {}),
   deniedDomains: normalizeDomains(policy.deniedDomains),
@@ -131,6 +140,7 @@ const createRuntimeConfig = (
   const installationId = WINDOWS_INSTALLATION_ID
   const windowsOwnershipRoot = resolveWindowsOwnershipRoot(environment, options.packaged ?? true)
   return {
+    trustedPrivateDestinations: policy.trustedPrivateDestinations,
     allowedDomains: [...policy.allowedDomains],
     ...(policy.askDomains ? { askDomains: [...policy.askDomains] } : {}),
     deniedDomains: [...policy.deniedDomains],

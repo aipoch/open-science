@@ -1,6 +1,7 @@
+import { configureTestElectronHost } from '../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
-import type { Logger } from './logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 
 // Capture ipcMain.handle registrations so the handler can be invoked directly.
 const handlers = new Map<string, (event: unknown, payload: unknown) => unknown>()
@@ -116,3 +117,5 @@ describe('network IPC handler', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -9,7 +9,10 @@ import {
   createOfficePreviewFrameProcessResolver,
   createOfficePreviewProcessMemoryReader
 } from '../office-preview/office-preview-electron'
-import { registerOfficePreviewIpcHandlers } from '../office-preview/office-preview-ipc'
+import {
+  registerOfficePreviewIpcHandlers,
+  registerOfficePreviewCommandIpc
+} from '../office-preview/office-preview-ipc'
 import {
   createOfficePreviewRuntimeUrl,
   registerOfficePreviewRuntimeProtocol
@@ -20,11 +23,13 @@ import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
 import { createElectronSurfaceAdapter } from './adapter'
 
 type Owners = {
+  commands?: import('../office-preview/application-commands').OfficePreviewCommands
   previewResources: Pick<ManagedPreviewResources, 'inspect' | 'acquire' | 'release'>
   runtimeHtmlPath: string
 }
 
 export const createOfficePreviewElectronSurfaces = ({
+  commands,
   previewResources,
   runtimeHtmlPath
 }: Owners): NamedElectronSurfaceAdapter[] => {
@@ -43,6 +48,13 @@ export const createOfficePreviewElectronSurfaces = ({
       protocol
     )
   )
+  if (commands)
+    return [
+      runtimeSurface,
+      createElectronSurfaceAdapter('office-preview', () =>
+        registerOfficePreviewCommandIpc(commands)
+      )
+    ]
   const toManagedPreviewRequest = (
     request: OfficePreviewOpenRequest
   ): AcquireManagedPreviewRequest =>

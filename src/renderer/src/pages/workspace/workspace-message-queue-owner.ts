@@ -1,63 +1,16 @@
-import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
-import type { MessageAttribution } from '../../../../shared/session-persistence'
-import type { ChatSession } from '@/stores/session-store'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
-
-import type { ComposerSendSnapshot } from './workspace-composer-controller'
-
-type MessageQueuePhase = 'queued' | 'interrupting' | 'sending' | 'error'
-type MessageQueueError = {
-  kind: 'branch' | 'send' | 'edit' | 'cancel'
-  detail?: string
-}
-
-type MessageQueueItem = {
-  kind: 'user' | 'application'
-  id: string
-  sessionId: string
-  agentFrameId: string
-  messageBranchId: string
-  snapshot?: ComposerSendSnapshot
-  text: string
-  attachmentCount: number
-  forcedSkillIds: string[]
-  permissionProfile: PermissionProfileId
-  agentConfiguration?: SessionAgentConfiguration
-  specialistId: string | null | undefined
-  agentFrameworkId?: ChatSession['agentFrameworkId']
-  agentBackendId?: string
-  projectId: string
-  cwd: string | undefined
-  phase: MessageQueuePhase
-  error?: MessageQueueError
-  deferredUntilIdle?: boolean
-  // Keep the dispatch reserved, but stop duplicating its real message in the queue preview.
-  messageAppended?: boolean
-  application?: {
-    messageId: string
-    attribution: Extract<MessageAttribution, { feature: 'compute' }>
-    completion: Promise<{ sessionId: string; messageId: string } | undefined>
-    resolve: (result: { sessionId: string; messageId: string } | undefined) => void
-  }
-  revisionMessageId?: string
-}
-
-type MessageQueueEditIntent = Pick<
+import type { PermissionProfileId } from '../../../../shared/permission-profiles'
+import type { MessageAttribution } from '../../../../shared/session-message-contract'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import type { ChatSession } from '@/stores/session-store'
+import type {
+  MessageQueueEditIntent,
+  MessageQueueError,
   MessageQueueItem,
-  | 'kind'
-  | 'sessionId'
-  | 'agentFrameId'
-  | 'messageBranchId'
-  | 'permissionProfile'
-  | 'agentConfiguration'
-  | 'specialistId'
-  | 'agentFrameworkId'
-  | 'agentBackendId'
-  | 'projectId'
-  | 'cwd'
-  | 'revisionMessageId'
->
+  MessageQueuePhase
+} from './composer-contract'
+
+import type { ComposerSendSnapshot } from './composer-contract'
 
 type MessageQueueAdmission = {
   session: ChatSession
@@ -262,8 +215,8 @@ class WorkspaceMessageQueueOwner {
 
 export { WorkspaceMessageQueueOwner }
 export type {
-  MessageQueueAdmission,
   ApplicationMessageQueueAdmission,
+  MessageQueueAdmission,
   MessageQueueDispatch,
   MessageQueueError,
   MessageQueueItem,

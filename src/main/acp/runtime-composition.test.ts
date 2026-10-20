@@ -1,5 +1,5 @@
-// Pins the production Agent Context resolver: createAcpRuntime is Electron-coupled, so the lookup
-// policy is extracted as createProjectAgentContextResolver and covered here against a fake repository.
+// Pins the production Agent Context resolver separately from the runtime composition so the lookup
+// policy stays covered against a fake repository.
 
 import { describe, expect, it, vi } from 'vitest'
 

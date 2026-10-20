@@ -454,3 +454,45 @@ describe('Plan Preview workbench integration', () => {
     expect(screen.queryByRole('button', { name: 'Dismiss' })).not.toBeNull()
   })
 })
+
+it.each([false, true])(
+  'keeps imported Plan previews readable without approval controls (active run: %s)',
+  (activeRun) => {
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({
+        ...session,
+        activeRun: activeRun ? session.activeRun : undefined,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }))
+    }))
+    render(
+      <PreviewToolContent
+        item={{
+          id: 'tool:session-1:plan',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          type: 'tool',
+          toolKind: 'plan',
+          title: 'Session Plan'
+        }}
+        restoredPlanResponder={{
+          sessionId: 'session-1',
+          enabled: true,
+          canRespondToSession: () => true,
+          respond: respondToRestoredPlan
+        }}
+      />
+    )
+    expect(screen.getByRole('heading', { name: 'Analyze one dataset' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull()
+    expect(respondPlan).not.toHaveBeenCalled()
+    expect(respondToRestoredPlan).not.toHaveBeenCalled()
+  }
+)

@@ -3,7 +3,7 @@ import { ipcMainHandle } from './ipc-handler-registry'
 import { LIFECYCLE_CHANNELS } from '../shared/lifecycle-events'
 import { callerLeaseForEvent } from './caller-lifecycle'
 import { callerContextForEvent } from './caller-context'
-import { createLogger } from './logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { broadcastToRenderers } from './renderer-broadcast'
 

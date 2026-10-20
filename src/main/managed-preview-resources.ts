@@ -3,7 +3,6 @@ import type { BigIntStats } from 'node:fs'
 import { open, stat } from 'node:fs/promises'
 import { basename, extname } from 'node:path'
 
-import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
 import type { OfficePreviewAdmissionError } from '../shared/office-preview'
 import type {
   AcquireManagedPreviewRequest,
@@ -12,8 +11,9 @@ import type {
   ReadManagedPreviewRangeRequest,
   ReleaseManagedPreviewRequest
 } from '../shared/preview-resources'
-import type { ManagedFileReadLease } from './managed-file-versions/service'
+import { FileObservationMismatchError, type FileObservation } from './bounded-file-io'
 import { waitForManagedFilePublication } from './managed-file-preview'
+import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
@@ -89,7 +89,7 @@ type ManagedPreviewResourcesOptions = {
 type ManagedPreviewTrustedLease = Pick<
   ManagedFileReadLease,
   'path' | 'size' | 'versionToken' | 'snapshot' | 'read' | 'readRange' | 'verifyUnchanged' | 'close'
->
+> & { checksum?: string; version?: Pick<ManagedFileReadLease['version'], 'checksum'> }
 
 type ManagedPreviewResourceSnapshot = {
   size: number
@@ -314,6 +314,7 @@ class ManagedPreviewResources {
         imageDimensions = dimensions
       }
 
+      const sourceChecksum = trustedLease?.version?.checksum ?? trustedLease?.checksum
       const id = this.createId()
       const resource: ManagedPreviewResource = {
         id,
@@ -321,6 +322,9 @@ class ManagedPreviewResources {
         size: fileSnapshot.size,
         mimeType,
         version: fileSnapshot.version,
+        ...(typeof sourceChecksum === 'string' && /^[a-f0-9]{64}$/.test(sourceChecksum)
+          ? { sourceChecksum }
+          : {}),
         ...(imageDimensions ? { width: imageDimensions.width, height: imageDimensions.height } : {})
       }
 

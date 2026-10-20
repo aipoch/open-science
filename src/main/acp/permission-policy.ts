@@ -14,18 +14,28 @@ import {
 } from '../../shared/activity-groups'
 import { extractProviderToolName } from './runtime-events'
 import {
+  APP_AUTO_OPERATION_IDENTITIES,
+  classifyAppAutoOperation,
+  type AutoOperationDecision
+} from './auto-operation-policy'
+import {
   appMcpServerAliases,
   canonicalAppMcpServerName,
   resolveCanonicalMcpToolIdentity
 } from '../agent-framework/app-mcp-names'
 
 type PermissionPolicyContext = {
+  // Main-only handoff to the Notebook execution owner's per-code gate. Never read from tool input.
+  notebookHostAdmission?: boolean
+  // Separate main-only handoff to the validated Runtime binding boundary.
+  notebookBindingHostAdmission?: boolean
   permissionPrompts?: 'none'
   profile: PermissionProfileId
   projectId?: string
   // Delegated runtimes have a provider-local Session id, while durable grants belong to the parent
   // app Session. Keep that owner identity separate from the request routing identity.
   permissionGrantSessionId?: string
+  modelRoute?: import('../agent-framework/types').AgentModelRoute
   frameworkId?: AgentFrameworkId
   shellDialect?: CommandShellDialect
   notebookShellRuntime?: ShellRuntimeBinding['kind']
@@ -36,10 +46,16 @@ type PermissionPolicyContext = {
   mcpServerNames?: readonly string[]
   // Main-owned identity of the user Message whose provider turn is parked on this request.
   promptMessageId?: string
+  // Captured by Main from the active interaction, never supplied by the provider.
+  interactionSequence?: number
 }
 
 const TRUSTED_MCP_TOOL_IDENTITY = Symbol('trusted-mcp-tool-identity')
 const TRUSTED_NATIVE_TOOL_IDENTITY = Symbol('trusted-native-tool-identity')
+const TRUSTED_AUTO_OPERATION = Symbol('trusted-auto-operation')
+type TrustedAutoOperationRequest = RequestPermissionRequest & {
+  [TRUSTED_AUTO_OPERATION]?: { identity: string; rawInput: unknown }
+}
 type TrustedMcpPermissionRequest = RequestPermissionRequest & {
   [TRUSTED_MCP_TOOL_IDENTITY]?: string
 }
@@ -57,6 +73,17 @@ const withTrustedMcpToolIdentity = (
 
 const trustedMcpToolIdentity = (params: RequestPermissionRequest): string | undefined =>
   (params as TrustedMcpPermissionRequest)[TRUSTED_MCP_TOOL_IDENTITY]
+
+// Additional correlation evidence for Auto only. Do not restore provider metadata or the general
+// MCP identity: doing so would change historical remembered-grant matching outside the new policy.
+const withTrustedAutoOperation = (
+  params: RequestPermissionRequest,
+  identity: string,
+  rawInput: unknown
+): RequestPermissionRequest =>
+  Object.assign({}, params, {
+    [TRUSTED_AUTO_OPERATION]: { identity, rawInput }
+  })
 
 // Marks a provider-native tool only after the runtime binds its preceding tool_call to the later
 // request_permission by session and call id. ACP JSON cannot forge this process-local Symbol.
@@ -136,7 +163,9 @@ const isMcpTool = (
   const providerToolName = extractProviderToolName(toolCall)
 
   return (
-    isMcpToolName(toolCall.title, mcpServerNames) || isMcpToolName(providerToolName, mcpServerNames)
+    trustedMcpToolIdentity(params) != null ||
+    isMcpToolName(toolCall.title, mcpServerNames) ||
+    isMcpToolName(providerToolName, mcpServerNames)
   )
 }
 
@@ -241,10 +270,8 @@ const isNativeWebSearchPermission = (
   )
 }
 
-// OpenCode's native Skill tool only reads an app-provisioned skill definition into the model's
-// context. It is framework plumbing rather than a user-authorizable side effect. Older OpenCode
-// sessions can still emit request_permission, so the runtime binds that request to a preceding native
-// tool_call and attaches the process-local identity below. Presentation text alone is never trusted.
+// Bind the provisioned Skill loader to its observed native call before consulting app grants.
+// Presentation text alone is never sufficient to claim the shared Skill capability.
 const isOpenCodeNativeSkillPermission = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
@@ -282,6 +309,21 @@ const isArtifactSaveTool = (
   )
 }
 
+// Deliberately bounded: new tools do not inherit Auto approval from server membership.
+const LIBRARY_AUTO_TOOL_IDENTITIES: ReadonlySet<string> = new Set([
+  'open-science-library/search_library',
+  'open-science-library/read_library_abstract',
+  'open-science-library/read_library_pdf',
+  'open-science-library/format_references',
+  'open-science-library/format_citation_document',
+  'open-science-library/prepare_latex_bundle',
+  'open-science-library/save_to_inbox',
+  'open-science-library/acquire_pdf',
+  'open-science-literature/read_document',
+  'open-science-literature/list_pdf_elements',
+  'open-science-literature/read_pdf_element'
+])
+
 const APP_INTERACTION_TOOLS = new Set([
   'open-science-notebook/ask_user_question',
   'open-science-notebook/request_network_access'
@@ -310,40 +352,37 @@ const isAppInteractionTool = (
 // user's explicit, dialog-confirmed choice, so it auto-approves everything (for frameworks that delegate
 // permissions rather than bypassing natively — a native-bypass agent sends no requests here at all).
 // Otherwise, only native-less 'auto' conservatively approves workspace-contained low-risk operations.
-const resolveAutomaticPermission = (
+const resolveLegacyAutomaticPermissionReason = (
   params: RequestPermissionRequest,
   context: PermissionPolicyContext | undefined
 ): string | undefined => {
   if (context?.profile === 'full') {
-    return resolveAllowOptionId(params)
+    return 'full_access'
   }
 
-  if (isOpenCodeNativeSkillPermission(params, context)) {
-    return resolveAllowOptionId(params)
+  const libraryIdentity = trustedMcpToolIdentity(params)
+  if (
+    context?.profile === 'auto' &&
+    libraryIdentity &&
+    LIBRARY_AUTO_TOOL_IDENTITIES.has(libraryIdentity) &&
+    context.mcpServerNames?.map(canonicalAppMcpServerName).includes(libraryIdentity.split('/')[0])
+  ) {
+    // Single-use provider decision only; no durable grant or resource-policy changes.
+    return 'library_auto'
   }
 
   // Asking the user is itself the authorization boundary: the call cannot execute code or mutate
   // external state, and it remains blocked until the renderer answers or cancels it. Do not insert a
   // redundant permission card before the actual choice card.
   if (isAppInteractionTool(params, context)) {
-    return resolveAllowOptionId(params)
-  }
-
-  // The app-owned loader only reads the current projection under its enforced Skill allowlist.
-  // A model-supplied title or argument must never claim this exception.
-  if (
-    context?.frameworkId === 'codex' &&
-    context.mcpServerNames?.includes('skills') &&
-    trustedMcpToolIdentity(params) === 'skills/load_skill'
-  ) {
-    return resolveAllowOptionId(params)
+    return 'app_interaction'
   }
 
   // Saving an already-existing/inline result into the exact app-owned Artifact capability is part
   // of normal turn finalization. It cannot execute code or choose Project/Session ownership, so it
   // receives one call-scoped allow decision under every profile without showing an approval card.
   if (context?.mcpServerNames && isArtifactSaveTool(params, context.mcpServerNames)) {
-    return resolveAllowOptionId(params)
+    return 'artifact_save'
   }
 
   // The declaration exception must be bound to a server-qualified tool identity. rawInput is
@@ -355,7 +394,7 @@ const resolveAutomaticPermission = (
       providerToolName: extractProviderToolName(params.toolCall)
     })
   ) {
-    return resolveAllowOptionId(params)
+    return 'activity_declaration'
   }
 
   if (
@@ -366,10 +405,56 @@ const resolveAutomaticPermission = (
     return undefined
   }
 
-  return resolveAllowOptionId(params)
+  return 'conservative_auto'
 }
 
+// All automatic classifications share this entry. Existing cross-profile exceptions retain their
+// original precedence and semantics; the new operation rules apply only to trusted Auto requests.
+const resolveAutoOperation = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): AutoOperationDecision => {
+  const autoEvidence = (params as TrustedAutoOperationRequest)[TRUSTED_AUTO_OPERATION]
+  const identity = trustedMcpToolIdentity(params) ?? autoEvidence?.identity
+  if (context?.profile === 'auto' && identity && APP_AUTO_OPERATION_IDENTITIES.has(identity)) {
+    if (!context.mcpServerNames?.map(canonicalAppMcpServerName).includes(identity.split('/')[0])) {
+      return { kind: 'legacy' }
+    }
+    return classifyAppAutoOperation(identity, params.toolCall.rawInput ?? autoEvidence?.rawInput)
+  }
+  const reason = resolveLegacyAutomaticPermissionReason(params, context)
+  if (!reason) return { kind: 'legacy' }
+  return { kind: reason === 'app_interaction' ? 'inner_authorization' : 'allow_once', reason }
+}
+
+const resolveAutomaticPermissionReason = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): string | undefined => {
+  const operation = resolveAutoOperation(params, context)
+  return operation.kind === 'legacy' ? undefined : operation.reason
+}
+
+const resolveAutomaticPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): string | undefined =>
+  resolveAutomaticPermissionReason(params, context) ? resolveAllowOptionId(params) : undefined
+
+const isManagedSkillPermission = (
+  params: RequestPermissionRequest,
+  context: PermissionPolicyContext | undefined
+): boolean =>
+  isOpenCodeNativeSkillPermission(params, context) ||
+  ((context?.frameworkId === 'claude-code' || context?.frameworkId === 'codex') &&
+    context.mcpServerNames?.includes('skills') === true &&
+    trustedMcpToolIdentity(params) === 'skills/load_skill')
+
 export {
+  isManagedSkillPermission,
+  resolveAutomaticPermissionReason,
+  resolveAutoOperation,
+  LIBRARY_AUTO_TOOL_IDENTITIES,
   isNativeWebSearchCandidate,
   isNativeWebSearchPermission,
   isNativeWebFetchCandidate,
@@ -383,6 +468,7 @@ export {
   resolveAllowOptionId,
   trustedMcpToolIdentity,
   withTrustedNativeToolIdentity,
-  withTrustedMcpToolIdentity
+  withTrustedMcpToolIdentity,
+  withTrustedAutoOperation
 }
 export type { PermissionPolicyContext }

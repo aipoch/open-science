@@ -16,7 +16,10 @@ import {
   OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS
 } from '../../shared/office-preview'
 import { OFFICE_PREVIEW_RUNTIME_ORIGIN } from '../office-preview/office-preview-runtime-protocol'
-import { createReviewerElectronPagedContentResolver } from './paged-preview-electron'
+import {
+  createReviewerElectronPagedContentResolver,
+  renderReviewerDesktopResource
+} from './paged-preview-electron'
 
 const request = {
   artifactVersionId: 'version',
@@ -236,4 +239,25 @@ describe('Reviewer Electron paged preview adapter', () => {
     expect(resources.release).toHaveBeenCalledExactlyOnceWith(42, { resourceId: 'resource' })
     expect(vi.getTimerCount()).toBe(0)
   })
+})
+
+it('renders an already-authorized Node capability and destroys its native window on cancellation', async () => {
+  const { window, resource, resources } = fixture()
+  const controller = new AbortController()
+  window.loadURL.mockImplementation(() => new Promise(() => undefined))
+  const pending = renderReviewerDesktopResource({
+    artifactVersionId: request.artifactVersionId,
+    format: 'docx',
+    pages: [2],
+    includePreview: true,
+    maxBytes: 1000,
+    resource,
+    signal: controller.signal
+  })
+  await vi.waitFor(() => expect(window.loadURL).toHaveBeenCalledOnce())
+  controller.abort()
+  await expect(pending).rejects.toThrow()
+  expect(window.destroy).toHaveBeenCalledOnce()
+  expect(resources.acquireResolvedFile).not.toHaveBeenCalled()
+  expect(resources.release).not.toHaveBeenCalled()
 })

@@ -46,7 +46,7 @@ import { useMentionTrigger } from './useMentionTrigger'
 // rendered as a model-driven overlay (see below) rather than a CSS :empty hint, so it shows whenever
 // the doc is empty — including when the editor is blurred or retains a stray browser-inserted node.
 const composerEditorClassName =
-  'min-h-[36px] max-h-[200px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent py-1.5 text-[15px] leading-relaxed text-text-000 outline-none'
+  'min-h-[36px] max-h-[200px] w-full overflow-y-auto whitespace-pre-wrap break-words bg-transparent py-1.5 text-[15px] leading-relaxed text-text-000 outline-none focus-visible:outline-none'
 
 // Placeholder overlay aligned to the editor's text start; pointer-events-none lets clicks reach the box.
 const composerPlaceholderClassName =
@@ -757,7 +757,13 @@ export const ComposerEditor = ({
       }
     }
     // Enter submits; Shift+Enter inserts a newline; IME composition never submits.
-    if (event.key === 'Enter' && !event.shiftKey && !composingRef.current) {
+    if (
+      event.key === 'Enter' &&
+      !event.shiftKey &&
+      !composingRef.current &&
+      !event.nativeEvent.isComposing &&
+      event.nativeEvent.keyCode !== 229
+    ) {
       event.preventDefault()
       onSubmit()
     }

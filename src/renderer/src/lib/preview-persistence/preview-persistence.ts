@@ -1,15 +1,22 @@
 import { useEffect, useRef } from 'react'
+import {
+  getDesktopRuntimeEpoch,
+  desktopRuntimeWritable,
+  useDesktopRuntimeRecoveryStore
+} from '../../stores/desktop-runtime-recovery-store'
 
 import {
   PREVIEW_STATE_VERSION,
   MAX_PERSISTED_PREVIEW_ITEMS,
   createEmptyPersistedPreviewState,
   normalizePersistedPreviewState,
+  type PersistedPreviewFileItem,
   type PersistedPreviewState,
   type PreviewStateSnapshot,
   type SavePreviewStateResult,
   type SavePreviewStateRequest
 } from '../../../../shared/preview-state'
+import { parseLiteratureAttachmentVersionReference } from '../../../../shared/literature-attachment-reference'
 import { getUploadedAttachmentPath } from '../../../../shared/uploads'
 import {
   usePreviewWorkbenchStore,
@@ -153,6 +160,28 @@ const indexAuthoritativeArtifactIds = (sessions: ChatSession[]): ReadonlyMap<str
   return artifactIdByRecordId
 }
 
+const canonicalizeLiteraturePreviewState = (
+  state: PersistedPreviewState
+): PersistedPreviewState => {
+  const canonicalItems = state.items.map((item: PersistedPreviewFileItem) => {
+    if (item.source !== 'literature') return item
+    const versionId = parseLiteratureAttachmentVersionReference(item.path)
+    return versionId ? { ...item, id: `literature:${versionId}` } : item
+  })
+  const items = [...new Map(canonicalItems.map((item) => [item.id, item])).values()]
+  const activeItem = state.items.find((item) => item.id === state.activeItemId)
+  const activeVersionId =
+    activeItem?.source === 'literature'
+      ? parseLiteratureAttachmentVersionReference(activeItem.path)
+      : undefined
+
+  return {
+    ...state,
+    activeItemId: activeVersionId ? `literature:${activeVersionId}` : state.activeItemId,
+    items
+  }
+}
+
 // Applies only the changes made after `base` to the authoritative state. This preserves remote tabs
 // while retaining local actions since the last accepted snapshot, including the rejected write.
 const rebasePreviewState = (
@@ -160,6 +189,9 @@ const rebasePreviewState = (
   local: PersistedPreviewState,
   authoritative: PersistedPreviewState
 ): PersistedPreviewState => {
+  base = canonicalizeLiteraturePreviewState(base)
+  local = canonicalizeLiteraturePreviewState(local)
+  authoritative = canonicalizeLiteraturePreviewState(authoritative)
   const baseItems = new Map(base.items.map((item) => [item.id, item]))
   const localItems = new Map(local.items.map((item) => [item.id, item]))
   const mergedItems = authoritative.items
@@ -200,6 +232,7 @@ const createPreviewSaveScheduler = (
   const queues = new Map<
     string,
     {
+      epoch: number
       pendingState: PersistedPreviewState | undefined
       pendingBaseState: PersistedPreviewState | undefined
       inFlightState: PersistedPreviewState | undefined
@@ -221,8 +254,26 @@ const createPreviewSaveScheduler = (
     generations.set(projectId, (generations.get(projectId) ?? 0) + 1)
   }
 
+  // Retire queued work immediately; a completed old write may have reached the backend, but its
+  // response must not seed revisions or trigger conflict retries in the new attachment.
+  useDesktopRuntimeRecoveryStore.subscribe((state, previous) => {
+    if (state.epoch === previous.epoch && state.phase === previous.phase) return
+    if (state.phase === 'connected' && state.epoch === previous.epoch) return
+    for (const [projectId, queue] of queues) {
+      queue.pendingState = undefined
+      queue.pendingBaseState = undefined
+      bumpGeneration(projectId)
+    }
+    failures.clear()
+    revisions.clear()
+    acceptedStates.clear()
+  })
+
   const schedule = ({ projectId, state }: PreviewSaveInput): void => {
+    if (!desktopRuntimeWritable()) return
+    state = canonicalizeLiteraturePreviewState(state)
     const queue = queues.get(projectId) ?? {
+      epoch: getDesktopRuntimeEpoch(),
       pendingState: undefined,
       pendingBaseState: undefined,
       inFlightState: undefined,
@@ -248,6 +299,10 @@ const createPreviewSaveScheduler = (
     const drain = (async () => {
       try {
         while (queue.pendingState) {
+          if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) {
+            queue.pendingState = undefined
+            break
+          }
           const nextState = queue.pendingState
           const nextBaseState =
             queue.pendingBaseState ??
@@ -263,9 +318,11 @@ const createPreviewSaveScheduler = (
               state: nextState,
               expectedRevision: revisions.get(projectId) ?? 0
             })
+            if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) return
             if (result.status === 'conflict') {
-              const authoritativeState =
+              const authoritativeState = canonicalizeLiteraturePreviewState(
                 result.snapshot?.state ?? createEmptyPersistedPreviewState()
+              )
               const localState = queue.pendingState ?? nextState
               const localBaseState = nextBaseState
               const revision = result.snapshot?.revision ?? 0
@@ -299,6 +356,7 @@ const createPreviewSaveScheduler = (
             bumpGeneration(projectId)
             failures.delete(projectId)
           } catch (error) {
+            if (queue.epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable()) return
             failures.set(projectId, { state: nextState, error })
             bumpGeneration(projectId)
             reportError(error)
@@ -358,7 +416,10 @@ const createPreviewSaveScheduler = (
     }
 
     revisions.set(projectId, Math.max(revisions.get(projectId) ?? 0, snapshot?.revision ?? 0))
-    acceptedStates.set(projectId, snapshot?.state ?? createEmptyPersistedPreviewState())
+    acceptedStates.set(
+      projectId,
+      canonicalizeLiteraturePreviewState(snapshot?.state ?? createEmptyPersistedPreviewState())
+    )
     return true
   }
 
@@ -428,50 +489,59 @@ const toRestoredSlice = (
   // Hydrated sessions hold finalized upload paths while persisted tabs may still reference staging.
   const uploadByPreviewId = synchronizeUploadPreviewIndex(sessions)
   const artifactIdByRecordId = indexAuthoritativeArtifactIds(sessions)
+  const restoredItems = persisted.items.map((item) => {
+    const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
+    // Restore managed identity only from authoritative data for the persisted source.
+    const hasArtifactSource = item.source === undefined || item.source === 'artifact'
+    const artifactId = hasArtifactSource
+      ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
+      : undefined
+    const hydratedManagedFileId =
+      item.source === 'upload' ? upload?.managedFileId : hasArtifactSource ? artifactId : undefined
+    const managedFileId = item.managedFileId ?? hydratedManagedFileId
+    const mimeType = upload?.mimeType ?? item.mimeType
+    const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
+
+    return {
+      id: item.id,
+      sessionId: upload?.sessionId ?? item.sessionId,
+      title: item.title,
+      type: 'file' as const,
+      source: item.source as PreviewFileSource | undefined,
+      path: upload?.path ?? item.path,
+      // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
+      format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
+      name: item.name,
+      ...(mimeType ? { mimeType } : {}),
+      ...(upload?.size !== undefined || item.size !== undefined
+        ? { size: upload?.size ?? item.size }
+        : {}),
+      ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
+      ...(artifactId ? { artifactId } : {}),
+      ...(managedFileId ? { managedFileId } : {}),
+      ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
+      ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
+      ...(item.originSession ? { originSession: item.originSession } : {})
+    }
+  })
+  const canonicalizedItems = restoredItems.map((item) => {
+    if (item.source !== 'literature') return item
+    const versionId = parseLiteratureAttachmentVersionReference(item.path)
+    return versionId ? { ...item, id: `literature:${versionId}` } : item
+  })
+  const uniqueItems = [...new Map(canonicalizedItems.map((item) => [item.id, item])).values()]
+  const activeItem = persisted.items.find((item) => item.id === persisted.activeItemId)
+  const activeVersionId =
+    activeItem?.source === 'literature'
+      ? parseLiteratureAttachmentVersionReference(activeItem.path)
+      : undefined
+  const activeItemId = activeVersionId ? `literature:${activeVersionId}` : persisted.activeItemId
 
   return {
     panelState: persisted.panelState,
-    activeItemId: persisted.activeItemId,
+    activeItemId,
     items: [
-      ...persisted.items.map((item) => {
-        const upload = item.source === 'upload' ? uploadByPreviewId.get(item.id) : undefined
-        // Restore managed identity only from authoritative data for the persisted source.
-        const hasArtifactSource = item.source === undefined || item.source === 'artifact'
-        const artifactId = hasArtifactSource
-          ? (item.artifactId ?? artifactIdByRecordId.get(item.id))
-          : undefined
-        const hydratedManagedFileId =
-          item.source === 'upload'
-            ? upload?.managedFileId
-            : hasArtifactSource
-              ? artifactId
-              : undefined
-        const managedFileId = item.managedFileId ?? hydratedManagedFileId
-        const mimeType = upload?.mimeType ?? item.mimeType
-        const currentFormat = getPreviewFormatForFile({ name: item.name, mimeType })
-
-        return {
-          id: item.id,
-          sessionId: upload?.sessionId ?? item.sessionId,
-          title: item.title,
-          type: 'file' as const,
-          source: item.source as PreviewFileSource | undefined,
-          path: upload?.path ?? item.path,
-          // Re-evaluate the format from current name/MIME metadata, falling back to the stored result.
-          format: currentFormat === 'unknown' ? (item.format as PreviewFileFormat) : currentFormat,
-          name: item.name,
-          ...(mimeType ? { mimeType } : {}),
-          ...(upload?.size !== undefined || item.size !== undefined
-            ? { size: upload?.size ?? item.size }
-            : {}),
-          ...(item.mtimeMs !== undefined ? { mtimeMs: item.mtimeMs } : {}),
-          ...(artifactId ? { artifactId } : {}),
-          ...(managedFileId ? { managedFileId } : {}),
-          ...(item.selectedVersionId ? { selectedVersionId: item.selectedVersionId } : {}),
-          ...(item.versionNumber !== undefined ? { versionNumber: item.versionNumber } : {}),
-          ...(item.originSession ? { originSession: item.originSession } : {})
-        }
-      }),
+      ...uniqueItems,
       ...(persisted.subagents
         ? [
             {
@@ -529,10 +599,12 @@ export const usePreviewPersistence = (
   isSessionPersistenceReady: boolean
 ): void => {
   const previousProjectIdRef = useRef<string | undefined>(undefined)
+  const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
+  const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
 
   useEffect(() => {
     // Upload preview paths can only be reconciled after persisted sessions have hydrated.
-    if (!isSessionPersistenceReady) return
+    if (!isSessionPersistenceReady || !['connected', 'reconciling'].includes(recoveryPhase)) return
 
     const previousProjectId = previousProjectIdRef.current
     const store = usePreviewWorkbenchStore.getState()
@@ -559,7 +631,7 @@ export const usePreviewPersistence = (
     const loadLatest = async (): Promise<void> => {
       const loadGeneration = previewSaveScheduler.getGeneration(activeProjectId)
       const snapshot = await window.api.preview.load({ projectId: activeProjectId })
-      if (cancelled) return
+      if (cancelled || recoveryEpoch !== getDesktopRuntimeEpoch()) return
 
       if (!previewSaveScheduler.acceptLoadedSnapshot(activeProjectId, loadGeneration, snapshot)) {
         const currentStore = usePreviewWorkbenchStore.getState()
@@ -593,7 +665,7 @@ export const usePreviewPersistence = (
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, isSessionPersistenceReady])
+  }, [activeProjectId, isSessionPersistenceReady, recoveryEpoch, recoveryPhase])
 
   // Write through workbench changes so a process-level restart cannot lose the selected Subagent
   // Frame (or another durable preview change) before React gets an unmount opportunity.

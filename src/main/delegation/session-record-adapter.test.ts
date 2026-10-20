@@ -1,12 +1,12 @@
+import { SpecialistStorageFixture } from '../../../test/specialist-fixtures'
 import { describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
-import type { BuiltinSpecialistRegistryEntry } from '../../shared/specialist-package'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+import type { BuiltinSpecialistRegistryEntry } from '@aipoch/specialists'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 import {
   normalizeSessionFile,
   type PersistedChatMessage,
@@ -17,8 +17,7 @@ import {
   type SessionFileIndex,
   type SessionMutationRepository
 } from '../session-persistence/coordinator'
-import { SpecialistRepository } from '../specialist/repository'
-import { SpecialistService } from '../specialist/service'
+import { createSpecialistService } from '../specialist/service'
 import {
   createDeterministicDelegateExecution,
   type ExecutionControl
@@ -1651,8 +1650,7 @@ describe('Session delegated-work adapter', () => {
         fullAccess: emptyFullAccessConfig(),
         selectedCapabilities: emptySelectedConfig()
       })
-      const profileRepository = new SpecialistRepository(profileStorage)
-      const profiles = new SpecialistService(profileRepository, {
+      const profiles = createSpecialistService(profileStorage, {
         load: async () => ({
           entries: [builtin('secret-builtin-id-a'), builtin('secret-builtin-id-b')],
           diagnostics: []
@@ -1667,7 +1665,7 @@ describe('Session delegated-work adapter', () => {
       }
       const disabled = await profiles.create({ name: 'DISABLED_PROFILE' })
       await profiles.setEnabled(disabled.id, false)
-      await profileRepository.insert({
+      await new SpecialistStorageFixture(profileStorage).insert({
         id: 'secret-pending-id',
         name: 'PENDING_PROFILE',
         displayName: 'Pending Profile',

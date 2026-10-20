@@ -519,7 +519,7 @@ describe('ACP Runtime base composition', () => {
       /new (?:AcpRuntimeSnapshotOwner|AcpConnectionResourceOwner|AcpBackendGenerationOwner|ContextUsageTracker|AcpSessionInteractionOwner|AcpSessionCapabilityOwner|AcpGenerationActivityOwner|AcpConnectionTransitionOwner|AcpTurnSkillOwner|AcpSessionConfigurator|ArtifactTurnOwner|SessionPlanInteractionOwner|AcpPromptContentOwner|AcpSessionPresentationPolicy|AcpPromptOutcomeFinalizer)/
     )
     expect(composer).not.toMatch(/from ['"]electron['"]|import \{ AcpRuntime \}/)
-    expect(composer).toContain("import type { AcpRuntimeOptions } from './runtime'")
+    expect(composer).toMatch(/import type \{ AcpRuntimeOptions \} from '\.\/runtime(?:-contract)?'/)
     expect(applicationComposition).toContain('composeAcpRuntimeBaseOwners(runtimeOptions)')
     expect(applicationComposition).toContain(
       'composeAcpRuntimeSessionOwners(runtimeOptions, baseOwners)'

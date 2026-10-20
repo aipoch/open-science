@@ -1,21 +1,32 @@
-import { Check, Highlighter, Strikethrough, Trash2, Underline, Waves } from 'lucide-react'
+import {
+  Bookmark as BookmarkIcon,
+  Check,
+  CircleAlert,
+  Highlighter,
+  Loader2,
+  Pencil,
+  Strikethrough,
+  Trash2,
+  Underline,
+  Waves
+} from 'lucide-react'
 import { useRef, useState } from 'react'
-import { Bookmark as BookmarkIcon, CircleAlert, Loader2, Pencil } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import { TagSelection } from '../../settings/ResourceTagControls'
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { AnnotationValidationError, TextAnnotation } from '../../../../../shared/annotations'
+import type { TextAnnotation } from '../../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../../shared/annotations'
 import {
   PDF_MARK_COLORS,
   PDF_MARK_KINDS,
   type PdfMarkColor,
   type PdfMarkKind
 } from '../../../../../shared/pdf-bookmarks'
+import { TagSelection } from '../../settings/ResourceTagControls'
 import { AnnotationTrigger, type AnnotationTriggerAction } from './AnnotationTrigger'
 
 type AnnotationControl = Readonly<{
@@ -225,7 +236,7 @@ const PdfMarkColorControls = ({
             ? t('Pink')
             : t('Purple')
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider>
       <fieldset className="space-y-2">
         <legend className="text-xs font-medium">{t('Color')}</legend>
         <div className="flex gap-2" role="group" aria-label={t('Color')}>
@@ -286,7 +297,7 @@ const PdfTextMarkControls = ({
           ? t('Wavy underline')
           : t('Strikethrough')
   return (
-    <TooltipProvider delayDuration={800}>
+    <TooltipProvider>
       <fieldset className="space-y-2">
         <legend className="text-xs font-medium">{t('Mark style')}</legend>
         <div className="flex gap-2" role="group" aria-label={t('Mark style')}>
@@ -653,5 +664,5 @@ const AnnotationDraftEditor = ({
   )
 }
 
-export { AnnotationDraftEditor, AnnotationMarkers, PdfTextMarkControls, PdfMarkColorControls }
+export { AnnotationDraftEditor, AnnotationMarkers, PdfMarkColorControls, PdfTextMarkControls }
 export type { AnnotationControl, BookmarkDraftAction, BookmarkSaveInput, PdfTextMarkStyle }

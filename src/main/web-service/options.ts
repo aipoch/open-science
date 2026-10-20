@@ -28,7 +28,9 @@ const parseWebModeOptions = (
   const requestedPort = serveArg?.startsWith('--serve=')
     ? serveArg.slice('--serve='.length)
     : envPort
-  const parsedPort = requestedPort === undefined ? DEFAULT_WEB_PORT : parseWebPort(requestedPort)
+  // Independent desktop profiles must not compete for the standalone CLI/Web port.
+  const defaultPort = argv.includes('--desktop') ? 0 : DEFAULT_WEB_PORT
+  const parsedPort = requestedPort === undefined ? defaultPort : parseWebPort(requestedPort)
   return { enabled, headless, port: parsedPort }
 }
 

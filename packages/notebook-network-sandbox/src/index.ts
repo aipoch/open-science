@@ -21,6 +21,7 @@ import type {
   NotebookNetworkSandboxStatus,
   NotebookSandboxCleanupResult,
   NotebookSandboxProcessOutcome,
+  NotebookSandboxProcessState,
   NotebookSandboxCommand,
   NotebookSandboxedProcess,
   NotebookSandboxTarget
@@ -29,11 +30,22 @@ import type {
 let activeOwnerToken: symbol | undefined
 
 class NotebookSandboxPreparationError extends Error {
+  // Certifies only this request: other commands may still own unresolved cleanup debt.
   readonly cleanupComplete = true
 
   constructor(cause: unknown) {
     super(cause instanceof Error ? cause.message : String(cause), { cause })
     this.name = 'NotebookSandboxPreparationError'
+  }
+}
+
+class NotebookSandboxPreparationCleanupError extends Error {
+  constructor(
+    cause: unknown,
+    readonly retryCleanup: () => Promise<NotebookSandboxCleanupResult>
+  ) {
+    super('SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.', { cause })
+    this.name = 'NotebookSandboxPreparationCleanupError'
   }
 }
 
@@ -72,6 +84,24 @@ const sharesCleanupDomain = (
 
 const cleanupComplete = (result: NotebookSandboxCleanupResult): boolean =>
   result.processesTerminated && result.networkClosed && result.temporaryResourcesRemoved
+
+const processStateForOutcome = (
+  outcome: NotebookSandboxProcessOutcome
+): NotebookSandboxProcessState =>
+  outcome.processState ??
+  (outcome.processesTerminated ? 'started-and-reaped' : 'termination-unknown')
+
+const processesTerminatedForOutcome = (outcome: NotebookSandboxProcessOutcome): boolean => {
+  const state = processStateForOutcome(outcome)
+  return state === 'never-started' || state === 'started-and-reaped'
+}
+
+const withProcessState = (
+  outcome: Omit<NotebookSandboxProcessOutcome, 'processState'>,
+  processState: NotebookSandboxProcessState
+): NotebookSandboxProcessOutcome => {
+  return { ...outcome, processState, processesTerminated: processState !== 'termination-unknown' }
+}
 
 const initializationFailureReason = (
   status: Exclude<NotebookNetworkSandboxStatus, { kind: 'ready' }>
@@ -167,9 +197,16 @@ class NotebookNetworkSandbox {
   }
 
   async wrap(command: NotebookSandboxCommand): Promise<NotebookSandboxedProcess> {
-    if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
-    const target = normalizedTarget(command.target)
-    await this.#reconcilePendingCommands(target)
+    let target: NotebookSandboxTarget
+    try {
+      if (!this.#initialized) throw new Error('Notebook network sandbox is not initialized.')
+      target = normalizedTarget(command.target)
+      await this.#reconcilePendingCommands(target)
+    } catch (error) {
+      // No command has been registered or passed to the runtime. The caller may release this
+      // request's unused resources, but the commands blocking admission retain their own debt.
+      throw new NotebookSandboxPreparationError(error)
+    }
     const commandId = randomUUID()
     const shell = command.shell as string | WindowsShell | undefined
     const controller = new AbortController()
@@ -194,6 +231,7 @@ class NotebookNetworkSandbox {
         target,
         command: command.command,
         ...(command.executable ? { executable: command.executable, args: command.args ?? [] } : {}),
+        ...(command.electronAsNode ? { electronAsNode: true } : {}),
         commandId,
         ...(shell ? { shell } : {}),
         cwd: command.cwd,
@@ -204,6 +242,9 @@ class NotebookNetworkSandbox {
           ? { inheritedFileDescriptorCount: command.inheritedFileDescriptorCount }
           : {}),
         ...(command.superviseProcessTree ? { superviseProcessTree: true } : {}),
+        ...(command.windowsShellControlPipe
+          ? { windowsShellControlPipe: command.windowsShellControlPipe }
+          : {}),
         windowsProtectionRequired: command.windowsProtectionRequired,
         windowsRuntimeAccessRequired: command.windowsRuntimeAccessRequired,
         signal: controller.signal,
@@ -218,13 +259,17 @@ class NotebookNetworkSandbox {
     } catch (error) {
       const cleanup = await this.#releaseCommand(
         commandId,
-        { processesTerminated: true },
+        withProcessState({ processesTerminated: true }, 'never-started'),
         'spawn-failed'
       ).catch(() => undefined)
       if (!cleanup || !cleanupComplete(cleanup)) {
-        throw new Error(
-          'SHELL_CLEANUP_INCOMPLETE: Shell preparation cleanup could not be verified.',
-          { cause: error }
+        // Retain the exact command's cleanup ownership even though no process was returned.
+        throw new NotebookSandboxPreparationCleanupError(error, () =>
+          this.#releaseCommand(
+            commandId,
+            withProcessState({ processesTerminated: true }, 'never-started'),
+            'spawn-failed'
+          )
         )
       }
       throw new NotebookSandboxPreparationError(error)
@@ -232,15 +277,34 @@ class NotebookNetworkSandbox {
       finishPreparation()
     }
     let cleanupPromise: Promise<NotebookSandboxCleanupResult> | undefined
+    const assertOpen = (): void => {
+      if (activeCommand.cleanupRequest) {
+        throw new Error('Notebook sandbox process is already closed.')
+      }
+    }
     return {
       argv: wrapped.argv,
       env: wrapped.env,
       ...(wrapped.confirmProcessTreeTermination
         ? { confirmProcessTreeTermination: wrapped.confirmProcessTreeTermination }
         : {}),
-      ...(wrapped.beginSpawn ? { beginSpawn: wrapped.beginSpawn } : {}),
-      annotateStderr: (stderr) => this.#backend.annotateStderr(commandId, stderr),
-      setExecutionActive: (active) => this.#backend.setCommandExecutionActive(commandId, active),
+      ...(wrapped.requestProcessTreeTermination
+        ? { requestProcessTreeTermination: wrapped.requestProcessTreeTermination }
+        : {}),
+      ...(wrapped.confirmProcessState ? { confirmProcessState: wrapped.confirmProcessState } : {}),
+      ...(wrapped.beginSpawn
+        ? {
+            beginSpawn: () => {
+              assertOpen()
+              return wrapped.beginSpawn!()
+            }
+          }
+        : {}),
+      annotateStderr: (stderr, stdout) => this.#backend.annotateStderr(commandId, stderr, stdout),
+      setExecutionActive: (active) => {
+        if (active) assertOpen()
+        this.#backend.setCommandExecutionActive(commandId, active)
+      },
       resetNetworkConnections: () => this.#backend.resetCommandConnections(commandId),
       cleanup: (reason, processOutcome) => {
         if (cleanupPromise) return cleanupPromise
@@ -387,9 +451,10 @@ class NotebookNetworkSandbox {
     const command = this.#activeCommands.get(commandId)
     if (!command) {
       return Promise.resolve({
-        processesTerminated: processOutcome.processesTerminated,
+        processesTerminated: processesTerminatedForOutcome(processOutcome),
         networkClosed: true,
-        temporaryResourcesRemoved: true
+        temporaryResourcesRemoved: true,
+        ...(processOutcome.processState ? { processState: processOutcome.processState } : {})
       })
     }
     if (!command.controller.signal.aborted) {
@@ -401,21 +466,31 @@ class NotebookNetworkSandbox {
     command.cleanupRequest ??= { reason, processOutcome }
     command.cleanupTask = (async () => {
       const retainedOutcome = command.cleanupRequest!.processOutcome
-      if (retry && !retainedOutcome.processesTerminated && retainedOutcome.confirmTermination) {
+      if (
+        retry &&
+        !processesTerminatedForOutcome(retainedOutcome) &&
+        retainedOutcome.confirmTermination
+      ) {
         // Only the original process owner can supply new evidence. The runtime consumes a snapshot;
         // resource-cleanup layers cannot upgrade an unverified outcome themselves.
         const confirmed = await retainedOutcome.confirmTermination().catch(() => false)
         if (confirmed) {
           command.cleanupRequest = {
             reason: command.cleanupRequest!.reason,
-            processOutcome: { processesTerminated: true }
+            processOutcome: withProcessState({ processesTerminated: true }, 'started-and-reaped')
           }
         }
       }
+      const processOutcome = command.cleanupRequest!.processOutcome
       const result = await this.#backend.cleanupAfterCommand(
         commandId,
         command.cleanupRequest!.reason,
-        { processesTerminated: command.cleanupRequest!.processOutcome.processesTerminated }
+        processOutcome.processState
+          ? withProcessState(
+              { processesTerminated: processesTerminatedForOutcome(processOutcome) },
+              processOutcome.processState
+            )
+          : { processesTerminated: processesTerminatedForOutcome(processOutcome) }
       )
       if (cleanupComplete(result)) this.#forgetCommand(commandId)
       return result
@@ -440,7 +515,11 @@ class NotebookNetworkSandbox {
         )
       )
     )
-    if (results.some((result) => !cleanupComplete(result))) {
+    if (
+      results.some(
+        (result) => !cleanupComplete(result) && result.admission !== 'independent-command-allowed'
+      )
+    ) {
       throw new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
     }
   }
@@ -454,7 +533,10 @@ class NotebookNetworkSandbox {
 
 export { NotebookNetworkSandbox, NotebookSandboxPreparationError }
 // Shared transport accepts an already validated numeric destination, preserving DNS pinning.
-export { tunnelThroughProxy } from '../runtime/src/gateway/command-gateway.js'
+export {
+  tunnelThroughProxy,
+  resolveParentProxyUrl
+} from '../runtime/src/gateway/command-gateway.js'
 export type {
   NotebookNetworkAccessRequest,
   NotebookNetworkDecisionHandler,
@@ -467,8 +549,11 @@ export type {
   NotebookSandboxCleanupReason,
   NotebookSandboxCleanupResult,
   NotebookSandboxProcessOutcome,
+  NotebookSandboxProcessState,
   NotebookSandboxTarget,
   NotebookSandboxResources,
   NotebookSandboxedProcess,
   NotebookTrustBundle
 } from './types.js'
+
+export { reviewPrivateDestination } from '../runtime/src/gateway/address-policy.js'

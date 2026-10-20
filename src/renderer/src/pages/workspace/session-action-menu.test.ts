@@ -39,6 +39,63 @@ const invocation = (session: ChatSession): SessionActionInvocation => ({
 })
 
 describe('session action menu', () => {
+  it('hides capabilities omitted by a menu owner', () => {
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn()
+    })
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'limited-owner',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      invocation(createSession())
+    )
+    const actions = entries.flatMap((entry) => (entry.kind === 'action' ? [entry.action] : []))
+    expect(actions).not.toContain('download-artifacts')
+    expect(actions).not.toContain('view-notebook')
+    expect(actions).not.toContain('delete')
+  })
+
+  it('offers discussion and replay for ordinary running Sessions and forwards the selected source', async () => {
+    const onViewReplay = vi.fn()
+    const onDiscussSession = vi.fn(async () => undefined)
+    const bindings = createSessionActionBindings({
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: false,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onViewReplay,
+      onDiscussSession
+    })
+    const context = invocation(createSession({ status: 'running' }))
+    const entries = resolveActionMenuEntries(
+      {
+        identityKey: 'source',
+        catalog: SESSION_ACTION_CATALOG,
+        recipe: SESSION_ACTION_RECIPE,
+        bindings
+      },
+      context
+    )
+    for (const action of ['discuss', 'view-replay'] as const) {
+      expect(
+        entries.find((entry) => entry.kind === 'action' && entry.action === action)
+      ).toMatchObject({ disabled: false })
+      await bindings[action].execute(context)
+    }
+    expect(onViewReplay).toHaveBeenCalledWith(context.session)
+    expect(onDiscussSession).toHaveBeenCalledWith(context.session)
+  })
   it('preserves the existing action order and executes every action for the invocation session', async () => {
     const session = createSession()
     const handlers = {
@@ -215,6 +272,37 @@ it('groups conversation and package exports while keeping package admission inde
   expect(onExportPackage).toHaveBeenCalledWith(context.session)
 })
 
+it('keeps inactive Attention sessions available for fork and package export', () => {
+  const bindings = createSessionActionBindings({
+    canMutateConversations: true,
+    canDeleteConversations: false,
+    canDownloadArtifacts: true,
+    onTogglePin: vi.fn(),
+    onRenameSession: vi.fn(),
+    onDownloadArtifacts: vi.fn(),
+    onViewNotebook: vi.fn(),
+    onDeleteSession: vi.fn(),
+    onForkSession: vi.fn(async () => undefined),
+    onExportPackage: vi.fn(async () => undefined)
+  })
+  const context = invocation(
+    createSession({ status: 'error', attention: { recordProblems: ['size-limit'] } })
+  )
+  const entries = resolveActionMenuEntries(
+    {
+      identityKey: context.session.id,
+      catalog: SESSION_ACTION_CATALOG,
+      recipe: [
+        { kind: 'action', action: 'export-package' },
+        { kind: 'action', action: 'fork' }
+      ],
+      bindings
+    },
+    context
+  )
+  expect(entries).toMatchObject([{ disabled: false }, { disabled: false }])
+})
+
 it.each([
   'idle',
   'running',
@@ -297,3 +385,117 @@ it.each([
   expect(entry).toMatchObject({ disabled: state.disabled })
   if (state.disabled) expect(entry).toHaveProperty('disabledDescription', expect.any(String))
 })
+
+it.each([undefined, false] as const)(
+  'keeps diagnostics available with contentLoaded=%s when storage and ordinary exports are blocked',
+  async (contentLoaded) => {
+    const onExportDiagnostics = vi.fn()
+    const bindings = createSessionActionBindings({
+      canMutateConversations: false,
+      canDeleteConversations: false,
+      canDownloadArtifacts: false,
+      packageBusy: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onExportDiagnostics
+    })
+    const context = invocation(createSession({ status: 'running', messages: [], contentLoaded }))
+    expect(bindings['export-diagnostics'].hidden).toBe(false)
+    expect(bindings['export-diagnostics'].disabled).toBeUndefined()
+    await bindings['export-diagnostics'].execute(context)
+    expect(onExportDiagnostics).toHaveBeenCalledWith(context.session)
+  }
+)
+
+it.each([
+  { status: 'running', activeRun: { promptMessageId: 'message-1', startedAt: 1 } },
+  { status: 'waiting-permission' },
+  { status: 'waiting-for-user' },
+  {
+    status: 'waiting-plan-approval',
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      plan: {
+        artifactId: 'plan',
+        artifactVersionId: 'version',
+        artifactChecksum: 'a'.repeat(64),
+        approval: 'pending',
+        stepStatuses: {}
+      }
+    }
+  }
+] satisfies Partial<ChatSession>[])(
+  'offers imported exports without weakening fork or live-transfer admission: %j',
+  async (history) => {
+    const imported = createSession({
+      ...history,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      }
+    })
+    const options = {
+      canMutateConversations: true,
+      canDeleteConversations: true,
+      canDownloadArtifacts: true,
+      onTogglePin: vi.fn(),
+      onRenameSession: vi.fn(),
+      onDownloadArtifacts: vi.fn(),
+      onViewNotebook: vi.fn(),
+      onDeleteSession: vi.fn(),
+      onExportSession: vi.fn(),
+      onExportPackage: vi.fn(async () => undefined),
+      onForkSession: vi.fn(async () => undefined)
+    }
+    const entriesFor = (
+      session: ChatSession,
+      overrides: Partial<typeof options> & { packageBusy?: boolean } = {}
+    ): ReturnType<typeof resolveActionMenuEntries> =>
+      resolveActionMenuEntries(
+        {
+          identityKey: session.id,
+          catalog: SESSION_ACTION_CATALOG,
+          recipe: [
+            { kind: 'action', action: 'export' },
+            { kind: 'action', action: 'export-package' },
+            { kind: 'action', action: 'fork' }
+          ],
+          bindings: createSessionActionBindings({ ...options, ...overrides })
+        },
+        invocation(session)
+      )
+    expect(entriesFor(imported)).toMatchObject([
+      { disabled: false },
+      { disabled: false },
+      { disabled: true }
+    ])
+    const bindings = createSessionActionBindings(options)
+    await bindings.export.execute(invocation(imported))
+    await bindings['export-package'].execute(invocation(imported))
+    expect(options.onExportSession).toHaveBeenCalledWith(imported)
+    expect(options.onExportPackage).toHaveBeenCalledWith(imported)
+    expect(entriesFor({ ...imported, packageOrigin: undefined })).toMatchObject([
+      { disabled: true },
+      { disabled: true },
+      { disabled: true }
+    ])
+    for (const live of [{ agentPromptInFlight: true }, { compacting: true }])
+      expect(entriesFor({ ...imported, ...live })).toMatchObject([
+        { disabled: true },
+        { disabled: true },
+        { disabled: true }
+      ])
+    expect(entriesFor(imported, { packageBusy: true })[1]).toMatchObject({ disabled: true })
+    expect(entriesFor(imported, { canMutateConversations: false })[1]).toMatchObject({
+      disabled: true
+    })
+    expect(entriesFor({ ...imported, messages: [] })[0]).toMatchObject({ disabled: true })
+  }
+)

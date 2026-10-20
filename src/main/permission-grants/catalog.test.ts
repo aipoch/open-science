@@ -130,6 +130,7 @@ describe('permission grant renderer projection', () => {
     const snapshot = projectPermissionGrantSnapshot(records, {
       connectorPolicy: {
         bundledConnectorIds: ['chemistry'],
+        bundledConnectorNames: { chemistry: 'Chemistry' },
         customMcpServers: [
           { id: 'custom-1', name: 'stable', displayName: 'Renamed', enabled: true }
         ],
@@ -163,7 +164,12 @@ describe('permission grant renderer projection', () => {
           scope: { kind: 'global' }
         }
       ],
-      { connectorPolicy: { bundledConnectorIds: ['chemistry'] } }
+      {
+        connectorPolicy: {
+          bundledConnectorIds: ['chemistry'],
+          bundledConnectorNames: { chemistry: 'Chemistry' }
+        }
+      }
     )
 
     expect(snapshot.grants[0]).not.toHaveProperty('connectorServerId')

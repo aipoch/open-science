@@ -12,7 +12,7 @@ import {
   type MacInstallationAssistantAction,
   type MacInstallationAssistantResult
 } from '../shared/mac-installation'
-import { createLogger, diagnosticErrorFields } from './logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 export type InstallationLocation = 'writable' | 'read-only' | 'unknown'
 

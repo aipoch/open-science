@@ -1,0 +1,2 @@
+{"name":"numeric glyph alias with a native control code","glyphName":"C211","characterCode":2,"readerText":"Ó","fontProgramHex":"01000401000101011253796e746865746963456e636f64696e67000101010fbd8bf8ecf8ba05c30f8bdb12c6110001010105433231310000000187000201010410f9ab0ef9abbd16f8baf8bafcba060e"}
+{"name":"tall control glyph run","glyphName":"C019","characterCode":2,"readerText":"\u0013","fontProgramHex":"01000401000101011253796e746865746963456e636f64696e670001010111bd1cfa24f8ecf8ba05c50f8be112c8110001010105433231310000000187000201010414f9ab0ef9abbd1cfa2415f8ba1c0802fcba060e"}

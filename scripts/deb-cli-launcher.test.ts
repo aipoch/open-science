@@ -12,7 +12,7 @@ afterEach(async () => {
 
 // Exercise the POSIX wrapper locally as well as on its Linux target.
 describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
-  it('runs the bundled CLI through Electron Node mode and preserves arguments and exit status', async () => {
+  it('runs the bundled CLI through ordinary Node without a desktop executable and preserves arguments and exit status', async () => {
     const root = await realpath(await mkdtemp(join(tmpdir(), 'deb-cli-')))
     roots.push(root)
     const app = join(root, "Open-Science ' 数据")
@@ -22,7 +22,8 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
     await mkdir(bin)
     await copyFile(resolve('build/deb-cli-launcher'), join(resources, 'open-science-cli'))
     await chmod(join(resources, 'open-science-cli'), 0o755)
-    const executable = join(app, 'open-science')
+    await mkdir(join(resources, 'node-runtime'))
+    const executable = join(resources, 'node-runtime/node')
     await writeFile(
       executable,
       '#!/bin/sh\nprintf "%s\\n" "$ELECTRON_RUN_AS_NODE" "$OPEN_SCIENCE_APP_PATH" "$@"\nexit 23\n',
@@ -32,15 +33,20 @@ describe.skipIf(process.platform === 'win32')('Debian CLI launcher', () => {
     await symlink(join(resources, 'open-science-cli'), command)
     const result = spawnSync(command, ['run', '--prompt', 'spaces; $(never-run) "quoted"', ''], {
       encoding: 'utf8',
-      env: { ...process.env, OPEN_SCIENCE_APP_PATH: '/wrong/application', DISPLAY: '' }
+      env: {
+        ...process.env,
+        OPEN_SCIENCE_APP_PATH: '/wrong/application',
+        ELECTRON_RUN_AS_NODE: '1',
+        DISPLAY: ''
+      }
     })
     expect(result.error).toBeUndefined()
     expect(result.status).toBe(23)
     expect(result.stderr).toBe('')
     expect(result.stdout.split('\n')).toEqual([
-      '1',
-      executable,
-      join(resources, 'cli/index.mjs'),
+      '',
+      '',
+      join(resources, 'backend/cli.mjs'),
       'run',
       '--prompt',
       'spaces; $(never-run) "quoted"',

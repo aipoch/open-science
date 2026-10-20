@@ -2,7 +2,7 @@ import { useLayoutEffect, useRef, type ReactNode } from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { useTranslation } from 'react-i18next'
 import type { NativeActionMenuRequest } from '../../../../shared/action-menu-overlay'
-import type { PointerActionMenuProps } from './PointerActionMenu'
+import type { PointerActionMenuProps } from './action-menu-presentation'
 
 // Custom labels may contain badges/shortcuts. Send their text, never executable HTML or callbacks.
 const labelText = (label: ReactNode): string => {

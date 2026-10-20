@@ -1,6 +1,7 @@
+import { PermissionScopeButton } from '@/pages/workspace/PermissionScopeButton'
 import { ErrorNotice } from '@/components/error-notice'
 import { useState } from 'react'
-import { ShieldAlert, ChevronDown, ChevronUp } from 'lucide-react'
+import { ShieldAlert, ChevronDown, ChevronUp, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
@@ -9,6 +10,7 @@ import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import {
   dialogBodyClassName,
+  dialogCloseButtonClassName,
   dialogDescriptionClassName,
   dialogFooterClassName,
   dialogHeaderClassName,
@@ -29,8 +31,7 @@ type PendingBroadScope = Readonly<{
   scope: BroadPermissionScope
 }>
 
-// A modal approval card for a pending compute operation. The card cannot be dismissed without
-// a decision — the call is held open in main until the user responds (or a 5-minute timeout fires).
+// Closing releases the UI immediately and denies idle requests through the store.
 //
 // Four approval scopes; Broker persists Session/Project/Global and the compute adapter receives a
 // one-call allow decision only after that write succeeds.
@@ -48,30 +49,34 @@ export function ComputeApprovalDialog({
   const { t } = useTranslation()
   const request = useComputeStore((state) =>
     state.pendingApprovals.find(
-      (candidate) => !candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId)
+      (candidate) =>
+        !candidate.closed && (!candidate.sessionId || !blockedSessionIds?.has(candidate.sessionId))
     )
   )
   const respondApproval = useComputeStore((state) => state.respondApproval)
+  const close = useComputeStore((state) => state.closeApproval)
   const [expandedRequestId, setExpandedRequestId] = useState<string | null>(null)
   const [pendingBroadScope, setPendingBroadScope] = useState<PendingBroadScope>()
-  const [responding, setResponding] = useState(false)
+  const [respondingRequestId, setRespondingRequestId] = useState<string>()
   const [responseErrorRequestId, setResponseErrorRequestId] = useState<string>()
 
   const dialogRequest = useRetainedDialogValue(request)
   if (!dialogRequest) return null
 
+  const responding = dialogRequest.responding || respondingRequestId === dialogRequest.id
+
   const submitResponse = (decision: ComputeApprovalDecision): void => {
     if (responding) return
     const requestId = dialogRequest.id
-    setResponding(true)
+    setRespondingRequestId(requestId)
     setResponseErrorRequestId(undefined)
     void respondApproval(requestId, decision)
       .catch(() => setResponseErrorRequestId(requestId))
-      .finally(() => setResponding(false))
+      .finally(() =>
+        setRespondingRequestId((current) => (current === requestId ? undefined : current))
+      )
   }
   const deny = (): void => submitResponse('deny')
-  const approveOnce = (): void => submitResponse('once')
-  const approveSession = (): void => submitResponse('session')
   const confirmBroadScope = (): void => {
     if (!pendingBroadScope) return
     const { requestId, scope } = pendingBroadScope
@@ -109,13 +114,17 @@ export function ComputeApprovalDialog({
         : t('remote commands on {{host}}', { host: dialogRequest.providerName })
 
   return (
-    <Dialog.Root open={active && Boolean(request)}>
+    <Dialog.Root
+      open={active && Boolean(request)}
+      onOpenChange={(open) => {
+        if (!open) close(dialogRequest.id)
+      }}
+    >
       <Dialog.Portal>
         <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[60]')} />
         <Dialog.Content
           aria-busy={responding}
           onInteractOutside={(event) => event.preventDefault()}
-          onEscapeKeyDown={(event) => event.preventDefault()}
           className={dialogPanelClassName(
             'z-[60] flex max-h-[calc(100svh-2rem)] w-[min(480px,calc(100vw-2rem))] flex-col overscroll-contain p-0'
           )}
@@ -125,7 +134,7 @@ export function ComputeApprovalDialog({
               className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
               aria-hidden="true"
             />
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <Dialog.Title className={dialogTitleClassName}>{title}</Dialog.Title>
               <Dialog.Description
                 className={cn(dialogDescriptionClassName, 'text-xs [text-wrap:pretty]')}
@@ -133,6 +142,16 @@ export function ComputeApprovalDialog({
                 {description}
               </Dialog.Description>
             </div>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon-sm"
+              aria-label={t('Close')}
+              className={cn(dialogCloseButtonClassName, 'shrink-0')}
+              onClick={() => close(dialogRequest.id)}
+            >
+              <X className="size-4" aria-hidden="true" />
+            </Button>
           </div>
 
           <ScrollArea
@@ -260,7 +279,7 @@ export function ComputeApprovalDialog({
                   )}
                 />
               ) : null}
-              {responseErrorRequestId === dialogRequest.id ? (
+              {dialogRequest.responseFailed || responseErrorRequestId === dialogRequest.id ? (
                 <ErrorNotice
                   inline
                   role="alert"
@@ -275,29 +294,16 @@ export function ComputeApprovalDialog({
             <Button type="button" variant="destructive" disabled={responding} onClick={deny}>
               {t('Deny')}
             </Button>
-            <Button type="button" variant="outline" disabled={responding} onClick={approveOnce}>
-              {t('Once')}
-            </Button>
-            <Button type="button" variant="outline" disabled={responding} onClick={approveSession}>
-              {t('This session')}
-            </Button>
-            <Button
-              type="button"
-              variant="outline"
+            <PermissionScopeButton
+              key={dialogRequest.id}
+              available={['once', 'session', 'project', 'global']}
               disabled={responding}
-              onClick={() =>
-                setPendingBroadScope({ requestId: dialogRequest.id, scope: 'project' })
-              }
-            >
-              {t('This project')}
-            </Button>
-            <Button
-              type="button"
-              disabled={responding}
-              onClick={() => setPendingBroadScope({ requestId: dialogRequest.id, scope: 'global' })}
-            >
-              {t('Always')}
-            </Button>
+              onAllow={(scope) => {
+                if (scope === 'project' || scope === 'global')
+                  setPendingBroadScope({ requestId: dialogRequest.id, scope })
+                else submitResponse(scope)
+              }}
+            />
           </div>
         </Dialog.Content>
       </Dialog.Portal>

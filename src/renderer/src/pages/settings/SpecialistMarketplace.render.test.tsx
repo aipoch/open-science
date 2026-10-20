@@ -104,6 +104,7 @@ beforeEach(() => {
       }),
       addMarketplaceSource: vi.fn().mockResolvedValue(snapshot.sources[0]),
       cancelMarketplaceCandidate: vi.fn().mockResolvedValue(undefined),
+      prepareMarketplaceInstall: vi.fn(),
       removeMarketplaceSource: vi.fn()
     }
   } as never
@@ -546,6 +547,52 @@ describe('Specialist Marketplace settings', () => {
         button.textContent?.includes('Install Specialist')
       )?.disabled
     ).toBe(false)
+  })
+
+  it('disables Marketplace write actions when the host surface omits them (Remote Web)', async () => {
+    const specialistApi = window.api.specialist as unknown as Record<string, unknown>
+    delete specialistApi.prepareMarketplaceInstall
+    delete specialistApi.inspectGitHubMarketplaceSource
+    window.api.specialist.getMarketplaceRelease = vi.fn().mockResolvedValue(release)
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace view={{ kind: 'marketplace-sources' }} onNavigate={vi.fn()} />
+      )
+    })
+    const input = container.querySelector<HTMLInputElement>('#marketplace-repository')!
+    fireEvent.change(input, { target: { value: 'https://github.com/example/marketplace' } })
+    const findButton = (label: string): HTMLButtonElement =>
+      Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes(label)
+      )!
+    expect(findButton('Inspect source').disabled).toBe(true)
+    // "Trust and add source" only renders after a successful inspection, which the disabled
+    // Inspect control makes unreachable in this surface.
+
+    await act(async () => {
+      root.render(
+        <SpecialistMarketplace
+          view={{
+            kind: 'marketplace-release',
+            sourceId: 'github-example',
+            id: 'example-specialist',
+            version: '2.0.0'
+          }}
+          onNavigate={vi.fn()}
+        />
+      )
+    })
+    fireEvent.click(
+      Array.from(container.querySelectorAll('button')).find((item) =>
+        item.textContent?.includes('Skills')
+      )!
+    )
+    const install = Array.from(container.querySelectorAll('button')).find((item) =>
+      item.textContent?.includes('Install Specialist')
+    )
+    expect(install).toBeDefined()
+    expect(install!.disabled).toBe(true)
   })
 
   it('omits Author when a Marketplace listing does not declare one', async () => {

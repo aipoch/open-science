@@ -4,11 +4,18 @@ import { createRuntimeConfig } from '../../packages/notebook-network-sandbox/src
 
 import {
   DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+  OPEN_SCIENCE_DOMAIN_GROUP_IDS,
   buildNotebookNetworkPolicy,
   normalizeNotebookNetworkSettings,
   notebookNetworkSettingsAllowDomain,
   validateCustomAllowedDomain
 } from './notebook-network'
+
+import { OPEN_SCIENCE_DOMAIN_GROUP_IDS as settingDomainGroups } from './notebook-network-settings'
+
+it('preserves the public domain group identity across the settings boundary', () => {
+  expect(OPEN_SCIENCE_DOMAIN_GROUP_IDS).toBe(settingDomainGroups)
+})
 
 vi.mock('node:dns/promises', () => ({
   lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }])
@@ -43,6 +50,15 @@ describe('disabled automatic domain access', () => {
 })
 
 describe('notebook network policy', () => {
+  it('passes the application default policy to the sandbox including label wildcards', () => {
+    expect(() =>
+      createRuntimeConfig({
+        policy: buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS),
+        resources: { root: '/resources' }
+      })
+    ).not.toThrow()
+  })
+
   it('enables every Open-Science domain group by default', () => {
     const policy = buildNotebookNetworkPolicy(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
 
@@ -139,5 +155,29 @@ describe('notebook network policy', () => {
 
     expect(policy.deniedDomains).toEqual([])
     expect(policy.deniedDomainReasons).toEqual({})
+  })
+})
+
+describe('private trust persistence contract', () => {
+  it('preserves historical defaults and never promotes a private grant to a public domain grant', () => {
+    expect(normalizeNotebookNetworkSettings({})).toEqual(DEFAULT_NOTEBOOK_NETWORK_SETTINGS)
+    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    const settings = normalizeNotebookNetworkSettings({ trustedPrivateDestinations: [rule] })
+    expect(buildNotebookNetworkPolicy(settings).trustedPrivateDestinations).toEqual([rule])
+    expect(notebookNetworkSettingsAllowDomain(settings, rule.hostname)).toBe(false)
+    expect(settings.allowedDomains).toEqual([])
+    expect(normalizeNotebookNetworkSettings(JSON.parse(JSON.stringify(settings)))).toEqual(settings)
+  })
+  it('fails closed for ambiguous duplicate services and malformed records', () => {
+    const rule = { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+    expect(
+      normalizeNotebookNetworkSettings({
+        trustedPrivateDestinations: [rule, { ...rule, approvedAddresses: ['10.32.0.8'] }]
+      }).trustedPrivateDestinations
+    ).toEqual([])
+    expect(
+      normalizeNotebookNetworkSettings({ trustedPrivateDestinations: [{ ...rule, port: 0 }] })
+        .trustedPrivateDestinations
+    ).toEqual([])
   })
 })

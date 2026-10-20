@@ -1,0 +1,4 @@
+{"name": "abbreviated-label-borrows-blank-first-column-space", "nextX": 160, "label": "ABC", "labelWidth": 18, "right": 152}
+{"name": "label-expansion-stops-at-neighbor-clearance", "nextX": 80, "label": "ABC", "labelWidth": 18, "right": 72}
+{"name": "numeric-first-column-keeps-original-space-budget", "nextX": 160, "label": "12.4", "labelWidth": 18, "right": 66}
+{"name": "statistical-subheading-borrows-first-column-without-values-on-its-row", "nextX": 160, "label": "ABC", "labelWidth": 18, "right": 152, "singleLabel": "Joint ROM, mean (SD)"}

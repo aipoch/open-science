@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import { mkdir, rename, rm, stat, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
@@ -8,7 +9,7 @@ import type {
   ArtifactVersionFile,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import { artifactFailureDiagnostic } from './pending-file-transaction'
 import type {
   ArtifactVersionProducerCapture,
@@ -138,7 +139,7 @@ type ArtifactProvenanceVersionWriterOptions = {
   compatibilityRepository: Pick<ArtifactRepository, 'listPendingRunFiles'>
   createId: () => string
   now: () => Date
-  durability: ArtifactDurability
+  durability: FileDurability
   resourceBudgets?: LocalResourceBudgetOverrides
   writeBudgetOwner: Pick<ArtifactWriteBudgetOwner, 'assertReserved' | 'release'>
   captureProducer: (
@@ -655,6 +656,7 @@ class ArtifactProvenanceVersionWriter {
           checksum: persisted.checksum,
           sizeBytes: persisted.sizeBytes
         })
+        await bindManagedPdfVersion(transaction, 'artifact-version', persisted.id)
         await transaction.artifactLineage.update({
           where: { id: persisted.artifactId },
           data: { filename: request.filename }

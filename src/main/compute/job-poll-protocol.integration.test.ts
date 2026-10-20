@@ -1,12 +1,14 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { expect, it, vi } from 'vitest'
 
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import type { ComputeJob } from '../../shared/compute'
 import { ComputeService } from './compute-service'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+
+import type { SshRunner } from '@aipoch/compute/node'
+import { JobPoller } from '@aipoch/compute/node'
 import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
-import { JobPoller } from './job-poller'
 import type { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
 
 const nonce = 'INTEGRITY_'
 const providerId = 'ssh:cluster'
@@ -69,13 +71,15 @@ it('isolates incomplete poll protocol while another Compute Job completes', asyn
       }))
     }
     const hostRepository = { get: vi.fn(async () => null) } as unknown as ComputeHostRepository
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      onJobUpdated: (job) => updates.push(job),
-      makeNonce: () => nonce
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+        onJobUpdated: (job) => updates.push(job),
+        makeNonce: () => nonce
+      })
+      .tick()
 
     const service = new ComputeService({
       runner: {} as SshRunner,
@@ -172,12 +176,14 @@ it('recovers malformed handles from durable workdirs without blocking a healthy 
       acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn() }))
     }
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository: { get: vi.fn(async () => null) } as unknown as ComputeHostRepository,
-      jobRepository,
-      makeNonce: () => nonce
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository: { get: vi.fn(async () => null) } as unknown as ComputeHostRepository,
+        jobRepository,
+        makeNonce: () => nonce
+      })
+      .tick()
 
     for (const [jobId, pid] of [
       ['malformed-json', 301],
@@ -261,7 +267,7 @@ it('safely converges a persistently ambiguous malformed handle across poller res
       acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn() }))
     }
     const makePoller = (): JobPoller =>
-      new JobPoller({
+      createComputeExecution().createPoller({
         connectionBroker,
         hostRepository: { get: vi.fn(async () => null) } as unknown as ComputeHostRepository,
         jobRepository,

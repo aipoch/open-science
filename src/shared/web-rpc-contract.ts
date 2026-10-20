@@ -1,3 +1,4 @@
+import { RUNTIME_PAYLOAD_CAPABILITY, runtimePayloadRequestSchema } from './runtime-payload-transfer'
 import { z } from 'zod'
 
 import { APPLICATION_COMMAND_ERROR_CODES } from './application-command-contract'
@@ -6,10 +7,12 @@ import { WEB_EVENT_CHANNELS, WEB_INVOKE_CHANNELS } from './web-api-map.generated
 
 export const WEB_RPC_PROTOCOL_VERSION = 1 as const
 export const WEB_RPC_CAPABILITY_UPDATE_CLI_V1 = 'update-cli-v1' as const
-export const WEB_RPC_CAPABILITIES = [WEB_RPC_CAPABILITY_UPDATE_CLI_V1] as const
-// v3 requires ACP consumers to apply acp:event incrementally. The payload is an ordered event
-// batch on the same protocol version; Electron and Web clients that ship with this Main consume it.
-export const WEB_EVENT_STREAM_PROTOCOL_VERSION = 3 as const
+export const WEB_RPC_CAPABILITIES = [
+  WEB_RPC_CAPABILITY_UPDATE_CLI_V1,
+  RUNTIME_PAYLOAD_CAPABILITY
+] as const
+// v4 carries bounded invalidations for large Session notifications. Clients restore the full facade.
+export const WEB_EVENT_STREAM_PROTOCOL_VERSION = 4 as const
 export const WEB_RPC_TRANSPORT_ERROR_CODES = [
   'invalid_request',
   'method_not_found',
@@ -28,6 +31,9 @@ export const WEB_RPC_UNAVAILABLE_CHANNELS = [
   'file:save-blob',
   'file:save-managed',
   'sessions:export-conversation',
+  'sessions:inspect-diagnostics',
+  'sessions:export-diagnostics',
+  'sessions:cancel-diagnostics',
   'sessions:export-package',
   'sessions:fork',
   'sessions:import-package',
@@ -77,7 +83,9 @@ const webRpcValueSchema: z.ZodType<unknown> = z.lazy(() =>
 export const webRpcRequestSchema = z
   .object({
     protocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
-    args: z.array(webRpcValueSchema)
+    args: z.array(webRpcValueSchema),
+    acceptPayload: z.literal(1).optional(),
+    transfer: runtimePayloadRequestSchema.optional()
   })
   .strict()
 
@@ -109,7 +117,9 @@ export const webRpcBootstrapSchema = z
     platform: z.string(),
     draftScope: z.string().min(1).optional(),
     webCallerLocation: z.enum(WEB_CALLER_LOCATIONS).optional(),
-    versions: z.object({ electron: z.string(), chrome: z.string(), node: z.string() }).strict(),
+    versions: z
+      .object({ electron: z.string().optional(), chrome: z.string().optional(), node: z.string() })
+      .strict(),
     rpcProtocolVersion: z.literal(WEB_RPC_PROTOCOL_VERSION),
     eventStream: z
       .object({

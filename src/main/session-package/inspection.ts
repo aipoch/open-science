@@ -10,8 +10,13 @@ import { validatePackageRecords } from './validation'
 export const assertSettledHistory = (session: PersistedChatSession): void => {
   const context = session.runtimeContext
   if (
-    session.status !== 'idle' ||
-    hasCurrentRunningDelegatedAttempt(session) ||
+    session.activeRun ||
+    session.status === 'running' ||
+    session.status.startsWith('waiting-') ||
+    // Package metadata is untrusted; claimed import identity cannot bypass source validation.
+    hasCurrentRunningDelegatedAttempt({ runtimeContext: context }) ||
+    context?.permission?.state === 'pending' ||
+    context?.plan?.approval === 'pending' ||
     context?.delegatedWork?.messageCommands?.some(
       (command) =>
         command.receipt.status === 'queued' ||

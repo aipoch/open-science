@@ -1,9 +1,22 @@
+import { matchesWriteScope } from '@aipoch/notebook-analysis'
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { lstat, mkdir, readdir, realpath, stat } from 'node:fs/promises'
 import { isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { nodeRuntimeEnvironment } from '../node-process-host'
+import { runtimeMetadataIfConfigured } from '../runtime-metadata'
 
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import {
+  analyzeNotebookSourceFileAccess,
+  verifiedSerializedValues
+} from '@aipoch/notebook-analysis'
+import type {
+  NotebookSourceFileAccessContext,
+  NotebookSourceFileWriteScope
+} from '@aipoch/notebook-analysis/contracts'
+import type { ComputeJob } from '../../shared/compute'
 import {
   parseOwnedExecutionFileEvidenceSummary,
   type ExecutionActivityKind,
@@ -12,28 +25,20 @@ import {
   type ExecutionFileEvidenceSummary,
   type ScientificOutputEvidence
 } from '../../shared/execution-file-evidence'
-import type { ComputeJob } from '../../shared/compute'
 import type {
-  NotebookLanguage,
   NotebookRunInputFile,
   NotebookRunRecord,
   NotebookWorkingFile
 } from '../../shared/notebook'
-import { assertDiskReserve } from '../bounded-file-io'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { assertDiskReserve, digestFileWithinBudget } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
-import { analyzeScientificOutputs } from './scientific-output-analysis'
-import { createRootNotebookLane } from './lane-identity'
-import { getNotebookFileEvidenceLocation } from './repository'
-import { notebookPromptInputPath } from './prompt-input-materialization'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
-import { verifiedSerializedValues } from './serialized-file-provenance'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
-import type {
-  NotebookSourceFileAccessContext,
-  NotebookSourceFileWriteScope
-} from './dependency-analysis-types'
+import { createRootNotebookLane } from './lane-identity'
+import { notebookPromptInputPath } from './prompt-input-materialization'
+import { getNotebookFileEvidenceLocation } from './repository'
+import { analyzeScientificOutputs } from './scientific-output-analysis'
 
 const log = createLogger('notebook:file-evidence')
 
@@ -60,6 +65,7 @@ type WorkingFileObservationRequest = {
     reasonCodes: ExecutionFileEvidenceReason[]
   }
   sourceFileAccessContext?: NotebookSourceFileAccessContext
+  executionOutcome?: 'completed' | 'incomplete'
 }
 
 type WorkingFileObservationResult = {
@@ -69,7 +75,10 @@ type WorkingFileObservationResult = {
 }
 
 type WorkingFileObservation = {
-  finish: (signal?: AbortSignal) => Promise<WorkingFileObservationResult>
+  finish: (
+    signal?: AbortSignal,
+    executionOutcome?: WorkingFileObservationRequest['executionOutcome']
+  ) => Promise<WorkingFileObservationResult>
 }
 
 type WorkingFileObservationDependencies = {
@@ -441,18 +450,14 @@ const stripUnpublishedGenerations = (workingFiles: NotebookWorkingFile[]): Noteb
     return unpublished
   })
 
+// Plain-Node hosts (runtime certification, SDK consumers) configure no host entry; the
+// __dirname candidates below resolve the worker directly instead of throwing.
 const resolveEvidenceWorkerPath = (): string => {
+  const resourcesPath = runtimeMetadataIfConfigured()?.resourcesPath
   const candidates = [
-    process.resourcesPath &&
-      join(
-        process.resourcesPath,
-        'app.asar.unpacked',
-        'resources',
-        'notebook',
-        'file_evidence_worker.js'
-      ),
-    process.resourcesPath &&
-      join(process.resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
+    resourcesPath &&
+      join(resourcesPath, 'app.asar.unpacked', 'resources', 'notebook', 'file_evidence_worker.js'),
+    resourcesPath && join(resourcesPath, 'resources', 'notebook', 'file_evidence_worker.js'),
     join(__dirname, '../../resources/notebook/file_evidence_worker.js'),
     join(__dirname, '../../../resources/notebook/file_evidence_worker.js')
   ].filter((candidate): candidate is string => Boolean(candidate))
@@ -468,7 +473,8 @@ export const runEvidenceWorker = async (
     signal?.throwIfAborted()
     const child = spawn(process.execPath, [resolveEvidenceWorkerPath()], {
       cwd: evidenceRoot,
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      env: { ...process.env, ...nodeRuntimeEnvironment() },
+      windowsHide: true,
       stdio: ['pipe', 'pipe', 'pipe']
     })
     let stdout = ''
@@ -1632,52 +1638,6 @@ const prepareSourceFileAccess = async (
   return result
 }
 
-const companionStemMatches = (
-  candidate: string,
-  stem: string,
-  suffixes: readonly string[]
-): boolean => {
-  const lowerCandidate = candidate.toLocaleLowerCase('en-US')
-  return suffixes.some(
-    (suffix) => lowerCandidate.endsWith(suffix) && candidate.slice(0, -suffix.length) === stem
-  )
-}
-
-const matchesWriteScope = (scope: NotebookSourceFileWriteScope, candidate: string): boolean => {
-  if (scope.kind === 'directory') return candidate.startsWith(`${scope.path}/`)
-  if (scope.kind === 'timestamped-log')
-    return (
-      candidate.startsWith(scope.path) &&
-      /^\.\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2}(?:\.\d+)?\.log$/.test(
-        candidate.slice(scope.path.length)
-      )
-    )
-  const lowerPath = scope.path.toLocaleLowerCase('en-US')
-  if (scope.kind === 'shapefile') {
-    if (!lowerPath.endsWith('.shp')) return false
-    return companionStemMatches(candidate, scope.path.slice(0, -'.shp'.length), [
-      '.shp.xml',
-      '.shp',
-      '.shx',
-      '.dbf',
-      '.prj',
-      '.cpg',
-      '.sbn',
-      '.sbx',
-      '.qix',
-      '.fix'
-    ])
-  }
-  const extension = lowerPath.endsWith('.tiff') ? '.tiff' : '.tif'
-  if (!lowerPath.endsWith(extension)) return false
-  const stem = scope.path.slice(0, -extension.length)
-  return (
-    candidate === scope.path ||
-    companionStemMatches(candidate, scope.path, ['.aux.xml', '.ovr']) ||
-    companionStemMatches(candidate, stem, ['.tfw', '.tifw', '.prj'])
-  )
-}
-
 function selectInitialFilesForCapture(
   initialFiles: readonly SnapshotEntry[],
   access: WorkingFileObservationRequest['sourceFileAccess']
@@ -1816,13 +1776,23 @@ const persistEvidence = async (
     changes,
     rootResults.every((result) => result.available)
   )
+  const adjustedCoverage: ReturnType<typeof corroboratedCoverage> =
+    request.executionOutcome === 'incomplete'
+      ? {
+          ...coverage,
+          evidenceState: coverage.evidenceState === 'unavailable' ? 'unavailable' : 'partial',
+          writerAttribution:
+            coverage.writerAttribution === 'unavailable' ? 'unavailable' : 'partial',
+          reasonCodes: uniqueReasons([...coverage.reasonCodes, 'execution-incomplete'])
+        }
+      : coverage
   const rootReasonCodes = rootResults
     .flatMap((result) => result.reasonCodes)
     .filter(
       (reason) =>
         reason !== 'watcher-unavailable' ||
         coverage.fileReads !== 'complete' ||
-        coverage.writerAttribution !== 'complete'
+        adjustedCoverage.writerAttribution !== 'complete'
     )
 
   const plannedBytes = Math.min(
@@ -1865,12 +1835,12 @@ const persistEvidence = async (
         blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         rootKinds,
         rootsAvailable: rootResults.every((result) => result.available),
-        evidenceState: coverage.evidenceState,
-        fileReads: coverage.fileReads,
-        externalPaths: coverage.externalPaths,
-        writerAttribution: coverage.writerAttribution,
-        ...(coverage.readPaths ? { readPaths: coverage.readPaths } : {}),
-        reasonCodes: [...rootReasonCodes, ...coverage.reasonCodes],
+        evidenceState: adjustedCoverage.evidenceState,
+        fileReads: adjustedCoverage.fileReads,
+        externalPaths: adjustedCoverage.externalPaths,
+        writerAttribution: adjustedCoverage.writerAttribution,
+        ...(adjustedCoverage.readPaths ? { readPaths: adjustedCoverage.readPaths } : {}),
+        reasonCodes: [...rootReasonCodes, ...adjustedCoverage.reasonCodes],
         scientificOutputs,
         changes: changes.map((change) => ({
           change:
@@ -1997,7 +1967,7 @@ const startWorkingFileObservation = async (
   }
   let finished = false
   return {
-    finish: async (signal) => {
+    finish: async (signal, executionOutcome) => {
       if (finished) {
         return {
           workingFiles: [],
@@ -2006,8 +1976,71 @@ const startWorkingFileObservation = async (
       }
       finished = true
       const results = await Promise.all(observations.map((observation) => observation.finish()))
+      // A flushed memory map can change bytes without changing file metadata (notably
+      // on Windows). Recheck only declared write targets against the frozen baseline;
+      // opening a writable handle alone must not create a fictitious output generation.
+      let remainingBytes = capture?.maxActivityBytes ?? 0
+      const declaredWrites = new Set(preparedRequest.sourceFileAccess?.writes)
+      for (let index = 0; capture && index < observations.length; index++) {
+        const result = results[index]
+        const changed = new Set(result.changes.map((change) => change.relativePath))
+        for (const before of observations[index].initialFiles) {
+          if (!declaredWrites.has(before.relativePath) || changed.has(before.relativePath)) continue
+          const baseline = capture.initialGenerationChecksums.get(before.relativePath)
+          if (!baseline) continue
+          try {
+            if (before.size > Math.min(capture.maxGenerationBytes, remainingBytes)) {
+              result.available = false
+              result.reasonCodes.push('observer-limit-exceeded')
+              continue
+            }
+            const observedRoot = await realpath(roots[index].path)
+            const after = await snapshotEntry(
+              observedRoot,
+              roots[index].logicalPath,
+              logicalSessionRoot,
+              before.physicalPath
+            )
+            if (!after) throw new Error('Write target is no longer an observable file.')
+            if (after.size > Math.min(capture.maxGenerationBytes, remainingBytes)) {
+              result.available = false
+              result.reasonCodes.push('observer-limit-exceeded')
+              continue
+            }
+            // Reserve before reading so failed/growing files cannot reset the turn budget.
+            remainingBytes -= after.size
+            const digest = await digestFileWithinBudget(
+              after.physicalPath,
+              after.size,
+              signal ?? request.signal
+            )
+            const verified = await snapshotEntry(
+              observedRoot,
+              roots[index].logicalPath,
+              logicalSessionRoot,
+              after.physicalPath
+            )
+            if (
+              !verified ||
+              !sameSnapshotEntry(after, verified) ||
+              digest.sizeBytes !== verified.size
+            )
+              throw new Error('Write target changed during content comparison.')
+            if (digest.checksum !== baseline)
+              result.changes.push({
+                relation: 'modified',
+                relativePath: before.relativePath,
+                before,
+                after: verified
+              })
+          } catch {
+            result.available = false
+            result.reasonCodes.push('observer-failed')
+          }
+        }
+      }
       const result = await persistEvidence(
-        { ...preparedRequest, signal: signal ?? request.signal },
+        { ...preparedRequest, signal: signal ?? request.signal, executionOutcome },
         roots.map((root) => root.kind),
         results,
         capture,
@@ -2469,13 +2502,19 @@ export {
   completeWorkingFileEvidence,
   deleteWorkingFileEvidenceProject,
   ensureWorkingFileEvidenceProject,
+  publishComputeJobFileEvidence,
   reconcileComputeJobFileEvidence,
   reconcileWorkingFileEvidence,
-  publishComputeJobFileEvidence,
   recoverPublishedComputeJobFileEvidence,
   settleComputeJobFileEvidence,
   startWorkingFileObservation,
   toPortableNotebookRelativePath
 }
-export type { WorkingFileEvidenceLocation, WorkingFileObservation, WorkingFileObservationResult }
-export type { ComputeTransferInput, ComputeTransferOutput, FrozenComputeTransferInput }
+export type {
+  ComputeTransferInput,
+  ComputeTransferOutput,
+  FrozenComputeTransferInput,
+  WorkingFileEvidenceLocation,
+  WorkingFileObservation,
+  WorkingFileObservationResult
+}

@@ -937,7 +937,7 @@ describe('mandatory product glossary', () => {
       keepWaiting: de.native['Keep waiting'],
       quitAnyway: de.native['Quit anyway'],
       moveInProgress: de.native['Move in progress'],
-      model: de.renderer['grok-4.6 · 500K'],
+      model: de.renderer['Default model: grok-4.7 · 500K'],
       archive: de.renderer.Archive_verb,
       block: de.renderer.Block,
       clear: de.renderer.Clear,
@@ -970,14 +970,14 @@ describe('mandatory product glossary', () => {
       sessionNotebook: de.renderer['Session notebook'],
       drivenAgent:
         de.renderer[
-          'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.'
+          'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.'
         ]
     }).toEqual({
       minimizeToTray: 'In den Infobereich minimieren',
       keepWaiting: 'Weiter warten',
       quitAnyway: 'Trotzdem beenden',
       moveInProgress: 'Datenverschiebung läuft',
-      model: 'grok-4.6 · 500K',
+      model: 'Standardmodell: grok-4.7 · 500K',
       archive: 'Archivieren',
       block: 'Blockieren',
       clear: 'Löschen',
@@ -1007,7 +1007,7 @@ describe('mandatory product glossary', () => {
         'Durch das Senden dieses bearbeiteten Prompts wird ab hier ein neuer Branch erstellt. Die folgende {{count}} Interaktion bleibt über die Versionssteuerung der Nachricht verfügbar.',
       sessionNotebook: 'Sitzungs-Notebook',
       drivenAgent:
-        'Wählen Sie den Agenten aus, den Open-Science steuert, und installieren Sie ihn. Nur dieser Agent muss installiert sein, um fortzufahren.'
+        'Verwenden Sie die ausgewählte Laufzeit, sobald sie bereit ist. Wechseln Sie nur, wenn Sie deren Anbieterunterstützung benötigen. Im nächsten Schritt verbinden Sie ein Modell.'
     })
   })
 
@@ -1022,14 +1022,12 @@ describe('mandatory product glossary', () => {
       manualLower: de.renderer.manual,
       remote: de.renderer.Remote,
       proxy: de.renderer.Proxy,
-      nodeVersion: de.renderer['Node v'],
       nodeScript: de.renderer['node — script file'],
       nodePackage: de.renderer['npx — Node package'],
       bioconductor: de.renderer.Bioconductor,
       scratch: de.renderer.Scratch,
       scratchRoot: de.renderer['Scratch root'],
       scratchRootPath: de.renderer['Scratch root path'],
-      mainOnly: de.renderer['Main only'],
       tool: de.renderer.Tool,
       tools: de.renderer.Tools,
       review: de.renderer.Review,
@@ -1045,14 +1043,12 @@ describe('mandatory product glossary', () => {
       manualLower: 'manuell',
       remote: 'Remote',
       proxy: 'Proxy',
-      nodeVersion: 'Node v',
       nodeScript: 'Node – Skriptdatei',
       nodePackage: 'npx – Node-Paket',
       bioconductor: 'Bioconductor',
       scratch: 'Scratch',
       scratchRoot: 'Scratch-Verzeichnis',
       scratchRootPath: 'Pfad zum Scratch-Verzeichnis',
-      mainOnly: 'Nur Hauptagent',
       tool: 'Tool',
       tools: 'Tools',
       review: 'Review',
@@ -1736,8 +1732,8 @@ describe('mandatory product glossary', () => {
     const rootPackage = JSON.parse(
       readFileSync(join(__dirname, '..', '..', '..', '..', 'package.json'), 'utf8')
     ) as { version: string }
-    // The banner assertion tracks the repo version instead of a hardcoded bump target.
-    expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version} veröffentlicht`)
+    // Track the repo version without requiring an unreleased build to claim publication.
+    expect(readme).toContain(`AIPOCH Open-Science v${rootPackage.version}`)
   })
 
   const chosenGenericTerms = {
@@ -2068,7 +2064,7 @@ describe('mandatory product glossary', () => {
       'Edit specialist': 'Modifier le spécialiste',
       'Recent files': 'Fichiers récents',
       'Search messages, projects, files and Library…':
-        'Rechercher des messages, projets, fichiers et dans Library…',
+        'Rechercher des messages, projets, fichiers et dans la bibliothèque…',
       'Search skills': 'Rechercher des compétences',
       'Search skills to add': 'Rechercher des compétences à ajouter',
       'Search skills…': 'Rechercher des compétences…',
@@ -3000,65 +2996,15 @@ describe('Russian catalog quality', () => {
       'Этот коннектор больше не существует. Черновик не сохранён.'
     ],
     ['Used by', 'Используют'],
-    ['Available to Main Agent', 'Доступен главному агенту'],
-    ['Unavailable to Main Agent', 'Недоступен главному агенту'],
     ['Filter Connectors by agent', 'Фильтровать коннекторы по агенту'],
     ['Filter Skills by agent', 'Фильтровать навыки по агенту'],
     ['All Agents/Specialists', 'Все агенты и специалисты'],
     ['Export', 'Экспортировать'],
     ['Remove', 'Удалить'],
-    ['Agents with access', 'Агенты с доступом'],
-    [
-      'Hover to preview. Click to view every agent.',
-      'Наведите курсор для предпросмотра. Нажмите, чтобы увидеть всех агентов.'
-    ],
     [
       'This Provider no longer exists. Your draft has not been saved.',
       'Этот поставщик моделей больше не существует. Черновик не сохранён.'
     ],
-    ['Deleted {{count}} Skills._one', 'Удалён {{count}} навык.'],
-    ['Deleted {{count}} Skills._few', 'Удалено {{count}} навыка.'],
-    ['Deleted {{count}} Skills._many', 'Удалено {{count}} навыков.'],
-    ['Deleted {{count}} Skills._other', 'Удалено {{count}} навыка.'],
-    [
-      'Some selected Skills could not be deleted. They remain selected.',
-      'Не удалось удалить некоторые выбранные навыки. Они остались выбранными.'
-    ],
-    ['Delete…', 'Удалить…'],
-    ['Delete selected Skills?', 'Удалить выбранные навыки?'],
-    [
-      'Deleted Skills are removed from this device and cannot be recovered.',
-      'Навыки будут удалены с этого устройства без возможности восстановления.'
-    ],
-    ['{{count}} selected Skills can be deleted._one', 'Можно удалить {{count}} выбранный навык.'],
-    ['{{count}} selected Skills can be deleted._few', 'Можно удалить {{count}} выбранных навыка.'],
-    [
-      '{{count}} selected Skills can be deleted._many',
-      'Можно удалить {{count}} выбранных навыков.'
-    ],
-    [
-      '{{count}} selected Skills can be deleted._other',
-      'Можно удалить {{count}} выбранного навыка.'
-    ],
-    ['{{count}} protected Skills will be kept._one', '{{count}} защищённый навык будет сохранён.'],
-    [
-      '{{count}} protected Skills will be kept._few',
-      '{{count}} защищённых навыка будут сохранены.'
-    ],
-    [
-      '{{count}} protected Skills will be kept._many',
-      '{{count}} защищённых навыков будут сохранены.'
-    ],
-    [
-      '{{count}} protected Skills will be kept._other',
-      '{{count}} защищённого навыка будет сохранено.'
-    ],
-    ['Owned by a Specialist.', 'Принадлежит специалисту.'],
-    ['Used by a Specialist.', 'Используется специалистом.'],
-    ['Delete {{count}} Skills_one', 'Удалить {{count}} навык'],
-    ['Delete {{count}} Skills_few', 'Удалить {{count}} навыка'],
-    ['Delete {{count}} Skills_many', 'Удалить {{count}} навыков'],
-    ['Delete {{count}} Skills_other', 'Удалить {{count}} навыка'],
     [
       'View Connector availability for {{count}} agents_one',
       'Показать доступность коннектора для {{count}} агента'
@@ -3203,8 +3149,8 @@ describe('Russian catalog quality', () => {
     ['System_language', 'Как в системе'],
     ['System_runtime', 'Системная'],
     [
-      'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.',
-      'Выберите агента, которым будет управлять Open-Science, затем установите его. Для продолжения достаточно установить только этого агента.'
+      'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.',
+      'Используйте выбранную среду, если она готова. Выбирайте другую только ради нужной поддержки поставщиков. На следующем шаге вы подключите модель.'
     ],
     ['Read-only', 'Только чтение'],
     [
@@ -3283,8 +3229,8 @@ describe('Korean safety copy', () => {
       '워크스페이스의 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 작업 전에는 계속 확인합니다.'
     ],
     [
-      'Auto-approve edits to workspace files. Still ask before commands, network, and MCP tools.',
-      '워크스페이스 파일 편집을 자동 승인합니다. 명령, 네트워크 및 MCP 도구를 실행하기 전에는 계속 확인합니다.'
+      'Auto-approve workspace edits and supported Library workflows. Other tools follow their permission rules.',
+      '워크스페이스 편집과 지원되는 라이브러리 작업 흐름을 자동 승인합니다. 다른 도구는 각각의 권한 규칙을 따릅니다.'
     ],
     [
       '<em>Your existing data (~{{size}}) will be moved</em> to the new location — your files come with it, and nothing is left behind in the current folder.',
@@ -3311,8 +3257,8 @@ describe('Korean safety copy', () => {
       '이 보고서는 GitHub에 공개로 게시됩니다. 공유하기 전에 아래 오류 텍스트를 편집하여 민감한 내용을 제거하세요. 런타임 로그는 이 기기에 남아 있으며 자동으로 첨부되지 않습니다.'
     ],
     [
-      '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project._other',
-      '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 상태를 확인할 수 없어 프로젝트 보관 기능은 계속 사용할 수 없습니다. 그래도 프로젝트를 영구 삭제할 수는 있습니다.'
+      '{{count}} damaged saved conversations were moved aside. Archiving remains unavailable for affected project data because its state cannot be verified. You can still permanently delete the affected project data._other',
+      '손상된 대화 {{count}}개를 별도 위치로 옮겼습니다. 영향을 받은 프로젝트 데이터는 상태를 확인할 수 없어 계속 보관할 수 없습니다. 영향을 받은 프로젝트 데이터를 영구 삭제할 수는 있습니다.'
     ],
     [
       'This will permanently delete "{{name}}" and all of its saved conversations, including any that could not be loaded during recovery. Generated artifacts and uploaded files stored by Open-Science will also be deleted. Files in the project\'s working folder are not deleted. Retained managed Session workspaces remain available in Settings → Storage. This action cannot be undone.',
@@ -3665,7 +3611,6 @@ describe('Korean binding terminology', () => {
     ['Refreshing…', '새로고침 중…'],
     ['Application storage', '애플리케이션 저장소'],
     ['Anthropic approx.', 'Anthropic 근사치'],
-    ['Chromium v', 'Chromium v'],
     ['Add interpreter…', '인터프리터 추가…'],
     ['Could not add that interpreter.', '해당 인터프리터를 추가할 수 없습니다.'],
     [
@@ -3941,7 +3886,9 @@ const SCAN_ROOTS = [
   join(SRC_ROOT, 'renderer', 'src'),
   join(SRC_ROOT, 'renderer', 'web'),
   join(SRC_ROOT, 'shared'),
-  join(SRC_ROOT, 'main')
+  join(SRC_ROOT, 'main'),
+  // Translation helpers supply English labels that host UI translates at the boundary.
+  join(SRC_ROOT, '..', 'packages', 'pdf-translation', 'src')
 ]
 
 const sourceFiles = (dir: string): string[] =>
@@ -5075,6 +5022,12 @@ const NOT_TRANSLATABLE = new Set([
   'GitHub',
   'PubMed',
   'Crossref',
+  // Provider brand names rendered inside decorative/internal SVG marks.
+  'Claude',
+  'Codex',
+  'opencode',
+  'Nvidia',
+  'TencentCloud',
   // A literal DOI example; translating its suffix would change the identifier.
   '10.1000/example',
   'SKILL.md',
@@ -5089,6 +5042,7 @@ const NOT_TRANSLATABLE = new Set([
   'Enter',
   'Esc',
   'Ctrl',
+  'Alt',
   'Ctrl+',
   'Enter / Tab',
   // A placeholder showing literal CLI arguments. Translating it would suggest the user should type

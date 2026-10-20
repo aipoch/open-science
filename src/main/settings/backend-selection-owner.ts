@@ -1,23 +1,16 @@
-import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from '../../shared/settings'
+import { type ReasoningEffort } from '../../shared/model-preference-contract'
+import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
+import { type ResolvedReasoningEffort } from '@aipoch/providers'
+
 import { NO_ACTIVE_PROVIDER_MESSAGE } from '../../shared/run-error-classification'
-import {
-  resolveReasoningEffortValue,
-  type ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+import { DEFAULT_REASONING_EFFORT } from '../../shared/settings'
 import { DEFAULT_AGENT_FRAMEWORK_ID, type AgentFrameworkId } from '../agent-framework'
-import type { StoredSettings } from './types'
+import type { ExplicitAgentBackendTarget } from './backend-target'
 import type { ProviderAccountsModule, RuntimeProviderModelSelection } from './provider-accounts'
+import type { StoredSettings } from './types'
 
 type AgentBackendSelection = Readonly<{
   frameworkId: AgentFrameworkId
-}>
-
-type ExplicitAgentBackendTarget = Readonly<{
-  frameworkId: AgentFrameworkId
-  providerId: string
-  model: Readonly<{ kind: 'required'; id: string }> | Readonly<{ kind: 'provider-default' }>
-  reasoningEffort: ReasoningEffort
-  resolvedReasoningEffort?: ResolvedReasoningEffort
 }>
 
 type BackendSelectionResolution = Readonly<{

@@ -1,29 +1,32 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto'
 import { isDeepStrictEqual } from 'node:util'
 
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type {
+  AcpContinueInterruptedTurnRequest,
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
-  AcpContinueInterruptedTurnRequest,
   AcpPromptRequest,
   AcpResumeSessionRequest,
-  AcpSaveAsSkillRequest,
-  AcpRuntimeState
+  AcpRuntimeState,
+  AcpSaveAsSkillRequest
 } from '../../shared/acp'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
-import type { TaskNotificationService } from '../notifications/task-notifications'
-import type { AcpCreateSessionWorkflow } from './create-session-workflow'
-import { bindResumeRequestToProject } from './session-project-binding'
-import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
-import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
 import {
   getActiveConversationContext,
   resolveMessageBranchPath
 } from '../../shared/conversation-graph'
 import { hasCurrentRunningDelegatedAttempt } from '../../shared/delegated-work-projection'
-import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
-import type { HistoryReplayDescriptor, HistoryReplayTarget } from '../../shared/history-preamble'
+import type {
+  HistoryReplayDescriptor,
+  HistoryReplayTarget
+} from '../../shared/history-replay-contract'
+import { isHiddenControlMessage, type PersistedChatSession } from '../../shared/session-persistence'
+import type { TaskNotificationService } from '../notifications/task-notifications'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
+import type { AcpCreateSessionWorkflow } from './create-session-workflow'
+import { continueInterruptedTurn, SAVE_AS_SKILL_PROMPT } from './interrupted-turn-continuation'
+import { buildSaveAsSkillHistoryReplay } from './save-as-skill-history'
+import { bindResumeRequestToProject } from './session-project-binding'
 
 const log = createLogger('acp')
 const resumeLogHashKey = randomBytes(32)
@@ -49,7 +52,10 @@ type AcpHandlerWorkflowRuntime = {
   startContinuation(request: AcpPromptRequest): Promise<void>
   startContinuationWhenDispatchAdmitted(
     request: AcpPromptRequest,
-    validate: () => Promise<void>
+    validate: () => Promise<void>,
+    delegatedMessageId?: string,
+    onAdmissionQueued?: () => void,
+    admitDispatch?: (operation: () => Promise<void>) => Promise<void>
   ): Promise<unknown>
 }
 
@@ -78,6 +84,11 @@ type AcpHandlerWorkflows = {
 type InterruptedTurnSessionSource = {
   loadSession(projectId: string, sessionId: string): Promise<PersistedChatSession | undefined>
   prepareRuntimeResume?(projectId: string, sessionId: string): Promise<void>
+  completeRuntimeAttachment?(
+    projectId: string,
+    sessionId: string,
+    attached: AcpCreateSessionResponse
+  ): Promise<void>
 }
 
 type SaveAsSkillAdmission = (sessionId: string) => void | Promise<void>
@@ -293,7 +304,11 @@ const createAcpHandlerWorkflows = (
     const startedAt = Date.now()
     const context = {
       operationId: randomUUID(),
-      sessionHash: resumeSessionHash(request.sessionId)
+      sessionHash: resumeSessionHash(request.sessionId),
+      sessionId: request.sessionId,
+      projectId: request.projectId,
+      frameworkId: request.agentTarget?.frameworkId,
+      previousFrameworkId: request.previousFrameworkId
     }
     logResumeDiagnostic('info', 'acp:resume-session started', context)
 
@@ -306,7 +321,13 @@ const createAcpHandlerWorkflows = (
         ) {
           await interruptedTurnSessions.prepareRuntimeResume(projectId, request.sessionId)
         }
-        return runtime.resumeSession(bound)
+        const attached = await runtime.resumeSession(bound)
+        await interruptedTurnSessions?.completeRuntimeAttachment?.(
+          projectId,
+          request.sessionId,
+          attached
+        )
+        return attached
       }
       const result = archiveAvailability
         ? await archiveAvailability.withSessionAvailableById(request.sessionId, resume)
@@ -324,7 +345,8 @@ const createAcpHandlerWorkflows = (
       logResumeDiagnostic('error', 'acp:resume-session failed', {
         ...context,
         durationMs: Math.max(0, Date.now() - startedAt),
-        ...resumeErrorDiagnosticFields(error)
+        ...resumeErrorDiagnosticFields(error),
+        ...errorLogFields(error)
       })
       throw error
     }
@@ -345,16 +367,44 @@ const createAcpHandlerWorkflows = (
                 startDispatchAdmittedContinuation: (
                   continuation: AcpPromptRequest,
                   validate: () => Promise<void>
-                ) => runtime.startContinuationWhenDispatchAdmitted(continuation, validate)
+                ) =>
+                  runtime.startContinuationWhenDispatchAdmitted(
+                    continuation,
+                    validate,
+                    undefined,
+                    undefined,
+                    (operation) =>
+                      archiveAvailability.withSessionAvailable(
+                        request.projectId,
+                        request.sessionId,
+                        operation
+                      )
+                  )
               }
             : {}),
           notifications: taskNotifications
         },
         request
       )
-    return archiveAvailability
-      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, run)
-      : run()
+    // Check availability before reading, but never hold the Project gate while queuing root work.
+    await archiveAvailability?.withSessionAvailable(
+      request.projectId,
+      request.sessionId,
+      async () => undefined
+    )
+    try {
+      return await run()
+    } catch (error) {
+      logResumeDiagnostic('error', 'acp:continue-interrupted-turn failed', {
+        operation: 'continue-interrupted-turn',
+        projectId: request.projectId,
+        sessionId: request.sessionId,
+        promptMessageId: request.promptMessageId,
+        runtimeSegmentId: request.contextReset?.runtimeSegmentId,
+        ...errorLogFields(error)
+      })
+      throw error
+    }
   },
 
   async saveAsSkill(request): Promise<AcpRuntimeState> {
@@ -370,26 +420,42 @@ const createAcpHandlerWorkflows = (
         text: 'Save as skill'
       })
       try {
-        await runtime.startContinuationWhenDispatchAdmitted(prepared.continuation, async () => {
-          await saveAsSkillAdmission?.(request.sessionId)
-          const admitted = prepareSaveAsSkillContinuation(
-            runtime,
-            await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
-            request
-          )
-          if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
-            throw new Error('Save as skill Session changed before provider admission.')
-          }
-        })
+        await runtime.startContinuationWhenDispatchAdmitted(
+          prepared.continuation,
+          async () => {
+            await saveAsSkillAdmission?.(request.sessionId)
+            const admitted = prepareSaveAsSkillContinuation(
+              runtime,
+              await interruptedTurnSessions.loadSession(request.projectId, request.sessionId),
+              request
+            )
+            if (!isDeepStrictEqual(admitted.continuation, prepared.continuation)) {
+              throw new Error('Save as skill Session changed before provider admission.')
+            }
+          },
+          undefined,
+          undefined,
+          archiveAvailability
+            ? (operation) =>
+                archiveAvailability.withSessionAvailable(
+                  request.projectId,
+                  request.sessionId,
+                  operation
+                )
+            : undefined
+        )
       } catch (error) {
         if (tracked) taskNotifications?.untrackPrompt(prepared.session.id, tracked)
         throw error
       }
       return runtime.getState()
     }
-    return archiveAvailability
-      ? archiveAvailability.withSessionAvailable(request.projectId, request.sessionId, save)
-      : save()
+    await archiveAvailability?.withSessionAvailable(
+      request.projectId,
+      request.sessionId,
+      async () => undefined
+    )
+    return save()
   },
 
   async sendPrompt(request): Promise<AcpRuntimeState> {

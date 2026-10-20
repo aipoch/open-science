@@ -1,0 +1,34 @@
+{"name":"arrow-assignment-is-a-symbolic-expression","source":"μ ←","preserved":true}
+{"name":"compact-variance-identifier-is-a-symbolic-expression","source":"σB2 ←","preserved":true}
+{"name":"partial-derivative-is-a-symbolic-expression","source":"∂Norm(z, Z)","preserved":true}
+{"name":"combining-accent-identifier-is-a-symbolic-expression","source":"ẑ","preserved":true}
+{"name":"math-function-with-brackets-is-a-symbolic-expression","source":"Var[z] + ǫ","preserved":true}
+{"name":"algorithm-comment-remains-translatable","source":"zi ← αẑ i + β // shift and scale","preserved":false}
+{"name":"body-describing-symbol-remains-translatable","source":"We use σB2 to estimate variance.","preserved":false}
+{"name":"short-body-connector-after-formula-remains-translatable","source":"= Fγ,β(z) to","preserved":false}
+{"name":"math-operand-with-connector-stays-in-original-layout","source":"Var[z] and","preserved":true}
+{"name":"math-product-with-connector-stays-in-original-layout","source":"· EB[σB], where","preserved":true}
+{"name":"body-clause-with-connector-remains-translatable","source":"where σB is measured","preserved":false}
+{"name":"isolated-opening-parenthesis-stays-in-original-layout","source":"(","preserved":true}
+{"name":"isolated-closing-parenthesis-stays-in-original-layout","source":")","preserved":true}
+{"name":"isolated-opening-bracket-stays-in-original-layout","source":"[","preserved":true}
+{"name":"isolated-closing-bracket-stays-in-original-layout","source":"]","preserved":true}
+{"name":"closing-delimiter-and-symbol-remain-formula","source":")p","preserved":true}
+{"name":"absolute-variable-remains-formula","source":"|g|","preserved":true}
+{"name":"ordinary-prose-with-parentheses-still-translates","source":"The value (left) remains stable.","preserved":false}
+{"name":"equation-connective-does-not-turn-formula-into-prose","source":"From, ‖g‖2 − g2 + 4‖g‖2","preserved":true}
+{"name":"body-prose-with-connective-still-translates","source":"From these assumptions, the estimate follows.","preserved":false}
+{"name": "standalone-citation-year-keeps-native-numeric-text", "source": "2024)", "preserved": true}
+{"name": "caption-panel-ending-is-not-a-formula", "source": "c)", "preserved": false}
+{"name": "author-contact-is-not-a-formula", "source": "{name, other}@example.invalid", "preserved": false}
+{"name": "split-body-word-before-condition-is-not-formula", "source": "lutions (g > 1", "preserved": false}
+{"name": "split-body-word-before-example-is-not-formula", "source": "els (e.g. ≥ 1", "preserved": false}
+{"name": "body-word-before-approximation-is-not-formula", "source": "networks (∼", "preserved": false}
+{"name": "named-math-function-without-prose-spacing-remains-formula", "source": "relu(x > 0)", "preserved": true}
+{"name": "spaced-math-function-condition-remains-formula", "source": "relu (x > 0)", "preserved": true}
+{"name": "parallel-norm-delimiter", "source": "∥", "preserved": true}
+{"name": "double-vertical-norm-delimiter", "source": "‖", "preserved": true}
+{"name": "extensible-opening-bracket-piece", "source": "", "preserved": true}
+{"name": "extensible-closing-bracket-piece", "source": "", "preserved": true}
+{"name": "divides-delimiter", "source": "∣", "preserved": true}
+{"name": "underbrace-pieces", "source": "︸︸", "preserved": true}

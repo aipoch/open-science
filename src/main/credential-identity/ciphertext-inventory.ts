@@ -190,7 +190,8 @@ export const verifyCredentialCiphertexts = (
 ): void => {
   try {
     for (const value of ciphertexts) decrypt(value)
-  } catch {
+  } catch (error) {
+    if (error instanceof CredentialIdentityError) throw error
     throw new CredentialIdentityError('decryption-failed')
   }
 }

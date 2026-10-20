@@ -1,0 +1,8 @@
+{"name": "empty-output-gets-one-automatic-retry", "responses": ["empty", "success"], "status": "completed", "calls": 2}
+{"name": "incomplete-error-gets-one-automatic-retry", "responses": ["incomplete-output", "success"], "status": "completed", "calls": 2}
+{"name": "second-empty-output-skips-block", "responses": ["empty", "empty"], "status": "completed", "calls": 2}
+{"name": "second-incomplete-error-skips-block", "responses": ["incomplete-output", "incomplete-output"], "status": "completed", "calls": 2}
+{"name": "timeout-is-not-retried-automatically", "responses": ["timeout"], "status": "error", "calls": 1, "failure": "timeout"}
+{"name": "changed-model-is-not-retried-automatically", "responses": ["model-changed"], "status": "error", "calls": 1, "failure": "model-changed"}
+{"name": "unknown-provider-error-is-redacted", "responses": ["unknown"], "status": "error", "calls": 1, "failure": "unknown"}
+{"name": "transient-failure-after-invalid-output-stops-retry", "responses": ["empty", "timeout"], "status": "error", "calls": 2, "failure": "timeout"}

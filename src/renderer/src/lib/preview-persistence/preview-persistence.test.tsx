@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -116,6 +117,11 @@ const createSession = (
 
 describe('preview persistence projections', () => {
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({
+      phase: 'connected',
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1,
+      closing: false
+    })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useSessionStore.setState(createInitialSessionState())
   })
@@ -148,6 +154,29 @@ describe('preview persistence projections', () => {
     // Runtime-only timestamps and tab type are dropped from the durable projection.
     expect(persisted.items[0]).not.toHaveProperty('createdAt')
     expect(persisted.items[0]).not.toHaveProperty('type')
+  })
+
+  it('does not persist the Library tool tab or its active identity', () => {
+    usePreviewWorkbenchStore.setState({
+      panelState: 'open',
+      activeItemId: 'tool:project:library',
+      items: [
+        {
+          type: 'tool',
+          sessionId: '__project_library__',
+          createdAt: 1,
+          updatedAt: 2,
+          id: 'tool:project:library',
+          toolKind: 'library',
+          title: 'Library',
+          libraryScopeRequest: { section: 'inbox' }
+        }
+      ]
+    })
+    const persisted = toPersistedPreviewState(usePreviewWorkbenchStore.getState())
+    expect(persisted.items).toEqual([])
+    expect(persisted.activeItemId).toBeUndefined()
+    expect(persisted.version).toBe(PREVIEW_STATE_VERSION)
   })
 
   it('keeps source preview URLs and identifiers out of the durable projection', () => {
@@ -301,6 +330,36 @@ describe('preview persistence projections', () => {
         deletedAt: '2026-07-28T12:00:00.000Z'
       }
     })
+  })
+
+  it('migrates historical Literature preview ids to immutable version ids', () => {
+    const restored = toRestoredSlice({
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'literature:attachment-1',
+      items: [
+        {
+          id: 'literature:attachment-1',
+          sessionId: '__literature__',
+          title: 'paper.pdf',
+          source: 'literature',
+          path: 'literature-attachment-version:version-1',
+          format: 'pdf',
+          name: 'paper.pdf',
+          managedFileId: 'attachment-1',
+          selectedVersionId: 'version-1'
+        }
+      ]
+    })
+
+    expect(restored.activeItemId).toBe('literature:version-1')
+    expect(restored.items).toEqual([
+      expect.objectContaining({
+        id: 'literature:version-1',
+        managedFileId: 'attachment-1',
+        selectedVersionId: 'version-1'
+      })
+    ])
   })
 
   it('recovers managed identity from a persisted authoritative artifact id', () => {
@@ -1125,6 +1184,93 @@ describe('usePreviewPersistence per-project save/restore', () => {
     await flushPreviewPersistence()
 
     expect(save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 11 }))
+  })
+
+  it('does not resurrect a remotely closed Literature tab after restoring a legacy id', async () => {
+    const legacyLiteratureState: PersistedPreviewState = {
+      version: PREVIEW_STATE_VERSION,
+      panelState: 'open',
+      activeItemId: 'literature:attachment-1',
+      items: [
+        {
+          id: 'literature:attachment-1',
+          sessionId: '__literature__',
+          title: 'paper.pdf',
+          source: 'literature',
+          path: 'literature-attachment-version:version-1',
+          format: 'pdf',
+          name: 'paper.pdf',
+          managedFileId: 'attachment-1',
+          selectedVersionId: 'version-1'
+        }
+      ]
+    }
+    load.mockResolvedValueOnce({ state: legacyLiteratureState, revision: 7 })
+
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    await flushPreviewPersistence()
+    expect(usePreviewWorkbenchStore.getState().items[0]?.id).toBe('literature:version-1')
+
+    save.mockClear()
+    save.mockResolvedValueOnce({
+      status: 'conflict',
+      snapshot: {
+        revision: 8,
+        state: {
+          version: PREVIEW_STATE_VERSION,
+          panelState: 'collapsed',
+          items: []
+        }
+      }
+    })
+    act(() => usePreviewWorkbenchStore.getState().collapsePanel())
+    await flushPreviewPersistence()
+
+    expect(save.mock.calls[1]?.[0].state.items).toEqual([])
+    expect(usePreviewWorkbenchStore.getState().items).toEqual([])
+  })
+
+  it('retires queued preview saves and ignores old conflict replies after recovery', async () => {
+    await act(async () => {
+      root.render(<PersistenceHarness projectId="project-a" />)
+    })
+    await flushPreviewPersistence()
+    save.mockClear()
+    const pending = createDeferred<SavePreviewStateResult>()
+    save.mockReturnValueOnce(pending.promise)
+    act(() =>
+      usePreviewWorkbenchStore.setState({ panelState: 'open', items: [createStoredFileItem()] })
+    )
+    act(() => usePreviewWorkbenchStore.setState({ panelState: 'collapsed' }))
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({
+        phase: 'disconnected',
+        epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+      })
+    })
+    await act(async () => {
+      pending.resolve({
+        status: 'conflict',
+        snapshot: {
+          revision: 99,
+          state: { version: PREVIEW_STATE_VERSION, panelState: 'open', items: [] }
+        }
+      })
+    })
+    await flushPreviewPersistence()
+    expect(save).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    await flushPreviewPersistence()
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(load.mock.calls.length).toBeGreaterThan(1)
   })
 
   it('rebases a user change queued after the conflicting snapshot', async () => {

@@ -1,15 +1,16 @@
-import {
-  resolveManagedProjectFileAnnotationIdentity,
-  type Annotation,
-  type ManagedProjectFileAnnotationIdentity
-} from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
+import type { Annotation } from '../../../../../shared/annotation-contract'
+import {
+  resolveManagedProjectFileAnnotationIdentity,
+  type ManagedProjectFileAnnotationIdentity
+} from '../../../../../shared/annotations'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import type { Bookmark, BookmarkTarget } from '../../../../../shared/bookmarks'
+import { parseLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
+import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../shared/pdf-annotations'
+import { replayAnnotationTarget } from '../../../../../shared/replay-reference'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
 
 import { createPreviewFileItem, LITERATURE_PREVIEW_SESSION_ID } from '../preview-file-item'
 
@@ -232,7 +233,9 @@ const createAnnotationPreviewItem = (annotation: Annotation): PreviewFileItem | 
 }
 
 const requestAnnotationReveal = (annotation: Annotation): void => {
-  if (!fileAnnotationSource(annotation)) {
+  // Replay references navigate through their captured position, including file-only steps.
+  // Their archive Session is not necessarily the uploaded file's native owner.
+  if (replayAnnotationTarget(annotation) || !fileAnnotationSource(annotation)) {
     publishAnnotationReveal(annotation)
     return
   }

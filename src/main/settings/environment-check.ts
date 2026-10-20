@@ -9,9 +9,17 @@ import type {
   EnvironmentCheckResult,
   ManagedClaudeRegistry
 } from '../../shared/settings'
-import { MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
-import { findPythonCommand, type PythonCommand } from '../notebook/python-command'
-import { netFetchStandard } from '../skills/net-fetch'
+import {
+  MINIMUM_CODEX_ACP_VERSION,
+  MINIMUM_CODEX_CLI_VERSION,
+  isSupportedCodexCliVersion
+} from '../../shared/codex-runtime'
+import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isSupportedClaudeCliVersion
+} from '../../shared/claude-runtime'
+import { findPythonCommand, type PythonCommand } from '@aipoch/environment'
+import { netFetchStandard } from '../network-fetch'
 import { getManagedPlatform } from './managed-claude'
 import { detectAvx2, resolveOpencodePlatform } from './managed-opencode'
 import { resolveManagedCodexPlatform } from './managed-codex'
@@ -73,8 +81,63 @@ const verifyStorageAccess = async (storageRoot: string): Promise<void> => {
   }
 }
 
-// Uses Electron's Chromium network stack so this observes the configured System, Manual, or Direct
-// proxy mode. A HEAD request keeps the required source check lightweight.
+export type RegistryProbeFailureReason = 'dns' | 'tls' | 'timeout' | 'http' | 'transport'
+export class RegistryProbeFailure extends Error {
+  constructor(
+    readonly failureReason: RegistryProbeFailureReason,
+    message: string
+  ) {
+    super(message)
+    this.name = 'RegistryProbeFailure'
+  }
+}
+
+const registryFailureReason = (error: unknown): RegistryProbeFailureReason | undefined => {
+  // Fetch wraps socket/TLS errors in a TypeError. Inspect bounded causes and fixed codes only;
+  // error messages can contain proxy credentials or user paths and are never classification input.
+  let cause = error
+  for (let depth = 0; depth < 4 && cause && typeof cause === 'object'; depth++) {
+    const code = 'code' in cause ? cause.code : undefined
+    if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns'
+    if (
+      [
+        'CERT_HAS_EXPIRED',
+        'DEPTH_ZERO_SELF_SIGNED_CERT',
+        'SELF_SIGNED_CERT_IN_CHAIN',
+        'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+        'ERR_TLS_CERT_ALTNAME_INVALID',
+        'UNABLE_TO_GET_ISSUER_CERT_LOCALLY'
+      ].includes(String(code))
+    )
+      return 'tls'
+    if (
+      [
+        'ETIMEDOUT',
+        'UND_ERR_CONNECT_TIMEOUT',
+        'UND_ERR_HEADERS_TIMEOUT',
+        'UND_ERR_BODY_TIMEOUT'
+      ].includes(String(code))
+    )
+      return 'timeout'
+    if (
+      [
+        'ECONNREFUSED',
+        'ECONNRESET',
+        'ENETUNREACH',
+        'EHOSTUNREACH',
+        'EPIPE',
+        'UND_ERR_SOCKET',
+        'ERR_PROXY_CONNECTION_FAILED'
+      ].includes(String(code))
+    )
+      return 'transport'
+    cause = 'cause' in cause ? cause.cause : undefined
+  }
+  return undefined
+}
+
+// Use the active host transport, also used by managed installs. Node owns its proxy environment;
+// Electron hosts use Chromium. A HEAD request keeps the required source check lightweight.
 const probeRegistryReachability: RegistryProbe = async (registry, packagePath = '') => {
   const startedAt = Date.now()
   const controller = new AbortController()
@@ -86,12 +149,13 @@ const probeRegistryReachability: RegistryProbe = async (registry, packagePath = 
       redirect: 'follow',
       signal: controller.signal
     })
-    if (!response.ok) throw new Error(`HTTP ${response.status} while checking ${registry}`)
+    if (!response.ok)
+      throw new RegistryProbeFailure('http', `HTTP ${response.status} while checking ${registry}`)
     return Date.now() - startedAt
   } catch (error) {
-    if (error instanceof Error && error.name === 'AbortError') {
-      throw new Error(`Timed out while checking ${registry}`)
-    }
+    if (error instanceof RegistryProbeFailure) throw error
+    const reason = controller.signal.aborted ? 'timeout' : registryFailureReason(error)
+    if (reason) throw new RegistryProbeFailure(reason, `Could not reach ${registry} (${reason}).`)
     throw error
   } finally {
     clearTimeout(timer)
@@ -342,14 +406,22 @@ const runEnvironmentCheck = async ({
       const nativeCheck: EnvironmentCheckItem = {
         id: 'agent',
         label: 'Codex native CLI',
-        status: nativeCliFound ? 'passed' : isSelected ? 'failed' : 'warning',
-        summary: nativeCliFound
-          ? nativeCliVersion
-            ? `Codex CLI ${nativeCliVersion} is installed.`
-            : 'Codex CLI is installed.'
-          : isSelected
-            ? 'Native Codex CLI is not installed.'
-            : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
+        status:
+          nativeCliFound && isSupportedCodexCliVersion(nativeCliVersion)
+            ? 'passed'
+            : isSelected
+              ? 'failed'
+              : 'warning',
+        summary:
+          nativeCliFound && !isSupportedCodexCliVersion(nativeCliVersion)
+            ? `Codex CLI must be updated to ${MINIMUM_CODEX_CLI_VERSION} or later, then re-detected.`
+            : nativeCliFound
+              ? nativeCliVersion
+                ? `Codex CLI ${nativeCliVersion} is installed.`
+                : 'Codex CLI is installed.'
+              : isSelected
+                ? 'Native Codex CLI is not installed.'
+                : 'Native Codex CLI is not installed (optional — only needed if you switch to Codex).',
         detail: nativeCliPath
       }
 
@@ -379,12 +451,18 @@ const runEnvironmentCheck = async ({
 
     // For other frameworks or when Codex doesn't have component info, show single runtime row
     if (runtime.found) {
+      const incompatibleClaude =
+        id === 'claude-code' && !isSupportedClaudeCliVersion(runtime.version)
       return [
         {
           id: 'agent',
           label: `${label} runtime`,
-          status: 'passed',
-          summary: runtime.version ? `${label} ${runtime.version} is ready.` : `${label} is ready.`,
+          status: incompatibleClaude ? (id === agentFrameworkId ? 'failed' : 'warning') : 'passed',
+          summary: incompatibleClaude
+            ? CLAUDE_CLI_INCOMPATIBLE_MESSAGE
+            : runtime.version
+              ? `${label} ${runtime.version} is ready.`
+              : `${label} is ready.`,
           detail: runtime.path
         }
       ]

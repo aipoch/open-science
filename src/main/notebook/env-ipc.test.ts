@@ -1,6 +1,7 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProvisionProgress, RuntimeProvisioner } from './provisioner'
+import type { ProvisionProgress, RuntimeProvisioner } from '@aipoch/environment'
 
 const registered = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
 const sent: Array<{ channel: string; progress: ProvisionProgress }> = []
@@ -171,3 +172,5 @@ describe('registerNotebookEnvIpcHandlers', () => {
     await operation
   })
 })
+
+await configureTestElectronHost(await import('electron'))

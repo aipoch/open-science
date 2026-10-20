@@ -4,6 +4,7 @@ import { X } from 'lucide-react'
 import { useChildLayerDismissalGuard } from '@/components/ui/use-child-layer-dismissal-guard'
 import { useTranslation } from 'react-i18next'
 
+import { FOCUS_COMPOSER_EVENT, requestComposerFocus } from './composer-focus-events'
 import { PreviewPanelSurface } from './PreviewPanel'
 import type { RestoredPlanResponder } from './session-plan/SessionPlanSurfaces'
 import type { PreviewInteractionPort } from './previews/preview-types'
@@ -28,8 +29,19 @@ const MobilePreviewSheet = ({
 }: MobilePreviewSheetProps): React.JSX.Element => {
   const { t } = useTranslation()
   const surfaceRef = useRef<HTMLDivElement>(null)
+  const focusComposerAfterClose = useRef(false)
   const modalOpen = isMobile && open
   const { setContentRef, onInteractOutside } = useChildLayerDismissalGuard(surfaceRef)
+
+  useEffect(() => {
+    if (!modalOpen) return
+    const revealComposer = (): void => {
+      focusComposerAfterClose.current = true
+      onClose()
+    }
+    window.addEventListener(FOCUS_COMPOSER_EVENT, revealComposer)
+    return () => window.removeEventListener(FOCUS_COMPOSER_EVENT, revealComposer)
+  }, [modalOpen, onClose])
 
   useEffect(() => {
     if (!modalOpen) return
@@ -71,6 +83,12 @@ const MobilePreviewSheet = ({
         else element.setAttribute('aria-hidden', hidden)
       }
       document.body.style.overflow = previousOverflow
+      // Retry focus only after the conversation is no longer inert or trapped behind the sheet.
+      if (focusComposerAfterClose.current) {
+        focusComposerAfterClose.current = false
+        requestComposerFocus()
+        return
+      }
       if (
         previousFocus instanceof HTMLElement &&
         previousFocus.isConnected &&

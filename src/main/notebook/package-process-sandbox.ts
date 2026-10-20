@@ -23,15 +23,13 @@ import {
 } from 'node:path'
 
 import type { PackageMirror } from '../../shared/mirror'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { validateCustomAllowedDomain } from '../../shared/notebook-network'
-import {
-  defaultSpawn,
-  packageProcessTreeTerminated,
-  type InstallRequest,
-  type InstallSpawn
-} from './package-manager'
+import { defaultSpawn } from './environment-process'
+import { packageProcessTreeTerminated, type InstallSpawn } from '@aipoch/environment'
+import type { InstallRequest } from '../../shared/notebook-env'
 import { assertProcessTreeSupport, terminateProcessTree } from '../process-tree'
-import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from './process-environment'
+import { buildNotebookKernelEnvironment, PIP_TRANSPORT_ENV_KEYS } from '@aipoch/environment'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { kernelExecutableReadRoot } from './kernel-executable-read-root'
 
@@ -44,6 +42,7 @@ type PackageProcessSandboxOptions = Readonly<{
   interpreter?: Readonly<{ command: string; condaPrefix?: string; library?: string }>
   platform?: NodeJS.Platform
   terminateTree?: typeof terminateProcessTree
+  getGrantedLocalRoots?: () => Promise<readonly GrantedLocalRoot[]>
 }>
 
 const packageMirrorHosts = (mirror: PackageMirror | undefined): string[] => {
@@ -274,6 +273,7 @@ export const sandboxedPackageSpawn =
     const { processSandbox, request, runtimeRoot } = options
     const platform = options.platform ?? process.platform
     assertProcessTreeSupport(platform)
+    const grantedRoots = options.getGrantedLocalRoots ? await options.getGrantedLocalRoots() : []
     const projectedEnv = packageEnvironment(env ?? {}, platform)
     const externalR = request.language === 'r' && Boolean(options.interpreter?.library)
     // External R consent covers one library and the workload cache, never managed environments
@@ -302,6 +302,7 @@ export const sandboxedPackageSpawn =
       superviseProcessTree: platform === 'win32',
       filesystem: {
         readOnlyRoots: [
+          ...grantedRoots.map((root) => root.path),
           ...(externalR ? [runtimeRoot] : []),
           ...absolutePath(dirname(command)),
           ...absolutePath(request.workspaceCwd),
@@ -313,6 +314,7 @@ export const sandboxedPackageSpawn =
             : [])
         ],
         readWriteRoots: [
+          ...grantedRoots.filter((root) => root.access === 'rw').map((root) => root.path),
           ...(externalR ? [] : [runtimeRoot]),
           ...absolutePath(
             options.interpreter?.library ??

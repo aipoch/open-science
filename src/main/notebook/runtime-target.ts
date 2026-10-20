@@ -1,8 +1,8 @@
 import { realpathSync } from 'node:fs'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from '@aipoch/environment'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
 
 type RuntimeTargetBinding = Pick<NotebookRuntimeBinding, 'source' | 'runtimeId' | 'label'> & {
   envName?: string

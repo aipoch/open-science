@@ -1,0 +1,8 @@
+{"name":"numbered-heading-rejoins-lowercase-hyphen-continuation","first":"Adaptive Net-","tail":"works","change":"none","joined":"3.2 Adaptive Networks"}
+{"name":"heading-retains-compound-hyphen-before-capitalized-continuation","first":"Layer-","tail":"Normalized Models","change":"none","joined":"3.2 Layer-Normalized Models"}
+{"name":"opposite-column-heading-tail-never-joins","first":"Adaptive Net-","tail":"works","change":"column"}
+{"name":"different-heading-style-never-joins","first":"Adaptive Net-","tail":"works","change":"style"}
+{"name":"distant-heading-tail-never-joins","first":"Adaptive Net-","tail":"works","change":"gap"}
+{"name":"unrelated-numbered-heading-remains-separate","first":"Adaptive Net-","tail":"4.1 Next section","change":"number"}
+{"name": "single-native-heading-run-keeps-hanging-word-tail", "first": "Detailed Feature Extrac-", "tail": "tion", "change": "none", "combined": true, "joined": "3.2 Detailed Feature Extrac-tion"}
+{"name": "intervening-object-blocks-combined-heading-tail", "first": "Detailed Feature Extrac-", "tail": "tion", "change": "intervening", "combined": true}

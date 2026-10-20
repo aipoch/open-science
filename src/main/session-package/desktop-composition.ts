@@ -5,6 +5,8 @@ import type { SessionRepository } from '../session-persistence/repository'
 import type { ProjectRepository } from '../projects/repository'
 import type { ApplicationEventPublisher } from '../application-events'
 import type { NativeTranslator } from '../locale/main-process-messages'
+import type { SensitiveContentEvidence, SessionPackageRequest } from '../../shared/session-package'
+import type { PackageSensitiveContentSource } from './sensitive-content'
 import {
   isMigrationInProgress,
   isMigrationPending,
@@ -22,6 +24,12 @@ type Owners = {
   projectRepository: Pick<ProjectRepository, 'get'>
   sessionRepository: Pick<SessionRepository, 'loadSession'>
   isPackageHandoffHeld: () => boolean
+  cancelBrowserTransfer?: (id: string) => Promise<void>
+  onSensitiveContentFailure?: (
+    request: SessionPackageRequest,
+    evidence: SensitiveContentEvidence[],
+    sources: PackageSensitiveContentSource[]
+  ) => void
 }
 export const createSessionPackageDesktop = ({
   sessionPackageService,
@@ -31,10 +39,13 @@ export const createSessionPackageDesktop = ({
   applicationEvents,
   projectRepository,
   sessionRepository,
-  isPackageHandoffHeld
+  isPackageHandoffHeld,
+  onSensitiveContentFailure,
+  cancelBrowserTransfer
 }: Owners): SessionPackageDesktop => {
   return new SessionPackageDesktop({
     service: sessionPackageService,
+    cancelBrowserTransfer,
     translate,
     withDataRootWrite,
     assertCanStart: () => {
@@ -69,6 +80,7 @@ export const createSessionPackageDesktop = ({
       archiveCoordinator.reserveProjectImport(projectId, signal),
     onOperationChanged: (snapshot) =>
       applicationEvents.publish('sessions:package-operation-changed', snapshot),
+    onSensitiveContentFailure,
     afterImport: async (identity, originClientId, projectCreated) => {
       const [project, importedSession] = await Promise.all([
         projectRepository.get(identity.projectId),

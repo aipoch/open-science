@@ -1,29 +1,39 @@
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
+import { credentialDiagnosticSchema, type CredentialDiagnostic } from './diagnostic'
+import type { KWalletProbeResult } from './kwallet-probe-contract'
+import type { LinuxCredentialBackend, LinuxKWalletBackend } from './linux-backend-contract'
 import { safeCredentialProbeResult } from './probe'
+import type { IdentityProbeResult } from './probe-contract'
+export type { IdentityProbeResult } from './probe-contract'
 
 const log = createLogger('credential-identity')
 
-export type IdentityProbeResult = Readonly<{
-  status: 'exists' | 'not-found' | 'access-blocked' | 'error' | 'unsupported'
-  reason?: string
-  osStatus?: number
-}>
-
 export type CredentialIdentity = Readonly<
   | { backend: 'mac-keychain' | 'linux-secret-service'; appName: string; exists: boolean }
+  | {
+      backend: 'linux-kwallet'
+      appName: string
+      exists: boolean
+      passwordStore: LinuxKWalletBackend
+      wallet: string
+    }
   | { backend: 'windows-dpapi' | 'file'; appName: string }
 >
 
 export class CredentialIdentityError extends Error {
+  readonly diagnostic?: CredentialDiagnostic
   constructor(
     readonly reason: string,
-    readonly probe?: IdentityProbeResult & Readonly<{ appName: string }>
+    readonly probe?: IdentityProbeResult & Readonly<{ appName: string }>,
+    diagnostic?: CredentialDiagnostic
   ) {
     // Native startup recovery translates this stable message before displaying it.
     super(
       'Credential storage needs recovery. Existing credentials and profile data have been preserved.'
     )
     this.name = 'CredentialIdentityError'
+    const parsed = credentialDiagnosticSchema.safeParse(diagnostic)
+    if (parsed.success) this.diagnostic = parsed.data
   }
 }
 
@@ -34,7 +44,8 @@ export const selectCredentialIdentity = (options: {
   packaged: boolean
   credentialStore?: 'os' | 'file'
   probe: (appName: string) => IdentityProbeResult
-  linuxProbe?: (appName: string) => IdentityProbeResult
+  linuxProbe?: (appName: string) => KWalletProbeResult
+  linuxBackend?: LinuxCredentialBackend
   linuxPasswordStore?: string
 }): CredentialIdentity => {
   const suffix = options.packaged ? '' : ' (DEV)'
@@ -51,8 +62,23 @@ export const selectCredentialIdentity = (options: {
     const result = options.linuxProbe?.(legacy)
     if (!result || !['exists', 'not-found'].includes(result.status))
       throw new CredentialIdentityError(
-        result?.reason ?? `linux-secret-service-probe-${result?.status ?? 'unsupported'}`
+        result?.reason ??
+          `linux-${
+            options.linuxBackend && options.linuxBackend !== 'gnome_libsecret'
+              ? 'kwallet'
+              : 'secret-service'
+          }-probe-${result?.status ?? 'unsupported'}`
       )
+    if (options.linuxBackend && options.linuxBackend !== 'gnome_libsecret') {
+      if (!result.wallet) throw new CredentialIdentityError('linux-kwallet-wallet-unconfirmed')
+      return Object.freeze({
+        backend: 'linux-kwallet',
+        appName: legacy,
+        exists: result.status === 'exists',
+        passwordStore: options.linuxBackend,
+        wallet: result.wallet
+      })
+    }
     return Object.freeze({
       backend: 'linux-secret-service',
       appName: legacy,

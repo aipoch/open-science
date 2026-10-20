@@ -16,7 +16,7 @@ on:
     inputs:
       nightly:
         description: >-
-          Mark artifacts as a nightly build: appends `-nightly.<short-sha>` to the version so
+          Mark artifacts as a nightly build: appends `-nightly.g<short-sha>` to the version so
           nightly installers get distinct filenames (and in-app version) from stable releases.
         type: boolean
         default: false
@@ -38,10 +38,14 @@ on:
         default: false
       platform_name:
         description: >-
-          If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, or windows-x64).
+          If set, emit only this matrix name (macos-arm64, macos-x64, linux-x64, linux-arm64, or windows-x64).
           Used by the Nightly macos-x64 packaging dry-run; release/nightly leave it empty.
         type: string
         default: ''
+      sign_windows:
+        description: Sign the stable Windows package with Azure Artifact Signing.
+        type: boolean
+        default: false
 
 # Builds only read the repo and upload run artifacts; every publish step lives in the caller.
 permissions:
@@ -70,9 +74,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -96,26 +100,27 @@ jobs:
         run: npm run check:cli-package
 
   verify_tests:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/3)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
     if: ${{ !inputs.skip_verify }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    timeout-minutes: 25
+    # Three-shard runs reached ~36m; leave headroom for coverage and runner load.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3]
+        shard: [1, 2, 3, 4]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -124,18 +129,19 @@ jobs:
         continue-on-error: true
         # The static lane owns i18n; the native lane retains the original macOS sandbox checks.
         # PR Gate separately verifies real Linux isolation with its required system dependencies.
+        # Repository-wide architecture scans exceeded 30s under full-suite coverage load.
         run: >-
           npx vitest run
           --coverage
           --coverage.reporter=text-summary
-          --testTimeout=30000
-          --shard=${{ matrix.shard }}/3
+          --testTimeout=60000
+          --shard=${{ matrix.shard }}/4
           --reporter=blob
           --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-test-blob-${{ matrix.shard }}
           path: vitest-reports/
@@ -168,14 +174,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       - name: Download all test shards
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: build-test-blob-*
           path: vitest-reports
@@ -185,14 +191,14 @@ jobs:
           SHARDS_RESULT: ${{ needs.verify_tests.result }}
         run: |
           test "$SHARDS_RESULT" = success
-          for shard in 1 2 3; do
+          for shard in 1 2 3 4; do
             test -s "vitest-reports/blob-$shard.json"
           done
       - name: Merge test reports and enforce coverage
         run: npx vitest run --merge-reports=vitest-reports --coverage --passWithNoTests
       - name: Upload coverage report
         if: ${{ !cancelled() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: build-coverage-report
           path: coverage/
@@ -203,7 +209,7 @@ jobs:
   verify_macos:
     name: Verify macOS native behavior
     if: ${{ !inputs.skip_verify }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -211,31 +217,39 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
       # Keep platform-gated cases that Ubuntu skips, plus regressions from the macOS release run.
       - name: Test macOS native behavior and release regressions
-        run: >-
-          npx vitest run
-          src/main/windows.test.ts
-          packages/notebook-network-sandbox/src/filesystem-policy.test.ts
-          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
-          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
-          src/main/net/network-info.test.ts
-          src/main/notebook/managed-runtime-guard.test.ts
-          src/main/notebook/package-cache-sandbox.integration.test.ts
-          src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts
-          src/main/compute/compute-remote-operation-owner.test.ts
-          scripts/ci/mirror-channel-publication.test.ts
-          src/main/literature/catalog-capacity.test.ts
+        run: |
+          set -euo pipefail
+          OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"
+          test -x "$OPEN_SCIENCE_TEST_PY_ENV"
+          export OPEN_SCIENCE_TEST_PY_ENV
+          npx vitest run \
+            src/main/windows.test.ts \
+            packages/notebook-network-sandbox/src/filesystem-policy.test.ts \
+            packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
+            packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
+            src/main/net/network-info.test.ts \
+            src/main/notebook/managed-runtime-guard.test.ts \
+            src/main/process-tree-darwin-recovery.test.ts \
+            src/main/process-tree-evidence.macos.integration.test.ts \
+            src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts \
+            src/main/notebook/runtime-service.macos-isolation.integration.test.ts \
+            src/main/notebook/package-cache-sandbox.integration.test.ts \
+            src/main/acp/prompt-attachment-notebook-sandbox.integration.test.ts \
+            src/main/compute/compute-remote-operation-owner.test.ts \
+            scripts/ci/mirror-channel-publication.test.ts \
+            src/main/literature/catalog-capacity.test.ts
       - name: Test production macOS kernel sandbox
         run: >-
           npx vitest run src/main/notebook/kernel-executor.test.ts
-          -t 'executes the repl loop through the production network sandbox'
+          -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
 
   # Resolve the platform matrix. mac_only trims it to the two mac archs — used by the notarization
   # dry-run (notarize-dryrun.yml), which only needs a signed mac build. With mac_only false (the
@@ -266,6 +280,7 @@ jobs:
           ]'
           rest='[
             {"name":"linux-x64","os":"ubuntu-latest","platform":"linux","eb_args":"--linux","engine_keep":".so.node","subdir":"linux-64","bin_os":"linux","bin_arch":"x64"},
+            {"name":"linux-arm64","os":"ubuntu-24.04-arm","platform":"linux","eb_args":"--linux --arm64","engine_keep":"linux-arm64-openssl-3.0.x.so.node","subdir":"linux-aarch64","bin_os":"linux","bin_arch":"arm64"},
             {"name":"windows-x64","os":"windows-latest","platform":"win","eb_args":"--win --x64","engine_keep":"windows.dll","subdir":"win-64","bin_os":"win","bin_arch":"x64"}
           ]'
           if [ "${{ inputs.mac_only }}" = "true" ]; then
@@ -284,11 +299,15 @@ jobs:
 
   build:
     name: Build ${{ matrix.name }}
-    needs: setup
+    needs: [setup]
     # Start as soon as the matrix is resolved. The sibling verify job remains part of this reusable
     # workflow's result, so release/nightly callers cannot reach publish if verification fails.
-    if: ${{ needs.setup.result == 'success' }}
+    if: ${{ !cancelled() && needs.setup.result == 'success' }}
     runs-on: ${{ matrix.os }}
+    environment: ${{ inputs.sign_windows && matrix.platform == 'win' && 'windows-signing' || '' }}
+    permissions:
+      contents: read
+      id-token: write
     # Observed packaging legs: macOS 6–16 min (Intel renderer build is the slow one), Linux/Windows
     # 6–12 min. Generous ceilings still stop a hung electron-builder well before the 6 h default.
     timeout-minutes: ${{ matrix.platform == 'mac' && 45 || 30 }}
@@ -308,14 +327,44 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
+
+      # The Node secret backend compiles against libsecret/dbus headers during packaging
+      # (build:backend-native); Ubuntu images do not ship them.
+      - name: Install Linux secret service headers
+        if: ${{ matrix.platform == 'linux' }}
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends libsecret-1-dev libdbus-1-dev
 
       # npm ci runs postinstall: prisma generate + electron-builder install-app-deps.
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+
+      # Package dry-runs must retain this native gate even when portable verification is skipped.
+      - name: Verify Windows receipt publication and submission recovery
+        if: ${{ matrix.platform == 'win' }}
+        run: >-
+          npx vitest run
+          src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/compute/compute-submission-evidence-recovery.integration.test.ts
+
+      # Exercise persisted data-location upgrades on each actual target OS before packaging.
+      # The shared verification job cannot substitute for Windows path semantics or Linux casing.
+      - name: Verify native data-location upgrades
+        run: >-
+          npx vitest run
+          src/main/storage-root.test.ts
+          src/main/storage/brand-location.test.ts
+          src/main/storage/data-location-identity.test.ts
+          src/main/settings/document-store.test.ts
+          src/main/settings/repository.test.ts
+          --maxWorkers=1
+          --testTimeout=30000
+          --hookTimeout=30000
 
       # electron-builder compiles build/icon.icon with actool. Fail here with a focused diagnostic
       # instead of much later in packaging if the runner image ever loses its Xcode 26 selection.
@@ -332,8 +381,8 @@ jobs:
           OPEN_SCIENCE_ENV_CDN_BASE: https://statics.aipoch.com/open-science
         run: node scripts/verify-runtime-bundle.mjs "${{ matrix.subdir }}"
 
-      # The schema's binaryTargets generates Prisma engines for several platforms; keep only the one
-      # this build ships so each installer stays lean. Fails loudly if the expected engine is missing.
+      # Keep the engines this platform ships: Linux x64 needs Debian and RHEL OpenSSL 3 engines;
+      # Linux ARM64 uses one generic OpenSSL 3 engine. macOS/Windows also keep one. Fail if no matching engine was generated.
       # The glob is `*query_engine-*` (not `libquery_engine-*`) so it also matches Windows' engine,
       # which is named `query_engine-windows.dll.node` without the `lib` prefix.
       - name: Prune foreign Prisma engines
@@ -442,6 +491,85 @@ jobs:
           security find-identity -v -p codesigning "$keychain" | \
             grep -q 'Developer ID Application:'
 
+      - name: Sign in to Azure for Windows code signing
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Prepare the module before packaging, and export its search path to later steps. Verify
+      # autoloading from a separate Bash step, matching electron-builder's parent shell.
+      - name: Pre-install Azure Trusted Signing module
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: pwsh
+        run: |
+          $requiredVersion = [Version]'0.5.0'
+          $availableModule = Get-Module -ListAvailable -Name TrustedSigning |
+            Where-Object { $_.Version -ge $requiredVersion } |
+            Sort-Object Version -Descending |
+            Select-Object -First 1
+          if (-not $availableModule) {
+            # Best effort: hosted runners already carry the NuGet provider, and the gallery fetch
+            # behind this bootstrap intermittently fails — it must not block the module install
+            # (electron-builder wraps this same call for the same reason).
+            try {
+              Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force -Scope CurrentUser
+            } catch {
+              Write-Host "NuGet provider bootstrap skipped: $($_.Exception.Message)"
+            }
+            if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) {
+              Register-PSRepository -Default
+            }
+            $installed = $false
+            for ($attempt = 1; $attempt -le 3 -and -not $installed; $attempt++) {
+              try {
+                Install-Module -Name TrustedSigning -MinimumVersion 0.5.0 -Force -Repository PSGallery -Scope CurrentUser
+                $installed = $true
+              } catch {
+                Write-Host "Install-Module attempt $attempt failed: $($_.Exception.Message)"
+                if ($attempt -lt 3) { Start-Sleep -Seconds 15 }
+              }
+            }
+            if (-not $installed) {
+              throw 'TrustedSigning module could not be installed from PSGallery after 3 attempts.'
+            }
+          }
+          $command = Get-Command Invoke-TrustedSigning -ErrorAction SilentlyContinue
+          # CurrentUser installs land under the Documents folder; folder redirection can leave that
+          # directory off PSModulePath. Export the full effective path through GITHUB_ENV so the
+          # later packaging step and its signing subprocesses inherit it without registry edits.
+          $documents = [Environment]::GetFolderPath('MyDocuments')
+          $candidates = @(
+            if ($documents) {
+              Join-Path $documents 'PowerShell\Modules'
+              Join-Path $documents 'WindowsPowerShell\Modules'
+            }
+            "$env:USERPROFILE\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\PowerShell\Modules",
+            "$env:USERPROFILE\Documents\WindowsPowerShell\Modules",
+            "$env:USERPROFILE\OneDrive\Documents\WindowsPowerShell\Modules"
+          )
+          $moduleRoot = $candidates | Where-Object { Test-Path (Join-Path $_ 'TrustedSigning') } | Select-Object -First 1
+          if (-not $moduleRoot -and -not $command) {
+            Write-Host "PSModulePath: $env:PSModulePath"
+            throw 'TrustedSigning module installed but its directory could not be located.'
+          }
+          $pathEntries = @($env:PSModulePath -split ';' | Where-Object { $_ })
+          if ($moduleRoot -and $pathEntries -notcontains $moduleRoot) {
+            $pathEntries += $moduleRoot
+          }
+          $env:PSModulePath = ($pathEntries | Select-Object -Unique) -join ';'
+          "PSModulePath=$env:PSModulePath" >> $env:GITHUB_ENV
+          Write-Host "PSModulePath for signing: $env:PSModulePath"
+
+      - name: Verify Azure Trusted Signing module in packaging environment
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: bash
+        run: |
+          pwsh -NoProfile -NonInteractive -Command 'Get-Command Invoke-TrustedSigning -ErrorAction Stop | Format-List Name, Source, Version'
+
       # Build the renderer + main and Web bundles, then package with electron-builder. The verify
       # job already typechecks this exact checkout once, so the four platform jobs must not repeat it.
       #
@@ -451,28 +579,62 @@ jobs:
       # keychain above and electron-builder consumes only that keychain path. With no cert — or for
       # any nightly (kept ad-hoc for speed) — Developer ID signing is skipped and the afterPack hook
       # (build/adhoc-sign.cjs) applies a valid ad-hoc signature so Gatekeeper shows the bypassable
-      # "unidentified developer" prompt instead of "damaged". Linux has no signing concept. All
-      # secrets are optional — the build works with none set.
+      # "unidentified developer" prompt instead of "damaged". Stable Windows tag builds use
+      # Artifact Signing through the GitHub OIDC login above; all other Windows builds remain
+      # unsigned. Linux packages do not use this signing service.
+      - name: Verify Windows runtime CDN availability
+        if: ${{ matrix.platform == 'win' }}
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: node scripts/windows-runtime-cdn.mjs check
+
       - name: Build & package
         id: package
         shell: bash
         env:
-          # Windows remains unsigned until a code-signing certificate is provisioned. Stable macOS
-          # jobs consume the explicitly prepared keychain without exposing CSC_LINK to electron-builder.
+          # Stable macOS jobs consume the explicitly prepared keychain without exposing CSC_LINK to
+          # electron-builder. Azure's PowerShell module uses the preceding Azure CLI OIDC login.
           CSC_KEYCHAIN: ${{ steps.mac_signing.outputs.keychain }}
-          # macos-26-intel Node 22 x64 defaults to a ~2 GB old-space. The renderer production graph
+          AZURE_CLIENT_ID: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT_ID: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+          AZURE_SIGNING_ENDPOINT: ${{ vars.AZURE_SIGNING_ENDPOINT }}
+          AZURE_SIGNING_ACCOUNT: ${{ vars.AZURE_SIGNING_ACCOUNT }}
+          AZURE_SIGNING_PROFILE: ${{ vars.AZURE_SIGNING_PROFILE }}
+          # The previous Node 22 x64 build on macos-26-intel defaulted to ~2 GB old-space. The renderer graph
           # (~6400 modules) OOMs during emit at that limit. This is a ceiling, not a reservation.
           NODE_OPTIONS: --max-old-space-size=8192
         run: |
-          npm run build:e2e
-          npm run build:web
-          # Nightly: override the packaged version with `<base>-nightly.<short-sha>` (valid semver
-          # prerelease). Every artifactName template uses ${version}, so this alone makes nightly
-          # filenames distinct from stable ones and ties each build to its commit.
           eb_ver=()
           if [ "${{ inputs.nightly }}" = "true" ]; then
             base=$(node -p "require('./package.json').version")
-            eb_ver=(-c.extraMetadata.version="${base}-nightly.${GITHUB_SHA::7}")
+            # Prefix the SHA so npm cannot normalize a numeric identifier (0189093 -> 189093).
+            # The staged Node backend reads the root manifest; Electron and artifact filenames
+            # read extraMetadata. Both must carry exactly the same version.
+            nightly_version="${base}-nightly.g${GITHUB_SHA::7}"
+            npm version --no-git-tag-version "$nightly_version"
+            eb_ver=(-c.extraMetadata.version="$nightly_version")
+          fi
+          npm run build:e2e
+          npm run build:web
+          windows_signing_args=()
+          if [ "${{ inputs.sign_windows }}" = "true" ] && [ "${{ matrix.platform }}" = "win" ]; then
+            for name in AZURE_SIGNING_PUBLISHER AZURE_SIGNING_ENDPOINT AZURE_SIGNING_ACCOUNT AZURE_SIGNING_PROFILE; do
+              if [ -z "${!name:-}" ]; then
+                echo "::error::Missing windows-signing environment variable: $name" >&2
+                exit 1
+              fi
+            done
+            # Keep the Azure configuration on the stable Windows leg only. electron-builder signs
+            # the application and NSIS installer before generating latest.yml and blockmaps.
+            windows_signing_args=(
+              -c.win.forceCodeSigning=true
+              "-c.win.azureSignOptions.publisherName=$AZURE_SIGNING_PUBLISHER"
+              "-c.win.azureSignOptions.endpoint=$AZURE_SIGNING_ENDPOINT"
+              "-c.win.azureSignOptions.codeSigningAccountName=$AZURE_SIGNING_ACCOUNT"
+              "-c.win.azureSignOptions.certificateProfileName=$AZURE_SIGNING_PROFILE"
+            )
           fi
           if [ "${{ steps.mac_signing.outputs.enabled }}" = "true" ]; then
             # Stable build with a Developer ID cert -> SIGN ONLY (notarize:false). Notarization +
@@ -499,8 +661,16 @@ jobs:
               # primary-signature assessment. Certificate-free and nightly builds must stay ad-hoc.
               unsigned_args=(-c.dmg.sign=false)
             fi
-            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" --publish never
+            npx electron-builder ${{ matrix.eb_args }} "${eb_ver[@]}" "${unsigned_args[@]}" \
+              "${windows_signing_args[@]}" --publish never
           fi
+
+      - name: Verify signed Windows package
+        if: ${{ matrix.platform == 'win' && inputs.sign_windows }}
+        shell: pwsh
+        env:
+          AZURE_SIGNING_PUBLISHER: ${{ vars.AZURE_SIGNING_PUBLISHER }}
+        run: ./scripts/ci/verify-windows-signature.ps1 -InstallerDir dist -CheckUnpacked
 
       # Keep each native feed unique even when notarization is skipped. The installed app still
       # polls latest-mac.yml; only the publication job combines the two architecture artifacts.
@@ -541,7 +711,7 @@ jobs:
       # Upload the build once. Blocking package smoke and advisory desktop regression download this
       # immutable artifact, so re-running either validation never rebuilds or re-signs the package.
       - name: Upload build artifacts
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: ${{ matrix.name }}
           retention-days: 7

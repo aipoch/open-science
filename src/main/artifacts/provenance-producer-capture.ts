@@ -11,12 +11,9 @@ import type {
   ArtifactVersionEvidence,
   CreateArtifactVersionRequest
 } from '../../shared/artifact-provenance'
-import type {
-  NotebookEnvironmentManifest,
-  NotebookRunEnvironmentCapture,
-  NotebookRunInputFile,
-  NotebookRunRecord
-} from '../../shared/notebook'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
+import type { NotebookRunEnvironmentCapture } from '@aipoch/environment/contracts'
+import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
 import { hasImmutableExecutionFileEvidenceReference } from '../../shared/execution-file-evidence'
 import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import type { ImmutableInputAuthority } from '../immutable-input-authority'
@@ -24,7 +21,7 @@ import { getNotebookSessionRoot, NotebookRunRepository } from '../notebook/repos
 import {
   unavailableNotebookDependencyProjection,
   type NotebookDependencyAnalyzer
-} from '../notebook/dependency-analysis'
+} from '@aipoch/notebook-analysis'
 import {
   sealArtifactProvenanceGraph,
   type ArtifactProvenanceComputeActivityInput,

@@ -8,8 +8,8 @@ import { ManagedFileVersionError } from './managed-file-versions/error'
 import type {
   ArtifactProducerInputScope,
   ManagedFileReadLease,
-  ManagedFileVersionService
-} from './managed-file-versions/service'
+  ManagedFileVersionReadPort
+} from './managed-file-versions/read-port'
 import { getNotebookInputRoot } from './notebook/input-staging'
 
 type ResolveImmutableInputVersionRequest = {
@@ -33,8 +33,8 @@ type StageLatestImmutableInputRequest = {
 
 type ImmutableInputAuthorityOptions = {
   storageRoot: string
-  managedFileVersions: Pick<ManagedFileVersionService, 'openVersion'> &
-    Partial<Pick<ManagedFileVersionService, 'openLatest' | 'openProducerVersion'>>
+  managedFileVersions: Pick<ManagedFileVersionReadPort, 'openVersion'> &
+    Partial<Pick<ManagedFileVersionReadPort, 'openLatest' | 'openProducerVersion'>>
 }
 
 type ImmutableInputVersionValidation =
@@ -396,6 +396,6 @@ export type {
   ImmutableInputContentLease,
   ImmutableInputVersionValidation,
   ResolveImmutableInputVersionRequest,
-  StageLatestImmutableInputRequest,
-  StageImmutableInputVersionRequest
+  StageImmutableInputVersionRequest,
+  StageLatestImmutableInputRequest
 }

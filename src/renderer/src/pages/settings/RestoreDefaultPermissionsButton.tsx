@@ -36,7 +36,7 @@ const RestoreDefaultPermissionsButton = ({
   const label = loading
     ? t('Restoring…')
     : success
-      ? t('Defaults restored')
+      ? t('Default permissions present')
       : error
         ? t('Try again')
         : t('Restore defaults')

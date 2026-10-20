@@ -27,8 +27,8 @@ const fixture = async (): Promise<{ root: string; backend: ResolvedAgentBackend 
       vendorId: 'opencode-go',
       agentProviderId: 'admitted-go',
       baseUrl: 'http://127.0.0.1:19999',
-      openaiBaseUrl: 'http://127.0.0.1:19999/v1',
-      apiEndpoints: ['openai'],
+      chatCompletionsBaseUrl: 'http://127.0.0.1:19999/v1',
+      apiEndpoints: ['chat-completions'],
       model: 'admitted-model',
       key: 'synthetic-provider-secret'
     },

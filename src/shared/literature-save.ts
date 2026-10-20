@@ -1,4 +1,4 @@
-import type { LiteratureCatalogReceipt } from './literature'
+import type { LiteratureCatalogReceipt } from '@aipoch/literature-library/contracts'
 
 export type LiteratureLibrarySaveResult = Readonly<{
   // Receipts correspond to the completed input prefix, including reused records.

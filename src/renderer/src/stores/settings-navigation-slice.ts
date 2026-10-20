@@ -1,9 +1,11 @@
-import type { ComputeAuthenticationErrorCode } from '../../../shared/compute'
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
+
 import {
   settingsPanelRoute,
   type SettingsPanelId,
   type SettingsRoute
-} from '../pages/settings/settings-navigation'
+} from '@/lib/settings-navigation'
+import { rememberSettingsReturnFocusTarget } from './settings-return-focus'
 
 export type SettingsNavigationIntent = Readonly<{
   requestId: number
@@ -20,6 +22,7 @@ export type SettingsNavigationState = {
 export type SettingsNavigationActions = {
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
+  openSettingsToClassification: () => void
   openSettingsToOpenAlex: () => void
   closeSettings: () => void
   openSettingsToSkill: (skillId: string) => void
@@ -49,16 +52,23 @@ export const createSettingsNavigationSlice = ({
   getState,
   setState
 }: SettingsNavigationSliceOptions): SettingsNavigationActions => {
-  const openTo = (route: SettingsRoute): void =>
+  const openTo = (route: SettingsRoute): void => {
+    rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
     setState({
       isSettingsOpen: true,
       pendingSettingsIntent: { requestId: ++settingsNavigationRequestId, route }
     })
+  }
 
   return {
-    openSettings: () => setState({ isSettingsOpen: true }),
+    openSettings: () => {
+      rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
+      setState({ isSettingsOpen: true })
+    },
 
     openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
+    openSettingsToClassification: () =>
+      openTo({ panel: 'model', view: { kind: 'classification' } }),
     openSettingsToOpenAlex: () =>
       openTo({ panel: 'credentials', view: { kind: 'service', serviceId: 'openalex' } }),
 
@@ -80,6 +90,7 @@ export const createSettingsNavigationSlice = ({
       openTo({ panel: 'compute', view: { kind: 'detail', providerId } }),
 
     openSettingsToComputeAuthentication: (providerId, errorCode) => {
+      rememberSettingsReturnFocusTarget(getState().isSettingsOpen)
       const requestId = ++settingsNavigationRequestId
       setState({
         isSettingsOpen: true,

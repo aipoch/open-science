@@ -251,3 +251,61 @@ describe('getToolExecutionPhase', () => {
     ).toBe('prepared')
   })
 })
+
+describe('correlated host-owned code review', () => {
+  it('pauses only the exact Notebook Run awaiting review', () => {
+    const notebook = activity({
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      promptMessageId: 'prompt',
+      executionInvocationId: 'invocation',
+      rawOutput: { runId: 'run-1', status: 'running', executionInvocationId: 'invocation' }
+    })
+    const permission = {
+      state: 'pending',
+      fingerprint: 'review-run-1',
+      createdAt: 1,
+      originatingPromptMessageId: 'prompt',
+      request: {
+        requestId: 'review',
+        sessionId: 's',
+        toolCallId: 'app-approval:review',
+        title: 'Review',
+        appOwned: true,
+        rawInput: {
+          code: 'os.unlink(path)',
+          notebookCodeRisk: {
+            runId: 'run-1',
+            language: 'python',
+            risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+          }
+        },
+        options: []
+      }
+    } satisfies SessionPermissionRuntimeContext
+    expect(
+      getToolExecutionPhase({ ...notebook, executionInvocationId: undefined }, permission)
+    ).toBe('prepared')
+    expect(
+      getToolExecutionPhase(
+        {
+          ...notebook,
+          rawOutput: { runId: 'run-1', executionInvocationId: 'invocation', status: 'completed' }
+        },
+        permission
+      )
+    ).toBe('completed')
+    expect(getToolExecutionPhase(notebook, permission)).toBe('awaiting-approval')
+    expect(
+      getToolExecutionPhase(
+        {
+          ...notebook,
+          rawOutput: { runId: 'other', status: 'running', executionInvocationId: 'invocation' }
+        },
+        permission
+      )
+    ).toBe('executing')
+    expect(
+      getToolExecutionPhase({ ...notebook, promptMessageId: 'other-branch-prompt' }, permission)
+    ).toBe('executing')
+  })
+})

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import {
   SessionPersistenceCoordinator,

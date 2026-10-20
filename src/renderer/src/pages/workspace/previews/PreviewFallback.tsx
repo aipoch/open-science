@@ -210,9 +210,9 @@ export const PreviewErrorCard = (props: {
   const unavailable = missing || outside
 
   const message = missing
-    ? t(FILE_MISSING_MESSAGE_KEY)
+    ? `${t(FILE_MISSING_MESSAGE_KEY)} ${t('Restore the file or reconnect its drive before retrying. You can close this preview and continue working.')}`
     : outside
-      ? t(FILE_OUTSIDE_STORAGE_MESSAGE_KEY)
+      ? `${t(FILE_OUTSIDE_STORAGE_MESSAGE_KEY)} ${t('Open the file from your current storage location, or close this preview and continue working.')}`
       : fallbackMessage
 
   return (
@@ -221,7 +221,7 @@ export const PreviewErrorCard = (props: {
       name={name}
       title={t(unavailable ? 'File unavailable' : 'Preview unavailable')}
       message={message}
-      retryable={props.retryable ?? true}
+      retryable={props.retryable ?? !outside}
     />
   )
 }

@@ -12,7 +12,7 @@
 
 ### 前提条件
 
-- [Node.js](https://nodejs.org/) 22（参阅 [`.nvmrc`](../../.nvmrc)）和 npm
+- [Node.js](https://nodejs.org/) 24（参阅 [`.nvmrc`](../../.nvmrc)）和 npm
 - Git
 
 ### 设置
@@ -72,20 +72,47 @@ Git worktree 只能在仓库的 `.worktree/<name>` 目录下新建，每个变�
 
 ## 项目结构
 
-这是使用 electron-vite、React 和 TypeScript 构建的 Electron 应用。三个运行时进程层和一个共享模块位于 `src/` 下：
+Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。
 
-- `src/main/` — Electron 主进程（ACP 运行时、会话持久化、产物、Notebook、项目、IPC 处理程序）。
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — preload 桥，将类型化 `window.api` 公开给 renderer。
 - `src/renderer/` — React UI（页面、store、组件）。
 - `src/shared/` — 跨进程共享的类型和辅助工具。
+- `packages/` — 包含独立领域软件包及原生辅助程序。隔离验证将声明的 tarball 安装到干净的消费者环境；默认联网安装，`--offline` 要求完整缓存。稳定版发布五种独立 CLI 压缩包；自动发布 npm 仍暂缓。
 
 ## 开发工作流
 
 1. 基于默认分支为变更新建分支。
 2. 完成变更，并保持范围集中、内容自洽。
 3. 添加或更新覆盖已更改行为的测试。
-4. 构建最终测试影响集，并在最后一次实质性编辑后运行。如果无法确定所有权、使用方或风险，请使用完整回退。
-5. 创建拉取请求，清晰说明变更及其动机。
+4. 新增、重命名、删除源文件或测试，或改变其依赖关系时，完成[模块影响注册清单](#模块影响注册)。先暂存新文件，再运行注册检查。
+5. 构建最终测试影响集，并在最后一次实质性编辑后运行。如果无法确定所有权、使用方或风险，请使用完整回退。
+6. 创建拉取请求，清晰说明变更及其动机。
+
+### 模块影响注册
+
+模块注册应与源代码和测试在同一次变更中完成，不要等 CI 失败后再补。编辑 `scripts/ci/module-impact/<module-id>.json`；文件名定义模块 ID（`^[a-z][a-z0-9_]*$`）。根文件 `scripts/ci/module-impact.json` 只包含 `{"schemaVersion": 1}`，不要添加共享索引或内联模块。适用时复用现有的所有者模块。
+
+提交前逐项检查：
+
+- `src/` 或 `packages/` 下每个新增或重命名的文件，都必须在恰好一个模块的 `ownerPaths` 中注册，包括测试、原生源文件、资源和夹具。使用以 `/` 分隔、相对于仓库根目录的精确路径。`testFiles` 条目不代表文件所有权。
+- 将新测试登记到适当的 `testFiles` 类别：`owner` 覆盖模块自身行为，`contract` 覆盖接口契约，`consumer` 覆盖依赖该模块的下游行为。同一模块内，一个测试只能归入一个类别；同一个测试可以为多个模块提供覆盖证据。
+- 新增测试或修改导入、重导出、mock 时，检查上游模块。使用方覆盖检查会追踪传递依赖：只在测试所属模块登记，可能使多个上游模块缺少覆盖证据。对于报告的每个 `<module-id> -> <test-path>` 缺口，将测试加入对应模块的适当类别；下游测试通常放入 `testFiles.consumer`。不要通过删除有效依赖关系来消除报错。
+- 在 `interfacePaths` 中维护公开边界，包括导出供其他测试使用的辅助函数的测试文件。用 `consumerModules` 维护模块之间的使用关系；它不能替代明确的测试证据。原生模块或 worker 的加载关系记录在 `scripts/ci/module-runtime-consumers.json` 中。IPC、事件、文件系统协议等动态关系仍需明确的契约测试，静态分析无法全部证明。
+- 重命名时，将所有权、接口和测试引用更新为新路径。只有文件确实删除时才能移除对应引用；保留仍存在文件的覆盖。不要为了通过注册检查而削弱既有的使用方关系、能力／回退路由或 `fullTestReason`。
+
+**先暂存本次变更中的新文件，再运行检查。** 查看 `git status --short`，然后使用 `git add -- <paths>` 暂存本次变更的源文件、测试、资源和模块记录。所有权审计和使用方覆盖检查通过 `git ls-files` 枚举文件：即使单独运行测试成功，尚未跟踪的新文件也可能被漏掉。检查读取已跟踪路径的工作区内容，因此最后一次实质性编辑后应重新运行，并在提交前检查 `git diff --cached`。
+
+在仓库根目录运行：
+
+```bash
+node scripts/ci/audit-module-ownership.mjs
+npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+```
+
+这些检查验证注册信息，不代表产品行为已通过测试。还需对受影响模块运行 `npm run test:module -- <module-id>`，并执行[验证策略](#验证策略)要求的其他检查。提交后，使用 `npm run test:affected:explain -- --base origin/main --head HEAD` 查看计划；该命令比较已提交的版本，不包含暂存或未暂存的修改。未知所有权和已有的完整验证标记仍保留完整回退；完成注册不会免除必要的 CI 检查。
+
+新增注册的审批豁免、覆盖保留规则以及需要 CI 所有者审批的变更，见[英文版 CI 控制平面审批说明](../../CONTRIBUTING.md#ci-control-plane-approval)。
 
 ### 数据库架构变更
 
@@ -222,8 +249,7 @@ ci(review): unify automated AI reviews
 - 包含[验证策略](#验证策略)中的最终证据映射，说明所列检查均在最后一次实质性编辑后运行，并指出未覆盖风险。
 - 保持拉取请求规模合理、范围集中，便于审查。
 - 确保最终测试影响集通过；需要完整回退时，确保完整回退通过。
-- 拉取请求检查通过后，仅使用 **squash merge** 直接合并。不要仅因 `main` 推进而更新分支；只有发生合并冲突或维护者要求时才更新。squash 提交主题必须保留拉取请求标题的 Conventional Commit 格式。
-- 合并到 `main` 的非文档变更会触发 [Nightly 工作流](../../.github/workflows/nightly.yml)，它会在生成的提交上运行合并后验证和跨平台软件包认证。
+- 对适用的变更，确认已完成[模块影响注册清单](#模块影响注册)，并报告新文件加入 Git 跟踪后运行的注册检查。
 
 ## 报告问题
 
@@ -234,10 +260,26 @@ ci(review): unify automated AI reviews
 - 操作系统和应用版本。
 - 相关日志或截图（如有）。
 
-## 发布 npm 软件包
-
-维护者应遵循 [npm 软件包发布指南](../npm-release.md)。npm 软件包版本使用 `npm-v*` 标签，并通过受保护的 `Publish npm package` 工作流发布。
-
 ## 许可证
 
 参与贡献即表示你同意，你的贡献将在与本项目相同的 [Apache License 2.0](../../LICENSE) 下许可。
+
+## 当前开发与 CI 基准
+
+完整规则以[英文贡献指南](../../CONTRIBUTING.md)为准；下文同步当前工作流。
+
+- `npm run dev` 构建 Node 后端、准备可执行文件并打开 Electron。监听器自动重建软件包和后端；构建成功后，正常退出应用并重新运行命令以加载 backend/Main/Preload 变更。渲染器使用 HMR。
+
+- `src/` 和 `packages/` 下每个新增文件（包括资源和测试夹具）都必须在 `scripts/ci/module-impact/<module-id>.json` 中有且仅有一个所有者。保留所有者、契约、消费者测试及动态依赖证据。执行 `git add` 后，运行英文指南中的注册检查及 `node scripts/ci/audit-module-ownership.mjs`。
+
+- 必要检查和评审通过后，在原生合并队列启用时进入队列；队列先验证合并后的版本，再执行 squash merge。保留 Conventional Commit 标题，不绕过失败的必需检查。
+
+- Nightly 每天 15:17 UTC 定时运行，也可手动触发，不是每次合并都触发。Source Regression 每天两次补充完整 Mac、委派和软件包验证；PR 与队列运行各自选中的检查组。
+
+- `npm test` 始终运行完整测试。`npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` 解释 PR 选测，`--tier queue` 解释队列选测。证据不完整时保留更广的测试范围。受保护的 CI 策略需要代码所有者评审；注册数据不得削减已有覆盖。
+
+- `packages/` 包含独立领域软件包及原生辅助程序。隔离验证将声明的 tarball 安装到干净的消费者环境；默认联网安装，`--offline` 要求完整缓存。稳定版发布五种独立 CLI 压缩包；自动发布 npm 仍暂缓。
+
+- 必须提供全部八种翻译：de、es、fr、zh-Hans、zh-Hant、ja、ko、ru。术语和 context 规则见 [AGENTS.md](../../AGENTS.md) 与[词汇表](../i18n-glossary.md)。
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

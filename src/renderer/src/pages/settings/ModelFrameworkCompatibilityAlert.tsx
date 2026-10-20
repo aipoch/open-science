@@ -3,7 +3,7 @@ import { ErrorNotice } from '@/components/error-notice'
 
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { isProviderUsableByFramework } from '../../../../shared/settings'
-import { isModelBridgeSupported } from '../../../../shared/provider-registry'
+import { isModelBridgeSupported } from '../../../../shared/provider-bridge-policy'
 import { incompatibilityReason } from '../workspace/composer-model-picker-utils'
 
 // Settings-time compatibility guard for the Model panel. The active provider must be able to drive the

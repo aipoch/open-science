@@ -1,8 +1,11 @@
 import {
   BookOpen,
+  BookOpenText,
   ClipboardCopy,
   Download,
   Eye,
+  ExternalLink,
+  Link,
   GitBranch,
   Maximize2,
   PackagePlus,
@@ -16,7 +19,10 @@ import type {
 } from '@/components/action-menu'
 
 export type PreviewCapabilityId =
+  | 'open-source'
+  | 'copy-source-url'
   | 'pdf-context'
+  | 'pdf-add-to-literature'
   | 'copy-path'
   | 'save-as-artifact'
   | 'provenance'
@@ -32,7 +38,10 @@ export type PreviewActionBindings = Partial<Record<PreviewCapabilityId, PreviewA
 export type PreviewMenuRecipeEntry = ActionMenuRecipeEntry<PreviewCapabilityId>
 
 export const PREVIEW_CAPABILITY_CATALOG: Record<PreviewCapabilityId, ActionMenuDefinition> = {
+  'open-source': { labelKey: 'Open source in browser', icon: ExternalLink },
+  'copy-source-url': { labelKey: 'Copy link', icon: Link },
   'pdf-context': { labelKey: 'Read with agent', icon: BookOpen },
+  'pdf-add-to-literature': { labelKey: 'Add to Literature', icon: BookOpenText },
   'copy-path': { labelKey: 'Copy path', icon: ClipboardCopy },
   'save-as-artifact': { labelKey: 'Save as artifact', icon: PackagePlus },
   provenance: { labelKey: 'Provenance', icon: GitBranch },
@@ -63,12 +72,19 @@ export const MANAGED_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
 
 export const MANAGED_PDF_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
   { kind: 'action', action: 'pdf-context' },
+  { kind: 'action', action: 'pdf-add-to-literature' },
   { kind: 'separator' },
   ...MANAGED_PREVIEW_MENU_RECIPE
 ]
 
+export const SOURCE_PREVIEW_MENU_RECIPE: readonly PreviewMenuRecipeEntry[] = [
+  { kind: 'action', action: 'open-source' },
+  { kind: 'action', action: 'copy-source-url' },
+  { kind: 'action', action: 'close' }
+]
+
 const NATIVE_CONTEXT_MENU_SELECTOR =
-  'input, textarea, select, button, iframe, [contenteditable]:not([contenteditable="false"]), [data-preview-context-menu-passthrough]'
+  'input, textarea, select, button, iframe, webview, [contenteditable]:not([contenteditable="false"]), [data-preview-context-menu-passthrough]'
 
 export const shouldHandlePreviewContextMenu = (target: EventTarget | null): boolean =>
   !(target instanceof Element && target.closest(NATIVE_CONTEXT_MENU_SELECTOR))

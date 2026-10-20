@@ -1,12 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
-
 import { executeAgentsMutation, type AgentsMutationCatalog } from './agents-mutations'
 import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
-import type {
-  CreateSpecialistInput,
-  SpecialistView,
-  UpdateSpecialistInput
-} from '../../shared/specialist'
+import type { CreateSpecialistInput, UpdateSpecialistInput } from '@aipoch/specialists'
+import type { SpecialistView } from '../../shared/specialist'
 import type { SpecialistService } from '../specialist/service'
 
 // ---------------------------------------------------------------------------

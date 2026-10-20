@@ -1,19 +1,19 @@
-import type { NetworkProxySettings } from '../../../shared/network-proxy'
 import type { PackageMirror } from '../../../shared/mirror'
-import type { NotebookNetworkSettings } from '../../../shared/notebook-network'
+import type { ReasoningEffort } from '../../../shared/model-preference-contract'
+import type { NetworkProxySettings } from '../../../shared/network-proxy'
+import type { NotebookNetworkSettings } from '../../../shared/notebook-network-settings'
+import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
-  ReasoningEffort,
   ReviewerModelConfiguration,
   SessionDetailsModelConfiguration,
-  SettingsSnapshot,
   SetNotebookNetworkRequest,
+  SettingsSnapshot,
   SubagentModelConfiguration,
   VisionModelConfiguration
 } from '../../../shared/settings'
 import type { CloseActionPreference } from '../../../shared/window-controls'
-import type { PermissionProfileId } from '../../../shared/permission-profiles'
 import { isMirrorConfigured } from '../pages/settings/mirror-view'
 import type {
   OptimisticSettingsWriteKey,
@@ -74,7 +74,8 @@ export type SettingsPreferencesActions = {
   setNetworkProxy: (settings: NetworkProxySettings) => Promise<void>
   setNotebookNetwork: (
     settings: NotebookNetworkSettings,
-    baseAllowedDomains?: readonly string[]
+    baseAllowedDomains?: readonly string[],
+    baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
   ) => Promise<NotebookNetworkSettings>
 }
 
@@ -387,11 +388,16 @@ export const createSettingsPreferencesSlice = ({
       await refreshAfterCommit({ networkProxy: saved })
     },
 
-    setNotebookNetwork: async (notebookNetwork, baseAllowedDomains) => {
+    setNotebookNetwork: async (
+      notebookNetwork,
+      baseAllowedDomains,
+      baseTrustedPrivateDestinations
+    ) => {
       const command = getCommands().setNotebookNetwork
       if (!command) throw new Error('Notebook network settings are unavailable.')
       const request: SetNotebookNetworkRequest = {
         ...notebookNetwork,
+        ...(baseTrustedPrivateDestinations === undefined ? {} : { baseTrustedPrivateDestinations }),
         ...(baseAllowedDomains === undefined ? {} : { baseAllowedDomains })
       }
       const saved = await command(request)

@@ -1,19 +1,18 @@
-import type { ComputeHost } from '../../shared/compute'
-import { createLogger, errorLogFields } from '../logger'
+import type { ComputeHost } from '@aipoch/compute'
+import { createScpRunner, createSshRunner } from '@aipoch/compute/node'
+
+import { classifyConnectionFailure } from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import { ComputeAuthOwner } from './compute-auth-owner'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
+import { ComputeAuthOwner } from './compute-auth-owner'
 import { PasswordSshAdapter } from './connection-adapters'
-import {
-  SshConfigComputeConnectionBroker,
-  classifyConnectionFailure,
-  type ComputeConnectionBroker
-} from './connection-broker'
+import { SshConfigComputeConnectionBroker, type ComputeConnectionBroker } from './connection-broker'
+
+import { SshRunner, type ScpRunner } from '@aipoch/compute/node'
 import { CredentialVault } from './credential-vault'
 import type { ComputeJobRepository } from './job-repository'
 import type { ComputeHostRepository } from './repository'
-import { SystemScpRunner, type ScpRunner } from './scp-runner'
-import { SystemSshRunner, type SshRunner } from './ssh-runner'
 
 const log = createLogger('compute')
 
@@ -58,7 +57,7 @@ const createSshConfigCompatibilityBroker = (
   new SshConfigComputeConnectionBroker({
     getHost: (providerId) => repository.get(providerId),
     runner,
-    scpRunner: scpRunner ?? new SystemScpRunner()
+    scpRunner: scpRunner ?? createScpRunner()
   })
 
 const createComputeAuthenticationOwner = (
@@ -140,8 +139,8 @@ const createComputeAuthenticationRuntime = (
   connectionBroker: ComputeConnectionBroker
   authentication: ComputeAuthOwner
 }> => {
-  const sshRunner = new SystemSshRunner()
-  const scpRunner = new SystemScpRunner()
+  const sshRunner = createSshRunner()
+  const scpRunner = createScpRunner()
   const credentialVault =
     options.authenticationDependencies?.vault ?? new CredentialVault(options.repository)
   const passwordAdapter =

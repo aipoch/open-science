@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { outputComparisonPolicySchema } from './output-comparison'
+import { outputComparisonPolicySchema } from '@aipoch/reproducibility/comparison'
 import type { ArtifactReproducibilityCheckState } from './artifact-reproducibility'
 
 const id = z.string().min(1).max(256)
@@ -30,7 +30,7 @@ export const sessionReproducibilityCommandSchema = z.discriminatedUnion('action'
 ])
 export type SessionReproducibilityCommand = z.infer<typeof sessionReproducibilityCommandSchema>
 export type SessionReproducibilityBatch = {
-  comparisonPolicy?: import('./output-comparison').OutputComparisonPolicy
+  comparisonPolicy?: import('@aipoch/reproducibility/comparison').OutputComparisonPolicy
   batchId: string
   projectId: string
   appSessionId: string

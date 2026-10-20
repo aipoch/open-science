@@ -104,7 +104,7 @@ const fakeStore = () => {
     logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
     switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
       result: {
-        runtimeBinding: { kind: 'powershell', version: '5.1' },
+        runtimeBinding: { kind: 'powershell', version: '7.6' },
         appliesTo: 'subsequent-executions',
         wslProfilePreserved: true
       },

@@ -6,7 +6,7 @@ import type {
   BackgroundResultSourceRef,
   ProjectBackgroundActivityChangedEvent
 } from '../../shared/background-result-delivery'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type {
   BackgroundResultPromptOutcome,
   ResolvedBackgroundResultSource

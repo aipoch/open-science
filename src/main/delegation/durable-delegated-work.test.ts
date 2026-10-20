@@ -52,132 +52,163 @@ const specialist = (overrides: Partial<SpecialistFixture> = {}): SpecialistFixtu
 })
 
 describe('durable delegated work', () => {
-  it('durably queues delegated user questions and resumes only after atomic confirmation', async () => {
-    const execution = createDeterministicDelegateExecution()
-    const records = createInMemoryDelegatedWorkRecords({
-      session: caller.session,
-      rootFrameId: caller.frameId,
-      originMessageId: caller.originMessageId
-    })
-    const ids = {
-      frame: ['child-frame'],
-      attempt: ['source-attempt', 'answer-attempt'],
-      message: ['child-prompt', 'answer-prompt'],
-      runtime: ['source-runtime', 'answer-runtime'],
-      question: ['question-request']
-    }
-    const work = createDurableDelegatedWork({
-      execution,
-      records,
-      createId: (kind) => ids[kind].shift()!
-    })
-
-    await work.delegate(caller, { task: 'Audit the cohort', name: 'Source audit' }, { wait: false })
-    await expect.poll(() => execution.controls()).toHaveLength(1)
-    const delegatedCaller: AuthenticatedDelegateCaller = {
-      session: caller.session,
-      frameId: 'child-frame',
-      role: 'delegate',
-      attemptId: 'source-attempt',
-      originMessageId: 'child-prompt',
-      toolInvocationId: 'ask-user-tool-call'
-    }
-    const questionRequest = {
-      sessionId: caller.session.sessionId,
-      questions: [
-        {
-          question: 'Which cohort definition should I use?',
-          header: 'Cohort',
-          options: [
-            { label: 'Strict', description: 'Use published exclusions.' },
-            { label: 'Broad', description: 'Include the exploratory subgroup.' }
-          ]
-        }
-      ]
-    }
-    const beforeQuestion = await records.snapshot()
-    await expect(
-      work.requestUserInput(
-        { ...delegatedCaller, permissionPrompts: 'none' },
-        questionRequest,
-        'question-request'
-      )
-    ).resolves.toEqual({ action: 'cancelled' })
-    expect(await records.snapshot()).toEqual(beforeQuestion)
-    await expect(
-      work.requestUserInput(delegatedCaller, questionRequest, 'question-request')
-    ).resolves.toEqual({ action: 'pending' })
-    await expect(
-      work.requestUserInput(delegatedCaller, questionRequest, 'question-request')
-    ).resolves.toEqual({ action: 'pending' })
-    await expect(
-      work.requestUserInput(
-        delegatedCaller,
-        {
-          ...questionRequest,
-          questions: [
-            { question: 'Different question?', options: [{ label: 'Yes' }, { label: 'No' }] }
-          ]
-        },
-        'question-request'
-      )
-    ).rejects.toMatchObject({ code: 'conflict' })
-
-    const admitted = await records.snapshot()
-    expect(admitted.questionRequests).toMatchObject([
-      {
-        requestId: 'question-request',
-        sourceFrameId: 'child-frame',
-        sourceAttemptId: 'source-attempt',
-        sourceName: 'Source audit',
-        sequence: 1,
-        status: 'pending',
-        draftAnswers: [],
-        draftQuestionIndex: 0
+  it.each([false, true])(
+    'durably queues delegated user questions and resumes only after atomic confirmation (multiSelect: %s)',
+    async (multiSelect) => {
+      const answer = multiSelect ? ['Strict', 'Broad'] : 'Strict'
+      const execution = createDeterministicDelegateExecution()
+      const records = createInMemoryDelegatedWorkRecords({
+        session: caller.session,
+        rootFrameId: caller.frameId,
+        originMessageId: caller.originMessageId
+      })
+      const ids = {
+        frame: ['child-frame'],
+        attempt: ['source-attempt', 'answer-attempt'],
+        message: ['child-prompt', 'answer-prompt'],
+        runtime: ['source-runtime', 'answer-runtime'],
+        question: ['question-request']
       }
-    ])
-    expect(admitted.messages).toHaveLength(1)
-    expect(admitted.messageCommands).toHaveLength(0)
-
-    await work.updateQuestionDraft(caller.session, {
-      requestId: 'question-request',
-      draftAnswers: [{ questionIndex: 0, value: 'Strict' }],
-      questionIndex: 0
-    })
-    expect(execution.controls()).toHaveLength(1)
-
-    execution.controls()[0].complete('Waiting for the user choice.')
-    await expect
-      .poll(async () => (await records.snapshot()).records[0].attempts[0].status)
-      .toBe('completed')
-    await expect(work.children(caller)).resolves.toMatchObject([
-      { frameId: 'child-frame', attemptId: 'source-attempt', status: 'awaiting_user' }
-    ])
-
-    await expect(
-      work.confirmQuestion(caller.session, {
-        requestId: 'question-request',
-        answers: [{ questionIndex: 0, value: 'Strict' }]
+      const work = createDurableDelegatedWork({
+        execution,
+        records,
+        createId: (kind) => ids[kind].shift()!
       })
-    ).resolves.toMatchObject({
-      requestId: 'question-request',
-      continuationAttemptId: 'answer-attempt'
-    })
-    await expect.poll(() => execution.controls()).toHaveLength(2)
-    expect(execution.controls()[1].input).toMatchObject({
-      frameId: 'child-frame',
-      attemptId: 'answer-attempt',
-      continuation: true
-    })
-    expect(execution.controls()[1].input.task).toContain('Strict')
-    await expect(
-      work.confirmQuestion(caller.session, {
+
+      await work.delegate(
+        caller,
+        { task: 'Audit the cohort', name: 'Source audit' },
+        { wait: false }
+      )
+      await expect.poll(() => execution.controls()).toHaveLength(1)
+      const delegatedCaller: AuthenticatedDelegateCaller = {
+        session: caller.session,
+        frameId: 'child-frame',
+        role: 'delegate',
+        attemptId: 'source-attempt',
+        originMessageId: 'child-prompt',
+        toolInvocationId: 'ask-user-tool-call'
+      }
+      const questionRequest = {
+        sessionId: caller.session.sessionId,
+        questions: [
+          {
+            question: 'Which cohort definition should I use?',
+            header: 'Cohort',
+            kind: multiSelect ? ('multi-select' as const) : ('single-select' as const),
+            options: [
+              { label: 'Strict', description: 'Use published exclusions.' },
+              { label: 'Broad', description: 'Include the exploratory subgroup.' }
+            ]
+          }
+        ]
+      }
+      const beforeQuestion = await records.snapshot()
+      await expect(
+        work.requestUserInput(
+          { ...delegatedCaller, permissionPrompts: 'none' },
+          questionRequest,
+          'question-request'
+        )
+      ).resolves.toEqual({ action: 'cancelled' })
+      expect(await records.snapshot()).toEqual(beforeQuestion)
+      await expect(
+        work.requestUserInput(delegatedCaller, questionRequest, 'question-request')
+      ).resolves.toEqual({ action: 'pending' })
+      await expect(
+        work.requestUserInput(delegatedCaller, questionRequest, 'question-request')
+      ).resolves.toEqual({ action: 'pending' })
+      await expect(
+        work.requestUserInput(
+          delegatedCaller,
+          {
+            ...questionRequest,
+            questions: [
+              { question: 'Different question?', options: [{ label: 'Yes' }, { label: 'No' }] }
+            ]
+          },
+          'question-request'
+        )
+      ).rejects.toMatchObject({ code: 'conflict' })
+
+      const admitted = await records.snapshot()
+      expect(admitted.questionRequests).toMatchObject([
+        {
+          requestId: 'question-request',
+          sourceFrameId: 'child-frame',
+          sourceAttemptId: 'source-attempt',
+          sourceName: 'Source audit',
+          sequence: 1,
+          status: 'pending',
+          draftAnswers: [],
+          draftQuestionIndex: 0
+        }
+      ])
+      expect(admitted.messages).toHaveLength(1)
+      expect(admitted.messageCommands).toHaveLength(0)
+
+      if (multiSelect) {
+        for (const value of [[], ['Strict', 'Strict'], ['unknown']]) {
+          await expect(
+            work.updateQuestionDraft(caller.session, {
+              requestId: 'question-request',
+              draftAnswers: [{ questionIndex: 0, value }],
+              questionIndex: 0
+            })
+          ).rejects.toMatchObject({ code: 'admission_rejection' })
+          await expect(
+            work.confirmQuestion(caller.session, {
+              requestId: 'question-request',
+              answers: [{ questionIndex: 0, value }]
+            })
+          ).rejects.toMatchObject({ code: 'admission_rejection' })
+        }
+      }
+      await work.updateQuestionDraft(caller.session, {
         requestId: 'question-request',
-        answers: [{ questionIndex: 0, value: 'Strict' }]
+        draftAnswers: [{ questionIndex: 0, value: answer }],
+        questionIndex: 0
       })
-    ).rejects.toMatchObject({ code: 'conflict' })
-    expect(execution.controls()).toHaveLength(2)
-  })
+      expect(execution.controls()).toHaveLength(1)
+
+      execution.controls()[0].complete('Waiting for the user choice.')
+      await expect
+        .poll(async () => (await records.snapshot()).records[0].attempts[0].status)
+        .toBe('completed')
+      await expect(work.children(caller)).resolves.toMatchObject([
+        { frameId: 'child-frame', attemptId: 'source-attempt', status: 'awaiting_user' }
+      ])
+
+      await expect(
+        work.confirmQuestion(caller.session, {
+          requestId: 'question-request',
+          answers: [{ questionIndex: 0, value: answer }]
+        })
+      ).resolves.toMatchObject({
+        requestId: 'question-request',
+        continuationAttemptId: 'answer-attempt'
+      })
+      await expect.poll(() => execution.controls()).toHaveLength(2)
+      expect(execution.controls()[1].input).toMatchObject({
+        frameId: 'child-frame',
+        attemptId: 'answer-attempt',
+        continuation: true
+      })
+      expect(execution.controls()[1].input.task).toContain(
+        multiSelect ? JSON.stringify(answer) : 'Strict'
+      )
+      expect((await records.snapshot()).questionRequests[0].answers).toEqual([
+        { questionIndex: 0, value: answer }
+      ])
+      await expect(
+        work.confirmQuestion(caller.session, {
+          requestId: 'question-request',
+          answers: [{ questionIndex: 0, value: answer }]
+        })
+      ).rejects.toMatchObject({ code: 'conflict' })
+      expect(execution.controls()).toHaveLength(2)
+    }
+  )
 
   it('cancels pending delegated questions on Stop and rejects a late confirmation', async () => {
     const execution = createDeterministicDelegateExecution()
@@ -5053,9 +5084,31 @@ describe('ACP terminal outcomes through durable delegation', () => {
       originMessageId: caller.originMessageId
     })
     const terminalize = vi.spyOn(records, 'terminalize')
+    const finalize = vi.fn(async () => undefined)
+    const artifact = {
+      id: 'published-version',
+      artifactId: 'published-artifact',
+      versionId: 'published-version',
+      versionNumber: 1,
+      checksum: 'abc',
+      createdAt: '2026-09-24T00:00:00.000Z',
+      projectId: caller.session.projectId,
+      sessionId: caller.session.sessionId,
+      runId: 'run-a',
+      name: 'panel.png',
+      path: '/managed/panel.png',
+      fileUrl: 'file:///managed/panel.png',
+      mimeType: 'image/png',
+      size: 8,
+      mtimeMs: 1
+    }
     const work = createDurableDelegatedWork({
       execution,
       records,
+      artifactEvidence: {
+        open: async () => ({ finalize, dispose: async () => undefined }),
+        project: async () => [artifact]
+      },
       resolveExecutionModel: () => ({
         snapshot: TEST_EXECUTION_MODEL,
         backendLease: {
@@ -5089,7 +5142,14 @@ describe('ACP terminal outcomes through durable delegation', () => {
     } else {
       result = await work.delegate(caller, { task: 'Inspect evidence', name: 'Inspect' })
     }
-    const expectedStatus = unreaped ? 'error' : stopped ? 'cancelled' : outcome
+    const expectedStatus =
+      outcome === 'startup-unreaped'
+        ? 'error'
+        : stopped
+          ? 'cancelled'
+          : outcome === 'unreaped'
+            ? 'completed'
+            : outcome
     expect.soft(result).toMatchObject({ kind: 'results', children: [{ status: expectedStatus }] })
     expect.soft(terminalize).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -5101,7 +5161,7 @@ describe('ACP terminal outcomes through durable delegation', () => {
     )
     expect.soft(disposeResources).toHaveBeenCalledTimes(unreaped ? 0 : 1)
     expect.soft(releaseClaim).toHaveBeenCalledOnce()
-    if (unreaped)
+    if (outcome === 'startup-unreaped')
       expect.soft(terminalize).toHaveBeenCalledWith(
         expect.objectContaining({
           error: expect.objectContaining({
@@ -5109,6 +5169,21 @@ describe('ACP terminal outcomes through durable delegation', () => {
           })
         })
       )
-    if (unreaped) await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+    if (expectedStatus === 'completed') {
+      expect(finalize).toHaveBeenCalledOnce()
+      expect(result).toMatchObject({
+        children: [{ response: 'Observed evidence', artifactsCreated: [artifact] }]
+      })
+      const collected = await work.collect(caller, [result.children[0].frameId])
+      expect(collected).toMatchObject([{ status: 'completed', response: 'Observed evidence' }])
+    }
+    if (unreaped) {
+      await expect(execution.reserve(1)).rejects.toMatchObject({ code: 'capacity' })
+      await expect(work.stopSession(caller.session)).rejects.toThrow()
+      if (expectedStatus === 'completed')
+        expect(await work.collect(caller, [result.children[0].frameId])).toMatchObject([
+          { status: 'completed', response: 'Observed evidence', artifactsCreated: [artifact] }
+        ])
+    }
   })
 })

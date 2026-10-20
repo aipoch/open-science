@@ -27,7 +27,7 @@ const AgentControlMenuContent = ({
 }: ComponentProps<typeof DropdownMenuContent> & {
   boundary: HTMLElement | null
 }): React.JSX.Element => (
-  <TooltipProvider delayDuration={300}>
+  <TooltipProvider>
     <AgentControlMenuTooltipBoundaryContext.Provider value={boundary}>
       <DropdownMenuContent {...props}>{children}</DropdownMenuContent>
     </AgentControlMenuTooltipBoundaryContext.Provider>

@@ -328,7 +328,7 @@ describe('codexFramework', () => {
     expect(codexNativeModelInstructions).not.toContain('coding agent')
   })
 
-  it('disables native multi-agent, Shell, and memory across every backend route', () => {
+  it('disables native plugins, apps, multi-agent, Shell, and memory across every backend route', () => {
     const framework = createCodexFramework()
     const configurations = [
       framework.prepareModelConfig(
@@ -355,7 +355,7 @@ describe('codexFramework', () => {
       framework.prepareModelConfig(
         {
           type: 'custom',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: 'https://gateway.example/v1',
           model: 'chat-model',
           key: 'secret'
@@ -363,7 +363,10 @@ describe('codexFramework', () => {
         {
           storageRoot: '/data/bridge',
           executablePath: '/runtime/codex-acp',
-          responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+          responsesConnection: {
+            baseUrl: 'http://127.0.0.1:43123/v1',
+            token: 'local-token'
+          }
         }
       ),
       framework.prepareModelConfig(
@@ -377,7 +380,7 @@ describe('codexFramework', () => {
         {
           storageRoot: '/data/compatibility',
           executablePath: '/runtime/codex-acp',
-          responsesBridge: {
+          responsesConnection: {
             baseUrl: 'http://127.0.0.1:43124/v1',
             token: 'local-token',
             kind: 'responses-compatibility'
@@ -396,11 +399,18 @@ describe('codexFramework', () => {
 
     const codexConfigs = configurations.map(({ env }) => JSON.parse(env?.CODEX_CONFIG ?? '{}'))
 
+    expect(codexConfigs.map(({ agents }) => agents)).toEqual(
+      configurations.map(() => ({ enabled: false }))
+    )
+
     expect(codexConfigs.map(({ features }) => features)).toEqual(
       configurations.map((_configuration, index) => ({
+        apps: false,
         memories: false,
         multi_agent: false,
         multi_agent_v2: false,
+        plugins: false,
+        remote_plugin: false,
         code_mode: {
           direct_only_tool_namespaces:
             index === 2 ? ['mcp__skills', 'mcp__open_science_plan'] : ['mcp__skills']
@@ -476,7 +486,7 @@ describe('codexFramework', () => {
     })
   })
 
-  it.each(['gpt-5.4', 'gpt-6-astra'])(
+  it.each(['gpt-5.4', 'gpt-6-astra', 'gpt-6-sol', 'gpt-6-luna'])(
     'keeps bundled metadata for trusted official model %s',
     (model) => {
       const framework = createCodexFramework()
@@ -530,7 +540,11 @@ describe('codexFramework', () => {
     expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).not.toHaveProperty('model_catalog_json')
   })
 
-  it('adds local metadata when the active official model is not bundled by Codex', () => {
+  it.each([
+    ['gpt-6-astra', '0.144.6'],
+    ['gpt-6.1-sol', '0.144.6'],
+    ['gpt-6.1-sol', CODEX_VERSION]
+  ])('adds local metadata for unbundled official model %s on Codex %s', (model, nativeVersion) => {
     const framework = createCodexFramework()
     const config = framework.prepareModelConfig(
       {
@@ -538,14 +552,15 @@ describe('codexFramework', () => {
         vendorId: 'openai',
         apiEndpoints: ['responses'],
         baseUrl: 'https://api.openai.com/v1',
-        model: 'gpt-6-astra',
+        model,
         contextWindow: 1_050_000,
+        supportsImageInput: true,
         key: 'sk-plaintext-secret'
       },
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        nativeVersion: '0.144.6',
+        nativeVersion,
         reasoningEffort: 'max',
         reasoningEfforts: ['low', 'medium', 'high', 'xhigh', 'max']
       }
@@ -557,9 +572,13 @@ describe('codexFramework', () => {
     )
     expect(JSON.parse(modelCatalogFile?.content ?? '').models).toEqual([
       expect.objectContaining({
-        slug: 'gpt-6-astra',
+        slug: model,
         context_window: 1_050_000,
-        default_reasoning_level: 'max'
+        default_reasoning_level: 'max',
+        input_modalities: ['text', 'image'],
+        supported_reasoning_levels: ['low', 'medium', 'high', 'xhigh', 'max'].map((effort) =>
+          expect.objectContaining({ effort })
+        )
       })
     ])
   })
@@ -662,7 +681,7 @@ describe('codexFramework', () => {
     const config = framework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://gateway.example/v1',
         model: 'chat-model',
         contextWindow: 128_000,
@@ -671,7 +690,10 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' },
+        responsesConnection: {
+          baseUrl: 'http://127.0.0.1:43123/v1',
+          token: 'local-token'
+        },
         systemPromptAppends: ['Stable bridge guidance.']
       }
     )
@@ -709,17 +731,47 @@ describe('codexFramework', () => {
     expect(config.persistentSystemPrompt).toBe('Stable bridge guidance.')
   })
 
+  it('uses the DeepSeek Responses API base documented for deepseek-flash', () => {
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'official',
+        vendorId: 'deepseek',
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
+        baseUrl: 'https://api.deepseek.com/anthropic',
+        chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
+        responsesBaseUrl: 'https://api.deepseek.com',
+        model: 'deepseek-flash',
+        key: 'sk-plaintext-secret'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        nativeVersion: CODEX_VERSION
+      }
+    )
+
+    expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+      model_providers: {
+        'open-science': {
+          base_url: 'https://api.deepseek.com',
+          wire_api: 'responses'
+        }
+      }
+    })
+  })
+
   it('drives a native-Responses vendor directly on its OpenAI /v1 base, ignoring the bridge', () => {
     const framework = createCodexFramework()
     // A dual-endpoint vendor (e.g. MiniMax) advertises openai + responses and keeps its Anthropic
-    // route in baseUrl and its OpenAI/Responses /v1 root in openaiBaseUrl. Even if a bridge object
+    // route in baseUrl and its OpenAI/Responses /v1 root in chatCompletionsBaseUrl. Even if a bridge object
     // is present, native Responses must post to the vendor's own /v1 base with the vendor key.
     const config = framework.prepareModelConfig(
       {
         type: 'custom',
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         baseUrl: 'https://api.minimaxi.com/anthropic',
-        openaiBaseUrl: 'https://api.minimaxi.com/v1',
+        chatCompletionsBaseUrl: 'https://api.minimaxi.com/v1',
         model: 'MiniMax-M3',
         contextWindow: 1_000_000,
         key: 'mm-secret'
@@ -729,7 +781,10 @@ describe('codexFramework', () => {
         executablePath: '/runtime/codex-acp',
         reasoningEffort: 'none',
         reasoningEfforts: ['none', 'high'],
-        responsesBridge: { baseUrl: 'http://127.0.0.1:43123/v1', token: 'local-token' }
+        responsesConnection: {
+          baseUrl: 'http://127.0.0.1:43123/v1',
+          token: 'local-token'
+        }
       }
     )
 
@@ -813,7 +868,7 @@ describe('codexFramework', () => {
       {
         storageRoot: '/data',
         executablePath: '/runtime/codex-acp',
-        responsesBridge: {
+        responsesConnection: {
           baseUrl: 'http://127.0.0.1:43123/v1',
           token: 'local-token',
           kind: 'responses-compatibility'
@@ -941,10 +996,14 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
+          agents: { enabled: false },
           features: {
+            apps: false,
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            plugins: false,
+            remote_plugin: false,
             code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
@@ -966,10 +1025,14 @@ describe('codexFramework', () => {
         HOME: join('/data', 'codex-subscription'),
         CODEX_HOME: join('/data', 'codex-subscription'),
         CODEX_CONFIG: JSON.stringify({
+          agents: { enabled: false },
           features: {
+            apps: false,
             memories: false,
             multi_agent: false,
             multi_agent_v2: false,
+            plugins: false,
+            remote_plugin: false,
             code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
             shell_tool: false
           },
@@ -1163,6 +1226,43 @@ describe('codexFramework', () => {
     expect(config.persistentSystemPrompt).toBe('Stable subscription guidance.')
   })
 
+  it('adds only read-write granted local roots to Codex writable roots', () => {
+    const framework = createCodexFramework()
+    const grantedLocalRoots = [
+      { path: 'D:\\OpenScience\\read-write', access: 'rw' as const },
+      { path: 'D:\\OpenScience\\read-only', access: 'ro' as const },
+      { path: 'D:\\OpenScience\\read-write', access: 'rw' as const }
+    ]
+    const apiConfig = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        apiEndpoints: ['responses'],
+        baseUrl: 'https://api.openai.com/v1',
+        model: 'gpt-5.6-sol'
+      },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        grantedLocalRoots
+      }
+    )
+    const subscriptionConfig = framework.prepareModelConfig(
+      { type: 'codex-isolated', apiEndpoints: ['responses'], model: 'gpt-5.6-terra' },
+      {
+        storageRoot: '/data',
+        executablePath: '/runtime/codex-acp',
+        grantedLocalRoots
+      }
+    )
+
+    expect(JSON.parse(apiConfig.env?.CODEX_CONFIG ?? '{}')).toMatchObject({
+      sandbox_workspace_write: { writable_roots: ['D:\\OpenScience\\read-write'] }
+    })
+    expect(JSON.parse(subscriptionConfig.env?.CODEX_CONFIG ?? '{}')).toMatchObject({
+      sandbox_workspace_write: { writable_roots: ['D:\\OpenScience\\read-write'] }
+    })
+  })
+
   it.each([
     ['ask', 'read-only'],
     ['auto', 'agent'],
@@ -1238,7 +1338,7 @@ describe('codexFramework', () => {
       expect.objectContaining({
         env: expect.objectContaining({
           CODEX_HOME: '/data/codex',
-          ELECTRON_RUN_AS_NODE: '1'
+          ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined
         }),
         detached: true,
         shell: false,

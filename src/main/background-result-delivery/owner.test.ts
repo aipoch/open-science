@@ -1,3 +1,4 @@
+import { createBackgroundResultActivityOwner } from './ipc'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -593,4 +594,26 @@ describe('BackgroundResultDeliveryOwner', () => {
     expect(repository.failClaim).toHaveBeenCalledWith(['local-run:run-1'], 'claim-1', 3)
     owner.dispose()
   })
+})
+
+it('keeps the project activity limit and source resolution in the shared read owner', async () => {
+  const rows = Array.from({ length: 201 }, (_, index) => delivery(String(index)))
+  const repository = {
+    listAwaitingAgent: vi.fn(async () => rows.slice(0, 1)),
+    listProjectVisible: vi.fn(async () => rows)
+  }
+  const resolveSources = vi.fn(async () => [])
+  const owner = createBackgroundResultActivityOwner(repository, { resolveSources })
+  expect(await owner.projectActivity({ projectId: 'project' })).toEqual({
+    items: [],
+    truncated: true
+  })
+  expect(repository.listProjectVisible).toHaveBeenCalledExactlyOnceWith('project', 201)
+  expect(resolveSources).toHaveBeenCalledWith(rows.slice(0, 200))
+  expect(await owner.sessionActivity({ sessionId: 'session' })).toEqual({
+    active: [],
+    awaitingAgent: []
+  })
+  expect(repository.listAwaitingAgent).toHaveBeenCalledExactlyOnceWith('session')
+  expect(resolveSources).toHaveBeenLastCalledWith(rows.slice(0, 1))
 })

@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto'
 import { chmod, copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 
-import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import type { SessionKey } from './session-records'
 import type { DelegatedProcessOwnership } from './process-ownership'

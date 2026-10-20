@@ -2,7 +2,7 @@ import type { SessionPdfBinding } from '../../../shared/session-persistence'
 import type { ResolvedSessionPdfVersion } from '../session-pdf-source-resolver'
 import { createHash, createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { z } from 'zod'
-import type { PdfStructureResult } from '../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { SessionCatalog } from '../../session-persistence/coordinator'
 import { prepareModelImageData, type ImageContentData } from '../../uploads/attachment-media'
 import { resolveCurrentPdfContext } from '../pdf-context'
@@ -90,7 +90,9 @@ const issues = (element: Element): string[] =>
   )
 const hasCells = (element: Element): boolean =>
   tables(element).some(({ table }) => table.cells.length > 0)
-const projectionCell = (cell: Table['cells'][number]): Omit<Table['cells'][number], 'regions'> => ({
+const projectionCell = (
+  cell: Table['cells'][number]
+): Omit<Table['cells'][number], 'regions' | 'sourceItems'> => ({
   row: cell.row,
   column: cell.column,
   rowSpan: cell.rowSpan,

@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { execFile } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdir } from 'node:fs/promises'
@@ -5,6 +6,10 @@ import { dirname, join } from 'node:path'
 import { createServer } from 'node:net'
 import { promisify } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
+import {
+  CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
+  isSupportedClaudeCliVersion
+} from '../../shared/claude-runtime'
 
 import type {
   ClaudeDetectResult,
@@ -25,10 +30,12 @@ import {
 } from '../../shared/settings'
 import {
   buildUnsupportedCodexAcpVersionMessage,
+  CODEX_CLI_INCOMPATIBLE_MESSAGE,
+  isSupportedCodexCliVersion,
   isSupportedCodexAcpVersion,
   MINIMUM_CODEX_ACP_VERSION
 } from '../../shared/codex-runtime'
-import { isModelBridgeSupported } from '../../shared/provider-registry'
+import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
@@ -42,8 +49,8 @@ import {
   syncConnectorSkillDocs,
   syncMaterializedCustomServerSkillDocs
 } from '../connectors/provision'
-import { createLogger } from '../logger'
-import type { SkillDirectoryLayout } from '../skills/materializer'
+import { createLogger } from '@aipoch/diagnostics/node'
+import type { SkillDirectoryLayout } from '@aipoch/skills/projection'
 import { writeAgentConfigFiles } from './agent-config-files'
 import { createDefaultDetectDeps, detectClaude, type ClaudeDetectDeps } from './claude-detect'
 import {
@@ -58,6 +65,7 @@ import {
 } from './codebuddy-detect'
 import {
   detectCodex,
+  detectCodexComponents,
   parseVersion as parseCodexVersion,
   runAcpInitializeSmoke,
   type CodexDetectDeps
@@ -109,7 +117,7 @@ import { buildProviderEnv, type ResolvedProvider } from './provider-env'
 import { resolveSystemProxyEnvironment, type SystemProxyEnvironment } from './system-proxy'
 import type { ProviderAccountsModule } from './provider-accounts'
 import type { SettingsRepository } from './repository'
-import type { SkillCatalogModule } from './skill-catalog'
+import type { SkillCatalogModule } from '../skills/catalog'
 import type { ConnectorSettingsModule } from './connector-settings'
 import type { StoredCodexInfo, StoredSettings } from './types'
 
@@ -153,7 +161,7 @@ const runCodexAdapterVersion = async (
 
   try {
     const { stdout } = await execFileAsync(process.execPath, [adapterPath, '--version'], {
-      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' },
+      env: { ...process.env, ...nodeRuntimeEnvironment(), NO_BROWSER: '1' },
       timeout: 5_000,
       windowsHide: true,
       signal
@@ -285,7 +293,10 @@ const codexVersionsFromProbe = (
 ): Pick<StoredCodexInfo, 'version' | 'nativeVersion'> | undefined => {
   const version = probe.adapter?.output ? parseCodexVersion(probe.adapter.output) : undefined
   const nativeVersion = probe.native?.output ? parseCodexVersion(probe.native.output) : undefined
-  return version && nativeVersion && isSupportedCodexAcpVersion(version)
+  return version &&
+    nativeVersion &&
+    isSupportedCodexCliVersion(nativeVersion) &&
+    isSupportedCodexAcpVersion(version)
     ? { version, nativeVersion }
     : undefined
 }
@@ -415,7 +426,12 @@ export class AgentRuntimeManager {
       getAdapterVersion: (path, signal) =>
         runCodexAdapterVersion(path, baseOpencodeDetectDeps.getVersion, signal),
       getCodexVersion: baseOpencodeDetectDeps.getVersion,
-      smokeInitialize: runAcpInitializeSmoke(baseOpencodeDetectDeps.platform),
+      smokeInitialize: async (path, opts, signal) => {
+        signal?.throwIfAborted()
+        if (path === managedAdapterPath) await ensureManagedCodexContextUsage(path)
+        signal?.throwIfAborted()
+        return runAcpInitializeSmoke(baseOpencodeDetectDeps.platform)(path, opts, signal)
+      },
       resolveNpmBinDirs: baseOpencodeDetectDeps.resolveNpmBinDirs,
       extraDirs: [dirname(managedAdapterPath)],
       managedAdapterPath,
@@ -477,7 +493,7 @@ export class AgentRuntimeManager {
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
                 : framework.id === 'codex'
-                  ? (['anthropic', 'openai', 'responses'] as const)
+                  ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
                     ? (activeEndpoints ?? [])
                     : framework.supportedApiTypes
@@ -488,7 +504,7 @@ export class AgentRuntimeManager {
       signal.throwIfAborted()
       return computePreflight({
         settings,
-        claudePathExists: runtimeProbe.claudeVersion !== null,
+        claudePathExists: isSupportedClaudeCliVersion(runtimeProbe.claudeVersion),
         opencodePathExists: runtimeProbe.opencodeVersion !== null,
         codebuddyPathExists: isSupportedCodeBuddyVersion(runtimeProbe.codebuddyVersion),
         codexPathExists: codexVersionsFromProbe(runtimeProbe.codex) !== undefined,
@@ -647,6 +663,24 @@ export class AgentRuntimeManager {
           nativeVersion: detected.nativeCodexVersion
         })
       } else {
+        const components = await detectCodexComponents(this.codexDetectDeps, operationSignal)
+        operationSignal.throwIfAborted()
+        if (
+          components.adapterPath &&
+          components.adapterVersion &&
+          components.nativeCliPath &&
+          components.nativeCliVersion &&
+          (!isSupportedCodexCliVersion(components.nativeCliVersion) ||
+            !isSupportedCodexAcpVersion(components.adapterVersion))
+        ) {
+          await this.repository.setCodexInfo({
+            resolvedPath: components.adapterPath,
+            version: components.adapterVersion,
+            nativePath: components.nativeCliPath,
+            nativeVersion: components.nativeCliVersion
+          })
+          return
+        }
         const cached = (await this.repository.getSettings()).codex?.resolvedPath
         if (cached && !(await this.pathExists(cached))) await this.repository.clearCodexInfo()
       }
@@ -1046,10 +1080,18 @@ export class AgentRuntimeManager {
   }
 
   async resolveClaudeExecutable(storedPath: string | undefined): Promise<string> {
-    if (storedPath && (await this.pathExists(storedPath))) return storedPath
+    if (storedPath && (await this.pathExists(storedPath))) {
+      const version = await this.detectDeps.getVersion(storedPath).catch(() => undefined)
+      if (!isSupportedClaudeCliVersion(version)) throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      return storedPath
+    }
 
     const detected = await detectClaude(this.detectDeps)
-    if (detected.found && detected.path) return detected.path
+    if (detected.found && detected.path) {
+      if (!isSupportedClaudeCliVersion(detected.version))
+        throw new Error(CLAUDE_CLI_INCOMPATIBLE_MESSAGE)
+      return detected.path
+    }
     throw new Error(CLAUDE_EXECUTABLE_MISSING_MESSAGE)
   }
 
@@ -1104,6 +1146,10 @@ export class AgentRuntimeManager {
       throw new Error(buildUnsupportedCodexAcpVersionMessage(adapterVersion))
     }
 
+    if (!isSupportedCodexCliVersion(await this.probeCodexNativeVersion(nativePath))) {
+      throw new Error(CODEX_CLI_INCOMPATIBLE_MESSAGE)
+    }
+
     await ensureManagedCodexContextUsage(adapterPath)
     return adapterPath
   }
@@ -1140,6 +1186,11 @@ export class AgentRuntimeManager {
         await this.executeClaudeProbe(executablePath, env, [
           '--settings',
           runtimeConfig.settingsPath,
+          '--setting-sources',
+          '',
+          '--strict-mcp-config',
+          '--permission-mode',
+          'default',
           '--add-dir',
           runtimeConfig.skillProjection.root
         ])
@@ -1352,10 +1403,28 @@ export class AgentRuntimeManager {
       await this.repository.clearCodexInfo()
     }
 
-    const { detectCodexComponents } = await import('./codex-detect')
     const components = await detectCodexComponents(detectDeps, signal)
+    // Retain discovered obsolete installs so Settings can offer repair with accurate versions.
+    if (
+      components.adapterPath &&
+      components.adapterVersion &&
+      components.nativeCliPath &&
+      components.nativeCliVersion &&
+      (!isSupportedCodexCliVersion(components.nativeCliVersion) ||
+        !isSupportedCodexAcpVersion(components.adapterVersion))
+    ) {
+      await this.repository.setCodexInfo({
+        resolvedPath: components.adapterPath,
+        version: components.adapterVersion,
+        nativePath: components.nativeCliPath,
+        nativeVersion: components.nativeCliVersion
+      })
+      signal.throwIfAborted()
+    }
     let diagnostic: string | undefined
-    if (components.nativeCliFound && !components.adapterFound) {
+    if (components.nativeCliFound && !isSupportedCodexCliVersion(components.nativeCliVersion)) {
+      diagnostic = CODEX_CLI_INCOMPATIBLE_MESSAGE
+    } else if (components.nativeCliFound && !components.adapterFound) {
       diagnostic = `Native Codex ${components.nativeCliVersion} is installed at ${components.nativeCliPath}, but the Codex ACP adapter required by Open-Science is missing.`
     } else if (!components.nativeCliFound && components.adapterFound) {
       diagnostic =
@@ -1589,10 +1658,14 @@ export class AgentRuntimeManager {
           ? !!version &&
             isSupportedCodexAcpVersion(parseCodexVersion(version) ?? '') &&
             !!settings.codex?.nativePath &&
-            !!(await this.codexDetectDeps.getCodexVersion(settings.codex.nativePath))
-          : candidate === 'codebuddy'
-            ? isSupportedCodeBuddyVersion(version)
-            : !!version
+            isSupportedCodexCliVersion(
+              await this.probeCodexNativeVersion(settings.codex.nativePath)
+            )
+          : candidate === 'claude-code'
+            ? isSupportedClaudeCliVersion(version)
+            : candidate === 'codebuddy'
+              ? isSupportedCodeBuddyVersion(version)
+              : !!version
       if (ready) {
         await this.repository.setAgentFramework(candidate)
         return

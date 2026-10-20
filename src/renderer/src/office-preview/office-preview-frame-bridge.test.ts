@@ -22,7 +22,9 @@ describe('Office preview frame bridge', () => {
       sessionId: 'session-1'
     })
     const onStart = vi.fn()
+    const onFind = vi.fn()
     bridge.onStart(onStart)
+    bridge.onFind(onFind)
     const start: OfficePreviewRuntimeStart = {
       sessionId: 'session-1',
       resource: {
@@ -53,6 +55,21 @@ describe('Office preview frame bridge', () => {
 
     messageListener?.({ source: parent, data: message } as unknown as MessageEvent)
     expect(onStart).toHaveBeenCalledWith(start)
+
+    const find = {
+      channel: 'open-science-office-preview',
+      version: 1,
+      type: 'find',
+      sessionId: 'session-1'
+    }
+    messageListener?.({ source: {}, data: find } as unknown as MessageEvent)
+    messageListener?.({
+      source: parent,
+      data: { ...find, sessionId: 'stale' }
+    } as unknown as MessageEvent)
+    expect(onFind).not.toHaveBeenCalled()
+    messageListener?.({ source: parent, data: find } as unknown as MessageEvent)
+    expect(onFind).toHaveBeenCalledOnce()
 
     bridge.reportState({ sessionId: 'session-1', phase: 'ready' })
     expect(parent.postMessage).toHaveBeenLastCalledWith(

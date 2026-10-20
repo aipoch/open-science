@@ -1,5 +1,7 @@
-import { sanitizeAcpMessageImage, type AcpMessageImage } from '../../../../../shared/acp'
-import type { PdfNormalizedRect } from '../../../../../shared/annotations'
+import type { AcpMessageImage } from '../../../../../shared/acp-image-contract'
+import { sanitizeAcpMessageImage } from '../../../../../shared/acp-image-contract'
+import type { PdfNormalizedRect } from '../../../../../shared/annotation-contract'
+import { validatePdfProseRegions, type PdfProseRegion } from '../../../../../shared/pdf-text'
 
 type NormalizedPoint = Readonly<{ x: number; y: number }>
 
@@ -21,6 +23,33 @@ const pointInPage = (clientX: number, clientY: number, page: DOMRect): Normalize
   x: clampUnit((clientX - page.left) / page.width),
   y: clampUnit((clientY - page.top) / page.height)
 })
+
+// On a 0-degree PDF.js page, the displayed viewport is the unrotated CropBox. Ratios
+// already remove its origin and zoom, so these are the reader's top-left coordinates.
+// Rotated pages must not reuse the annotation coordinate contract for prose reading.
+const pdfProseRegionFromRect = (
+  page: number,
+  rotation: number,
+  rect: PdfNormalizedRect,
+  splitRatio: number
+): PdfProseRegion | undefined => {
+  if (rotation !== 0 || !Number.isFinite(splitRatio) || splitRatio <= 0 || splitRatio >= 1)
+    return undefined
+  const region: PdfProseRegion = {
+    page,
+    left: rect.x,
+    top: rect.y,
+    right: rect.x + rect.width,
+    bottom: rect.y + rect.height,
+    split: rect.x + rect.width * splitRatio
+  }
+  try {
+    validatePdfProseRegions([region])
+    return region
+  } catch {
+    return undefined
+  }
+}
 
 const cropPdfCanvasRegion = (
   source: HTMLCanvasElement,
@@ -87,4 +116,10 @@ const textInPdfRect = (
   return text ? text.slice(0, limit) : undefined
 }
 
-export { cropPdfCanvasRegion, normalizedPdfRect, pointInPage, textInPdfRect }
+export {
+  cropPdfCanvasRegion,
+  normalizedPdfRect,
+  pdfProseRegionFromRect,
+  pointInPage,
+  textInPdfRect
+}

@@ -1,3 +1,7 @@
+import {
+  desktopRuntimeWritable,
+  getDesktopRuntimeEpoch
+} from '@/stores/desktop-runtime-recovery-store'
 import type { RuntimeWriterLease } from '../../../../shared/runtime-writer'
 
 // Only the elected renderer projects raw runtime events into durable Session state. Other windows
@@ -43,21 +47,32 @@ export const setRuntimeWriterActivation = (callback: () => Promise<void>): void 
   activate = callback
 }
 let client: RuntimeWriterClient | undefined
+let clientEpoch = -1
 const getClient = (): RuntimeWriterClient | undefined => {
+  const epoch = getDesktopRuntimeEpoch()
+  if (clientEpoch !== epoch) {
+    client = undefined
+    activatedToken = undefined
+    activation = undefined
+    clientEpoch = epoch
+  }
   if (typeof window === 'undefined' || !window.api?.lifecycle?.claimRuntimeWriter) return undefined
   return (client ??= new RuntimeWriterClient(() => window.api.lifecycle.claimRuntimeWriter()))
 }
 export const ensureRuntimeWriter = async (): Promise<boolean> => {
+  if (!desktopRuntimeWritable()) return false
+  const epoch = getDesktopRuntimeEpoch()
   const c = getClient()
   if (!c) return true
-  if (!(await c.ensure())) return false
+  if (!(await c.ensure()) || epoch !== getDesktopRuntimeEpoch() || !desktopRuntimeWritable())
+    return false
   if (c.token !== activatedToken && !activation) {
     const token = c.token
     activation = (async () => {
       await activate?.()
-      activatedToken = token
+      if (epoch === getDesktopRuntimeEpoch()) activatedToken = token
     })().finally(() => {
-      activation = undefined
+      if (epoch === getDesktopRuntimeEpoch()) activation = undefined
     })
   }
   try {
@@ -66,9 +81,15 @@ export const ensureRuntimeWriter = async (): Promise<boolean> => {
     // Stay read-only if refreshing durable authority failed; the next claim can retry.
     return false
   }
-  return c.token !== undefined && c.token === activatedToken
+  return (
+    epoch === getDesktopRuntimeEpoch() &&
+    desktopRuntimeWritable() &&
+    c.token !== undefined &&
+    c.token === activatedToken
+  )
 }
 export const isRuntimeWriter = (): boolean => {
+  if (!desktopRuntimeWritable()) return false
   const c = getClient()
   return c ? Boolean(c.token && c.token === activatedToken) : true
 }

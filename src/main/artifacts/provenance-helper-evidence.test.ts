@@ -9,7 +9,7 @@ import {
   parseArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
 import { projectPublicArtifactExecutionSnapshot } from './provenance-read-model'
-import { artifactReproducibilityRecipeMatchesSnapshot } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
 
 const digest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
@@ -159,10 +159,13 @@ describe('Artifact helper execution evidence', () => {
       expect(value.helperEvidenceStatus?.state).toBe('incomplete')
       expect(value.reproducibilityRecipe).toBeDefined()
       expect(
-        artifactReproducibilityRecipeMatchesSnapshot(value.reproducibilityRecipe!, {
-          ...value,
-          provenanceGraph: graph
-        })
+        reproductionRecipes.artifactReproducibilityRecipeMatchesSnapshot(
+          value.reproducibilityRecipe!,
+          {
+            ...value,
+            provenanceGraph: graph
+          }
+        )
       ).toBe(true)
       expect(() => parseArtifactExecutionSnapshot(JSON.stringify(value))).not.toThrow()
     }

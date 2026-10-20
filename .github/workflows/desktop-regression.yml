@@ -1,7 +1,7 @@
 name: Desktop Regression
 
 # Advisory desktop behavior checks. Packaged P0 consumes the immutable ARM64 release artifact while
-# visual regression uses the same macos-14 source-build environment that owns the canonical Darwin
+# visual regression uses the same macos-15 source-build environment that owns the canonical Darwin
 # baselines. Release and Nightly call this reusable workflow inside their existing low-privilege run,
 # so the independent jobs can be retried without a privileged workflow_run checkout boundary.
 on:
@@ -99,8 +99,8 @@ jobs:
           ref: ${{ needs.source.outputs.sha }}
           persist-credentials: false
 
-      # Keep business assertions and fake-Agent behavior matched to the immutable package. Only
-      # overlay the launch fixture and Keychain runner being diagnosed from the selected branch.
+      # Keep fake-Agent behavior matched to the immutable package. Overlay the launch tooling and
+      # the two certification specs whose runtime-boundary assertions are being diagnosed.
       - name: Checkout manual launch tooling
         if: github.event_name == 'workflow_dispatch'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -112,24 +112,28 @@ jobs:
           sparse-checkout: |
             e2e/fixtures/electron-app.ts
             scripts/ci/run-macos-packaged-e2e.sh
+            e2e/certification/notebook-lifecycle.spec.ts
+            e2e/certification/remote-pairing.spec.ts
 
       - name: Apply manual launch tooling
         if: github.event_name == 'workflow_dispatch'
         run: |
           cp .regression-tooling/e2e/fixtures/electron-app.ts e2e/fixtures/electron-app.ts
           cp .regression-tooling/scripts/ci/run-macos-packaged-e2e.sh scripts/ci/run-macos-packaged-e2e.sh
+          cp .regression-tooling/e2e/certification/notebook-lifecycle.spec.ts e2e/certification/notebook-lifecycle.spec.ts
+          cp .regression-tooling/e2e/certification/remote-pairing.spec.ts e2e/certification/remote-pairing.spec.ts
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
 
       - name: Download macOS ARM64 package
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           run-id: ${{ needs.source.outputs.run_id }}
@@ -159,7 +163,7 @@ jobs:
 
       - name: Upload P0 diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-regression-p0-${{ needs.source.outputs.run_id }}
           retention-days: 7
@@ -169,12 +173,12 @@ jobs:
           if-no-files-found: ignore
 
   visual:
-    name: visual (canonical macos-14 source build)
+    name: visual (canonical macos-15 source build)
     needs: source
     # An explicit status check allows visual-only runs after source is skipped.
     if: ${{ !cancelled() && inputs.suite != 'p0' && (inputs.suite == 'visual' || needs.source.outputs.available == 'true') }}
     continue-on-error: ${{ inputs.allow_failure == true }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     steps:
       - name: Checkout source revision
@@ -185,9 +189,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       - name: Install dependencies
@@ -203,7 +207,7 @@ jobs:
 
       - name: Upload visual diagnostics
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: desktop-regression-visual-${{ needs.source.outputs.run_id || github.run_id }}
           retention-days: 7

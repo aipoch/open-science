@@ -1,7 +1,8 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 
-import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
+import { test } from './fixtures/electron-app'
+import { homeNewProjectButton } from './fixtures/project'
 
 const createProject = async (
   page: Page,
@@ -19,7 +20,7 @@ const createProject = async (
       .getByRole('menuitem', { name: 'New project', exact: true })
       .click()
   } else {
-    await page.getByRole('button', { name: 'New project', exact: true }).click()
+    await homeNewProjectButton(page).click()
   }
 
   const dialog = page.getByRole('dialog', { name: 'New project' })
@@ -66,7 +67,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 15)
   page = await app.restart()
@@ -263,7 +263,6 @@ test('switches projects from the Workspace project menu and expands remaining pr
 test('closes mobile navigation when switching projects', async ({ app }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
 
   await seedProjects(page, 1)
   page = await app.restart()
@@ -272,20 +271,34 @@ test('closes mobile navigation when switching projects', async ({ app }) => {
   await reloadAndOpenProject(page, 'Project 2')
 
   await page.setViewportSize({ width: 700, height: 700 })
-  await page.getByRole('button', { name: 'Open navigation' }).click()
-
   const navigation = page.locator('aside[aria-label="Workspace navigation"]')
-  await expect(navigation).toHaveAttribute('data-mobile-open', 'true')
-  await navigation.locator('button[title="Project 2"]').click()
-  await page
-    .locator('[aria-label="Project actions"]')
-    .locator('[data-project-id]')
-    .filter({ hasText: /^Project 1Description 1$/ })
-    .click()
+  for (const [zoom, currentProject, nextProject] of [
+    [1, 2, 1],
+    [1.25, 1, 2]
+  ] as const) {
+    await app.setMainWindowZoomFactor(zoom)
+    await page.getByRole('button', { name: 'Open navigation' }).click()
+    await expect(navigation).toHaveAttribute('data-mobile-open', 'true')
+    if (process.platform === 'win32') {
+      const titlebar = page.getByTestId('windows-titlebar')
+      await expect
+        .poll(async () => {
+          const titlebarBounds = (await titlebar.boundingBox())!
+          const navigationBounds = (await navigation.boundingBox())!
+          return navigationBounds.y - (titlebarBounds.y + titlebarBounds.height)
+        })
+        .toBeGreaterThanOrEqual(0)
+    }
+    await navigation.locator(`button[title="Project ${currentProject}"]`).click()
+    await page
+      .locator('[aria-label="Project actions"]')
+      .locator('[data-project-id]')
+      .filter({ hasText: new RegExp(`^Project ${nextProject}Description ${nextProject}$`) })
+      .click()
 
-  await expect(navigation).toHaveAttribute('data-mobile-open', 'false')
-  await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible()
-
+    await expect(navigation).toHaveAttribute('data-mobile-open', 'false')
+    await expect(page.getByRole('button', { name: 'Open navigation' })).toBeVisible()
+  }
   await page.getByRole('button', { name: 'Open navigation' }).click()
-  await expect(navigation.locator('button[title="Project 1"]')).toBeVisible()
+  await expect(navigation.locator('button[title="Project 2"]')).toBeVisible()
 })

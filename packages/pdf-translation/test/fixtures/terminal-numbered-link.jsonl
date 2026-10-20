@@ -1,0 +1,21 @@
+{"name": "complete figure terminal period", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见图 8。", "label": "8.", "offset": 45, "expectedStart": 7, "targetLabel": "8。"}
+{"name": "complete table terminal period", "source": "The controlled observations appear in Table 8.", "translation": "受控观测见表 8。", "label": "8.", "offset": 44, "expectedStart": 7, "targetLabel": "8。"}
+{"name": "abbreviated figure", "source": "The controlled observations appear in Fig. 8.", "translation": "受控观测见圖 8．", "label": "8.", "offset": 43, "expectedStart": 7, "targetLabel": "8．"}
+{"name": "reverse localized figure", "source": "受控观测见图 8。", "translation": "The controlled observations appear in Figure 8.", "label": "8。", "offset": 7, "expectedStart": 45, "targetLabel": "8."}
+{"name": "fullwidth source period", "source": "受控观测见圖 8．", "translation": "The controlled observations appear in Fig. 8.", "label": "8．", "offset": 7, "expectedStart": 43, "targetLabel": "8."}
+{"name": "unrelated numeral before reference", "source": "The controlled observations appear in Figure 8.", "translation": "另有8个样本。受控观测见图 8。", "label": "8.", "offset": 45, "expectedStart": 14, "targetLabel": "8。"}
+{"name": "repeated reference keeps occurrence", "source": "The prior sample uses Figure 8 and the complete result appears in Figure 8.", "translation": "先前样本使用图 8，完整结果见图 8。", "label": "8.", "offset": 73, "expectedStart": 17, "targetLabel": "8。"}
+{"name": "changed figure number", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见图 9，另有8个样本。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "changed reference kind", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见表 8。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "same punctuation cannot mask changed kind", "source": "The controlled observations appear in Figure 8.", "translation": "The controlled observations appear in Table 8.", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "changed table kind", "source": "The controlled observations appear in Table 8.", "translation": "受控观测见图 8。", "label": "8.", "offset": 44, "expectedStart": null, "targetLabel": null}
+{"name": "extra occurrence", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见图 8。另见图 8。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "missing occurrence", "source": "The prior sample uses Figure 8 and the complete result appears in Figure 8.", "translation": "完整结果见图 8。", "label": "8.", "offset": 73, "expectedStart": null, "targetLabel": null}
+{"name": "bare numeral", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测使用8。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "missing sentence stop", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见图 8", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "decimal figure identity", "source": "The controlled observations appear in Figure 8.3.", "translation": "受控观测见图 8。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "alphabetic subfigure identity", "source": "The controlled observations appear in Figure 8.a.", "translation": "受控观测见图 8。", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "target decimal figure", "source": "The controlled observations appear in Figure 8.", "translation": "The controlled observations appear in Figure 8.3.", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "target alphabetic figure", "source": "The controlled observations appear in Figure 8.", "translation": "The controlled observations appear in Figure 8.a.", "label": "8.", "offset": 45, "expectedStart": null, "targetLabel": null}
+{"name": "partial number suffix", "source": "The controlled observations appear in Figure 18.", "translation": "受控观测见图 18。", "label": "8.", "offset": 46, "expectedStart": null, "targetLabel": null}
+{"name": "wrong source offset", "source": "The controlled observations appear in Figure 8.", "translation": "受控观测见图 8。", "label": "8.", "offset": 0, "expectedStart": null, "targetLabel": null}

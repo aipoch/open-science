@@ -1,14 +1,15 @@
-import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 import { rm } from 'node:fs/promises'
 import { createServer, request as httpRequest, type Server } from 'node:http'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+import { createArtifactSaveFixture } from '../artifacts/save-test-fixtures'
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { AgentMcpHttpHost } from './mcp-http-host'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { ArtifactRepository } from '../artifacts/repository'
+import { AgentMcpHttpHost } from './mcp-http-host'
 
 describe('AgentMcpHttpHost', () => {
   let saveFixture: Awaited<ReturnType<typeof createArtifactSaveFixture>> | undefined
@@ -488,6 +489,95 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
   })
 
+  it('uninstalls only its own Literature route and permits reinstall with the same handler', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const handler = { readDocument: vi.fn(async () => ({ content: 'page', nextCursor: null })) }
+    const stale = host.registerLiterature('feature', handler)
+    const current = host.registerLiterature('feature', handler)
+    const removeLibrary = host.registerLiteratureLibrary('feature', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox: vi.fn()
+    })
+    const status = async (kind: 'library' | 'literature'): Promise<number> =>
+      (
+        await fetch(host!.urlFor(kind, 'feature'), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+            accept: 'application/json, text/event-stream'
+          },
+          body: JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'tools/list' })
+        })
+      ).status
+    stale()
+    expect(await status('literature')).toBe(200)
+    current()
+    current()
+    expect(await status('literature')).toBe(404)
+    expect(await status('library')).toBe(200)
+    const reinstalled = host.registerLiterature('feature', handler)
+    current()
+    expect(await status('literature')).toBe(200)
+    reinstalled()
+    removeLibrary()
+    expect(await status('library')).toBe(404)
+  })
+
+  it('aborts a removed Library route before pending lookup can commit', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    let release!: () => void
+    let started!: () => void
+    let signal: AbortSignal | undefined
+    const waiting = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const entered = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const saveToInbox = vi.fn(async () => ({ results: [] }))
+    const uninstall = host.registerLiteratureLibrary('feature', {
+      searchLibrary: vi.fn(),
+      readAbstract: vi.fn(),
+      readPdf: vi.fn(),
+      saveToInbox,
+      resolveSaveReferences: async (_refs, currentSignal) => {
+        signal = currentSignal
+        started()
+        await waiting
+        return [
+          {
+            item: literatureItemInputSchema.parse({ title: 'Paper', itemType: 'journalArticle' }),
+            source: { provider: 'test', rawMetadata: {} }
+          }
+        ]
+      }
+    })
+    const client = new Client({ name: 'uninstall-library-test', version: '1' })
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL(host.urlFor('library', 'feature')), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } }
+      })
+    )
+    const pending = client
+      .callTool({ name: 'save_to_inbox', arguments: { refs: ['doi:10.1234/paper'] } })
+      .catch((error: unknown) => error)
+    try {
+      await entered
+      uninstall()
+      await pending
+      await vi.waitFor(() => expect(signal?.aborted).toBe(true))
+    } finally {
+      release()
+      await client.close()
+    }
+    expect(saveToInbox).not.toHaveBeenCalled()
+  })
+
   it('serves the user Literature Library over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
@@ -762,6 +852,59 @@ describe('AgentMcpHttpHost', () => {
     expect(response.headers.get('connection')).toBe('close')
   })
 
+  it('retains the host body budget above the SDK default for parsed requests', async () => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    host.registerHostMessage('large', { sendMessage: vi.fn() })
+    const response = await fetch(host.urlFor('host-message', 'large'), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'ping',
+        params: { padding: 'x'.repeat(4 * 1024 * 1024) }
+      })
+    })
+    expect(response.status).toBe(200)
+    expect(await response.json()).toMatchObject({ id: 1, result: {} })
+  })
+
+  it.each([100, 101])('enforces the SDK batch boundary for %i messages', async (count) => {
+    host = new AgentMcpHttpHost()
+    const { token } = await host.ensureStarted()
+    const sendMessage = vi.fn()
+    host.registerHostMessage('batch', { sendMessage })
+    const response = await fetch(host.urlFor('host-message', 'batch'), {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${token}`,
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream'
+      },
+      body: JSON.stringify(
+        Array.from({ length: count }, (_, id) => ({ jsonrpc: '2.0', id, method: 'ping' }))
+      )
+    })
+    expect(response.status).toBe(count === 100 ? 200 : 400)
+    const body = await response.json()
+    if (count === 100) {
+      expect(body).toHaveLength(100)
+      expect(body).toEqual(
+        expect.arrayContaining(
+          Array.from({ length: count }, (_, id) => ({ jsonrpc: '2.0', id, result: {} }))
+        )
+      )
+    } else {
+      expect(body).toMatchObject({ error: { code: -32600 } })
+    }
+    expect(sendMessage).not.toHaveBeenCalled()
+  })
+
   it('serves one trusted side-chat host-message handler over its bound route', async () => {
     host = new AgentMcpHttpHost()
     const { token } = await host.ensureStarted()
@@ -791,3 +934,5 @@ describe('AgentMcpHttpHost', () => {
     await client.close()
   })
 })
+
+configureTestRuntimeMetadata()

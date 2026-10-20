@@ -9,6 +9,10 @@ on:
       - 'v*'
   workflow_dispatch:
     inputs:
+      package_smoke_run_id:
+        description: Diagnostic package smoke using an existing Release run; skips build/tests and publication, overriding verify_only.
+        type: string
+        default: ''
       verify_only:
         description: Verify tests and coverage without building or publishing packages.
         type: boolean
@@ -17,7 +21,7 @@ on:
 # Required to create a Release and upload assets.
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: release-${{ github.ref }}
@@ -25,9 +29,13 @@ concurrency:
 
 jobs:
   release-preflight:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}
     name: Release preflight
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    outputs:
+      windows_runtime_source_changed: ${{ steps.runtime_change.outputs.source_changed }}
+      windows_runtime_catalog_changed: ${{ steps.runtime_change.outputs.catalog_changed }}
     permissions:
       contents: read
     steps:
@@ -49,15 +57,87 @@ jobs:
         if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
         run: git merge-base --is-ancestor "$GITHUB_SHA" origin/main
 
+      - name: Detect Windows runtime changes
+        id: runtime_change
+        shell: bash
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != "push" ] || [[ "$GITHUB_REF" != refs/tags/v* ]]; then
+            exit 0
+          fi
+          previous_tag=$(git describe --tags --match 'v*' --abbrev=0 "$GITHUB_SHA^" 2>/dev/null || true)
+          if [ -z "$previous_tag" ]; then
+            source_changed=true
+            catalog_changed=true
+            echo "No previous version tag found; requiring the reviewed runtime catalog and CDN objects."
+          else
+            runtime_paths=(
+              'packages/notebook-network-sandbox/vendor/windows-runtime/sources.json'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/*.patch'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/build.ps1'
+              'packages/notebook-network-sandbox/vendor/windows-runtime/npm/**'
+              'scripts/check-windows-notebook-runtime.mjs'
+              'scripts/stage-windows-notebook-components.mjs'
+              '.github/actions/windows-notebook-runtime/action.yml'
+            )
+            source_changed=false
+            catalog_changed=false
+            if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- "${runtime_paths[@]}"; then
+              source_changed=true
+            fi
+            # Upload action pins do not change runtime bytes; retain every other workflow change.
+            if ! git diff --quiet \
+              --ignore-matching-lines='^[[:space:]]+uses: actions/upload-artifact@[0-9a-f]{40} # v[0-9]+$' \
+              "$previous_tag" "$GITHUB_SHA" -- '.github/workflows/windows-notebook-runtime.yml'; then
+              source_changed=true
+            fi
+            if ! git diff --quiet "$previous_tag" "$GITHUB_SHA" -- src/main/notebook/windows-runtime-catalog.json; then
+              catalog_changed=true
+            fi
+            echo "Runtime source changed since $previous_tag: $source_changed"
+            echo "Runtime catalog changed since $previous_tag: $catalog_changed"
+          fi
+          if [ "$source_changed" = true ] && [ "$catalog_changed" != true ]; then
+            echo 'Runtime source changed without a catalog update. Run the runtime signing/staging flow, merge the catalog, publish its CDN objects, then create the application tag.' >&2
+            exit 1
+          fi
+          echo "source_changed=$source_changed" >> "$GITHUB_OUTPUT"
+          echo "catalog_changed=$catalog_changed" >> "$GITHUB_OUTPUT"
+
+      - name: Verify reviewed Windows runtime CDN objects
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+        env:
+          CDN_BASE_URL: ${{ vars.CDN_BASE_URL }}
+          S3_PREFIX: ${{ vars.S3_PREFIX }}
+        run: node scripts/windows-runtime-cdn.mjs check --verify-bytes
+
   # Build the platform matrix (macOS arm64/x64 + Linux + Windows x64) via the reusable workflow.
   # secrets: inherit forwards the optional signing/notarization secrets. macOS is signed but NOT
   # notarized here — notarization is decoupled into the notarize-mac job below.
   build:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.package_smoke_run_id }}
     needs: release-preflight
     uses: ./.github/workflows/build.yml
+    permissions:
+      contents: read
+      id-token: write
     with:
       verify_only: ${{ github.event_name == 'workflow_dispatch' && inputs.verify_only }}
+      sign_windows: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
     secrets: inherit
+
+  # Reuse the real package gates on existing Release bytes without rebuilding or publishing.
+  # Cross-run diagnostics deliberately emit no release certification for this tooling revision.
+  package-smoke-dry-run:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.package_smoke_run_id != '' }}
+    uses: ./.github/workflows/package-smoke.yml
+    with:
+      artifact_run_id: ${{ inputs.package_smoke_run_id }}
+      # Diagnostic branches cannot enter the protected signing environment. Tag releases below
+      # still require publisher/signature verification; this path only exercises existing packages.
+      require_windows_signing: false
 
   # Exercise the exact uploaded packages in separate native jobs. A failed matrix leg can be retried
   # against the immutable build artifact without repeating installation, packaging, or signing.
@@ -65,6 +145,8 @@ jobs:
     if: ${{ !inputs.verify_only }}
     needs: build
     uses: ./.github/workflows/package-smoke.yml
+    with:
+      require_windows_signing: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
 
   # Exercise advisory regression in this low-privilege build run and retain its diagnostics without
   # allowing known flakes to override the blocking build + package-smoke result.
@@ -84,11 +166,30 @@ jobs:
     uses: ./.github/workflows/notarize-mac.yml
     secrets: inherit
 
+  # Repack the certified desktop backend after notarization; no second native build/signing path.
+  cli-artifacts:
+    needs: [build, package-smoke, notarize-mac]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/runtime-packages.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      desktop_run_id: ${{ format('{0}', github.run_id) }}
+
+  linux-cli-packages:
+    needs: cli-artifacts
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/linux-cli-packages.yml
+    permissions:
+      contents: read
+      actions: read
+
   # Collect every platform's artifacts and publish them to the tag's Release in one shot (a single
   # publish job avoids the race of multiple build jobs writing the same Release). Depends on
   # notarize-mac so the mac dmg/zip it downloads are the stapled versions.
   publish:
-    needs: [build, package-smoke, notarize-mac]
+    needs: [build, package-smoke, notarize-mac, cli-artifacts, linux-cli-packages]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -107,18 +208,24 @@ jobs:
 
       # Pin the release transform scripts to the repo's Node line instead of the runner default.
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install release transform dependencies
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
           merge-multiple: true # flatten every platform's files into one directory
+
+      - name: Verify standalone release archive set
+        run: node scripts/runtime-archives.mjs verify artifacts
+
+      - name: Verify Linux CLI package set
+        run: node scripts/linux-cli-packages.mjs verify artifacts "${GITHUB_REF_NAME#v}" "$GITHUB_SHA"
 
       # Fail closed unless every native target reports package evidence for this exact tag commit.
       # P0 and visual regression run independently as advisory Desktop Regression checks.
@@ -128,6 +235,7 @@ jobs:
           --directory artifacts
           --output artifacts/RELEASE-CERTIFICATION.json
           --expected-sha "$GITHUB_SHA"
+          --require-signed-windows
 
       # Merge build or post-notarization feeds; partial mac artifacts fail before publication.
       - name: Merge mac update feed
@@ -138,7 +246,7 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb *.rpm *.tar.gz)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
@@ -158,6 +266,8 @@ jobs:
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/open-science-cli-*.tar.gz
 
       # Set the final body before GitHub emits the release event consumed by Zenodo. Updating the
       # GitHub Release afterwards is too late because Zenodo archives the event payload it received.
@@ -189,10 +299,15 @@ jobs:
             artifacts/*.exe
             artifacts/*.AppImage
             artifacts/*.deb
+            artifacts/*.rpm
+            artifacts/open-science-cli-*.tar.gz
+            artifacts/CLI-PACKAGE-SHA256SUMS.txt
+            artifacts/CLI-PACKAGE-PROVENANCE.json
             artifacts/SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
             artifacts/latest.yml
             artifacts/latest-linux.yml
+            artifacts/latest-linux-arm64.yml
             artifacts/*-mac.yml
             artifacts/*.blockmap
 
@@ -206,3 +321,16 @@ jobs:
           gh api --method POST "repos/$GITHUB_REPOSITORY/dispatches"
           --field event_type=windows-upgrade-smoke
           --field "client_payload[tag]=$GITHUB_REF_NAME"
+
+  # Releases created with GITHUB_TOKEN do not emit a downstream release workflow run. Invoke the
+  # read-only PoC directly after publication so every normal stable release is measured.
+  release-sbom-poc:
+    needs: publish
+    permissions:
+      contents: read
+    uses: ./.github/workflows/release-sbom-poc.yml
+    with:
+      tag: ${{ github.ref_name }}
+
+  # GITHUB_TOKEN-created releases do not trigger a separate release-event workflow.
+  # The protected tag, root version, source commit and native artifacts are shared with desktop.

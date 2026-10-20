@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -212,10 +213,12 @@ describe('process-local Side chat delivery', () => {
   })
 
   it('keeps startup composition free of Side chat authority scans and persistence wiring', async () => {
-    const source = await readFile(join(process.cwd(), 'src/main/ipc.ts'), 'utf8')
+    const source = await readFile(join(process.cwd(), 'src/main/composition/side-chat.ts'), 'utf8')
     expect(source).not.toMatch(/\.loadPersistedSideChats\s*\(/)
     expect(source).not.toMatch(/\.(?:saveSideChatProjection|appendSideChatRelay)\s*\(/)
     expect(source).not.toMatch(/(?:sideChatRuntime|sideChatRelay)\.hydrate\s*\(/)
     expect(source).not.toMatch(/await sideChatRuntime\.sweepStaleProfiles/)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

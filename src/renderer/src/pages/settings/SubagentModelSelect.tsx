@@ -16,15 +16,17 @@ import {
   parseConfiguredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
   projectReasoningEffortIntent,
   resolveReasoningEffortControl
 } from '../../../../shared/reasoning-effort'
-import { ProviderKindIcon } from './provider-icons'
+import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+
+import { isCodexSubscriptionProvider } from '../../../../shared/settings'
 import { providerKindKey } from './provider-form-value'
+import { ProviderKindIcon } from './provider-icons'
 import { SettingsField, SettingsRow } from './SettingsLayout'
-import { isCodexSubscriptionProvider, type ReasoningEffort } from '../../../../shared/settings'
 
 const INHERIT_KEY = 'same-as-main-model'
 const DISABLED_KEY = 'not-configured'

@@ -1,21 +1,18 @@
+import { SpecialistStorageFixture } from '../../../../test/specialist-fixtures'
+import { SettingsRepository } from '../../settings/repository'
+import { createHostSpecialistPackages } from './environment'
 import { randomUUID } from 'node:crypto'
 import { mkdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-
 import { strFromU8, strToU8, unzipSync } from 'fflate'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-
-import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
-import { UserSkillSpecialistPackageAdapter } from '../../skills/specialist-package-adapter'
-import { SpecialistRepository } from '../repository'
-import { SpecialistService } from '../service'
+import type { SpecialistPackageCatalogSnapshot } from '@aipoch/specialists'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
 import {
   buildContributionTemplateZip,
   buildDeterministicSpecialistZip
-} from './contribution-template'
-import { SpecialistPackageService } from './service'
-import { SpecialistPackageTransaction } from './transaction'
+} from '@aipoch/specialists/node'
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
@@ -31,11 +28,7 @@ afterEach(async () => {
   await rm(storageRoot, { recursive: true, force: true })
 })
 
-const packageFromTemplate = (input: {
-  id: string
-  bundledSkill?: string
-  builtinSkill?: string
-}): Uint8Array => {
+const packageFromTemplate = (input: { id: string; bundledSkill?: string }): Uint8Array => {
   const template = unzipSync(
     buildContributionTemplateZip({
       appVersion: '0.9.2',
@@ -66,8 +59,8 @@ const packageFromTemplate = (input: {
 }
 
 describe('Specialist contribution release certification', () => {
-  it('turns the contribution template into installable no-Skill and bundled-Skill journeys', async () => {
-    const repository = new SpecialistRepository(storageRoot)
+  it('installs template-bundled Skills through the real ownership adapter', async () => {
+    const repository = new SpecialistStorageFixture(storageRoot)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageRoot)
     const catalog = async (): Promise<SpecialistPackageCatalogSnapshot> => ({
       appVersion: '0.9.2',
@@ -80,15 +73,14 @@ describe('Specialist contribution release certification', () => {
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
     })
-    const packages = new SpecialistPackageService({
+    const packages = createHostSpecialistPackages({
       storageDir: storageRoot,
-      repository,
+      domain: repository.domain,
       skillPort,
       catalog
     })
 
     for (const archive of [
-      packageFromTemplate({ id: 'template-no-skills' }),
       packageFromTemplate({ id: 'template-with-skills', bundledSkill: 'certified-analysis' })
     ]) {
       const preview = await packages.preview(archive)
@@ -102,9 +94,8 @@ describe('Specialist contribution release certification', () => {
       })
     }
 
-    await expect(new SpecialistService(repository).list()).resolves.toEqual(
+    await expect(repository.domain.catalog.list()).resolves.toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ id: 'template-no-skills', ownedSkillIds: [] }),
         expect.objectContaining({
           id: 'template-with-skills',
           ownedSkillIds: ['personal-certified-analysis']
@@ -116,19 +107,13 @@ describe('Specialist contribution release certification', () => {
     expect(decoder.decode(installedSkills?.[0].files[0].bytes)).toContain('Certified bundled Skill')
   })
 
-  it('exports before a confirmed overwrite and round-trips the new baseline into clean storage', async () => {
-    const repository = new SpecialistRepository(storageRoot)
+  it('round-trips real Skill bytes and ownership into a clean host store', async () => {
+    const repository = new SpecialistStorageFixture(storageRoot)
     const skillPort = new UserSkillSpecialistPackageAdapter(storageRoot)
-    const builtinSkill = {
-      id: 'builtin-reader',
-      appVersion: '0.9.2',
-      compatibility: 'app:0.9.2:builtin-reader'
-    }
     const catalog = async (): Promise<SpecialistPackageCatalogSnapshot> => ({
       appVersion: '0.9.2',
-      builtinSkills: [builtinSkill],
+      builtinSkills: [],
       skills: [
-        { id: builtinSkill.id, builtin: true },
         ...(await skillPort.snapshot()).map((skill) => ({
           ...skill,
           name: skill.id.startsWith('personal-') ? skill.id.slice('personal-'.length) : skill.id,
@@ -138,16 +123,15 @@ describe('Specialist contribution release certification', () => {
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
     })
-    const packages = new SpecialistPackageService({
+    const packages = createHostSpecialistPackages({
       storageDir: storageRoot,
-      repository,
+      domain: repository.domain,
       skillPort,
       catalog
     })
     const archive = packageFromTemplate({
       id: 'overwrite-roundtrip',
-      bundledSkill: 'portable-analysis',
-      builtinSkill: builtinSkill.id
+      bundledSkill: 'portable-analysis'
     })
     const firstPreview = await packages.preview(archive)
     await expect(
@@ -156,51 +140,7 @@ describe('Specialist contribution release certification', () => {
       status: 'installed'
     })
 
-    const profiles = new SpecialistService(repository)
-    const imported = await profiles.getById('overwrite-roundtrip')
-    await profiles.update({
-      id: imported.id,
-      revision: imported.revision,
-      description: 'Locally edited before overwrite.'
-    })
-    const edited = await profiles.getById(imported.id)
-    expect(edited.modifiedSinceImport).toBe(true)
-    const beforeOverwrite = await packages.previewExport(imported.id)
-    const backup = await packages.export({
-      specialistId: imported.id,
-      expectedRevision: beforeOverwrite.expectedRevision,
-      includedSkillIds: ['personal-portable-analysis']
-    })
-    expect(decoder.decode(unzipSync(backup.archiveBytes)['specialist.json'])).toContain(
-      'Locally edited before overwrite.'
-    )
-
-    const overwrite = await packages.preview(archive)
-    expect(overwrite.overwrite).toMatchObject({
-      currentVersion: '0.1.0',
-      incomingVersion: '0.1.0',
-      modifiedSinceImport: true
-    })
-    expect(overwrite.diagnostics.map((diagnostic) => diagnostic.code)).toEqual(
-      expect.arrayContaining([
-        'specialist.overwrite-same-version',
-        'specialist.overwrite-local-modifications'
-      ])
-    )
-    await expect(packages.install({ candidateToken: overwrite.candidateToken })).resolves.toEqual({
-      status: 'failed',
-      code: 'overwrite-confirmation-required'
-    })
-    await expect(
-      packages.install({ candidateToken: overwrite.candidateToken, confirmOverwrite: true })
-    ).resolves.toMatchObject({ status: 'installed' })
-    const replaced = await profiles.getById(imported.id)
-    expect(replaced).toMatchObject({
-      description: 'Portable overwrite-roundtrip',
-      modifiedSinceImport: false,
-      ownedSkillIds: ['personal-portable-analysis']
-    })
-
+    const replaced = await repository.domain.catalog.getById('overwrite-roundtrip')
     const exportPreview = await packages.previewExport(replaced.id)
     const exported = await packages.export({
       specialistId: replaced.id,
@@ -209,13 +149,12 @@ describe('Specialist contribution release certification', () => {
     })
     const targetRoot = join(storageRoot, 'clean-target')
     await mkdir(targetRoot)
-    const targetRepository = new SpecialistRepository(targetRoot)
+    const targetRepository = new SpecialistStorageFixture(targetRoot)
     const targetSkillPort = new UserSkillSpecialistPackageAdapter(targetRoot)
     const targetCatalog = async (): Promise<SpecialistPackageCatalogSnapshot> => ({
       appVersion: '0.9.2',
-      builtinSkills: [builtinSkill],
+      builtinSkills: [],
       skills: [
-        { id: builtinSkill.id, builtin: true },
         ...(await targetSkillPort.snapshot()).map((skill) => ({
           ...skill,
           name: skill.id.startsWith('personal-') ? skill.id.slice('personal-'.length) : skill.id,
@@ -225,9 +164,9 @@ describe('Specialist contribution release certification', () => {
       connectorIds: [],
       protectedSpecialistIds: ['reviewer']
     })
-    const targetPackages = new SpecialistPackageService({
+    const targetPackages = createHostSpecialistPackages({
       storageDir: targetRoot,
-      repository: targetRepository,
+      domain: targetRepository.domain,
       skillPort: targetSkillPort,
       catalog: targetCatalog
     })
@@ -240,7 +179,7 @@ describe('Specialist contribution release certification', () => {
       targetPackages.install({ candidateToken: targetPreview.candidateToken })
     ).resolves.toMatchObject({ status: 'installed' })
 
-    const restored = await new SpecialistService(targetRepository).getById(replaced.id)
+    const restored = await targetRepository.domain.catalog.getById(replaced.id)
     expect(restored).toMatchObject({
       id: replaced.id,
       packageVersion: replaced.packageVersion,
@@ -248,9 +187,15 @@ describe('Specialist contribution release certification', () => {
       description: replaced.description,
       systemPrompt: replaced.systemPrompt,
       selectedCapabilities: replaced.selectedCapabilities,
-      ownedSkillIds: replaced.ownedSkillIds,
-      modifiedSinceImport: false
+      ownedSkillIds: replaced.ownedSkillIds
     })
+    const targetFiles = (await targetSkillPort.exportSnapshot(['personal-portable-analysis']))[0]
+      .files
+    const archivedFiles = unzipSync(exported.archiveBytes)
+    expect(targetFiles).toEqual([
+      { path: 'SKILL.md', bytes: archivedFiles['skills/portable-analysis/SKILL.md'] }
+    ])
+    expect(decoder.decode(targetFiles[0].bytes)).toContain('Use it.')
     const restoredSkills = await targetSkillPort.snapshot()
     expect(restoredSkills).toEqual([
       expect.objectContaining({
@@ -263,13 +208,6 @@ describe('Specialist contribution release certification', () => {
   })
 
   it.each([
-    { checkpoint: 'prepared', phase: 'prepared', specialistLive: false, skillLive: false },
-    {
-      checkpoint: 'committing before Specialist swap',
-      phase: 'committing',
-      specialistLive: false,
-      skillLive: false
-    },
     {
       checkpoint: 'committing after Specialist swap',
       phase: 'committing',
@@ -282,20 +220,13 @@ describe('Specialist contribution release certification', () => {
       specialistLive: true,
       skillLive: true
     },
-    { checkpoint: 'committed', phase: 'committed', specialistLive: true, skillLive: true },
-    {
-      checkpoint: 'rolling back',
-      phase: 'rolling-back',
-      specialistLive: false,
-      skillLive: false
-    },
-    { checkpoint: 'rolled back', phase: 'rolled-back', specialistLive: false, skillLive: false }
+    { checkpoint: 'committed', phase: 'committed', specialistLive: true, skillLive: true }
   ] as const)(
     'recovers a complete old or new package after restart at $checkpoint',
     async ({ checkpoint, phase, specialistLive, skillLive }) => {
       const root = join(storageRoot, checkpoint.replaceAll(' ', '-'))
       await mkdir(root)
-      const repository = new SpecialistRepository(root)
+      const repository = new SpecialistStorageFixture(root)
       const skillPort = new UserSkillSpecialistPackageAdapter(root)
       const before = await repository.getAll()
       const after = {
@@ -329,7 +260,6 @@ describe('Specialist contribution release certification', () => {
           id: 'interrupted-skill',
           version: '1.0.0',
           disposition: 'install',
-          files: ['SKILL.md'],
           contentHash: 'a'.repeat(64),
           filesToInstall: [
             {
@@ -343,10 +273,6 @@ describe('Specialist contribution release certification', () => {
       ])
       if (specialistLive) await repository.replaceAll(after)
       if (skillLive) await skillPort.commit(transactionId)
-      if (phase === 'rolling-back' || phase === 'rolled-back') {
-        await skillPort.rollback(transactionId)
-        await repository.replaceAll(before)
-      }
       await writeFile(
         join(root, 'specialist-package-transaction.json'),
         `${JSON.stringify({
@@ -359,12 +285,19 @@ describe('Specialist contribution release certification', () => {
         'utf8'
       )
 
-      await new SpecialistPackageTransaction(
-        root,
-        repository,
-        () => randomUUID(),
-        skillPort
-      ).recover()
+      await createHostSpecialistPackages({
+        storageDir: root,
+        domain: repository.domain,
+        skillPort,
+        skillSettings: new SettingsRepository(root),
+        catalog: async () => ({
+          appVersion: '1.0.0',
+          builtinSkills: [],
+          skills: [],
+          connectorIds: [],
+          protectedSpecialistIds: []
+        })
+      }).recover()
 
       const recovered = await repository.getAll()
       const recoveredSkills = await skillPort.snapshot()

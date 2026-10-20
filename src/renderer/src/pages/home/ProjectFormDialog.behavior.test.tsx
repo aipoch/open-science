@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { Project } from '../../../../shared/projects'
@@ -32,6 +32,50 @@ beforeEach(() => useProjectStore.setState(createInitialProjectState()))
 afterEach(cleanup)
 
 describe('project form public submission behavior', () => {
+  it.each(['Escape', 'Close', 'Cancel'])(
+    '%s protects drafts and restores editing focus',
+    async (exit) => {
+      render(<Harness />)
+      const trigger = screen.getByText('Create fixture')
+      trigger.focus()
+      fireEvent.click(trigger)
+      const name = screen.getByLabelText('Name') as HTMLInputElement
+      const context = screen.getByLabelText('Agent Context') as HTMLTextAreaElement
+      fireEvent.change(name, { target: { value: 'Research draft' } })
+      fireEvent.change(context, { target: { value: 'Unsaved instructions' } })
+      context.focus()
+      if (exit === 'Escape') fireEvent.keyDown(context, { key: 'Escape' })
+      else fireEvent.click(screen.getByRole('button', { name: exit }))
+      const confirmation = screen.getByRole('alertdialog')
+      expect(confirmation.textContent).toContain('Discard unsaved changes?')
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+      await waitFor(() => expect(document.activeElement).toBe(context))
+      expect(name.value).toBe('Research draft')
+      expect(context.value).toBe('Unsaved instructions')
+      fireEvent.keyDown(context, { key: 'Escape' })
+      fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+      await waitFor(() => expect(document.activeElement).toBe(trigger))
+      fireEvent.click(trigger)
+      expect((screen.getByLabelText('Name') as HTMLInputElement).value).toBe('')
+      expect((screen.getByLabelText('Agent Context') as HTMLTextAreaElement).value).toBe('')
+    }
+  )
+
+  it('Escape from the discard confirmation keeps the dirty form open', async () => {
+    render(<Harness />)
+    fireEvent.click(screen.getByText('Edit fixture'))
+    const name = screen.getByLabelText('Name') as HTMLInputElement
+    fireEvent.change(name, { target: { value: 'Changed' } })
+    name.focus()
+    fireEvent.keyDown(name, { key: 'Escape' })
+    fireEvent.keyDown(screen.getByRole('button', { name: 'Keep editing' }), { key: 'Escape' })
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(screen.getByRole('dialog')).not.toBeNull()
+    expect(name.value).toBe('Changed')
+    await waitFor(() => expect(document.activeElement).toBe(name))
+  })
+
   it.each(['create', 'edit'] as const)(
     'exposes pending %s and disables unavailable exits',
     async (mode) => {

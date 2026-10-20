@@ -5,8 +5,7 @@ import { createStoreSaver } from '../session-persistence/session-persistence'
 import {
   processWorkspaceRuntimeEvents,
   processIncrementalWorkspaceRuntimeEvents,
-  syncWorkspaceContextUsage,
-  markRunningSessionsDisconnectedOnDrop
+  syncWorkspaceContextUsage
 } from './workspace-runtime-event-owner'
 afterEach(() => vi.unstubAllGlobals())
 it('an observer receiving background runtime events does not mutate or save a conversation', async () => {
@@ -52,7 +51,6 @@ it('an observer receiving background runtime events does not mutate or save a co
   await processWorkspaceRuntimeEvents({ revision: 1, events: [event] })
   await processIncrementalWorkspaceRuntimeEvents([event])
   syncWorkspaceContextUsage(['old-session'], {})
-  markRunningSessionsDisconnectedOnDrop('connected', 'closed')
   expect(useSessionStore.getState().sessions).toBe(initial.sessions)
   await save(useSessionStore.getState())
   expect(saveSession).not.toHaveBeenCalled()

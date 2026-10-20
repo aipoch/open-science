@@ -3,11 +3,11 @@ import { act, cloneElement, isValidElement, type PropsWithChildren, type ReactEl
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 
 import { ComposerComputeTargetIndicator } from './ComposerComputeTargetIndicator'
-
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 vi.mock('@/components/ui/tooltip', () => ({

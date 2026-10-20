@@ -1,4 +1,4 @@
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import type { LocalizedReleaseNotes, PlatformDownload, UpdateManifest } from '../../shared/update'
 
 const LOCALIZED_NOTE_LOCALES = new Set(['zh-Hans', 'zh-Hant', 'ja', 'ko', 'fr', 'ru', 'de', 'es'])
@@ -7,7 +7,9 @@ const DOWNLOAD_KEYS = new Set([
   'mac-x64',
   'win-x64',
   'linux-x64-appimage',
-  'linux-x64-deb'
+  'linux-x64-deb',
+  'linux-arm64-appimage',
+  'linux-arm64-deb'
 ])
 const MANIFEST_TIMEOUT_MS = 15_000
 const MAX_MANIFEST_BYTES = 256 * 1024

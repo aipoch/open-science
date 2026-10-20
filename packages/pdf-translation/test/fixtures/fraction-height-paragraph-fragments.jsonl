@@ -1,0 +1,3 @@
+{"name":"tall-fraction-font-box-overlap-does-not-split-paragraph","neighbor":false,"secondY":0.116,"count":1}
+{"name":"neighbor-between-paragraph-fragments-prevents-merge","neighbor":true,"secondY":0.116,"count":2}
+{"name":"mostly-overlapping-fragments-are-not-merged","neighbor":false,"secondY":0.102,"count":2}

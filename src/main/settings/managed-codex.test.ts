@@ -1,3 +1,4 @@
+import { runInNewContext } from 'node:vm'
 import { EventEmitter } from 'node:events'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { createHash } from 'node:crypto'
@@ -10,6 +11,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   symlink,
   writeFile
 } from 'node:fs/promises'
@@ -151,7 +153,8 @@ const { errorLogSpy, warnLogSpy } = vi.hoisted(() => ({
   warnLogSpy: vi.fn()
 }))
 
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({
     debug: vi.fn(),
     info: vi.fn(),
@@ -189,6 +192,7 @@ import {
   patchCodexAcpContextUsageSource,
   patchCodexAcpModelCatalogStartupSource,
   patchCodexAcpPromptFailureSource,
+  patchCodexAcpCompactionSource,
   patchCodexAcpSkillInputSource,
   patchCodexAcpTurnUsageSource,
   resolveManagedCodexPlatform,
@@ -199,7 +203,7 @@ import {
 } from './managed-codex'
 
 it('runs Windows Codex command shims through the shell during version verification', async () => {
-  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.153.4' }))
+  const spawnVersion = vi.fn(async () => ({ status: 0, stdout: 'codex-cli 0.157.1' }))
 
   await expect(
     runManagedCodexVersion(
@@ -209,7 +213,7 @@ it('runs Windows Codex command shims through the shell during version verificati
       'win32',
       spawnVersion
     )
-  ).resolves.toBe('0.153.4')
+  ).resolves.toBe('0.157.1')
   expect(spawnVersion).toHaveBeenCalledWith(
     '"C:\\Users\\me\\AppData\\Roaming\\npm\\codex.cmd"',
     ['--version'],
@@ -287,7 +291,7 @@ describe('managed Codex paths and platform resolution', () => {
     const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
 
     expect(CODEX_ACP_VERSION).toBe('1.6.2')
-    expect(CODEX_VERSION).toBe('0.153.4')
+    expect(CODEX_VERSION).toBe('0.157.1')
     expect(CODEX_ACP_INTEGRITY).toMatch(/^sha512-/)
     expect(Object.keys(CODEX_INTEGRITIES).sort()).toEqual([
       'darwin-arm64',
@@ -543,7 +547,7 @@ describe('installManagedCodex', () => {
 
     const controller = new AbortController()
     const verifyAdapter = vi.fn().mockResolvedValue('1.6.2')
-    const verifyCodex = vi.fn().mockResolvedValue('0.153.4')
+    const verifyCodex = vi.fn().mockResolvedValue('0.157.1')
     const verifyPair = vi.fn().mockResolvedValue(undefined)
     const outcome = await installManagedCodex({
       installId: 'codex-1',
@@ -565,11 +569,11 @@ describe('installManagedCodex', () => {
       adapterPath: managedCodexAdapterEntry(root),
       adapterVersion: '1.6.2',
       codexPath: managedCodexBinary(root, platform),
-      codexVersion: '0.153.4'
+      codexVersion: '0.157.1'
     })
     expect(metadataUrls).toEqual([
       'https://reg/@agentclientprotocol%2fcodex-acp/1.6.2',
-      'https://reg/@openai%2fcodex/0.153.4-darwin-arm64'
+      'https://reg/@openai%2fcodex/0.157.1-darwin-arm64'
     ])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('codex-acp')
     expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe('native-codex')
@@ -637,7 +641,7 @@ describe('installManagedCodex', () => {
       fetchJson,
       fetchTarball,
       verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
+      verifyCodex: () => Promise.resolve('0.157.1'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
       existingCodexPath: externalCodexPath
@@ -648,7 +652,7 @@ describe('installManagedCodex', () => {
       adapterPath: managedCodexAdapterEntry(root),
       adapterVersion: '1.6.2',
       codexPath: externalCodexPath,
-      codexVersion: '0.153.4'
+      codexVersion: '0.157.1'
     })
     expect(metadataUrls).toEqual(['https://reg/@agentclientprotocol%2fcodex-acp/1.6.2'])
     expect(await readFile(managedCodexAdapterEntry(root), 'utf8')).toContain('adapter-only')
@@ -661,73 +665,86 @@ describe('installManagedCodex', () => {
     )
   })
 
-  it('falls back to the managed Codex CLI when the user-owned CLI is incompatible', async () => {
-    root = await mkdtemp(join(tmpdir(), 'managed-codex-fallback-'))
-    const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
-    const adapterTgz = buildTgz([
-      {
-        name: 'package/dist/index.js',
-        content: adapterFixture('fallback-adapter'),
-        mode: 0o755
+  it.each(['handshake', 'obsolete', 'unknown', 'prerelease'])(
+    'falls back to the managed Codex CLI when the user-owned CLI is incompatible (%s)',
+    async (reason) => {
+      root = await mkdtemp(join(tmpdir(), 'managed-codex-fallback-'))
+      const platform = resolveManagedCodexPlatform({ platform: 'darwin', arch: 'arm64' })
+      const adapterTgz = buildTgz([
+        {
+          name: 'package/dist/index.js',
+          content: adapterFixture('fallback-adapter'),
+          mode: 0o755
+        }
+      ])
+      const nativeTgz = buildTgz([
+        {
+          name: `package/vendor/${platform.target}/bin/codex`,
+          content: Buffer.from('managed-compatible-codex'),
+          mode: 0o755
+        }
+      ])
+      const externalCodexPath = join(root, 'user-bin', 'codex')
+      await mkdir(dirname(externalCodexPath), { recursive: true })
+      await writeFile(externalCodexPath, 'user-owned-incompatible-codex')
+
+      const metadataUrls: string[] = []
+      const fetchJson = async (url: string): Promise<unknown> => {
+        metadataUrls.push(url)
+        return url.includes('agentclientprotocol%2fcodex-acp')
+          ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
+          : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
       }
-    ])
-    const nativeTgz = buildTgz([
-      {
-        name: `package/vendor/${platform.target}/bin/codex`,
-        content: Buffer.from('managed-compatible-codex'),
-        mode: 0o755
+      const fetchTarball = async (
+        url: string
+      ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
+        const body = url.includes('adapter') ? adapterTgz : nativeTgz
+        return { stream: Readable.from(body), totalBytes: body.length }
       }
-    ])
-    const externalCodexPath = join(root, 'user-bin', 'codex')
-    await mkdir(dirname(externalCodexPath), { recursive: true })
-    await writeFile(externalCodexPath, 'user-owned-incompatible-codex')
+      const verifyPair = vi.fn(async (_adapterPath: string, codexPath: string) => {
+        if (codexPath === externalCodexPath && reason === 'handshake')
+          throw new Error('incompatible Codex CLI')
+      })
 
-    const metadataUrls: string[] = []
-    const fetchJson = async (url: string): Promise<unknown> => {
-      metadataUrls.push(url)
-      return url.includes('agentclientprotocol%2fcodex-acp')
-        ? { dist: { tarball: 'https://reg/adapter.tgz', integrity: sha512(adapterTgz) } }
-        : { dist: { tarball: 'https://reg/codex.tgz', integrity: sha512(nativeTgz) } }
+      const outcome = await installManagedCodex({
+        installId: 'codex-fallback',
+        onEvent: () => undefined,
+        dataRoot: root,
+        registries: ['https://reg'],
+        platform,
+        fetchJson,
+        fetchTarball,
+        verifyAdapter: () => Promise.resolve('1.6.2'),
+        verifyCodex: (path) =>
+          Promise.resolve(
+            path !== externalCodexPath || reason === 'handshake'
+              ? '0.157.1'
+              : reason === 'obsolete'
+                ? '0.153.4'
+                : reason === 'prerelease'
+                  ? '0.157.1-alpha.1'
+                  : undefined
+          ),
+        verifyPair,
+        integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
+        existingCodexPath: externalCodexPath
+      })
+
+      expect(outcome).toEqual({
+        result: { installId: 'codex-fallback', ok: true },
+        adapterPath: managedCodexAdapterEntry(root),
+        adapterVersion: '1.6.2',
+        codexPath: managedCodexBinary(root, platform),
+        codexVersion: '0.157.1'
+      })
+      expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.157.1-darwin-arm64')
+      expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
+      expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
+        'managed-compatible-codex'
+      )
+      expect(verifyPair).toHaveBeenCalledTimes(reason === 'handshake' ? 2 : 1)
     }
-    const fetchTarball = async (
-      url: string
-    ): Promise<{ stream: NodeJS.ReadableStream; totalBytes?: number }> => {
-      const body = url.includes('adapter') ? adapterTgz : nativeTgz
-      return { stream: Readable.from(body), totalBytes: body.length }
-    }
-    const verifyPair = vi.fn(async (_adapterPath: string, codexPath: string) => {
-      if (codexPath === externalCodexPath) throw new Error('incompatible Codex CLI')
-    })
-
-    const outcome = await installManagedCodex({
-      installId: 'codex-fallback',
-      onEvent: () => undefined,
-      dataRoot: root,
-      registries: ['https://reg'],
-      platform,
-      fetchJson,
-      fetchTarball,
-      verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
-      verifyPair,
-      integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) },
-      existingCodexPath: externalCodexPath
-    })
-
-    expect(outcome).toEqual({
-      result: { installId: 'codex-fallback', ok: true },
-      adapterPath: managedCodexAdapterEntry(root),
-      adapterVersion: '1.6.2',
-      codexPath: managedCodexBinary(root, platform),
-      codexVersion: '0.153.4'
-    })
-    expect(metadataUrls).toContain('https://reg/@openai%2fcodex/0.153.4-darwin-arm64')
-    expect(await readFile(externalCodexPath, 'utf8')).toBe('user-owned-incompatible-codex')
-    expect(await readFile(managedCodexBinary(root, platform), 'utf8')).toBe(
-      'managed-compatible-codex'
-    )
-    expect(verifyPair).toHaveBeenCalledTimes(2)
-  })
+  )
 
   it('runs the smoke handshake from a home outside the staged runtime tree', async () => {
     root = await mkdtemp(join(tmpdir(), 'managed-codex-'))
@@ -768,7 +785,7 @@ describe('installManagedCodex', () => {
       fetchJson,
       fetchTarball,
       verifyAdapter: () => Promise.resolve('1.6.2'),
-      verifyCodex: () => Promise.resolve('0.153.4'),
+      verifyCodex: () => Promise.resolve('0.157.1'),
       verifyPair,
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -826,7 +843,7 @@ describe('installManagedCodex', () => {
       },
       verifyCodex: async () => {
         smokeChecks += 1
-        return '0.153.4'
+        return '0.157.1'
       },
       integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
     })
@@ -923,7 +940,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -974,7 +991,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1030,7 +1047,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1091,7 +1108,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1155,7 +1172,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1216,7 +1233,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1273,7 +1290,7 @@ describe('installManagedCodex', () => {
         fetchJson: fetchJsonSpy,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1333,7 +1350,7 @@ describe('installManagedCodex', () => {
         fetchJson,
         fetchTarball,
         verifyAdapter: () => Promise.resolve('1.6.2'),
-        verifyCodex: () => Promise.resolve('0.153.4'),
+        verifyCodex: () => Promise.resolve('0.157.1'),
         verifyPair: vi.fn().mockResolvedValue(undefined),
         integrities: { adapter: sha512(adapterTgz), codex: sha512(nativeTgz) }
       })
@@ -1387,6 +1404,38 @@ describe('installManagedCodex', () => {
 
     await expect(readFile(managedCodexAdapterEntry(root))).rejects.toThrow()
     expect(await readFile(join(root, 'unrelated-runtime'), 'utf8')).toBe('keep-me')
+  })
+})
+
+describe('Codex authentication repair', () => {
+  it('repairs the pinned authentication method in an installed adapter and remains idempotent', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'codex-auth-repair-'))
+    try {
+      const method = await readFile(
+        new URL('./fixtures/codex-acp-1.6.2-authentication-status.txt', import.meta.url),
+        'utf8'
+      )
+      const adapterPath = join(root, 'index.js')
+      await writeFile(
+        adapterPath,
+        withPinnedSkillMapper(`class Client {${method}}\n// Other pinned patch targets`)
+      )
+      await ensureManagedCodexContextUsage(adapterPath)
+      const repaired = await readFile(adapterPath, 'utf8')
+      const Client = runInNewContext(
+        `${repaired.split('// Other pinned patch targets')[0]}\nClient`
+      )
+      const client = new Client()
+      client.getCurrentModelProvider = async () => 'open-science-chatgpt-https'
+      client.getAccount = async () => ({ requiresOpenaiAuth: true, account: null })
+      expect((await client.getAuthenticationStatus()).type).toBe('unauthenticated')
+      client.getAccount = async () => ({ requiresOpenaiAuth: false, account: null })
+      expect((await client.getAuthenticationStatus()).type).toBe('gateway')
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(repaired)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
   })
 })
 
@@ -2008,7 +2057,104 @@ describe('patchCodexAcpTurnUsageSource', () => {
   })
 })
 
+// Adapter startup already patched by the previous application release.
+const PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE =
+  [
+    'function startCodexConnection(codexPath, env) {',
+    '  const spawnEnv = env ?? process.env;',
+    '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
+    '  const startupConfig = startupConfigString ? JSON.parse(startupConfigString) : void 0;',
+    '  const modelCatalogPath = typeof startupConfig?.model_catalog_json === "string"',
+    '    ? startupConfig.model_catalog_json',
+    '    : void 0;',
+    '  const appServerArgs = modelCatalogPath',
+    '    ? ["app-server", "-c", `model_catalog_json=${JSON.stringify(modelCatalogPath)}`]',
+    '    : ["app-server"];',
+    '  let codex;',
+    '  if (codexPath) {',
+    '    codex = process.platform === "win32"',
+    '      ? spawn(`"${codexPath}" app-server`, appServerArgs.slice(1), { shell: true, env: spawnEnv })',
+    '      : spawn(codexPath, appServerArgs, { env: spawnEnv });',
+    '  } else {',
+    '    const bundledCodexPath = createRequire(import.meta.url).resolve("@openai/codex/bin/codex.js");',
+    '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
+    '  }'
+  ].join('\n') + '\n  return codex;\n}'
+
 describe('patchCodexAcpModelCatalogStartupSource', () => {
+  it.each(['C:\\Program Files\\Codex\\codex.exe', undefined])(
+    'hides the nested Windows app-server console for executable %s',
+    (codexPath) => {
+      const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
+      const spawn = vi.fn<(...args: unknown[]) => { pid: number }>(() => ({ pid: 1 }))
+      const start = Function(
+        'spawn',
+        'process',
+        'createRequire',
+        'importMetaUrl',
+        `${patched.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+      )(
+        spawn,
+        { platform: 'win32', execPath: 'node.exe', env: {} },
+        () => ({ resolve: () => 'bundled-codex.js' }),
+        'file:///adapter.js'
+      ) as (path: string | undefined, env: NodeJS.ProcessEnv) => unknown
+      const env = { CODEX_CONFIG: JSON.stringify({ model: 'gpt-5.4' }) }
+      start(codexPath, env)
+      expect(spawn).toHaveBeenCalledOnce()
+      expect(spawn.mock.calls[0]).toEqual(
+        codexPath
+          ? [`"${codexPath}" app-server`, [], { shell: true, env, windowsHide: true }]
+          : ['node.exe', ['bundled-codex.js', 'app-server'], { env, windowsHide: true }]
+      )
+    }
+  )
+
+  it('upgrades the installed startup patch and leaves a second check unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-console-'))
+    try {
+      const adapterPath = join(root, 'index.js')
+      await writeFile(
+        adapterPath,
+        withPinnedSkillMapper('').replace(
+          PINNED_MODEL_CATALOG_STARTUP_FIXTURE,
+          PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE
+        )
+      )
+      await ensureManagedCodexContextUsage(adapterPath)
+      const upgraded = await readFile(adapterPath, 'utf8')
+      const spawn = vi.fn<(...args: unknown[]) => { pid: number }>(() => ({ pid: 1 }))
+      const start = Function(
+        'spawn',
+        'process',
+        'createRequire',
+        'importMetaUrl',
+        `${upgraded.replace('import.meta.url', 'importMetaUrl')}; return startCodexConnection;`
+      )(
+        spawn,
+        { platform: 'win32', execPath: 'node.exe', env: {} },
+        () => ({ resolve: () => 'bundled-codex.js' }),
+        'file:///adapter.js'
+      ) as (path: string | undefined, env: NodeJS.ProcessEnv) => unknown
+      const env = { CODEX_CONFIG: JSON.stringify({ model_catalog_json: 'C:\\Data\\catalog.json' }) }
+      start('C:\\Program Files\\Codex\\codex.exe', env)
+      start(undefined, env)
+      expect(spawn.mock.calls.map((call) => call[2])).toEqual([
+        { shell: true, env, windowsHide: true },
+        { env, windowsHide: true }
+      ])
+      const catalogArg = `model_catalog_json=${JSON.stringify('C:\\Data\\catalog.json')}`
+      expect(spawn.mock.calls[0]?.[1]).toEqual(['-c', catalogArg])
+      expect(spawn.mock.calls[1]?.[1]).toEqual(['bundled-codex.js', 'app-server', '-c', catalogArg])
+      const before = await stat(adapterPath)
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(upgraded)
+      expect((await stat(adapterPath)).mtimeMs).toBe(before.mtimeMs)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('passes a generated model catalog to the native app-server at process startup', () => {
     const patched = patchCodexAcpModelCatalogStartupSource(PINNED_MODEL_CATALOG_STARTUP_FIXTURE)
     const spawn = vi.fn(() => ({ pid: 1 }))
@@ -2063,6 +2209,14 @@ describe('patchCodexAcpModelCatalogStartupSource', () => {
     )
   })
 
+  it('rejects ambiguous original and previously patched startup functions', () => {
+    expect(() =>
+      patchCodexAcpModelCatalogStartupSource(
+        `${PINNED_MODEL_CATALOG_STARTUP_FIXTURE}\n${PREVIOUS_MODEL_CATALOG_STARTUP_FIXTURE}`
+      )
+    ).toThrow(/model-catalog startup patch no longer matches/)
+  })
+
   it('fails closed when the pinned app-server spawn source drifts', () => {
     const drifted = PINNED_MODEL_CATALOG_STARTUP_FIXTURE.replace(
       'spawn(codexPath, ["app-server"], { env: spawnEnv })',
@@ -2072,6 +2226,78 @@ describe('patchCodexAcpModelCatalogStartupSource', () => {
     expect(() => patchCodexAcpModelCatalogStartupSource(drifted)).toThrow(
       /model-catalog startup patch no longer matches/
     )
+  })
+})
+
+describe('Codex Reviewer MCP normalization', () => {
+  // The config projection from pinned codex-acp 1.6.2; transport conversion is unchanged.
+  const fixture = `function createSessionConfig(serversToConfigure) {
+    return {
+      "mcp_servers": Object.fromEntries(serversToConfigure.map((mcp) => [mcp.name, this.createMcpSeverConfig(mcp.server)]))
+    };
+  }`
+
+  const normalize = async (source: string): Promise<string> => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-mcp-config-'))
+    try {
+      const adapterPath = join(root, 'index.js')
+      await writeFile(adapterPath, withPinnedSkillMapper(source))
+      await ensureManagedCodexContextUsage(adapterPath)
+      return (await readFile(adapterPath, 'utf8')).split('\nfunction buildPromptItems')[0]
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+
+  it('requires only Reviewer MCP and preserves stdio/HTTP transport config', async () => {
+    const patched = await normalize(fixture)
+    const project = Function(`${patched}; return createSessionConfig;`)() as (
+      servers: Array<{ name: string; server: Record<string, unknown> }>
+    ) => { mcp_servers: Record<string, Record<string, unknown>> }
+    for (const server of [
+      { command: 'node', args: ['reviewer.js'], env: { TOKEN: 'test' } },
+      { url: 'http://127.0.0.1:1234/mcp', http_headers: { Authorization: 'test' } }
+    ]) {
+      const result = project.call({ createMcpSeverConfig: (value: unknown) => value }, [
+        { name: 'open-science-reviewer', server },
+        { name: 'optional-user-server', server }
+      ])
+      expect(result.mcp_servers['open-science-reviewer']).toEqual({ ...server, required: true })
+      expect(result.mcp_servers['optional-user-server']).toEqual(server)
+      expect(server).not.toHaveProperty('required')
+    }
+    expect(await normalize(patched)).toBe(patched)
+  })
+
+  it('upgrades an existing managed adapter atomically and leaves the second check unchanged', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'managed-codex-reviewer-'))
+    try {
+      const adapterPath = join(root, 'index.js')
+      const previous = withPinnedSkillMapper(fixture)
+      await writeFile(adapterPath, previous)
+      await ensureManagedCodexContextUsage(adapterPath)
+      const upgraded = await readFile(adapterPath, 'utf8')
+      expect(upgraded).toContain(await normalize(fixture))
+      const before = await stat(adapterPath)
+      await ensureManagedCodexContextUsage(adapterPath)
+      expect(await readFile(adapterPath, 'utf8')).toBe(upgraded)
+      expect((await stat(adapterPath)).mtimeMs).toBe(before.mtimeMs)
+      expect(await readdir(root)).toEqual(['index.js'])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects drifted, duplicated or mixed config projections', async () => {
+    for (const source of [
+      fixture.replace('mcp.server)', 'mcp.server, true)'),
+      `${fixture}\n${fixture}`,
+      `${fixture}\n${await normalize(fixture)}`
+    ]) {
+      await expect(normalize(source)).rejects.toThrow(
+        'Pinned Codex ACP Reviewer MCP patch no longer matches the adapter bundle'
+      )
+    }
   })
 })
 
@@ -2364,5 +2590,127 @@ describe('managed Codex process admission', () => {
     } finally {
       await rm(dataRoot, { recursive: true, force: true })
     }
+  })
+})
+
+describe('Codex native compaction settlement patch', () => {
+  const source = `class Client {
+  async runCompact(params) {
+    const compactionCompleted = this.awaitCompactionCompleted(params.threadId);
+    await this.threadCompactStart(params);
+    return await compactionCompleted;
+  }
+}
+class Bridge {
+  async runCompact(sessionId) {
+    await this.codexClient.runCompact({ threadId: sessionId });
+  }
+}
+async function command() {
+  switch (name) {
+      case "compact": {
+        await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId));
+        return { handled: true };
+      }
+  }
+}`
+  // The dynamically evaluated class is the pinned adapter code under test.
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const harness = () => {
+    const patched = patchCodexAcpCompactionSource(source)
+    expect(patchCodexAcpCompactionSource(patched)).toBe(patched)
+    const Client = new Function(
+      'RequestError',
+      'isCompactionCompletedNotification',
+      `${patched}; return Client`
+    )(
+      {
+        internalError: (data: unknown, message: string) =>
+          Object.assign(new Error(message), { data })
+      },
+      (event: { method: string }) => event.method === 'thread/compacted'
+    )
+    const client = new Client()
+    client.codexEventHandlers = []
+    const completions = new Map<string, (event: unknown) => void>()
+    client.captureTurnCompletions = (
+      threadId: string,
+      capture: (event: unknown) => void
+    ): (() => void) => {
+      completions.set(threadId, capture)
+      return () => {
+        completions.delete(threadId)
+      }
+    }
+    client.threadCompactStart = vi.fn(async () => {})
+    const emit = (method: string, params: Record<string, unknown>): void => {
+      if (method === 'turn/completed') completions.get(String(params.threadId))?.(params)
+      for (const callback of [...client.codexEventHandlers])
+        callback({ eventType: 'notification', method, params })
+    }
+    return { client, emit, completions }
+  }
+
+  it.each(['completed', 'interrupted'])(
+    'settles a %s turn and releases its listener',
+    async (status) => {
+      const { client, emit } = harness()
+      const started = vi.fn()
+      const pending = client.runCompact({ threadId: 'one' }, started)
+      emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+      expect(started).toHaveBeenCalledWith('turn', 'one')
+      emit('turn/completed', { threadId: 'other', turn: { id: 'turn', status } })
+      expect(client.codexEventHandlers).toHaveLength(1)
+      emit('turn/completed', { threadId: 'one', turn: { id: 'turn', status } })
+      await expect(pending).resolves.toMatchObject({ turn: { status } })
+      expect(client.codexEventHandlers).toHaveLength(0)
+    }
+  )
+
+  it('settles the native close fence and releases both subscriptions', async () => {
+    const { client, emit, completions } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+    // closeSession calls recordTurnCompleted directly after fencing stale notifications.
+    completions.get('one')?.({ threadId: 'one', turn: { id: 'turn', status: 'interrupted' } })
+    await expect(pending).resolves.toMatchObject({ turn: { status: 'interrupted' } })
+    expect(completions.size).toBe(0)
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('ignores retries and rejects only the active turn terminal error', async () => {
+    const { client, emit } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('turn/started', { threadId: 'one', turn: { id: 'turn' } })
+    emit('error', { threadId: 'one', turnId: 'old', willRetry: false, error: { message: 'stale' } })
+    emit('error', { threadId: 'one', turnId: 'turn', willRetry: true, error: { message: 'retry' } })
+    expect(client.codexEventHandlers).toHaveLength(1)
+    emit('error', {
+      threadId: 'one',
+      turnId: 'turn',
+      willRetry: false,
+      error: { message: 'context full' }
+    })
+    await expect(pending).rejects.toThrow('context full')
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('retains native success and cleans up a rejected start', async () => {
+    const { client, emit } = harness()
+    const pending = client.runCompact({ threadId: 'one' })
+    emit('thread/compacted', { threadId: 'one' })
+    await expect(pending).resolves.toBeUndefined()
+    client.threadCompactStart.mockRejectedValueOnce(new Error('start rejected'))
+    await expect(client.runCompact({ threadId: 'one' })).rejects.toThrow('start rejected')
+    expect(client.codexEventHandlers).toHaveLength(0)
+  })
+
+  it('rejects ambiguous or drifted pinned code', () => {
+    expect(() => patchCodexAcpCompactionSource(source + source)).toThrow('no longer matches')
+    expect(() =>
+      patchCodexAcpCompactionSource(
+        source.replace('await this.threadCompactStart(params)', 'await changed(params)')
+      )
+    ).toThrow('no longer matches')
   })
 })

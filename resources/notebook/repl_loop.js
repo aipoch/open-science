@@ -2789,7 +2789,28 @@ async function hostSessionsInspect(sessionId) {
   )
 }
 
-const hostSessions = Object.freeze({ list: hostSessionsList, inspect: hostSessionsInspect })
+async function hostSessionsRead(options = {}) {
+  if (arguments.length > 1)
+    throw new TypeError(
+      'host.sessions.read accepts one optional options object; the discussion Session is selected automatically'
+    )
+  const result = await sessionsRpc('read', {
+    options: remappedHostObject(options, 'host.sessions.read options', {
+      branchId: 'branchId',
+      kind: 'kind',
+      id: 'id',
+      part: 'part',
+      offset: 'offset',
+      limit: 'limit'
+    })
+  })
+  return camelCasedHostValue(result)
+}
+const hostSessions = Object.freeze({
+  list: hostSessionsList,
+  inspect: hostSessionsInspect,
+  read: hostSessionsRead
+})
 
 // host.compute: async remote-compute calls over the SAME app-local RPC endpoint as host.mcp, routed to
 // the main-process ComputeService via {method:'computeCall'}. Like host.mcp, this is only injected in
@@ -3669,7 +3690,7 @@ function wrapForRun(code) {
 
 // Runs one request against the persistent context. console is redirected into strings and restored in
 // finally; the awaited value of the async IIFE (i.e. what the user code `return`s) becomes result.
-async function run(code) {
+async function run(code, publisher) {
   let out = '',
     err = ''
   const outputBudget = {
@@ -3687,8 +3708,15 @@ async function run(code) {
   }
   let error = null,
     result = null
+  let executionStarted = false
+  const bindings = []
+  if (typeof publisher === 'string' && /^__open_science_publish_[a-f0-9]+$/.test(publisher)) {
+    sandbox[publisher] = (name, get, set) => bindings.push({ name, get, set })
+  }
   try {
-    const value = await vm.runInContext(wrapForRun(code), context, { filename: '<repl>' })
+    const script = new vm.Script(wrapForRun(code), { filename: '<repl>' })
+    executionStarted = true
+    const value = await script.runInContext(context)
     if (value !== undefined) {
       // Non-serializable (e.g. circular) echoes fall back to a string so a run never fails on output.
       try {
@@ -3704,12 +3732,24 @@ async function run(code) {
     error = takeOutputTail(diagnosticBudget, e && e.stack ? String(e.stack) : String(e))
     if (truncatedComputeErrors.has(e)) diagnosticBudget.truncated = true
   } finally {
+    // Accessors keep captured closures and later assignments attached to the same JS binding.
+    // Uninitialized lexical declarations (early return/throw) must not replace prior cell values.
+    for (const { name, get, set } of bindings) {
+      try {
+        get()
+        Object.defineProperty(sandbox, name, { get, set, enumerable: true, configurable: true })
+      } catch {
+        // A declaration still in its temporal dead zone did not finish initializing.
+      }
+    }
+    if (publisher) delete sandbox[publisher]
     console.log = origLog
     console.error = origErr
   }
   return {
     stdout: out,
     stderr: err,
+    execution_started: executionStarted,
     error,
     result,
     cwd: process.cwd(),
@@ -3735,7 +3775,7 @@ rl.on('line', (line) => {
     ACTIVE_CONTROL_INVOCATION_ID = request.control_invocation_id
     DELEGATE_CALL_SEQUENCE = 0
     try {
-      const resp = await run(request.code || '')
+      const resp = await run(request.code || '', request.repl_publisher)
       resp.req_id = request.req_id
       emit(resp)
     } finally {

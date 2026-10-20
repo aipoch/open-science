@@ -22,7 +22,39 @@ vi.mock('../ipc-handler-registry', () => ({
 }))
 
 import { ManagedFileVersionError } from './service'
-import { createManagedFileVersionHandlers, registerManagedFileVersionIpcHandlers } from './ipc'
+import {
+  createManagedFileVersionHandlers,
+  createManagedFileVersionCommandOwner,
+  registerManagedFileVersionIpcHandlers as installManagedFileVersionIpcHandlers,
+  type ManagedFileVersionHandlers
+} from './ipc'
+import {
+  ApplicationCallerLeaseRegistry,
+  bindCallerLeaseToEvent,
+  type OwnedApplicationCallerLease
+} from '../caller-lifecycle'
+
+const leases = new ApplicationCallerLeaseRegistry()
+let senders = new WeakMap<object, OwnedApplicationCallerLease>()
+const registerManagedFileVersionIpcHandlers = (handlers: ManagedFileVersionHandlers): void => {
+  installManagedFileVersionIpcHandlers(createManagedFileVersionCommandOwner(handlers))
+  for (const channel of ['managed-file-versions:diff-text', 'managed-file-versions:cancel-diff']) {
+    const handler = registered.get(channel)!
+    registered.set(channel, (rawEvent, request) => {
+      const event = rawEvent as {
+        sender: { id: number; once?: (name: string, listener: () => void) => void }
+      }
+      let owned = senders.get(event.sender)
+      if (!owned) {
+        owned = leases.acquire({ surface: 'electron', leaseId: `electron:${event.sender.id}` })
+        senders.set(event.sender, owned)
+        event.sender.once?.('destroyed', owned.release)
+      }
+      bindCallerLeaseToEvent(event, owned.lease)
+      return handler(event, request)
+    })
+  }
+}
 
 const inspectRequest: ManagedFileVersionInspectRequest = {
   source: 'artifact',
@@ -93,7 +125,10 @@ const saveResult: SaveTextEditResult = {
 }
 
 describe('managed file version IPC', () => {
-  beforeEach(() => registered.clear())
+  beforeEach(() => {
+    registered.clear()
+    senders = new WeakMap()
+  })
 
   it('returns renderer-safe discriminated envelopes and gates writes through the data-root lease', async () => {
     const service = {

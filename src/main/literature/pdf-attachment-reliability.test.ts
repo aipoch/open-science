@@ -1,59 +1,66 @@
-import { initDataRoot } from '../storage-root'
+import { persistentContentReferences } from '../storage/prisma-content-references'
+import type { PrismaClient } from '@prisma/client'
 import { createHash } from 'node:crypto'
-import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
-import { transactLiterature } from './transact'
 import {
-  mkdtemp,
-  rm,
-  writeFile,
-  truncate,
   access,
+  chmod,
+  mkdtemp,
   readFile,
   readdir,
   rename,
-  chmod
+  rm,
+  truncate,
+  writeFile
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { parseLiteratureDeletionError } from '../../shared/literature-deletion'
+import type { PdfAnnotationSource } from '../../shared/pdf-annotations'
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import { initDataRoot } from '../storage-root'
+import { transactLiterature } from './transact'
 
+import { LiteratureFullTextFinder } from '@aipoch/literature-discovery'
 import {
-  createLiteratureAttachmentVersionReference,
-  parseLiteratureAttachmentVersionReference,
   literatureCatalogCommandSchema,
-  literatureCatalogReceiptSchema,
-  literatureItemInputSchema,
-  literaturePdfImportRequestSchema,
-  type LiteraturePdfImportRequest
-} from '../../shared/literature'
+  literatureCatalogReceiptSchema
+} from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { createTestPdf as pdf } from '../../../test/fixtures/literature-pdf'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
+import {
+  createLiteratureAttachmentVersionReference,
+  parseLiteratureAttachmentVersionReference
+} from '../../shared/literature-attachment-reference'
+import {
+  literaturePdfImportRequestSchema,
+  type LiteraturePdfImportRequest
+} from '../../shared/literature'
 import type { PersistedChatMessage } from '../../shared/session-persistence'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import { ManagedPreviewResources } from '../managed-preview-resources'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ContentRepository } from '../storage/content-repository'
-import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
-import { inspectPdfPageCount } from '../uploads/attachment-media'
-import { LiteratureAttachmentAuthority } from './attachment-authority'
-import { LiteratureCatalog } from './catalog'
-import { AgentPdfAcquisition } from './agent-pdf-acquisition'
-import { LiteratureFullTextFinder } from './full-text-finder'
-import { SessionRepository } from '../session-persistence/repository'
 import {
   SessionPersistenceCoordinator,
   type SessionFileIndex
 } from '../session-persistence/coordinator'
-import { LiteraturePdfImporter } from './pdf-importer'
-import { LiteratureFullTextIndex } from './full-text-index'
-import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
+import { SessionRepository } from '../session-persistence/repository'
+import { ContentRepository } from '../storage/content-repository'
+import { removeAnchoredFile } from '../uploads/atomic-no-replace-publisher'
+import { inspectPdfPageCount } from '../uploads/attachment-media'
+import { AgentPdfAcquisition } from './agent-pdf-acquisition'
+import { LiteratureAttachmentAuthority } from './attachment-authority'
+import { LiteratureCatalog } from './catalog'
 import { LiteratureDocumentReader } from './document-reader'
+import { literatureIndex } from './full-text-index'
+import { LiteraturePdfImporter } from './pdf-importer'
 import { SessionPdfSourceResolver } from './session-pdf-source-resolver'
-import { ManagedPreviewResources } from '../managed-preview-resources'
 
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
@@ -63,6 +70,11 @@ vi.mock('node:fs/promises', async (importOriginal) => {
 vi.mock('../uploads/atomic-no-replace-publisher', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../uploads/atomic-no-replace-publisher')>()
   return { ...actual, removeAnchoredFile: vi.fn(actual.removeAnchoredFile) }
+})
+
+vi.mock('../pdf-annotations/native-import', async () => {
+  const core = await import('../pdf-annotations/native-import-core')
+  return { ...core, parseNativePdfAnnotations: core.parseNativePdfAnnotationsOnCurrentThread }
 })
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
@@ -103,7 +115,11 @@ describe('Literature PDF attachment reliability', () => {
     initDataRoot(root)
     client = createProjectDbClient(root)
     await migrateApplicationDatabase(client)
-    const content = new ContentRepository({ storageRoot: root, getClient: async () => client! })
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot: root,
+      getClient: async () => client!
+    })
     const sessions = new SessionRepository(join(root, 'sessions'))
     const coordinator = new SessionPersistenceCoordinator(sessions, {
       syncSession: async () => []
@@ -152,6 +168,101 @@ describe('Literature PDF attachment reliability', () => {
     }
   }
 
+  it('shares a verified Workspace PDF atomically and reuses the attachment on reopening', async () => {
+    const { request, path, content, catalog, authority } = await setup()
+    await client!.project.create({ data: { id: 'workspace', name: 'Workspace' } })
+    const annotations = new PdfAnnotationRepository(async () => client!)
+    const bytes = await readFile(path)
+    const source: PdfAnnotationSource = {
+      kind: 'upload-version',
+      projectId: 'workspace',
+      sessionId: 'session',
+      sourceFileId: 'upload',
+      versionId: 'workspace-version',
+      checksum: createHash('sha256').update(bytes).digest('hex'),
+      name: 'paper.pdf',
+      path: 'upload-version:workspace-version'
+    }
+    await annotations.create({
+      id: 'workspace-note',
+      projectId: source.projectId!,
+      sessionId: source.sessionId,
+      kind: 'document-note',
+      note: 'Keep my work',
+      tagIds: [],
+      target: { source, selector: { kind: 'document-note', coordinateVersion: 1 } }
+    })
+    let rejectFinalVerification = false
+    const importer = new LiteraturePdfImporter({
+      catalog,
+      content,
+      uploads: { resolveManagedUploadPath: async () => path, deleteUpload: async () => undefined },
+      workspace: {
+        annotations,
+        sources: {
+          async withVerifiedSource(selected, operation) {
+            if (selected.kind === 'literature-attachment-version') {
+              const lease = await authority.openContent(selected.versionId)
+              try {
+                await lease.verifyUnchanged()
+                return await operation(
+                  {
+                    ...lease,
+                    verifyUnchanged: async () => {
+                      if (rejectFinalVerification) throw new Error('Target bytes changed')
+                      await lease.verifyUnchanged()
+                    }
+                  },
+                  selected
+                )
+              } finally {
+                await lease.close()
+              }
+            }
+            const verifyUnchanged = async (): Promise<void> => {
+              expect(
+                createHash('sha256')
+                  .update(await readFile(path))
+                  .digest('hex')
+              ).toBe(selected.checksum)
+            }
+            await verifyUnchanged()
+            if (rejectFinalVerification) throw new Error('Source bytes changed')
+            await annotations.registerVerifiedSource(selected, bytes.length)
+            return operation({ path, size: bytes.length, verifyUnchanged }, selected)
+          }
+        }
+      }
+    })
+    const input = { source, itemId: request.itemId, operationId: crypto.randomUUID() }
+    const attach = catalog.attachContent.bind(catalog)
+    vi.spyOn(catalog, 'attachContent').mockImplementationOnce((input, onAttached, newItem) =>
+      attach(
+        input,
+        async (tx, result) => {
+          await onAttached?.(tx, result)
+          throw new Error('Injected failure after attaching')
+        },
+        newItem
+      )
+    )
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Injected failure')
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(0)
+    const committed = await importer.addToLiterature(input)
+    expect(committed.item.attachments[0].versions[0].pageCount).toBe(1)
+    const versionId = committed.item.attachments[0].versions[0].id
+    const library = await annotations.list({ literatureVersionId: versionId })
+    expect(library.items.map((note) => note.id)).toEqual(['workspace-note'])
+    await importer.addToLiterature(input)
+    rejectFinalVerification = true
+    await expect(importer.addToLiterature(input)).rejects.toThrow('Source bytes changed')
+    expect((await catalog.get(request.itemId))!.attachments).toHaveLength(1)
+    expect(await client!.pdfAnnotation.count()).toBe(1)
+    rejectFinalVerification = false
+    await importer.addToLiterature(input)
+    expect((await catalog.get(request.itemId))!.attachments[0].versions).toHaveLength(1)
+  })
+
   it.each(['unlink', 'sweep'] as const)(
     'reports pending cleanup when permanent deletion commits before a %s failure',
     async (failure) => {
@@ -185,7 +296,11 @@ describe('Literature PDF attachment reliability', () => {
         state: 'deleted-permanently',
         cleanupPending: true
       })
-      const restarted = new ContentRepository({ storageRoot: root, getClient: async () => client! })
+      const restarted = new ContentRepository({
+        references: persistentContentReferences,
+        storageRoot: root,
+        getClient: async () => client!
+      })
       expect(
         await restarted.sweep({ createdBefore: new Date(Date.now() + 1), contentIds: [contentId] })
       ).toMatchObject({ removedIds: [contentId], failedIds: [] })
@@ -558,7 +673,7 @@ describe('Literature PDF attachment reliability', () => {
     const extractionId = createHash('sha256')
       .update(`${version.checksum}:${fingerprint}`)
       .digest('hex')
-    const index = await LiteratureFullTextIndex.open(root)
+    const index = await literatureIndex(root).open()
     try {
       await index.replace({
         extractionId,
@@ -706,6 +821,8 @@ describe('Literature PDF attachment reliability', () => {
       mimeType: 'application/pdf'
     }
     const resource = await resources.acquire(17, input)
+    expect(resource.sourceChecksum).toBe(version.checksum)
+    expect(resource.size).toBe(original.length)
     const protocol = await resources.resolveProtocolResource(resource.id)
     try {
       expect(
@@ -978,6 +1095,7 @@ describe('Literature PDF attachment reliability', () => {
       let acquire: () => Promise<unknown> = () => importer.import(request)
       if (kind === 'full-text') {
         const finder = new LiteratureFullTextFinder({
+          pageCount: inspectPdfPageCount,
           catalog: {
             get: async (id) => {
               const item = await catalog.get(id)

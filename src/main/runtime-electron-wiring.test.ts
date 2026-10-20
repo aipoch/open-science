@@ -23,6 +23,31 @@ vi.mock('./compute/ipc', () => ({ installComputeIpcHandlers }))
 import { installElectronRuntimeAdapters } from './runtime-electron-wiring'
 
 describe('production Electron runtime wiring', () => {
+  it('records one registration timing for every named surface', async () => {
+    order.length = 0
+    const compute = { handlers: {}, enabledHosts: {} } as never
+    const runtime = {} as never
+    const workflows = {} as never
+    const sessionAdmission = {} as never
+    const names = ['notifications', 'compute', 'connectors', 'acp', 'settings'].map(
+      (name) => `open-science:ipc-surface:${name}`
+    )
+
+    for (const name of names) performance.clearMeasures(name)
+    await installElectronRuntimeAdapters({
+      compute,
+      beforeCompute: [{ name: 'notifications', install: () => ({ uninstall: vi.fn() }) }],
+      beforeAcp: [{ name: 'connectors', install: () => ({ uninstall: vi.fn() }) }],
+      acp: { runtime, workflows, sessionAdmission },
+      afterAcp: [{ name: 'settings', install: () => ({ uninstall: vi.fn() }) }]
+    })
+
+    for (const name of names) {
+      expect(performance.getEntriesByName(name, 'measure')).toHaveLength(1)
+    }
+    for (const name of names) performance.clearMeasures(name)
+  })
+
   it('exports only the named Session deletion capability to application startup', () => {
     expectTypeOf<
       keyof ApplicationRuntimeInterfaces['sessionDeletionCapability']
@@ -30,6 +55,7 @@ describe('production Electron runtime wiring', () => {
   })
 
   it('installs the constructed Compute and ACP modules before remaining surfaces', async () => {
+    order.length = 0
     const compute = { handlers: {}, enabledHosts: {} } as never
     const runtime = {} as never
     const workflows = {} as never

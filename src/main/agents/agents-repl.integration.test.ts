@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -16,7 +17,6 @@ import {
 } from '../notebook/kernel-protocol'
 import { AgentsService, type AgentsCatalogSource, type AgentsReadOp } from './agents-service'
 import { createSpecialistService, type SpecialistService } from '../specialist/service'
-import type { StoredConnectors } from '../settings/types'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.integration.test.ts
 // Exercises the real resources/notebook/repl_loop.js against a real NotebookLocalRpcServer wired
@@ -92,21 +92,22 @@ const stubCatalog: AgentsCatalogSource = {
       available: true
     }
   ],
-  getConnectors: async (): Promise<StoredConnectors | undefined> => ({
-    enabledIds: [],
-    autoAllowIds: [],
-    disabledConnectorIds: ['chemistry'],
-    customMcpServers: [
-      {
-        id: 'cust-1',
-        name: 'my-server',
-        displayName: 'My Server',
-        transport: 'stdio',
-        enabled: true,
-        command: 'run'
-      }
-    ]
-  })
+  getConnectors: async () =>
+    projectConnectorsFromStored({
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: ['chemistry'],
+      customMcpServers: [
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        }
+      ]
+    })
 }
 
 gate('host.agents repl integration', () => {

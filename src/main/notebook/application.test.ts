@@ -157,7 +157,7 @@ describe('Notebook application composition', () => {
   })
 
   it('registers Host Model after local RPC so reverse disposal cancels inference first', () => {
-    const source = readFileSync(resolve(__dirname, '../ipc.ts'), 'utf8')
+    const source = readFileSync(resolve(__dirname, '../composition/notebook-bridge.ts'), 'utf8')
     const localRpcRegistration = source.indexOf('const notebookRpcServer = await modules.add(')
     const hostModelRegistration = source.indexOf("name: 'host-model-service'")
 

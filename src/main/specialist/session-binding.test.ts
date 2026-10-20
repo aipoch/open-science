@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { SessionBindingService } from './session-binding'
 import type { SpecialistService } from './service'
 import type { SpecialistView } from '../../shared/specialist'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 
 // ---------------------------------------------------------------------------
 // Helpers

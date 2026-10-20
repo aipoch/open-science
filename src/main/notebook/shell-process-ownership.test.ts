@@ -50,6 +50,40 @@ describe.runIf(process.platform === 'linux')('Shell process ownership recovery',
 })
 
 describe('Shell process ownership receipt lifecycle', () => {
+  it('preserves the receipt and reports a redacted identity-query timeout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'shell-query-timeout-'))
+    roots.push(root)
+    const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+      runId: 'timeout',
+      projectId: 'project',
+      sessionId: 'session',
+      platform: 'win32',
+      hosted: true
+    }).host!
+    await rename(
+      host.pendingPath,
+      join(root, 'shell-process-ownership', `timeout.active.12345.${host.receiptId}.json`)
+    )
+    vi.mocked(spawnSync).mockReturnValueOnce({
+      pid: 0,
+      output: [null, '', 'private-command-line'],
+      stdout: '',
+      stderr: 'private-command-line',
+      status: null,
+      signal: 'SIGTERM',
+      error: Object.assign(new Error('query timed out'), { code: 'ETIMEDOUT' })
+    })
+    const restarted = new ShellProcessOwnershipRegistry(root, { processExists: () => true })
+    await expect(restarted.recover()).rejects.toMatchObject({
+      code: 'SHELL_PROCESS_RECOVERY_BLOCKED',
+      cause: {
+        message:
+          'Windows host identity query failed: status=null, code=ETIMEDOUT, receiptMatched=false'
+      }
+    })
+    expect(restarted.hasReceipts()).toBe(true)
+  })
+
   it('preserves every original after interrupted historical backup and requires renewed consent', async () => {
     const root = await mkdtemp(join(tmpdir(), 'shell-backup-retry-'))
     roots.push(root)
@@ -133,7 +167,11 @@ describe('Shell process ownership receipt lifecycle', () => {
         const restarted = new ShellProcessOwnershipRegistry(root)
         if (identity === 'owned') {
           await restarted.recover()
-          expect(() => process.kill(child.pid!, 0)).toThrow()
+          // Windows can retire the owned process object after tree recovery has completed.
+          // Wait only for this fixture's original child handle to report its exit.
+          await expect
+            .poll(() => child.exitCode !== null || child.signalCode !== null, { timeout: 4_000 })
+            .toBe(true)
           expect(restarted.hasReceipts()).toBe(false)
         } else {
           await expect(restarted.recover()).rejects.toMatchObject({
@@ -163,6 +201,52 @@ describe('Shell process ownership receipt lifecycle', () => {
       }
     },
     20_000
+  )
+
+  it.runIf(process.platform === 'win32')(
+    'forwards the owned shell command through the Windows process host',
+    async () => {
+      const root = await mkdtemp(join(tmpdir(), 'shell-host-forwarding-'))
+      roots.push(root)
+      const host = new ShellProcessOwnershipRegistry(root).beginLaunch({
+        runId: 'forwarding',
+        projectId: 'project',
+        sessionId: 'session',
+        platform: 'win32',
+        hosted: true
+      }).host!
+      const marker = join(root, 'forwarded.json')
+      const script = [
+        "const fs = require('node:fs');",
+        `fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ argv: process.argv.slice(1), electron: process.env.ELECTRON_RUN_AS_NODE }))`
+      ].join('')
+      const child = spawn(
+        process.execPath,
+        [
+          host.path,
+          host.pendingPath,
+          host.receiptId,
+          '--restore-electron-run-as-node',
+          JSON.stringify('1'),
+          process.execPath,
+          '-e',
+          script,
+          'shell-forwarded-a',
+          'shell-forwarded-b'
+        ],
+        { windowsHide: true, env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' } }
+      )
+      const exitCode = await new Promise<number | null>((resolve, reject) => {
+        child.once('error', reject)
+        child.once('close', resolve)
+      })
+
+      expect(exitCode).toBe(0)
+      expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({
+        argv: ['shell-forwarded-a', 'shell-forwarded-b'],
+        electron: '1'
+      })
+    }
   )
 
   it('cancels a pending hosted launch before a delayed host can start its command', async () => {

@@ -1,9 +1,9 @@
+import { useLiteratureHost } from './renderer-host'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import type { LiteratureDeletionDiagnostic } from '../../../../shared/literature-deletion'
 import { Button } from '@/components/ui/button'
-import { useNavigationStore } from '@/stores/navigation-store'
-import { useProjectStore } from '@/stores/project-store'
+
 import { LiteratureErrorNotice } from './LiteratureErrorNotice'
 
 export function LiteratureDeletionNotice({
@@ -13,6 +13,10 @@ export function LiteratureDeletionNotice({
   diagnostic: LiteratureDeletionDiagnostic
   onNavigate?: () => void
 }): React.JSX.Element {
+  const { useProjectStore, useNavigationStore } = useLiteratureHost()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const projects = useProjectStore((state) => state.projects)
   const [expanded, setExpanded] = useState(false)
@@ -21,8 +25,8 @@ export function LiteratureDeletionNotice({
   const openRecovery = async (projectId: string): Promise<void> => {
     setActionError(undefined)
     try {
-      if (!window.api.sessions.openRecoveryFolder) throw new Error('Unavailable')
-      await window.api.sessions.openRecoveryFolder({ projectId })
+      if (!hostApi.sessions.openRecoveryFolder) throw new Error('Unavailable')
+      await hostApi.sessions.openRecoveryFolder({ projectId })
     } catch {
       setActionError(t('Could not open that folder.'))
     }
@@ -134,7 +138,7 @@ export function LiteratureDeletionNotice({
                       {t('The damaged file was moved aside; its references are still unknown.')}
                     </p>
                   ) : null}
-                  {issue.projectId && window.api.sessions.openRecoveryFolder ? (
+                  {issue.projectId && hostApi.sessions.openRecoveryFolder ? (
                     <Button
                       type="button"
                       size="sm"

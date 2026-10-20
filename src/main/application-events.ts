@@ -1,34 +1,37 @@
-import type { LiteratureChangedEvent } from '../shared/literature'
-import type {
-  PdfNativeAnnotationImportProgress,
-  PdfAnnotationsChangedEvent
-} from '../shared/pdf-annotations'
-import type {
-  AcpAgentRuntimeUpdate,
-  AcpPermissionRequest,
-  AcpRuntimeEvent,
-  AcpStateUpdate
-} from '../shared/acp'
-import type { CompletionGateLifecycleEvent } from './agents/completion-gate'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
+import type { LiteratureChangedEvent } from '@aipoch/literature-library/contracts'
+import type { DownloadProgress } from '@aipoch/resilient-download'
+import type { AcpAgentRuntimeUpdate, AcpRuntimeEvent, AcpStateUpdate } from '../shared/acp'
+import type { AcpPermissionRequest } from '../shared/acp-permission-contract'
+import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'
 import type { ComputeApprovalRequest, JobSummary } from '../shared/compute'
-import type { DownloadProgress } from '../shared/download-progress'
 import type {
   Project,
   ProjectDeletedEvent,
   SessionDeletedEvent,
   SessionUpsertEvent
 } from '../shared/lifecycle-events'
+import type { LocalePreferenceSnapshot } from '../shared/locale'
+import type { MemoryChangedEvent } from '../shared/memory'
 import type { NotebookAvailableEvent, NotebookChangedEvent } from '../shared/notebook'
-import type { ProvisionProgress } from '../shared/notebook-env'
 import type { NotificationInboxChanged } from '../shared/notifications'
+import type {
+  PdfAnnotationsChangedEvent,
+  PdfNativeAnnotationImportProgress
+} from '../shared/pdf-annotations'
 import type { PermissionGrantsChangedEvent } from '../shared/permission-grants'
-import type { ProjectBackgroundActivityChangedEvent } from '../shared/background-result-delivery'
 import type { ProjectFilesChangedEvent } from '../shared/project-files'
 import type {
   ReviewSessionRequest,
   ReviewSuppressionEvent,
   ReviewUpdateEvent
 } from '../shared/reviewer'
+import type { PackageOperationSnapshot } from '../shared/session-package'
+import type {
+  SessionPersistenceFlushAbortedEvent,
+  SessionPersistenceFlushRequest
+} from '../shared/session-persistence-flush'
 import type {
   ClaudeInstallEvent,
   ConnectorApprovalRequest,
@@ -36,20 +39,13 @@ import type {
   ConversationSkillImportApprovalRequest,
   SettingsSnapshot
 } from '../shared/settings'
+import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../shared/side-chat'
 import type { CompletionHandoffLifecycleEvent, PendingSwitchBroadcast } from '../shared/specialist'
 import type { MigrationProgress } from '../shared/storage'
-import type { SideChatRelayDeliveredEvent, SideChatRuntimeEvent } from '../shared/side-chat'
-import type { UpdateStatus } from '../shared/update'
-import type { LocalePreferenceSnapshot } from '../shared/locale'
 import type { TagsChangedEvent } from '../shared/tags'
-import type { MemoryChangedEvent } from '../shared/memory'
+import type { UpdateStatus } from '../shared/update'
 import type { WslSetupStatus } from '../shared/wsl-setup'
-import type { PackageOperationSnapshot } from '../shared/session-package'
-import type {
-  SessionPersistenceFlushAbortedEvent,
-  SessionPersistenceFlushRequest
-} from '../shared/session-persistence-flush'
-import { createLogger, errorLogFields } from './logger'
+import type { CompletionGateLifecycleEvent } from './agents/completion-gate-contract'
 
 const log = createLogger('application-events')
 

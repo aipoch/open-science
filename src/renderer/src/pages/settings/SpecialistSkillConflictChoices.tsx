@@ -1,7 +1,6 @@
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { useTranslation } from 'react-i18next'
-
-import type { SpecialistPackageSkillPreview } from '../../../../shared/specialist-package'
+import type { SpecialistPackageSkillPreview } from '@aipoch/specialists'
 import type { SkillConflictResolutionMap } from './specialist-skill-conflicts'
 
 export const SpecialistSkillConflictChoices = ({

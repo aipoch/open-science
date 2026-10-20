@@ -25,6 +25,63 @@ const ACTIVE_COMPUTE_JOB_STATUSES = new Set<JobSummary['status']>([
   'running'
 ])
 
+// Events invalidate snapshots. Keep one read in flight and one trailing refresh, so a burst
+// cannot fan out queries or let an already-invalidated response replace the last good data.
+const createActivityRefresh = <T,>(
+  read: () => Promise<T>,
+  publish: (value: T) => void
+): { refresh: () => void; dispose: () => void } => {
+  let active = true
+  let loading = false
+  let pending = false
+  let retries = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const clearRetry = (): void => {
+    clearTimeout(timer)
+    timer = undefined
+  }
+  const load = async (): Promise<void> => {
+    if (!active) return
+    if (loading) {
+      pending = true
+      return
+    }
+    loading = true
+    do {
+      pending = false
+      try {
+        const value = await read()
+        if (active && !pending) publish(value)
+        retries = 0
+      } catch {
+        // Keep the last good snapshot. A missed terminal update may have no later event.
+        if (active && !pending && retries < 3) {
+          timer = setTimeout(
+            () => {
+              timer = undefined
+              void load()
+            },
+            1_000 * 2 ** retries++
+          )
+        }
+      }
+    } while (active && pending)
+    loading = false
+  }
+  return {
+    refresh: (): void => {
+      if (!active) return
+      clearRetry()
+      retries = 0
+      void load()
+    },
+    dispose: (): void => {
+      active = false
+      clearRetry()
+    }
+  }
+}
+
 const kernelLabel = (
   kernel: NotebookProjectKernelActivity,
   t: ReturnType<typeof useTranslation>['t']
@@ -89,44 +146,32 @@ const ProjectComputeInbox = (): React.JSX.Element => {
 
   useEffect(() => {
     if (!projectId) return
-    let alive = true
-    let requestVersion = 0
-    const load = async (): Promise<void> => {
-      const version = ++requestVersion
-      const activity = await window.api.notebook
-        .getProjectActivity({ projectId })
-        .catch(() => undefined)
-      if (alive && version === requestVersion && activity) {
-        setNotebookSnapshot({ projectId, activity })
-      }
-    }
+    const refresh = createActivityRefresh(
+      () => window.api.notebook.getProjectActivity({ projectId }),
+      (activity) => setNotebookSnapshot({ projectId, activity })
+    )
     const stop = window.api.notebook.onChanged((event) => {
-      if (event.projectId === projectId) void load()
+      if (event.projectId === projectId) refresh.refresh()
     })
-    void load()
+    refresh.refresh()
     return () => {
-      alive = false
+      refresh.dispose()
       stop()
     }
   }, [projectId])
 
   useEffect(() => {
     if (!projectId) return
-    let alive = true
-    let requestVersion = 0
-    const load = async (): Promise<void> => {
-      const version = ++requestVersion
-      const next = await window.api.compute
-        .jobsList({ projectId, since: recentSince })
-        .catch(() => [])
-      if (alive && version === requestVersion) setJobsSnapshot({ projectId, jobs: next })
-    }
+    const refresh = createActivityRefresh(
+      () => window.api.compute.jobsList({ projectId, since: recentSince }),
+      (jobs) => setJobsSnapshot({ projectId, jobs })
+    )
     const stop = window.api.compute.onJobUpdated((job) => {
-      if (job.project_id === projectId) void load()
+      if (job.project_id === projectId) refresh.refresh()
     })
-    void load()
+    refresh.refresh()
     return () => {
-      alive = false
+      refresh.dispose()
       stop()
     }
   }, [projectId, recentSince])

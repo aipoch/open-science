@@ -2,8 +2,10 @@ import type { ChildProcess } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import * as processTree from '../process-tree'
 import * as powerShellParser from './powershell-search-parser'
+import * as windowsRuntime from './windows-notebook-runtime'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, symlink } from 'node:fs/promises'
+import { realpathSync } from 'node:fs'
 import { EventEmitter } from 'node:events'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -11,6 +13,7 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
+  NotebookShellProcessAdapter,
   buildShellEnv,
   normalizePowerShellStderr,
   resolveShellInvocation,
@@ -22,7 +25,10 @@ import { NOTEBOOK_TEXT_LIMIT_BYTES } from './content-limits'
 import type { NotebookProcessSandbox } from './process-sandbox'
 import { normalizeFilesystemLayout } from '../../../packages/notebook-network-sandbox/runtime/src/platform/filesystem-layout.js'
 import { terminateProcessTree } from '../process-tree'
-import { notebookWorkloadCacheEnv } from './notebook-workload-cache-paths'
+import { notebookWorkloadCacheEnv } from '@aipoch/environment'
+import { shellNpmPaths } from './shell-npm-environment'
+import { windowsSupervisedLaunch } from '../../../packages/notebook-network-sandbox/runtime/src/platform/windows-appcontainer'
+import { ViolationLog } from '../../../packages/notebook-network-sandbox/runtime/src/gateway/violation-log'
 
 let portableRuntimeRoot: string
 
@@ -38,6 +44,158 @@ afterEach(async () => {
 const previewAvailable = (): boolean => true
 
 describe('notebook shell process behavior', () => {
+  it.skipIf(process.platform === 'win32' && !process.env.OPEN_SCIENCE_TEST_BASH)(
+    'retains a random temporary path across consecutive Bash cells',
+    async () => {
+      const shell = process.env.OPEN_SCIENCE_TEST_BASH ?? '/bin/bash'
+      // Git Bash is only a local Windows test interpreter. Use the production Job Object
+      // supervisor so normal shell exit still has authoritative process-tree cleanup proof.
+      const sandbox: NotebookProcessSandbox | undefined =
+        process.platform === 'win32'
+          ? {
+              wrap: async (invocation) => {
+                const launch = windowsSupervisedLaunch({
+                  executable: invocation.executable,
+                  args: [...invocation.args],
+                  command: '',
+                  cwd: portableRuntimeRoot,
+                  env: invocation.env,
+                  gatewayPort: 1,
+                  gatewayCredentials: { username: 'unused', password: 'unused' },
+                  hostPath: join(
+                    process.cwd(),
+                    'packages/notebook-network-sandbox/vendor/windows',
+                    process.arch,
+                    'notebook-appcontainer-host.exe'
+                  )
+                })
+                return {
+                  executable: launch.argv[0],
+                  args: launch.argv.slice(1),
+                  env: launch.env,
+                  confirmProcessTreeTermination: launch.confirmProcessTreeTermination,
+                  annotateStderr: (stderr) => stderr,
+                  cleanup: async (_reason, outcome) => ({
+                    processesTerminated: outcome.processesTerminated,
+                    networkClosed: true,
+                    temporaryResourcesRemoved: true
+                  })
+                }
+              }
+            }
+          : undefined
+      const adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+      try {
+        const request = {
+          cwd: portableRuntimeRoot,
+          handoffDir: portableRuntimeRoot,
+          runtimeRoot: join(portableRuntimeRoot, 'runtime'),
+          projectId: 'cross-cell-project',
+          sessionId: 'cross-cell-session',
+          runtimeBinding: { kind: 'native-posix' as const, shell }
+        }
+        const first = await adapter.execute({
+          ...request,
+          command: 'cross_cell_tmp="/tmp/cell-$RANDOM-$RANDOM"; printf "%s" "$cross_cell_tmp"'
+        })
+        expect(first, JSON.stringify(first)).toMatchObject({ exitCode: 0 })
+        expect(first.stdout).toMatch(/^\/tmp\/cell-\d+-\d+$/)
+        const second = await adapter.execute({
+          ...request,
+          command: 'printf "%s" "${cross_cell_tmp-UNSET}"'
+        })
+        expect(second.exitCode).toBe(0)
+        expect(second.stdout).toBe(first.stdout)
+        expect(
+          await adapter.execute({
+            ...request,
+            command:
+              'export CELL_EXPORT=kept; greet() { printf hello; }; mkdir child; cd child; set -u'
+          })
+        ).toMatchObject({ exitCode: 0 })
+        const state = await adapter.execute({
+          ...request,
+          command:
+            'printf "%s:%s:" "$cross_cell_tmp" "$CELL_EXPORT"; greet; printf ":%s:" "${PWD##*/}"; case "$-" in *u*) printf nounset;; esac'
+        })
+        expect(state).toMatchObject({
+          exitCode: 0,
+          stdout: `${first.stdout}:kept:hello:child:nounset`
+        })
+      } finally {
+        expect(await adapter.shutdown()).toEqual({ reaped: true })
+      }
+    }
+  )
+
+  it.each(
+    (['7.6', '5.1'] as const).flatMap((version) =>
+      [false, true].map((aliased) => ({ version, aliased }))
+    )
+  )(
+    'requires the bundled Node read grant only for PowerShell $version (aliased storage: $aliased)',
+    async ({ version, aliased }) => {
+      const alias = join(portableRuntimeRoot, 'alias')
+      if (aliased)
+        await symlink(portableRuntimeRoot, alias, process.platform === 'win32' ? 'junction' : 'dir')
+      const runtimeRoot = join(aliased ? alias : portableRuntimeRoot, 'managed')
+      const root = join(portableRuntimeRoot, 'bundled')
+      const nodeRoot = join(root, 'node')
+      const hostTools = join(portableRuntimeRoot, 'host-tools')
+      await mkdir(hostTools)
+      const resolver = vi.spyOn(windowsRuntime, 'resolveWindowsNotebookRuntime').mockReturnValue({
+        root,
+        node: join(nodeRoot, 'node.exe'),
+        powershell: join(root, 'powershell', 'pwsh.exe')
+      })
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      const admission = vi
+        .spyOn(processTree, 'assertProcessTreeSupport')
+        .mockImplementation(() => {})
+      const wrap = vi
+        .fn<NotebookProcessSandbox['wrap']>()
+        .mockRejectedValue(new Error('stop-before-spawn'))
+      try {
+        const result = await runShellCommand({
+          command: 'node --version',
+          cwd: portableRuntimeRoot,
+          handoffDir: portableRuntimeRoot,
+          runtimeRoot,
+          environment: {
+            PATH: hostTools,
+            ...(version === '7.6'
+              ? { NPM_CONFIG_PREFIX: join(portableRuntimeRoot, '.notebook-tools', 'npm') }
+              : {})
+          },
+          sessionId: 'fixture-session',
+          projectId: 'fixture-project',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version },
+          processSandbox: { wrap }
+        })
+        expect(result.stderr).toBe('stop-before-spawn')
+        expect(wrap).toHaveBeenCalledOnce()
+        const { filesystem, env } = wrap.mock.calls[0][0]
+        if (version === '7.6') {
+          expect(env.NPM_CONFIG_PREFIX).toBe(
+            realpathSync.native(shellNpmPaths(runtimeRoot, 'win32').prefix)
+          )
+          expect(filesystem.readWriteRoots).toContain(env.NPM_CONFIG_PREFIX)
+        }
+        if (version === '7.6') expect(filesystem.readOnlyRoots).toContain(nodeRoot)
+        else expect(filesystem.readOnlyRoots).not.toContain(nodeRoot)
+        expect(filesystem.readOnlyRoots).not.toContain(hostTools)
+        expect(filesystem.optionalReadOnlyRoots).toContain(hostTools)
+      } finally {
+        resolver.mockRestore()
+        parser.mockRestore()
+        admission.mockRestore()
+      }
+    }
+  )
+
   it('returns application recovery facts when earlier cleanup blocks native preparation', async () => {
     const result = await runShellCommand({
       command: 'printf never-started',
@@ -61,6 +219,78 @@ describe('notebook shell process behavior', () => {
       recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
     })
   })
+  it('keeps a persistent lane blocked until incomplete cleanup is verified', async () => {
+    const wrap = vi
+      .fn()
+      .mockRejectedValue(
+        new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.')
+      )
+    const adapter = new NotebookShellProcessAdapter(process.platform, { wrap })
+    const request = {
+      command: 'echo never-started',
+      cwd: process.cwd(),
+      handoffDir: process.cwd(),
+      runtimeRoot: portableRuntimeRoot,
+      sessionId: 'session',
+      projectId: 'project'
+    }
+    const first = await adapter.execute(request)
+    expect(first).toMatchObject({
+      exitCode: null,
+      errorCode: 'shell-cleanup-incomplete',
+      recovery: { execution: 'not-started', retryAfter: 'cleanup-verified' }
+    })
+    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+    expect(wrap).toHaveBeenCalledTimes(1)
+    expect(await adapter.shutdown()).toEqual({ reaped: false })
+    expect(await adapter.execute(request)).toMatchObject({ errorCode: 'shell-cleanup-incomplete' })
+  })
+
+  it.each(['incomplete', 'throw'])(
+    'retries preparation cleanup on shutdown after %s proof',
+    async (failure) => {
+      let verified = false
+      const retryCleanup = vi.fn(async () => {
+        if (!verified && failure === 'throw') throw new Error('cleanup still unavailable')
+        return verified
+      })
+      const wrap = vi
+        .fn()
+        .mockRejectedValue(
+          Object.assign(
+            new Error('SHELL_CLEANUP_INCOMPLETE: Previous shell cleanup could not be reconciled.'),
+            { retryCleanup }
+          )
+        )
+      const adapter = new NotebookShellProcessAdapter(process.platform, { wrap })
+      const request = {
+        command: 'echo never-started',
+        cwd: process.cwd(),
+        handoffDir: process.cwd(),
+        runtimeRoot: portableRuntimeRoot,
+        sessionId: 'session',
+        projectId: 'project'
+      }
+      const result = await adapter.execute(request)
+      expect(result).toMatchObject({
+        errorCode: 'shell-cleanup-incomplete',
+        ownedTreeReaped: false
+      })
+      wrap.mockRejectedValueOnce(new Error('unrelated preparation failure must never run'))
+      expect(await adapter.execute(request)).toMatchObject({
+        errorCode: 'shell-cleanup-incomplete'
+      })
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(await adapter.shutdown()).toEqual({ reaped: false })
+      verified = true
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(retryCleanup).toHaveBeenCalledTimes(3)
+      expect(wrap).toHaveBeenCalledOnce()
+      expect(await adapter.shutdown()).toEqual({ reaped: true })
+      expect(retryCleanup).toHaveBeenCalledTimes(3)
+    }
+  )
+
   it('rejects unavailable process ownership before sandbox preparation', async () => {
     const admission = vi.spyOn(processTree, 'assertProcessTreeSupport').mockImplementation(() => {
       throw new processTree.ProcessTreeUnavailableError(new Error('native module missing'))
@@ -100,7 +330,10 @@ describe('notebook shell process behavior', () => {
 
     it('uses an absolute non-interactive PowerShell command on Windows without relying on PATH', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
-      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', 'win32')
+      const invocation = resolveShellInvocation('cp "source.png" "destination.png"', {
+        kind: 'powershell',
+        version: '5.1'
+      })
 
       expect(invocation.executable).toBe(
         'C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe'
@@ -147,7 +380,7 @@ describe('notebook shell process behavior', () => {
     it('isolates PowerShell command syntax from the exit-code wrapper', () => {
       vi.stubEnv('SystemRoot', 'C:\\Windows')
       const command = "Write-Output 'first'\n# keep this comment\nWrite-Output 'continued' `"
-      const invocation = resolveShellInvocation(command, 'win32')
+      const invocation = resolveShellInvocation(command, { kind: 'powershell', version: '5.1' })
       const script = Buffer.from(invocation.args.at(-1) ?? '', 'base64').toString('utf16le')
       const encodedCommand = script.match(/\$openScienceCommandBase64 = '([A-Za-z0-9+/=]+)'/)?.[1]
 
@@ -247,10 +480,15 @@ describe('notebook shell process behavior', () => {
           pathEnvironment: {
             OPEN_SCIENCE_HANDOFF_DIR: 'C:\\handoff',
             ...notebookWorkloadCacheEnv(portableRuntimeRoot),
+            NPM_CONFIG_PREFIX: shellNpmPaths(portableRuntimeRoot, 'linux').prefix,
+            NPM_CONFIG_CACHE: shellNpmPaths(portableRuntimeRoot, 'linux').cache,
             OPEN_SCIENCE_INPUT_DIR: 'C:\\inputs'
           },
           filesystem: expect.objectContaining({
-            readOnlyRoots: expect.arrayContaining(['C:\\inputs'])
+            readOnlyRoots: expect.arrayContaining(['C:\\inputs']),
+            readWriteRoots: expect.arrayContaining([
+              shellNpmPaths(portableRuntimeRoot, 'linux').prefix
+            ])
           })
         })
       )
@@ -488,6 +726,55 @@ describe('notebook shell process behavior', () => {
       }
     })
 
+    it('annotates redirected JSON filesystem errors while preserving Shell stdout', async () => {
+      const parser = vi
+        .spyOn(powerShellParser, 'parsePowerShellSearchCommands')
+        .mockResolvedValue([])
+      vi.stubEnv('SystemRoot', 'C:\\Windows')
+      const path = String.raw`C:\Users\fixture\.config\sample-tool\access-token.txt`
+      const stdout = `Access is denied.\n${JSON.stringify(
+        {
+          ok: false,
+          message: `EPERM: operation not permitted, open '${path}'`
+        },
+        null,
+        2
+      )}\n`
+      const log = new ViolationLog()
+      try {
+        const result = await runShellCommand({
+          command: 'sample-command 2>&1',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: { kind: 'powershell', version: '5.1' },
+          processSandbox: {
+            wrap: async (invocation) => ({
+              executable: process.execPath,
+              args: ['-e', `process.stdout.write(${JSON.stringify(stdout)})`],
+              env: invocation.env,
+              confirmProcessTreeTermination: async () => true,
+              annotateStderr: (stderr, output) => log.attach('command', stderr, undefined, output),
+              cleanup: async () => ({
+                processesTerminated: true,
+                networkClosed: true,
+                temporaryResourcesRemoved: true
+              })
+            })
+          },
+          terminateTree: async () => ({ reaped: true })
+        })
+        expect(result.stdout).toBe(stdout)
+        expect(result.stderr).toContain(`OPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: ${path} `)
+        expect(result.stderr).not.toContain('"ok"')
+      } finally {
+        parser.mockRestore()
+      }
+    })
+
     it('keeps Windows shell runtime variables while excluding host secrets', () => {
       const runtimeRoot = 'D:\\OpenScience\\runtime'
       const env = buildShellEnv(
@@ -505,7 +792,9 @@ describe('notebook shell process behavior', () => {
           OPEN_SCIENCE_PSMODULEPATH: 'C:\\host\\controlled-modules',
           OPEN_SCIENCE_TEST_SECRET: 'must-not-leak'
         },
-        runtimeRoot
+        runtimeRoot,
+        undefined,
+        { kind: 'powershell', version: '5.1' }
       )
       const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
 
@@ -635,7 +924,11 @@ describe('notebook shell process behavior', () => {
     })
 
     await vi.waitFor(
-      () => expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true }),
+      () =>
+        expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+          processesTerminated: true,
+          processState: 'never-started'
+        }),
       { timeout: 5_000 }
     )
     expect(completed).toBe(false)
@@ -706,7 +999,10 @@ describe('notebook shell process behavior', () => {
         })
       ).resolves.toMatchObject({ cancelled: true, exitCode: null })
       expect(beginSpawn).not.toHaveBeenCalled()
-      expect(cleanup).toHaveBeenCalledWith('cancel', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('cancel', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
     }
   )
 
@@ -723,6 +1019,7 @@ describe('notebook shell process behavior', () => {
         args: ['-e', 'process.stdout.write("finished")'],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
+        confirmProcessState: async () => 'started-and-reaped' as const,
         cleanup
       }))
     }
@@ -749,7 +1046,10 @@ describe('notebook shell process behavior', () => {
         recovery: { execution: 'may-have-run', retryAfter: 'cleanup-verified' }
       })
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }
@@ -776,6 +1076,7 @@ describe('notebook shell process behavior', () => {
         args: ['-e', 'process.stdout.write("finished")'],
         env: invocation.env,
         annotateStderr: (stderr: string) => stderr,
+        confirmProcessState: async () => 'started-and-reaped' as const,
         cleanup
       }))
     }
@@ -802,12 +1103,78 @@ describe('notebook shell process behavior', () => {
         })
       ).resolves.toEqual({ stdout: 'finished', stderr: '', exitCode: 0 })
       expect(cleanup).toHaveBeenCalledTimes(2)
-      expect(cleanup).toHaveBeenNthCalledWith(1, 'exit', { processesTerminated: true })
-      expect(cleanup).toHaveBeenNthCalledWith(2, 'exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenNthCalledWith(1, 'exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
+      expect(cleanup).toHaveBeenNthCalledWith(2, 'exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     } finally {
       await rm(runtimeRoot, { recursive: true, force: true })
     }
   })
+
+  it.each([true, false])(
+    'retains WSL launch evidence until guest cleanup is proven after an identity race: %s',
+    async (reaped) => {
+      const runtimeRoot = await mkdtemp(join(tmpdir(), 'open-science-wsl-identity-'))
+      const registry = new ShellProcessOwnershipRegistry(runtimeRoot, {
+        processStartIdentity: () => undefined
+      })
+      const launch = registry.beginLaunch({
+        runId: 'short-wsl-command',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        platform: 'win32'
+      })
+      const cleanup = vi.fn(async () => {
+        expect(registry.hasReceipts()).toBe(true)
+        return {
+          processesTerminated: reaped,
+          networkClosed: true,
+          temporaryResourcesRemoved: reaped
+        }
+      })
+      try {
+        const result = await runShellCommand({
+          command: 'printf finished',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'win32',
+          runtimeBinding: {
+            kind: 'wsl2-bash',
+            profileId: 'profile-1',
+            distro: 'Ubuntu',
+            user: 'researcher'
+          },
+          previewAvailable: () => true,
+          prepareProcessOwnership: () => launch,
+          terminateTree: async () => ({ reaped: false }),
+          processSandbox: {
+            wrap: async () => ({
+              executable: process.execPath,
+              args: ['-e', 'process.stdout.write("finished")'],
+              env: process.env,
+              annotateStderr: (stderr) => stderr,
+              cleanup
+            })
+          }
+        })
+        expect(result.stdout).toBe('finished')
+        expect(result.exitCode).toBe(reaped ? 0 : null)
+        expect(result.errorCode).toBe(reaped ? undefined : 'shell-cleanup-incomplete')
+        expect(registry.hasReceipts()).toBe(!reaped)
+        expect(cleanup).toHaveBeenCalled()
+      } finally {
+        await rm(runtimeRoot, { recursive: true, force: true })
+      }
+    }
+  )
 
   describe.runIf(process.platform !== 'win32')('process results', () => {
     let runtimeRoot: string
@@ -1018,6 +1385,9 @@ describe('notebook shell process behavior', () => {
             args: invocation.args,
             env: { OPEN_SCIENCE_SANDBOX_TEST: 'wrapped' },
             beginExecution,
+            // Keep this wrapper contract independent of POSIX exit-tree inspection timing.
+            // Real tree teardown and incomplete outcomes have separate coverage below.
+            confirmProcessTreeTermination: async () => true,
             annotateStderr: (stderr: string) => stderr,
             cleanup
           }
@@ -1053,7 +1423,10 @@ describe('notebook shell process behavior', () => {
       expect(beginExecution).toHaveBeenCalledOnce()
       expect(endExecution).toHaveBeenCalledOnce()
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('exit', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('exit', {
+        processesTerminated: true,
+        processState: 'started-and-reaped'
+      })
     })
 
     it('waits for exit-tree inspection and reports an incomplete outcome exactly', async () => {
@@ -1106,7 +1479,8 @@ describe('notebook shell process behavior', () => {
       })
       expect(cleanup).toHaveBeenCalledWith('exit', {
         processesTerminated: false,
-        confirmTermination: expect.any(Function)
+        confirmTermination: expect.any(Function),
+        processState: 'termination-unknown'
       })
     })
 
@@ -1158,7 +1532,10 @@ describe('notebook shell process behavior', () => {
         })
 
         expect(cleanup).toHaveBeenCalledOnce()
-        expect(cleanup).toHaveBeenCalledWith(reason, { processesTerminated: true })
+        expect(cleanup).toHaveBeenCalledWith(reason, {
+          processesTerminated: true,
+          processState: 'started-and-reaped'
+        })
       }
     )
 
@@ -1215,6 +1592,7 @@ describe('notebook shell process behavior', () => {
       await expect(completion).resolves.toMatchObject({ exitCode: null })
       expect(cleanup).toHaveBeenCalledWith('timeout', {
         processesTerminated: reaped,
+        processState: reaped ? 'started-and-reaped' : 'termination-unknown',
         ...(!reaped ? { confirmTermination: expect.any(Function) } : {})
       })
     })
@@ -1249,7 +1627,10 @@ describe('notebook shell process behavior', () => {
       ).resolves.toMatchObject({ exitCode: null })
 
       expect(cleanup).toHaveBeenCalledOnce()
-      expect(cleanup).toHaveBeenCalledWith('spawn-failed', { processesTerminated: true })
+      expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
     })
 
     it('reports bounded spawn-failure teardown failure without assuming termination', async () => {
@@ -1281,8 +1662,8 @@ describe('notebook shell process behavior', () => {
       })
 
       expect(cleanup).toHaveBeenCalledWith('spawn-failed', {
-        processesTerminated: false,
-        confirmTermination: expect.any(Function)
+        processesTerminated: true,
+        processState: 'never-started'
       })
     })
 
@@ -1358,3 +1739,5 @@ describe('notebook shell process behavior', () => {
     })
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

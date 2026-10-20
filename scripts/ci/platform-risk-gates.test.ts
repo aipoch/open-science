@@ -17,6 +17,78 @@ const changes = (path: string): Array<{ path: string; status: string }> => [
 ]
 
 describe('platform risk execution policy', () => {
+  it.each([
+    ['shared owner', 'M', 'src/shared/app-config.ts'],
+    ['unknown owner', 'A', 'src/shared/new-unregistered-contract.ts'],
+    ['destructive change', 'D', 'src/shared/app-config.ts'],
+    ['global input', 'M', 'package.json'],
+    ['CI policy', 'M', '.github/workflows/pr-gate.yml']
+  ])(
+    'defers %s full portable validation to acceptance without weakening other checks',
+    (_, status, path) => {
+      const classify = (event: string): ReturnType<typeof runModuleImpactAuthorityCli> =>
+        runModuleImpactAuthorityCli(
+          ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+          { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+          { execute: () => Buffer.from(`${status}\0${path}\0`), write: () => undefined }
+        )
+      const { plan: pr, report } = classify('pull_request')
+      const { plan: queue } = classify('merge_group')
+      expect(report.resolved.mode).toBe('full')
+      expect(pr.mode).toBe('full')
+      expect(pr.bundles).not.toContain('unit')
+      expect(pr.lanes).not.toContain('unit_macos')
+      expect(pr.roots).toEqual(report.resolved.roots)
+      expect(pr.reasonChains).toEqual(expect.arrayContaining(report.resolved.reasonChains))
+      expect(pr.reasonChains).toContain(
+        'pull_request: full portable tests and coverage deferred to scheduled/manual acceptance'
+      )
+      expect(pr.bundles).toEqual(
+        expect.arrayContaining(['policy', 'static', 'linux_runtime', 'windows_core', 'windows_e2e'])
+      )
+      expect(pr.lanes).toEqual(
+        expect.arrayContaining(['interface_contracts', 'cli_sdk', 'i18n', 'lint', 'typecheck_node'])
+      )
+      expect(queue.mode).toBe('full')
+      expect(queue.bundles).not.toContain('unit')
+      expect(queue.lanes).not.toContain('unit_macos')
+      for (const plan of [pr, queue]) {
+        const conclusions = Object.fromEntries(
+          ['preflight', ...plan.bundles].map((name) => [name, 'success'])
+        )
+        expect(evaluatePrGate(plan, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
+        for (const unit of ['skipped', 'failure', 'cancelled', undefined]) {
+          expect(
+            evaluatePrGate(plan, { ...conclusions, unit }, { executionMode: 'bundles' }).ok
+          ).toBe(unit === 'skipped')
+        }
+      }
+    }
+  )
+
+  it.each(['pull_request', 'merge_group'])(
+    'keeps bounded module tests and their blocking gate on %s',
+    (event) => {
+      const { plan } = runModuleImpactAuthorityCli(
+        ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+        { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+        {
+          execute: () => Buffer.from('M\0src/renderer/src/components/ui/button.tsx\0'),
+          write: () => undefined
+        }
+      )
+      expect(plan.mode).toBe('selective')
+      expect(plan.bundles).toContain('unit')
+      expect(plan.lanes).toContain('unit_macos')
+      const conclusions = Object.fromEntries(
+        ['preflight', ...plan.bundles].map((name) => [name, 'success'])
+      )
+      expect(
+        evaluatePrGate(plan, { ...conclusions, unit: 'skipped' }, { executionMode: 'bundles' }).ok
+      ).toBe(false)
+    }
+  )
+
   it('uses Windows business journeys without Mac on ordinary PRs', () => {
     const plan = platformExecutionPlan(
       full,
@@ -167,24 +239,28 @@ it('retains all deferred Mac suites in the nightly job and fails on missing exec
   for (const command of [
     'test:e2e:journey',
     'test:e2e:workspace',
-    'playwright.browser.config.ts',
+    'e2e/playwright.browser.config.ts',
     'test:e2e:visual',
     'test:e2e:accessibility:signal'
   ]) {
     expect(steps.some(({ run }) => run?.includes(command))).toBe(true)
   }
-  const enforce = steps.find(
-    ({ name }) => name === 'Enforce complete Mac core and presentation suites'
-  )!
-  const env = {
-    ...process.env,
-    FUNCTIONAL: 'success',
-    WORKSPACE: 'success',
-    PRESENTATION: 'success',
-    ACCESSIBILITY: 'success'
-  }
-  expect(spawnSync('bash', ['-c', enforce.run!], { env }).status).toBe(0)
-  for (const key of ['FUNCTIONAL', 'WORKSPACE', 'PRESENTATION', 'ACCESSIBILITY']) {
+  const enforce = steps.find(({ name }) => name === 'Enforce selected Mac suite')!
+  for (const [group, key] of [
+    ['functional', 'FUNCTIONAL'],
+    ['workspace', 'WORKSPACE'],
+    ['presentation', 'PRESENTATION'],
+    ['presentation', 'ACCESSIBILITY']
+  ]) {
+    const env = {
+      ...process.env,
+      GROUP: group,
+      FUNCTIONAL: 'success',
+      WORKSPACE: 'success',
+      PRESENTATION: 'success',
+      ACCESSIBILITY: 'success'
+    }
+    expect(spawnSync('bash', ['-c', enforce.run!], { env }).status).toBe(0)
     expect(
       spawnSync('bash', ['-c', enforce.run!], { env: { ...env, [key]: 'skipped' } }).status
     ).toBe(1)
@@ -246,7 +322,7 @@ it('applies the platform policy only when explicitly enabled', () => {
 
 it.each([
   'src/main/locale/main-process-messages.ts',
-  'src/main/connectors/descriptors/genes-ontology.ts'
+  'packages/connector-builtins/src/genes-ontology.ts'
 ])('uses Windows business coverage without Mac for known non-native main changes: %s', (path) => {
   const { plan } = runModuleImpactAuthorityCli(
     ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
@@ -303,8 +379,8 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
     {
       number: 2696,
       paths: [
-        'src/main/connectors/descriptors/genomes-ensembl.test.ts',
-        'src/main/connectors/descriptors/genomes-ensembl.ts',
+        'packages/connector-builtins/src/genomes-ensembl.test.ts',
+        'packages/connector-builtins/src/genomes-ensembl.ts',
         'src/main/notebook/host-mcp.integration.test.ts'
       ]
     },
@@ -342,7 +418,7 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
       expect.arrayContaining(fixture.paths.filter((path) => path.endsWith('.test.ts')))
     )
     expect(report.shadow.modules).toContain(
-      fixture.number === 2696 ? 'genomes_ensembl_connector' : 'acp_runtime'
+      fixture.number === 2696 ? 'connector_builtins' : 'acp_runtime'
     )
   }
 })

@@ -255,7 +255,14 @@ it.each([
         expect(received.projectId).not.toBe(imported.projectId)
         expect(received.sessionId).not.toBe(imported.sessionId)
         const forwardedOrigin = await receiver.readOrigin(received)
-        expect(forwardedOrigin.sourceManifest).toEqual(origin.sourceManifest)
+        expect(forwardedOrigin.sourceManifest).toEqual({
+          ...origin.sourceManifest,
+          requiredFeatures: ['ro-crate'],
+          inventory: [
+            ...origin.sourceManifest.inventory,
+            expect.objectContaining({ path: 'ro-crate-metadata.json', kind: 'metadata' })
+          ]
+        })
         const [reopened] = await new NotebookRunRepository(next.storageRoot).readSessionDocuments(
           received.projectId,
           received.sessionId

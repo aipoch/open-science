@@ -5,6 +5,25 @@ import { AcpOpenCodeTurnAdapter } from './opencode-turn-adapter'
 import type { OpenCodeUsageSnapshot } from './opencode-turn-usage'
 
 describe('ACP OpenCode turn adapter', () => {
+  it('ignores historical compaction errors and returns only the current summary outcome', async () => {
+    const before = { assistantMessageIds: new Set(['old']), usageByMessageId: new Map() }
+    const after = {
+      assistantMessageIds: new Set(['old', 'new']),
+      usageByMessageId: new Map(),
+      compactionByMessageId: new Map([
+        ['old', { succeeded: false, error: 'old failure' }],
+        ['new', { succeeded: true }]
+      ])
+    }
+    const adapter = new AcpOpenCodeTurnAdapter(
+      vi.fn().mockResolvedValueOnce(before).mockResolvedValueOnce(after)
+    )
+    const probe = await adapter.begin({ providerSessionId: 'session', cwd: '/workspace' })
+    expect(await probe.finalize({ response: { stopReason: 'end_turn' } })).toEqual({
+      compaction: { succeeded: true }
+    })
+  })
+
   it('captures one provider Session and cwd before and after the turn', async () => {
     const snapshots: OpenCodeUsageSnapshot[] = [
       {
@@ -67,7 +86,7 @@ describe('ACP OpenCode turn adapter', () => {
           cachedReadTokens: 2,
           cachedWriteTokens: 1,
           outputTokens: 2,
-          contextUsedTokens: 14
+          contextUsedTokens: 15
         },
         {
           sourceInvocationId: 'step-2',
@@ -76,10 +95,10 @@ describe('ACP OpenCode turn adapter', () => {
           cachedReadTokens: 4,
           cachedWriteTokens: 1,
           outputTokens: 3,
-          contextUsedTokens: 23
+          contextUsedTokens: 24
         }
       ],
-      contextUsedTokens: 23,
+      contextUsedTokens: 24,
       lastModelStepUsage: {
         inputTokens: 19,
         cacheTokens: 5,

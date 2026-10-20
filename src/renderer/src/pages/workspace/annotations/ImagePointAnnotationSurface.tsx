@@ -1,16 +1,18 @@
-import { useLayoutEffect, useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Textarea } from '@/components/ui/textarea'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import type {
-  Annotation,
-  AnnotationValidationError,
-  ImagePointAnnotation
-} from '../../../../../shared/annotations'
+import type { Annotation, ImagePointAnnotation } from '../../../../../shared/annotation-contract'
+import type { AnnotationValidationError } from '../../../../../shared/annotations'
 
+import { createAnnotationId } from './annotation-id'
+import {
+  subscribeAnnotationReveal,
+  subscribeAnnotationRevealPreparation
+} from './annotation-reveal'
 import {
   fitContainedImageRect,
   viewportPointToNormalized,
@@ -22,11 +24,6 @@ import {
   imagePointAnnotationSourceForPreview,
   type ImagePointAnnotationSource
 } from './image-annotation-source'
-import { createAnnotationId } from './annotation-id'
-import {
-  subscribeAnnotationReveal,
-  subscribeAnnotationRevealPreparation
-} from './annotation-reveal'
 import { useAnnotationSurfaceScale } from './use-annotation-surface-scale'
 
 const IMAGE_POINT_CLICK_THRESHOLD = 4
@@ -438,4 +435,4 @@ const ImagePointAnnotationSurface = ({
   )
 }
 
-export { ImagePointAnnotationSurface, IMAGE_POINT_CLICK_THRESHOLD }
+export { IMAGE_POINT_CLICK_THRESHOLD, ImagePointAnnotationSurface }

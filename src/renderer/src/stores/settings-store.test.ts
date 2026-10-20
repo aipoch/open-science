@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from './desktop-runtime-recovery-store'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
@@ -942,6 +943,130 @@ describe('settings store: onboarding completion', () => {
 })
 
 describe('settings store: startup loading', () => {
+  it('rejects an incomplete settings snapshot before it becomes the active cache', async () => {
+    api.getSettings.mockResolvedValueOnce({ providers: null })
+    await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(false)
+    expect(useSettingsStore.getState()).toMatchObject({ isLoaded: false, isLoading: false })
+  })
+
+  it('does not duplicate an unresolved settings read when retry is requested', async () => {
+    let finish!: (value: SettingsSnapshot) => void
+    api.getSettings.mockReturnValue(
+      new Promise<SettingsSnapshot>((resolve) => {
+        finish = resolve
+      })
+    )
+    const first = useSettingsStore.getState().load({ force: true })
+    const second = useSettingsStore.getState().load({ force: true })
+    try {
+      expect(api.getSettings).toHaveBeenCalledOnce()
+    } finally {
+      finish(snapshot([]))
+      await Promise.all([first, second])
+    }
+  })
+
+  it('settles a stalled settings read and rejects its late result', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: SettingsSnapshot) => void
+    api.getSettings.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    try {
+      const loading = useSettingsStore.getState().load({ force: true })
+      await vi.advanceTimersByTimeAsync(15_001)
+      expect(useSettingsStore.getState()).toMatchObject({
+        isLoading: false,
+        isLoaded: false,
+        loadError: 'Open-Science could not load settings. Retry to continue.'
+      })
+      await expect(loading).resolves.toBe(false)
+      finish({ ...snapshot([]), onboardingCompletedAt: 111 })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(useSettingsStore.getState().isLoaded).toBe(false)
+      await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(true)
+    } finally {
+      finish(snapshot([]))
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('settles stalled optional probes without discarding the loaded settings', async () => {
+    vi.useFakeTimers()
+    let finish!: (value: boolean) => void
+    api.isEncryptionAvailable.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    try {
+      const loading = useSettingsStore.getState().load({ force: true })
+      await vi.advanceTimersByTimeAsync(15_001)
+      expect(useSettingsStore.getState()).toMatchObject({
+        isLoading: false,
+        isLoaded: true,
+        encryptionAvailable: false,
+        loadError: undefined
+      })
+      await expect(loading).resolves.toBe(true)
+      finish(true)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(useSettingsStore.getState().encryptionAvailable).toBe(false)
+    } finally {
+      finish(false)
+      await vi.advanceTimersByTimeAsync(0)
+      vi.useRealTimers()
+    }
+  })
+
+  it('rejects capability results from a disconnected backend epoch', async () => {
+    let finish!: (value: boolean) => void
+    api.isEncryptionAvailable.mockReturnValueOnce(
+      new Promise((resolve) => {
+        finish = resolve
+      })
+    )
+    const loading = useSettingsStore.getState().load({ force: true })
+    await vi.waitFor(() => expect(useSettingsStore.getState().isLoaded).toBe(true))
+    useDesktopRuntimeRecoveryStore.setState({
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+    })
+    finish(true)
+    await expect(loading).resolves.toBe(false)
+    expect(useSettingsStore.getState()).toMatchObject({
+      encryptionAvailable: false,
+      isLoading: false,
+      loadFailure: 'backend-unavailable'
+    })
+  })
+
+  it('does not start optional settings probes while the backend is disconnected', async () => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected' })
+    try {
+      await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(false)
+      expect(api.isEncryptionAvailable).not.toHaveBeenCalled()
+      expect(api.getPreflight).not.toHaveBeenCalled()
+    } finally {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    }
+  })
+
+  it('turns a synchronously unavailable bridge into recoverable settings state', async () => {
+    api.getSettings.mockImplementationOnce(() => {
+      throw new Error('desktop disconnected')
+    })
+    await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(false)
+    expect(useSettingsStore.getState()).toMatchObject({
+      isLoaded: false,
+      isLoading: false,
+      loadError: 'Open-Science could not load settings. Retry to continue.'
+    })
+    await expect(useSettingsStore.getState().load({ force: true })).resolves.toBe(true)
+  })
+
   it('clears the preflight failure after a successful forced load', async () => {
     useSettingsStore.setState({ preflightFailed: true })
 
@@ -1098,6 +1223,9 @@ describe('settings store: startup loading', () => {
       )
 
     const first = useSettingsStore.getState().load()
+    useDesktopRuntimeRecoveryStore.setState({
+      epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+    })
     const second = useSettingsStore.getState().load({ force: true })
 
     resolveSecond?.({ ...snapshot([]), onboardingCompletedAt: 222 })

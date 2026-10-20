@@ -1,13 +1,15 @@
+import * as durableJson from '@aipoch/durable-files'
+import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
-import { createLiteratureLibraryMcpServer } from './library-mcp-server'
-import { createLiteratureMcpServer } from './mcp-server'
-import * as durableJson from '../storage/durable-json-file'
-import { mkdtemp, rm, readFile } from 'node:fs/promises'
+import { randomUUID } from 'node:crypto'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { afterEach, expect, it, vi } from 'vitest'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import {
   createApplicationCommandRouter,
   type ApplicationInvocation
@@ -23,10 +25,14 @@ import {
   literatureApplicationCommands,
   registerLiteratureApplicationCommands
 } from './application-commands'
-import { LiteratureCitationStyleLibrary } from './citation-style-library'
-import { LiteratureBatchJobs } from './batch-jobs'
-import { LiteratureFullTextIndex } from './full-text-index'
-import { literatureItemInputSchema } from '../../shared/literature'
+import { discoveryJobOptions } from './discovery-adapters'
+import { literatureIndex } from './full-text-index'
+import { createLiteratureLibraryMcpServer } from './library-mcp-server'
+import { createLiteratureMcpServer } from './mcp-server'
+
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
+}))
 
 vi.mock('electron', () => ({ app: { getPath: () => '/home/user', isPackaged: true } }))
 const roots: string[] = []
@@ -91,6 +97,7 @@ it('drains a detached batch worker and pauses remaining rows before copying', as
   })
   const path = join(await directory(), 'literature', 'batch-jobs.json')
   const jobs = new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path,
     spacingMs: 0,
     catalog: {
@@ -137,10 +144,11 @@ it('drains a detached batch worker and pauses remaining rows before copying', as
 })
 
 it('does not start or flush index maintenance while the migration gate is closed', async () => {
-  const sweep = vi.spyOn(LiteratureFullTextIndex, 'sweepExpired').mockResolvedValue()
-  const flush = vi.spyOn(LiteratureFullTextIndex, 'flushPendingAccesses').mockResolvedValue()
+  const owner = literatureIndex(await directory())
+  const sweep = vi.spyOn(owner, 'sweepExpired').mockResolvedValue()
+  const flush = vi.spyOn(owner, 'flushPendingAccesses').mockResolvedValue()
   beginMigration()
-  const stop = LiteratureFullTextIndex.startRetentionSweep(await directory(), vi.fn())
+  const stop = owner.startRetentionSweep(vi.fn())
   await stop()
   expect(sweep).not.toHaveBeenCalled()
   expect(flush).not.toHaveBeenCalled()
@@ -155,6 +163,7 @@ it('pauses an admitted task creation that finishes saving after migration starts
   })
   const fullText = vi.fn()
   const jobs = new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path,
     catalog: { get: vi.fn() },
     fullText: { run: fullText },
@@ -186,12 +195,11 @@ it('waits for admitted index maintenance before copying', async () => {
   const blocked = new Promise<void>((resolve) => {
     release = resolve
   })
-  const sweep = vi.spyOn(LiteratureFullTextIndex, 'sweepExpired').mockImplementation(() => blocked)
-  vi.spyOn(LiteratureFullTextIndex, 'flushPendingAccesses').mockResolvedValue()
+  const owner = literatureIndex(await directory())
+  const sweep = vi.spyOn(owner, 'sweepExpired').mockImplementation(() => blocked)
+  vi.spyOn(owner, 'flushPendingAccesses').mockResolvedValue()
   // Startup can itself run within an admitted writer's async context.
-  const stop = await withDataRootWrite(async () =>
-    LiteratureFullTextIndex.startRetentionSweep(await directory(), vi.fn())
-  )
+  const stop = await withDataRootWrite(async () => owner.startRetentionSweep(vi.fn()))
   try {
     await vi.waitFor(() => expect(sweep).toHaveBeenCalledOnce())
     beginMigration()
@@ -292,4 +300,120 @@ it('routes stored metadata sources through the validated application boundary', 
   } finally {
     installation.uninstall()
   }
+})
+
+await configureTestElectronHost(await import('electron'))
+
+it('uninstalls command admission, drains admitted work, and preserves stored styles for reinstall', async () => {
+  const library = new LiteratureCitationStyleLibrary(
+    join(await directory(), 'literature', 'citation-styles')
+  )
+  const styleId = await library.import(style)
+  const router = createApplicationCommandRouter()
+  let release!: () => void
+  let entered!: () => void
+  const waiting = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const started = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const owner = {
+    citationStyles: async (
+      _request: Parameters<
+        Parameters<typeof registerLiteratureApplicationCommands>[1]['citationStyles']
+      >[0]
+    ) => {
+      expect(_request.kind).toBe('list')
+      entered()
+      await waiting
+      return { styles: await library.list() }
+    }
+  } as Parameters<typeof registerLiteratureApplicationCommands>[1]
+  const first = registerLiteratureApplicationCommands(router.registrar, owner)
+  const pending = router.dispatcher.invoke(
+    literatureApplicationCommands.citationStyles,
+    invocation([{ kind: 'list' }])
+  )
+  await started
+  first.uninstall()
+  await expect(
+    router.dispatcher.invoke(
+      literatureApplicationCommands.citationStyles,
+      invocation([{ kind: 'list' }])
+    )
+  ).rejects.toThrow('Unknown application command')
+  let drained = false
+  const draining = first.whenIdle().then(() => {
+    drained = true
+  })
+  await Promise.resolve()
+  expect(drained).toBe(false)
+  release()
+  await pending
+  await draining
+  const second = registerLiteratureApplicationCommands(router.registrar, owner)
+  try {
+    first.uninstall()
+    const result = await router.dispatcher.invoke(
+      literatureApplicationCommands.citationStyles,
+      invocation([{ kind: 'list' }])
+    )
+    expect(result.styles.some(({ id }) => id === styleId)).toBe(true)
+  } finally {
+    second.uninstall()
+  }
+})
+
+it('cancels an admitted PDF import on uninstall and drains its rollback before teardown', async () => {
+  const router = createApplicationCommandRouter()
+  let started!: () => void
+  const entered = new Promise<void>((resolve) => {
+    started = resolve
+  })
+  let signal: AbortSignal | undefined
+  let rolledBack = false
+  const owner: Pick<Parameters<typeof registerLiteratureApplicationCommands>[1], 'importPdf'> = {
+    importPdf: async (_request, currentSignal) => {
+      signal = currentSignal
+      started()
+      try {
+        await new Promise<void>((_resolve, reject) =>
+          currentSignal!.addEventListener('abort', () => reject(currentSignal!.reason), {
+            once: true
+          })
+        )
+        throw new Error('Unexpected completed import')
+      } finally {
+        rolledBack = true
+      }
+    }
+  }
+  const installation = registerLiteratureApplicationCommands(
+    router.registrar,
+    owner as Parameters<typeof registerLiteratureApplicationCommands>[1]
+  )
+  const pending = router.dispatcher.invoke(
+    literatureApplicationCommands.importPdf,
+    invocation([
+      {
+        itemId: 'item',
+        attachment: {
+          id: 'upload',
+          sessionId: 'session',
+          name: 'paper.pdf',
+          originalName: 'paper.pdf',
+          path: '/managed/paper.pdf',
+          size: 10
+        }
+      }
+    ])
+  )
+  const rejection = expect(pending).rejects.toThrow('uninstalled')
+  await entered
+  installation.uninstall()
+  await installation.whenIdle()
+  await rejection
+  expect(signal?.aborted).toBe(true)
+  expect(rolledBack).toBe(true)
 })

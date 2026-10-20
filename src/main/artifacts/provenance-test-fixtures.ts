@@ -39,7 +39,9 @@ export const createArtifactVersionRequest = (
 // database and client; migration/upgrade behavior is covered by the database module's tests.
 let emptyDatabase: Promise<Buffer> | undefined
 
-export const createProvenanceTestFixture = async (): Promise<{
+export const createProvenanceTestFixture = async (
+  options: Pick<ArtifactProvenanceRepositoryOptions, 'readLiteratureItems'> = {}
+): Promise<{
   storageRoot: string
   client: ReturnType<typeof createProjectDbClient>
   compatibilityRepository: ArtifactRepository
@@ -72,6 +74,7 @@ export const createProvenanceTestFixture = async (): Promise<{
   const compatibilityRepository = new ArtifactRepository(storageRoot)
   const notebookRepository = new NotebookRunRepository(storageRoot)
   const repositoryOptions = {
+    ...options,
     storageRoot,
     getClient: () => Promise.resolve(client),
     compatibilityRepository,

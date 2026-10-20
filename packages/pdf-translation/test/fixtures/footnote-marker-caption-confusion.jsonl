@@ -1,0 +1,5 @@
+{"name":"footnote-marker-must-not-become-table-caption","source":"7We use the public toolkit to compute the baseline.","text":"表 7：我们使用公开工具包计算基线。","corrected":"7我们使用公开工具包计算基线。","language":"Chinese","accepted":false,"changedMeaning":true}
+{"name":"footnote-marker-must-not-become-figure-caption","source":"7See the repository for implementation details.","text":"Figure 7: See the repository for implementation details.","corrected":"7See the repository for implementation details.","language":"English","accepted":false,"changedMeaning":true}
+{"name":"footnote-may-refer-to-real-table","source":"7We report the full results in Table 2.","text":"7我们在表 2 中报告完整结果。","language":"Chinese","accepted":true}
+{"name":"numbered-table-caption-keeps-real-label","source":"Table 7: Results from the public toolkit.","text":"表 7：公开工具包的结果。","language":"Chinese","accepted":true}
+{"name":"numbered-section-keeps-heading","source":"7 Introduction","text":"7 引言","language":"Chinese","accepted":true}

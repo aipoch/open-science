@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { DiscoveredInterpreter, RuntimeEnablement } from '../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement } from '../../../shared/notebook-runtime'
 import { useRuntimeSettingsStore } from './runtime-settings-store'
 
 const python: DiscoveredInterpreter = {

@@ -97,3 +97,19 @@ describe('hasCurrentRunningDelegatedAttempt', () => {
     ).toBe(40)
   })
 })
+
+it('does not treat imported delegated attempts as live work or running activity', () => {
+  const session = {
+    ...sessionWith([{ agentFrameId: 'child', attempts: [attempt('historical', 'running')] }]),
+    packageOrigin: {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  expect(hasCurrentRunningDelegatedAttempt(session)).toBe(false)
+  expect(earliestCurrentDelegatedAttemptStartedAt(session)).toBeUndefined()
+  expect(session.runtimeContext?.delegatedWork?.records[0].attempts[0].status).toBe('running')
+})

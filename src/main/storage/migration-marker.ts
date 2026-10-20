@@ -2,6 +2,12 @@ import { createReadStream, type Dirent } from 'node:fs'
 import { lstat, readFile, readdir, readlink, rm, stat, writeFile } from 'node:fs/promises'
 import { createHash, randomUUID } from 'node:crypto'
 import { join, relative } from 'node:path'
+import {
+  needsWslNpmMigration,
+  npmMigrationPath,
+  requireNpmMigration,
+  type NpmMigration
+} from './wsl-npm-migration'
 
 // Sentinel file in a staged data root. Commit/discard gates validate it before treating a copied
 // target as a committed location or deleting its staging data. Keep these helpers Electron-free.
@@ -103,12 +109,47 @@ export const newToken = (): string => randomUUID()
 // scan so commit can never accept a partial tally as proof of equivalence.
 export const scanInventory = async (
   root: string,
-  dirs: string[]
+  dirs: string[],
+  npmMigration?: NpmMigration
 ): Promise<{ dirs: string[]; fileCount: number; totalBytes: number; digest: string }> => {
   const presentDirs: string[] = []
   let fileCount = 0
   let totalBytes = 0
   const inventoryHash = createHash('sha256')
+  const npmEntries = (await needsWslNpmMigration(root, dirs))
+    ? await requireNpmMigration(npmMigration).scan(root)
+    : undefined
+
+  const scanNpmContents = (): void => {
+    // Match native walk's depth-first locale ordering and existing digest format exactly. No new
+    // marker version or alternate receipt is needed for WSL links.
+    const ordered = npmEntries!
+      .filter((entry) => entry.path !== '')
+      .sort((left, right) => {
+        const a = left.path.split('/')
+        const b = right.path.split('/')
+        for (let i = 0; i < Math.min(a.length, b.length); i++) {
+          const compared = a[i].localeCompare(b[i])
+          if (compared) return compared
+        }
+        return a.length - b.length
+      })
+    for (const entry of ordered) {
+      const path = join('runtime', 'npm', ...entry.path.split('/'))
+      if (entry.kind === 'dir') {
+        inventoryHash.update(JSON.stringify(['nested-dir', path]))
+      } else if (entry.kind === 'link') {
+        const bytes = Buffer.byteLength(entry.target!)
+        fileCount++
+        totalBytes += bytes
+        inventoryHash.update(JSON.stringify(['symlink', path, bytes, entry.target]))
+      } else {
+        fileCount++
+        totalBytes += entry.size
+        inventoryHash.update(JSON.stringify(['file', path, entry.size, entry.hash]))
+      }
+    }
+  }
 
   for (const dir of dirs) {
     const topLevel = join(root, dir)
@@ -135,6 +176,10 @@ export const scanInventory = async (
     inventoryHash.update(JSON.stringify(['dir', dir]))
 
     const walk = async (current: string): Promise<void> => {
+      if (npmEntries && current === npmMigrationPath(root)) {
+        scanNpmContents()
+        return
+      }
       const entries: Dirent[] = (await readdir(current, { withFileTypes: true })).sort(
         (left, right) => left.name.localeCompare(right.name)
       )

@@ -12,7 +12,7 @@
 
 ### 前提条件
 
-- [Node.js](https://nodejs.org/) 22（[`.nvmrc`](../../.nvmrc) を参照）と npm
+- [Node.js](https://nodejs.org/) 24（[`.nvmrc`](../../.nvmrc) を参照）と npm
 - Git
 
 ### セットアップ
@@ -72,12 +72,13 @@ Git worktree はリポジトリの `.worktree/<name>` ディレクトリ内に�
 
 ## プロジェクト構成
 
-このプロジェクトは electron-vite、React、TypeScript で構築された Electron アプリです。`src/` 配下に 3 つのランタイムプロセス層と共有モジュールがあります。
+Web UI は通常の Node バックエンドで動作し、Electron や画面環境は不要です。
 
-- `src/main/` — Electron メインプロセス（ACP ランタイム、セッション永続化、アーティファクト、Notebook、プロジェクト、IPC ハンドラー）。
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — 型付き `window.api` をレンダラーへ公開する preload ブリッジ。
 - `src/renderer/` — React UI（ページ、ストア、コンポーネント）。
 - `src/shared/` — プロセス間で共有する型とヘルパー。
+- `packages/` — は独立ドメインパッケージとネイティブ補助プログラムを収めます。分離検証は宣言された tarball をクリーンな利用環境へインストールします。通常はオンラインで、`--offline` には完全なキャッシュが必要です。安定版は五種類の独立 CLI アーカイブを公開し、npm 自動公開は保留中です。
 
 ## 開発ワークフロー
 
@@ -222,8 +223,6 @@ ci(review): unify automated AI reviews
 - [検証ポリシー](#検証ポリシー)の最終根拠マッピングを含め、記載チェックが最後の実質的編集後に実行されたことと、未対応リスクを明記します。
 - レビューしやすい適切な大きさと範囲に保ちます。
 - 最終 Test Impact Set、または必要な完全フォールバックが成功していることを確認します。
-- Pull Request のチェック通過後は、**squash merge のみ**で直接マージします。`main` が進んだという理由だけでブランチを更新せず、マージ競合がある場合またはメンテナーが要求した場合に更新します。squash コミット件名には Pull Request タイトルの Conventional Commit 形式を維持します。
-- `main` にマージされたドキュメント以外の変更は [Nightly ワークフロー](../../.github/workflows/nightly.yml)を起動し、生成されたコミットに対するマージ後検証とクロスプラットフォームパッケージ認証を実行します。
 
 ## Issue の報告
 
@@ -234,10 +233,26 @@ ci(review): unify automated AI reviews
 - OS とアプリのバージョン。
 - 関連するログやスクリーンショット（ある場合）。
 
-## npm パッケージの公開
-
-メンテナーは [npm パッケージリリースガイド](../npm-release.md)に従ってください。npm パッケージバージョンは `npm-v*` タグを使用し、保護された `Publish npm package` ワークフローから公開されます。
-
 ## ライセンス
 
 コントリビューションを行うことで、その成果がプロジェクトと同じ [Apache License 2.0](../../LICENSE) でライセンスされることに同意したものとみなされます。
+
+## 現在の開発と CI
+
+完全な規則は[英語の貢献ガイド](../../CONTRIBUTING.md)を正とします。以下は現在の手順の要約です。
+
+- `npm run dev` は Node バックエンドをビルドし、実行ファイルを準備して Electron を開きます。監視機構はパッケージとバックエンドを再ビルドします。成功後にアプリを正常終了してコマンドを再起動すると backend/Main/Preload の変更を読み込みます。renderer は HMR を使います。
+
+- `src/` と `packages/` の新規ファイルは、リソースや fixture を含め、`scripts/ci/module-impact/<module-id>.json` に所有者を一つ登録します。所有者、契約、利用側テストと動的依存関係を維持してください。`git add` 後に英語ガイドの登録検査と `node scripts/ci/audit-module-ownership.mjs` を実行します。
+
+- 必須検査とレビューが通ったら、有効化されたネイティブのマージキューに登録します。キューは統合後のリビジョンを検証してから squash merge を行います。Conventional Commit のタイトルを維持し、失敗した必須検査を迂回しません。
+
+- Nightly は毎日 15:17 UTC と手動操作で実行され、各マージでは起動しません。Source Regression は一日二回、完全な Mac、委派、パッケージ検証を補います。PR とキューは各段階で選択された検査を実行します。
+
+- `npm test` は完全なスイートを実行します。`npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` は PR の選択を、`--tier queue` はキューの選択を説明します。証拠が不完全なら広い範囲を維持します。保護された CI ポリシーには所有者レビューが必要で、登録変更で既存の検証範囲を削減できません。
+
+- `packages/` は独立ドメインパッケージとネイティブ補助プログラムを収めます。分離検証は宣言された tarball をクリーンな利用環境へインストールします。通常はオンラインで、`--offline` には完全なキャッシュが必要です。安定版は五種類の独立 CLI アーカイブを公開し、npm 自動公開は保留中です。
+
+- de、es、fr、zh-Hans、zh-Hant、ja、ko、ru の八言語すべてが必要です。用語と context 規則は [AGENTS.md](../../AGENTS.md) と[用語集](../i18n-glossary.md)を参照してください。
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

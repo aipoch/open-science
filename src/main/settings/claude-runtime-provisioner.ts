@@ -2,9 +2,11 @@ import { createHash, randomUUID } from 'node:crypto'
 import { chmod, lstat, mkdir, readFile, readdir, rename, rm } from 'node:fs/promises'
 import { join, relative, resolve } from 'node:path'
 
+import { retryFileReplacement } from '@aipoch/durable-files'
+
 import { ALL_CONNECTOR_IDS } from '../connectors/registry'
-import { parseFrontmatter } from '../skills/frontmatter'
-import { isUsableSkillName } from '../skills/skill-name'
+import { parseFrontmatter } from '@aipoch/skills/document'
+import { isUsableSkillName } from '@aipoch/skills/document'
 
 const CLAUDE_PRIVATE_PROFILE_DIR = 'claude'
 const CLAUDE_SKILL_RUNTIME_SEGMENTS = ['runtime-support', 'agent-skills', 'claude'] as const
@@ -370,29 +372,32 @@ export const provisionClaudeRuntime = async (
     await assertTreeReadOnly(stagingProjectionRoot, true)
 
     const publishedRoot = join(revisionsDir, revision)
-    try {
-      await rename(stagingProjectionRoot, publishedRoot)
-      await chmod(publishedRoot, 0o555)
-      await assertTreeReadOnly(publishedRoot)
-    } catch (error) {
-      // Platforms disagree on the error for renaming over an existing non-empty/read-only directory
-      // (EEXIST/ENOTEMPTY on Linux, EACCES on macOS). The content-derived destination is the arbiter:
-      // only an already-published directory for this exact revision makes the failure idempotent.
-      const existing = await lstat(publishedRoot).catch(() => null)
-      if (existing?.isSymbolicLink()) {
-        throw new Error(
-          `Claude Skill projection revision cannot be a symbolic link: ${publishedRoot}`
-        )
+    // Windows may briefly deny publication while another process holds a directory handle.
+    await retryFileReplacement(async () => {
+      try {
+        await rename(stagingProjectionRoot, publishedRoot)
+        await chmod(publishedRoot, 0o555)
+        await assertTreeReadOnly(publishedRoot)
+      } catch (error) {
+        // Platforms disagree on the error for renaming over an existing non-empty/read-only directory
+        // (EEXIST/ENOTEMPTY on Linux, EACCES on macOS). The content-derived destination is the arbiter:
+        // only an already-published directory for this exact revision makes the failure idempotent.
+        const existing = await lstat(publishedRoot).catch(() => null)
+        if (existing?.isSymbolicLink()) {
+          throw new Error(
+            `Claude Skill projection revision cannot be a symbolic link: ${publishedRoot}`
+          )
+        }
+        if (!existing?.isDirectory()) throw error
+        await assertCompleteProjection(publishedRoot)
+        if ((await hashProjection(publishedRoot)) !== revision) {
+          throw new Error(`Claude Skill projection revision ${revision} has conflicting content.`)
+        }
+        await setTreeReadOnly(publishedRoot)
+        await assertTreeReadOnly(publishedRoot)
+        await removeTree(stagingProjectionRoot)
       }
-      if (!existing?.isDirectory()) throw error
-      await assertCompleteProjection(publishedRoot)
-      if ((await hashProjection(publishedRoot)) !== revision) {
-        throw new Error(`Claude Skill projection revision ${revision} has conflicting content.`)
-      }
-      await setTreeReadOnly(publishedRoot)
-      await assertTreeReadOnly(publishedRoot)
-      await removeTree(stagingProjectionRoot)
-    }
+    })
 
     await migrateLegacyManagedSkills(privateProfileDir)
 

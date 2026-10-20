@@ -4,7 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { PUBLIC_TERMINAL_FIXTURE } from '../../test/fixtures/renderer-contract-certification'
+import { PUBLIC_TERMINAL_FIXTURE } from './test/fixtures'
 import { connectToOpenScience, OpenScienceClient } from './index.mjs'
 
 const response = (status: number, payload: unknown): Response =>

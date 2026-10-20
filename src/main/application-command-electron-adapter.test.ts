@@ -29,6 +29,7 @@ const validatedChannels = [
   'bookmarks:resolve-pdf-source',
   'bookmarks:update-note',
   'lifecycle:claim-runtime-writer',
+  'literature:add-pdf',
   'literature:cancel-pdf-import',
   'literature:citation-styles',
   'literature:complete-metadata',
@@ -37,9 +38,11 @@ const validatedChannels = [
   'literature:format-references',
   'literature:full-text',
   'literature:get',
+  'literature:get-candidate-states',
   'literature:import-pdf',
   'literature:import-records',
   'literature:jobs',
+  'literature:journals',
   'literature:lookup-metadata',
   'literature:search',
   'literature:sources',
@@ -58,6 +61,7 @@ const validatedChannels = [
   'pdf-annotations:delete',
   'pdf-annotations:import-native',
   'pdf-annotations:list',
+  'pdf-annotations:reconcile',
   'pdf-annotations:update',
   'pdf-structure:cancel',
   'pdf-structure:clear-cache',
@@ -72,17 +76,29 @@ const validatedChannels = [
   'projects:retry-deletion-cleanup',
   'projects:update',
   'projects:update-archive',
+  'session-replay:get',
+  'session-replay:get-selection-snapshot',
+  'session-replay:list',
+  'session-replay:list-selection-snapshots',
+  'session-replay:save-selection-snapshot',
+  'session-replay:save-view',
+  'session-replay:unlink-session',
+  'sessions:cancel-diagnostics',
   'sessions:delete-session',
   'sessions:edit-details',
+  'sessions:export-diagnostics',
   'sessions:export-package',
   'sessions:filter-pdf-context-candidates',
   'sessions:fork',
   'sessions:import-package',
+  'sessions:inspect-diagnostics',
   'sessions:link-pdf-context',
   'sessions:package-operation',
+  'sessions:retry-runtime-terminal-commit',
   'sessions:set-delegation-policy',
   'sessions:unlink-pdf-context',
   'sessions:update-archive',
+  'settings:get-settings',
   'tags:create',
   'tags:delete',
   'tags:reorder',
@@ -118,6 +134,27 @@ beforeEach(() => {
 })
 
 describe('Electron Application Command adapter', () => {
+  it('dispatches an exact terminal retry through the standard caller lease and command envelope', async () => {
+    const invoke = vi.fn().mockResolvedValue(undefined)
+    registerApplicationCommandElectronAdapter(dispatcher(invoke), { warn })
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    await expect(
+      handlers.get('sessions:retry-runtime-terminal-commit')?.(eventWithLease(), request)
+    ).resolves.toEqual({ ok: true, result: undefined })
+    expect(invoke).toHaveBeenCalledExactlyOnceWith(
+      'sessions:retry-runtime-terminal-commit',
+      expect.objectContaining({
+        args: [request],
+        callerLease: expect.objectContaining({ isCurrent: expect.any(Function) })
+      })
+    )
+  })
+
   it('installs the catalog-selected validated slice with caller context and lease', async () => {
     const result = [{ id: 'project-1' }]
     const invoke = vi.fn().mockResolvedValue(result)

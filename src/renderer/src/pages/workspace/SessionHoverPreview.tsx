@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  useSyncExternalStore,
   type ReactElement,
   type ReactNode
 } from 'react'
@@ -36,7 +37,8 @@ type SessionRenameRequest = (
 ) => Promise<boolean | void> | boolean | void
 
 type SessionHoverPreviewContextValue = {
-  activeSessionId: string | null
+  subscribeToActiveSession: (sessionId: string, listener: () => void) => () => void
+  getSessionPreviewState: (sessionId: string) => 'closed' | 'cold' | 'warm'
   closeNow: (sessionId: string) => void
   requestOpen: (sessionId: string, immediate?: boolean) => void
   cancelOpen: (sessionId: string) => void
@@ -46,12 +48,53 @@ type SessionHoverPreviewContextValue = {
 const SessionHoverPreviewContext = createContext<SessionHoverPreviewContextValue | null>(null)
 
 const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): React.JSX.Element => {
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null)
   const activeSessionIdRef = useRef<string | null>(null)
+  const skipEntryAnimationRef = useRef(false)
+  const activeSessionListenersRef = useRef(new Map<string, Set<() => void>>())
 
   const protectedSessionRef = useRef<string | null>(null)
   const pendingRef = useRef<{ id: string; timer: ReturnType<typeof setTimeout> } | null>(null)
   const warmUntilRef = useRef(0)
+
+  const subscribeToActiveSession = useCallback(
+    (sessionId: string, listener: () => void): (() => void) => {
+      let listeners = activeSessionListenersRef.current.get(sessionId)
+      if (!listeners) {
+        listeners = new Set()
+        activeSessionListenersRef.current.set(sessionId, listeners)
+      }
+      listeners.add(listener)
+      return () => {
+        listeners.delete(listener)
+        if (listeners.size === 0) activeSessionListenersRef.current.delete(sessionId)
+      }
+    },
+    []
+  )
+  const getSessionPreviewState = useCallback(
+    (sessionId: string): 'closed' | 'cold' | 'warm' =>
+      activeSessionIdRef.current !== sessionId
+        ? 'closed'
+        : skipEntryAnimationRef.current
+          ? 'warm'
+          : 'cold',
+    []
+  )
+  const selectActiveSession = useCallback(
+    (sessionId: string | null, skipEntryAnimation: boolean): void => {
+      const previous = activeSessionIdRef.current
+      if (previous === sessionId) return
+      activeSessionIdRef.current = sessionId
+      skipEntryAnimationRef.current = skipEntryAnimation
+      if (previous) {
+        for (const listener of activeSessionListenersRef.current.get(previous) ?? []) listener()
+      }
+      if (sessionId) {
+        for (const listener of activeSessionListenersRef.current.get(sessionId) ?? []) listener()
+      }
+    },
+    []
+  )
 
   const cancelOpen = useCallback((sessionId: string): void => {
     if (pendingRef.current?.id !== sessionId) return
@@ -59,33 +102,37 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
     pendingRef.current = null
   }, [])
 
-  const requestOpen = useCallback((sessionId: string, immediate = false): void => {
-    if (protectedSessionRef.current && protectedSessionRef.current !== sessionId) return
-    if (pendingRef.current) clearTimeout(pendingRef.current.timer)
-    pendingRef.current = null
-    const show = (): void => {
+  const requestOpen = useCallback(
+    (sessionId: string, immediate = false): void => {
+      if (protectedSessionRef.current && protectedSessionRef.current !== sessionId) return
+      if (pendingRef.current) clearTimeout(pendingRef.current.timer)
       pendingRef.current = null
-      activeSessionIdRef.current = sessionId
-      setActiveSessionId(sessionId)
-    }
-    if (immediate || activeSessionIdRef.current || Date.now() < warmUntilRef.current) show()
-    else
-      pendingRef.current = {
-        id: sessionId,
-        timer: setTimeout(show, SESSION_HOVER_PREVIEW_DELAY_MS)
+      if (activeSessionIdRef.current === sessionId) return
+      const instant =
+        immediate || activeSessionIdRef.current !== null || Date.now() < warmUntilRef.current
+      const show = (): void => {
+        pendingRef.current = null
+        selectActiveSession(sessionId, instant)
       }
-  }, [])
+      if (instant) show()
+      else
+        pendingRef.current = {
+          id: sessionId,
+          timer: setTimeout(show, SESSION_HOVER_PREVIEW_DELAY_MS)
+        }
+    },
+    [selectActiveSession]
+  )
 
   const closeNow = useCallback(
     (sessionId: string): void => {
       cancelOpen(sessionId)
       if (activeSessionIdRef.current !== sessionId) return
-      activeSessionIdRef.current = null
       protectedSessionRef.current = null
       warmUntilRef.current = Date.now() + SESSION_HOVER_PREVIEW_SKIP_DELAY_MS
-      setActiveSessionId(null)
+      selectActiveSession(null, false)
     },
-    [cancelOpen]
+    [cancelOpen, selectActiveSession]
   )
 
   const setProtected = useCallback((sessionId: string, protectedFromHover: boolean): void => {
@@ -104,8 +151,22 @@ const SessionHoverPreviewProvider = ({ children }: { children: ReactNode }): Rea
   )
 
   const value = useMemo(
-    () => ({ activeSessionId, closeNow, requestOpen, cancelOpen, setProtected }),
-    [activeSessionId, closeNow, requestOpen, cancelOpen, setProtected]
+    () => ({
+      subscribeToActiveSession,
+      getSessionPreviewState,
+      closeNow,
+      requestOpen,
+      cancelOpen,
+      setProtected
+    }),
+    [
+      subscribeToActiveSession,
+      getSessionPreviewState,
+      closeNow,
+      requestOpen,
+      cancelOpen,
+      setProtected
+    ]
   )
 
   return (
@@ -334,8 +395,24 @@ const SessionHoverPreview = ({
   const context = useContext(SessionHoverPreviewContext)
   if (!context) throw new Error('SessionHoverPreview must be inside SessionHoverPreviewProvider')
 
-  const { activeSessionId, closeNow, requestOpen, cancelOpen, setProtected } = context
-  const open = !previewSuppressed && activeSessionId === session.id
+  const {
+    subscribeToActiveSession,
+    getSessionPreviewState,
+    closeNow,
+    requestOpen,
+    cancelOpen,
+    setProtected
+  } = context
+  const subscribe = useCallback(
+    (listener: () => void) => subscribeToActiveSession(session.id, listener),
+    [session.id, subscribeToActiveSession]
+  )
+  const getSnapshot = useCallback(
+    () => getSessionPreviewState(session.id),
+    [getSessionPreviewState, session.id]
+  )
+  const previewState = useSyncExternalStore(subscribe, getSnapshot, () => 'closed')
+  const open = !previewSuppressed && previewState !== 'closed'
   const onPreviewRequestRef = useRef(onPreviewRequest)
   const triggerRef = useRef<HTMLDivElement>(null)
   const contentRef = useRef<HTMLDivElement>(null)
@@ -474,6 +551,7 @@ const SessionHoverPreview = ({
         alignOffset={SESSION_HOVER_PREVIEW_ALIGN_OFFSET_PX}
         collisionPadding={8}
         data-slot="session-preview-content"
+        data-skip-entry-animation={previewState === 'warm'}
         aria-label={session.title}
         onPointerEnter={cancelClose}
         onPointerLeave={requestClose}
@@ -513,7 +591,7 @@ const SessionHoverPreview = ({
           }
           restoreFocusRef.current = contentRef.current?.contains(document.activeElement) ?? false
         }}
-        className="max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
+        className="hover-bubble max-h-[var(--radix-popover-content-available-height)] w-80 max-w-[calc(100vw-1rem)] overflow-y-auto overscroll-contain border-0 bg-transparent p-0 text-inherit shadow-none motion-reduce:animate-none"
       >
         <SessionHoverPreviewCard
           session={session}

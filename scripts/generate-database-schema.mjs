@@ -25,7 +25,10 @@ const assertRuntimeDdlLocality = (files) => {
   const rawSqlOwner = 'src/main/database/migration-sql-executor.ts'
   const fullyOwnedPaths = new Set([
     'src/main/database/generated/runtime-schema.ts',
-    'src/main/database/sqlite-schema-migrations.ts'
+    'src/main/database/sqlite-schema-migrations.ts',
+    // Self-versioned standalone schema: the literature full-text index applies
+    // these statements transactionally and versions them via PRAGMA user_version.
+    'src/main/literature/full-text-index-schema.ts'
   ])
   for (const file of files) {
     if (

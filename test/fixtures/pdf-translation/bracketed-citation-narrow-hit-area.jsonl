@@ -1,0 +1,4 @@
+{"name": "bracketed-run-moves-exactly-with-digit-hit-area", "change": "none", "accepted": true}
+{"name": "changed-reference-is-rejected", "change": "label", "accepted": false}
+{"name": "shifted-hit-area-is-rejected", "change": "shift", "accepted": false}
+{"name":"repeated bracketed references preserve distinct narrow and full hit areas","change":"repeated","accepted":true}

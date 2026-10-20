@@ -61,6 +61,7 @@ const SpecialistAppearancePicker = ({
   const [pendingPatch, setPendingPatch] = useState<SpecialistAppearancePatch>()
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [showSaving, setShowSaving] = useState(false)
+  const [revisionConflict, setRevisionConflict] = useState(false)
 
   useEffect(() => {
     if (saveState !== 'saving') return
@@ -84,7 +85,8 @@ const SpecialistAppearancePicker = ({
       setPendingPatch(undefined)
       setShowSaving(false)
       setSaveState('success')
-    } catch {
+    } catch (error) {
+      setRevisionConflict(error instanceof Error && /revision conflict/i.test(error.message))
       setShowSaving(false)
       setSaveState('error')
     }
@@ -278,7 +280,13 @@ const SpecialistAppearancePicker = ({
                 inline
                 level="error"
                 className="w-full"
-                description={t('Appearance wasn’t saved. Try again.')}
+                description={
+                  revisionConflict
+                    ? t(
+                        'Appearance changed elsewhere. Review the current appearance before trying again.'
+                      )
+                    : t('Appearance wasn’t saved. Try again.')
+                }
                 primaryButton={{
                   label: t('Try again'),
                   onClick: () => {

@@ -1,4 +1,9 @@
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import {
+  getDesktopRuntimeEpoch,
+  desktopRuntimeWritable,
+  useDesktopRuntimeRecoveryStore
+} from '../../../stores/desktop-runtime-recovery-store'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 import { useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { BookOpenText, FolderOpen } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -18,6 +23,7 @@ import {
   searchLiteratureMentionOptions
 } from '../literature-pdf-options'
 
+import { createArtifactThumbnailReader, thumbnailRequestKey } from './artifact-thumbnail-reader'
 import { ArtifactFileIcon } from './artifact-file-icon'
 import { fuzzyScore, type FuzzyMatch } from './fuzzy-match'
 import { HighlightedText } from './HighlightedText'
@@ -108,6 +114,8 @@ export const ArtifactMentionPopup = ({
     rows: [],
     state: 'loading'
   })
+  const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
+  const recoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
   const [fileRetry, setFileRetry] = useState(0)
   const [libraryRetry, setLibraryRetry] = useState(0)
   const [collectionRetry, setCollectionRetry] = useState(0)
@@ -118,27 +126,34 @@ export const ArtifactMentionPopup = ({
 
   useEffect(() => {
     let cancelled = false
+    if (!desktopRuntimeWritable()) return
     if (!activeProjectId) return
 
-    void loadAllProjectFiles(activeProjectId)
+    void loadAllProjectFiles(
+      activeProjectId,
+      () => !cancelled && recoveryEpoch === getDesktopRuntimeEpoch() && desktopRuntimeWritable()
+    )
       .then((files) => {
-        if (!cancelled) setProjectFiles({ projectId: activeProjectId, files, state: 'loaded' })
+        if (!cancelled && recoveryEpoch === getDesktopRuntimeEpoch())
+          setProjectFiles({ projectId: activeProjectId, files, state: 'loaded' })
       })
       .catch(() => {
-        if (!cancelled) setProjectFiles({ projectId: activeProjectId, files: [], state: 'error' })
+        if (!cancelled && recoveryEpoch === getDesktopRuntimeEpoch())
+          setProjectFiles({ projectId: activeProjectId, files: [], state: 'error' })
       })
 
     return () => {
       cancelled = true
     }
-  }, [activeProjectId, fileRetry])
+  }, [activeProjectId, fileRetry, recoveryEpoch, recoveryPhase])
 
   useEffect(() => {
     let cancelled = false
+    if (!desktopRuntimeWritable()) return
     const timeout = window.setTimeout(() => {
       void searchLiteratureMentionOptions(query, { projectId: activeProjectId }).then(
         (options) => {
-          if (cancelled) return
+          if (cancelled || recoveryEpoch !== getDesktopRuntimeEpoch()) return
           setLibrary({
             projectId: activeProjectId,
             query,
@@ -156,7 +171,7 @@ export const ArtifactMentionPopup = ({
           })
         },
         () => {
-          if (!cancelled)
+          if (!cancelled && recoveryEpoch === getDesktopRuntimeEpoch())
             setLibrary({ projectId: activeProjectId, query, rows: [], state: 'error' })
         }
       )
@@ -165,16 +180,17 @@ export const ArtifactMentionPopup = ({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [activeProjectId, query, libraryRetry])
+  }, [activeProjectId, query, libraryRetry, recoveryEpoch, recoveryPhase])
 
   useEffect(() => {
     let cancelled = false
+    if (!desktopRuntimeWritable()) return
     const timeout = window.setTimeout(() => {
       void (
         query.trim() ? searchLiteratureCollectionMentionOptions(query) : Promise.resolve([])
       ).then(
         (options) => {
-          if (cancelled) return
+          if (cancelled || recoveryEpoch !== getDesktopRuntimeEpoch()) return
           setCollections({
             projectId: activeProjectId,
             query,
@@ -189,7 +205,7 @@ export const ArtifactMentionPopup = ({
           })
         },
         () => {
-          if (!cancelled)
+          if (!cancelled && recoveryEpoch === getDesktopRuntimeEpoch())
             setCollections({ projectId: activeProjectId, query, rows: [], state: 'error' })
         }
       )
@@ -198,7 +214,7 @@ export const ArtifactMentionPopup = ({
       cancelled = true
       window.clearTimeout(timeout)
     }
-  }, [activeProjectId, query, collectionRetry])
+  }, [activeProjectId, query, collectionRetry, recoveryEpoch, recoveryPhase])
 
   const libraryState =
     library.query === query && library.projectId === activeProjectId ? library.state : 'loading'
@@ -274,6 +290,17 @@ export const ArtifactMentionPopup = ({
   }, [rows, query])
 
   const [activeIndex, setActiveIndex] = useState(0)
+  const [readThumbnail] = useState(createArtifactThumbnailReader)
+  useLayoutEffect(() => {
+    readThumbnail.setActiveKeys(
+      new Set(
+        (desktopRuntimeWritable() ? matches : []).map((row) =>
+          thumbnailRequestKey({ source: row.source ?? 'literature', path: row.path ?? '' })
+        )
+      )
+    )
+    return () => readThumbnail.setActiveKeys(new Set())
+  }, [matches, readThumbnail, recoveryEpoch, recoveryPhase])
 
   // Reset the highlight to the top when the query changes (setState-during-render pattern).
   const [lastQuery, setLastQuery] = useState(query)
@@ -300,6 +327,8 @@ export const ArtifactMentionPopup = ({
 
   const selectRow = useCallback(
     async (row: ArtifactRow): Promise<void> => {
+      if (!desktopRuntimeWritable()) return
+      const epoch = getDesktopRuntimeEpoch()
       if (row.projectId !== useNavigationStore.getState().activeProjectId || !matches.includes(row))
         return
       const revision = ++selectionRevisionRef.current
@@ -326,7 +355,7 @@ export const ArtifactMentionPopup = ({
           projectId: row.projectId,
           fileId: row.sourceFileId
         })
-        if (revision !== selectionRevisionRef.current) return
+        if (revision !== selectionRevisionRef.current || epoch !== getDesktopRuntimeEpoch()) return
         if (!result.ok) {
           setSelectionError(t('Could not resolve file version.'))
           return
@@ -348,7 +377,7 @@ export const ArtifactMentionPopup = ({
           versionId: head.id
         })
       } catch {
-        if (revision !== selectionRevisionRef.current) return
+        if (revision !== selectionRevisionRef.current || epoch !== getDesktopRuntimeEpoch()) return
         setSelectionError(t('Could not resolve file version.'))
       }
     },
@@ -359,7 +388,7 @@ export const ArtifactMentionPopup = ({
     () => () => {
       selectionRevisionRef.current += 1
     },
-    [query, selectionKey, activeProjectId]
+    [query, selectionKey, activeProjectId, recoveryEpoch, recoveryPhase]
   )
 
   // Handle navigation keys at the document level while mounted, since focus stays in the editor.
@@ -447,10 +476,12 @@ export const ArtifactMentionPopup = ({
           <FolderOpen className="size-4 shrink-0 text-text-200" aria-hidden="true" />
         ) : (
           <ArtifactFileIcon
+            key={`${recoveryEpoch}:${recoveryPhase}`}
             name={row.iconName ?? row.name}
             mimeType={row.mimeType}
             path={row.path ?? ''}
             source={row.source ?? 'literature'}
+            readThumbnail={readThumbnail}
           />
         )}
         <span className="flex min-w-0 flex-1 flex-col">

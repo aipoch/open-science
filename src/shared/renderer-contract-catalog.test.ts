@@ -13,6 +13,29 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('keeps native action menu presentation on desktop IPC without backend or web exposure', () => {
+    for (const [publicPath, channel, dispatch] of [
+      ['window.openActionMenu', 'action-menu:open', 'electron-ipc-send'],
+      ['window.closeActionMenu', 'action-menu:close', 'electron-ipc-send'],
+      ['window.onActionMenuClosed', 'action-menu:closed', 'electron-ipc-subscription']
+    ]) {
+      expect(
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      ).toMatchObject({
+        channel,
+        surfaceInstallation: {
+          electron: 'preload',
+          localWeb: 'unavailable',
+          remoteWeb: 'unavailable'
+        },
+        dispatchPolicy: { electron: dispatch, localWeb: 'none', remoteWeb: 'none' }
+      })
+      expect(ELECTRON_APPLICATION_COMMAND_CHANNELS).not.toContain(channel)
+      expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain(channel)
+      expect(Object.values(WEB_EVENT_CHANNELS)).not.toContain(channel)
+    }
+  })
+
   it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(
@@ -279,11 +302,14 @@ describe('renderer contract catalog', () => {
       'specialist.abortPackageUpload',
       'specialist.beginPackageUpload',
       'specialist.cancelPackage',
+      'specialist.getMarketplaceRelease',
       'specialist.installPackage',
       'specialist.list',
+      'specialist.listMarketplace',
       'specialist.onCatalogChanged',
       'specialist.previewPackageUpload',
       'specialist.setEnabled',
+      'specialist.setSessionSpecialist',
       'specialist.update'
     ])
 
@@ -487,6 +513,7 @@ describe('renderer contract catalog', () => {
       'bookmarks.resolvePdfSource',
       'bookmarks.updateNote',
       'lifecycle.claimRuntimeWriter',
+      'literature.addPdf',
       'literature.cancelPdfImport',
       'literature.citationStyles',
       'literature.completeMetadata',
@@ -495,9 +522,11 @@ describe('renderer contract catalog', () => {
       'literature.formatReferences',
       'literature.fullText',
       'literature.get',
+      'literature.getCandidateStates',
       'literature.importPdf',
       'literature.importRecords',
       'literature.jobs',
+      'literature.journals',
       'literature.lookupMetadata',
       'literature.search',
       'literature.sources',
@@ -516,6 +545,7 @@ describe('renderer contract catalog', () => {
       'pdfAnnotations.delete',
       'pdfAnnotations.importNative',
       'pdfAnnotations.list',
+      'pdfAnnotations.reconcile',
       'pdfAnnotations.update',
       'pdfStructure.cancel',
       'pdfStructure.clearCache',
@@ -530,17 +560,29 @@ describe('renderer contract catalog', () => {
       'projects.retryDeletionCleanup',
       'projects.update',
       'projects.updateArchive',
+      'sessionReplay.get',
+      'sessionReplay.getSelectionSnapshot',
+      'sessionReplay.list',
+      'sessionReplay.listSelectionSnapshots',
+      'sessionReplay.saveSelectionSnapshot',
+      'sessionReplay.saveView',
+      'sessionReplay.unlinkSession',
+      'sessions.cancelDiagnostics',
       'sessions.deleteSession',
       'sessions.editDetails',
+      'sessions.exportDiagnostics',
       'sessions.exportPackage',
       'sessions.filterPdfContextCandidates',
       'sessions.fork',
       'sessions.importPackage',
+      'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.packageOperation',
+      'sessions.retryRuntimeTerminalCommit',
       'sessions.setDelegationPolicy',
       'sessions.unlinkPdfContext',
       'sessions.updateArchive',
+      'settings.getSettings',
       'tags.create',
       'tags.delete',
       'tags.reorder',
@@ -561,6 +603,7 @@ describe('renderer contract catalog', () => {
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
       'lifecycle:claim-runtime-writer',
+      'literature:add-pdf',
       'literature:cancel-pdf-import',
       'literature:citation-styles',
       'literature:complete-metadata',
@@ -569,9 +612,11 @@ describe('renderer contract catalog', () => {
       'literature:format-references',
       'literature:full-text',
       'literature:get',
+      'literature:get-candidate-states',
       'literature:import-pdf',
       'literature:import-records',
       'literature:jobs',
+      'literature:journals',
       'literature:lookup-metadata',
       'literature:search',
       'literature:sources',
@@ -590,6 +635,7 @@ describe('renderer contract catalog', () => {
       'pdf-annotations:delete',
       'pdf-annotations:import-native',
       'pdf-annotations:list',
+      'pdf-annotations:reconcile',
       'pdf-annotations:update',
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
@@ -604,17 +650,29 @@ describe('renderer contract catalog', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'session-replay:get',
+      'session-replay:get-selection-snapshot',
+      'session-replay:list',
+      'session-replay:list-selection-snapshots',
+      'session-replay:save-selection-snapshot',
+      'session-replay:save-view',
+      'session-replay:unlink-session',
+      'sessions:cancel-diagnostics',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-diagnostics',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
       'sessions:fork',
       'sessions:import-package',
+      'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
+      'settings:get-settings',
       'tags:create',
       'tags:delete',
       'tags:reorder',

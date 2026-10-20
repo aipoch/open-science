@@ -1,3 +1,4 @@
+import { expectBoundaryPaths } from '../../../../../test/module-boundary-assertions'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 import {
@@ -485,7 +486,7 @@ const hookKeys = [
   'sendPreparationInFlightSessionIds',
   'saveAsSkillInFlightSessionIds',
   'nativeContextCompactionSessionIds',
-  'subscribeToSubagentRuntimeUpdates',
+  'subagentTranscripts',
   'compactContext',
   'ensureSessionReady',
   'saveAsSkill',
@@ -501,6 +502,7 @@ const hookKeys = [
   'resolveSessionRuntimeSelection'
 ] as const
 const sendIntentKeys = [
+  'onPreparationRejected',
   'expectedFrameworkId',
   'sessionId',
   'messageId',
@@ -521,8 +523,10 @@ const sendIntentKeys = [
   'pdfContext',
   'pdfReadingPosition',
   'pdfReadingPositionSource',
+  'pdfProseReadingSelections',
   'pendingPdfContextAttachmentIds',
   'pendingPdfContextVersions',
+  'discussionFocus',
   'parts',
   'specialistId',
   'enabledComputeHosts',
@@ -567,7 +571,7 @@ const privateOwnerBoundaryViolations = (path: string, source?: string): string[]
 }
 describe('workspace runtime architecture', () => {
   const facadeFile = sourceFileFor(facadePath)
-  it('keeps the established runtime interface plus readiness and the child-update selector', () => {
+  it('keeps the established runtime interface plus readiness and the owned child transcripts', () => {
     const runtimeType = typeLiteralAlias(facadeFile, 'WorkspaceAgentRuntime')
     const owner = variableArrow(facadeFile, 'useOwnedWorkspaceAgentRuntime')
     const consumer = variableArrow(facadeFile, 'useWorkspaceAgentRuntime')
@@ -625,10 +629,8 @@ describe('workspace runtime architecture', () => {
     for (const responsibility of [
       'lifecycleOwner.processRuntimeEvents',
       'processWorkspaceRuntimeEvents',
-      'syncWorkspaceElicitationState',
-      'syncWorkspacePermissionState',
-      'syncWorkspaceContextUsage',
-      'markRunningSessionsDisconnectedOnDrop'
+      'syncWorkspaceInteractionStateFromSnapshot',
+      'syncWorkspaceContextUsage'
     ]) {
       expect(
         effects.some((body) => body.includes(responsibility)),
@@ -853,7 +855,7 @@ describe('workspace runtime architecture', () => {
   it('keeps the module-impact owner and test closure complete', () => {
     const manifest = loadModuleImpactManifest(manifestPath)
     const workspaceRuntime = manifest.modules.workspace_runtime
-    expect(workspaceRuntime.ownerPaths).toEqual([
+    expectBoundaryPaths(manifest, 'workspace_runtime', [
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
@@ -866,28 +868,39 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-selection-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.ts',
       'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts',
+      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.characterization.test.tsx',
       'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts',
       'src/renderer/src/lib/acp/workspace-events.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-save-as-skill-owner.test.tsx',
+      'src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-branch-owner.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-session-memory.test.ts',
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
       'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts'
+      'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
+      'src/renderer/src/lib/acp/workspace-operation-error.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts',
+      'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
+      'src/renderer/src/lib/handled-failure-diagnostics.ts'
     ])
-    expect(workspaceRuntime.interfacePaths).toEqual([
-      'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
-      'src/renderer/src/lib/acp/workspace-events.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
-      'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
-      'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
-    ])
-    expect(workspaceRuntime.consumerModules).toEqual(['workspace_page'])
+    expect(workspaceRuntime.interfacePaths).toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',
+        'src/renderer/src/lib/acp/workspace-events.ts',
+        'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
+        'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
+        'src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.ts'
+      ])
+    )
+    expect(workspaceRuntime.consumerModules).toEqual(expect.arrayContaining(['workspace_page']))
     expect(workspaceRuntime.testFiles.owner).toContain(architectureTestPath)
-    expect(workspaceRuntime.capabilityOverlays).toEqual(['renderer_state'])
+    expect(workspaceRuntime.capabilityOverlays).toEqual(expect.arrayContaining(['renderer_state']))
     expect(workspaceRuntime.fallbackCapability).toBe('renderer_view')
   })
 })

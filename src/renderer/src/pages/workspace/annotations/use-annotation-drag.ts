@@ -1,6 +1,6 @@
 import { createContext, useContext, useLayoutEffect, useRef, type DragEvent } from 'react'
-import type { Annotation } from '../../../../../shared/annotations'
-import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotation-transfer'
+import type { Annotation } from '../../../../../shared/annotation-contract'
+import { ANNOTATION_DRAG_TYPE, annotationTransfers } from './annotation-transfer'
 export type SourceContext = {
   sourceId: string
   projectId: string

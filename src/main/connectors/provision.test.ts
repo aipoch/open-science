@@ -1,10 +1,30 @@
-import { describe, it, expect } from 'vitest'
-import { mkdtemp, mkdir, readdir, readFile, writeFile, stat } from 'node:fs/promises'
+import { describe, it, expect, vi } from 'vitest'
+import { mkdtemp, mkdir, readdir, readFile, writeFile, stat, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { syncConnectorSkillDocs } from './provision'
+import { syncConnectorSkillDocs, syncCustomServerSkillDocs } from './provision'
+import type { StoredCustomMcpServer } from '../settings/types'
 
 describe('syncConnectorSkillDocs', () => {
+  it('does not write or remove bundled docs when already cancelled', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'skills-cancel-'))
+    try {
+      await mkdir(join(dir, 'mcp-chemistry'))
+      await writeFile(join(dir, 'mcp-chemistry', 'SKILL.md'), 'existing')
+      const controller = new AbortController()
+      controller.abort()
+
+      await expect(syncConnectorSkillDocs(dir, [], controller.signal)).rejects.toBe(
+        controller.signal.reason
+      )
+
+      expect(await readFile(join(dir, 'mcp-chemistry', 'SKILL.md'), 'utf8')).toBe('existing')
+      expect(await readdir(dir)).toEqual(['mcp-chemistry'])
+    } finally {
+      await rm(dir, { recursive: true, force: true })
+    }
+  })
+
   it('writes enabled connectors as mcp-<id>/SKILL.md and removes disabled ones', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'skills-'))
     // A stale disabled connector directory that should be removed.
@@ -30,4 +50,61 @@ describe('syncConnectorSkillDocs', () => {
       expect(literature).toContain(`### ${method}`)
     }
   })
+})
+
+describe('cancelled custom Connector Skill discovery', () => {
+  it.each(['resolve', 'reject'] as const)(
+    'preserves docs and skips subsequent servers and cleanup when discovery later %ss',
+    async (outcome) => {
+      const dir = await mkdtemp(join(tmpdir(), 'skills-discovery-cancel-'))
+      try {
+        for (const name of ['discovering', 'stale']) {
+          await mkdir(join(dir, `mcp-${name}`))
+          await writeFile(join(dir, `mcp-${name}`, 'SKILL.md'), `existing-${name}`)
+        }
+        const server: StoredCustomMcpServer = {
+          id: 'discovering-id',
+          name: 'discovering',
+          displayName: 'Discovering',
+          transport: 'stdio',
+          command: 'mcp',
+          enabled: true
+        }
+        let finishDiscovery!: () => void
+        const listTools = vi.fn(
+          () =>
+            new Promise<[]>((resolve, reject) => {
+              finishDiscovery = () =>
+                outcome === 'resolve' ? resolve([]) : reject(new Error('discovery stopped'))
+            })
+        )
+        const controller = new AbortController()
+        const sync = syncCustomServerSkillDocs(
+          dir,
+          [server, { ...server, id: 'later-id', name: 'later' }],
+          listTools,
+          undefined,
+          controller.signal
+        )
+        const settled = sync.then(
+          () => undefined,
+          (error: unknown) => error
+        )
+        await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce())
+        controller.abort()
+        finishDiscovery()
+        expect(await settled).toBe(controller.signal.reason)
+
+        expect(listTools).toHaveBeenCalledOnce()
+        expect((await readdir(dir)).sort()).toEqual(['mcp-discovering', 'mcp-stale'])
+        for (const name of ['discovering', 'stale']) {
+          expect(await readFile(join(dir, `mcp-${name}`, 'SKILL.md'), 'utf8')).toBe(
+            `existing-${name}`
+          )
+        }
+      } finally {
+        await rm(dir, { recursive: true, force: true })
+      }
+    }
+  )
 })

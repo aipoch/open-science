@@ -1,13 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { resultId, type SearchCategory, type SearchResult } from './search-result'
+import { readLiteratureSelectionPage } from '../../lib/literature-queries'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 import type {
   LiteratureCollectionView,
-  LiteratureItemView,
-  LiteratureAnnotationSearchView
-} from '../../../../shared/literature'
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
 import type { SearchFileFormat, SearchSort } from '../../../../shared/search-text'
-import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import { resultId, type SearchCategory, type SearchResult } from './search-result'
 
 export type SearchPage = {
   items: SearchResult[]

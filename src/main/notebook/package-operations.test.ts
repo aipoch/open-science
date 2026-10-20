@@ -8,10 +8,10 @@ import type { NotebookLanguage } from '../../shared/notebook'
 import type { PackageMirror } from '../../shared/mirror'
 import { createRootNotebookLane } from './lane-identity'
 import { NotebookPackageOperations } from './package-operations'
-import { installPackages } from './package-manager'
+import { installPackages } from '@aipoch/environment'
 import { compactManagePackagesResult } from './mcp-server'
-import { CHILD_UNCONFIRMED } from './provisioner-runtime'
-import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { CHILD_UNCONFIRMED } from '@aipoch/environment'
+import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type PackageOptions = ConstructorParameters<typeof NotebookPackageOperations>[0]

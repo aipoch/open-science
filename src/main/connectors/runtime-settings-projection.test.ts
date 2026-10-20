@@ -1,4 +1,9 @@
 import { UnauthorizedError } from '@modelcontextprotocol/sdk/client/auth.js'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { Server } from '@modelcontextprotocol/sdk/server/index.js'
+import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { getEventListeners } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { StoredConnectors } from '../settings/types'
@@ -11,6 +16,185 @@ const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors
 })
 
 describe('ConnectorRuntimeSettingsProjection', () => {
+  it.each([
+    ['all', false],
+    ['targeted', false],
+    ['all', true],
+    ['targeted', true]
+  ] as const)(
+    'releases completed %s discovery cancellation links with SDK failure: %s',
+    async (scope, fail) => {
+      const serverConfig = {
+        id: 'discovery-id',
+        name: 'discovery',
+        displayName: 'Discovery',
+        transport: 'stdio' as const,
+        command: 'unused',
+        enabled: true
+      }
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+      const client = new Client({ name: 'discovery-test', version: '1' })
+      const server = new Server(
+        { name: 'discovery-test-server', version: '1' },
+        { capabilities: { tools: {} } }
+      )
+      server.setRequestHandler(ListToolsRequestSchema, async () => {
+        if (fail) throw new Error('discovery failed')
+        return { tools: [] }
+      })
+      await Promise.all([client.connect(clientTransport), server.connect(serverTransport)])
+      const send = vi.spyOn(clientTransport, 'send')
+      const discoverySignals: AbortSignal[] = []
+      let parent!: AbortSignal
+      const projection = new ConnectorRuntimeSettingsProjection({
+        readConnectors: async () => connectors({ customMcpServers: [serverConfig] }),
+        skillsDir: '/config/skills',
+        mcpClientManager: {
+          listTools: async (_config, signal) => {
+            discoverySignals.push(signal!)
+            return (await client.listTools({}, { signal })).tools
+          }
+        },
+        syncBundledSkillDocs: async () => undefined,
+        syncCustomSkillDocs: async (_dir, servers, loadTools, _managedNames, signal) => {
+          parent = signal!
+          try {
+            await loadTools(servers[0])
+            return { materializedNames: [serverConfig.name], failures: [] }
+          } catch (error) {
+            return { materializedNames: [], failures: [{ server: serverConfig, error }] }
+          }
+        },
+        reportError: vi.fn()
+      })
+      try {
+        for (let index = 0; index < 12; index += 1) {
+          if (scope === 'all') await projection.refresh()
+          else await projection.refreshCustomServer(serverConfig.id)
+          expect(getEventListeners(parent, 'abort')).toHaveLength(0)
+        }
+        expect(new Set(discoverySignals).size).toBe(12)
+        expect(discoverySignals.every((signal) => signal !== parent)).toBe(true)
+        expect(projection.materializedCustomSkillNames()).toHaveLength(fail ? 0 : 1)
+        expect(projection.customServerAvailability(serverConfig.id)).toBe(
+          fail ? 'unavailable' : undefined
+        )
+        await projection.dispose()
+        expect(discoverySignals.every((signal) => !signal.aborted)).toBe(true)
+        expect(
+          send.mock.calls.filter(
+            ([message]) => 'method' in message && message.method === 'notifications/cancelled'
+          )
+        ).toHaveLength(0)
+      } finally {
+        await projection.dispose()
+        await Promise.all([client.close(), server.close()])
+      }
+    }
+  )
+
+  it('drains a blocked bundled sync and discards queued and future refreshes on disposal', async () => {
+    let finishSync!: () => void
+    const syncBundledSkillDocs = vi.fn().mockReturnValue(
+      new Promise<void>((resolve) => {
+        finishSync = resolve
+      })
+    )
+    const readConnectors = vi.fn().mockResolvedValue(connectors())
+    const syncCustomSkillDocs = vi.fn()
+    const listTools = vi.fn()
+    const notifyStatusChanged = vi.fn()
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors,
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs,
+      notifyStatusChanged
+    })
+    const refresh = projection.refresh()
+    await vi.waitFor(() => expect(syncBundledSkillDocs).toHaveBeenCalledOnce())
+    const queued = projection.refreshCustomServer('queued-id')
+    const notificationsBeforeDisposal = notifyStatusChanged.mock.calls.length
+    let disposed = false
+    const disposal = projection.dispose().then(() => {
+      disposed = true
+    })
+
+    expect(syncBundledSkillDocs.mock.calls[0][2].aborted).toBe(true)
+    await projection.refresh()
+    await projection.refreshCustomServer('later-id')
+    projection.setCustomServerDispatchAvailability('queued-id', 'unavailable')
+    expect(disposed).toBe(false)
+
+    finishSync()
+    await Promise.all([refresh, queued, disposal, projection.dispose()])
+
+    expect(disposed).toBe(true)
+    expect(readConnectors).toHaveBeenCalledOnce()
+    expect(syncCustomSkillDocs).not.toHaveBeenCalled()
+    expect(listTools).not.toHaveBeenCalled()
+    expect(projection.isRefreshing()).toBe(false)
+    expect(projection.customServerAvailability('queued-id')).toBeUndefined()
+    expect(notifyStatusChanged).toHaveBeenCalledTimes(notificationsBeforeDisposal)
+  })
+
+  it.each(['all', 'targeted'] as const)(
+    'aborts in-flight %s discovery without publishing late results or cancellation errors',
+    async (scope) => {
+      const server = {
+        id: 'discovery-id',
+        name: 'discovery',
+        displayName: 'Discovery',
+        transport: 'stdio' as const,
+        command: 'mcp',
+        enabled: true
+      }
+      const listTools = vi.fn((_config, signal: AbortSignal) => {
+        return new Promise<[]>((_resolve, reject) => {
+          signal.addEventListener('abort', () => reject(signal.reason), { once: true })
+        })
+      })
+      const syncCustomSkillDocs = vi.fn(async (_dir, servers, loadTools) => {
+        try {
+          await loadTools(servers[0])
+          return { materializedNames: [server.name], failures: [] }
+        } catch (error) {
+          // Even an injected sync implementation that returns a discovery failure after abort
+          // must not publish it into the live runtime snapshot.
+          return { materializedNames: [], failures: [{ server, error }] }
+        }
+      })
+      const notifyStatusChanged = vi.fn()
+      const reportError = vi.fn()
+      const projection = new ConnectorRuntimeSettingsProjection({
+        readConnectors: vi.fn().mockResolvedValue(connectors({ customMcpServers: [server] })),
+        skillsDir: '/config/skills',
+        mcpClientManager: { listTools },
+        syncBundledSkillDocs: vi.fn().mockResolvedValue(undefined),
+        syncCustomSkillDocs,
+        notifyStatusChanged,
+        reportError
+      })
+      const refresh =
+        scope === 'all' ? projection.refresh() : projection.refreshCustomServer(server.id)
+      await vi.waitFor(() => expect(listTools).toHaveBeenCalledOnce())
+      const signal = listTools.mock.calls[0][1]
+      const notificationsBeforeDisposal = notifyStatusChanged.mock.calls.length
+
+      await projection.dispose()
+      await refresh
+
+      expect(signal.aborted).toBe(true)
+      expect(projection.materializedCustomSkillNames()).toEqual([])
+      expect(projection.customServerAvailability(server.id)).toBeUndefined()
+      expect(projection.isRefreshing()).toBe(false)
+      expect(projection.isDegraded()).toBe(false)
+      expect(reportError).not.toHaveBeenCalled()
+      expect(notifyStatusChanged).toHaveBeenCalledTimes(notificationsBeforeDisposal)
+    }
+  )
+
   it('owns the current snapshot and synchronizes bundled and enabled custom Skill docs', async () => {
     const stored = connectors({
       disabledConnectorIds: ['chemistry'],
@@ -52,15 +236,19 @@ describe('ConnectorRuntimeSettingsProjection', () => {
     expect(projection.current()).toBe(stored)
     expect(syncBundledSkillDocs).toHaveBeenCalledWith(
       '/config/skills',
-      expect.not.arrayContaining(['chemistry'])
+      expect.not.arrayContaining(['chemistry']),
+      expect.any(AbortSignal)
     )
     expect(syncCustomSkillDocs).toHaveBeenCalledWith(
       '/config/skills',
       [stored.customMcpServers?.[0]],
-      expect.any(Function)
+      expect.any(Function),
+      undefined,
+      expect.any(AbortSignal)
     )
     expect(listTools).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 'server-id', command: 'mcp', transport: 'stdio' })
+      expect.objectContaining({ id: 'server-id', command: 'mcp', transport: 'stdio' }),
+      expect.any(AbortSignal)
     )
     expect(projection.materializedCustomSkillNames()).toEqual(['mcp-enabled'])
   })
@@ -112,7 +300,8 @@ describe('ConnectorRuntimeSettingsProjection', () => {
         '/config/skills',
         [target],
         expect.any(Function),
-        ['target']
+        ['target'],
+        expect.any(AbortSignal)
       )
     )
 

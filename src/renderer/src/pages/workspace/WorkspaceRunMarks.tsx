@@ -39,8 +39,7 @@ const RUN_MARK_PREVIEW_HEIGHT_PX = 88
 const RUN_MARK_PREVIEW_MARGIN_PX = 12
 const RUN_MARK_INLINE_OFFSET_PX = 8
 const RUN_MARK_TOP_OFFSET_PX = 8
-const RUN_MARK_ROW_SIZE_PX = 20
-const RUN_MARK_MIN_ROW_SIZE_PX = 12
+const RUN_MARK_ROW_SIZE_PX = 8
 const RUN_MARK_MAX_RAIL_HEIGHT_PX = 480
 
 type RunMarkRailPosition = {
@@ -60,7 +59,7 @@ const WorkspaceRunMarks = ({
   const [visibleIndices, setVisibleIndices] = useState<number[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
   const [focusedId, setFocusedId] = useState<string | null>(null)
-  const [railWindow, setRailWindow] = useState({ start: 0, end: 44, rowSize: 12 })
+  const [railWindow, setRailWindow] = useState({ start: 0, end: 64, rowSize: RUN_MARK_ROW_SIZE_PX })
   const [highlightedIndex, setHighlightedIndex] = useState<number | null>(null)
   const [availableMessageIds, setAvailableMessageIds] = useState<Set<string>>(
     () => new Set(marks.map((mark) => mark.id))
@@ -74,11 +73,20 @@ const WorkspaceRunMarks = ({
     top: number
     open: boolean
   } | null>(null)
+  const pointerFrameRef = useRef<number | undefined>(undefined)
+  const pointerPositionRef = useRef(0)
+  const cancelPointerFrame = (): void => {
+    if (pointerFrameRef.current !== undefined) {
+      window.cancelAnimationFrame(pointerFrameRef.current)
+      pointerFrameRef.current = undefined
+    }
+  }
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const cancelPreviewClose = (): void => {
     window.clearTimeout(closeTimerRef.current)
   }
   const closePreview = useCallback((): void => {
+    cancelPointerFrame()
     window.clearTimeout(closeTimerRef.current)
     setPreview((current) => (current?.open ? { ...current, open: false } : current))
     setHighlightedIndex(null)
@@ -88,6 +96,7 @@ const WorkspaceRunMarks = ({
     closeTimerRef.current = setTimeout(closePreview, 120)
   }
   const showPreview = (mark: RunMark, index: number, button: HTMLButtonElement): void => {
+    cancelPointerFrame()
     cancelPreviewClose()
     const rect = button.getBoundingClientRect()
     const width = Math.min(RUN_MARK_PREVIEW_WIDTH_PX, window.innerWidth - 24)
@@ -116,6 +125,7 @@ const WorkspaceRunMarks = ({
     window.addEventListener('resize', closePreview)
     viewport?.addEventListener('scroll', closePreview, { passive: true })
     return () => {
+      cancelPointerFrame()
       window.clearTimeout(closeTimerRef.current)
       document.removeEventListener('keydown', dismissOnEscape)
       window.removeEventListener('resize', closePreview)
@@ -129,10 +139,7 @@ const WorkspaceRunMarks = ({
   const updateRailWindow = useCallback((): void => {
     const rail = railRef.current
     if (!rail || rail.clientHeight === 0) return
-    const rowSize = Math.max(
-      RUN_MARK_MIN_ROW_SIZE_PX,
-      Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / marks.length)
-    )
+    const rowSize = RUN_MARK_ROW_SIZE_PX
     const start = Math.max(0, Math.floor(rail.scrollTop / rowSize) - 4)
     const end = Math.min(
       marks.length,
@@ -149,10 +156,7 @@ const WorkspaceRunMarks = ({
     (position: number): void => {
       const rail = railRef.current
       if (!rail || rail.clientHeight === 0) return
-      const rowSize = Math.max(
-        RUN_MARK_MIN_ROW_SIZE_PX,
-        Math.min(RUN_MARK_ROW_SIZE_PX, rail.clientHeight / marks.length)
-      )
+      const rowSize = RUN_MARK_ROW_SIZE_PX
       const markTop = position * rowSize
       const inset = Math.min(rowSize, rail.clientHeight / 4)
       const nextTop = Math.max(
@@ -313,7 +317,8 @@ const WorkspaceRunMarks = ({
     image: t('Image')
   }
 
-  const previewMark = marks.find((mark) => mark.id === preview?.id)
+  const previewIndex = marks.findIndex((mark) => mark.id === preview?.id)
+  const previewMark = marks[previewIndex]
   // A measured preview belongs to one rail position. ResizeObserver may move the rail
   // without a window resize; invalidate the old anchor without another state update.
   const previewOpen =
@@ -329,6 +334,28 @@ const WorkspaceRunMarks = ({
         <ol
           ref={railRef}
           className="pointer-events-auto relative w-full overflow-hidden"
+          onPointerMove={(event) => {
+            if (event.pointerType === 'touch') return
+            const rail = event.currentTarget
+            pointerPositionRef.current = Math.max(
+              0,
+              Math.min(
+                marks.length - 1,
+                (event.clientY - rail.getBoundingClientRect().top + rail.scrollTop) /
+                  RUN_MARK_ROW_SIZE_PX -
+                  0.5
+              )
+            )
+            if (pointerFrameRef.current !== undefined) return
+            pointerFrameRef.current = window.requestAnimationFrame(() => {
+              pointerFrameRef.current = undefined
+              setHighlightedIndex(pointerPositionRef.current)
+            })
+          }}
+          onPointerLeave={() => {
+            cancelPointerFrame()
+            if (!railRef.current?.contains(document.activeElement)) setHighlightedIndex(null)
+          }}
           onScroll={updateRailWindow}
           style={railStyle}
         >
@@ -410,15 +437,29 @@ const WorkspaceRunMarks = ({
                     }}
                     onPointerLeave={(event) => {
                       if (document.activeElement !== event.currentTarget) {
-                        setHighlightedIndex(null)
                         schedulePreviewClose()
                       }
                     }}
                   >
                     <span
                       aria-hidden="true"
+                      // Only the visible stroke moves; the dense hit targets stay fixed.
+                      style={{
+                        scale: `${
+                          previewOpen && highlightedIndex !== null
+                            ? 0.4 +
+                              0.6 *
+                                Math.cos(
+                                  (Math.min(4, Math.abs(highlightedIndex - index)) * Math.PI) / 8
+                                ) **
+                                  2
+                            : 0.4
+                        } 1`
+                      }}
                       className={runMarkIndicatorClassName(
-                        previewOpen ? highlightedIndex : null,
+                        previewOpen && highlightedIndex !== null
+                          ? Math.round(highlightedIndex)
+                          : null,
                         index,
                         visibleIndices.includes(index)
                       )}
@@ -430,26 +471,35 @@ const WorkspaceRunMarks = ({
         </ol>
       </nav>
       {preview && previewMark ? (
-        <div
+        <button
+          type="button"
+          tabIndex={-1}
           id={previewId}
-          role="tooltip"
+          disabled={!previewOpen || (!onRevealMessage && !availableMessageIds.has(previewMark.id))}
+          onClick={() => {
+            railRef.current
+              ?.querySelector<HTMLButtonElement>(`button[data-run-index="${previewIndex}"]`)
+              ?.focus({ preventScroll: true })
+            closePreview()
+            scrollToRun(previewMark, previewIndex)
+          }}
           aria-hidden={!previewOpen}
           data-slot="run-mark-preview"
           data-open={previewOpen || undefined}
           onPointerEnter={cancelPreviewClose}
           onPointerLeave={schedulePreviewClose}
-          className="fixed left-0 top-0 z-50 hidden h-[88px] w-64 max-w-[calc(100vw-24px)] rounded-xl border border-border-200 bg-bg-000 p-3 text-start text-text-000 shadow-dialog transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] md:block data-[open]:opacity-100 [&:not([data-open])]:pointer-events-none [&:not([data-open])]:opacity-0 starting:opacity-0 motion-reduce:transition-none"
+          className="fixed left-0 top-0 z-50 hidden h-[88px] w-64 max-w-[calc(100vw-24px)] flex-col rounded-xl border border-border-200 bg-bg-000 p-3 text-start text-text-000 shadow-dialog transition-[transform,opacity] duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] md:flex data-[open]:opacity-100 [&:not([data-open])]:pointer-events-none [&:not([data-open])]:opacity-0 starting:opacity-0 motion-reduce:transition-none"
           style={{ transform: `translate3d(${preview.left}px, ${preview.top}px, 0)` }}
         >
-          <p className="truncate text-xs font-semibold leading-4 text-text-000">
+          <span className="block truncate text-xs font-semibold leading-4 text-text-000">
             {normalizePreviewText(previewMark.userMessage, previewFallback)}
-          </p>
+          </span>
           {previewMark.agentMessage ? (
-            <p className="mt-1 line-clamp-2 break-words text-xs leading-4 text-text-200">
+            <span className="mt-1 line-clamp-2 break-words text-xs leading-4 text-text-200">
               {normalizePreviewText(previewMark.agentMessage, previewFallback)}
-            </p>
+            </span>
           ) : null}
-        </div>
+        </button>
       ) : null}
     </>,
     document.body

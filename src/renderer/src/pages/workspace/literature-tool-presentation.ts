@@ -1,4 +1,4 @@
-import { literatureCatalogReceiptSchema } from '../../../../shared/literature'
+import { literatureCatalogReceiptSchema } from '@aipoch/literature-library/contracts'
 import { summarizeLiteratureSaveReceipts } from '../../../../shared/literature-save'
 
 type LiteratureToolAction = 'format' | 'read' | 'search' | 'save'
@@ -38,6 +38,7 @@ type LiteratureToolSummary = Readonly<{
   requestedStart?: number
   requestedEnd?: number
   pdfDownloaded?: boolean
+  candidateIds?: readonly string[]
   savedCount?: number
   existingItemIds?: readonly string[]
   duplicateCount?: number
@@ -589,6 +590,17 @@ const buildLiteratureLibraryToolSummary = (
     ...(acquired ? { pdfDownloaded: true } : {}),
     ...(saveSummary
       ? {
+          candidateIds: parsedReceipts?.success
+            ? [
+                ...new Set(
+                  parsedReceipts.data
+                    .filter((receipt) => receipt.kind === 'candidate')
+                    .map((receipt) => receipt.id)
+                )
+              ]
+            : acquired
+              ? [acquired.candidateId as string]
+              : [],
           savedCount: saveSummary.pendingCount,
           existingItemIds: saveSummary.existingItemIds,
           duplicateCount: saveSummary.duplicateCount,
@@ -605,14 +617,14 @@ const buildLiteratureLibraryToolSummary = (
 }
 
 export {
-  pdfElementToolAction,
-  buildPdfElementToolSummary,
   buildLiteratureLibraryToolSummary,
   buildLiteratureToolSummary,
+  buildPdfElementToolSummary,
   getLiteratureLibraryToolAction,
   isLiteratureLibraryAcquirePdfTool,
   isLiteratureLibraryLatexTool,
   isLiteratureLibraryPdfReadTool,
-  isLiteratureReadDocumentTool
+  isLiteratureReadDocumentTool,
+  pdfElementToolAction
 }
 export type { LiteratureToolAction, LiteratureToolSummary }

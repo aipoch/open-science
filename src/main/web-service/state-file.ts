@@ -1,7 +1,7 @@
 import { rm } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 const WEB_SERVICE_STATE_FILE = 'web-service.json'
 

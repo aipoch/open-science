@@ -1,69 +1,49 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { desktopShellInteraction } from '../desktop-interaction'
+import type { ArtifactResolver } from './compute-job-workflow-owner'
+import type { ComputeHandlers } from './handler-contract'
 
-import { BrowserWindow, shell } from 'electron'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ComputeApprovalRequest, ComputeJob, JobSummary } from '../../shared/compute'
 
-import type {
-  ChangeComputeHostAuthenticationRequest,
-  CancelComputeJobRequest,
-  RetryComputeJobHarvestRequest,
-  ChangeComputeHostAuthenticationResult,
-  ComputeApprovalDecision,
-  ComputeHost,
-  ComputeApprovalRequest,
-  ComputePasswordCapability,
-  ComputeExecutionMode,
-  ComputeHostDeletionStatus,
-  ComputeJob,
-  ComputeJobsListFilter,
-  ComputeJobsPendingNotificationFilter,
-  ComputeJobAnalysisTransition,
-  JobSummary,
-  CreateComputeHostRequest,
-  CreatePasswordComputeHostRequest,
-  CreatePasswordComputeHostResult,
-  ResetPasswordComputeHostRequest,
-  ResetPasswordComputeHostResult,
-  SetComputeJobRemoteCleanupRequest,
-  DetailsAuthor,
-  ProbeResult
-} from '../../shared/compute'
-import { computeProviderId } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile } from '../../shared/remote-fs'
-import { getProjectDbClient } from '../projects/prisma-client'
-import { createLogger, errorLogFields } from '../logger'
-import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
-import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
-import { broadcastToRenderers } from '../renderer-broadcast'
-import type { TaskNotificationService } from '../notifications/task-notifications'
+import { computeProviderId } from '@aipoch/compute'
+
+import type { SessionComputePolicyAuthority } from '@aipoch/compute'
+import { ComputeConnectionError, type ComputeJobDeletionOwner } from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import { buildComputeApprovalBroadcast } from '../notifications/electron-wiring'
+import type { TaskNotificationService } from '../notifications/task-notifications'
+import { getProjectDbClient } from '../projects/prisma-client'
+import { broadcastToRenderers } from '../renderer-broadcast'
+import { createSettingsComputeGrantPort } from '../settings/compute-grant-port'
+import { resolveConfigRoot, resolveDataRoot } from '../storage-root'
 import { ComputeApprovalBroker, type ComputeApprovalContext } from './compute-approval-broker'
-import { ComputeService, type ArtifactResolver } from './compute-service'
-import { ConcurrencyManager } from './concurrency-manager'
-import type { SessionComputePolicyAuthority } from '../session-persistence/compute-policy'
-import { ComputeHostRepository } from './repository'
-import { ComputeJobRepository } from './job-repository'
 import { ComputeJobOperationRepository } from './compute-job-operation-repository'
-import { createComputeJobDeletionOwner, type ComputeJobDeletionOwner } from './job-deletion-owner'
+import { ComputeService } from './compute-service'
+import { type ComputeConnectionBroker } from './connection-broker'
+import { ComputeJobRepository } from './job-repository'
+import { ComputeHostRepository } from './repository'
 import { readSshConfigHostAliases } from './ssh-config'
-import { ComputeConnectionError, type ComputeConnectionBroker } from './connection-broker'
-import { dispatchJob } from './job-dispatcher'
-import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
-import { deleteComputeHost, type DeleteComputeHostOptions } from './compute-host-deletion-owner'
-import { SessionCacheOwner } from './session-cache-owner'
-import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
+
 import type { PermissionGrantRegistry } from '../permission-grants/registry'
-import {
-  createComputePermissionGrantAdapter,
-  type LegacyComputeGrantPort
-} from './permission-grant-adapter'
 import {
   createComputeAuthenticationRuntime,
   projectComputeCredentialStatus,
   type ComputeAuthenticationDependencies,
   type ComputeHostLifecycle
 } from './authentication-runtime'
+import { deleteComputeHost } from './compute-host-deletion-owner'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
+import { EnabledComputeHostsRegistry, enabledComputeHostsRegistry } from './enabled-hosts-registry'
+import {
+  createComputePermissionGrantAdapter,
+  type LegacyComputeGrantPort
+} from './permission-grant-adapter'
+import { SessionCacheOwner } from './session-cache-owner'
+import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 export const COMPUTE_JOB_UPDATED_CHANNEL = 'compute:job-updated'
 
 const log = createLogger('compute')
@@ -156,84 +136,6 @@ export const toJobSummary = async (
 }
 
 // Renderer-callable Compute commands; transport and credential details remain behind their owners.
-type ComputeHandlers = {
-  list: () => Promise<ComputeHost[]>
-  get: (providerId: string) => Promise<ComputeHost | null>
-  create: (request: CreateComputeHostRequest) => Promise<ComputeHost>
-  createPassword: (
-    request: CreatePasswordComputeHostRequest
-  ) => Promise<CreatePasswordComputeHostResult>
-  resetPassword: (
-    request: ResetPasswordComputeHostRequest
-  ) => Promise<ResetPasswordComputeHostResult>
-  changeAuthentication: (
-    request: ChangeComputeHostAuthenticationRequest
-  ) => Promise<ChangeComputeHostAuthenticationResult>
-  passwordCapability: () => Promise<ComputePasswordCapability>
-  delete: (providerId: string, options?: DeleteComputeHostOptions) => Promise<void>
-  deletionStatus: (providerId: string) => Promise<ComputeHostDeletionStatus>
-  // Selectable Host aliases parsed from ~/.ssh/config (patterns and Match blocks excluded).
-  sshConfigAliases: () => Promise<string[]>
-  // Runs the probe bundle against the host and persists the result. Returns the ProbeResult.
-  probe: (providerId: string) => Promise<ProbeResult>
-  // Persisted instructions only; resource observations are exposed on the host's probeResult.
-  // The read doc is the exact oldText baseline for a guarded replacement.
-  detailsGet: (providerId: string) => Promise<{ doc: string }>
-  detailsSave: (
-    providerId: string,
-    text: string,
-    oldText: string,
-    author: DetailsAuthor
-  ) => Promise<void>
-  // Scratch root: set path and mark pinned.
-  scratchSet: (providerId: string, path: string) => Promise<void>
-  // Scratch root: clear the override so probes may auto-detect it again.
-  scratchClear: (providerId: string) => Promise<void>
-  // Enforced concurrent job limit: set 1..500.
-  concurrencySet: (providerId: string, limit: number) => Promise<void>
-  executionModeSet: (providerId: string, executionMode: ComputeExecutionMode) => Promise<void>
-  // Session-level concurrency control (Phase 3c, issue 04).
-  setSessionConcurrencyLimit: (sessionId: string, limit: number) => Promise<void>
-  getSessionConcurrencyStatus: (sessionId: string) => Promise<{
-    session_limit: number | null
-    active_count: number
-    queued_count: number
-    provider_ceilings: Record<string, number>
-    queue_blocked_reason?: import('../../shared/compute').ComputeQueueBlockedReason
-  }>
-  listDir: (providerId: string, path: string) => Promise<DirListing>
-  download: (providerId: string, remotePath: string, dest: DownloadDest) => Promise<LocalFile>
-  revealInFolder: (filePath: string) => void
-  // The compute service instance, exposed so the notebook RPC server can wire computeCall.
-  computeService: ComputeService
-  connectionBroker: ComputeConnectionBroker
-  concurrencyManager?: ConcurrencyManager
-  jobDeletionOwner?: ComputeJobDeletionOwner
-  // Responds to a pending approval request from the renderer with a canonical app-owned scope.
-  approvalRespond: (id: string, decision: ComputeApprovalDecision) => void
-  approvalReplay: (id: string) => ComputeApprovalRequest | null
-  approvalReplayPending: () => void
-  approvalPauseSession: (sessionId: string) => void
-  approvalResumeSession: (sessionId: string) => void
-  approvalCancelSession: (sessionId: string) => void
-  approvalCancelAll: () => void
-  approvalCompleteGlobalCancellation: () => void
-  approvalCompleteSessionCancellation: (sessionId: string) => void
-  approvalBeginSessionDeletion: (sessionId: string) => void
-  approvalFinishSessionDeletion: (sessionId: string, retained: boolean) => void
-  // Returns either a Session feed or the bounded global non-terminal activity projection.
-  jobsList: (filter: ComputeJobsListFilter) => Promise<JobSummary[]>
-  jobsCancel: (
-    request: CancelComputeJobRequest
-  ) => Promise<import('../../shared/compute').JobStatusResult>
-  jobsRetryHarvest: (request: RetryComputeJobHarvestRequest) => Promise<void>
-  jobsSetRemoteCleanup: (request: SetComputeJobRemoteCleanupRequest) => Promise<void>
-  // Returns jobs with notifiedAt set and notificationConsumedAt null (issue 05 restart recovery).
-  jobsPendingNotification: (filter: ComputeJobsPendingNotificationFilter) => Promise<JobSummary[]>
-  // Marks the given job ids as notification-consumed. Idempotent (issue 05).
-  jobsMarkConsumed: (sessionId: string, jobIds: string[]) => Promise<void>
-  jobsTransitionAnalysis: (request: ComputeJobAnalysisTransition) => Promise<JobSummary[]>
-}
 
 type ComputeResultDeliveryProjection = Readonly<{
   observeJob(job: JobSummary): Promise<void>
@@ -287,12 +189,10 @@ const createComputeHandlers = (
           })
         : (request: ComputeApprovalRequest, context?: ComputeApprovalContext) => {
             // Tests and isolated registrations without the notification service still receive cards.
-            for (const win of BrowserWindow.getAllWindows()) {
-              win.webContents.send('compute:approval-request', {
-                ...request,
-                ...(context?.sessionId ? { session_id: context.sessionId } : {})
-              })
-            }
+            broadcastToRenderers('compute:approval-request', {
+              ...request,
+              ...(context?.sessionId ? { session_id: context.sessionId } : {})
+            })
           },
       replay: (request, context) =>
         broadcastToRenderers('compute:approval-request', {
@@ -352,24 +252,24 @@ const createComputeHandlers = (
       reportAuthenticationFailurePersistenceError: (error) =>
         log.warn('compute authentication breaker persistence failed', errorLogFields(error))
     })
+  const execution = injectedService?.execution ?? createComputeExecution()
   const concurrencyManager =
     !injectedService && jobRepository
-      ? new ConcurrencyManager(
-          jobRepository,
-          repository,
-          (queuedJobId, handleJobUpdated) =>
+      ? execution.createQueue({
+          jobs: jobRepository,
+          hosts: repository,
+          dispatch: (queuedJobId, handleJobUpdated) =>
             dispatchJob(queuedJobId, {
               connectionBroker,
               hostRepository: repository,
               jobRepository,
               onJobUpdated: handleJobUpdated,
-              storageRoot
+              storageRoot,
+              execution
             }),
-          onJobUpdated,
-          undefined,
-          undefined,
-          sessionLimitPersistence
-        )
+          publish: onJobUpdated,
+          sessionPolicy: sessionLimitPersistence
+        })
       : undefined
   const summarizeJob = async (
     job: ComputeJob,
@@ -389,6 +289,7 @@ const createComputeHandlers = (
   const service =
     injectedService ??
     new ComputeService({
+      execution,
       admitSessionWork,
       runner: sshRunner,
       repository,
@@ -404,7 +305,7 @@ const createComputeHandlers = (
       credentialVault
     })
   const jobDeletionOwner = jobRepository
-    ? createComputeJobDeletionOwner({
+    ? execution.createDeletionOwner({
         jobRepository,
         hostRepository: repository,
         connectionBroker,
@@ -560,8 +461,8 @@ const createComputeHandlers = (
     getSessionConcurrencyStatus: (sessionId) => service.getSessionConcurrencyStatus(sessionId),
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
-    revealInFolder: (filePath) => {
-      shell.showItemInFolder(filePath)
+    revealInFolder: async (filePath) => {
+      await desktopShellInteraction().revealPath(filePath)
     },
     computeService: service,
     connectionBroker,
@@ -694,7 +595,7 @@ export const createJobUpdatedBroadcaster =
     resultDelivery?: ComputeResultDeliveryProjection,
     scheduling?: (
       job: ComputeJob
-    ) => Promise<import('../../shared/compute').ComputeQueueBlockedReason | undefined>
+    ) => Promise<import('@aipoch/compute').ComputeQueueBlockedReason | undefined>
   ): ((job: ComputeJob) => void) =>
   (job) => {
     // Register the canonical nonterminal observation before any filesystem/Host lookup yields.
@@ -861,16 +762,16 @@ const createComputeIpcModule = (
   }
 }
 
+export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
+export type { ComputeIpcAdapter } from './electron-ipc-adapter'
 export {
   createComputeHandlers,
   createComputeIpcModule,
   createDefaultComputeHostRepository,
-  createDefaultComputeJobRepository,
   createDefaultComputeJobOperationRepository,
+  createDefaultComputeJobRepository,
   enabledComputeHostsRegistry
 }
-export { COMPUTE_JOBS_LIST_CHANNEL, installComputeIpcHandlers } from './electron-ipc-adapter'
-export type { ComputeIpcAdapter } from './electron-ipc-adapter'
 export type {
   ComputeHandlers,
   ComputeHostLifecycle,

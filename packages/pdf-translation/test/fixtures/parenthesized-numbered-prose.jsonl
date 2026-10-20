@@ -1,0 +1,2 @@
+{"name": "repeated-numeric-markers-keep-separate-hanging-paragraphs", "markers": ["(1)", "(2)", "(3)"], "joinedMarkers": true}
+{"name": "single-numeric-operand-remains-independent", "markers": ["(2)"], "joinedMarkers": false}

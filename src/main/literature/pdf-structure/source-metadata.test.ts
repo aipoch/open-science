@@ -74,25 +74,51 @@ it('inspects verified bounded PDF metadata without running layout extraction', a
   await expect(authority.pageCount(request, source, new AbortController().signal)).resolves.toBe(12)
   expect(inspectPdfPageCount).toHaveBeenCalledTimes(1)
 })
-it('rejects changed bytes, oversized sources, symlinks and cancelled reads', async () => {
-  const { authority, request, source, root, bytes } = await setup()
+it('rejects changed bytes before returning PDF metadata', async () => {
+  const { authority, request, source, bytes } = await setup()
   await writeFile(source.path, Buffer.alloc(bytes.length, 32))
   await expect(authority.pageCount(request, source, new AbortController().signal)).rejects.toThrow(
     'LINKED_PDF_UNAVAILABLE'
   )
+})
+it('rejects oversized sources before inspecting PDF metadata', async () => {
+  const { authority, request, source } = await setup()
   source.sizeBytes = 51 * 1024 * 1024
   await expect(authority.pageCount(request, source, new AbortController().signal)).rejects.toThrow(
     'LINKED_PDF_UNAVAILABLE'
   )
-  source.sizeBytes = bytes.length
-  await symlink(source.path, join(root, 'link.pdf'))
+  expect(inspectPdfPageCount).not.toHaveBeenCalled()
+})
+it('rejects file symlinks before inspecting PDF metadata', async ({ skip }) => {
+  const { authority, request, source, root } = await setup()
+  try {
+    await symlink(source.path, join(root, 'link.pdf'))
+  } catch (error) {
+    if (
+      process.platform === 'win32' &&
+      error instanceof Error &&
+      'code' in error &&
+      error.code === 'EPERM'
+    ) {
+      skip('This Windows account cannot create file symlinks; the rejection runs where supported.')
+    }
+    throw error
+  }
   source.path = join(root, 'link.pdf')
   await expect(authority.pageCount(request, source, new AbortController().signal)).rejects.toThrow(
     'LINKED_PDF_UNAVAILABLE'
   )
+  expect(inspectPdfPageCount).not.toHaveBeenCalled()
+})
+it('rejects cancelled reads before resolving or inspecting the source', async () => {
+  const { authority, request, source, resolveVersion } = await setup()
   const controller = new AbortController()
   controller.abort()
-  await expect(authority.pageCount(request, source, controller.signal)).rejects.toThrow()
+  await expect(authority.pageCount(request, source, controller.signal)).rejects.toBe(
+    controller.signal.reason
+  )
+  expect(resolveVersion).not.toHaveBeenCalled()
+  expect(inspectPdfPageCount).not.toHaveBeenCalled()
 })
 it('reauthorizes after metadata inspection before returning page count', async () => {
   const { authority, request, source, resolveVersion } = await setup()

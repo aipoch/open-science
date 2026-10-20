@@ -1,10 +1,8 @@
-import type { NotebookLanguage, NotebookSessionRequest } from '../../shared/notebook'
-import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
-import type { NotebookEnvironmentOperations } from './environment-operations'
-import type { EnvironmentCaptureTarget } from './environment-state-tracker'
-import { boundedFailureDiagnostic } from './failure-diagnostic'
-import type { InstallRequest, InstallResult } from './package-manager'
-import type { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import type {
+  EnvironmentCaptureTarget,
+  NotebookRecoveryCoordinator,
+  NotebookRuntimeRepairPolicy
+} from '@aipoch/environment'
 import {
   DEFAULT_ENV_VERSION,
   DEFAULT_PY_ENV,
@@ -12,9 +10,14 @@ import {
   envPrefix,
   pythonReady,
   rReady
-} from './runtime-paths'
+} from '@aipoch/environment'
+import type { NotebookSessionRequest } from '../../shared/notebook'
+import type { InstallRequest, InstallResult } from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
+import type { NotebookEnvironmentOperations } from './environment-operations'
+import { boundedFailureDiagnostic } from './failure-diagnostic'
 import { runtimeTargetReceipt } from './runtime-target'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,

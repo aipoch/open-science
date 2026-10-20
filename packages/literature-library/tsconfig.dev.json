@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "noEmitOnError": true,
+    "tsBuildInfoFile": "./.cache/dev.tsbuildinfo"
+  },
+  "references": [
+    {
+      "path": "../literature-citations/tsconfig.dev.json"
+    },
+    {
+      "path": "../literature-discovery/tsconfig.dev.json"
+    },
+    {
+      "path": "../literature-screening/tsconfig.dev.json"
+    },
+    {
+      "path": "../journal-catalog/tsconfig.dev.json"
+    }
+  ]
+}

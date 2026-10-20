@@ -7,11 +7,10 @@
 
 generator client {
   provider      = "prisma-client-js"
-  // Generate query engines for both macOS architectures so the x64 build can be cross-packaged on an
-  // Apple Silicon CI runner (the scarce Intel `macos-13` runner is no longer needed). "native" is the
-  // build host's engine (darwin-arm64 on mac CI, the distro engine on Linux); "darwin" adds x64 mac.
-  // The release build prunes engines it doesn't need per platform (see .github/workflows/build.yml).
-  binaryTargets = ["native", "darwin"]
+  // "native" supplies the build host's engine; "darwin" also allows macOS x64 cross-packaging.
+  // Linux CI runs on Ubuntu, but the portable AppImage also needs Fedora's RHEL OpenSSL 3 engine.
+  // The release build prunes unrelated platforms (see .github/workflows/build.yml).
+  binaryTargets = ["native", "darwin", "rhel-openssl-3.0.x"]
 }
 
 datasource db {
@@ -20,27 +19,27 @@ datasource db {
 }
 
 model Project {
-  id               String               @id @default(cuid())
-  name             String
-  description      String               @default("")
-  agentContext     String               @default("")
-  sessionDefaults  String               @default("{}")
-  isExample        Boolean              @default(false)
-  pinned           Boolean              @default(false)
-  archivedAt       DateTime?
-  archiveRevision  Int                  @default(0)
-  deletedAt        DateTime?
-  createdAt        DateTime             @default(now())
-  updatedAt        DateTime             @updatedAt
-  permissionGrants PermissionGrant[]
-  previewState     ProjectPreviewState?
-  visionEvidence   VisionEvidence[]
-  sessions         Session[]
-  memoryEntries    MemoryEntry[]
-  literatureItems  ProjectLiterature[]
-  bookmarks        Bookmark[]
-  pdfAnnotations   PdfAnnotation[]
-  pdfAnnotationImports PdfAnnotationImport[]
+  id                   String                @id @default(cuid())
+  name                 String
+  description          String                @default("")
+  agentContext         String                @default("")
+  sessionDefaults      String                @default("{}")
+  isExample            Boolean               @default(false)
+  pinned               Boolean               @default(false)
+  archivedAt           DateTime?
+  archiveRevision      Int                   @default(0)
+  deletedAt            DateTime?
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  permissionGrants     PermissionGrant[]
+  previewState         ProjectPreviewState?
+  sessionReplayProgress   SessionReplayProgress[]
+  sessionDiscussionSnapshots SessionDiscussionSnapshot[]
+  visionEvidence       VisionEvidence[]
+  sessions             Session[]
+  memoryEntries        MemoryEntry[]
+  literatureItems      ProjectLiterature[]
+  bookmarks            Bookmark[]
 }
 
 // A private, Session-scoped saved source location. Session identity deliberately has no foreign key:
@@ -62,16 +61,43 @@ model Bookmark {
 
   @@index([projectId, sessionId, createdAt, id])
   @@index([projectId, sessionId, sourceKind, sourceId])
-  @@map("bookmarks")
 }
 
-// PDF annotations belong to a managed file version. sessionId records creation context only.
-// They are owned independently from generic Bookmarks. The selector is versioned JSON
-// so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
-model PdfAnnotation {
-  id              String   @id
+// Personal-database PDF identity. Only verified immutable bytes may acquire this identity.
+// Existing Upload/Artifact/Literature/Inbox version references own the source lifecycle through
+// ContentBlob; a second source registry would duplicate those authoritative relationships.
+model PdfDocument {
+  id                  String                  @id
+  checksum            String
+  sizeBytes           BigInt
+  content             ContentBlob[]
+  annotationDocuments PdfAnnotationDocument[]
+  translations        PdfTranslation[]
+
+  @@unique([checksum, sizeBytes])
+}
+
+// Legacy groups remain separate until conflicting native edits have been reconciled.
+// New sources of one verified PdfDocument use its canonical annotation group.
+model PdfAnnotationDocument {
+  id          String                       @id
+  pdfDocumentId String?
+  pdfDocument PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
+  checksum    String
+  sizeBytes   BigInt?
+  revision    Int                          @default(0)
+  sources     PdfAnnotationSourceBinding[]
+  annotations PdfAnnotation[]
+  imports     PdfAnnotationImport[]
+  aliases     PdfAnnotationAlias[]
+
+  @@index([pdfDocumentId])
+}
+
+model PdfAnnotationSourceBinding {
+  id              String                @id
+  documentId      String
   projectId       String?
-  sessionId       String?
   sourceSessionId String?
   sourceKind      String
   sourceFileId    String
@@ -79,38 +105,72 @@ model PdfAnnotation {
   checksum        String
   name            String
   path            String
-  kind            String
-  selectorJson    String
-  color           String?
-  origin          String   @default("user")
-  externalSubtype String?
-  note            String   @default("")
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  project         Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  document        PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
+  @@index([projectId, sourceFileId, versionId])
+  @@index([documentId])
+}
+
+// Aliases preserve old links after explicit duplicate reconciliation. A null target is a deletion.
+model PdfAnnotationAlias {
+  id           String                @id
+  documentId   String
+  annotationId String?
+  document     PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([annotationId])
+}
+
+// PDF annotations belong to a shared document. Original source columns record provenance. sessionId records creation context only.
+// They are owned independently from generic Bookmarks. The selector is versioned JSON
+// so future mark kinds and coordinate systems can be added without changing Bookmark semantics.
+model PdfAnnotation {
+  documentId         String
+  nativeKey          String?
+  nativeBaselineJson String?
+  document           PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  id                 String                @id
+  projectId          String?
+  sessionId          String?
+  sourceSessionId    String?
+  sourceKind         String
+  sourceFileId       String
+  versionId          String
+  checksum           String
+  name               String
+  path               String
+  kind               String
+  selectorJson       String
+  color              String?
+  origin             String                @default("user")
+  externalSubtype    String?
+  note               String                @default("")
+  createdAt          DateTime              @default(now())
+  updatedAt          DateTime              @updatedAt
+
+  @@unique([documentId, nativeKey])
   @@index([projectId, createdAt, id])
   @@index([projectId, sourceFileId, versionId, createdAt, id])
   @@index([projectId, sourceKind, sourceFileId, versionId, createdAt, id])
   @@index([sourceKind, sourceFileId, versionId, createdAt, id])
-  @@map("pdf_annotations")
+  @@index([documentId, createdAt, id])
 }
 
 // Receipt survives individual annotation deletion, so exports can remove only imported originals.
 model PdfAnnotationImport {
-  id String @id
-  projectId String?
-  sessionId String?
-  sourceKind String
+  documentId   String                @unique
+  document     PdfAnnotationDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  id           String                @id
+  projectId    String?
+  sessionId    String?
+  sourceKind   String
   sourceFileId String
-  versionId String
-  checksum String
-  resultJson String
-  project Project? @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  versionId    String
+  checksum     String
+  resultJson   String
 
   @@index([projectId, sessionId])
   @@index([sourceKind, sourceFileId, versionId])
-  @@map("pdf_annotation_imports")
 }
 
 // Monotonic allocator for the app-wide human-facing Session number. The row is never deleted when
@@ -299,6 +359,31 @@ model ProjectPreviewState {
   items        String   @default("[]")
   updatedAt    DateTime @updatedAt
   project      Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+// Per-Session playback position and presentation settings; independent of the rebuildable index.
+model SessionReplayProgress {
+  projectId String
+  sessionId String
+  stateJson String?
+  revision  Int      @default(0)
+  updatedAt DateTime @default(now()) @updatedAt
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, sessionId])
+}
+
+// Immutable evidence captured for a discussion; source deletion does not remove saved fragments.
+// The receiving Session owns its association separately in runtimeContext.sessionContext.
+model SessionDiscussionSnapshot {
+  id              String   @id
+  sourceProjectId String
+  sourceSessionId String
+  contextJson     String
+  createdAt       DateTime @default(now())
+  sourceProject   Project  @relation(fields: [sourceProjectId], references: [id], onDelete: Cascade)
+
+  @@index([sourceProjectId, sourceSessionId])
 }
 
 // Legacy unread-task rows retained only as the source for the message-center startup migration.
@@ -490,6 +575,8 @@ model UploadFile {
 // in those domain models rather than being folded into storage.
 model ContentBlob {
   id                           String                        @id
+  pdfDocumentId                String?
+  pdfDocument                  PdfDocument? @relation(fields: [pdfDocumentId], references: [id], onDelete: Restrict)
   checksum                     String
   storageKey                   String                        @unique
   sizeBytes                    BigInt
@@ -503,6 +590,7 @@ model ContentBlob {
   literatureInboxPdfs          LiteratureInboxPdf[]
 
   @@index([checksum, sizeBytes])
+  @@index([pdfDocumentId])
   @@index([state, createdAt])
 }
 
@@ -544,6 +632,9 @@ model LiteratureItem {
   attachments              LiteratureAttachment[]
   acceptedInboxCandidates  LiteratureInboxCandidate[]        @relation("AcceptedLiteratureItem")
   metadataCommitReceipts   LiteratureMetadataCommitReceipt[]
+  smartAssessments         LiteratureSmartAssessment[]
+  smartOverrides           LiteratureSmartOverride[]
+  journalBinding           JournalItemBinding?
 
   @@index([deletedAt, updatedAt])
   @@index([mergedIntoItemId])
@@ -569,7 +660,7 @@ model LiteratureAttachment {
 }
 
 model LiteratureAttachmentVersion {
-  id             String               @id @default(cuid())
+  id             String                 @id @default(cuid())
   attachmentId   String
   contentBlobId  String
   versionNumber  Int
@@ -579,9 +670,9 @@ model LiteratureAttachmentVersion {
   provenanceJson String?
   checksum       String
   pageCount      Int?
-  createdAt      DateTime             @default(now())
-  attachment     LiteratureAttachment @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
-  contentBlob    ContentBlob          @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
+  createdAt      DateTime               @default(now())
+  attachment     LiteratureAttachment   @relation(fields: [attachmentId], references: [id], onDelete: Cascade)
+  contentBlob    ContentBlob            @relation(fields: [contentBlobId], references: [id], onDelete: Restrict)
 
   @@unique([attachmentId, versionNumber])
   @@unique([attachmentId, checksum])
@@ -712,6 +803,7 @@ model LiteratureSourceRecord {
 }
 
 model LiteratureCollection {
+  smart       LiteratureSmartCollection?
   revision    Int                        @default(1)
   id          String                     @id @default(cuid())
   name        String
@@ -1258,4 +1350,227 @@ model LiteratureMetadataCommitReceipt {
   item                      LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
 
   @@index([itemId])
+}
+
+// Smart membership is independent of manually managed LiteratureCollectionItem rows.
+model LiteratureSmartCollection {
+  automaticPauseReason String?
+  automaticPauseRunId  String?
+  evidenceMode         String                        @default("abstract")
+  autoUpdate           Boolean                       @default(false)
+  collectionId         String                        @id
+  scopeKind            String
+  scopeId              String?
+  ruleRevision         Int                           @default(1)
+  collection           LiteratureCollection          @relation(fields: [collectionId], references: [id], onDelete: Cascade)
+  assessments          LiteratureSmartAssessment[]
+  overrides            LiteratureSmartOverride[]
+  runs                 LiteratureSmartRun[]
+  ruleVersions         LiteratureSmartRuleRevision[]
+}
+
+model LiteratureSmartAssessment {
+  evidenceJson      String?
+  collectionId      String
+  itemId            String
+  ruleRevision      Int
+  inputDigest       String
+  policyKey         String
+  verdict           String
+  probabilitiesJson String                    @default("{}")
+  model             String
+  evaluatedAt       DateTime                  @default(now())
+  collection        LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  item              LiteratureItem            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, itemId])
+  @@index([itemId])
+}
+
+model LiteratureSmartOverride {
+  collectionId String
+  itemId       String
+  decision     String
+  updatedAt    DateTime                  @updatedAt
+  collection   LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  item         LiteratureItem            @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@id([collectionId, itemId])
+  @@index([itemId])
+}
+
+model LiteratureSmartRun {
+  abandonedAt  DateTime?
+  snapshotJson String?
+  id           String                    @id @default(cuid())
+  collectionId String
+  kind         String
+  state        String
+  ruleRevision Int
+  policyKey    String
+  model        String?
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+  collection   LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+
+  rule  LiteratureSmartRuleRevision @relation(fields: [collectionId, ruleRevision], references: [collectionId, revision])
+  items LiteratureSmartRunItem[]
+
+  @@index([collectionId, createdAt])
+}
+
+// Durable consumption facts, retained even after their collection/run is deleted.
+model ClassificationUsage {
+  eventId         String   @id
+  collectionId    String?
+  runId           String?
+  scenario        String
+  projectId       String?
+  sessionId       String?
+  providerId      String
+  model           String
+  occurredAt      DateTime
+  status          String
+  inputTokens     BigInt?
+  outputTokens    BigInt?
+  usageIncomplete Boolean  @default(true)
+
+  @@index([sessionId])
+  @@index([occurredAt])
+  @@index([collectionId])
+  @@index([runId])
+}
+
+model LiteratureSmartRuleRevision {
+  collectionId      String
+  revision          Int
+  description       String
+  inclusionCriteria String
+  exclusionCriteria String
+  scopeKind         String
+  scopeId           String?
+  evidenceMode      String
+  createdAt         DateTime                  @default(now())
+  collection        LiteratureSmartCollection @relation(fields: [collectionId], references: [collectionId], onDelete: Cascade)
+  runs              LiteratureSmartRun[]
+
+  @@id([collectionId, revision])
+}
+
+model LiteratureSmartRunItem {
+  runId       String
+  itemId      String
+  digest      String
+  state       String             @default("pending")
+  failure     String?
+  deferred    Boolean            @default(false)
+  resultJson  String?
+  evaluatedAt DateTime?
+  run         LiteratureSmartRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+
+  @@id([runId, itemId])
+  @@index([runId, state])
+  @@index([itemId, evaluatedAt])
+}
+
+// User-owned journal identity and annual attribute datasets. Bibliographic Items stay unchanged.
+model Journal {
+  id             String @id
+  name           String
+  normalizedName String
+  aliasesJson    String @default("[]")
+  issnsJson      String @default("[]")
+  externalIdsJson String @default("[]")
+  entries        JournalDatasetEntry[]
+  itemBindings   JournalItemBinding[]
+
+  @@index([normalizedName])
+}
+
+model JournalDataset {
+  id         String @id
+  name       String?
+  source     String
+  year       Int
+  revision   Int @default(1)
+  fieldsJson String
+  importedAt DateTime @default(now())
+  entries    JournalDatasetEntry[]
+
+  @@unique([source, year])
+}
+
+model JournalDatasetEntry {
+  datasetId String
+  journalId String
+  valuesJson String
+  sourceRow Int
+  dataset JournalDataset @relation(fields: [datasetId], references: [id], onDelete: Cascade)
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@id([datasetId, journalId])
+  @@index([journalId])
+}
+
+// Explicit confirmation applies only to this reference and this journal identity.
+model JournalItemBinding {
+  itemId String @id
+  journalId String
+  identityFingerprint String
+  revision String
+  item LiteratureItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  journal Journal @relation(fields: [journalId], references: [id], onDelete: Cascade)
+
+  @@index([journalId])
+}
+
+// Provider attempts remain accountable independently of the document or its saved translation.
+model PdfTranslationUsage {
+  eventId             String   @id
+  runId               String
+  attachmentVersionId String?
+  sourceIndex         Int
+  providerId          String
+  frameworkId         String
+  model               String
+  occurredAt          DateTime
+  completedAt         DateTime?
+  status              String
+  inputTokens         BigInt?
+  cacheTokens         BigInt?
+  cachedReadTokens    BigInt?
+  cachedWriteTokens   BigInt?
+  outputTokens        BigInt?
+  usageIncomplete     Boolean  @default(true)
+
+  @@index([occurredAt])
+  @@index([runId])
+  @@index([attachmentVersionId])
+}
+
+// A translation owns its immutable layout and ordered block deltas independently of its entry point.
+model PdfTranslation {
+  id                 String @id
+  pdfDocumentId      String
+  pdfDocument        PdfDocument @relation(fields: [pdfDocumentId], references: [id], onDelete: Cascade)
+  checksum           String
+  sizeBytes          BigInt
+  revision           Int
+  layoutSnapshotJson String?
+  payloadJson        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+  blocks             PdfTranslationBlock[]
+
+  @@index([pdfDocumentId, createdAt, id])
+}
+
+model PdfTranslationBlock {
+  translationId String
+  sourceIndex   Int
+  revision      Int
+  translation   String?
+  checkpoint    PdfTranslation @relation(fields: [translationId], references: [id], onDelete: Cascade)
+
+  @@id([translationId, sourceIndex])
 }

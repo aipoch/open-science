@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client'
 
-import { parseLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { parseLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import type { ContentReadLease, ContentRepository } from '../storage/content-repository'
 
 type ResolvedLiteratureAttachmentVersion = Readonly<{

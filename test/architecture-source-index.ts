@@ -16,6 +16,7 @@ const isProductionSource = (name: string): boolean =>
 const walkProductionSources = (directory: string, paths: string[]): void => {
   if (!existsSync(directory)) return
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (['node_modules', 'dist'].includes(entry.name)) continue
     const path = resolve(directory, entry.name)
     if (entry.isDirectory()) walkProductionSources(path, paths)
     else if (isProductionSource(entry.name)) paths.push(path)

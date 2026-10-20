@@ -1,16 +1,18 @@
 import { i18next } from '@/i18n'
-import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 import type { ChatSession } from '@/stores/session-store'
+import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 
+import type {
+  MessageQueueEditIntent,
+  MessageQueueError,
+  MessageQueueItem
+} from './composer-contract'
 import { docToArtifactRefs } from './composer/composer-doc'
 import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   WorkspaceMessageQueueOwner,
   type ApplicationMessageQueueAdmission,
   type MessageQueueAdmission,
-  type MessageQueueError,
-  type MessageQueueItem,
-  type MessageQueueEditIntent,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 
@@ -82,6 +84,8 @@ const queueSessionIsSendable = (
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
   (session.status === 'idle' || session.status === 'error') &&
+  // Live ownership can reach the store before the runtime snapshot or durable status catches up.
+  !session.agentPromptInFlight &&
   // Errored turns have no live reveal to wait for; let the queue proceed immediately.
   (session.status === 'error' || !options.isPresentationRevealing(session.id)) &&
   !options.promptInFlightSessionIds.includes(session.id) &&
@@ -107,6 +111,7 @@ const queuedItemHasPayload = (item: MessageQueueItem): boolean =>
   Boolean(item.snapshot?.pdfContext)
 
 const isQueueLiveTurn = (session: ChatSession | undefined): boolean =>
+  session?.agentPromptInFlight === true ||
   session?.status === 'running' ||
   session?.status === 'waiting-for-user' ||
   session?.status === 'waiting-permission'
@@ -215,15 +220,15 @@ const enqueueApplicationMessage = (
 }
 
 export {
-  enqueueQueuedMessage,
   enqueueApplicationMessage,
+  enqueueQueuedMessage,
   isQueueLiveTurn,
   queueBlocksImmediateSend,
+  queuedAdmissionFailure,
+  queuedItemHasPayload,
   queueErrorMessage,
   queueItemContextError,
   queueItemIsBusy,
   queuePermissionIsPending,
-  queueSessionIsSendable,
-  queuedAdmissionFailure,
-  queuedItemHasPayload
+  queueSessionIsSendable
 }

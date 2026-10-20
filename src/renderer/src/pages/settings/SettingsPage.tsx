@@ -3,7 +3,6 @@ import { createBookmarkPreviewItem } from '../workspace/annotations/annotation-r
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
 import { Notice } from '@/components/notice'
-import { ConnectorBulkManageView } from './ConnectorBulkManageView'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 /* Hallmark · component: settings side rail · genre: modern-minimal · theme: existing Open-Science tokens · slop: pass */
@@ -59,6 +58,9 @@ import {
 import { APP } from '../../../../shared/app-config'
 import type { SpecialistListItem } from '../../../../shared/specialist'
 import { Button } from '@/components/ui/button'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import type { SkillEditorLeaveState } from './SkillEditor'
+import type { NetworkEditorLeaveState } from './NotebookNetworkDomainsForm'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks/useMediaQuery'
 import { cn } from '@/lib/utils'
@@ -73,6 +75,7 @@ import {
   selectFrameworkApiEndpoints,
   useSettingsStore
 } from '@/stores/settings-store'
+import { takeSettingsReturnFocusTarget } from '@/stores/settings-return-focus'
 import {
   INITIAL_SETTINGS_ROUTE,
   settingsPanelRoute,
@@ -80,22 +83,22 @@ import {
   type NetworkView,
   type SettingsPanelId,
   type SettingsRoute
-} from './settings-navigation'
+} from '@/lib/settings-navigation'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
 import { ProvidersPanel } from './ProvidersPanel'
 import { ModelPanel } from './ModelPanel'
-import type { SkillsView } from './SkillsPanel'
-import type { ConnectorsView } from './ConnectorsPanel'
-import type { SpecialistsView } from './SpecialistsPanel'
+import type { SkillsView } from '@/lib/settings-navigation'
+import type { ConnectorsView } from '@/lib/settings-navigation'
+import type { SpecialistsView } from '@/lib/settings-navigation'
 import { ResourceTagSummary } from './ResourceTagControls'
 import { ConnectorsNavIcon } from './connector-icons'
-import type { ComputeView } from './ComputePanel'
-import type { ArchivedView } from './ArchivedPanel'
-import type { MemoryView } from './MemoryPanel'
-import type { TagsView } from './TagsPanel'
-import type { CredentialsView } from './CredentialsPanel'
-import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
+import type { ComputeView } from '@/lib/settings-navigation'
+import type { ArchivedView } from '@/lib/settings-navigation'
+import type { MemoryView } from '@/lib/settings-navigation'
+import type { TagsView } from '@/lib/settings-navigation'
+import type { CredentialsView } from '@/lib/settings-navigation'
+import { resolveVendorModelsUrl } from '@aipoch/providers'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -235,10 +238,12 @@ type SettingsPageProps = {
   hasCompleteSessionCatalog?: boolean
   catalogRecovery?: SessionCatalogRecovery
   onRetryCatalogRecovery?: () => void
+  sessionLoadError?: string
   undoHostRef?: React.Ref<HTMLDivElement>
 }
 
 type SettingsPageHandle = {
+  requestLeave: (leave: () => void) => void
   closeActivePane: () => boolean
 }
 
@@ -256,7 +261,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     contextWindow: provider.contextWindow?.toString() ?? '',
     maxInputTokens: provider.maxInputTokens?.toString() ?? '',
     maxOutputTokens: provider.maxOutputTokens?.toString() ?? '',
-    apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
+    apiEndpoint: provider.apiEndpoints?.[0] ?? 'messages',
     supportsImageInput: provider.supportsImageInput,
     reasoningEffortPreset: provider.reasoningEffortPreset ?? 'standard-5',
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',
@@ -323,6 +328,10 @@ type SettingsGroup = {
 // organization, and the app-level system panel.
 const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
   {
+    labelKey: 'System',
+    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
+  },
+  {
     labelKey: 'Intelligence',
     panels: [
       { id: 'model', labelKey: 'Model', Icon: Brain },
@@ -352,10 +361,6 @@ const SETTINGS_GROUPS: ReadonlyArray<SettingsGroup> = [
       { id: 'usage', labelKey: 'Usage', Icon: ChartNoAxesCombined },
       { id: 'archived', labelKey: 'Archived', Icon: Archive }
     ]
-  },
-  {
-    labelKey: 'System',
-    panels: [{ id: 'general', labelKey: 'General', Icon: Settings2 }]
   }
 ]
 
@@ -404,6 +409,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     hasCompleteSessionCatalog = true,
     catalogRecovery = { kind: 'ready' },
     onRetryCatalogRecovery,
+    sessionLoadError,
     undoHostRef
   },
   ref
@@ -488,6 +494,39 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // panel route, so unrelated panel views cannot form impossible combinations.
   const [history, setHistory] = useState<SettingsRoute[]>([INITIAL_SETTINGS_ROUTE])
   const [historyIndex, setHistoryIndex] = useState(0)
+  const skillLeaveReturnFocus = useRef<HTMLElement | null>(null)
+  const skillEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
+  const networkEditorLeaveState = useRef<NetworkEditorLeaveState | null>(null)
+  const [networkEditorBusy, setNetworkEditorBusy] = useState(false)
+  const onNetworkLeaveStateChange = useCallback((state: NetworkEditorLeaveState | null) => {
+    networkEditorLeaveState.current = state
+    setNetworkEditorBusy(state?.busy ?? false)
+    if (state && !state.dirty && !state.busy) setPendingSkillLeave(null)
+  }, [])
+  const providerEditorLeaveState = useRef<SkillEditorLeaveState | null>(null)
+  const [skillEditorBusy, setSkillEditorBusy] = useState(false)
+  const [pendingSkillLeave, setPendingSkillLeave] = useState<(() => void) | null>(null)
+  const onSkillEditorLeaveStateChange = useCallback((state: SkillEditorLeaveState | null) => {
+    skillEditorLeaveState.current = state
+    setSkillEditorBusy(state?.busy ?? false)
+  }, [])
+  const requestLeave = useCallback((leave: () => void) => {
+    const state =
+      networkEditorLeaveState.current ??
+      providerEditorLeaveState.current ??
+      skillEditorLeaveState.current
+    if (state?.dirty || state?.busy) {
+      const focused = document.activeElement
+      if (
+        focused instanceof HTMLElement &&
+        !focused.closest('[data-testid="skill-discard-confirmation"]')
+      ) {
+        skillLeaveReturnFocus.current = focused
+      }
+      setPendingSkillLeave(() => leave)
+    } else leave()
+  }, [])
+  const requestClose = (): void => requestLeave(onClose)
   const returnFocusRef = useRef<HTMLElement | null>(null)
   // Whether the dialog is enlarged to near-fullscreen via the maximize control.
   const [isExpanded, setIsExpanded] = useState(false)
@@ -517,6 +556,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   const browserSelectedTagId = useTagStore((state) => state.browserSelectedId)
   const setSelectedTagId = useTagStore((state) => state.setBrowserSelectedId)
   const [formValue, setFormValue] = useState<ProviderFormValue>(() =>
+    createEmptyProviderFormValue()
+  )
+  const [providerDraftBaseline, setProviderDraftBaseline] = useState<ProviderFormValue>(() =>
     createEmptyProviderFormValue()
   )
   const [providerBase, setProviderBase] = useState<ProviderView>()
@@ -574,29 +616,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
     mobileNavTriggerRef.current?.focus()
   }, [isMobile, isMobileNavOpen])
 
-  // External entry points publish one route intent with an event identity. Guard by request rather
-  // than target value so two separate requests for the same route are both honored.
-  const [seededIntentId, setSeededIntentId] = useState<number | undefined>()
-  if (
-    open &&
-    pendingSettingsIntent !== undefined &&
-    pendingSettingsIntent.requestId !== seededIntentId
-  ) {
-    setSeededIntentId(pendingSettingsIntent.requestId)
-    setHistory([pendingSettingsIntent.route])
-    setHistoryIndex(0)
-  }
-  if (!open && seededIntentId !== undefined) {
-    setSeededIntentId(undefined)
-  }
-
-  // Consume only the request applied above. A newer intent that arrives before this effect runs must
-  // remain pending for the next render.
+  // External route intents pass through the same draft protection as local navigation.
+  // Keep request identity independent of store consumption and Strict Mode effect replay.
+  const seededIntentId = useRef<number | undefined>(undefined)
   useEffect(() => {
-    if (open && pendingSettingsIntent !== undefined) {
-      consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    if (!open) {
+      seededIntentId.current = undefined
+      return
     }
-  }, [consumePendingSettingsIntent, open, pendingSettingsIntent])
+    if (!pendingSettingsIntent || pendingSettingsIntent.requestId === seededIntentId.current) return
+    seededIntentId.current = pendingSettingsIntent.requestId
+    consumePendingSettingsIntent(pendingSettingsIntent.requestId)
+    requestLeave(() => {
+      setHistory([pendingSettingsIntent.route])
+      setHistoryIndex(0)
+    })
+  }, [consumePendingSettingsIntent, open, pendingSettingsIntent, requestLeave])
+
+  useEffect(() => {
+    if (!open) setPendingSkillLeave(null)
+  }, [open])
 
   const currentRoute = history[historyIndex]
   const activePanel = currentRoute.panel
@@ -703,20 +742,26 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   // Pushes a complete active route, dropping any forward entries. Routes contain only serializable
   // navigation values, so comparing the whole route automatically covers fields added later.
-  const navigate = (route: SettingsRoute): void => {
-    if (JSON.stringify(route) === JSON.stringify(currentRoute)) return
-    setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
-    setHistoryIndex((index) => index + 1)
-  }
-
-  // Internal panel transitions must use this dialog's history instead of reseeding an external
-  // entry point, so Back returns to the recovery panel the user just completed.
-  const navigatePanel = (panel: SettingsPanelId): void => {
-    if (panel === 'tags') {
-      navigate({ panel, view: { kind: 'list', tagId: browserSelectedTagId } })
+  const navigate = (route: SettingsRoute, onNavigated?: () => void): void => {
+    if (JSON.stringify(route) === JSON.stringify(currentRoute)) {
+      onNavigated?.()
       return
     }
-    navigate(settingsPanelRoute(panel))
+    requestLeave(() => {
+      setHistory((entries) => [...entries.slice(0, historyIndex + 1), route])
+      setHistoryIndex((index) => index + 1)
+      onNavigated?.()
+    })
+  }
+
+  // Internal transitions retain history instead of reseeding an external entry point.
+  const navigatePanel = (panel: SettingsPanelId, onNavigated?: () => void): void => {
+    navigate(
+      panel === 'tags'
+        ? { panel, view: { kind: 'list', tagId: browserSelectedTagId } }
+        : settingsPanelRoute(panel),
+      onNavigated
+    )
   }
 
   const navigateTag = (tagId: string): void => {
@@ -815,18 +860,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       const leaf =
         skillsView.kind === 'create'
           ? t('New skill')
-          : skillsView.kind === 'manage'
-            ? t('Manage skills')
-            : skillsView.kind === 'upload'
-              ? t('Upload skills')
-              : skillsView.kind === 'import'
-                ? t('Import from GitHub')
-                : skillsView.kind === 'import-agent-home'
-                  ? t('Import installed skills')
-                  : (() => {
-                      const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
-                      return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
-                    })()
+          : skillsView.kind === 'upload'
+            ? t('Upload skills')
+            : skillsView.kind === 'import'
+              ? t('Import from GitHub')
+              : skillsView.kind === 'import-agent-home'
+                ? t('Import installed skills')
+                : (() => {
+                    const name = skills.find((skill) => skill.id === skillsView.id)?.name ?? ''
+                    return skillsView.kind === 'edit' ? t('Edit {{name}}', { name }).trim() : name
+                  })()
       return {
         rootLabelKey: 'Skills',
         rootTo: { panel: 'skills', view: { kind: 'list' } },
@@ -911,24 +954,21 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         }
       }
       const leaf =
-        connectorsView.kind === 'manage'
-          ? t('Manage connectors')
-          : connectorsView.kind === 'add'
-            ? t('Add connector')
-            : connectorsView.kind === 'import'
-              ? t('Import Connector or MCP configuration')
-              : connectorsView.kind === 'export'
-                ? t('Export {{name}}', {
+        connectorsView.kind === 'add'
+          ? t('Add connector')
+          : connectorsView.kind === 'import'
+            ? t('Import Connector or MCP configuration')
+            : connectorsView.kind === 'export'
+              ? t('Export {{name}}', {
+                  name:
+                    customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
+                }).trim()
+              : connectorsView.kind === 'edit'
+                ? t('Edit {{name}}', {
                     name:
                       customServers.find((s) => s.id === connectorsView.id)?.name ?? t('connector')
                   }).trim()
-                : connectorsView.kind === 'edit'
-                  ? t('Edit {{name}}', {
-                      name:
-                        customServers.find((s) => s.id === connectorsView.id)?.name ??
-                        t('connector')
-                    }).trim()
-                  : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
+                : (connectors.find((c) => c.id === connectorsView.id)?.displayName ?? '')
       return {
         rootLabelKey: 'Connectors',
         rootTo: { panel: 'connectors', view: { kind: 'list' } },
@@ -1049,15 +1089,16 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
 
   const goBack = (): void => {
     if (!canGoBack) return
-    setHistoryIndex((index) => index - 1)
+    requestLeave(() => setHistoryIndex((index) => index - 1))
   }
 
   const goForward = (): void => {
     if (!canGoForward) return
-    setHistoryIndex((index) => index + 1)
+    requestLeave(() => setHistoryIndex((index) => index + 1))
   }
 
   useImperativeHandle(ref, () => ({
+    requestLeave,
     closeActivePane: () => {
       if (!open) return false
       const activeDialog = Array.from(
@@ -1078,15 +1119,17 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
         return true
       }
       if (breadcrumb) {
-        if (canGoBack) setHistoryIndex((index) => index - 1)
+        if (canGoBack) goBack()
         else {
-          setHistory((entries) =>
-            entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+          requestLeave(() =>
+            setHistory((entries) =>
+              entries.map((entry, index) => (index === historyIndex ? breadcrumb.rootTo : entry))
+            )
           )
         }
       } else {
         setIsMobileNavOpen(false)
-        onClose()
+        requestClose()
       }
       return true
     }
@@ -1120,20 +1163,37 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
   // loads). A create pre-selects the official vendor matching the active agent framework. Also
   // clears any stale status message on entry.
   const modelViewKey = modelView.kind === 'edit' ? `edit:${modelView.providerId}` : modelView.kind
-  const [seededModelView, setSeededModelView] = useState(modelViewKey)
-  if (modelViewKey !== seededModelView) {
+  const [seededModelView, setSeededModelView] = useState<string | undefined>(modelViewKey)
+  if (open && modelViewKey !== seededModelView) {
     setSeededModelView(modelViewKey)
     if (modelView.kind === 'create') {
-      setFormValue(
-        createEmptyProviderFormValue(providerKindPatch(defaultProviderKindKey(agentFrameworkId)))
+      const initial = createEmptyProviderFormValue(
+        providerKindPatch(defaultProviderKindKey(agentFrameworkId))
       )
+      setFormValue(initial)
+      setProviderDraftBaseline(initial)
     } else if (modelView.kind === 'edit') {
       const provider = providers.find((entry) => entry.id === modelView.providerId)
-      if (provider) setFormValue(toFormValue(provider))
+      if (provider) {
+        const initial = toFormValue(provider)
+        setFormValue(initial)
+        setProviderDraftBaseline(initial)
+      }
       setProviderBase(provider)
     }
     setStatusMessage(undefined)
   }
+
+  const providerFormDirty = Object.entries({ ...providerDraftBaseline, ...formValue }).some(
+    ([key, value]) =>
+      key !== 'providerFormTouched' &&
+      value !== providerDraftBaseline[key as keyof ProviderFormValue]
+  )
+  useEffect(() => {
+    // This draft shares Settings' existing leave decision; the baseline contains no secret input.
+    providerEditorLeaveState.current =
+      open && isProviderFormOpen ? { dirty: providerFormDirty, busy: isSaving } : null
+  }, [open, isProviderFormOpen, providerFormDirty, isSaving])
 
   // Invalidate observations when the user leaves, edits inputs, or the saved target changes.
   useEffect(() => {
@@ -1250,6 +1310,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             })
         }
       }
+      // The completed write has settled this draft. It must not prompt or honor an older leave request.
+      providerEditorLeaveState.current = null
+      skillLeaveReturnFocus.current = null
+      setPendingSkillLeave(null)
       closeForm()
     } catch (error) {
       if (generation !== formOperationGeneration.current) return
@@ -1303,7 +1367,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
       onOpenChange={(next) => {
         if (next) return
         setIsMobileNavOpen(false)
-        onClose()
+        requestClose()
       }}
     >
       <Dialog.Portal>
@@ -1312,8 +1376,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           data-slot="settings-dialog"
           className="pointer-events-none fixed inset-0 z-50 outline-none data-[state=closed]:animate-out motion-reduce:data-[state=closed]:animate-none"
           onOpenAutoFocus={() => {
+            const activeElement = document.activeElement
+            const capturedReturnFocus = takeSettingsReturnFocusTarget()
+            if (returnFocusRef.current?.isConnected) return
             returnFocusRef.current =
-              document.activeElement instanceof HTMLElement ? document.activeElement : null
+              capturedReturnFocus ??
+              (activeElement instanceof HTMLElement && activeElement !== document.body
+                ? activeElement
+                : null)
           }}
           onCloseAutoFocus={(event) => {
             const returnFocus = returnFocusRef.current
@@ -1368,8 +1438,8 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
             className={cn(
               'pointer-events-auto fixed z-50 flex overflow-hidden overscroll-contain rounded-xl border border-border bg-card text-foreground shadow-dialog outline-none data-[state=closed]:animate-out data-[state=open]:animate-in data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 data-[state=closed]:fill-mode-forwards motion-reduce:data-[state=closed]:animate-none motion-reduce:data-[state=open]:animate-none',
               isExpanded
-                ? 'inset-0 rounded-none md:inset-4 md:rounded-xl'
-                : 'inset-0 h-[100dvh] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-1/2 md:h-[min(688px,calc(100vh-2rem))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
+                ? 'inset-x-0 bottom-0 top-[var(--windows-titlebar-height)] rounded-none md:bottom-4 md:left-4 md:right-4 md:top-[calc(var(--windows-titlebar-height)+1rem)] md:rounded-xl'
+                : 'inset-x-0 bottom-0 top-[var(--windows-titlebar-height)] h-[calc(100dvh-var(--windows-titlebar-height))] w-screen rounded-none md:bottom-auto md:left-1/2 md:right-auto md:top-[var(--windows-content-center-y)] md:h-[min(688px,var(--windows-content-max-height))] md:w-[min(960px,calc(100vw-2rem))] md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-xl'
             )}
           >
             {/* Radix requires a Title/Description for a11y; the visible panel title lives in the header. */}
@@ -1413,7 +1483,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                   aria-hidden={isMobile && !isMobileNavOpen ? true : undefined}
                   inert={isMobile && !isMobileNavOpen ? true : undefined}
                   className={cn(
-                    'fixed inset-y-0 left-0 z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
+                    'fixed bottom-0 left-0 top-[var(--windows-titlebar-height)] z-[70] flex min-h-0 w-[min(86vw,320px)] shrink-0 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-200 ease-out md:static md:z-auto md:w-48 md:translate-x-0',
                     isMobileNavOpen ? 'translate-x-0' : '-translate-x-full'
                   )}
                 >
@@ -1421,6 +1491,19 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                     data-slot="settings-navigation-scroll"
                     className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto overscroll-contain p-3"
                   >
+                    {isMobile ? (
+                      <div data-slot="settings-global-search" className="mb-4">
+                        <SettingsGlobalSearch
+                          panels={SETTINGS_PANELS}
+                          onNavigate={(panel, onNavigated) => {
+                            navigatePanel(panel, () => {
+                              setIsMobileNavOpen(false)
+                              onNavigated()
+                            })
+                          }}
+                        />
+                      </div>
+                    ) : null}
                     {SETTINGS_GROUPS.map((group) => (
                       <div key={group.labelKey} className="flex flex-col gap-0.5">
                         <div className="px-2 pb-1 pt-1 text-xs font-medium text-muted-foreground">
@@ -1435,8 +1518,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   type="button"
                                   aria-current={isActive ? 'page' : undefined}
                                   onClick={() => {
-                                    setIsMobileNavOpen(false)
-                                    navigatePanel(id)
+                                    navigatePanel(id, () => setIsMobileNavOpen(false))
                                   }}
                                   className={`flex h-8 w-full items-center gap-2 rounded-lg px-2 text-left text-sm ${
                                     isActive
@@ -1485,7 +1567,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
               inert={isMobile && isMobileNavOpen ? true : undefined}
               className="flex min-h-0 min-w-0 flex-1 flex-col bg-card"
             >
-              <TooltipProvider delayDuration={300}>
+              <TooltipProvider>
                 <div className="flex h-12 shrink-0 items-center justify-between gap-2 border-b border-border bg-card px-2 md:px-3">
                   <div className="flex min-w-0 items-center gap-1">
                     <Tooltip>
@@ -1579,7 +1661,6 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       </h2>
                     )}
                   </div>
-                  {/* Not mounted below the md breakpoint, so ⌘K never targets an invisible field. */}
                   {!isMobile ? (
                     <div
                       data-slot="settings-global-search"
@@ -1670,7 +1751,10 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                 layoutScroll
                 data-slot="settings-content-scroll"
                 data-settings-active-panel={activePanel}
-                className="min-h-0 flex-1 overflow-y-auto"
+                className={cn(
+                  'min-h-0 flex-1 overflow-y-auto',
+                  activePanel === 'network' && networkView.kind === 'domains' && 'scroll-pb-32'
+                )}
               >
                 <div
                   className={cn(
@@ -1684,10 +1768,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         modelView.kind === 'classification-edit')) ||
                       activePanel === 'memory' ||
                       activePanel === 'tags' ||
-                      (activePanel === 'skills' &&
-                        (skillsView.kind === 'marketplace-batch' ||
-                          skillsView.kind === 'manage')) ||
-                      (activePanel === 'connectors' && connectorsView.kind === 'manage')
+                      (activePanel === 'skills' && skillsView.kind === 'marketplace-batch')
                       ? 'h-full'
                       : 'min-h-full'
                   )}
@@ -1713,12 +1794,20 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             ? `${activePanel}:${Math.max(0, historyIndex - 1)}`
                             : `${activePanel}:${historyIndex}`
                     }
-                    onClose={onClose}
+                    onClose={requestClose}
                   >
                     {activePanel === 'skills' ? (
                       <SkillsPanel
                         view={skillsView}
                         onNavigate={navigateSkills}
+                        onEditorLeaveStateChange={onSkillEditorLeaveStateChange}
+                        onSaved={() => {
+                          // Only the completed write can bypass the dirty/pending guard.
+                          onSkillEditorLeaveStateChange(null)
+                          skillLeaveReturnFocus.current = null
+                          setPendingSkillLeave(null)
+                          navigateSkills({ kind: 'list' })
+                        }}
                         onOpenGitHubCredential={() =>
                           navigate({
                             panel: 'credentials',
@@ -1805,7 +1894,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                               useNavigationStore
                                 .getState()
                                 .openLiteratureItem(reference.resourceId, 'user')
-                              onClose()
+                              requestClose()
                               return
                             }
                             const specialist = specialistItems.find(
@@ -1830,9 +1919,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }}
                       />
                     ) : activePanel === 'connectors' ? (
-                      connectorsView.kind === 'manage' ? (
-                        <ConnectorBulkManageView />
-                      ) : connectorsView.kind === 'detail' ? (
+                      connectorsView.kind === 'detail' ? (
                         <div>
                           <ResourceTagSummary
                             reference={{
@@ -1843,6 +1930,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                             onOpenTag={navigateTag}
                           />
                           <ConnectorDetailView
+                            onOpenSpecialist={(usage) =>
+                              navigate({
+                                panel: 'specialists',
+                                view:
+                                  usage.kind === 'builtin'
+                                    ? { kind: 'builtin', id: usage.id }
+                                    : { kind: 'edit', id: usage.id }
+                              })
+                            }
                             key={connectorsView.id}
                             id={connectorsView.id}
                             onManagePermissions={() => navigatePanel('permissions')}
@@ -1930,12 +2026,15 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                       )
                     ) : activePanel === 'compute' ? (
                       computeView.kind === 'add' ? (
-                        <ComputeAddForm
-                          onCreated={(providerId) =>
-                            navigateCompute({ kind: 'detail', providerId })
-                          }
-                          onCancel={() => navigateCompute({ kind: 'list' })}
-                        />
+                        // Revoke completion authority before the dialog's exit animation unmounts.
+                        open && (
+                          <ComputeAddForm
+                            onCreated={(providerId) =>
+                              navigateCompute({ kind: 'detail', providerId })
+                            }
+                            onCancel={() => navigateCompute({ kind: 'list' })}
+                          />
+                        )
                       ) : computeView.kind === 'detail' ? (
                         <ComputeHostDetail
                           providerId={computeView.providerId}
@@ -1979,6 +2078,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         hasCompleteSessionCatalog={hasCompleteSessionCatalog}
                         catalogRecovery={catalogRecovery}
                         onRetryCatalogRecovery={onRetryCatalogRecovery}
+                        sessionLoadError={sessionLoadError}
                       />
                     ) : activePanel === 'runtimes' ? (
                       <RuntimesPanel
@@ -1993,11 +2093,14 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         }
                       />
                     ) : activePanel === 'network' ? (
-                      <NetworkPanel
-                        view={networkView}
-                        onNavigate={navigateNetwork}
-                        notebookNetworkAvailable={notebookNetworkAvailable}
-                      />
+                      open && (
+                        <NetworkPanel
+                          onNetworkLeaveStateChange={onNetworkLeaveStateChange}
+                          view={networkView}
+                          onNavigate={navigateNetwork}
+                          notebookNetworkAvailable={notebookNetworkAvailable}
+                        />
+                      )
                     ) : activePanel === 'usage' ? (
                       <TokenUsagePanel sessions={sessions} projects={projects} />
                     ) : activePanel === 'general' ? (
@@ -2096,6 +2199,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                                   )
                                 )
                                 setFormValue({ ...latest, ...changes })
+                                setProviderDraftBaseline(latest)
                                 setProviderBase(editingProvider)
                                 setStatusMessage(undefined)
                               }}
@@ -2105,6 +2209,7 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           </ErrorNotice>
                         ) : null}
                         <ProviderForm
+                          key={`${modelViewKey}:${providerBase?.configRevision ?? 'draft'}`}
                           value={formValue}
                           onChange={(patch) =>
                             setFormValue((current) => ({ ...current, ...patch }))
@@ -2249,6 +2354,57 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <ConfirmActionDialog
+        open={open && pendingSkillLeave !== null}
+        title={t('Discard unsaved changes?')}
+        description={
+          networkEditorLeaveState.current
+            ? t('Your network rules have not been saved. Discard them and leave?')
+            : isProviderFormOpen
+              ? isSaving
+                ? t('Wait for the provider save to finish before leaving.')
+                : t('Your provider edits have not been saved. Discard them and leave the editor?')
+              : skillEditorBusy
+                ? t('Wait for the current skill operation to finish before leaving.')
+                : t('Your skill edits have not been saved. Discard them and leave the editor?')
+        }
+        cancelLabel={t('Keep editing')}
+        confirmLabel={t('Discard changes')}
+        loading={networkEditorBusy || skillEditorBusy || (isProviderFormOpen && isSaving)}
+        loadingLabel={t('Please wait…')}
+        destructive
+        testId="skill-discard-confirmation"
+        onCancel={() => setPendingSkillLeave(null)}
+        onCloseAutoFocus={(event) => {
+          const target = skillLeaveReturnFocus.current
+          skillLeaveReturnFocus.current = null
+          if (!target?.isConnected) return
+          event.preventDefault()
+          target.focus({ preventScroll: true })
+        }}
+        onConfirm={() => {
+          if (
+            networkEditorLeaveState.current?.busy ||
+            skillEditorLeaveState.current?.busy ||
+            providerEditorLeaveState.current?.busy
+          )
+            return
+          if (isProviderFormOpen) {
+            // Settings stays mounted while closed. Clear the draft and seed a fresh saved revision
+            // on entry, even when closing does not change the current create/edit route.
+            const empty = createEmptyProviderFormValue()
+            setFormValue(empty)
+            setProviderDraftBaseline(empty)
+            setProviderBase(undefined)
+            setSeededModelView(undefined)
+            providerEditorLeaveState.current = null
+          }
+          const leave = pendingSkillLeave
+          skillLeaveReturnFocus.current = null
+          setPendingSkillLeave(null)
+          leave?.()
+        }}
+      />
       {open && tagAnnotationPreview ? (
         <Suspense fallback={null}>
           <PdfAnnotationPreviewDialog

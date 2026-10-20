@@ -35,8 +35,4 @@ export type ConnectorApplicationSettingsCapabilities = Pick<
   | 'setDeviceCredentialAuthenticator'
   | 'setCustomServerRuntimeProjectionProvider'
   | 'setCustomServerAuthenticator'
-  | 'previewSkillArchive'
-  | 'importSkillArchiveBatch'
-  | 'scanRepoSkills'
-  | 'importSkill'
 >

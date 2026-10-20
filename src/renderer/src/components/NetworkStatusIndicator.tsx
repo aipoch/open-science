@@ -7,6 +7,7 @@ import { useNetworkStore } from '@/stores/network-store'
 import { useSettingsStore } from '@/stores/settings-store'
 
 type NetworkStatusIndicatorProps = {
+  withTooltipProvider?: boolean
   // 'pill' for the home header (icon + label), 'icon' for the workspace sidebar footer
   // where space is tight.
   variant: 'pill' | 'icon'
@@ -31,7 +32,8 @@ const iconToneClasses = {
 } as const
 
 const NetworkStatusIndicator = ({
-  variant
+  variant,
+  withTooltipProvider = true
 }: NetworkStatusIndicatorProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const isOnline = useNetworkStore((state) => state.isOnline)
@@ -56,38 +58,37 @@ const NetworkStatusIndicator = ({
       ? t('Unreachable')
       : t('Check failed')
 
-  return (
-    <TooltipProvider delayDuration={300}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            onClick={() => openSettingsToPanel('network')}
-            aria-label={label}
-            className={
-              variant === 'pill'
-                ? cn(
-                    'inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 ease-out',
-                    pillToneClasses[tone]
-                  )
-                : cn(
-                    'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 ease-out',
-                    iconToneClasses[tone]
-                  )
-            }
-          >
-            <WifiOff
-              className={variant === 'pill' ? 'size-3.5' : 'size-4'}
-              strokeWidth={2}
-              aria-hidden="true"
-            />
-            {variant === 'pill' ? <span>{text}</span> : null}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent>{label}</TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+  const tooltip = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={() => openSettingsToPanel('network')}
+          aria-label={label}
+          className={
+            variant === 'pill'
+              ? cn(
+                  'inline-flex h-8 items-center gap-1 rounded-full border px-2.5 text-xs font-medium transition-colors duration-150 ease-out',
+                  pillToneClasses[tone]
+                )
+              : cn(
+                  'inline-flex h-8 w-8 cursor-pointer items-center justify-center rounded-md transition-colors duration-150 ease-out',
+                  iconToneClasses[tone]
+                )
+          }
+        >
+          <WifiOff
+            className={variant === 'pill' ? 'size-3.5' : 'size-4'}
+            strokeWidth={2}
+            aria-hidden="true"
+          />
+          {variant === 'pill' ? <span>{text}</span> : null}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
   )
+  return withTooltipProvider ? <TooltipProvider>{tooltip}</TooltipProvider> : tooltip
 }
 
 export { NetworkStatusIndicator }

@@ -3,6 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { i18next } from '@/i18n'
+import { useLocaleStore } from '@/stores/locale-store'
 import { useThemeStore } from '@/stores/theme-store'
 import { useUpdateStore } from '@/stores/update-store'
 import { AppVersionSection } from './AppVersionSection'
@@ -14,6 +16,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  useLocaleStore.setState({ preference: 'system', locale: 'en' })
   useThemeStore.getState().setPreference('light')
   container = document.createElement('div')
   document.body.appendChild(container)
@@ -29,9 +32,12 @@ beforeEach(() => {
   })
 })
 
-afterEach(() => {
+afterEach(async () => {
   act(() => root.unmount())
   container.remove()
+  useLocaleStore.setState({ preference: 'system', locale: 'en' })
+  await i18next.changeLanguage('en')
+  vi.restoreAllMocks()
   vi.unstubAllGlobals()
 })
 
@@ -69,6 +75,50 @@ describe('AppVersionSection', () => {
       'https://github.com/aipoch/open-science/blob/main/LICENSE'
     ])
     expect(links.every((link) => link.target === '_blank' && link.rel === 'noreferrer')).toBe(true)
+  })
+
+  it.each([
+    ['en', '/docs/'],
+    ['zh-Hans', '/docs/zh-Hans/'],
+    ['zh-Hant', '/docs/zh-Hant/'],
+    ['ja', '/docs/ja/'],
+    ['ko', '/docs/ko/'],
+    ['fr', '/docs/fr/'],
+    ['ru', '/docs/ru/'],
+    ['de', '/docs/de/'],
+    ['es', '/docs/es/']
+  ] as const)('opens the documentation homepage for the active %s locale', async (locale, path) => {
+    await act(async () => {
+      useLocaleStore.getState().setPreference(locale)
+      root.render(<AppVersionSection />)
+    })
+
+    const link = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.help-center"]'
+    )!
+    expect(link.href).toBe(`https://www.aipoch.com${path}`)
+    expect(link.getAttribute('aria-label')).toBe(i18next.t('Open Help Center in your browser'))
+    expect(link.target).toBe('_blank')
+    expect(link.rel).toBe('noreferrer')
+  })
+
+  it('updates the existing help link after a language switch and resolves System through the app', async () => {
+    act(() => root.render(<AppVersionSection />))
+    const link = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.help-center"]'
+    )!
+    expect(link.href).toBe('https://www.aipoch.com/docs/')
+
+    await act(async () => useLocaleStore.getState().setPreference('es'))
+    expect(link.href).toBe('https://www.aipoch.com/docs/es/')
+
+    vi.spyOn(navigator, 'languages', 'get').mockReturnValue(['zh-TW', 'en-US'])
+    await act(async () => useLocaleStore.getState().setPreference('system'))
+    expect(useLocaleStore.getState().preference).toBe('system')
+    expect(link.href).toBe('https://www.aipoch.com/docs/zh-Hant/')
+
+    await act(async () => useLocaleStore.getState().setPreference('en'))
+    expect(link.href).toBe('https://www.aipoch.com/docs/')
   })
 
   it('reveals resource details and primary-colored icons on pointer hover or keyboard focus', () => {
@@ -230,4 +280,13 @@ describe('AppVersionSection', () => {
     )
     expect(checkButton?.disabled).toBe(disabled)
   })
+})
+
+it('shows a rejected update action while preserving the ready installer action', () => {
+  useUpdateStore.setState({
+    status: { state: 'ready', current: '0.2.0', latest: '0.3.0', error: 'IPC unavailable' }
+  })
+  act(() => root.render(<AppVersionSection />))
+  expect(container.querySelector('[role="alert"]')?.textContent).toContain('IPC unavailable')
+  expect(useUpdateStore.getState().status.state).toBe('ready')
 })

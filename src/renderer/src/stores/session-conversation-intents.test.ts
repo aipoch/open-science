@@ -16,7 +16,8 @@ import {
   captureSessionConversationIntents,
   pendingSessionConversationCommands,
   recordSessionConversationAuthority,
-  resetSessionConversationIntentsForTests
+  resetSessionConversationIntentsForTests,
+  discardPreparedSessionConversationIntents
 } from './session-conversation-intents'
 
 const prompt = (id: string, content: string, timestamp: number): PersistedChatMessage => ({
@@ -54,48 +55,83 @@ const fixture = (): PersistedChatSession => {
 describe('Session conversation intents', () => {
   beforeEach(resetSessionConversationIntentsForTests)
 
-  it('captures append and run admission while keeping stable identities until acknowledgement', () => {
+  it('does not reselect the pending prepared edit Branch when capturing its append/run', () => {
     const before = fixture()
-    const message = prompt('prompt-2', 'Second', 2)
-    const conversationGraph = synchronizeActiveConversationMessages(
+    recordSessionConversationAuthority(before, before)
+    const editedGraph = forkEditedConversationMessage(
       before.conversationGraph!,
-      [...before.messages, message],
+      'prompt-1',
+      'edit',
       2
     )
-    const after: PersistedChatSession = {
-      ...before,
-      messages: [...before.messages, message],
-      conversationGraph,
-      activeRun: { promptMessageId: message.id, startedAt: 3 },
-      status: 'running',
-      updatedAt: 3
+    const edited = { ...before, conversationGraph: editedGraph, messages: [], updatedAt: 2 }
+    captureSessionConversationIntents(before, edited, 'start-run', 'prepare')
+    const nextPrompt = prompt('new', 'Edited prompt', 3)
+    const after = {
+      ...edited,
+      conversationGraph: synchronizeActiveConversationMessages(editedGraph, [nextPrompt], 3),
+      messages: [nextPrompt],
+      status: 'running' as const,
+      activeRun: { promptMessageId: 'new', startedAt: 4 }
     }
-    captureSessionConversationIntents(before, after)
-    const pending = pendingSessionConversationCommands(before.id)
-    expect(pending.map(({ kind }) => kind)).toEqual(['append-user', 'start-run'])
-    expect(pendingSessionConversationCommands(before.id)).toEqual(pending)
-
-    acknowledgeSessionConversationCommands({
-      ...after,
-      runtimeConversationCommandIds: [pending[0].id]
-    })
-    expect(pendingSessionConversationCommands(before.id)).toEqual([pending[1]])
+    captureSessionConversationIntents(edited, after, 'start-run', 'prepare')
+    expect(pendingSessionConversationCommands(before.id).map(({ kind }) => kind)).toEqual([
+      'fork-message',
+      'append-user',
+      'start-run'
+    ])
+    discardPreparedSessionConversationIntents(before.id, 'prepare')
+    expect(pendingSessionConversationCommands(before.id)).toEqual([])
   })
 
-  it('captures a fork before its branch selection', () => {
-    const before = fixture()
-    const root = before.conversationGraph!.frames[0]
-    const branchId = 'edited-branch'
-    const conversationGraph = activateConversationBranch(
-      forkEditedConversationMessage(before.conversationGraph!, 'prompt-1', branchId, 2),
-      branchId
-    )
-    const after = { ...before, conversationGraph, updatedAt: 2 }
-    captureSessionConversationIntents(before, after)
-    const commands = pendingSessionConversationCommands(before.id)
-    expect(commands.map(({ kind }) => kind)).toEqual(['fork-message', 'select-branch'])
-    expect(commands[1]).toMatchObject({ previousBranchId: root.activeBranchId, branchId })
-  })
+  it.each([undefined, 'main'] as const)(
+    'captures append and run admission with owner %s while keeping stable identities until acknowledgement',
+    (runtimeTranscriptOwner) => {
+      const before = { ...fixture(), runtimeTranscriptOwner }
+      const message = prompt('prompt-2', 'Second', 2)
+      const conversationGraph = synchronizeActiveConversationMessages(
+        before.conversationGraph!,
+        [...before.messages, message],
+        2
+      )
+      const after: PersistedChatSession = {
+        ...before,
+        messages: [...before.messages, message],
+        conversationGraph,
+        activeRun: { promptMessageId: message.id, startedAt: 3 },
+        status: 'running',
+        updatedAt: 3
+      }
+      captureSessionConversationIntents(before, after)
+      const pending = pendingSessionConversationCommands(before.id)
+      expect(pending.map(({ kind }) => kind)).toEqual(['append-user', 'start-run'])
+      expect(pendingSessionConversationCommands(before.id)).toEqual(pending)
+
+      acknowledgeSessionConversationCommands({
+        ...after,
+        runtimeConversationCommandIds: [pending[0].id]
+      })
+      expect(pendingSessionConversationCommands(before.id)).toEqual([pending[1]])
+    }
+  )
+
+  it.each([undefined, 'main'] as const)(
+    'captures a fork with owner %s before its branch selection',
+    (runtimeTranscriptOwner) => {
+      const before = { ...fixture(), runtimeTranscriptOwner }
+      const root = before.conversationGraph!.frames[0]
+      const branchId = 'edited-branch'
+      const conversationGraph = activateConversationBranch(
+        forkEditedConversationMessage(before.conversationGraph!, 'prompt-1', branchId, 2),
+        branchId
+      )
+      const after = { ...before, conversationGraph, updatedAt: 2 }
+      captureSessionConversationIntents(before, after)
+      const commands = pendingSessionConversationCommands(before.id)
+      expect(commands.map(({ kind }) => kind)).toEqual(['fork-message', 'select-branch'])
+      expect(commands[1]).toMatchObject({ previousBranchId: root.activeBranchId, branchId })
+    }
+  )
 
   it('reselects a retained local Branch before forking it against newer authority', () => {
     const authority = fixture()
@@ -260,7 +296,7 @@ describe('Session conversation intents', () => {
     ])
   })
 
-  it('does not infer intents from passive runtime changes or legacy sessions', () => {
+  it('does not infer intents from passive status changes before or after adoption', () => {
     const before = fixture()
     const after = { ...before, status: 'running' as const, updatedAt: 2 }
     captureSessionConversationIntents(before, after)

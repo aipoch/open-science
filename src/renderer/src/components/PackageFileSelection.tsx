@@ -34,7 +34,7 @@ export const PackageFileSelection = ({
 }: {
   files: PackageSelectableFile[]
   summary?: PackageSelectionSummary
-  onSelect: (excludedStorageKeys: string[]) => void
+  onSelect: (excludedStorageKeys: string[], includePdfNotes?: boolean) => void
   onCancel: () => void
   notice?: React.ReactNode
   children?: React.ReactNode
@@ -46,6 +46,7 @@ export const PackageFileSelection = ({
   const { excludedStorageKeys, selectionPreset, threshold, setThreshold } =
     usePackageOperationStore()
   const [query, setQuery] = useState('')
+  const [includePdfNotes, setIncludePdfNotes] = useState(false)
   const [customizing, setCustomizing] = useState(false)
   const [page, setPage] = useState(0)
   const [retainedPage, setRetainedPage] = useState(0)
@@ -185,6 +186,7 @@ export const PackageFileSelection = ({
       <div
         className={`${dialogBodyClassName} min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
       >
+        {notice}
         <fieldset className="grid gap-2 sm:grid-cols-2">
           <legend className="sr-only">{t('Package contents')}</legend>
           {(['compact', 'full'] as const).map((preset) => (
@@ -280,7 +282,7 @@ export const PackageFileSelection = ({
           ) : null}
           {stats.optionalCount > 0 ? (
             <p className="text-xs text-muted-foreground">
-              {t('Selected: {{selected}} / {{total}} files · {{size}}', {
+              {t('Optional files: {{selected}} / {{total}} selected · {{size}}', {
                 selected: stats.selectedOptionalCount,
                 total: stats.optionalCount,
                 size: packageBytes(stats.selectedOptionalBytes)
@@ -403,7 +405,7 @@ export const PackageFileSelection = ({
                         ) : null
                       })}
                     </div>
-                    <div className="max-h-48 overflow-y-auto">
+                    <div>
                       {visibleRetainedFiles
                         .slice(
                           currentRetainedPage * PAGE_SIZE,
@@ -689,14 +691,28 @@ export const PackageFileSelection = ({
         <p className="text-xs leading-relaxed text-muted-foreground">
           {t('Review private data before sharing.')}
         </p>
-        {notice}
+        {summary?.pdfNotesAvailable ? (
+          <label className="flex items-start gap-2 text-sm">
+            <input
+              type="checkbox"
+              checked={includePdfNotes}
+              onChange={(event) => setIncludePdfNotes(event.target.checked)}
+            />
+            {t(
+              'Include shared PDF notes and annotations from all projects as a read-only snapshot'
+            )}
+          </label>
+        ) : null}
       </div>
       <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
         <Button variant="ghost" className={dialogCancelButtonClassName} onClick={onCancel}>
           {t('Cancel')}
         </Button>
-        <Button disabled={requiredOversized} onClick={() => onSelect([...excluded])}>
-          {t('Export')}
+        <Button
+          disabled={requiredOversized}
+          onClick={() => onSelect([...excluded], includePdfNotes)}
+        >
+          {t('Choose save location…')}
         </Button>
       </div>
     </>

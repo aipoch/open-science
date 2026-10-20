@@ -12,13 +12,13 @@ import {
   managedRepairRegistryKey,
   readRepairRequiredReason,
   repairRegistryPath
-} from './runtime-paths'
+} from '@aipoch/environment'
 import { NotebookRuntimeRepairOwner } from './runtime-repair'
-import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import { createNotebookEnvironmentLifecycle } from './environment-lifecycle-workflows'
-import { serializeProvisioner } from './environment-operation-foundation'
-import { DefaultRuntimeProvisioner } from './provisioner'
-import { DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from './runtime-paths'
+import { serializeProvisioner } from '@aipoch/environment'
+import { DefaultRuntimeProvisioner } from '@aipoch/environment'
+import { DEFAULT_R_ENV, envPrefix, pythonBin, rBin } from '@aipoch/environment'
 import { NotebookSessionAggregate, type NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type RepairOptions = ConstructorParameters<typeof NotebookRuntimeRepairOwner>[0]

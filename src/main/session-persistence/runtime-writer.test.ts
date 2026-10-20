@@ -50,18 +50,17 @@ describe('runtime projection writer ownership', () => {
 it('keeps a living desktop writer despite background timer throttling and replaces a destroyed one', async () => {
   let now = 0
   let alive = true
-  const owner = new RuntimeWriterOwner(
-    () => now,
-    undefined,
-    (id) => (id.startsWith('electron:') ? alive : undefined)
-  )
-  const desktop = owner.claim('electron:1')
+  const owner = new RuntimeWriterOwner(() => now)
+  const desktop = owner.claim('electron:1', () => alive)
   now = RUNTIME_WRITER_LEASE_MS * 10
   expect(owner.claim('web:phone').token).toBeUndefined()
   await expect(owner.commit('electron:1', desktop.token!, async () => 'saved')).resolves.toBe(
     'saved'
   )
   alive = false
+  await expect(
+    owner.commit('electron:1', desktop.token!, async () => 'stale')
+  ).rejects.toMatchObject({ code: RUNTIME_WRITER_LOST })
   expect(owner.claim('web:phone').token).toBeTruthy()
   await expect(
     owner.commit('electron:1', desktop.token!, async () => 'stale')

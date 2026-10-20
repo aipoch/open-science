@@ -15,6 +15,10 @@ type WorkspaceToolCodeBlockProps = {
   // When true, renders a copy button overlaying the top-right corner. Defaults false to avoid
   // changing the transcript's code-block appearance; the permission dialog opts in.
   copyable?: boolean
+  // Opt-in review annotations; transcript code keeps its existing presentation.
+  showLineNumbers?: boolean
+  highlightedLines?: readonly number[]
+  revealLine?: { line: number }
 }
 
 type HighlightState = {
@@ -44,15 +48,33 @@ const WorkspaceToolCodeBlock = ({
   code: source,
   language,
   className,
-  copyable = false
+  copyable = false,
+  showLineNumbers = false,
+  highlightedLines,
+  revealLine
 }: WorkspaceToolCodeBlockProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const numbered = showLineNumbers || highlightedLines !== undefined
+  const sourceLines = useMemo(() => (numbered ? source.split('\n') : undefined), [source, numbered])
+  const virtual = !!sourceLines && sourceLines.length > 300
+  const [window, setWindow] = useState({ source, firstLine: 0 })
+  const firstLine = window.source === source ? window.firstLine : 0
+  const setFirstLine = useCallback(
+    (firstLine: number): void => setWindow({ source, firstLine }),
+    [source]
+  )
+  const pendingFocus = useRef<typeof revealLine>(undefined)
+  const startLine = virtual ? Math.min(firstLine, Math.max(0, sourceLines.length - 60)) : 0
+  const visibleLines = virtual ? sourceLines.slice(startLine, startLine + 60) : sourceLines
+  const markedLines = useMemo(() => new Set(highlightedLines), [highlightedLines])
+  const highlightEnabled = Boolean(language) && source.length <= 20_000 && !virtual
   const [highlighted, setHighlighted] = useState<HighlightState | null>(null)
   const copyIdentity = useMemo(() => ({ source }), [source])
   const [copyResult, setCopyResult] = useState<{
     identity: typeof copyIdentity
     success: boolean
   }>()
+  const codeViewport = useRef<HTMLPreElement>(null)
   const copyRequest = useRef(0)
   const copyTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   const copied = copyResult?.identity === copyIdentity && copyResult.success
@@ -63,7 +85,7 @@ const WorkspaceToolCodeBlock = ({
       ? t('Could not copy code. Try again.')
       : t('Copy code')
   const highlightKey = createHighlightKey(source, language)
-  const highlighter = useCodeHighlighter(Boolean(language))
+  const highlighter = useCodeHighlighter(highlightEnabled)
 
   useEffect(() => {
     return () => {
@@ -88,7 +110,12 @@ const WorkspaceToolCodeBlock = ({
   }, [copyIdentity])
 
   useEffect(() => {
-    if (!language || !highlighter?.supportsLanguage(language as BundledLanguage)) return
+    if (
+      !highlightEnabled ||
+      !language ||
+      !highlighter?.supportsLanguage(language as BundledLanguage)
+    )
+      return
 
     let active = true
     const apply = (result: HighlightResult): void => {
@@ -105,10 +132,60 @@ const WorkspaceToolCodeBlock = ({
     return () => {
       active = false
     }
-  }, [source, language, highlightKey, highlighter])
+  }, [source, language, highlightKey, highlighter, highlightEnabled])
 
   // Only paint tokens that were produced for the currently rendered code and language.
-  const tokens = highlighted?.key === highlightKey ? highlighted.result.tokens : undefined
+  const tokens =
+    highlightEnabled && highlighted?.key === highlightKey ? highlighted.result.tokens : undefined
+
+  useEffect(() => {
+    const viewport = codeViewport.current
+    if (!viewport || !revealLine || !Number.isInteger(revealLine.line)) return
+    if (virtual && sourceLines) {
+      const line = Math.min(sourceLines.length, Math.max(1, revealLine.line))
+      viewport.scrollTop = Math.max(0, (line - 1) * 19.5 - viewport.clientHeight / 2)
+      viewport.scrollLeft = 0
+      pendingFocus.current = revealLine
+      setFirstLine(Math.max(0, Math.floor(viewport.scrollTop / 19.5) - 8))
+      return
+    }
+    const target = viewport.querySelector<HTMLElement>(`[data-code-line="${revealLine.line}"]`)
+    if (!target) return
+    // Scroll only this code viewport, preserving the surrounding conversation position.
+    viewport.scrollTop +=
+      target.getBoundingClientRect().top -
+      viewport.getBoundingClientRect().top -
+      (viewport.clientHeight - target.clientHeight) / 2
+    viewport.scrollLeft = 0
+    target.focus({ preventScroll: true })
+  }, [revealLine, source, virtual, sourceLines, setFirstLine])
+  useEffect(() => {
+    if (virtual && revealLine && pendingFocus.current === revealLine) {
+      const target = codeViewport.current?.querySelector<HTMLElement>(
+        `[data-code-line="${revealLine.line}"]`
+      )
+      if (target) {
+        target.focus({ preventScroll: true })
+        pendingFocus.current = undefined
+      }
+    }
+  }, [virtual, firstLine, revealLine])
+
+  const renderTokens = (line: HighlightResult['tokens'][number]): React.ReactNode =>
+    line.map((token, tokenIndex) => (
+      <span
+        key={tokenIndex}
+        className="dark:[color:var(--shiki-dark)]!"
+        // Dual-theme Shiki colors use htmlStyle; the dark utility overrides inline light color.
+        style={{
+          color: token.color,
+          ...(token.htmlStyle as React.CSSProperties | undefined),
+          ...fontStyleToCss(token.fontStyle)
+        }}
+      >
+        {token.content}
+      </span>
+    ))
 
   return (
     <div
@@ -152,34 +229,77 @@ const WorkspaceToolCodeBlock = ({
         </span>
       )}
       <pre
+        ref={codeViewport}
+        onScroll={
+          virtual
+            ? (event) =>
+                setFirstLine(Math.max(0, Math.floor(event.currentTarget.scrollTop / 19.5) - 8))
+            : undefined
+        }
         data-testid="tool-code-block"
         data-language={language}
-        className="m-0 max-h-[320px] overflow-auto px-3 py-2.5"
+        className={cn('m-0 max-h-[320px] overflow-auto py-2.5', numbered ? 'px-0' : 'px-3')}
       >
-        <code className="block whitespace-pre font-mono text-[12px] leading-relaxed text-text-000">
-          {tokens
-            ? tokens.map((line, lineIndex) => (
-                <Fragment key={lineIndex}>
-                  {line.map((token, tokenIndex) => (
+        <code
+          className={cn(
+            'block whitespace-pre font-mono text-[12px] leading-relaxed text-text-000',
+            numbered && 'w-max min-w-full'
+          )}
+        >
+          {virtual && (
+            <span aria-hidden="true" className="block" style={{ height: startLine * 19.5 }} />
+          )}
+          {visibleLines
+            ? visibleLines.map((line, offset) => {
+                const index = startLine + offset
+                const marked = markedLines.has(index + 1)
+                const lineTokens = tokens?.[index]
+                return (
+                  <span
+                    key={index}
+                    style={virtual ? { height: 19.5, lineHeight: '19.5px' } : undefined}
+                    data-code-line={index + 1}
+                    data-highlighted={marked || undefined}
+                    tabIndex={-1}
+                    className={cn(
+                      'flex min-h-[1.625em] border-l-2 border-transparent pr-10 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring',
+                      marked &&
+                        'border-status-warning-foreground bg-status-warning-surface/60 dark:border-status-warning-dark-foreground dark:bg-status-warning-dark-surface/60'
+                    )}
+                  >
                     <span
-                      key={tokenIndex}
-                      className="dark:[color:var(--shiki-dark)]!"
-                      // Dual-theme Shiki output puts the color (and a --shiki-dark var) in htmlStyle,
-                      // not token.color. Apply htmlStyle, then let the app's dark class switch to the
-                      // paired token color; !important is required to beat Shiki's inline light color.
-                      style={{
-                        color: token.color,
-                        ...(token.htmlStyle as React.CSSProperties | undefined),
-                        ...fontStyleToCss(token.fontStyle)
-                      }}
-                    >
-                      {token.content}
+                      aria-hidden="true"
+                      data-line={index + 1}
+                      className={cn(
+                        'sticky left-0 mr-3 w-10 shrink-0 select-none bg-bg-000 pr-2 text-right text-muted-foreground before:content-[attr(data-line)]',
+                        marked &&
+                          'font-semibold text-status-warning-foreground dark:text-status-warning-dark-foreground'
+                      )}
+                    />
+                    <span>
+                      {lineTokens?.map((token) => token.content).join('') === line
+                        ? renderTokens(lineTokens)
+                        : line}
+                      {index < (sourceLines?.length ?? 0) - 1 ? '\n' : null}
                     </span>
-                  ))}
-                  {lineIndex < tokens.length - 1 ? '\n' : null}
-                </Fragment>
-              ))
-            : source}
+                  </span>
+                )
+              })
+            : tokens
+              ? tokens.map((line, index) => (
+                  <Fragment key={index}>
+                    {renderTokens(line)}
+                    {index < tokens.length - 1 ? '\n' : null}
+                  </Fragment>
+                ))
+              : source}
+          {virtual && sourceLines && (
+            <span
+              aria-hidden="true"
+              className="block"
+              style={{ height: Math.max(0, sourceLines.length - startLine - 60) * 19.5 }}
+            />
+          )}
         </code>
       </pre>
     </div>

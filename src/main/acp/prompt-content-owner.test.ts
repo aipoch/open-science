@@ -1,14 +1,25 @@
 import sharp from 'sharp'
 import * as attachmentMedia from '../uploads/attachment-media'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
-import { access, mkdtemp, readFile, rm, stat, truncate, writeFile } from 'node:fs/promises'
+import {
+  access,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  stat,
+  symlink,
+  truncate,
+  writeFile
+} from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { MAX_ACP_MESSAGE_IMAGE_BYTES } from '../../shared/acp'
-import { createLiteratureAttachmentVersionReference } from '../../shared/literature'
+import { createLiteratureAttachmentVersionReference } from '../../shared/literature-attachment-reference'
 import { createUploadVersionReference, type UploadedAttachment } from '../../shared/uploads'
 import { estimateHistoryTokens } from '../../shared/history-preamble'
 import {
@@ -22,6 +33,7 @@ import {
   createManagedFileReferenceResolver,
   FileReferenceResolver
 } from './file-reference-resolver'
+import { AcpClassificationImageLoader } from './classification-image-loader'
 import { AcpPromptContentOwner, resolvePdfPreparationScope } from './prompt-content-owner'
 import { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
 import type {
@@ -32,8 +44,8 @@ import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
 
 const { loggerInfo } = vi.hoisted(() => ({ loggerInfo: vi.fn() }))
 
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({
@@ -85,6 +97,103 @@ describe('PDF preparation routing', () => {
   })
 })
 
+describe('classification image uploads', () => {
+  it('reads the current managed head for classification', async () => {
+    const lease = createTrustedLease(imageBytes)
+    const openLatest = vi.fn(async () => lease)
+    const loader = new AcpClassificationImageLoader({
+      uploadRepository: {} as UploadRepository,
+      managedFileVersions: { openLatest } as never
+    })
+    const attachment: UploadedAttachment = {
+      id: 'upload-file-1',
+      versionId: 'stale-attachment-version',
+      sessionId: 'session-1',
+      name: 'current-image.png',
+      originalName: 'current-image.png',
+      path: 'upload-version:stale-attachment-version',
+      mimeType: 'image/png',
+      size: imageBytes.byteLength,
+      createdAt: '2026-10-15T00:00:00.000Z'
+    }
+
+    const images = await loader.load({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      currentUploads: [attachment],
+      signal: new AbortController().signal
+    })
+
+    expect(images).toHaveLength(1)
+    expect(openLatest).toHaveBeenCalledWith({
+      source: 'upload',
+      projectId: 'project-1',
+      fileId: 'upload-file-1'
+    })
+    expect(lease.close).toHaveBeenCalledOnce()
+  })
+
+  it('reads an unpublished current upload through the scoped upload capability', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const openLatest = vi.fn(async () => {
+      throw new Error('Unpublished uploads have no managed-file head.')
+    })
+    const loader = new AcpClassificationImageLoader({
+      uploadRepository: uploads,
+      managedFileVersions: { openLatest } as never
+    })
+    const [attachment] = await stageUploadFixtures(uploads, {
+      files: [
+        { name: 'current-image.png', mimeType: 'image/png', content: imageBytes.toString('base64') }
+      ]
+    })
+
+    const images = await loader.load({
+      appSessionId: 'session-1',
+      projectId: 'project-1',
+      currentUploads: [attachment!],
+      signal: new AbortController().signal
+    })
+
+    expect(images).toHaveLength(1)
+    expect(images[0]).toMatchObject({ mimeType: 'image/png' })
+    expect(Buffer.from(images[0]!.data, 'base64').byteLength).toBe(images[0]!.byteLength)
+    expect(openLatest).not.toHaveBeenCalled()
+  })
+
+  it('rejects a path replaced with an external symlink after upload authorization', async () => {
+    const root = await createRoot()
+    const uploads = new UploadRepository(root)
+    const [attachment] = await stageUploadFixtures(uploads, {
+      files: [
+        { name: 'current-image.png', mimeType: 'image/png', content: imageBytes.toString('base64') }
+      ]
+    })
+    const resolveManagedUploadPath = uploads.resolveManagedUploadPath.bind(uploads)
+    const externalDir = join(root, 'external')
+    await mkdir(externalDir)
+    await writeFile(join(externalDir, 'current-image.png'), imageBytes)
+    vi.spyOn(uploads, 'resolveManagedUploadPath').mockImplementation(async (...args) => {
+      const authorizedPath = await resolveManagedUploadPath(...args)
+      const authorizedDir = dirname(authorizedPath)
+      await rename(authorizedDir, join(root, 'original-upload'))
+      await symlink(externalDir, authorizedDir, process.platform === 'win32' ? 'junction' : 'dir')
+      return authorizedPath
+    })
+    const loader = new AcpClassificationImageLoader({ uploadRepository: uploads })
+
+    await expect(
+      loader.load({
+        appSessionId: 'session-1',
+        projectId: 'project-1',
+        currentUploads: [attachment!],
+        signal: new AbortController().signal
+      })
+    ).rejects.toThrow('Classification upload changed while it was being opened.')
+  })
+})
+
 const createRoot = async (): Promise<string> => {
   const root = await mkdtemp(join(tmpdir(), 'acp-prompt-content-owner-'))
   roots.push(root)
@@ -128,6 +237,111 @@ afterEach(async () => {
 })
 
 describe('AcpPromptContentOwner', () => {
+  it.each([
+    ['current-upload', 'empty'],
+    ['history-upload', 'empty'],
+    ['file-reference', 'empty'],
+    ['current-upload', 'valid'],
+    ['history-upload', 'valid'],
+    ['file-reference', 'valid'],
+    ['file-reference', 'corrupt'],
+    ['current-upload', 'empty-text']
+  ] as const)(
+    'issue #3499: identifies empty image files by name and accepts valid images (%s, %s)',
+    async (source, kind) => {
+      const root = await createRoot()
+      const uploads = new UploadRepository(root)
+      const name = kind === 'empty-text' ? 'empty.txt' : `${kind}-image.png`
+      const mimeType = kind === 'empty-text' ? 'text/plain' : 'image/png'
+      const bytes =
+        kind === 'empty' || kind === 'empty-text'
+          ? Buffer.alloc(0)
+          : kind === 'corrupt'
+            ? Buffer.from('not an image')
+            : imageBytes
+      const path = join(root, name)
+      await writeFile(path, bytes)
+      const staged =
+        source === 'file-reference'
+          ? []
+          : await stageUploadFixtures(uploads, {
+              files: [{ name, mimeType, content: bytes.toString('base64') }]
+            })
+      const owner = new AcpPromptContentOwner({
+        uploadRepository: uploads,
+        fileReferenceResolver:
+          source === 'file-reference'
+            ? new FileReferenceResolver([
+                {
+                  source: 'artifact',
+                  resolve: async () => ({
+                    absolutePath: path,
+                    name,
+                    mimeType,
+                    allowSkillImportReference: false
+                  })
+                }
+              ])
+            : createManagedFileReferenceResolver({ uploads })
+      })
+      const historyUploads =
+        source === 'history-upload'
+          ? await uploads.finalizePendingSessionUploads('source-session', staged, 'default-project')
+          : []
+
+      const preparation = owner.prepare({
+        appSessionId: 'target-session',
+        projectId: 'default-project',
+        text: 'Describe the attached image',
+        historyImages: [],
+        historyUploads,
+        currentUploads: source === 'current-upload' ? staged : [],
+        references:
+          source === 'file-reference' ? [{ id: 'empty-file', source: 'artifact', name, path }] : [],
+        codexSkillInputs: [],
+        skillImportEnabled: false
+      })
+      if (kind === 'empty') {
+        await expect(preparation).rejects.toMatchObject({
+          code: 'IMAGE_PROCESSING_FAILED',
+          sourceBytes: 0,
+          message: expect.stringContaining(`Image "${name}" is empty (0 bytes).`),
+          cause: expect.objectContaining({
+            code: 'IMAGE_PROCESSING_FAILED',
+            message: 'Failed to safely process 0-byte image.'
+          })
+        })
+        await expect(preparation).rejects.toThrow(
+          source === 'history-upload'
+            ? 'Start a new conversation and upload a non-empty image.'
+            : 'Remove this attachment or select a non-empty image.'
+        )
+      } else if (kind === 'corrupt') {
+        await expect(preparation).rejects.toMatchObject({
+          code: 'IMAGE_PROCESSING_FAILED',
+          sourceBytes: bytes.length,
+          message: `Failed to safely process ${bytes.length}-byte image.`
+        })
+      } else {
+        const prepared = await preparation
+        try {
+          if (kind === 'empty-text') {
+            expect(contentBlocks(prepared.content)).toContainEqual(
+              expect.objectContaining({ type: 'resource' })
+            )
+          } else {
+            expect(contentBlocks(prepared.content)).toContainEqual(
+              expect.objectContaining({ type: 'image', mimeType })
+            )
+          }
+        } finally {
+          prepared.close()
+        }
+      }
+      expect(await readFile(path)).toEqual(bytes)
+    }
+  )
+
   it('injects the send-time PDF page snapshot instead of a document-prefix preview', async () => {
     const root = await createRoot()
     const sourcePath = join(root, 'paper.pdf')

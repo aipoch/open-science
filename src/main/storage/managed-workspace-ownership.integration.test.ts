@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, mkdtemp, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -688,3 +689,5 @@ describe('managed workspace ownership', () => {
     expect(liveSessions.has(session.id)).toBe(true)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

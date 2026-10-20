@@ -1,19 +1,37 @@
+import { ApplicationCommandError } from './application-command-contract'
+import type {
+  AgentHomeSkillRef,
+  GitHubRepositorySearchView,
+  SkillActivationPolicy,
+  SkillBundlePreviewResult,
+  SkillPackageFileInfo,
+  SkillReference,
+  SkillReferenceInfo,
+  SkillReplacementPreview,
+  SkillSource
+} from '@aipoch/skills/document'
+import {
+  type ModelProtocol,
+  type OfficialVendorId,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { type ReasoningEffort } from './model-preference-contract'
+import { customProviderRequiresKey } from './provider-url-policy'
+import { type ReasoningEffortPresetSetting } from './reasoning-effort'
+export type { ModelProtocol } from '@aipoch/providers'
+export type { ReasoningEffort } from './model-preference-contract'
+
 // Shared model-settings & onboarding types crossing the main <-> renderer IPC boundary.
 //
 // The main process owns settings.json and all secret material. The renderer only ever receives the
 // masked provider view (never keyRef or plaintext keys) and sends drafts that carry a plaintext key
 // only while the user is actively typing one in.
 
-import type { OfficialVendorId } from './provider-registry'
-import { customProviderRequiresKey } from './provider-base-url'
-import type { PermissionProfileId } from './permission-profiles'
-import type {
-  CustomReasoningEffortTransport,
-  ReasoningEffortPresetSetting
-} from './reasoning-effort'
 import type { PackageMirror } from './mirror'
 import type { NetworkProxySettings } from './network-proxy'
-import type { NotebookNetworkSettings } from './notebook-network'
+import type { NotebookNetworkSettings } from './notebook-network-settings'
+import type { PermissionProfileId } from './permission-profiles'
+
 import type { CloseActionPreference } from './window-controls'
 
 // Settings file schema version; bumped when the on-disk shape changes. v2 adds official-vendor
@@ -128,41 +146,40 @@ export const selectClaudeSubscriptionProvider = <T extends { id: string; type: P
   )
 }
 
-// The chat API a model endpoint speaks: `anthropic` = /v1/messages, `openai` =
+// The chat API a model endpoint speaks: `messages` = /v1/messages, `chat-completions` =
 // /v1/chat/completions, and `responses` = /v1/responses. Keep the two OpenAI-shaped protocols
 // distinct: Codex requires Responses and reaches a Chat Completions provider only through its bridge.
 // A provider advertises the explicit set of endpoints it serves; a framework supports a set too.
-export type ChatApiEndpoint = 'anthropic' | 'openai' | 'responses'
 
 // Route path each chat endpoint speaks. Raw API paths are literal and identical in every locale
 // (they must match a gateway's own documentation); only the surrounding copy is localized per
 // surface. Main and renderer share this one map so no surface keeps a private copy.
-export const ENDPOINT_PATHS: Record<ChatApiEndpoint, string> = {
-  anthropic: '/v1/messages',
-  openai: '/v1/chat/completions',
+export const ENDPOINT_PATHS: Record<ModelProtocol, string> = {
+  messages: '/v1/messages',
+  'chat-completions': '/v1/chat/completions',
   responses: '/v1/responses'
 }
 
-// The endpoints a provider offers. Absent/empty ⇒ treat as ['anthropic'] (every legacy provider, and
-// the migration target for the removed 'both' apiType, which mapped to ['anthropic','openai']).
+// The endpoints a provider offers. Absent/empty ⇒ treat as ['messages'] (every legacy provider, and
+// the migration target for the removed 'both' apiType, which mapped to ['messages','chat-completions']).
 export const providerEndpoints = (provider: {
-  apiEndpoints?: readonly ChatApiEndpoint[]
-}): ChatApiEndpoint[] =>
+  apiEndpoints?: readonly ModelProtocol[]
+}): ModelProtocol[] =>
   provider.apiEndpoints && provider.apiEndpoints.length > 0
     ? [...provider.apiEndpoints]
-    : ['anthropic']
+    : ['messages']
 
 export const shareProviderTransportFamily = (left: ProviderType, right: ProviderType): boolean =>
   isXaiSubscriptionProvider(left) === isXaiSubscriptionProvider(right)
 
 export const canUseClaudeProviderTransport = (provider: {
   type: ProviderType
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  apiEndpoints?: readonly ModelProtocol[]
   key?: string
   baseUrl?: string
 }): boolean =>
   usesAppProviderTransport(provider.type) &&
-  providerEndpoints(provider).includes('anthropic') &&
+  providerEndpoints(provider).includes('messages') &&
   // A custom gateway needs credentials unless it is a loopback local model server, which serves the
   // Anthropic route without one; the transport adapters already treat the key as optional.
   (provider.type !== 'custom' ||
@@ -173,31 +190,31 @@ export const canUseClaudeProviderTransport = (provider: {
 // Codex's Responses-compatible bridge is a separate local gateway: it does not change the provider's
 // endpoints, but it makes Chat Completions providers usable through an explicit translation path.
 export const isProviderCompatibleWith = (
-  endpoints: readonly ChatApiEndpoint[],
-  frameworkEndpoints: readonly ChatApiEndpoint[]
+  endpoints: readonly ModelProtocol[],
+  frameworkEndpoints: readonly ModelProtocol[]
 ): boolean => endpoints.some((endpoint) => frameworkEndpoints.includes(endpoint))
 
 // Codex can drive a Chat Completions-only provider through the app's local Responses bridge.
 // CodeBuddy has the inverse boundary: it always consumes Chat Completions, so providers that expose
 // only Responses or Messages require the app's Chat compatibility transport.
 export const requiresChatCompletionsBridge = (
-  provider: { apiEndpoints?: readonly ChatApiEndpoint[] },
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  provider: { apiEndpoints?: readonly ModelProtocol[] },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
   const endpoints = providerEndpoints(provider)
 
   if (framework.id === 'codex') {
     return (
       framework.supportedApiTypes.includes('responses') &&
-      endpoints.includes('openai') &&
+      endpoints.includes('chat-completions') &&
       !endpoints.includes('responses')
     )
   }
   return (
     framework.id === 'codebuddy' &&
-    framework.supportedApiTypes.includes('openai') &&
-    !endpoints.includes('openai') &&
-    (endpoints.includes('responses') || endpoints.includes('anthropic'))
+    framework.supportedApiTypes.includes('chat-completions') &&
+    !endpoints.includes('chat-completions') &&
+    (endpoints.includes('responses') || endpoints.includes('messages'))
   )
 }
 
@@ -207,8 +224,8 @@ export const requiresChatCompletionsBridge = (
 // Codex subscription providers carry their own login and can only drive Codex regardless of
 // endpoint. Enforced both in the renderer gates and main-side (preflight + spawn).
 export const isProviderUsableByFramework = (
-  provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType },
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType },
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean => {
   if (isCodexSubscriptionProvider(provider.type)) return framework.id === 'codex'
   // Both Claude subscription modes rely on the ~/.claude or app-owned credential that only
@@ -227,8 +244,8 @@ export const isProviderUsableByFramework = (
 // The endpoint to actually use for a (provider, framework) pair. When both sides support OpenAI
 // /v1/chat/completions it wins (per product decision); otherwise the shared Anthropic endpoint; else
 // undefined when the pair is incompatible.
-export const preferredEndpoint = <const FrameworkEndpoints extends readonly ChatApiEndpoint[]>(
-  endpoints: readonly ChatApiEndpoint[],
+export const preferredEndpoint = <const FrameworkEndpoints extends readonly ModelProtocol[]>(
+  endpoints: readonly ModelProtocol[],
   frameworkEndpoints: FrameworkEndpoints
 ): FrameworkEndpoints[number] | undefined => {
   const shared: FrameworkEndpoints[number][] = frameworkEndpoints.filter((endpoint) =>
@@ -239,8 +256,8 @@ export const preferredEndpoint = <const FrameworkEndpoints extends readonly Chat
 
   return (
     shared.find((endpoint) => endpoint === 'responses') ??
-    shared.find((endpoint) => endpoint === 'openai') ??
-    shared.find((endpoint) => endpoint === 'anthropic')
+    shared.find((endpoint) => endpoint === 'chat-completions') ??
+    shared.find((endpoint) => endpoint === 'messages')
   )
 }
 
@@ -299,7 +316,7 @@ export type ClaudeDetectResult = {
 // Non-secret fingerprint for a concrete model/protocol probe. Provider-auth-only checks omit it.
 export type ProviderValidationTarget = {
   model?: string
-  endpoint?: ChatApiEndpoint
+  endpoint?: ModelProtocol
 }
 
 export type ProviderValidationFailure = {
@@ -323,8 +340,8 @@ export type ProviderView = {
   codexTransport?: CodexSubscriptionTransport
   name: string
   // Which chat APIs this provider's endpoint speaks; drives per-framework availability. Absent ⇒
-  // treat as ['anthropic'] (every legacy provider).
-  apiEndpoints?: ChatApiEndpoint[]
+  // treat as ['messages'] (every legacy provider).
+  apiEndpoints?: ModelProtocol[]
   baseUrl?: string
   model?: string
   // User-configured model token limits. Context is the shared request/response budget; input/output
@@ -427,7 +444,6 @@ export type AgentFrameworkId = 'claude-code' | 'opencode' | 'codex' | 'codebuddy
 // agent keeps its own default and nothing is sent. The concrete levels form a relative scale
 // (low < medium < high < xhigh < max): the active model's static profile maps the level onto its
 // concrete supported rungs (e.g. 'max' becomes the model's top level).
-export type ReasoningEffort = 'default' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'default'
 
@@ -545,8 +561,8 @@ export const APP_ICON_VARIANT_INFOS: readonly AppIconVariantInfo[] = [
 export type AgentFrameworkView = {
   id: AgentFrameworkId
   // Chat endpoints this framework can drive; a provider is selectable only if it shares one. Absent ⇒
-  // treat as ['anthropic'].
-  supportedApiTypes?: ChatApiEndpoint[]
+  // treat as ['messages'].
+  supportedApiTypes?: ModelProtocol[]
   displayName: string
   // Whether this framework materializes app skills; the renderer hides the skills UI when false.
   supportsSkills: boolean
@@ -634,6 +650,7 @@ export type SetNotebookNetworkRequest = NotebookNetworkSettings & {
   // The renderer's allowed-domain baseline. The owner applies the draft's add/remove delta to the
   // latest stored policy so a concurrent conversation approval cannot be overwritten by a stale form.
   baseAllowedDomains?: readonly string[]
+  baseTrustedPrivateDestinations?: NotebookNetworkSettings['trustedPrivateDestinations']
 }
 
 export type SetPackageMirrorRequest = PackageMirror
@@ -742,8 +759,8 @@ export type ProviderDraft = {
   // Optional custom-gateway request shape. Absence defaults to the literal `reasoning_effort` field.
   reasoningEffortTransport?: CustomReasoningEffortTransport
   // Which chat APIs a custom gateway speaks (form selector). Official providers take it from the
-  // registry; omitted defaults to ['anthropic'].
-  apiEndpoints?: ChatApiEndpoint[]
+  // registry; omitted defaults to ['messages'].
+  apiEndpoints?: ModelProtocol[]
   // Set when type is 'official': the chosen vendor and (where applicable) region. Base URL and model
   // catalog then come from the registry rather than the draft's baseUrl.
   vendorId?: OfficialVendorId
@@ -1161,10 +1178,6 @@ export type EnvironmentCheckResult = {
   runtime: ClaudeDetectResult
 }
 
-// A bundled skill's source category: app-bundled, imported from GitHub, or user-authored.
-export type SkillSource = 'featured' | 'imported' | 'personal'
-export type SkillActivationPolicy = 'always-on' | 'user-controlled'
-
 // Stable machine codes for failed Settings writes. The renderer display layer translates by code,
 // so no English message text ever crosses the store boundary or gets string-compared to decide a
 // translation. Codes are single hyphenated tokens with no spaces: concurrent failures are joined
@@ -1240,18 +1253,6 @@ export type ResolvedSkillDocument = {
   body: string
 }
 
-// A reference file's name and byte size, without its content.
-export type SkillReferenceInfo = {
-  path: string
-  sizeBytes: number
-}
-
-// A regular file in the Skill package, addressed relative to the package root.
-export type SkillPackageFileInfo = {
-  path: string
-  sizeBytes: number
-}
-
 export type SetSkillEnabledRequest = {
   id: string
   enabled: boolean
@@ -1260,13 +1261,6 @@ export type SetSkillEnabledRequest = {
 export type SetSkillsEnabledRequest = {
   ids: string[]
   enabled: boolean
-}
-
-// A supporting file bundled under the skill's `references/` directory. `dataBase64` carries new file
-// content; when omitted (on edit), it means "keep the existing file with this path unchanged".
-export type SkillReference = {
-  path: string
-  dataBase64?: string
 }
 
 // Create a personal (user-authored) skill from the in-app editor. `name` is the immutable invocation
@@ -1326,18 +1320,6 @@ export type PreviewSkillZipRequest = {
   dataBase64: string
 }
 
-// Read-only SKILL.md content shown before import. Every source adapter returns this renderer-safe
-// shape: sourceLabel is a display path/URL (never an absolute host path), metadata contains parsed
-// frontmatter fields other than name/description, and files contains relative names only.
-export type SkillReplacementPreview = {
-  targetId: string
-  sourceLabel?: string
-  added: string[]
-  modified: string[]
-  removed: string[]
-  comparisonUnavailable?: boolean
-}
-
 export type SkillImportPreviewContent = {
   replacement?: SkillReplacementPreview
   name: string
@@ -1371,42 +1353,6 @@ export type ImportSkillZipBatchItemResult =
 export type ImportSkillZipBatchResult = {
   results: ImportSkillZipBatchItemResult[]
   skills: SkillView[]
-}
-
-// The parsed contents of a bundle: the skill's name/description, the files it contains, whether an
-// identical bundle was already imported (same content signature), and — when the name collides with
-// exactly one existing imported skill of different content — the id of that skill, offered as a
-// replace target.
-export type SkillBundlePreview = {
-  replacement?: SkillReplacementPreview
-  subPath: string
-  name: string
-  description: string
-  metadata: Record<string, string>
-  body: string
-  previewError?: string
-  files: string[]
-  alreadyImported: boolean
-  replaceableId?: string
-  // Present only for candidates discovered from a public GitHub repo. The approval dialog uses it
-  // to load the same lazy candidate preview as Settings; the main process still owns import URLs.
-  githubUrl?: string
-}
-
-// One skill the bundle contained but that couldn't be imported (too large, no SKILL.md, no name, an
-// unreadable nested archive, ...). `source` identifies it within the bundle (the nested archive name
-// or subPath); `reason` is a plain-English explanation shown to the user. Surfaced so a partial import
-// tells the user exactly what was left out instead of failing the whole bundle.
-export type SkippedSkill = {
-  source: string
-  reason: string
-}
-
-// Result of previewing a bundle: the importable skills, plus any that were skipped and why. A bundle
-// with a mix of good and bad skills yields previews for the good ones and a skipped entry per bad one.
-export type SkillBundlePreviewResult = {
-  previews: SkillBundlePreview[]
-  skipped: SkippedSkill[]
 }
 
 // A Skill package import requested by an agent tool. The main process owns the archive bytes and
@@ -1445,31 +1391,6 @@ export type ScanRepoRequest = {
   repo: string
 }
 
-// A known user-level source that may contain installed skills. The shared Agents directory is
-// available for every framework; Claude and Codex directories are available only while that
-// framework is active.
-export type AgentHomeSkillSource = 'agents' | 'claude' | 'codex'
-
-// One skill found in a user-level source. Main returns renderer-safe metadata only: the source id and
-// slug are sufficient to request an import, while the absolute host path remains in the main process.
-export type AgentHomeSkillView = {
-  source: AgentHomeSkillSource
-  // The directory name under the agent's skills/ dir. Used as the candidate slug and as the
-  // identifier on disk; not a renderer-visible name (the SKILL.md frontmatter supplies that).
-  slug: string
-  // Parsed from SKILL.md frontmatter; falls back to the slug when the name is absent or unparseable.
-  name: string
-  description: string
-  // True when either the same source, slug, and content are already represented by an imported-skill
-  // record, or a controlled legacy slug fallback claims this row, so the UI can disable its checkbox.
-  alreadyImported: boolean
-}
-
-export type AgentHomeSkillRef = {
-  source: AgentHomeSkillSource
-  slug: string
-}
-
 export type PreviewAgentHomeSkillRequest = AgentHomeSkillRef
 
 // Batch import selected user-level skills. Main re-derives every absolute path from the trusted
@@ -1480,16 +1401,7 @@ export type ImportAgentHomeSkillsRequest = {
 
 // One bad or concurrently removed source does not abort the rest of a checked batch.
 export type ImportAgentHomeSkillItemResult =
-  | (AgentHomeSkillRef & {
-      status: 'imported' | 'unchanged' | 'updated'
-      id: string
-      error?: undefined
-    })
-  | (Partial<AgentHomeSkillRef> & {
-      status?: undefined
-      id?: undefined
-      error: string
-    })
+  import('@aipoch/skills/document').AgentHomeSkillImportResult
 
 export type ImportAgentHomeSkillsResult = {
   results: ImportAgentHomeSkillItemResult[]
@@ -1504,17 +1416,6 @@ export type ScannedSkillView = {
   url: string
   alreadyImported: boolean
 }
-
-// Compact public-repository metadata returned when scanRepoSkills receives a keyword query.
-export type GitHubRepositorySearchView = {
-  fullName: string
-  description: string | null
-  url: string
-  stars: number
-}
-
-export const GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE =
-  'GitHub search is limited to 256 characters. Shorten the keywords or paste an owner/repo reference.'
 
 // The existing scan seam also handles keyword discovery. Presence of `repositories` identifies a
 // search result, including the empty-results case; direct repo scans retain their original shape.
@@ -1857,3 +1758,38 @@ export type RespondConnectorCredentialRequest = { id: string; configured: boolea
 // src/shared (not src/main) so src/shared/remote-fs.ts stays within the shared layer — the full
 // StoredSettings in src/main structurally satisfies this shape.
 export type ComputeBookmarkStore = { computeBookmarks?: Record<string, string[]> }
+
+// Validate the required projection containers before any consumer can render them. Optional
+// preferences retain their established defaults; this does not rewrite the stored document.
+export const parseSettingsSnapshot = (snapshot: unknown): SettingsSnapshot => {
+  const record = (value: unknown): value is Record<string, unknown> =>
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+  if (
+    !record(snapshot) ||
+    !Array.isArray(snapshot.providers) ||
+    !Array.isArray(snapshot.agentFrameworks) ||
+    !record(snapshot.claude) ||
+    !record(snapshot.opencode) ||
+    typeof snapshot.agentFrameworkId !== 'string' ||
+    snapshot.providers.some(
+      (provider) =>
+        !record(provider) ||
+        typeof provider.id !== 'string' ||
+        typeof provider.name !== 'string' ||
+        !Array.isArray(provider.models) ||
+        provider.models.some((model) => typeof model !== 'string')
+    ) ||
+    snapshot.agentFrameworks.some(
+      (framework) =>
+        !record(framework) ||
+        typeof framework.id !== 'string' ||
+        typeof framework.displayName !== 'string'
+    ) ||
+    (snapshot.revision !== undefined &&
+      (typeof snapshot.revision !== 'number' ||
+        !Number.isSafeInteger(snapshot.revision) ||
+        snapshot.revision < 0))
+  )
+    throw new ApplicationCommandError('invalid-command-result', 'Invalid settings snapshot.')
+  return snapshot as SettingsSnapshot
+}

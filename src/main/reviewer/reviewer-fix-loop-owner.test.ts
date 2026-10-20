@@ -524,3 +524,76 @@ describe('reviewer fix-loop owner', () => {
     }
   )
 })
+
+describe('resumed correction rounds', () => {
+  it.each([1, 2])(
+    'assesses the resumed answer without reinjection and keeps the %i-round budget',
+    async (round) => {
+      mocks.sendApplicationPrompt.mockReset().mockResolvedValue({ stopReason: 'end_turn' })
+      mocks.runReviewAssessment.mockReset().mockResolvedValue({
+        review: review('re-review'),
+        submittedChecks: [{ sourceFindingId: openCheck.id, status: 'fail', sortIndex: 0 }]
+      })
+      const repository = {
+        commitFindingDispositions: vi.fn(),
+        getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+      } as unknown as ReviewRepository
+      const getSession = async (): Promise<PersistedChatSession> =>
+        session([
+          initialMessage,
+          { ...correctionMessage, responseToMessageId: 'resumed-prompt' },
+          ...mocks.sendApplicationPrompt.mock.calls.map(([request], index) => ({
+            ...correctionMessage,
+            id: `next-${index}`,
+            responseToMessageId: request.provenanceContext.promptMessageId
+          }))
+        ])
+      await runReviewerFixLoop({
+        ...makeOptions(getSession, repository, { maxRounds: 3 }),
+        resumeCorrection: {
+          promptMessageId: 'resumed-prompt',
+          turnMessageId: correctionMessage.id,
+          round
+        }
+      })
+      expect(mocks.runReviewAssessment).toHaveBeenCalledTimes(3 - round)
+      expect(mocks.runReviewAssessment.mock.calls[0][0]).toMatchObject({
+        mode: 'tracked',
+        scopeTurnMessageId: correctionMessage.id,
+        trackedChecks: [openCheck]
+      })
+      expect(mocks.sendApplicationPrompt).toHaveBeenCalledTimes(2 - round)
+      if (round === 1)
+        expect(mocks.sendApplicationPrompt.mock.calls[0][1].continuation).toEqual({
+          round: 2,
+          maxRounds: 3,
+          findingIds: [openCheck.id]
+        })
+      expect(repository.commitFindingDispositions).toHaveBeenCalledWith([
+        expect.objectContaining({ trigger: 'loop_terminated' })
+      ])
+    }
+  )
+  it('stops before assessing a resumed answer when Stop is pressed again', async () => {
+    mocks.runReviewAssessment.mockReset()
+    mocks.sendApplicationPrompt.mockReset()
+    const abort = new AbortController()
+    abort.abort()
+    const repository = {
+      commitFindingDispositions: vi.fn(),
+      getReviewsForProjectSession: vi.fn().mockResolvedValue([])
+    } as unknown as ReviewRepository
+    await runReviewerFixLoop({
+      ...makeOptions(async () => session([initialMessage, correctionMessage]), repository, {
+        abortSignal: abort.signal
+      }),
+      resumeCorrection: {
+        promptMessageId: 'resumed',
+        turnMessageId: correctionMessage.id,
+        round: 0
+      }
+    })
+    expect(mocks.runReviewAssessment).not.toHaveBeenCalled()
+    expect(mocks.sendApplicationPrompt).not.toHaveBeenCalled()
+  })
+})

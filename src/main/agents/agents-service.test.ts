@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { describe, expect, it, vi } from 'vitest'
 
 import { AgentsService, type AgentsCatalogSource } from './agents-service'
@@ -50,7 +51,9 @@ const catalog = (overrides: Partial<AgentsCatalogSource> = {}): AgentsCatalogSou
       available: true
     }
   ]),
-  getConnectors: vi.fn(async () => ({ enabledIds: [], autoAllowIds: [] }) as StoredConnectors),
+  getConnectors: vi.fn(async () =>
+    projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] } as StoredConnectors)
+  ),
   ...overrides
 })
 
@@ -158,7 +161,7 @@ describe('AgentsService read surface', () => {
     }
     const service = new AgentsService({
       specialistService: specialistService([]),
-      catalog: catalog({ getConnectors: vi.fn(async () => stored) })
+      catalog: catalog({ getConnectors: vi.fn(async () => projectConnectorsFromStored(stored)) })
     })
     const connectors = await service.listConnectors({})
     const chemistry = connectors.find((c) => c.id === 'chemistry')
@@ -291,8 +294,11 @@ describe('AgentsService connector runtime availability', () => {
     profiles.attachConnector = attachConnector
     const service = new AgentsService({
       specialistService: profiles,
-      catalog: catalog({ getConnectors: vi.fn(async () => stored) }),
-      customServerAvailability: (id) => (id === 'cust-1' ? 'unavailable' : undefined)
+      catalog: catalog({
+        getConnectors: vi.fn(async () =>
+          projectConnectorsFromStored(stored, (id) => (id === 'cust-1' ? 'unavailable' : undefined))
+        )
+      })
     })
 
     const connector = (await service.listConnectors({})).find((item) => item.id === 'cust-1')
@@ -327,7 +333,7 @@ describe('AgentsService connector runtime availability', () => {
     profiles.attachConnector = attachConnector
     const service = new AgentsService({
       specialistService: profiles,
-      catalog: catalog({ getConnectors: vi.fn(async () => stored) })
+      catalog: catalog({ getConnectors: vi.fn(async () => projectConnectorsFromStored(stored)) })
     })
 
     const connector = (await service.listConnectors({})).find(

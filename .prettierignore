@@ -20,4 +20,4 @@ packages/notebook-network-sandbox/vendor
 packages/notebook-network-sandbox/LICENSE.upstream
 
 # Preserve one source record per line in the PDF regression corpus.
-src/main/literature/pdf-structure/fixtures/**/*.jsonl
+packages/pdf-structure/test/fixtures/**/*.jsonl

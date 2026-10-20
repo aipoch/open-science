@@ -1,0 +1,2 @@
+{"name":"reuse one live page then revisit after eviction before mutation","pages":[1,1,2,1],"unchanged":[]}
+{"name":"unchanged region shares live snapshot without stale mutation ownership","pages":[1,2,1,2],"unchanged":[1]}

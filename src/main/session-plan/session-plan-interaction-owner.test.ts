@@ -3,6 +3,33 @@ import { describe, expect, it, vi } from 'vitest'
 import { SessionPlanInteractionOwner } from './session-plan-interaction-owner'
 
 describe('SessionPlanInteractionOwner', () => {
+  it('keeps a review identity through settlement but renews it for another request of the same Plan', async () => {
+    const owner = new SessionPlanInteractionOwner()
+    const identity = {
+      sessionId: 'session-1',
+      artifactVersionId: 'version-1',
+      interactionId: 'prompt-1'
+    }
+    owner.register(identity)
+    const first = owner.parkApproval(identity.sessionId, identity.interactionId)
+    const firstId = owner.reviewRequestIdFor(identity.sessionId, identity.artifactVersionId)
+    expect(firstId).toBeTypeOf('string')
+    owner.release(identity.sessionId, identity.artifactVersionId)
+    owner.resolveApproval(identity.sessionId, {}, owner.approvalTokenFor(identity.sessionId))
+    await first
+    expect(owner.hasPendingApproval(identity.sessionId)).toBe(false)
+    expect(owner.reviewRequestIdFor(identity.sessionId, identity.artifactVersionId)).toBe(firstId)
+    owner.register(identity)
+    const second = owner.parkApproval(identity.sessionId, identity.interactionId)
+    expect(owner.reviewRequestIdFor(identity.sessionId, identity.artifactVersionId)).not.toBe(
+      firstId
+    )
+    expect(owner.reviewRequestIdFor(identity.sessionId, 'other-version')).toBeUndefined()
+    owner.resolveApproval(identity.sessionId, {}, owner.approvalTokenFor(identity.sessionId))
+    await second
+    owner.clearSession(identity.sessionId, 'closed')
+    expect(owner.reviewRequestIdFor(identity.sessionId, identity.artifactVersionId)).toBeUndefined()
+  })
   it('keeps pause ownership after a decision and ignores stale Provider stops', async () => {
     const owner = new SessionPlanInteractionOwner()
     const approval = owner.parkApproval('session-1', 'prompt-1')

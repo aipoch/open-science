@@ -1,0 +1,344 @@
+import {
+  session as electronSession,
+  webFrameMain,
+  type BrowserWindow,
+  type Cookie,
+  type WebContents,
+  type WebPreferences
+} from 'electron'
+import { isAllowedSourceDescendantNavigation } from './navigation-policy'
+import {
+  parseHttpsSourceUrl,
+  SOURCE_PREVIEW_PARTITION,
+  SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL,
+  SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL
+} from '../shared/source-preview'
+
+const activeSources = new WeakMap<object, WebContents>()
+const registeredSourceGuests = new WeakSet<WebContents>()
+const configuredSessions = new WeakSet<Electron.Session>()
+let sourcePreviewSession: Electron.Session | undefined
+
+// Created only after app readiness. Never copy or clear the host profile on first use.
+export const getSourcePreviewSession = (): Electron.Session => {
+  sourcePreviewSession ??= electronSession.fromPartition(SOURCE_PREVIEW_PARTITION)
+  return sourcePreviewSession
+}
+
+const cookieDomain = (domain: string): string => {
+  const hostname = domain.replace(/^\./, '').toLowerCase()
+  const url = parseHttpsSourceUrl(`https://${hostname}`)
+  if (
+    !hostname ||
+    hostname.includes('*') ||
+    !url ||
+    url.host !== hostname ||
+    url.pathname !== '/' ||
+    url.search ||
+    url.hash
+  )
+    throw new Error('Expected a Cookie domain, not a URL or wildcard')
+  return hostname
+}
+
+// Match the stored Cookie domain exactly (ignoring its leading dot), not unrelated subdomains.
+export const getSourcePreviewCookies = async (domain: string): Promise<Cookie[]> => {
+  const hostname = cookieDomain(domain)
+  const cookies = await getSourcePreviewSession().cookies.get({ domain: hostname })
+  return cookies.filter((cookie) => cookie.domain?.replace(/^\./, '').toLowerCase() === hostname)
+}
+
+export const removeSourcePreviewCookies = async (domain: string): Promise<void> => {
+  const cookies = await getSourcePreviewCookies(domain)
+  const sourceSession = getSourcePreviewSession()
+  for (const cookie of cookies) {
+    const url = new URL(
+      `${cookie.secure ? 'https' : 'http'}://${cookie.domain!.replace(/^\./, '')}`
+    )
+    url.pathname = cookie.path || '/'
+    await sourceSession.cookies.remove(url.href, cookie.name)
+  }
+}
+
+// Cookies are domain scoped, so use the separate Cookie API rather than clear them by origin.
+// CacheStorage belongs to this origin; Chromium's HTTP cache has no exact-domain guarantee.
+export const clearSourcePreviewOriginStorage = async (origin: string): Promise<void> => {
+  const url = parseHttpsSourceUrl(origin)
+  if (!url || url.origin !== origin) throw new Error('Expected an HTTPS origin')
+  await getSourcePreviewSession().clearStorageData({
+    origin,
+    storages: ['filesystem', 'indexdb', 'localstorage', 'serviceworkers', 'cachestorage']
+  })
+}
+
+// Deliberately preserve localStorage/IndexedDB. This operation clears only HTTP cache and Cookies.
+export const clearSourcePreviewPartitionData = async (): Promise<void> => {
+  const sourceSession = getSourcePreviewSession()
+  await sourceSession.clearCache()
+  await sourceSession.clearStorageData({ storages: ['cookies'] })
+}
+
+export const getActiveSourceContents = (owner: object): WebContents | undefined => {
+  const contents = activeSources.get(owner)
+  return contents && !contents.isDestroyed() ? contents : undefined
+}
+
+export const isRegisteredSourcePreviewGuest = (
+  webContents: WebContents | null,
+  session: Electron.Session
+): boolean =>
+  webContents !== null &&
+  registeredSourceGuests.has(webContents) &&
+  !webContents.isDestroyed() &&
+  webContents.session === session
+
+export const isAllowedSourcePreviewStorageAccess = (
+  webContents: WebContents | null,
+  session: Electron.Session,
+  details: { isMainFrame: boolean; requestingUrl?: string },
+  permission = 'storage-access',
+  requestingOrigin?: string
+): boolean =>
+  permission === 'storage-access' &&
+  !details.isMainFrame &&
+  parseHttpsSourceUrl(details.requestingUrl ?? requestingOrigin ?? '') !== undefined &&
+  isRegisteredSourcePreviewGuest(webContents, session)
+
+const configureSourcePreviewSession = (sourceSession: Electron.Session): void => {
+  if (configuredSessions.has(sourceSession)) return
+  configuredSessions.add(sourceSession)
+  // Install session policies once, regardless of the number of host windows or source tabs.
+  sourceSession.on('will-download', (event, _item, guest) => {
+    if (guest && isRegisteredSourcePreviewGuest(guest, sourceSession)) event.preventDefault()
+  })
+  sourceSession.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    callback(isAllowedSourcePreviewStorageAccess(webContents, sourceSession, details, permission))
+  })
+  sourceSession.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    isAllowedSourcePreviewStorageAccess(
+      webContents,
+      sourceSession,
+      details,
+      permission,
+      requestingOrigin
+    )
+  )
+}
+
+// The DOM owns guest lifetime. Main owns security and the focused source used by page find.
+export const installSourcePreviewWebviews = (window: BrowserWindow): void => {
+  const host = window.webContents
+  const session = getSourcePreviewSession()
+  configureSourcePreviewSession(session)
+  const cleanups = new Map<WebContents, () => void>()
+  const willAttach = (
+    event: Electron.Event,
+    preferences: WebPreferences,
+    params: Record<string, string>
+  ): void => {
+    if (
+      !parseHttpsSourceUrl(params.src ?? '') ||
+      params.partition !== SOURCE_PREVIEW_PARTITION ||
+      params.preload ||
+      params.webpreferences ||
+      params.allowpopups ||
+      params.nodeintegration ||
+      params.nodeintegrationinsubframes ||
+      params.disablewebsecurity ||
+      params.plugins ||
+      params.blinkfeatures ||
+      params.disableblinkfeatures ||
+      preferences.enableBlinkFeatures ||
+      preferences.disableBlinkFeatures ||
+      preferences.preload
+    ) {
+      event.preventDefault()
+      return
+    }
+    Object.assign(preferences, {
+      session,
+      sandbox: true,
+      contextIsolation: true,
+      webSecurity: true,
+      nodeIntegration: false,
+      nodeIntegrationInSubFrames: false,
+      nodeIntegrationInWorker: false,
+      webviewTag: false,
+      allowRunningInsecureContent: false,
+      navigateOnDragDrop: false
+    })
+    delete preferences.preload
+  }
+  const didAttach = (_event: Electron.Event, guest: WebContents): void => {
+    if (guest.session !== session) {
+      guest.close({ waitForBeforeUnload: false })
+      return
+    }
+    registeredSourceGuests.add(guest)
+    const alive = (): boolean => cleanups.has(guest) && !guest.isDestroyed() && !host.isDestroyed()
+    guest.setWindowOpenHandler(() => ({ action: 'deny' }))
+    let navigationId = 0
+    const blocked = (url: string): void => {
+      if (alive())
+        host.send(SOURCE_PREVIEW_NAVIGATION_BLOCKED_CHANNEL, {
+          guestId: guest.id,
+          url,
+          navigationId
+        })
+    }
+    // Count the same events as the webview renderer, including programmatic loads and reloads.
+    const startNavigation = (
+      event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>
+    ): void => {
+      if (event.isMainFrame && !event.isSameDocument) navigationId += 1
+    }
+    const navigate = (
+      event: Electron.Event<Electron.WebContentsWillFrameNavigateEventParams>
+    ): void => {
+      if (
+        !(event.isMainFrame
+          ? parseHttpsSourceUrl(event.url)
+          : isAllowedSourceDescendantNavigation(event.url))
+      ) {
+        event.preventDefault()
+        if (event.isMainFrame) blocked(event.url)
+      }
+    }
+    const redirect = (
+      event: Electron.Event,
+      url: string,
+      _inPlace: boolean,
+      isMainFrame: boolean
+    ): void => {
+      if (!(isMainFrame ? parseHttpsSourceUrl(url) : isAllowedSourceDescendantNavigation(url))) {
+        event.preventDefault()
+        if (isMainFrame) blocked(url)
+      }
+    }
+    const focus = (): void => {
+      if (alive()) activeSources.set(host, guest)
+    }
+    const input = (event: Electron.Event, value: Electron.Input): void => {
+      if (alive() && !value.isComposing && value.key !== 'Process')
+        host.emit('before-input-event', event, value)
+    }
+    const contextSnapshotKey = `__openScienceSourceContextMenu_${guest.id}_${Math.random().toString(36).slice(2)}`
+    const rememberContextTarget = (
+      _event: Electron.Event,
+      _url: string,
+      _status: number,
+      _statusText: string,
+      _mainFrame: boolean,
+      processId: number,
+      routingId: number
+    ): void => {
+      const frame = webFrameMain.fromId(processId, routingId)
+      if (!frame || !parseHttpsSourceUrl(frame.url)) return
+      // Ordinary DOM bookkeeping only: no preload, IPC, or privileged API is exposed to the site.
+      // OOPIF :hover can be empty even for a real right-click; capture the actual event target.
+      void frame
+        .executeJavaScript(
+          `(() => {
+        const key = ${JSON.stringify(contextSnapshotKey)};
+        if (Object.prototype.hasOwnProperty.call(window, key)) return;
+        let passthrough = false;
+        Object.defineProperty(window, key, {
+          configurable: false,
+          enumerable: false,
+          get() {
+            const value = passthrough;
+            passthrough = false;
+            return value;
+          },
+          set() {}
+        });
+        window.addEventListener('contextmenu', (event) => {
+          if (!event.isTrusted) return;
+          passthrough = event.composedPath().some(target =>
+            target instanceof Element && target.closest('[data-preview-context-menu-passthrough]')
+          );
+        }, true);
+      })()`
+        )
+        .catch(() => {
+          /* The document may have navigated or detached. */
+        })
+    }
+    let menuGeneration = 0
+    const contextMenu = async (
+      _event: Electron.Event,
+      params: Electron.ContextMenuParams
+    ): Promise<void> => {
+      const generation = ++menuGeneration
+      const frame = params.frame
+      if (
+        !alive() ||
+        params.isEditable ||
+        params.formControlType !== 'none' ||
+        !frame ||
+        frame.isDestroyed()
+      )
+        return
+      const frameUrl = frame.url
+      if (!parseHttpsSourceUrl(frameUrl)) return
+      try {
+        // Consume the clicked frame's snapshot, never a later frame with the same URL.
+        const passthrough = await frame.executeJavaScript(`(() => {
+          return window[${JSON.stringify(contextSnapshotKey)}];
+        })()`)
+        if (
+          passthrough !== false ||
+          generation !== menuGeneration ||
+          !alive() ||
+          frame.isDestroyed() ||
+          frame.detached ||
+          frame.url !== frameUrl
+        )
+          return
+        const zoom = host.getZoomFactor()
+        host.send(SOURCE_PREVIEW_CONTEXT_MENU_CHANNEL, {
+          guestId: guest.id,
+          x: params.x / zoom,
+          y: params.y / zoom
+        })
+      } catch {
+        // A destroyed/navigated frame cannot open an application menu.
+      }
+    }
+    const cleanup = (): void => {
+      registeredSourceGuests.delete(guest)
+      cleanups.delete(guest)
+      if (activeSources.get(host) === guest) activeSources.delete(host)
+      guest.removeListener('did-start-navigation', startNavigation)
+      guest.removeListener('will-frame-navigate', navigate)
+      guest.removeListener('will-redirect', redirect)
+      guest.removeListener('focus', focus)
+      guest.removeListener('before-input-event', input)
+      guest.removeListener('context-menu', contextMenu)
+      guest.removeListener('did-frame-navigate', rememberContextTarget)
+      guest.removeListener('destroyed', cleanup)
+    }
+    cleanups.set(guest, cleanup)
+    guest.on('did-start-navigation', startNavigation)
+    guest.on('will-frame-navigate', navigate)
+    guest.on('will-redirect', redirect)
+    guest.on('focus', focus)
+    guest.on('before-input-event', input)
+    guest.on('context-menu', contextMenu)
+    guest.on('did-frame-navigate', rememberContextTarget)
+    guest.once('destroyed', cleanup)
+  }
+  const hostFocus = (): void => {
+    activeSources.delete(host)
+  }
+  host.on('will-attach-webview', willAttach)
+  host.on('did-attach-webview', didAttach)
+  host.on('focus', hostFocus)
+  window.on('closed', () => {
+    for (const cleanup of cleanups.values()) cleanup()
+    activeSources.delete(host)
+    host.removeListener('will-attach-webview', willAttach)
+    host.removeListener('did-attach-webview', didAttach)
+    host.removeListener('focus', hostFocus)
+  })
+}

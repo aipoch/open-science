@@ -1,14 +1,15 @@
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { X } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
 
+import type { ComputeHost } from '@aipoch/compute'
 import type {
-  ComputeHost,
   ComputeHostDeletionBlocker,
   ComputeHostDeletionStatus
 } from '../../../../shared/compute'
+
 import { JobStatusBadge } from '@/components/JobStatusBadge'
 import { Button } from '@/components/ui/button'
 import {

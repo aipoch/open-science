@@ -1,4 +1,165 @@
-import { expect, test } from '@playwright/test'
+import { expect, test, type Locator } from '@playwright/test'
+
+// Inspect real overflow: jsdom cannot detect a second scrollbar or a clipped footer.
+async function expectSingleBodyScroll(dialog: Locator, primary: Locator): Promise<void> {
+  const heading = dialog.getByRole('heading').first()
+  const before = { heading: await heading.boundingBox(), primary: await primary.boundingBox() }
+  const scrollable = await dialog.evaluate((element) => {
+    const regions = [element, ...element.querySelectorAll<HTMLElement>('*')].filter(
+      (node) =>
+        /auto|scroll/.test(getComputedStyle(node).overflowY) &&
+        node.scrollHeight > node.clientHeight + 1
+    )
+    for (const region of regions) region.scrollTop = region.scrollHeight
+    return regions.length
+  })
+  expect(scrollable, 'exactly one vertical scroll region').toBe(1)
+  await expect(heading).toBeInViewport()
+  await expect(primary).toBeInViewport()
+  expect((await heading.boundingBox())!.y).toBeCloseTo(before.heading!.y, 0)
+  expect((await primary.boundingBox())!.y).toBeCloseTo(before.primary!.y, 0)
+  expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+}
+
+for (const viewport of [
+  { width: 1280, height: 720 },
+  { width: 800, height: 480 },
+  { width: 320, height: 640 },
+  // The effective CSS viewport of a 1280 × 720 window at 200% zoom.
+  { width: 640, height: 360 }
+]) {
+  test(`package dialog has one scroll region for long project lists at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?import=project&many-projects&queue-full')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    const primary = dialog.getByRole('button', { name: 'Continue', exact: true })
+    await expect(dialog.getByRole('radio')).toHaveCount(32)
+    await expectSingleBodyScroll(dialog, primary)
+    const last = dialog.getByRole('radio').last()
+    await last.check()
+    await expect(primary).toBeEnabled()
+    await dialog.screenshot({ path: testInfo.outputPath('import-single-scroll.png') })
+    await dialog.getByRole('searchbox').fill('Cancer')
+    await expect(dialog.getByRole('radio')).toHaveCount(1)
+    await dialog.getByRole('radio').check()
+    await primary.click()
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeInViewport()
+  })
+
+  test(`package dialog has one scroll region for expanded export at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?retained&pdf-notes')
+    const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    const primary = dialog.getByRole('button', { name: 'Choose save location…', exact: true })
+    await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
+    await dialog.getByRole('button', { name: 'View files', exact: true }).click()
+    await expectSingleBodyScroll(dialog, primary)
+    await dialog
+      .getByRole('checkbox', {
+        name: 'Include shared PDF notes and annotations from all projects as a read-only snapshot'
+      })
+      .check()
+    await expect(primary).toBeInViewport()
+    await dialog.screenshot({ path: testInfo.outputPath('export-single-scroll.png') })
+  })
+}
+
+for (const scenario of [
+  { query: 'import=project&many-projects&transfers&queue-full', primary: 'Continue' },
+  { query: 'import=progress&transfers&queue-full', primary: 'Run in background' },
+  { query: 'import=cleanup&transfers', primary: 'Run in background' },
+  { query: 'evidence', primary: 'Try again' }
+]) {
+  test(`package dialog shares one scroll region with status content: ${scenario.query}`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 640, height: 360 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`/session-package.html?${scenario.query}`)
+    const dialog = page.getByRole('dialog').first()
+    if (scenario.query === 'evidence')
+      await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
+    await expectSingleBodyScroll(
+      dialog,
+      dialog.getByRole('button', { name: scenario.primary, exact: true })
+    )
+  })
+}
+
+for (const flow of [
+  { query: '', labels: ['选择内容', '生成包', '保存包'] },
+  { query: 'import=review&', labels: ['检查包', '确认内容', '导入'] }
+]) {
+  test(`Chinese package step labels fit at 320px: ${flow.labels[0]}`, async ({ page }) => {
+    await page.setViewportSize({ width: 320, height: 740 })
+    await page.goto(`/session-package.html?${flow.query}locale=zh-Hans`)
+    const steps = page.getByRole('list', { name: '包处理步骤' })
+    for (const label of flow.labels) {
+      const text = steps.getByText(label, { exact: true })
+      await expect(text).toBeVisible()
+      expect(
+        await text.evaluate((element) => {
+          const range = document.createRange()
+          range.selectNodeContents(element)
+          return range.getClientRects().length
+        })
+      ).toBe(1)
+    }
+    expect(await steps.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true)
+  })
+}
+
+for (const width of [1280, 320]) {
+  test(`package checks stay distinct from import progress at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.goto('/session-package.html?import=checking')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Check package')
+    await expect(dialog.getByText('18.0 MiB / 42.0 MiB')).toBeVisible()
+    await expect(dialog.getByRole('progressbar')).toHaveCount(0)
+    await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
+    const indicator = page.getByRole('region', { name: 'Package progress', exact: true })
+    await expect(indicator.getByRole('status')).toHaveText('Checking Session package…')
+    await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Review contents')
+    await expect(dialog.getByText('Cancer immunotherapy', { exact: true })).toBeVisible()
+    const confirm = dialog.getByRole('button', { name: 'Import', exact: true })
+    await confirm.focus()
+    await confirm.press('Enter')
+    await expect(dialog.getByRole('status')).toHaveText('Importing research…')
+    await expect(dialog.getByRole('progressbar')).toHaveAttribute(
+      'aria-valuetext',
+      'Importing research…: 42%'
+    )
+    await expect(dialog.locator('[aria-current="step"]')).toContainText('Import')
+    expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+      true
+    )
+    await expect(
+      dialog.getByRole('button', { name: 'Run in background', exact: true })
+    ).toBeInViewport()
+  })
+
+  test(`completed import exposes the next queued package at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 850 })
+    await page.goto('/session-package.html?import=success')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    await expect(dialog.getByRole('status')).toHaveText('Session imported')
+    await expect(dialog).toContainText('Cancer immunotherapy')
+    const next = dialog.getByRole('button', { name: 'Open next package (1)', exact: true })
+    await expect(next).toBeInViewport()
+    await next.click()
+    await expect(dialog.getByText('follow-up-study.science', { exact: true })).toBeVisible()
+    await expect(dialog.getByRole('radio', { name: 'Cancer immunotherapy' })).toBeVisible()
+  })
+}
 
 for (const width of [1280, 320]) {
   test(`early import errors use the shared dialog layout at ${width}px`, async ({
@@ -57,6 +218,57 @@ for (const width of [1280, 414]) {
   })
 }
 
+for (const width of [1280, 320]) {
+  test(`background export stays in the header at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running')
+    await expect(page.getByRole('region', { name: 'Package progress' })).toHaveCount(0)
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    await expect(progressButton).toBeInViewport()
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+    await expect(page.getByRole('progressbar', { name: 'Package progress' })).toHaveAttribute(
+      'value',
+      '512'
+    )
+  })
+}
+
+test('New conversation keeps background export accessible in the workspace header', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 800 })
+  await page.goto('/session-package.html?background=running&surface=new-conversation')
+  await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+  await expect(progressButton).toBeVisible()
+  await progressButton.click()
+  await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+})
+
+for (const width of [1280, 414, 320]) {
+  test(`Project index shows background export before GitHub at ${width}px`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width, height: 800 })
+    await page.goto('/session-package.html?background=running&surface=home')
+    await expect(page.getByRole('heading', { name: 'Projects' })).toBeVisible()
+    const progressButton = page.getByRole('button', { name: /Copying files… · View progress/ })
+    await expect(progressButton).toBeVisible()
+    expect(
+      await progressButton.evaluate((element) =>
+        element.nextElementSibling?.textContent?.includes('Star on GitHub')
+      )
+    ).toBe(true)
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true)
+    await page.screenshot({ path: testInfo.outputPath('project-index-progress.png') })
+    await progressButton.click()
+    await expect(page.getByRole('dialog', { name: 'Export Session package' })).toBeVisible()
+  })
+}
+
 test('full and compact presets simplify selection while retaining evidence', async ({
   page
 }, testInfo) => {
@@ -72,20 +284,24 @@ test('full and compact presets simplify selection while retaining evidence', asy
   await expect(page.getByRole('tooltip')).toHaveCount(0)
   await expect(dialog.getByRole('radio', { name: 'Essential export', exact: true })).toBeChecked()
   await expect(dialog.getByRole('radio').first()).toHaveAccessibleName('Essential export')
-  await expect(dialog.getByText('Selected: 0 / 29 files · 0 B')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 0 / 29 selected · 0 B')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('presets-compact.png') })
   await dialog.getByRole('button', { name: 'Customize contents', exact: true }).click()
   const required = dialog.getByRole('checkbox', { name: 'research-result-0.csv', exact: true })
   await dialog.getByRole('button', { name: 'Next', exact: true }).click()
   await expect(required).toBeDisabled()
   await expect(required).toBeChecked()
-  await dialog.getByRole('button', { name: 'Required evidence', exact: true }).focus()
+  await dialog.getByRole('button', { name: 'Required evidence', exact: true }).hover()
   await expect(page.getByRole('tooltip')).toContainText('Required files stay included')
   await expect(required).toBeChecked()
-  await page.keyboard.press('Escape')
+  // This test switches presets; Escape can also dismiss the enclosing Radix dialog.
+  await page.mouse.move(0, 0, { steps: 10 })
+  await dialog.getByRole('button', { name: 'Customize contents', exact: true }).focus()
+  await expect(page.getByRole('tooltip')).toHaveCount(0)
+  await expect(dialog).toHaveAttribute('data-state', 'open')
   await page.screenshot({ path: testInfo.outputPath('presets-custom.png') })
   await dialog.getByRole('radio', { name: 'Full export', exact: true }).check()
-  await expect(dialog.getByText('Selected: 29 / 29 files · 464.0 KiB')).toBeVisible()
+  await expect(dialog.getByText('Optional files: 29 / 29 selected · 464.0 KiB')).toBeVisible()
   await expect(dialog.getByLabel('Search optional files', { exact: true })).toHaveCount(0)
 })
 
@@ -99,7 +315,7 @@ for (const width of [1280, 414]) {
       await page.goto(`/session-package.html${empty ? '?empty' : ''}`)
       const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
       const customize = dialog.getByRole('button', { name: 'Customize contents', exact: true })
-      const save = dialog.getByRole('button', { name: 'Export', exact: true })
+      const save = dialog.getByRole('button', { name: 'Choose save location…', exact: true })
       await expect(customize).toBeVisible()
       await page.evaluate(() => document.fonts.ready)
       const before = await dialog.boundingBox()
@@ -361,10 +577,18 @@ for (const width of [1280, 414]) {
     await expect(help).toContainText('Lower speeds reduce disk activity')
     await page.screenshot({ path: testInfo.outputPath('transfer-speed-help.png') })
     const speed = dialog.getByRole('combobox', { name: 'Disk activity limit', exact: true })
+    await expect(speed).toHaveText('Auto')
     await speed.click()
     const options = page.getByRole('listbox')
     await expect(options).toBeVisible()
-    await expect(options.getByRole('option')).toHaveCount(3)
+    await expect(options.getByRole('option')).toHaveText([
+      'Auto',
+      '4.0 MiB/s',
+      '16.0 MiB/s',
+      '64.0 MiB/s',
+      '128.0 MiB/s',
+      '256.0 MiB/s'
+    ])
     await page.screenshot({ path: testInfo.outputPath('transfer-speed-menu.png') })
     await page.getByRole('option', { name: '4.0 MiB/s', exact: true }).click()
     await expect(speed).toHaveText('4.0 MiB/s')
@@ -372,6 +596,14 @@ for (const width of [1280, 414]) {
     await expect(speed).toBeFocused()
     await speed.press('Enter')
     await expect(options).toBeVisible()
+    await page.getByRole('option', { name: 'Auto', exact: true }).click()
+    await expect(speed).toHaveText('Auto')
+    await expect(speed).toBeFocused()
+    await speed.press('Enter')
+    await expect(page.getByRole('option', { name: 'Auto', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true'
+    )
     await page.keyboard.press('Escape')
     await expect(options).toHaveCount(0)
     await expect(dialog).toBeVisible()
@@ -379,4 +611,26 @@ for (const width of [1280, 414]) {
     await tip.focus()
     await expect(help).toBeVisible()
   })
+}
+
+for (const locale of ['en', 'zh-Hans']) {
+  for (const width of [1280, 320]) {
+    test(`future package requires an update in ${locale} at ${width}px`, async ({
+      page
+    }, testInfo) => {
+      await page.setViewportSize({ width, height: 800 })
+      await page.goto(`/session-package.html?import=update-required&locale=${locale}`)
+      const dialog = page.getByRole('dialog')
+      const message =
+        locale === 'en'
+          ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
+      await expect(dialog.getByRole('alert')).toHaveText(message)
+      await expect(dialog.getByRole('button', { name: /^(Import|导入)$/ })).toHaveCount(0)
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      await dialog.screenshot({ path: testInfo.outputPath('update-required.png') })
+    })
+  }
 }

@@ -1,8 +1,6 @@
 import { expect } from '@playwright/test'
 import { generateKeyPairSync, sign, createHash } from 'node:crypto'
 import { createServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
-import { join } from 'node:path'
 import { zipSync } from 'fflate'
 import { test } from './fixtures/electron-app'
 
@@ -10,11 +8,25 @@ import { test } from './fixtures/electron-app'
 // The production preload, IPC composition, service, verification and package importer all run.
 test('installs a reviewed GitHub Specialist through a Release asset redirect', async ({ app }) => {
   const digest = (bytes: Uint8Array): string => createHash('sha256').update(bytes).digest('hex')
-  const fixtureRoot = join(process.cwd(), 'src/main/specialist/package/test-fixtures/valid')
   const archive = Buffer.from(
     zipSync({
-      'manifest.json': await readFile(join(fixtureRoot, 'manifest.json')),
-      'specialist.json': await readFile(join(fixtureRoot, 'specialist.json'))
+      'manifest.json': Buffer.from(
+        JSON.stringify({
+          schema_version: 1,
+          id: 'fixture-specialist',
+          version: '1.0.0',
+          exported_with_app_version: '0.9.2'
+        })
+      ),
+      'specialist.json': Buffer.from(
+        JSON.stringify({
+          name: 'Fixture Specialist',
+          description: 'A valid adapter fixture.',
+          system_prompt: 'Fixture prompt that must stay out of previews and diagnostics.',
+          skill_ids: [],
+          connector_ids: []
+        })
+      )
     })
   )
   const metadataBase = 'https://raw.githubusercontent.com/example/marketplace/main/'

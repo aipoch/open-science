@@ -12,7 +12,7 @@ import { ComparisonFieldLabel } from './ComparisonFieldLabel'
 import type {
   ScientificComparisonPolicy,
   ScientificComparisonReport
-} from '../../../../shared/output-comparison'
+} from '@aipoch/reproducibility/comparison'
 
 export const ScientificComparisonFields = ({
   value,

@@ -1,3 +1,5 @@
+import { c as createTar } from 'tar'
+import { PACKAGE_REQUIRES_UPDATE } from './archive'
 import { initDataRoot } from '../storage-root'
 import * as fsPromises from 'node:fs/promises'
 import { PackageCleanupPendingError } from './cleanup'
@@ -15,7 +17,8 @@ import {
 import { SessionRepository } from '../session-persistence/repository'
 import { SessionPackageService } from './service'
 import { createPackageInspector, type InspectionWorkerInput } from './inspection-worker'
-import { inspectSessionPackage } from './inspection'
+import { inspectSessionPackage, readSession } from './inspection'
+import { createSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { PackageCapacityError } from './capacity'
 import { withPackageTransfer } from './transfer'
 
@@ -344,4 +347,72 @@ it('contains a worker heap limit failure and removes its validation directory', 
     code: 'ERR_WORKER_OUT_OF_MEMORY'
   })
   await expect(stat(root)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('preserves the update-required diagnostic across the bundled inspection worker', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'package-worker-future-'))
+  roots.push(root)
+  await writeFile(
+    join(root, 'manifest.json'),
+    JSON.stringify({
+      format: 'open-science-session',
+      schemaVersion: 1,
+      requiredFeatures: ['future-capability']
+    })
+  )
+  const archive = join(root, 'future.science')
+  await createTar({ cwd: root, file: archive, gzip: true }, ['manifest.json'])
+  await expect(
+    createPackageInspector(createWorker)(
+      archive,
+      join(root, 'source'),
+      new AbortController().signal
+    )
+  ).rejects.toThrow(PACKAGE_REQUIRES_UPDATE)
+  for (const path of validationRoots)
+    await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('rejects unsettled source history even when it claims an imported origin', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'forged-import-origin-'))
+  roots.push(root)
+  const session: PersistedChatSession = {
+    id: 'session',
+    projectId: 'project',
+    title: 'Untrusted',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'claimed',
+      sourceProjectId: 'source',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'child',
+            attempts: [
+              {
+                id: 'attempt',
+                status: 'running',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  await writeFile(join(root, 'session.json'), JSON.stringify(createSessionFile(session)))
+  await expect(readSession(root)).rejects.toThrow('Wait for the Session')
 })

@@ -1,7 +1,7 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { setTimeout as delay } from 'node:timers/promises'
 import { withFileIoPacing } from '../file-io-pacing'
-import { SpeedMeter } from '../net/download-speed'
+import { SpeedMeter } from '@aipoch/resilient-download'
 import { PACKAGE_DEFAULT_IO_BYTES_PER_SECOND } from '../../shared/session-package'
 
 const transfers = new AsyncLocalStorage<PackageTransfer>()

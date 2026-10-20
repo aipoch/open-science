@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SkillUploadView } from './SkillUploadView'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 
 let container: HTMLDivElement
 let root: Root

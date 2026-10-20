@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { fireEvent, within } from '@testing-library/react'
 import { expect, it, vi } from 'vitest'
 import { OutputComparisonDetails, OutputComparisonSettings } from './OutputComparison'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 

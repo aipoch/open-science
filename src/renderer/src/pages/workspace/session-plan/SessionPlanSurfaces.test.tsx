@@ -103,7 +103,15 @@ describe('Session Plan renderer surfaces', () => {
     expect(screen.getAllByRole('button').every((button) => button.dataset.slot === 'button')).toBe(
       true
     )
-    expect(screen.getByLabelText('Respond to Plan').dataset.slot).toBe('textarea')
+    const input = screen.getByLabelText('Respond to Plan')
+    expect(input.dataset.slot).toBe('textarea')
+    expect(input.previousElementSibling?.tagName).toBe('svg')
+    expect(screen.getByPlaceholderText('Describe changes to the Plan…')).toBeTruthy()
+    const sendButton = screen.getByRole('button', { name: 'Send Plan feedback' })
+    expect(sendButton.textContent).toBe('')
+    expect(sendButton.dataset.variant).toBe('outline')
+    expect(sendButton.dataset.size).toBe('icon-lg')
+    expect(sendButton.querySelector('svg.lucide-corner-down-left')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Open' }))
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }))
     expect(onOpen).toHaveBeenCalledOnce()
@@ -221,13 +229,138 @@ describe('Session Plan renderer surfaces', () => {
 
     const input = view.container.querySelector('textarea')!
     fireEvent.change(input, { target: { value: 'Split the analysis by cohort.' } })
-    fireEvent.submit(input.closest('form')!)
+    fireEvent.click(screen.getByRole('button', { name: 'Send Plan feedback' }))
     await waitFor(() =>
       expect(onSubmitResponse).toHaveBeenCalledWith('Split the analysis by cohort.')
     )
     await waitFor(() => expect(view.container.querySelector('article')).toBeNull())
     expect(onRespond).not.toHaveBeenCalled()
     expect(screen.queryByRole('button', { name: /request changes/i })).toBeNull()
+  })
+
+  it('sends nonempty feedback with Enter while Shift+Enter remains a line break', async () => {
+    const onRespond = vi.fn()
+    const onSubmitResponse = vi.fn().mockResolvedValue(undefined)
+    render(
+      <WorkspacePlanCard
+        projection={projection}
+        onOpen={vi.fn()}
+        onRespond={onRespond}
+        onSubmitResponse={onSubmitResponse}
+      />
+    )
+
+    const input = screen.getByLabelText('Respond to Plan') as HTMLTextAreaElement
+    const emptyEnter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    fireEvent(input, emptyEnter)
+    expect(emptyEnter.defaultPrevented).toBe(true)
+    expect(onSubmitResponse).not.toHaveBeenCalled()
+
+    fireEvent.change(input, { target: { value: 'Split the analysis' } })
+    const repeatedEnter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      repeat: true,
+      bubbles: true,
+      cancelable: true
+    })
+    fireEvent(input, repeatedEnter)
+    expect(repeatedEnter.defaultPrevented).toBe(true)
+    expect(onSubmitResponse).not.toHaveBeenCalled()
+
+    const lineBreak = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true
+    })
+    fireEvent(input, lineBreak)
+    expect(lineBreak.defaultPrevented).toBe(false)
+    expect(onSubmitResponse).not.toHaveBeenCalled()
+
+    fireEvent.change(input, { target: { value: 'Split the analysis\nby cohort.' } })
+    const send = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+    fireEvent(input, send)
+    expect(send.defaultPrevented).toBe(true)
+    await waitFor(() =>
+      expect(onSubmitResponse).toHaveBeenCalledWith('Split the analysis\nby cohort.')
+    )
+    expect(onRespond).not.toHaveBeenCalled()
+  })
+
+  it('does not send while selecting text with an input method or pressing another modifier', () => {
+    const onSubmitResponse = vi.fn()
+    render(
+      <WorkspacePlanCard
+        projection={projection}
+        onOpen={vi.fn()}
+        onRespond={vi.fn()}
+        onSubmitResponse={onSubmitResponse}
+      />
+    )
+
+    const input = screen.getByLabelText('Respond to Plan') as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: '修改方案' } })
+    fireEvent.compositionStart(input)
+    const composingEnter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true
+    })
+    fireEvent(input, composingEnter)
+    expect(composingEnter.defaultPrevented).toBe(false)
+    fireEvent.compositionEnd(input)
+
+    for (const modifier of ['ctrlKey', 'altKey', 'metaKey'] as const) {
+      const modifiedEnter = new KeyboardEvent('keydown', {
+        key: 'Enter',
+        [modifier]: true,
+        bubbles: true,
+        cancelable: true
+      })
+      fireEvent(input, modifiedEnter)
+      expect(modifiedEnter.defaultPrevented).toBe(false)
+    }
+    expect(onSubmitResponse).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['darwin', 'Return'],
+    ['win32', 'Enter'],
+    ['linux', 'Enter']
+  ])('shows %s keyboard shortcuts inside the feedback editor after typing', (platform, key) => {
+    const originalApi = window.api
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: { ...originalApi, platform }
+    })
+    try {
+      render(<WorkspacePlanCard projection={projection} onOpen={vi.fn()} onRespond={vi.fn()} />)
+      const input = screen.getByLabelText('Respond to Plan') as HTMLTextAreaElement
+      const hint = document.getElementById('plan-response-shortcuts-version-1')!
+      const sendButton = screen.getByRole('button', { name: 'Send Plan feedback' })
+      expect(input.getAttribute('aria-describedby')).toContain(hint.id)
+      expect(hint.className).toContain('text-muted-foreground')
+      expect(Array.from(hint.querySelectorAll('kbd')).map((kbd) => kbd.textContent)).toEqual([
+        key,
+        'Shift',
+        key
+      ])
+      expect(
+        Array.from(hint.querySelectorAll('kbd')).every((kbd) => kbd.className.includes('border'))
+      ).toBe(true)
+      expect(hint.textContent).toContain('Send')
+      expect(hint.textContent).toContain('New line')
+      expect(input.parentElement?.parentElement?.contains(sendButton)).toBe(true)
+      fireEvent.change(input, { target: { value: 'Keep this draft' } })
+      expect(hint.isConnected).toBe(true)
+      expect(sendButton.hasAttribute('disabled')).toBe(false)
+    } finally {
+      Object.defineProperty(window, 'api', { configurable: true, value: originalApi })
+    }
   })
 
   it.each(['looks good', 'dismiss', '批准执行', '取消计划', '先修改后再批准'])(

@@ -27,9 +27,9 @@ import {
   validateUpdateSpecialistInput,
   type CreateSpecialistInput,
   type UpdateSpecialistInput,
-  type SpecialistFieldError,
-  type SpecialistView
-} from '../../../../shared/specialist'
+  type SpecialistFieldError
+} from '@aipoch/specialists'
+import { type SpecialistView } from '../../../../shared/specialist'
 import { SpecialistAvatar } from './specialist-avatar'
 import { AVATAR_COLORS, SPECIALIST_COLOR_OPTIONS } from './specialist-icons'
 import { APP_ICON_GROUPS, APP_ICONS, DEFAULT_APP_ICON } from '@/components/app-icons/registry'

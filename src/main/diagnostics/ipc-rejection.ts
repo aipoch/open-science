@@ -1,5 +1,5 @@
 import type { CallerContext } from '../caller-context'
-import { diagnosticErrorFields, type Logger } from '../logger'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 
 type IpcRejectionLogger = Pick<Logger, 'warn'>
 

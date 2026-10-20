@@ -1,9 +1,6 @@
-import type { SecureStorageCipher } from '../secure-storage'
-import {
-  CredentialIdentityError,
-  type CredentialIdentity,
-  type IdentityProbeResult
-} from './selection'
+import type { SecureStorageCipher } from './cipher-contract'
+import type { IdentityProbeResult } from './probe-contract'
+import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 export interface CredentialAccess extends SecureStorageCipher {
   assertAccessAllowed(): void
@@ -21,46 +18,47 @@ export const createCredentialAccess = (options: {
   let checked = false
   let written = false
   let failure: CredentialIdentityError | undefined
-  const fail = (reason: string, probe?: IdentityProbeResult): never => {
+  const fail = (reason: string | CredentialIdentityError, probe?: IdentityProbeResult): never => {
     if (!failure) {
-      failure = new CredentialIdentityError(
-        reason,
-        options.identity.backend === 'mac-keychain' && probe
-          ? {
-              appName: options.identity.appName,
-              status: probe.status,
-              ...(probe.reason !== undefined ? { reason: probe.reason } : {}),
-              ...(probe.osStatus !== undefined ? { osStatus: probe.osStatus } : {})
-            }
-          : undefined
-      )
+      failure =
+        reason instanceof CredentialIdentityError
+          ? reason
+          : new CredentialIdentityError(
+              reason,
+              options.identity.backend === 'mac-keychain' && probe
+                ? {
+                    appName: options.identity.appName,
+                    status: probe.status,
+                    ...(probe.reason !== undefined ? { reason: probe.reason } : {}),
+                    ...(probe.osStatus !== undefined ? { osStatus: probe.osStatus } : {})
+                  }
+                : undefined
+            )
       options.recover(failure)
     }
     throw failure
   }
   const check = (reading: boolean): void => {
     if (failure) throw failure
-    if (
-      reading &&
-      (options.identity.backend === 'mac-keychain' ||
-        options.identity.backend === 'linux-secret-service') &&
-      !options.identity.exists &&
-      !written
-    )
+    if (reading && 'exists' in options.identity && !options.identity.exists && !written)
       return fail('read-before-key-created')
-    if (options.identity.backend === 'linux-secret-service') {
+    if (
+      options.identity.backend === 'linux-secret-service' ||
+      options.identity.backend === 'linux-kwallet'
+    ) {
+      const expectedBackend =
+        options.identity.backend === 'linux-kwallet'
+          ? options.identity.passwordStore
+          : 'gnome_libsecret'
       try {
-        if (options.cipher.getSelectedStorageBackend?.() !== 'gnome_libsecret')
+        if (options.cipher.getSelectedStorageBackend?.() !== expectedBackend)
           return fail('linux-backend-unavailable-or-changed')
       } catch {
         return fail('linux-backend-unavailable-or-changed')
       }
     }
     if (checked) return
-    if (
-      options.identity.backend === 'mac-keychain' ||
-      options.identity.backend === 'linux-secret-service'
-    ) {
+    if ('exists' in options.identity) {
       let result: IdentityProbeResult
       try {
         result = options.probe(options.identity.appName)
@@ -86,10 +84,14 @@ export const createCredentialAccess = (options: {
       check(false)
       try {
         if (!options.cipher.isEncryptionAvailable()) return fail('credential-access-unavailable')
-        checked = options.identity.backend !== 'linux-secret-service'
+        // OSCrypt derives and caches the process key here, so later metadata probes cannot change
+        // the key in use; repeating them only turns a transient keyring error into a fatal one.
+        checked = true
         return true
-      } catch {
-        return fail('credential-access-unavailable')
+      } catch (error) {
+        return fail(
+          error instanceof CredentialIdentityError ? error : 'credential-access-unavailable'
+        )
       }
     },
     getSelectedStorageBackend: () => options.cipher.getSelectedStorageBackend?.() ?? 'unknown',
@@ -101,8 +103,8 @@ export const createCredentialAccess = (options: {
         written = true
         checked = true
         return encrypted
-      } catch {
-        return fail('credential-write-failed')
+      } catch (error) {
+        return fail(error instanceof CredentialIdentityError ? error : 'credential-write-failed')
       }
     },
     decryptString(value) {
@@ -112,8 +114,8 @@ export const createCredentialAccess = (options: {
         const plaintext = options.cipher.decryptString(value)
         checked = true
         return plaintext
-      } catch {
-        return fail('decryption-failed')
+      } catch (error) {
+        return fail(error instanceof CredentialIdentityError ? error : 'decryption-failed')
       }
     }
   }

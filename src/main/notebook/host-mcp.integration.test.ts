@@ -1,11 +1,11 @@
+import { builtinConnectorRegistry } from '../connectors/registry'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import * as netFetch from '../skills/net-fetch'
 import { ConnectorService } from '../connectors/service'
-import { ParserEngine } from '../connectors/engine'
-import { CLINICAL_TRIALS_TOOLS } from '../connectors/descriptors/clinical-trials'
+import { ParserEngine } from '@aipoch/connector-core'
 import { renderSkillDoc } from '../connectors/skill-doc'
 import { NotebookKernelExecutor } from './kernel-executor'
 import { NotebookLocalRpcServer } from './local-rpc-server'
@@ -84,6 +84,7 @@ async function executeGenomesCell(
   fetchImpl: typeof fetch
 ): Promise<NotebookExecutionResult> {
   const connectorService = new ConnectorService({
+    registry: builtinConnectorRegistry,
     getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
     resolveApiKey: () => undefined,
     engine: new ParserEngine({ retries: 0, fetchImpl })
@@ -131,6 +132,7 @@ describe('clinical trial host.mcp regression', () => {
       }
     }
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: ['clinical-trials'],
         autoAllowIds: ['clinical-trials']
@@ -159,10 +161,14 @@ describe('clinical trial host.mcp regression', () => {
     )
     const exec = makeExecutor()
     try {
-      const descriptor = CLINICAL_TRIALS_TOOLS.find((tool) => tool.id === 'search_by_eligibility')!
+      const skill = renderSkillDoc('clinical-trials')
+      const example = skill
+        .split('### search_by_eligibility\n')[1]
+        ?.match(/\*\*Example:\*\* `([^`]+)`/)?.[1]
+      expect(example).toBeDefined()
       const execution = await exec.execute(
         baseRequest({
-          code: `${descriptor.example};
+          code: `${example};
             const next = await host.mcp('clinical-trials', 'search_by_eligibility', {
               condition: 'diabetes', min_age: '65 Years', sex: 'FEMALE',
               page_token: result.next_page_token
@@ -234,6 +240,7 @@ describe('Open Targets host.mcp regression', () => {
       { message: 'associatedTargets resolver failed', path: ['disease', 'associatedTargets'] }
     ]
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: ['clinical-genomics'],
         autoAllowIds: ['clinical-genomics']
@@ -515,7 +522,39 @@ gate('repl kernel host.mcp', () => {
         display_name: 'Trp53',
         species: 'mus_musculus'
       }
+      let submissions = 0
+      // Inject provider transport through the package API; keep the local RPC transport real.
+      const reactomeFetch = vi.fn<typeof fetch>(async (input, init) => {
+        const url = new URL(String(input))
+        expect(url.origin).toBe('https://reactome.org')
+        if (url.pathname === '/AnalysisService/database/version') return new Response('97')
+        if (url.pathname === '/AnalysisService/token/test-token/notFound') return Response.json([])
+        expect(url.pathname).toBe('/AnalysisService/identifiers/')
+        expect(url.searchParams.get('species')).toBe('Mus musculus')
+        expect(url.searchParams.get('resource')).toBe('TOTAL')
+        expect(init?.method).toBe('POST')
+        expect(new Headers(init?.headers).get('content-type')).toBe('text/plain')
+        expect(init?.body).toBe('Trp53')
+        submissions++
+        const mismatch =
+          (mode === 'batch-mismatch' && submissions === 1) ||
+          (mode === 'single-mismatch' && submissions === 2)
+        return Response.json({
+          summary: { token: 'test-token' },
+          identifiersNotFound: 0,
+          pathwaysFound: 1,
+          pathways: [
+            {
+              stId: mismatch ? 'R-HSA-test' : 'R-MMU-test',
+              name: 'Test pathway',
+              species: { name: mismatch ? 'Homo sapiens' : 'Mus musculus' },
+              llp: true
+            }
+          ]
+        })
+      })
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({
           enabledIds: ['genomes', 'genes'],
           autoAllowIds: ['genomes', 'genes']
@@ -523,46 +562,14 @@ gate('repl kernel host.mcp', () => {
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
           retries: 0,
-          fetchImpl: async (input) => {
+          fetchImpl: async (input, init) => {
+            if (new URL(String(input)).origin === 'https://reactome.org')
+              return reactomeFetch(input, init)
             expect(String(input)).toBe(`https://rest.ensembl.org/lookup/id/${record.id}?expand=0`)
             return Response.json(record)
           }
         })
       })
-      let submissions = 0
-      // Mock only Reactome's external transport; preserve the real local RPC transport.
-      const reactomeFetch = vi
-        .spyOn(netFetch, 'netFetchStandard')
-        .mockImplementation(async (input, init) => {
-          const url = new URL(String(input))
-          expect(url.origin).toBe('https://reactome.org')
-          if (url.pathname === '/AnalysisService/database/version') return new Response('97')
-          if (url.pathname === '/AnalysisService/token/test-token/notFound')
-            return Response.json([])
-          expect(url.pathname).toBe('/AnalysisService/identifiers/')
-          expect(url.searchParams.get('species')).toBe('Mus musculus')
-          expect(url.searchParams.get('resource')).toBe('TOTAL')
-          expect(init?.method).toBe('POST')
-          expect(new Headers(init?.headers).get('content-type')).toBe('text/plain')
-          expect(init?.body).toBe('Trp53')
-          submissions++
-          const mismatch =
-            (mode === 'batch-mismatch' && submissions === 1) ||
-            (mode === 'single-mismatch' && submissions === 2)
-          return Response.json({
-            summary: { token: 'test-token' },
-            identifiersNotFound: 0,
-            pathwaysFound: 1,
-            pathways: [
-              {
-                stId: mismatch ? 'R-HSA-test' : 'R-MMU-test',
-                name: 'Test pathway',
-                species: { name: mismatch ? 'Homo sapiens' : 'Mus musculus' },
-                llp: true
-              }
-            ]
-          })
-        })
       const rpcServer = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
         connectorService
       })
@@ -641,6 +648,7 @@ gate('repl kernel host.mcp', () => {
       const lookupUrl = `https://rest.ensembl.org/lookup/id/${record.id}?expand=0`
       const sequenceUrl = `https://rest.ensembl.org/sequence/region/mus_musculus/${region}`
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -711,6 +719,7 @@ gate('repl kernel host.mcp', () => {
   it('preserves VEP strand normalization and validation through host.mcp', async () => {
     const urls: string[] = []
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['genomes'], autoAllowIds: ['genomes'] }),
       resolveApiKey: () => undefined,
       engine: new ParserEngine({
@@ -791,6 +800,7 @@ gate('repl kernel host.mcp', () => {
     async (status) => {
       let attempts = 0
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['genes'], autoAllowIds: ['genes'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -844,6 +854,7 @@ gate('repl kernel host.mcp', () => {
     async (status) => {
       let markerRequests = 0
       const connectorService = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: ['cellguide'], autoAllowIds: ['cellguide'] }),
         resolveApiKey: () => undefined,
         engine: new ParserEngine({
@@ -1017,6 +1028,7 @@ gate('repl kernel host.mcp', () => {
 
   it('tells the agent how to recover when host.mcp names an unavailable connector', async () => {
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [], disabledConnectorIds: [] }),
       resolveApiKey: () => undefined
     })
@@ -1056,6 +1068,7 @@ gate('repl kernel host.mcp', () => {
 
   it('tells the agent to wait for sign-in when a Connector requires authentication', async () => {
     const connectorService = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: [],
@@ -1107,3 +1120,5 @@ gate('repl kernel host.mcp', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

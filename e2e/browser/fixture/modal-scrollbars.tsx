@@ -1,19 +1,21 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
-import { createRoot } from 'react-dom/client'
+import { JobDetailModal } from '@/components/JobDetailModal'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
+import * as Dialog from '@/components/ui/dialog'
+import { dialogPanelClassName } from '@/components/ui/dialog-chrome'
+import { ScrollArea } from '@/components/ui/scroll-area'
 import { initI18n } from '@/i18n'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { LiteratureLibraryPage } from '@/pages/literature/public/page'
+import { ReportErrorDialog } from '@/pages/workspace/ReportErrorDialog'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
-import { useTagStore } from '@/stores/tag-store'
-import { literatureItemInputSchema } from '../../../src/shared/literature'
-import * as Dialog from '@/components/ui/dialog'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import { dialogPanelClassName } from '@/components/ui/dialog-chrome'
-import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
-import { JobDetailModal } from '@/components/JobDetailModal'
 import { useSessionJobStore } from '@/stores/session-job-store'
+import { useTagStore } from '@/stores/tag-store'
 import { makeJob } from '@/test-utils/compute-job'
-import { ReportErrorDialog } from '@/pages/workspace/ReportErrorDialog'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
+import { createRoot } from 'react-dom/client'
 
 const mode = new URLSearchParams(location.search).get('mode')
 
@@ -106,44 +108,46 @@ useSessionJobStore.setState({
   )
 })
 createRoot(document.getElementById('root')!).render(
-  mode === 'scroll-area' ? (
-    <Dialog.Root open>
-      <Dialog.Portal>
-        <Dialog.Content
-          className={dialogPanelClassName('flex flex-col p-0')}
-          style={{ width: 420, height: 380 }}
-        >
-          <Dialog.Title>Shared scroll area</Dialog.Title>
-          <Dialog.Description>Positioned content stays inside the viewport.</Dialog.Description>
-          <ScrollArea className="min-h-0 flex-1" type="always">
-            <div style={{ height: 1200 }}>Long content</div>
-            <input className="sr-only" aria-label="Upload fixture" type="file" />
-            <button>Last action</button>
-          </ScrollArea>
-          <button>Footer action</button>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
-  ) : mode === 'confirm' ? (
-    <ConfirmActionDialog
-      open
-      title="Confirm action"
-      description={'Long confirmation description. '.repeat(150)}
-      cancelLabel="Cancel"
-      confirmLabel="Confirm"
-      onCancel={() => {}}
-      onConfirm={() => {}}
-    />
-  ) : mode === 'jobs' ? (
-    <JobDetailModal open sessionId="scroll-session" onClose={() => {}} />
-  ) : mode === 'report' ? (
-    <ReportErrorDialog
-      open
-      error={'Long error details\n'.repeat(100)}
-      subject={{}}
-      onClose={() => {}}
-    />
-  ) : (
-    <LiteratureLibraryPage />
-  )
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {mode === 'scroll-area' ? (
+      <Dialog.Root open>
+        <Dialog.Portal>
+          <Dialog.Content
+            className={dialogPanelClassName('flex flex-col p-0')}
+            style={{ width: 420, height: 380 }}
+          >
+            <Dialog.Title>Shared scroll area</Dialog.Title>
+            <Dialog.Description>Positioned content stays inside the viewport.</Dialog.Description>
+            <ScrollArea className="min-h-0 flex-1" type="always">
+              <div style={{ height: 1200 }}>Long content</div>
+              <input className="sr-only" aria-label="Upload fixture" type="file" />
+              <button>Last action</button>
+            </ScrollArea>
+            <button>Footer action</button>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
+    ) : mode === 'confirm' ? (
+      <ConfirmActionDialog
+        open
+        title="Confirm action"
+        description={'Long confirmation description. '.repeat(150)}
+        cancelLabel="Cancel"
+        confirmLabel="Confirm"
+        onCancel={() => {}}
+        onConfirm={() => {}}
+      />
+    ) : mode === 'jobs' ? (
+      <JobDetailModal open sessionId="scroll-session" onClose={() => {}} />
+    ) : mode === 'report' ? (
+      <ReportErrorDialog
+        open
+        error={'Long error details\n'.repeat(100)}
+        subject={{}}
+        onClose={() => {}}
+      />
+    ) : (
+      <LiteratureLibraryPage />
+    )}
+  </LiteratureRendererProvider>
 )

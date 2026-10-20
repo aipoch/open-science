@@ -1,6 +1,7 @@
+import type { MemoryView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { ErrorNotice } from '@/components/error-notice'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   ArrowUpRight,
   Bell,
@@ -15,7 +16,7 @@ import {
   UserRound,
   X
 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
@@ -55,8 +56,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { cn } from '@/lib/utils'
 import { useMemoryStore } from '@/stores/memory-store'
 
-export type MemoryView =
-  { kind: 'list' } | { kind: 'create' } | { kind: 'edit'; categoryId: string }
+export type { MemoryView } from '../../lib/settings-navigation'
 
 type MemoryPanelProps = {
   view: MemoryView
@@ -246,6 +246,7 @@ const CategoryForm = ({
         <Input
           name="memory-category-name"
           value={name}
+          disabled={saving}
           required
           maxLength={MEMORY_CATEGORY_NAME_MAX_LENGTH}
           placeholder={t('e.g. experiment results')}
@@ -261,6 +262,7 @@ const CategoryForm = ({
         <Textarea
           name="memory-category-guidance"
           value={guidance}
+          disabled={saving}
           required
           maxLength={MEMORY_CATEGORY_GUIDANCE_MAX_LENGTH}
           placeholder={t('Save findings that will be useful in future sessions')}
@@ -277,6 +279,7 @@ const CategoryForm = ({
         </div>
         <Switch
           checked={autoRecall}
+          disabled={saving}
           onCheckedChange={setAutoRecall}
           aria-label={t('Auto-recall')}
         />
@@ -303,7 +306,7 @@ const CategoryForm = ({
           })}
         </p>
         <div className="flex gap-2">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="ghost" disabled={saving} onClick={onCancel}>
             {t('Cancel')}
           </Button>
           <Button type="submit" disabled={!canSubmit}>
@@ -331,17 +334,25 @@ const NoteEditor = ({
   const { t } = useTranslation()
   const [value, setValue] = useState(initialValue)
   const [saving, setSaving] = useState(false)
+  const mounted = useRef(false)
+
+  useLayoutEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+    }
+  }, [])
 
   const save = async (): Promise<void> => {
     if (!value.trim() || saving) return
     setSaving(true)
     try {
       await onSave(value)
-      onCancel()
+      if (mounted.current) onCancel()
     } catch {
       // The store exposes the user-facing error and the editor stays open for retry.
     } finally {
-      setSaving(false)
+      if (mounted.current) setSaving(false)
     }
   }
 
@@ -350,6 +361,7 @@ const NoteEditor = ({
       <Textarea
         autoFocus
         value={value}
+        disabled={saving}
         required
         maxLength={MEMORY_ENTRY_MAX_LENGTH}
         aria-label={t('Memory note')}
@@ -358,7 +370,7 @@ const NoteEditor = ({
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
           if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') void save()
-          if (event.key === 'Escape') onCancel()
+          if (event.key === 'Escape' && !saving) onCancel()
         }}
       />
       {latestValue !== undefined ? (
@@ -371,7 +383,7 @@ const NoteEditor = ({
         </section>
       ) : null}
       <div className="mt-2 flex justify-end gap-1.5">
-        <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
+        <Button type="button" variant="ghost" size="sm" disabled={saving} onClick={onCancel}>
           {t('Cancel')}
         </Button>
         <Button
@@ -401,6 +413,11 @@ const EntryRow = ({
   const updateEntry = useMemoryStore((state) => state.updateEntry)
   const [editing, setEditing] = useState<MemoryEntryView>()
   const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timeout = window.setTimeout(() => setCopied(false), 1_200)
+    return () => window.clearTimeout(timeout)
+  }, [copied])
   const entryCategoryName =
     entry.categoryId === ABOUT_YOU_MEMORY_CATEGORY_ID ? t('About you') : entry.categoryName
   const categoryLabel = viewKind === 'project' ? entryCategoryName : null
@@ -413,7 +430,6 @@ const EntryRow = ({
       if (!navigator.clipboard) return
       await navigator.clipboard.writeText(entry.content)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1_200)
     } catch {
       setCopied(false)
     }
@@ -556,7 +572,7 @@ const MemoryList = ({
   const adding = selectedTarget === addingTarget
 
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider>
       <div data-slot="memory-panel" className="flex h-full min-h-0 flex-col px-3 py-3 md:px-4">
         <div className="mb-3 flex min-h-8 items-center justify-end gap-3">
           <label className="flex items-center gap-2 text-sm text-muted-foreground">

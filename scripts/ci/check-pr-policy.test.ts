@@ -261,7 +261,16 @@ const MIGRATION_MANIFEST = [
     }
   })
 
-  it('rejects an unversioned schema contract change from the Git revision CLI', () => {
+  it.each([
+    { name: 'generator binary targets', change: 'generator', expectedStatus: 0 },
+    { name: 'generator targets with an advanced base', change: 'advanced-base', expectedStatus: 0 },
+    { name: 'model fields', change: 'model', expectedStatus: 1 },
+    { name: 'generator and model fields', change: 'both', expectedStatus: 1 },
+    { name: 'model default strings', change: 'default', expectedStatus: 1 },
+    { name: 'datasource configuration', change: 'datasource', expectedStatus: 1 },
+    { name: 'SQLite check constraints', change: 'constraints', expectedStatus: 1 },
+    { name: 'deleted schema', change: 'deleted', expectedStatus: 1 }
+  ])('checks $name without a migration from the Git revision CLI', ({ change, expectedStatus }) => {
     const root = mkdtempSync(join(tmpdir(), 'database-migration-policy-'))
     const summary = join(root, 'summary')
 
@@ -271,7 +280,22 @@ const MIGRATION_MANIFEST = [
       execFileSync('git', ['config', 'user.name', 'CI Test'], { cwd: root })
       mkdirSync(join(root, 'prisma'), { recursive: true })
       mkdirSync(join(root, 'src/main/database/migrations'), { recursive: true })
-      writeFileSync(join(root, 'prisma/schema.prisma'), 'model Probe { id String @id }\n')
+      const schema = `generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "darwin"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url = "file:probe.db"
+}
+
+model Probe {
+  id String @id
+  label String @default("generator fake { not a block }")
+}
+`
+      writeFileSync(join(root, 'prisma/schema.prisma'), schema)
       writeFileSync(
         join(root, 'src/main/database/migrations/0001-runtime-schema-baseline.ts'),
         "const baseline = { id: '0001_runtime_schema_baseline' }\n"
@@ -280,16 +304,34 @@ const MIGRATION_MANIFEST = [
       execFileSync('git', ['commit', '--quiet', '-m', 'chore(fixture): add baseline'], {
         cwd: root
       })
-      const base = execFileSync('git', ['rev-parse', 'HEAD'], {
+      let base = execFileSync('git', ['rev-parse', 'HEAD'], {
         cwd: root,
         encoding: 'utf8'
       }).trim()
 
-      writeFileSync(
-        join(root, 'prisma/schema.prisma'),
-        'model Probe { id String @id, value String }\n'
-      )
-      execFileSync('git', ['add', 'prisma/schema.prisma'], { cwd: root })
+      let updatedSchema = schema
+      if (change === 'generator' || change === 'both' || change === 'advanced-base') {
+        updatedSchema = updatedSchema.replace(
+          'binaryTargets = ["native", "darwin"]',
+          '// Include Fedora, too. Braces in comments must not end the block: }\n' +
+            '  binaryTargets = ["native", "darwin", "rhel-openssl-3.0.x"]'
+        )
+      }
+      if (change === 'model' || change === 'both') {
+        updatedSchema = updatedSchema.replace('id String @id', 'id String @id\n  value String')
+      }
+      if (change === 'default') updatedSchema = updatedSchema.replace('not a block', 'new default')
+      if (change === 'datasource')
+        updatedSchema = updatedSchema.replace('file:probe.db', 'file:new.db')
+      writeFileSync(join(root, 'prisma/schema.prisma'), updatedSchema)
+      if (change === 'constraints') {
+        writeFileSync(
+          join(root, 'prisma/sqlite-check-constraints.json'),
+          '{"Probe": ["id != 0"]}\n'
+        )
+      }
+      if (change === 'deleted') rmSync(join(root, 'prisma/schema.prisma'))
+      execFileSync('git', ['add', 'prisma'], { cwd: root })
       execFileSync('git', ['commit', '--quiet', '-m', 'feat(database): add probe value'], {
         cwd: root
       })
@@ -297,6 +339,19 @@ const MIGRATION_MANIFEST = [
         cwd: root,
         encoding: 'utf8'
       }).trim()
+
+      if (change === 'advanced-base') {
+        execFileSync('git', ['checkout', '--quiet', '-b', 'target', base], { cwd: root })
+        writeFileSync(
+          join(root, 'prisma/schema.prisma'),
+          schema.replace('id String @id', 'id String @id\n  unrelated String')
+        )
+        execFileSync('git', ['add', 'prisma'], { cwd: root })
+        execFileSync('git', ['commit', '--quiet', '-m', 'feat(database): add unrelated field'], {
+          cwd: root
+        })
+        base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
+      }
 
       const result = spawnSync(process.execPath, [resolve('scripts/ci/check-pr-policy.mjs')], {
         cwd: root,
@@ -311,9 +366,11 @@ const MIGRATION_MANIFEST = [
         }
       })
 
-      expect(result.status, result.stderr).toBe(1)
+      expect(result.status, readFileSync(summary, 'utf8') + result.stderr).toBe(expectedStatus)
       expect(readFileSync(summary, 'utf8')).toContain(
-        'database schema contracts changed without a new migration'
+        expectedStatus === 0
+          ? 'Result: **pass**'
+          : 'database schema contracts changed without a new migration'
       )
     } finally {
       rmSync(root, { force: true, recursive: true })

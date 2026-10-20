@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { act, Component, type ReactNode } from 'react'
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -8,6 +9,7 @@ import {
   WEB_EVENT_CONNECTION_STATE_EVENT,
   WEB_EVENT_SURFACE_ATTRIBUTE
 } from '../../../../../../shared/web-event-connection'
+import { pdfjsLib } from '../pdfjs'
 import { createManagedPdfLoadingTask } from '../managed-pdf-document'
 import { PdfPreviewContent, PdfPreviewRenderer } from './PdfPreview'
 import * as nearViewport from '../useNearViewport'
@@ -16,10 +18,37 @@ import {
   requestAnnotationReveal,
   requestPdfAnnotationReveal
 } from '../../annotations/annotation-reveal'
-import type { PdfAnnotation as SavedPdfAnnotation } from '../../../../../../shared/pdf-annotations'
+import type {
+  PdfAnnotation as SavedPdfAnnotation,
+  PdfAnnotationListResult,
+  PdfNativeAnnotationImportProgress
+} from '../../../../../../shared/pdf-annotations'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { PdfAnnotationsProvider } from '../../pdf-annotations/PdfAnnotationsProvider'
 import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import { createPreviewResourceKey } from '../preview-resource-key'
+import { createPdfTranslationSource } from '@aipoch/pdf-translation/reader'
+import * as pdfTranslations from '@aipoch/pdf-translation/reader'
+import { PdfGenerationError } from '@aipoch/pdf-translation/contracts'
+import { type PdfTranslationCheckpoint } from '../../../../../../shared/pdf-translation'
+
+import { renderPdfNativeLinks } from './pdf-native-links'
+import * as translationJobs from './use-pdf-translation-job'
+import * as translationDocuments from './use-pdf-translation-document'
+import type { PdfDocumentSource } from '../../../../../../shared/pdf-document-source'
+import type { PdfProseRegion } from '../../../../../../shared/pdf-text'
+
+// Keep the real reader behavior while allowing the layout-admission spy below.
+vi.mock('@aipoch/pdf-translation/reader', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/pdf-translation/reader')>())
+}))
+
+vi.mock('./pdf-native-links', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./pdf-native-links')>()),
+  renderPdfNativeLinks: vi.fn(async () => {})
+}))
 
 vi.mock('../managed-pdf-document', () => ({ createManagedPdfLoadingTask: vi.fn() }))
 const { cancelTextLayer, renderTextLayer } = vi.hoisted(() => ({
@@ -85,6 +114,7 @@ vi.mock('pdfjs-dist/web/pdf_viewer.mjs', () => ({
 }))
 vi.mock('../pdfjs', () => ({
   pdfjsLib: {
+    getDocument: vi.fn(),
     AnnotationMode: { ENABLE_STORAGE: 3 },
     TextLayer: class {
       constructor(
@@ -127,10 +157,22 @@ const dispatchPointer = (target: EventTarget, type: string, init: PointerEventIn
   target.dispatchEvent(event)
 }
 
+const openReadingView = async (): Promise<void> => {
+  const trigger = await screen.findByRole('button', { name: 'Reading view' })
+  if (trigger.getAttribute('aria-expanded') !== 'true')
+    await act(async () => fireEvent.click(trigger))
+}
+
+const readingRenditionGroup = (): HTMLElement =>
+  screen
+    .getAllByRole('group', { name: 'PDF rendition' })
+    .find((group) => within(group).queryByRole('button', { name: 'Compare' })) as HTMLElement
+
 describe('PdfPreviewContent', () => {
   let container: HTMLDivElement
   let root: Root
   const destroyDocument = vi.fn().mockResolvedValue(undefined)
+  const initialSettings = useSettingsStore.getState()
   let getPage: ReturnType<typeof vi.fn>
 
   beforeEach(() => {
@@ -149,6 +191,16 @@ describe('PdfPreviewContent', () => {
       }
     )
     window.api = {
+      pdfStructure: {
+        readCached: vi.fn().mockResolvedValue(undefined),
+        parse: vi.fn(() => new Promise(() => {})),
+        cancel: vi.fn().mockResolvedValue(undefined)
+      },
+      localModels: {
+        getSnapshot: vi
+          .fn()
+          .mockResolvedValue({ availability: 'notInstalled', updateAvailable: false })
+      },
       previewResources: {
         acquire: vi.fn().mockResolvedValue({
           id: 'resource-1',
@@ -161,9 +213,9 @@ describe('PdfPreviewContent', () => {
         release: vi.fn().mockResolvedValue(undefined)
       }
     } as unknown as Window['api']
-    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(
-      {} as CanvasRenderingContext2D
-    )
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
     getPage = vi.fn().mockResolvedValue({
       getViewport: vi.fn(() => ({ width: 600, height: 800 })),
       getTextContent: vi
@@ -188,13 +240,210 @@ describe('PdfPreviewContent', () => {
     vi.useRealTimers()
     vi.restoreAllMocks()
     vi.unstubAllGlobals()
+    useSettingsStore.setState(initialSettings)
     useSessionStore.setState({ sessions: [], selectedSessionId: undefined } as never)
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: undefined,
+      pendingPdfContextByProject: {}
+    })
     delete (Element.prototype as { scrollIntoView?: unknown }).scrollIntoView
   })
 
   const flush = async (): Promise<void> => {
     for (let i = 0; i < 20; i++) await Promise.resolve()
   }
+
+  it('confirms body bounds and an adjustable divider, replacing only the current page', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const original: PdfProseRegion[] = [
+      { page: 1, left: 0.2, top: 0.2, right: 0.8, bottom: 0.8, split: 0.5 },
+      { page: 2, left: 0.1, top: 0.1, right: 0.9, bottom: 0.9, split: 0.5 }
+    ]
+    const onChange = vi.fn()
+    const render = async (regions: readonly PdfProseRegion[]): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/body.pdf"
+            name="body.pdf"
+            pdfProseRegions={regions}
+            pdfProseRegionIdentityKey="scope/binding"
+            onPdfProseRegionsChange={onChange}
+          />
+        )
+        await flush()
+      })
+    }
+    await render(original)
+    expect(container.querySelectorAll('[data-pdf-prose-region]')).toHaveLength(2)
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(100, 80, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 140, clientY: 136, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 460, clientY: 584, button: 0 })
+    )
+    expect(onChange).not.toHaveBeenCalled()
+    await act(async () =>
+      fireEvent.change(screen.getByRole('slider', { name: 'Column divider' }), {
+        target: { value: '60' }
+      })
+    )
+    expect(
+      container.querySelector<HTMLElement>('[data-pdf-prose-draft] [data-pdf-prose-split]')?.style
+        .left
+    ).toBe('60%')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Save body area' })))
+    const confirmed = onChange.mock.calls[0][0] as PdfProseRegion[]
+    expect(confirmed).toHaveLength(2)
+    expect(confirmed[0]).toMatchObject({ page: 1, left: 0.1, top: 0.1, right: 0.9 })
+    expect(confirmed[0].bottom).toBeCloseTo(0.9)
+    expect(confirmed[0].split).toBeCloseTo(0.58)
+    expect(confirmed[1]).toEqual(original[1])
+    expect(container.querySelector('[data-pdf-prose-draft]')).toBeNull()
+    await render(confirmed)
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Clear this page' })))
+    expect(onChange).toHaveBeenLastCalledWith([original[1]])
+  })
+
+  it('drops an unconfirmed body draft on identity change and cancels without publishing a region', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const onChange = vi.fn()
+    const render = async (identity: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/body.pdf"
+            name="body.pdf"
+            pdfProseRegionIdentityKey={identity}
+            onPdfProseRegionsChange={onChange}
+          />
+        )
+        await flush()
+      })
+    }
+    await render('branch-a/binding')
+    const acquisitions = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 360, clientY: 504, button: 0 })
+    )
+    expect(screen.getByRole('button', { name: 'Save body area' })).toBeTruthy()
+    await render('branch-b/binding')
+    expect(screen.queryByRole('button', { name: 'Save body area' })).toBeNull()
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[data-pdf-preview-root]')!, { key: 'Escape' })
+    )
+    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(acquisitions)
+  })
+
+  it('refuses body selection on rotated pages without enabling annotation or Agent actions', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    const page = await (
+      getPage as ReturnType<typeof vi.fn<() => Promise<{ getViewport: ReturnType<typeof vi.fn> }>>>
+    )()
+    page.getViewport.mockReturnValue({ width: 800, height: 600, rotation: 90 })
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({ numPages: 2, getPage, destroy: destroyDocument }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const onChange = vi.fn()
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="/rotated.pdf"
+          name="rotated.pdf"
+          onPdfProseRegionsChange={onChange}
+        />
+      )
+      await flush()
+    })
+    await act(async () =>
+      fireEvent.click(screen.getByRole('button', { name: 'Set two-column body' }))
+    )
+    expect(screen.getAllByText('Body areas are unavailable on rotated pages.')).toHaveLength(2)
+    expect(container.querySelector('[data-pdf-region-selection]')).toBeNull()
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('hides successful native import receipts, while keeping progress and incomplete-import warnings', async () => {
+    const cancel = vi.fn()
+    const renderProgress = async (
+      phase: PdfNativeAnnotationImportProgress['phase'],
+      overrides: Partial<PdfNativeAnnotationImportProgress> = {}
+    ): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="/audit/import.pdf"
+            name="import.pdf"
+            onCancelNativeImport={cancel}
+            nativeImportProgress={{
+              operationId: 'import-1',
+              phase,
+              pageCount: 2,
+              pagesProcessed: 2,
+              importedCount: 3,
+              unsupportedCount: 0,
+              truncated: false,
+              ...overrides
+            }}
+          />
+        )
+        await flush()
+      })
+    }
+    await renderProgress('parsing')
+    expect(screen.getByRole('status').textContent).toContain('Importing native annotations')
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel' })))
+    expect(cancel).toHaveBeenCalledOnce()
+    await renderProgress('saving')
+    expect(screen.getByRole('status').textContent).toContain('Saving imported annotations')
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    for (const importedCount of [0, 3]) {
+      await renderProgress('completed', { importedCount })
+      expect(screen.queryByRole('status')).toBeNull()
+      expect(container.textContent).not.toContain('Imported')
+    }
+    await renderProgress('failed')
+    expect(screen.getByRole('status').textContent).toContain('Native annotation import failed.')
+    await renderProgress('cancelled')
+    expect(screen.getByRole('status').textContent).toContain('Native annotation import cancelled.')
+    await renderProgress('completed', { truncated: true })
+    expect(screen.getByRole('status').textContent).toContain(
+      'Native annotation import limit reached.'
+    )
+    await renderProgress('completed', { unsupportedCount: 2 })
+    expect(screen.getByRole('status').textContent).toContain('Unsupported native annotations: 2')
+  })
+
   const observe = (): {
     targets: Element[]
     disconnect: ReturnType<typeof vi.fn>
@@ -232,6 +481,644 @@ describe('PdfPreviewContent', () => {
         })
     }
   }
+
+  it.each(['select', 'new', 'cancel', 'navigate'] as const)(
+    'handles the %s edition action with its own layout and lifetime',
+    async (action) => {
+      useSettingsStore.setState({
+        providers: [
+          {
+            id: 'api-provider',
+            name: 'API provider',
+            type: 'custom',
+            baseUrl: 'https://example.test',
+            apiEndpoints: ['chat-completions'],
+            models: ['translation-test'],
+            hasKey: true,
+            needsKey: false,
+            supportsImageInput: false
+          }
+        ]
+      })
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const page = await (
+        getPage as () => Promise<{
+          getViewport: ReturnType<typeof vi.fn>
+          getTextContent: ReturnType<typeof vi.fn>
+          getAnnotations?: ReturnType<typeof vi.fn>
+        }>
+      )()
+      page.getViewport.mockReturnValue({ width: 600, height: 800 })
+      page.getTextContent.mockResolvedValue({
+        items: [
+          { str: 'Selectable text', width: 80, height: 10, transform: [10, 0, 0, 10, 60, 700] }
+        ],
+        styles: {}
+      })
+      page.getAnnotations = vi.fn().mockResolvedValue([])
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          fingerprints: ['fp'],
+          getPage,
+          getData: async () => new Uint8Array([0]),
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      const saved = (key: string, unitId: string, text: string): PdfTranslationCheckpoint => ({
+        version: 1,
+        key,
+        revision: 1,
+        attachmentVersionId: 'version-1',
+        checksum: 'a'.repeat(64),
+        fingerprint: 'fp',
+        language: 'Chinese',
+        glossary: [],
+        targetKey: 'b'.repeat(64),
+        model: {
+          frameworkId: 'direct-api',
+          mode: 'api',
+          providerId: 'api-provider',
+          modelId: action === 'select' ? unitId : 'translation-test'
+        },
+        sources: ['Selectable text'],
+        translations: [text],
+        translatedSourceIndices: [0],
+        layoutSnapshot: {
+          version: 1,
+          parserVersion: unitId,
+          fingerprint: 'fp',
+          pages: [{ width: 600, height: 800 }],
+          units: [
+            {
+              id: unitId,
+              source: 'Selectable text',
+              fragments: [
+                {
+                  pageNumber: 1,
+                  rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+                  items: [{ index: 0, text: 'Selectable text' }]
+                }
+              ]
+            }
+          ],
+          coverage: {
+            pageCount: 1,
+            textItemCount: 1,
+            includedItemCount: 1,
+            excludedItemCount: 0,
+            pagesWithoutText: [],
+            exclusions: [],
+            warnings: []
+          }
+        }
+      })
+      const first = saved('11111111-1111-4111-8111-111111111111', 'first-model', '上一份译文')
+      const second = saved('22222222-2222-4222-8222-222222222222', 'second-model', '新译本内容')
+      let resolveSelection!: (value: PdfTranslationCheckpoint) => void
+      let finishVerification!: () => void
+      const verification = new Promise<void>((resolve) => {
+        finishVerification = resolve
+      })
+      const bind = pdfTranslations.createPdfTranslationBinder()
+      const delayedBind = vi.fn<typeof bind>(async (...args) => {
+        if (args[1].checkpoint?.key === second.key) await verification
+        return bind(...args)
+      })
+      vi.spyOn(pdfTranslations, 'createPdfTranslationBinder').mockReturnValue(delayedBind)
+      const editions = [first, second].map((checkpoint, index) => ({
+        id: `edition-${index}`,
+        key: checkpoint.key,
+        language: checkpoint.language,
+        glossary: [],
+        model: checkpoint.model,
+        selected: index === 0,
+        updatedAt: 1700000000000 + index
+      }))
+      const selectEdition = vi.fn(
+        () =>
+          new Promise<PdfTranslationCheckpoint>((resolve) => {
+            resolveSelection = resolve
+          })
+      )
+      Object.assign(window.api, {
+        pdfTranslation: {
+          readCheckpoint: vi.fn().mockResolvedValue(first),
+          listEditions: vi.fn().mockResolvedValue(editions),
+          selectEdition,
+          generatePdf: vi.fn(() => new Promise(() => {})),
+          cancelPdf: vi.fn().mockResolvedValue(undefined)
+        }
+      })
+      const props = {
+        path: 'literature-attachment-version:version-1',
+        name: 'edition.pdf',
+        source: 'literature' as const
+      }
+      const executor = {
+        targets: [{ id: 'api', label: 'Direct API', mode: 'api' as const }],
+        begin: vi.fn(async () => undefined),
+        translate: vi.fn(() => new Promise<string>(() => {}))
+      }
+      await act(async () => {
+        root.render(<PdfPreviewContent {...props} translationExecutor={executor} />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+      const selector = await screen.findByRole<HTMLButtonElement>('combobox', {
+        name: 'Saved translations'
+      })
+      const setup = screen.getByRole('button', { name: 'Translation settings' })
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      const progress = screen.getByRole('group', { name: 'Translation progress' })
+      const toggle = screen.getByRole('button', { name: /^Translation\s*1$/ })
+      await act(async () => toggle.click())
+      const oldRow = container.querySelector('[data-translation-row="first-model"]')!
+      expect(oldRow).not.toBeNull()
+      if (action !== 'select') {
+        const originalSnapshot = JSON.stringify(first)
+        let finishExtraction!: (value: pdfTranslations.PdfTranslationExtraction) => void
+        const extract = vi.spyOn(pdfTranslations, 'extractPdfTranslationSource').mockImplementation(
+          () =>
+            new Promise((resolve) => {
+              finishExtraction = resolve
+            })
+        )
+        await act(async () => fireEvent.click(setup))
+        await act(async () =>
+          fireEvent.click(screen.getByRole('button', { name: 'New translation' }))
+        )
+        const dialog = await screen.findByRole('dialog', { name: 'New translation' })
+        await act(async () =>
+          fireEvent.click(within(dialog).getByRole('button', { name: 'Translate document' }))
+        )
+        await waitFor(() => expect(extract).toHaveBeenCalledTimes(1))
+        expect(executor.begin).not.toHaveBeenCalled()
+        if (action === 'cancel') {
+          await act(async () =>
+            fireEvent.click(
+              within(screen.getByRole('region', { name: 'Full-text preparation' })).getByRole(
+                'button',
+                { name: 'Cancel' }
+              )
+            )
+          )
+        } else if (action === 'navigate') {
+          await act(async () => {
+            root.render(<PdfPreviewContent path="other.pdf" name="other.pdf" />)
+            await flush()
+          })
+        }
+        const freshSource = createPdfTranslationSource({
+          resourceRequestKey: extract.mock.calls[0][0].resourceRequestKey,
+          fingerprint: 'fp',
+          pages: first.layoutSnapshot!.pages,
+          units: [
+            {
+              ...first.layoutSnapshot!.units[0],
+              id: 'fresh-layout',
+              source: 'Freshly grouped text'
+            }
+          ]
+        })
+        await act(async () => {
+          finishExtraction({ source: freshSource, coverage: first.layoutSnapshot!.coverage })
+          await flush()
+        })
+        if (action === 'new') {
+          await waitFor(() =>
+            expect(executor.begin).toHaveBeenCalledWith(
+              freshSource,
+              expect.not.objectContaining({ checkpoint: expect.anything() }),
+              expect.any(AbortSignal)
+            )
+          )
+          expect(executor.translate).toHaveBeenCalledWith(
+            expect.objectContaining({ source: 'Freshly grouped text' })
+          )
+          expect(executor.begin.mock.calls).toHaveLength(1)
+        } else {
+          expect(extract.mock.calls[0][0].signal.aborted).toBe(true)
+          expect(executor.begin).not.toHaveBeenCalled()
+        }
+        expect(JSON.stringify(first)).toBe(originalSnapshot)
+        return
+      }
+      await act(async () => fireEvent.keyDown(selector, { key: 'ArrowDown' }))
+      await act(async () =>
+        fireEvent.click(screen.getByRole('option', { name: /Chinese · second-model/ }))
+      )
+      expect(selectEdition).toHaveBeenCalledWith({
+        source: 'version-1',
+        translationId: 'edition-1'
+      })
+      expect(selector.disabled).toBe(true)
+      expect(progress.isConnected).toBe(true)
+      await act(async () => {
+        resolveSelection(second)
+        await flush()
+      })
+      await waitFor(() =>
+        expect(delayedBind.mock.calls.some((args) => args[1].checkpoint?.key === second.key)).toBe(
+          true
+        )
+      )
+      expect(selector.isConnected).toBe(true)
+      expect(selector.disabled).toBe(true)
+      expect(selector.getAttribute('aria-busy')).toBe('true')
+      expect(setup.isConnected).toBe(true)
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      expect(progress.isConnected).toBe(true)
+      expect(toggle.isConnected).toBe(true)
+      expect(oldRow.isConnected).toBe(true)
+      expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
+      await act(async () => {
+        finishVerification()
+        await flush()
+      })
+      await waitFor(() =>
+        expect(container.querySelector('[data-translation-row="second-model"]')).not.toBeNull()
+      )
+      expect(selector.disabled).toBe(false)
+      expect(progress.isConnected).toBe(true)
+      expect(toggle.isConnected).toBe(true)
+      expect(setup.getAttribute('aria-expanded')).toBe('false')
+      expect(oldRow.isConnected).toBe(false)
+      expect(container.querySelector('[data-translation-row="first-model"]')).toBeNull()
+      // Another PDF must never inherit the retained edition or its sidebar content.
+      await act(async () => {
+        root.render(<PdfPreviewContent path="other.pdf" name="other.pdf" />)
+        await flush()
+      })
+      expect(container.querySelector('[data-translation-row="second-model"]')).toBeNull()
+    }
+  )
+
+  it('prefetches saved translation recovery while the literature PDF opens', async () => {
+    const readCheckpoint = vi.fn().mockResolvedValue(null)
+    ;(window.api as Window['api']).pdfTranslation = { readCheckpoint } as never
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+        />
+      )
+      await flush()
+    })
+    expect(readCheckpoint).toHaveBeenCalledWith('version-1')
+  })
+
+  it.each([
+    { kind: 'upload', hasSession: true, readOnly: false },
+    { kind: 'artifact', hasSession: true, readOnly: false },
+    { kind: 'upload', hasSession: false, readOnly: false },
+    { kind: 'artifact', hasSession: false, readOnly: false },
+    { kind: 'upload', hasSession: true, readOnly: true },
+    { kind: 'artifact', hasSession: true, readOnly: true }
+  ] as const)(
+    'prepares, translates, generates and opens a workspace $kind PDF with active Session $hasSession and read-only Notes $readOnly',
+    async ({ kind, hasSession, readOnly }) => {
+      useSettingsStore.setState({
+        providers: [
+          {
+            id: 'api-provider',
+            name: 'API provider',
+            type: 'custom',
+            baseUrl: 'https://example.test',
+            apiEndpoints: ['chat-completions'],
+            models: ['translation-test'],
+            hasKey: true,
+            needsKey: false,
+            supportsImageInput: false
+          }
+        ]
+      })
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const documentSource: PdfDocumentSource = {
+        kind: kind === 'upload' ? 'upload-version' : 'artifact-version',
+        projectId: 'project-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        sessionId: 'creator',
+        name: 'paper.pdf',
+        path: `${kind}-version:version-1`,
+        checksum: 'a'.repeat(64)
+      }
+      const resolvePdfSource = vi
+        .fn()
+        .mockResolvedValue(
+          readOnly
+            ? { ok: false, reason: 'source-unavailable' }
+            : { ok: true, source: documentSource }
+        )
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          projectId: 'project-1',
+          source: kind,
+          fileId: 'file-1',
+          sessionId: 'creator',
+          selectedVersion: {
+            id: 'version-1',
+            source: kind,
+            fileId: 'file-1',
+            versionNumber: 1,
+            displayName: documentSource.name,
+            originKind: kind === 'upload' ? 'user_upload' : 'agent_generated',
+            basedOnVersionId: null,
+            contentType: 'application/pdf',
+            sizeBytes: 1024,
+            checksum: documentSource.checksum,
+            createdAt: '2026-10-02T00:00:00.000Z'
+          }
+        }
+      })
+      const readCheckpoint = vi.fn().mockResolvedValue(null)
+      const begin = vi.fn().mockResolvedValue({
+        operationId: 'translation-1',
+        targetKey: 'b'.repeat(64),
+        model: { frameworkId: 'direct-api', mode: 'api' }
+      })
+      const translate = vi.fn().mockResolvedValue('译文')
+      const generatePdf = vi.fn().mockResolvedValue(new Uint8Array([4, 5]))
+      const close = vi.fn().mockResolvedValue(undefined)
+      const viewport = {
+        width: 600,
+        height: 800,
+        rotation: 0,
+        transform: [1, 0, 0, -1, 0, 800],
+        convertToViewportPoint: (x: number, y: number): number[] => [x, 800 - y]
+      }
+      const item = {
+        str: 'Selectable text',
+        fontName: 'f1',
+        transform: [12, 0, 0, 12, 60, 700],
+        width: 100,
+        height: 12,
+        dir: 'ltr'
+      }
+      const page = await (
+        getPage as () => Promise<{
+          rotate: number
+          getViewport: ReturnType<typeof vi.fn>
+          getTextContent: ReturnType<typeof vi.fn>
+          getAnnotations: ReturnType<typeof vi.fn>
+        }>
+      )()
+      page.rotate = 0
+      page.getViewport.mockReturnValue(viewport)
+      page.getTextContent.mockResolvedValue({ items: [item], styles: {} })
+      page.getAnnotations = vi.fn().mockResolvedValue([])
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          fingerprints: ['fp'],
+          getPage,
+          getData: vi.fn().mockResolvedValue(new Uint8Array([1, 2])),
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      const translatedPage = {
+        ...page,
+        getTextContent: vi.fn().mockResolvedValue({
+          items: [{ ...item, str: '译文', width: 24 }],
+          styles: {}
+        })
+      }
+      vi.mocked(pdfjsLib.getDocument).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          fingerprints: ['translated'],
+          getPage: vi.fn().mockResolvedValue(translatedPage),
+          destroy: vi.fn().mockResolvedValue(undefined)
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/paper.pdf',
+        size: 1024,
+        mimeType: 'application/pdf',
+        version: 1,
+        sourceChecksum: documentSource.checksum
+      })
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource },
+        managedFileVersions: { inspect },
+        pdfTranslation: {
+          readCheckpoint,
+          begin,
+          translate,
+          close,
+          generatePdf,
+          cancelPdf: vi.fn().mockResolvedValue(undefined)
+        }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: hasSession ? 'reader' : undefined,
+        sessions: hasSession ? [{ id: 'reader', projectId: 'project-1' }] : []
+      } as never)
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PdfPreviewRenderer
+              item={{
+                id: 'file-1',
+                projectId: 'project-1',
+                sessionId: 'creator',
+                title: documentSource.name,
+                type: 'file',
+                source: kind,
+                path: documentSource.path,
+                name: documentSource.name,
+                format: 'pdf',
+                managedFileId: 'file-1',
+                selectedVersionId: 'version-1'
+              }}
+            />
+          </TooltipProvider>
+        )
+        await flush()
+      })
+      if (hasSession) {
+        expect(resolvePdfSource).toHaveBeenCalledWith({
+          projectId: 'project-1',
+          sessionId: 'reader',
+          sourceKind: documentSource.kind,
+          sourceFileId: documentSource.sourceFileId,
+          versionId: documentSource.versionId
+        })
+      } else {
+        expect(resolvePdfSource).not.toHaveBeenCalled()
+        expect(useSessionStore.getState().selectedSessionId).toBeUndefined()
+        expect(screen.queryByRole('button', { name: 'Select area for Agent' })).toBeNull()
+      }
+      expect(inspect).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        source: kind,
+        fileId: 'file-1',
+        versionId: 'version-1'
+      })
+      expect(readCheckpoint).toHaveBeenCalledWith(
+        expect.objectContaining({
+          projectId: 'project-1',
+          kind: documentSource.kind,
+          sourceFileId: documentSource.sourceFileId,
+          versionId: documentSource.versionId,
+          checksum: documentSource.checksum
+        })
+      )
+      await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+      await act(async () => {
+        screen.getByRole('button', { name: 'Prepare full text' }).click()
+        await flush()
+      })
+      await waitFor(() => expect(screen.getByText('Full text prepared')).toBeTruthy())
+      await act(async () =>
+        fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
+          key: 'ArrowDown'
+        })
+      )
+      await act(async () => fireEvent.click(screen.getByRole('option', { name: 'Direct API' })))
+      await act(async () =>
+        fireEvent.keyDown(screen.getByRole('combobox', { name: 'Model' }), {
+          key: 'ArrowDown'
+        })
+      )
+      await act(async () =>
+        fireEvent.click(screen.getByRole('option', { name: 'translation-test · API provider' }))
+      )
+      await act(async () =>
+        fireEvent.change(screen.getByLabelText('Target language'), { target: { value: 'Chinese' } })
+      )
+      await act(async () => {
+        screen.getByRole('button', { name: 'Translate document' }).click()
+        await flush()
+      })
+      expect(begin).toHaveBeenCalledWith(
+        expect.objectContaining({
+          documentSource: expect.objectContaining({
+            kind: documentSource.kind,
+            projectId: documentSource.projectId,
+            sourceFileId: documentSource.sourceFileId,
+            versionId: documentSource.versionId,
+            checksum: documentSource.checksum
+          }),
+          targetId: 'api',
+          apiModel: { providerId: 'api-provider', modelId: 'translation-test' },
+          sources: ['Selectable text']
+        })
+      )
+      expect(begin.mock.calls[0][0]).not.toHaveProperty('attachmentVersionId')
+      expect(translate).toHaveBeenCalledWith({
+        operationId: 'translation-1',
+        sourceIndex: 0,
+        source: 'Selectable text'
+      })
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledOnce())
+      expect(generatePdf.mock.calls[0][0]).toMatchObject({
+        data: new Uint8Array([1, 2]),
+        units: [{ source: 'Selectable text', translation: '译文' }]
+      })
+      await waitFor(() =>
+        expect(
+          screen.getByRole('button', { name: 'View translated PDF' }).hasAttribute('disabled')
+        ).toBe(false)
+      )
+      await act(async () => screen.getByRole('button', { name: 'View translated PDF' }).click())
+      await waitFor(() =>
+        expect(container.querySelector('[data-pdf-translated-page]')?.textContent).toContain('译文')
+      )
+      expect(close).toHaveBeenCalledWith({ operationId: 'translation-1' })
+    }
+  )
+
+  it.each([
+    { projectId: 'another-project' },
+    { kind: 'artifact-version' as const },
+    { sourceFileId: 'another-file' },
+    { versionId: 'another-version' },
+    { checksum: 'b'.repeat(64) }
+  ])(
+    'does not expose workspace translation for a mismatched fixed Version %j',
+    async (difference) => {
+      const documentSource: PdfDocumentSource = {
+        kind: 'upload-version',
+        projectId: 'project-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: 'upload-version:version-1',
+        checksum: 'a'.repeat(64),
+        ...difference
+      }
+      const resolvePdfSource = vi.fn().mockResolvedValue({ ok: true, source: documentSource })
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          projectId: documentSource.projectId,
+          source: documentSource.kind === 'artifact-version' ? 'artifact' : 'upload',
+          fileId: documentSource.sourceFileId,
+          sessionId: 'creator',
+          selectedVersion: {
+            id: documentSource.versionId,
+            fileId: documentSource.sourceFileId,
+            source: documentSource.kind === 'artifact-version' ? 'artifact' : 'upload',
+            displayName: documentSource.name,
+            checksum: documentSource.checksum,
+            contentType: 'application/pdf',
+            sizeBytes: 1024
+          }
+        }
+      })
+      const readCheckpoint = vi.fn().mockResolvedValue(null)
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource },
+        managedFileVersions: { inspect },
+        pdfTranslation: { readCheckpoint, begin: vi.fn(), translate: vi.fn(), close: vi.fn() }
+      } as unknown as Window['api']
+      vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+        id: 'resource-1',
+        url: 'open-science-preview://resource-1/paper.pdf',
+        size: 1024,
+        mimeType: 'application/pdf',
+        version: 1,
+        sourceChecksum: 'a'.repeat(64)
+      })
+      useSessionStore.setState({
+        selectedSessionId: 'reader',
+        sessions: [{ id: 'reader', projectId: 'project-1' }]
+      } as never)
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'file-1',
+              projectId: 'project-1',
+              sessionId: 'creator',
+              title: 'paper.pdf',
+              type: 'file',
+              source: 'upload',
+              path: 'upload-version:version-1',
+              name: 'paper.pdf',
+              format: 'pdf',
+              managedFileId: 'file-1',
+              selectedVersionId: 'version-1'
+            }}
+          />
+        )
+        await flush()
+      })
+      expect(screen.queryByRole('button', { name: 'Full-text translation' })).toBeNull()
+      expect(window.api.pdfTranslation!.begin).not.toHaveBeenCalled()
+    }
+  )
 
   it('does not rerender page placeholders when opening the search toolbar', async () => {
     observe()
@@ -402,7 +1289,1161 @@ describe('PdfPreviewContent', () => {
     ])
   })
 
-  it('keeps the notes toggle visible and enables the sidebar within the reader width budget', async () => {
+  it.each(['artifact', 'retry', 'retry-sidebar', 'validation', 'validation-unchanged'] as const)(
+    'renders two admitted PDFs after %s, retaining text selection and visible generation status',
+    async (kind) => {
+      const observer = observe()
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      let invalidTranslation = false
+      let translatedText = '细胞'
+      const targetPage = {
+        cleanup: vi.fn(),
+        getViewport: ({ scale }: { scale: number }) => ({
+          width: 600 * scale,
+          height: 800 * scale,
+          scale,
+          rotation: 0,
+          convertToViewportPoint: (x: number, y: number) => [x * scale, (800 - y) * scale]
+        }),
+        render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+        getTextContent: async () => ({
+          items: [
+            {
+              str: invalidTranslation ? 'wrong' : translatedText,
+              width: 20,
+              transform: [10, 0, 0, 10, 60, 700]
+            }
+          ]
+        }),
+        getAnnotations: async () => []
+      }
+      const originalPage = {
+        ...targetPage,
+        getTextContent: async () => ({
+          items: [
+            { str: 'Selectable text', width: 80, height: 10, transform: [10, 0, 0, 10, 60, 700] }
+          ]
+        })
+      }
+      const original = {
+        numPages: 1,
+        fingerprints: ['fp'],
+        getData: async () => new Uint8Array([2]),
+        getPage: async () => originalPage,
+        destroy: vi.fn(async () => {})
+      }
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve(original),
+        destroy: vi.fn(async () => {})
+      } as never)
+      const destroy = vi.fn(async () => {})
+      vi.mocked(pdfjsLib.getDocument).mockReturnValue({
+        promise: Promise.resolve({ numPages: 1, getPage: async () => targetPage }),
+        destroy
+      } as never)
+      const props = { path: 'pair.pdf', name: 'pair.pdf', source: 'local' as const }
+      const source = createPdfTranslationSource({
+        resourceRequestKey: createPreviewResourceKey(props) + ':0',
+        fingerprint: 'fp',
+        pages: [{ width: 600, height: 800 }],
+        units: [
+          {
+            id: 'p1',
+            source: 'Selectable text',
+            fragments: [
+              {
+                pageNumber: 1,
+                rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+                items: [{ index: 0, text: 'Selectable text' }]
+              }
+            ]
+          }
+        ]
+      })
+      const results = {
+        source,
+        units: [{ id: 'p1', translationSource: 'Selectable text', translation: '细胞' }]
+      }
+      let fail!: (error: Error) => void
+      let complete!: (data: Uint8Array) => void
+      const generatePdf = vi
+        .fn()
+        .mockImplementationOnce(
+          () =>
+            new Promise((resolve, reject) => {
+              complete = resolve
+              fail = reject
+            })
+        )
+        .mockResolvedValue(new Uint8Array([1]))
+      Object.assign(window.api, {
+        pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) }
+      })
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            {...props}
+            translationSource={source}
+            translation={results}
+            translationArtifact={
+              kind === 'artifact' ? { results, data: new Uint8Array([1]) } : undefined
+            }
+          />
+        )
+        await flush()
+      })
+      if (kind === 'artifact') {
+        await openReadingView()
+        await act(async () => {
+          fireEvent.click(within(readingRenditionGroup()).getByRole('button', { name: 'Compare' }))
+          await flush()
+        })
+      }
+      if (kind !== 'artifact') {
+        expect(
+          screen.getByRole<HTMLButtonElement>('button', { name: 'Reading view' }).disabled
+        ).toBe(true)
+        expect(screen.getByRole('status').className).toContain('sr-only')
+        expect(
+          screen.getByRole('button', { name: 'View translation' }).getAttribute('aria-busy')
+        ).toBe('true')
+        expect(
+          container.querySelector('[data-pdf-translation-sidebar]')?.getAttribute('aria-hidden')
+        ).toBe('true')
+        await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+        const loadingPanel = screen.getByRole('complementary', { name: 'Translation sidebar' })
+        expect(within(loadingPanel).queryByRole('status')).toBeNull()
+        // Generating a PDF never hides accepted text behind a full-panel spinner.
+        const textReview = within(loadingPanel).getByRole('button', { name: /^Translation\s*1$/ })
+        await act(async () => textReview.click())
+        expect(within(loadingPanel).getAllByText('细胞').length).toBeGreaterThan(0)
+        expect(within(loadingPanel).getByRole('group', { name: 'PDF rendition' })).toBeTruthy()
+        await act(async () => textReview.click())
+        expect(textReview.getAttribute('aria-pressed')).toBe('false')
+        await act(async () => screen.getByRole('button', { name: 'Close translation' }).click())
+        await act(async () => {
+          if (kind === 'validation' || kind === 'validation-unchanged') {
+            invalidTranslation = true
+            complete(new Uint8Array([1]))
+          } else fail(new Error('worker unavailable'))
+          await flush()
+        })
+        expect(screen.queryByRole('alert')).toBeNull()
+        const entry = screen.getByRole('button', { name: 'View translation' })
+        expect(entry.getAttribute('aria-expanded')).toBe('false')
+        await act(async () => entry.click())
+        const error = screen.getByRole('alert')
+        expect(error.textContent).toContain('Could not prepare translated PDF')
+        if (kind === 'validation' || kind === 'validation-unchanged') {
+          expect(error.textContent).toContain('Page 1')
+          const details = screen.getByText('Details').closest('details')!
+          expect(details.open).toBe(false)
+          await act(async () => screen.getByText('Details').click())
+          expect(details.open).toBe(true)
+          expect(details.textContent).toContain('PDF translation text or placement changed')
+          await act(async () => screen.getByRole('button', { name: 'Locate issue' }).click())
+          await act(
+            async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+          )
+          expect(container.querySelector('[data-translation-source="p1"]')).not.toBeNull()
+          expect(generatePdf).toHaveBeenCalledTimes(1)
+          if (kind === 'validation') invalidTranslation = false
+        }
+
+        expect(screen.getAllByRole('alert')).toHaveLength(1)
+        expect(screen.getByRole('alert').closest('[data-pdf-translation-sidebar]')).not.toBeNull()
+        // First generation failure must expose accepted translations immediately,
+        // even though no verified PDF exists to enable the rendition controls.
+        const failedPanel = screen.getByRole('complementary', { name: 'Translation sidebar' })
+        const unavailableTranslation = within(failedPanel).getByRole<HTMLButtonElement>('button', {
+          name: 'View translated PDF'
+        })
+        expect(unavailableTranslation.disabled).toBe(true)
+        fireEvent.focus(unavailableTranslation.parentElement!)
+        await waitFor(() =>
+          expect(screen.getByRole('tooltip').textContent).toBe(
+            'The translated PDF could not be prepared. Read the translated text in the sidebar.'
+          )
+        )
+        fireEvent.blur(unavailableTranslation.parentElement!)
+        expect(within(failedPanel).getAllByText('细胞').length).toBeGreaterThan(0)
+        expect(
+          within(failedPanel)
+            .getByRole('button', { name: /^Translation\s*1$/ })
+            .getAttribute('aria-pressed')
+        ).toBe('true')
+        if (kind === 'retry') {
+          await act(async () => screen.getByRole('button', { name: 'Close translation' }).click())
+          expect(screen.queryByRole('alert')).toBeNull()
+          expect(screen.queryByText('Could not prepare translated PDF')).toBeNull()
+          await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+          expect(screen.getByRole('alert').closest('[data-pdf-translation-sidebar]')).not.toBeNull()
+        }
+        await act(async () => {
+          const retry = screen.getByRole('button', { name: 'Retry PDF generation' })
+          retry.focus()
+          retry.click()
+          await flush()
+        })
+        await act(
+          async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        )
+        if (kind === 'validation-unchanged') {
+          expect(generatePdf).toHaveBeenCalledTimes(2)
+          expect(screen.getByRole('alert').textContent).toContain(
+            'Rebuilding encountered the same issue. Your translations are still available.'
+          )
+          expect(screen.queryByRole('button', { name: 'Retry PDF generation' })).toBeNull()
+          expect(screen.getByRole('button', { name: 'Locate issue' })).toBeTruthy()
+          return
+        }
+        expect(document.activeElement).toBe(
+          screen.getByRole('button', { name: 'Close translation' })
+        )
+        expect(generatePdf).toHaveBeenCalledTimes(2)
+        expect(screen.queryByRole('alert')).toBeNull()
+        expect(screen.queryByText('Preparing translated PDF…')).toBeNull()
+      }
+      if (kind === 'validation') {
+        expect(container.querySelector('[data-translation-source="p1"]')).not.toBeNull()
+        expect(container.querySelector('[data-pdf-translated-page]')).toBeNull()
+        return
+      }
+      await openReadingView()
+      await waitFor(() =>
+        expect(
+          (screen.getByRole('button', { name: 'Compare' }) as HTMLButtonElement).disabled
+        ).toBe(false)
+      )
+      await act(async () => screen.getByRole('button', { name: 'Compare' }).click())
+      await waitFor(() =>
+        expect(container.querySelector('[data-pdf-translated-page]')).not.toBeNull()
+      )
+      expect(container.querySelector('[data-pdf-translation-reader]')).toBeNull()
+      const row = container.querySelector<HTMLElement>('[data-page-number="1"]')!
+      if (
+        container
+          .querySelector<HTMLElement>('[data-pdf-translation-sidebar]')
+          ?.getAttribute('aria-hidden') === 'true'
+      ) {
+        await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+      }
+      const translationSidebar = container.querySelector<HTMLElement>(
+        '[data-pdf-translation-sidebar]'
+      )!
+      expect(
+        within(translationSidebar).getByRole('button', { name: 'View translated PDF' })
+      ).toBeTruthy()
+      expect(within(translationSidebar).getByRole('button', { name: 'Compare PDFs' })).toBeTruthy()
+      expect(within(translationSidebar).getByRole('button', { name: 'Original PDF' })).toBeTruthy()
+      expect(
+        within(translationSidebar)
+          .getByRole('button', { name: /^Translation\s*\d+$/ })
+          .getAttribute('aria-pressed')
+      ).toBe('false')
+      await act(async () =>
+        within(translationSidebar).getByRole('button', { name: 'View translated PDF' }).click()
+      )
+      await waitFor(() => expect(row.querySelector('[data-pdf-translated-page]')).not.toBeNull())
+      expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+      expect(row.querySelector('[data-translation-highlight]')).toBeNull()
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /^Translation\s*\d+$/ })
+          .click()
+      )
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /Page 1/ })
+          .click()
+      )
+      const translatedHighlight = row.querySelector<HTMLElement>(
+        '[data-pdf-translated-page] [data-translation-highlight]'
+      )!
+      expect(translatedHighlight).not.toBeNull()
+      expect(translatedHighlight.dataset.translationSource).toBe('p1')
+      expect(translatedHighlight.style.left).toBe('10%')
+      expect(translatedHighlight.style.width).toBe('80%')
+      await waitFor(() =>
+        expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(
+          translatedHighlight
+        )
+      )
+      expect(
+        within(translationSidebar)
+          .getByRole('button', { name: 'View translated PDF' })
+          .getAttribute('aria-pressed')
+      ).toBe('true')
+      vi.mocked(Element.prototype.scrollIntoView).mockClear()
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: 'Locate paragraph on page 1' })
+          .click()
+      )
+      await waitFor(() =>
+        expect(vi.mocked(Element.prototype.scrollIntoView).mock.contexts).toContain(
+          translatedHighlight
+        )
+      )
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /^Page 1/ })
+          .click()
+      )
+      expect(row.querySelector('[data-translation-highlight]')).toBeNull()
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /^Translation\s*\d+$/ })
+          .click()
+      )
+      await act(async () =>
+        within(translationSidebar).getByRole('button', { name: 'Original PDF' }).click()
+      )
+      await waitFor(() => expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr)'))
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /^Translation\s*\d+$/ })
+          .click()
+      )
+      await act(async () =>
+        within(translationSidebar)
+          .getByRole('button', { name: /Page 1/ })
+          .click()
+      )
+      expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+      expect(
+        within(translationSidebar)
+          .getByRole('button', { name: 'Original PDF' })
+          .getAttribute('aria-pressed')
+      ).toBe('true')
+      await act(async () =>
+        within(translationSidebar).getByRole('button', { name: 'Compare PDFs' }).click()
+      )
+      await waitFor(() => expect(row.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))'))
+      expect(row.querySelectorAll('[data-translation-highlight]')).toHaveLength(2)
+      if (kind === 'artifact') {
+        await openReadingView()
+        await act(async () => screen.getByRole('button', { name: 'Paragraph markers' }).click())
+        await act(async () => screen.getByRole('button', { name: 'Reading view' }).click())
+        await act(
+          async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        )
+        const marker = screen.getByRole('button', { name: 'Read paragraph 1 translation' })
+        await act(async () => {
+          marker.focus()
+          marker.click()
+        })
+        await act(
+          async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+        )
+        expect(document.activeElement).toBe(
+          screen.getByRole('region', { name: 'pair.pdf scrollable preview' })
+        )
+      }
+      expect(
+        container
+          .querySelector<HTMLElement>('[data-pdf-translation-sidebar]')
+          ?.getAttribute('aria-hidden')
+      ).toBe('false')
+      expect(row.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+      for (const target of observer.targets) await observer.notify(target, true)
+      expect(row.querySelectorAll('canvas')).toHaveLength(2)
+      await waitFor(() => {
+        const calls = vi.mocked(renderPdfNativeLinks).mock.calls.map(([options]) => options)
+        expect(calls.map((options) => options.page)).toContain(originalPage)
+        expect(calls.map((options) => options.page)).toContain(targetPage)
+      })
+      const linkSignals = vi
+        .mocked(renderPdfNativeLinks)
+        .mock.calls.map(([options]) => options.signal)
+      const linkHosts = row.querySelectorAll<HTMLElement>('[data-pdf-native-links]')
+      expect([...linkHosts].every((host) => !host.hasAttribute('inert'))).toBe(true)
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Hand' })))
+      expect([...linkHosts].every((host) => host.hasAttribute('inert'))).toBe(true)
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Select' })))
+      await waitFor(() =>
+        expect(
+          row.querySelector('[data-pdf-translated-page] [data-pdf-text-layer]')?.textContent
+        ).toContain('细胞')
+      )
+      await openReadingView()
+      await act(async () => {
+        fireEvent.click(
+          within(readingRenditionGroup()).getByRole('button', { name: 'Translation' })
+        )
+        await flush()
+      })
+      expect(row.querySelectorAll('canvas')).toHaveLength(1)
+      if (kind === 'retry') {
+        const canvas = row.querySelector<HTMLCanvasElement>('[data-pdf-translated-page] canvas')!
+        await waitFor(() => expect(canvas.width).toBeGreaterThan(0))
+        const previousWidth = canvas.width
+        const drawImage = vi.mocked(canvas.getContext('2d')!.drawImage)
+        const paints = drawImage.mock.calls.length
+        let finishPaint!: () => void
+        targetPage.render.mockImplementationOnce(() => ({
+          promise: new Promise<void>((resolve) => {
+            finishPaint = resolve
+          }),
+          cancel: vi.fn()
+        }))
+        vi.mocked(pdfjsLib.getDocument).mockReturnValueOnce({
+          promise: Promise.resolve({ numPages: 1, getPage: async () => targetPage }),
+          destroy
+        } as never)
+        translatedText = '细胞内容'
+        await act(async () => {
+          root.render(
+            <PdfPreviewContent
+              {...props}
+              translationSource={source}
+              translation={{
+                ...results,
+                units: [{ ...results.units[0], translation: translatedText }]
+              }}
+            />
+          )
+          await flush()
+        })
+        await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(3))
+        await waitFor(() => expect(finishPaint).toBeDefined())
+        expect(canvas.width).toBe(previousWidth)
+        expect(drawImage).toHaveBeenCalledTimes(paints)
+        expect(row.querySelector('[data-pdf-translated-page] canvas')).toBe(canvas)
+        expect(row.style.gridTemplateColumns).toBe('minmax(0, 1fr)')
+        await act(async () => {
+          finishPaint()
+          await flush()
+        })
+        expect(drawImage).toHaveBeenCalledTimes(paints + 1)
+        expect(canvas.width).toBe(previousWidth)
+      }
+      await act(async () => {
+        root.render(null)
+        await flush()
+      })
+      expect(destroy).toHaveBeenCalledTimes(kind === 'retry' ? 2 : 1)
+      expect(linkSignals.every((signal) => signal.aborted)).toBe(true)
+    }
+  )
+
+  it.each([undefined, 'Arabic', 'Korean'])(
+    'keeps saved %s paragraph translations readable without unsupported PDF generation',
+    async (language) => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const generatePdf = vi.fn().mockResolvedValue(new Uint8Array([1]))
+      if (language) {
+        Object.assign(window.api, {
+          pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) }
+        })
+        vi.spyOn(translationJobs, 'usePdfTranslationJob').mockReturnValue({
+          state: {
+            status: 'completed',
+            done: 2,
+            total: 2,
+            options: { targetId: 'api', language, glossary: [] }
+          },
+          start: vi.fn(),
+          restart: vi.fn(),
+          retryUnit: vi.fn(),
+          skipUnit: vi.fn(),
+          cancel: vi.fn(),
+          reset: vi.fn()
+        })
+      }
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          fingerprints: ['fp'],
+          ...(language ? { getData: vi.fn().mockResolvedValue(new Uint8Array([2])) } : {}),
+          getPage,
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      const props = { path: 'compare.pdf', name: 'compare.pdf', source: 'local' as const }
+      const units = [1, 2].map((pageNumber) => ({
+        id: `p${pageNumber}`,
+        source: 'Selectable text',
+        translationSource: 'Selectable text',
+        translation: `${language === 'Arabic' ? 'خلية' : language === 'Korean' ? '세포' : '译文'} ${pageNumber}`,
+        fragments: [
+          {
+            pageNumber,
+            rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+            items: [{ index: 0, text: 'Selectable text' }]
+          }
+        ]
+      }))
+      const source = createPdfTranslationSource({
+        resourceRequestKey: `${createPreviewResourceKey(props)}:0`,
+        fingerprint: 'fp',
+        pages: [
+          { width: 600, height: 800 },
+          { width: 600, height: 800 }
+        ],
+        units
+      })
+      await act(async () => {
+        root.render(<PdfPreviewContent {...props} translationSource={source} />)
+        await flush()
+      })
+      const originalCanvas = container.querySelector('[data-page-number="1"] canvas')
+      expect(originalCanvas).not.toBeNull()
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            {...props}
+            translationSource={source}
+            translation={{ source, units: language ? units : units.slice(0, 1) }}
+          />
+        )
+        await flush()
+      })
+      expect(container.querySelector('[data-page-number="1"] canvas')).toBe(originalCanvas)
+      await openReadingView()
+      await act(async () => screen.getByRole('button', { name: 'Compare' }).click())
+      const original = screen.getByRole('region', { name: 'compare.pdf scrollable preview' })
+      expect(original.contains(screen.getByRole('group', { name: 'PDF rendition' }))).toBe(false)
+      expect(
+        screen
+          .getByRole('group', { name: 'PDF view controls' })
+          .contains(screen.getByRole('button', { name: 'Reading view' }))
+      ).toBe(true)
+      expect((screen.getByRole('button', { name: 'Compare' }) as HTMLButtonElement).disabled).toBe(
+        true
+      )
+      expect(
+        (screen.getByRole('button', { name: 'Translation' }) as HTMLButtonElement).disabled
+      ).toBe(true)
+      expect(container.querySelector('[data-pdf-translation-reader]')).toBeNull()
+      expect(container.querySelector('[data-pdf-translated-page]')).toBeNull()
+      await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+      const sidebar = container.querySelector<HTMLElement>('[data-pdf-translation-sidebar]')!
+      const translationToggle = within(sidebar).getByRole('button', { name: /^Translation\s*\d/ })
+      expect(translationToggle.getAttribute('aria-pressed')).toBe('false')
+      await act(async () => translationToggle.click())
+      expect(within(sidebar).getByText(units[0].translation)).toBeTruthy()
+      expect(generatePdf).not.toHaveBeenCalled()
+      const renditionActions = within(sidebar).getByRole('group', { name: 'PDF rendition' })
+      expect(
+        (
+          within(renditionActions).getByRole('button', {
+            name: 'View translated PDF'
+          }) as HTMLButtonElement
+        ).disabled
+      ).toBe(true)
+      const unavailableRendition = within(renditionActions).getByRole('button', {
+        name: 'View translated PDF'
+      })
+      fireEvent.focus(unavailableRendition.parentElement!)
+      await waitFor(() =>
+        expect(document.body.textContent).toContain(
+          language
+            ? 'PDF generation is unavailable for this language. Saved text translations remain available.'
+            : 'Available when the translated PDF is ready.'
+        )
+      )
+      await act(async () =>
+        within(sidebar)
+          .getByRole('button', { name: /Page 1/ })
+          .click()
+      )
+      await openReadingView()
+      expect(screen.getByRole('button', { name: 'Original' }).getAttribute('aria-pressed')).toBe(
+        'true'
+      )
+      expect(container.querySelector('[data-pdf-translation-reader]')).toBeNull()
+    }
+  )
+
+  it.each([
+    ['original', false],
+    ['translated', false],
+    ['compare', false],
+    ['translated', true],
+    ['compare', true]
+  ] as const)(
+    'preserves the translation list toggle and shows the PDF refresh from %s (source mismatch: %s)',
+    async (rendition, sourceMismatch) => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const job = {
+        state: { status: 'running' as const, done: 1, total: 4 },
+        start: vi.fn(),
+        restart: vi.fn(),
+        retryUnit: vi.fn(),
+        skipUnit: vi.fn(),
+        cancel: vi.fn(),
+        reset: vi.fn()
+      }
+      vi.spyOn(translationJobs, 'usePdfTranslationJob').mockReturnValue(job)
+      const props = { path: 'progress.pdf', name: 'progress.pdf', source: 'local' as const }
+      const units = [
+        'First paragraph',
+        'Second paragraph',
+        'Third paragraph',
+        'Fourth paragraph'
+      ].map((text, index) => ({
+        id: `p${index + 1}`,
+        source: text,
+        translationSource: text,
+        translation: ['第一段', '第二段', '第三段', '第四段'][index],
+        fragments: [
+          {
+            pageNumber: Math.floor(index / 2) + 1,
+            rect: { x: 0.1, y: 0.1 + (index % 2) * 0.125, width: 0.8, height: 0.1 },
+            items: [{ index: index % 2, text }]
+          }
+        ]
+      }))
+      const source = createPdfTranslationSource({
+        resourceRequestKey: `${createPreviewResourceKey(props)}:0`,
+        fingerprint: 'fp',
+        pages: [
+          { width: 600, height: 800 },
+          { width: 600, height: 800 }
+        ],
+        units
+      })
+      const completedUnits = [[], [0, 1], [0, 1, 3], [0, 1, 2, 3]]
+      const pageSnapshots = completedUnits.map((translatedIndices) =>
+        [1, 2].map((pageNumber) => ({
+          cleanup: vi.fn(),
+          getViewport: ({ scale }: { scale: number }) => ({
+            width: 600 * scale,
+            height: 800 * scale,
+            scale,
+            rotation: 0,
+            convertToViewportPoint: (x: number, y: number) => [x * scale, (800 - y) * scale]
+          }),
+          render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+          getTextContent: async () => ({
+            items: units.slice((pageNumber - 1) * 2, pageNumber * 2).map((unit, index) => ({
+              str: translatedIndices.includes((pageNumber - 1) * 2 + index)
+                ? unit.translation
+                : unit.source,
+              width: 80,
+              height: 10,
+              transform: [10, 0, 0, 10, 60, 700 - index * 100]
+            }))
+          }),
+          getAnnotations: async () => []
+        }))
+      )
+      const originalPages = pageSnapshots[0]
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          fingerprints: ['fp'],
+          getData: async () => new Uint8Array([0]),
+          getPage: async (number: number) => originalPages[number - 1],
+          destroy: vi.fn(async () => {})
+        }),
+        destroy: vi.fn(async () => {})
+      } as never)
+      for (const pages of pageSnapshots.slice(1, sourceMismatch ? 3 : 4)) {
+        vi.mocked(pdfjsLib.getDocument).mockReturnValueOnce({
+          promise: Promise.resolve({
+            numPages: 2,
+            getPage: async (number: number) => pages[number - 1]
+          }),
+          destroy: vi.fn(async () => {})
+        } as never)
+      }
+      let finishPdf!: () => void
+      let failPdf!: (error: Error) => void
+      const generatePdf = vi.fn(
+        () =>
+          new Promise<Uint8Array>((resolve, reject) => {
+            finishPdf = () => resolve(new Uint8Array([generatePdf.mock.calls.length]))
+            failPdf = reject
+          })
+      )
+      Object.assign(window.api, {
+        pdfTranslation: { generatePdf, cancelPdf: vi.fn(async () => {}) }
+      })
+      const progress = async (count: number): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <PdfPreviewContent
+              {...props}
+              translationSource={source}
+              translation={{
+                source,
+                units: count === 3 ? [units[0], units[1], units[3]] : units.slice(0, count)
+              }}
+            />
+          )
+          await flush()
+        })
+      }
+      await progress(1)
+      await act(async () => screen.getByRole('button', { name: 'Translating… 1/4' }).click())
+      const sidebar = container.querySelector<HTMLElement>('[data-pdf-translation-sidebar]')!
+      const translationToggle = (): HTMLElement =>
+        within(sidebar).getByRole('button', { name: /^Translation\s*\d+$/ })
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('false')
+      await act(async () => translationToggle().click())
+      expect(within(sidebar).getByText('第一段')).toBeTruthy()
+      await progress(2)
+      expect(generatePdf).toHaveBeenCalledTimes(1)
+      expect(within(sidebar).queryByText('Preparing translated PDF…')).toBeNull()
+      expect(within(sidebar).queryByText('Checking translated PDF…')).toBeNull()
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('true')
+      expect(within(sidebar).getByText('第一段')).toBeTruthy()
+      await act(async () => {
+        finishPdf()
+        await flush()
+      })
+      await waitFor(() =>
+        expect(
+          (
+            within(sidebar).getByRole('button', {
+              name: 'View translated PDF'
+            }) as HTMLButtonElement
+          ).disabled
+        ).toBe(false)
+      )
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('true')
+      expect(within(sidebar).getByText('第二段')).toBeTruthy()
+      if (rendition !== 'original') {
+        await act(async () =>
+          within(sidebar)
+            .getByRole('button', {
+              name: rendition === 'compare' ? 'Compare PDFs' : 'View translated PDF'
+            })
+            .click()
+        )
+      }
+      await progress(3)
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('true')
+      expect(within(sidebar).getByText('Page 2 · #4')).toBeTruthy()
+      expect(within(sidebar).queryByText('Page 2 · #3')).toBeNull()
+      expect(generatePdf).toHaveBeenCalledTimes(1)
+      if (rendition === 'original') {
+        await act(async () => screen.getByRole('button', { name: 'Close translation' }).click())
+      }
+      await act(async () => screen.getByRole('button', { name: 'Update PDF preview' }).click())
+      expect(generatePdf).toHaveBeenCalledTimes(2)
+      const row = container.querySelector<HTMLElement>('[data-page-number="1"]')!
+      expect(row.querySelector('[data-pdf-translated-page]')).not.toBeNull()
+      expect(row.style.gridTemplateColumns).toBe(
+        rendition === 'compare' ? 'repeat(2, minmax(0, 1fr))' : 'minmax(0, 1fr)'
+      )
+      expect(
+        screen.getByRole('button', { name: 'Update PDF preview' }).getAttribute('aria-busy')
+      ).toBe('true')
+      await act(async () => screen.getByRole('button', { name: 'Update PDF preview' }).click())
+      expect(generatePdf).toHaveBeenCalledTimes(2)
+      await act(async () => {
+        finishPdf()
+        await flush()
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Update PDF preview' })).toBeNull()
+      )
+      if (rendition === 'original') {
+        await act(async () => screen.getByRole('button', { name: 'Translating… 1/4' }).click())
+      }
+      expect(
+        within(sidebar)
+          .getByRole('button', {
+            name: rendition === 'compare' ? 'Compare PDFs' : 'View translated PDF'
+          })
+          .getAttribute('aria-pressed')
+      ).toBe('true')
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('true')
+      expect(within(sidebar).getByText('第四段')).toBeTruthy()
+      await act(async () => translationToggle().click())
+      const displayedPage = row.querySelector('[data-pdf-translated-page]')
+      expect(displayedPage).not.toBeNull()
+      // A slower parallel result fills an earlier gap. Keep the current PDF and
+      // rendition visible throughout the resulting automatic page refresh.
+      await progress(4)
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(3))
+      expect(row.querySelector('[data-pdf-translated-page]')).toBe(displayedPage)
+      expect(displayedPage?.isConnected).toBe(true)
+      expect(
+        within(sidebar)
+          .getByRole('button', {
+            name: rendition === 'compare' ? 'Compare PDFs' : 'View translated PDF'
+          })
+          .getAttribute('aria-pressed')
+      ).toBe('true')
+      expect(
+        within(sidebar).getByRole('button', { name: 'Original PDF' }).getAttribute('aria-pressed')
+      ).toBe('false')
+      if (sourceMismatch) {
+        await act(async () => {
+          failPdf(new PdfGenerationError({ code: 'source-mismatch', pageNumber: 2 }))
+          await flush()
+        })
+        await waitFor(() =>
+          expect(within(sidebar).getByText('Could not prepare translated PDF')).toBeTruthy()
+        )
+        expect(row.querySelector('[data-pdf-translated-page]')).toBe(displayedPage)
+        for (const name of ['Original PDF', 'View translated PDF', 'Compare PDFs']) {
+          const button = within(sidebar).getByRole<HTMLButtonElement>('button', { name })
+          expect(button.disabled).toBe(false)
+          await act(async () => button.click())
+          expect(button.getAttribute('aria-pressed')).toBe('true')
+        }
+        expect(row.querySelector('[data-pdf-translated-page]')).not.toBeNull()
+        expect(row.style.gridTemplateColumns).toBe('repeat(2, minmax(0, 1fr))')
+        expect(generatePdf).toHaveBeenCalledTimes(3)
+        expect(translationToggle().getAttribute('aria-pressed')).toBe('false')
+        await act(async () => translationToggle().click())
+        expect(within(sidebar).getByText('第三段')).toBeTruthy()
+        return
+      }
+      await act(async () => {
+        finishPdf()
+        await flush()
+      })
+      await waitFor(() =>
+        expect(screen.queryByRole('button', { name: 'Update PDF preview' })).toBeNull()
+      )
+      expect(translationToggle().getAttribute('aria-pressed')).toBe('false')
+    }
+  )
+
+  it('restarts translations with an externally supplied source without extracting a layout', async () => {
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        fingerprints: ['fp'],
+        getPage,
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const props = { path: 'supplied.pdf', name: 'supplied.pdf', source: 'local' as const }
+    const source = createPdfTranslationSource({
+      resourceRequestKey: createPreviewResourceKey(props) + ':0',
+      fingerprint: 'fp',
+      pages: [{ width: 600, height: 800 }],
+      units: [
+        {
+          id: 'p1',
+          source: 'Selectable text',
+          fragments: [
+            {
+              pageNumber: 1,
+              rect: { x: 0.1, y: 0.1, width: 0.8, height: 0.1 },
+              items: [{ index: 0, text: 'Selectable text' }]
+            }
+          ]
+        }
+      ]
+    })
+    const extract = vi.spyOn(pdfTranslations, 'extractPdfTranslationSource')
+    const executor = {
+      targets: [{ id: 'test', label: 'Test model', mode: 'agent' as const }],
+      begin: vi.fn(async () => undefined),
+      translate: vi.fn(async () => 'Translated paragraph')
+    }
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent {...props} translationSource={source} translationExecutor={executor} />
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
+        key: 'ArrowDown'
+      })
+    )
+    await act(async () => fireEvent.click(screen.getByRole('option', { name: 'Test model' })))
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Target language'), { target: { value: 'French' } })
+    )
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    await waitFor(() => expect(executor.translate).toHaveBeenCalledTimes(1))
+    await act(async () => screen.getByRole('button', { name: 'Translation settings' }).click())
+    await act(async () => screen.getByRole('button', { name: 'New translation' }).click())
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    await waitFor(() => expect(executor.begin).toHaveBeenCalledTimes(2))
+    expect(executor.begin).toHaveBeenLastCalledWith(
+      source,
+      expect.objectContaining({ language: 'French' }),
+      expect.any(AbortSignal)
+    )
+    expect(executor.translate).toHaveBeenCalledTimes(2)
+    expect(extract).not.toHaveBeenCalled()
+  })
+
+  it('keeps source coverage accessible after a prepared document is translated', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+    const page = await (
+      getPage as () => Promise<{
+        getViewport: ReturnType<typeof vi.fn>
+        getTextContent: ReturnType<typeof vi.fn>
+        rotate: number
+      }>
+    )()
+    page.getViewport.mockReturnValue({ width: 600, height: 800, transform: [1, 0, 0, -1, 0, 800] })
+    page.rotate = 0
+    page.getTextContent.mockResolvedValue({
+      items: [
+        {
+          str: 'Selectable text',
+          transform: [12, 0, 0, 12, 60, 700],
+          width: 100,
+          height: 12,
+          dir: 'ltr'
+        }
+      ],
+      styles: {}
+    })
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 1,
+        fingerprints: ['fp'],
+        getPage,
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    const executor = {
+      targets: [{ id: 'test', label: 'Test model', mode: 'agent' as const }],
+      translate: vi.fn(async () => 'Translated paragraph')
+    }
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent path="coverage.pdf" name="coverage.pdf" translationExecutor={executor} />
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+    await act(async () => {
+      screen.getByRole('button', { name: 'Prepare full text' }).click()
+      await flush()
+    })
+    await waitFor(() => expect(screen.getByText('Full text prepared')).toBeTruthy())
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('combobox', { name: 'Translation method' }), {
+        key: 'ArrowDown'
+      })
+    )
+    await act(async () => fireEvent.click(screen.getByRole('option', { name: 'Test model' })))
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Target language'), { target: { value: 'French' } })
+    )
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    await openReadingView()
+    expect(screen.queryByText('Full text prepared')).toBeNull()
+    await act(async () => screen.getByRole('button', { name: 'Close translation' }).click())
+    await act(async () => screen.getByRole('button', { name: 'View translation' }).click())
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    expect(screen.queryByRole('textbox', { name: 'Search translation' })).toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'View translation' }))
+    expect(screen.queryByText('Full-text preparation')).toBeNull()
+    const setupToggle = screen.getByRole('button', { name: 'Translation settings' })
+    expect(setupToggle.getAttribute('aria-expanded')).toBe('false')
+    await act(async () => setupToggle.click())
+    expect(setupToggle.getAttribute('aria-expanded')).toBe('true')
+    await act(async () => screen.getByText('Full-text preparation').closest('button')?.click())
+    const preparationInfo = screen.getByRole('button', { name: 'More information' })
+    await act(async () => fireEvent.focus(preparationInfo))
+    await waitFor(() =>
+      expect(document.body.textContent).toContain(
+        'This report checks source coverage, not translation completeness or accuracy.'
+      )
+    )
+    const translationToggle = screen
+      .getAllByRole('button', { name: /^Translation/ })
+      .find((button) => button.hasAttribute('aria-pressed'))
+    expect(translationToggle).toBeTruthy()
+    await act(async () => fireEvent.click(translationToggle!))
+
+    await act(async () => screen.getByRole('button', { name: 'Search translation' }).click())
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Search translation'), {
+        target: { value: 'Translated paragraph' }
+      })
+    )
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    const paragraph = screen.getByRole('button', { name: /Page 1 · #1\s*Translated paragraph/ })
+    await act(async () => {
+      paragraph.focus()
+      paragraph.click()
+    })
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    expect(paragraph.getAttribute('aria-expanded')).toBe('true')
+    expect(document.activeElement).toBe(paragraph)
+    expect(Element.prototype.scrollIntoView).toHaveBeenCalledWith({ block: 'center' })
+    await act(async () => paragraph.click())
+    expect(paragraph.getAttribute('aria-expanded')).toBe('false')
+    expect(document.activeElement).toBe(paragraph)
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Search translation'), {
+        target: { value: 'previous translation only' }
+      })
+    )
+    expect(screen.getByText('No translation matches')).toBeTruthy()
+    await act(async () => screen.getByRole('button', { name: 'New translation' }).click())
+    expect(screen.getByRole('dialog').textContent).toContain('Target language')
+    expect((screen.getByRole('dialog').querySelector('input') as HTMLInputElement).value).toBe(
+      'French'
+    )
+    expect(executor.translate).toHaveBeenCalledTimes(1)
+    await act(async () => screen.getByRole('button', { name: 'Cancel' }).click())
+    expect(screen.getByText('No translation matches')).toBeTruthy()
+    expect(executor.translate).toHaveBeenCalledTimes(1)
+    await act(async () => screen.getByRole('button', { name: 'New translation' }).click())
+    await act(async () => {
+      screen.getByRole('button', { name: 'Translate document' }).click()
+      await flush()
+    })
+    expect(executor.translate).toHaveBeenCalledTimes(2)
+    await act(async () => screen.getByRole('button', { name: 'Search translation' }).click())
+    await waitFor(() => expect(screen.getByLabelText('Search translation')).toBeTruthy())
+    expect((screen.getByLabelText('Search translation') as HTMLInputElement).value).toBe('')
+    const restoredTranslationToggle = screen
+      .getAllByRole('button', { name: /^Translation/ })
+      .find((button) => button.hasAttribute('aria-pressed'))
+    expect(restoredTranslationToggle).toBeTruthy()
+    if (restoredTranslationToggle!.getAttribute('aria-pressed') === 'false') {
+      await act(async () => fireEvent.click(restoredTranslationToggle!))
+    }
+    expect(
+      screen
+        .getByRole('button', { name: /Page 1 · #1\s*Translated paragraph/ })
+        .getAttribute('aria-pressed')
+    ).toBe('false')
+    await openReadingView()
+    expect(screen.getByRole('button', { name: 'Original' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    expect(executor.translate).toHaveBeenCalledTimes(2)
+  })
+
+  it('separates translation from navigation, retains draft settings, and shares the notes space', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+    const executor = {
+      targets: [{ id: 'agent', label: 'Agent', mode: 'agent' as const }],
+      translate: vi.fn()
+    }
+    await act(async () => {
+      root.render(
+        <PdfPreviewContent
+          path="literature-attachment-version:version-1"
+          name="paper.pdf"
+          source="literature"
+          translationExecutor={executor}
+        />
+      )
+      await flush()
+    })
+    const entry = screen.getByRole('button', { name: 'Full-text translation' })
+    const panel = container.querySelector<HTMLElement>('[data-pdf-translation-sidebar]')!
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    expect(panel.dataset.state).toBe('closed')
+    await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+    const navigation = container.querySelector('#pdf-navigation-sidebar')!
+    expect(navigation.textContent).not.toContain('Translation')
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    await act(async () => entry.click())
+    expect(panel.getAttribute('aria-hidden')).toBe('false')
+    expect(panel.dataset.state).toBe('open')
+    expect(panel.className).toContain('transition-[opacity,transform]')
+    expect(panel.hasAttribute('data-preview-escape-boundary')).toBe(true)
+    expect(navigation).toBe(container.querySelector('#pdf-navigation-sidebar'))
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '320px'
+    )
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Target language'), { target: { value: 'Chinese' } })
+    )
+    await act(async () =>
+      fireEvent.click(screen.getByText('Translation glossary', { selector: 'button' }))
+    )
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Add term' })))
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Source term 1'), { target: { value: 'cell' } })
+    )
+    await act(async () =>
+      fireEvent.change(screen.getByLabelText('Preferred translation 1'), {
+        target: { value: '细胞' }
+      })
+    )
+    await act(async () =>
+      fireEvent.keyDown(screen.getByLabelText('Source term 1'), { key: 'Escape' })
+    )
+    expect(document.activeElement).toBe(entry)
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    await act(async () => entry.click())
+    expect((screen.getByLabelText('Target language') as HTMLInputElement).value).toBe('Chinese')
+    expect((screen.getByLabelText('Source term 1') as HTMLInputElement).value).toBe('cell')
+    expect((screen.getByLabelText('Preferred translation 1') as HTMLInputElement).value).toBe(
+      '细胞'
+    )
+    await act(async () => screen.getByRole('button', { name: 'Show notes sidebar' }).click())
+    expect(panel.getAttribute('aria-hidden')).toBe('true')
+    const notesPanel = container.querySelector<HTMLElement>('[data-pdf-notes-sidebar]')!
+    expect(notesPanel.style.width).toBe(panel.style.width)
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize notes sidebar' }), {
+        key: 'ArrowLeft'
+      })
+    )
+    expect(notesPanel.style.width).toBe('336px')
+    await act(async () => entry.click())
+    expect(panel.style.width).toBe('336px')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      panel.style.width
+    )
+    expect(panel.getAttribute('aria-hidden')).toBe('false')
+    expect(container.querySelector('[data-pdf-notes-sidebar]')).toBeNull()
+    await act(async () => screen.getByRole('button', { name: 'Translation settings' }).click())
+    await act(async () => screen.getByRole('button', { name: 'Close translation' }).click())
+    await act(async () => entry.click())
+    await act(async () => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())))
+    expect(document.activeElement).toBe(entry)
+    expect(screen.queryByRole('textbox', { name: 'Search translation' })).toBeNull()
+    expect(executor.translate).not.toHaveBeenCalled()
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([320, 375, 414, 768])(
+    'shows only one contextual sidebar at reader width %s',
+    async (width) => {
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(width)
+      await act(async () => {
+        root.render(
+          <PdfPreviewContent
+            path="literature-attachment-version:version-1"
+            name="paper.pdf"
+            source="literature"
+          />
+        )
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      await act(async () => screen.getByRole('button', { name: 'Full-text translation' }).click())
+      expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
+      const panel = container.querySelector('[data-pdf-translation-sidebar]')!
+      expect(panel.getAttribute('aria-hidden')).toBe('false')
+      expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe('')
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      expect(panel.getAttribute('aria-hidden')).toBe('true')
+      expect(container.querySelector('#pdf-navigation-sidebar')).not.toBeNull()
+      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    }
+  )
+
+  it('floats notes in narrow readers and preserves the notebook and docked width across resizing', async () => {
     let width = 1200
     const callbacks: ResizeObserverCallback[] = []
     vi.stubGlobal(
@@ -441,6 +2482,7 @@ describe('PdfPreviewContent', () => {
     expect(navigationToggle.closest('[role="tablist"]')).not.toBeNull()
     expect(navigationToggle.closest('[data-pdf-controls="interaction"]')).toBeNull()
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
+    expect(notebook.getAttribute('tabindex')).toBe('-1')
     expect(notebook.getAttribute('aria-hidden')).toBe('false')
     expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
       '320px'
@@ -457,18 +2499,34 @@ describe('PdfPreviewContent', () => {
         await flush()
       })
     }
-    await resize(900)
+    await resize(1119)
+    expect(notebook.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe('')
+    expect((notebook as HTMLElement).style.width).toBe('320px')
+    expect(container.querySelector('[aria-label="Resize notes sidebar"]')).toBeNull()
+    await resize(280)
+    expect((notebook as HTMLElement).style.width).toBe('264px')
     const narrowToggle = container.querySelector<HTMLButtonElement>(
-      '[aria-label="Show notes sidebar"]'
+      '[role="tablist"] [aria-label="Hide notes sidebar"]'
     )!
-    expect(narrowToggle).not.toBeNull()
-    expect(narrowToggle.getAttribute('aria-disabled')).toBe('true')
     await act(async () => narrowToggle.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
-    await resize(1200)
-    expect(
-      container.querySelector('[aria-label="Hide notes sidebar"]')?.getAttribute('aria-disabled')
-    ).toBe('false')
+    await act(async () => narrowToggle.click())
+    expect(notebook.hasAttribute('inert')).toBe(false)
+    expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+    await act(async () =>
+      notebook.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    )
+    expect(notebook.hasAttribute('inert')).toBe(true)
+    expect(document.activeElement).toBe(narrowToggle)
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    await act(async () => narrowToggle.click())
+    await resize(1120)
+    expect(container.querySelector('[aria-label="Resize notes sidebar"]')).not.toBeNull()
+    expect((notebook as HTMLElement).style.width).toBe('336px')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '336px'
+    )
     expect(notebook.getAttribute('data-pdf-notes-sidebar')).toBe('true')
     await act(async () =>
       container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')!.click()
@@ -478,7 +2536,7 @@ describe('PdfPreviewContent', () => {
     const toggleWithNavigation = container.querySelector<HTMLButtonElement>(
       '[role="tablist"] [aria-label="Hide notes sidebar"]'
     )!
-    expect(toggleWithNavigation.getAttribute('aria-disabled')).toBe('false')
+    expect(toggleWithNavigation.getAttribute('aria-disabled')).not.toBe('true')
     await act(async () => toggleWithNavigation.click())
     expect(notebook.hasAttribute('inert')).toBe(true)
     await act(async () => toggleWithNavigation.click())
@@ -490,6 +2548,30 @@ describe('PdfPreviewContent', () => {
     expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loadCount)
     expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
     expect(destroyDocument).not.toHaveBeenCalled()
+  })
+
+  it('keeps notes docked at the default application modal width', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1150)
+    await act(async () => {
+      root.render(
+        <div data-slot="file-preview-dialog">
+          <PdfPreviewContent
+            path="literature-attachment-version:version-1"
+            name="paper.pdf"
+            source="literature"
+          />
+        </div>
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show notes sidebar' }).click())
+    const notes = container.querySelector<HTMLElement>('[data-pdf-notes-sidebar]')!
+    expect(notes.style.width).toBe('320px')
+    expect(container.querySelector<HTMLElement>('[data-pdf-original-view]')!.style.right).toBe(
+      '320px'
+    )
+    expect(screen.getByRole('separator', { name: 'Resize notes sidebar' })).not.toBeNull()
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
   })
 
   it('switches Literature reading modes without releasing or resetting the original PDF', async () => {
@@ -528,6 +2610,9 @@ describe('PdfPreviewContent', () => {
     )
     const original = container.querySelector<HTMLElement>('[data-pdf-original-view]')!
     const scroller = original.querySelector<HTMLElement>('[role="region"]')!
+    // Only the real PDF scroller is a keyboard stop, not its structural tab wrapper.
+    expect(original.tabIndex).toBe(-1)
+    expect(scroller.tabIndex).toBe(0)
     scroller.scrollTop = 275
     const clickMode = async (label: string): Promise<void> => {
       const button = [...container.querySelectorAll('button')].find(
@@ -545,6 +2630,7 @@ describe('PdfPreviewContent', () => {
     )
     expect(original.getAttribute('aria-hidden')).toBe('true')
     expect(original.hasAttribute('inert')).toBe(true)
+    expect(container.querySelector('[data-pdf-figures-view]')?.getAttribute('tabindex')).toBe('-1')
     const figures = container.querySelector('[data-pdf-figures-content]')
     expect(figures).not.toBeNull()
     await act(async () => {
@@ -641,132 +2727,449 @@ describe('PdfPreviewContent', () => {
     )
   })
 
-  it('W01 reloads revoked PDF ranges while retaining zoom, position and the selected version', async () => {
-    document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
-    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
-    const freshAcquire =
-      Promise.withResolvers<Awaited<ReturnType<Window['api']['previewResources']['acquire']>>>()
-    const resource = {
-      id: 'resource-1',
-      url: '/preview/resource-1',
-      size: 3,
-      mimeType: 'application/pdf',
-      version: 1
-    }
-    vi.mocked(window.api.previewResources.acquire)
-      .mockReset()
-      .mockResolvedValueOnce(resource)
-      .mockReturnValueOnce(freshAcquire.promise)
-    const active = new Set(['resource-1'])
-    vi.mocked(window.api.previewResources.readRange).mockImplementation(async ({ resourceId }) => {
-      if (!active.has(resourceId)) throw new Error('Revoked PDF resource')
-      return { begin: 0, end: 3, total: 3, data: new Uint8Array([1, 2, 3]) }
-    })
-    vi.mocked(createManagedPdfLoadingTask).mockImplementation(
-      (capability) =>
-        ({
-          promise: Promise.resolve({
-            numPages: 3,
-            destroy: destroyDocument,
-            getPage: async () => {
-              await window.api.previewResources.readRange({
-                resourceId: capability.id,
-                begin: 0,
-                end: 3
-              })
-              return {
-                getViewport: ({ scale }: { scale: number }) => ({
-                  width: 400 * scale,
-                  height: 560 * scale
-                }),
-                getTextContent: async () => ({
-                  items: [{ str: `Text from ${capability.id}` }],
-                  styles: {}
-                }),
-                render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
-                cleanup: vi.fn()
-              }
-            }
-          }),
-          destroy: vi.fn().mockResolvedValue(undefined)
-        }) as never
-    )
-    const phase = (value: string): void => {
-      window.dispatchEvent(
-        new CustomEvent(WEB_EVENT_CONNECTION_STATE_EVENT, { detail: { phase: value } })
-      )
-    }
-    try {
+  it.each(['connected', 'disconnected'] as const)(
+    'reports rejected PDF releases only while the backend is connected (%s)',
+    async (phase) => {
+      const error = new Error('Preview release unavailable')
+      const report = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      vi.mocked(window.api.previewResources.release).mockRejectedValue(error)
       await act(async () =>
+        root.render(<PdfPreviewContent path="/report.pdf" name="report.pdf" source="local" />)
+      )
+      await act(async () => {
+        useDesktopRuntimeRecoveryStore.setState({ phase, epoch: phase === 'connected' ? 0 : 1 })
+        root.unmount()
+      })
+      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
+      expect(destroyDocument).toHaveBeenCalled()
+      if (phase === 'connected') {
+        expect(report).toHaveBeenCalledWith('Failed to release PDF preview resource', error)
+      } else {
+        expect(report).not.toHaveBeenCalled()
+      }
+    }
+  )
+
+  it.each(['web', 'desktop'] as const)(
+    'reloads revoked %s PDF ranges while retaining zoom, position and the selected version',
+    async (surface) => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
+      if (surface === 'web')
+        document.documentElement.setAttribute(WEB_EVENT_SURFACE_ATTRIBUTE, 'true')
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+      const freshAcquire =
+        Promise.withResolvers<Awaited<ReturnType<Window['api']['previewResources']['acquire']>>>()
+      const resource = {
+        id: 'resource-1',
+        url: '/preview/resource-1',
+        size: 3,
+        mimeType: 'application/pdf',
+        version: 1
+      }
+      vi.mocked(window.api.previewResources.acquire)
+        .mockReset()
+        .mockResolvedValueOnce(resource)
+        .mockImplementation(() =>
+          useDesktopRuntimeRecoveryStore.getState().phase === 'connected'
+            ? freshAcquire.promise
+            : Promise.reject(new Error('Desktop is recovering.'))
+        )
+      const active = new Set(['resource-1'])
+      vi.mocked(window.api.previewResources.readRange).mockImplementation(
+        async ({ resourceId }) => {
+          if (!active.has(resourceId)) throw new Error('Revoked PDF resource')
+          return { begin: 0, end: 3, total: 3, data: new Uint8Array([1, 2, 3]) }
+        }
+      )
+      vi.mocked(createManagedPdfLoadingTask).mockImplementation(
+        (capability) =>
+          ({
+            promise: Promise.resolve({
+              numPages: 3,
+              destroy: destroyDocument,
+              getOutline: async () =>
+                capability.id === 'resource-1'
+                  ? [
+                      { title: 'Old section', dest: [0], items: [] },
+                      { title: 'Old later section', dest: [0], items: [] }
+                    ]
+                  : [
+                      { title: 'New section', dest: [0], items: [] },
+                      { title: 'New later section', dest: [2], items: [] }
+                    ],
+              getPage: async () => {
+                await window.api.previewResources.readRange({
+                  resourceId: capability.id,
+                  begin: 0,
+                  end: 3
+                })
+                return {
+                  getViewport: ({ scale }: { scale: number }) => ({
+                    width: 400 * scale,
+                    height: 560 * scale
+                  }),
+                  getTextContent: async () => ({
+                    items: [{ str: `Text from ${capability.id}` }],
+                    styles: {}
+                  }),
+                  render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+                  cleanup: vi.fn()
+                }
+              }
+            }),
+            destroy: vi.fn().mockResolvedValue(undefined)
+          }) as never
+      )
+      const phase = (value: string): void => {
+        if (surface === 'desktop') {
+          useDesktopRuntimeRecoveryStore.setState({
+            phase: value === 'live' ? 'connected' : 'disconnected',
+            epoch: value === 'live' && useDesktopRuntimeRecoveryStore.getState().epoch === 0 ? 0 : 1
+          })
+        } else
+          window.dispatchEvent(
+            new CustomEvent(WEB_EVENT_CONNECTION_STATE_EVENT, { detail: { phase: value } })
+          )
+      }
+      try {
+        await act(async () =>
+          root.render(
+            <PdfPreviewContent
+              path="/report.pdf"
+              name="report.pdf"
+              source="artifact"
+              projectId="project-1"
+              managedFileId="file-1"
+              selectedVersionId="version-1"
+            />
+          )
+        )
+        await act(async () => phase('live'))
+        await act(async () => {
+          const navigation = await vi.waitFor(() =>
+            container.querySelector<HTMLButtonElement>('[aria-label="Show navigation"]')
+          )
+          navigation?.click()
+        })
+        await act(async () => screen.getByRole('treeitem', { name: 'Old later section' }).click())
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
+        )
+        expect(container.textContent).toContain('125%')
+        const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+        scroll.scrollTop = 700
+        scroll.scrollLeft = 50
+        vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
+          this: HTMLElement
+        ) {
+          if (this === scroll)
+            return { left: 0, top: 0, right: 400, bottom: 600, width: 400, height: 600 } as DOMRect
+          if (this.dataset.pageNumber) {
+            const width = Number.parseFloat(this.style.width)
+            const height = width * 1.4
+            const top =
+              16 + (Number(this.dataset.pageNumber) - 1) * (height + 12) - scroll.scrollTop
+            return {
+              left: 16 - scroll.scrollLeft,
+              top,
+              right: 16 - scroll.scrollLeft + width,
+              bottom: top + height,
+              width,
+              height
+            } as DOMRect
+          }
+          return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect
+        })
+        active.clear()
+        await act(async () => phase('reconnecting'))
+        await act(async () => phase('replaying'))
+        await act(async () => phase('live'))
+        expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+        expect(container.querySelector('canvas')).toBeNull()
+        // Browsers clamp the scroller when old pages disappear during the new acquisition.
+        scroll.scrollTop = 0
+        scroll.scrollLeft = 0
+        active.add('resource-2')
+        await act(async () => freshAcquire.resolve({ ...resource, id: 'resource-2' }))
+        expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toContain(
+          'Text from resource-2'
+        )
+        expect(
+          screen.getByRole('treeitem', { name: 'New section' }).getAttribute('aria-selected')
+        ).toBe('true')
+        expect(
+          screen.getByRole('treeitem', { name: 'New later section' }).getAttribute('aria-selected')
+        ).toBe('false')
+        expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: 'file-1',
+          versionId: 'version-1'
+        })
+        expect(container.textContent).toContain('125%')
+        expect(scroll.scrollTop).toBe(700)
+        expect(scroll.scrollLeft).toBe(50)
+        expect(destroyDocument).toHaveBeenCalled()
+        expect(window.api.previewResources.release).toHaveBeenCalledWith({
+          resourceId: 'resource-1'
+        })
+      } finally {
+        document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
+        freshAcquire.resolve({ ...resource, id: 'resource-2' })
+      }
+    }
+  )
+
+  it('keeps the PDF resource and zoom while the conversation Session binds', async () => {
+    window.api.pdfAnnotations = {
+      list: vi.fn().mockResolvedValue({ items: [], total: 0 })
+    } as unknown as Window['api']['pdfAnnotations']
+    const render = async (sessionId?: string): Promise<void> => {
+      await act(async () => {
         root.render(
-          <PdfPreviewContent
-            path="/report.pdf"
-            name="report.pdf"
-            source="artifact"
-            projectId="project-1"
-            managedFileId="file-1"
-            selectedVersionId="version-1"
+          <TooltipProvider>
+            <PdfAnnotationsProvider
+              projectId={sessionId ? 'project-1' : undefined}
+              sessionId={sessionId}
+              loadAnnotations={false}
+            >
+              <PdfPreviewRenderer
+                item={{
+                  id: 'upload-1',
+                  projectId: 'project-1',
+                  sessionId: 'creator',
+                  title: 'paper.pdf',
+                  type: 'file',
+                  source: 'upload',
+                  path: 'upload-version:version-1',
+                  name: 'paper.pdf',
+                  format: 'pdf',
+                  managedFileId: 'upload-1',
+                  selectedVersionId: 'version-1'
+                }}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+        await flush()
+      })
+    }
+    await render()
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Zoom in' })))
+    expect(container.textContent).toContain('125%')
+    const scroll = screen.getByLabelText('paper.pdf scrollable preview')
+    const loads = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    await render('pending-session')
+    await render('bound-session')
+    expect(container.textContent).toContain('125%')
+    expect(screen.getByLabelText('paper.pdf scrollable preview')).toBe(scroll)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loads)
+    expect(destroyDocument).not.toHaveBeenCalled()
+    expect(window.api.previewResources.release).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['upload', false],
+    ['artifact', false],
+    ['upload', true],
+    ['artifact', true]
+  ] as const)(
+    'shows package %s PDF snapshots without live notes or mutation controls (receipt only: %s)',
+    async (sourceKind, receiptOnly) => {
+      const setValue = vi.fn()
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          destroy: destroyDocument,
+          annotationStorage: { setValue }
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      const annotation: SavedPdfAnnotation = {
+        id: 'package-note',
+        projectId: 'project-1',
+        version: 1,
+        origin: 'user',
+        kind: 'page-note',
+        tagIds: [],
+        note: 'Packaged evidence',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z',
+        target: {
+          source: {
+            kind: sourceKind === 'upload' ? 'upload-version' : 'artifact-version',
+            projectId: 'project-1',
+            sessionId: 'package-session',
+            sourceFileId: 'file-1',
+            versionId: 'version-1',
+            name: 'paper.pdf',
+            path: `${sourceKind}-version:version-1`,
+            checksum: 'a'.repeat(64)
+          },
+          selector: { kind: 'page-note', pageNumber: 1, pageRotation: 0, coordinateVersion: 1 }
+        }
+      }
+      let resolveNotes!: (value: PdfAnnotationListResult) => void
+      const list = vi.fn<Window['api']['pdfAnnotations']['list']>(
+        () =>
+          new Promise((resolve) => {
+            resolveNotes = resolve
+          })
+      )
+      const resolvePdfSource = vi.fn()
+      window.api = {
+        ...window.api,
+        pdfAnnotations: { list },
+        bookmarks: { resolvePdfSource },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: 'package-session',
+        sessions: [{ id: 'package-session', projectId: 'project-1', packageOrigin: {} }] as never
+      })
+      await act(async () => {
+        root.render(
+          <TooltipProvider>
+            <PdfAnnotationsProvider writable={false} loadAnnotations={false}>
+              <PdfPreviewRenderer
+                item={{
+                  id: 'file-1',
+                  projectId: 'project-1',
+                  sessionId: 'package-session',
+                  title: 'paper.pdf',
+                  name: 'paper.pdf',
+                  type: 'file',
+                  format: 'pdf',
+                  source: sourceKind,
+                  path: annotation.target.source.path,
+                  managedFileId: 'file-1',
+                  selectedVersionId: 'version-1'
+                }}
+              />
+            </PdfAnnotationsProvider>
+          </TooltipProvider>
+        )
+        await flush()
+      })
+      expect(list).toHaveBeenCalledTimes(1)
+      expect(list).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        sessionId: 'package-session',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        limit: 100,
+        cursor: undefined
+      })
+      const expectReadOnly = (): void => {
+        expect(
+          screen
+            .getByRole('button', { name: 'Annotate selected text' })
+            .getAttribute('aria-disabled')
+        ).toBe('true')
+        expect(screen.queryByRole('button', { name: 'Select area to annotate' })).toBeNull()
+      }
+      expectReadOnly()
+      await act(async () => {
+        const result: PdfAnnotationListResult = {
+          items: receiptOnly ? [] : [annotation],
+          total: receiptOnly ? 0 : 1,
+          readOnly: true,
+          readonlyIds: receiptOnly ? [] : [annotation.id],
+          source: annotation.target.source,
+          nativeImport: {
+            nativeRefs: [{ id: '12R', pageNumber: 1 }],
+            pageCount: 1,
+            unsupportedCount: 0,
+            truncated: false
+          }
+        }
+        list.mockResolvedValue(result)
+        resolveNotes(result)
+        await flush()
+      })
+      expectReadOnly()
+      await act(async () =>
+        fireEvent.mouseDown(screen.getByRole('tab', { name: 'Notes & Annotations' }), {
+          button: 0,
+          ctrlKey: false
+        })
+      )
+      expect(setValue).toHaveBeenCalledWith('12R', { noView: true })
+      if (!receiptOnly) {
+        expect(container.querySelector('[data-pdf-notebook-view]')?.textContent).toContain(
+          'Packaged evidence'
+        )
+        expect(
+          screen.getByRole('button', { name: 'Edit annotation note' }).hasAttribute('disabled')
+        ).toBe(true)
+        expect(
+          screen.getByRole('button', { name: 'Delete annotation' }).hasAttribute('disabled')
+        ).toBe(true)
+      } else {
+        expect(screen.queryByRole('button', { name: 'Edit annotation note' })).toBeNull()
+      }
+      expect(container.textContent).not.toContain(
+        'PDF annotations are unavailable for this source.'
+      )
+      expect(resolvePdfSource).not.toHaveBeenCalled()
+      for (const [request] of list.mock.calls)
+        expect(request).toMatchObject({
+          projectId: 'project-1',
+          sessionId: 'package-session',
+          sourceFileId: 'file-1',
+          versionId: 'version-1'
+        })
+    }
+  )
+
+  it.each([undefined, 'artifact'] as const)(
+    'opens read-only replay PDF versions without writable annotation/bookmark access (source: %s)',
+    async (source) => {
+      const list = vi.fn()
+      const resolveSource = vi.fn()
+      window.api.pdfAnnotations = { list } as never
+      window.api.bookmarks = { resolveSource } as never
+      useSessionStore.setState({
+        selectedSessionId: 'discussion',
+        sessions: [{ id: 'discussion', projectId: 'project-1' }] as never
+      })
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            readOnly
+            item={{
+              id: 'recorded-pdf',
+              projectId: 'project-1',
+              sessionId: 'creator',
+              title: 'report.pdf',
+              name: 'report.pdf',
+              type: 'file',
+              format: 'pdf',
+              source,
+              path: 'artifact-version:historical',
+              managedFileId: 'artifact-1',
+              selectedVersionId: 'historical'
+            }}
           />
         )
-      )
-      await act(async () => phase('live'))
-      await act(async () =>
-        container.querySelector<HTMLButtonElement>('[aria-label="Zoom in"]')?.click()
-      )
-      expect(container.textContent).toContain('125%')
-      const scroll = container.querySelector<HTMLElement>('[role="region"]')!
-      scroll.scrollTop = 700
-      scroll.scrollLeft = 50
-      vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (
-        this: HTMLElement
-      ) {
-        if (this === scroll)
-          return { left: 0, top: 0, right: 400, bottom: 600, width: 400, height: 600 } as DOMRect
-        if (this.dataset.pageNumber) {
-          const width = Number.parseFloat(this.style.width)
-          const height = width * 1.4
-          const top = 16 + (Number(this.dataset.pageNumber) - 1) * (height + 12) - scroll.scrollTop
-          return {
-            left: 16 - scroll.scrollLeft,
-            top,
-            right: 16 - scroll.scrollLeft + width,
-            bottom: top + height,
-            width,
-            height
-          } as DOMRect
-        }
-        return { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 } as DOMRect
+        await flush()
       })
-      active.clear()
-      await act(async () => phase('reconnecting'))
-      await act(async () => phase('replaying'))
-      await act(async () => phase('live'))
-      expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
-      expect(container.querySelector('canvas')).toBeNull()
-      // Browsers clamp the scroller when old pages disappear during the new acquisition.
-      scroll.scrollTop = 0
-      scroll.scrollLeft = 0
-      active.add('resource-2')
-      await act(async () => freshAcquire.resolve({ ...resource, id: 'resource-2' }))
-      expect(container.querySelector('[data-pdf-text-layer]')?.textContent).toContain(
-        'Text from resource-2'
+      await vi.waitFor(() =>
+        expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
+          source: 'artifact',
+          projectId: 'project-1',
+          fileId: 'artifact-1',
+          versionId: 'historical'
+        })
       )
-      expect(window.api.previewResources.acquire).toHaveBeenLastCalledWith({
-        source: 'artifact',
-        projectId: 'project-1',
-        fileId: 'file-1',
-        versionId: 'version-1'
-      })
-      expect(container.textContent).toContain('125%')
-      expect(scroll.scrollTop).toBe(700)
-      expect(scroll.scrollLeft).toBe(50)
-      expect(destroyDocument).toHaveBeenCalled()
-      expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
-    } finally {
-      document.documentElement.removeAttribute(WEB_EVENT_SURFACE_ATTRIBUTE)
-      freshAcquire.resolve({ ...resource, id: 'resource-2' })
+      expect(list).not.toHaveBeenCalled()
+      expect(resolveSource).not.toHaveBeenCalled()
+      await act(async () => root.render(null))
+      expect(window.api.previewResources.release).toHaveBeenCalled()
     }
-  })
+  )
 
   it('acquires the exact managed Artifact version selected by the preview item', async () => {
     await act(async () => {
@@ -939,7 +3342,9 @@ describe('PdfPreviewContent', () => {
       })
       const tabs = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
       expect(tabs).toHaveLength(3)
-      for (const tab of tabs) expect(tab.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+      for (const tab of tabs) {
+        expect(tab.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+      }
       await act(async () =>
         fireEvent.mouseDown(
           tabs.find((tab) => tab.textContent === 'Notes & Annotations')!,
@@ -977,47 +3382,323 @@ describe('PdfPreviewContent', () => {
     }
   )
 
-  it('resolves an exact bookmark source without a PDF Agent-context binding', async () => {
-    const resolvePdfSource = vi.fn().mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+  it('adds a Library PDF region to a new conversation draft and disables selection after unlink', async () => {
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(400)
+    vi.mocked(HTMLCanvasElement.prototype.getContext).mockReturnValue({
+      drawImage: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    vi.spyOn(HTMLCanvasElement.prototype, 'toDataURL').mockReturnValue('data:image/png;base64,AQID')
+    const source = {
+      kind: 'literature-attachment-version' as const,
+      sourceFileId: 'attachment-1',
+      versionId: 'version-1',
+      name: 'paper.pdf',
+      path: 'literature-attachment-version:version-1',
+      checksum: 'a'.repeat(64)
+    }
+    const onAddAnnotation = vi.fn()
+    const createSession = vi.fn()
     window.api = {
       ...window.api,
-      bookmarks: { resolvePdfSource }
+      sessions: { create: createSession },
+      pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0, source }) },
+      tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
     } as unknown as Window['api']
-    useSessionStore.setState({
-      selectedSessionId: 'session-owner',
-      sessions: [{ id: 'session-owner', projectId: 'project-1' }]
-    } as never)
-
+    usePreviewWorkbenchStore.setState({
+      activeProjectId: 'project-1',
+      pendingPdfContextByProject: {
+        'project-1': {
+          kind: 'version',
+          sourceKind: source.kind,
+          sourceVersionId: source.versionId,
+          previewItemId: 'library-pdf'
+        }
+      }
+    })
     await act(async () => {
       root.render(
         <PdfPreviewRenderer
           item={{
-            id: 'artifact-1',
+            id: 'library-pdf',
             projectId: 'project-1',
-            sessionId: 'source-session',
-            title: 'report.pdf',
+            sessionId: '__literature__',
+            title: source.name,
+            name: source.name,
+            path: source.path,
             type: 'file',
-            source: 'artifact',
-            path: 'artifact-version:stale-projection',
-            name: 'report.pdf',
             format: 'pdf',
-            managedFileId: 'artifact-1',
-            selectedVersionId: 'artifact-v2'
+            source: 'literature',
+            managedFileId: source.sourceFileId
           }}
+          onAddAnnotation={onAddAnnotation}
         />
       )
+      await flush()
     })
-
-    await vi.waitFor(() =>
-      expect(resolvePdfSource).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        sessionId: 'session-owner',
-        sourceKind: 'artifact-version',
-        sourceFileId: 'artifact-1',
-        versionId: 'artifact-v2'
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label="Select area for Agent"]')!.click()
+    )
+    const overlay = container.querySelector<HTMLElement>('[data-pdf-region-selection]')!
+    expect(overlay).not.toBeNull()
+    overlay.setPointerCapture = vi.fn()
+    overlay.hasPointerCapture = vi.fn(() => true)
+    overlay.releasePointerCapture = vi.fn()
+    overlay.getBoundingClientRect = () => new DOMRect(0, 0, 400, 560)
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerdown', { clientX: 40, clientY: 56, button: 0 })
+    )
+    await act(async () =>
+      dispatchPointer(overlay, 'pointerup', { clientX: 200, clientY: 280, button: 0 })
+    )
+    expect(onAddAnnotation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'pdf',
+        target: 'agent',
+        source: { ...source, projectId: 'project-1' },
+        selector: expect.objectContaining({ kind: 'region', pageNumber: 1 })
       })
     )
+    expect(createSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions).toHaveLength(0)
+    await act(async () => {
+      usePreviewWorkbenchStore.getState().setPendingPdfContext('project-1', undefined)
+    })
+    await act(async () =>
+      fireEvent.keyDown(container.querySelector('[aria-label="Area selection actions"]')!, {
+        key: 'Enter'
+      })
+    )
+    expect(
+      screen.getByRole('menuitem', { name: 'Select area for Agent' }).getAttribute('aria-disabled')
+    ).toBe('true')
   })
+
+  it.each(['artifact', 'upload'] as const)(
+    'resolves a draft %s PDF from its exact managed Version',
+    async (source) => {
+      const inspect = vi.fn().mockResolvedValue({
+        ok: true,
+        value: {
+          projectId: 'project-1',
+          fileId: 'file-1',
+          source,
+          sessionId: 'source-session',
+          selectedVersion: {
+            id: 'version-1',
+            fileId: 'file-1',
+            source,
+            displayName: 'paper.pdf',
+            checksum: 'b'.repeat(64),
+            sizeBytes: 10
+          }
+        }
+      })
+      window.api = {
+        ...window.api,
+        managedFileVersions: { inspect },
+        pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) }
+      } as unknown as Window['api']
+      usePreviewWorkbenchStore.setState({
+        activeProjectId: 'project-1',
+        pendingPdfContextByProject: {
+          'project-1': {
+            kind: 'version',
+            sourceKind: source === 'artifact' ? 'artifact-version' : 'upload-version',
+            sourceFileId: 'file-1',
+            sourceVersionId: 'version-1',
+            previewItemId: 'file-1'
+          }
+        }
+      })
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'file-1',
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              title: 'paper.pdf',
+              name: 'paper.pdf',
+              path:
+                source === 'upload'
+                  ? 'upload-version:project-1/source-session/file-1/version-1'
+                  : 'unused-path',
+              type: 'file',
+              format: 'pdf',
+              source,
+              managedFileId: 'file-1',
+              selectedVersionId: 'version-1'
+            }}
+            onAddAnnotation={vi.fn()}
+          />
+        )
+        await flush()
+      })
+      expect(inspect).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        source,
+        fileId: 'file-1',
+        versionId: 'version-1'
+      })
+      await act(async () =>
+        container.querySelector<HTMLButtonElement>('[aria-label="Select area for Agent"]')!.click()
+      )
+      expect(
+        container.querySelector('[data-pdf-cursor-mode]')?.getAttribute('data-pdf-cursor-mode')
+      ).toBe('area')
+      await act(async () => usePreviewWorkbenchStore.setState({ activeProjectId: 'other-project' }))
+      expect(
+        container.querySelector('[data-pdf-cursor-mode]')?.getAttribute('data-pdf-cursor-mode')
+      ).toBe('select')
+    }
+  )
+
+  it.each([false, true])(
+    'keeps unavailable annotations quiet only for imported history (imported: %s)',
+    async (imported) => {
+      const resolvePdfSource = vi
+        .fn()
+        .mockResolvedValue({ ok: false, reason: 'source-unavailable' })
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: 'session-owner',
+        sessions: [
+          {
+            id: 'session-owner',
+            projectId: 'project-1',
+            ...(imported
+              ? {
+                  packageOrigin: {
+                    importId: 'import-1',
+                    sourceProjectId: 'source-project',
+                    sourceSessionId: 'source-session',
+                    importedAt: 1,
+                    manifestChecksum: 'a'.repeat(64)
+                  }
+                }
+              : {})
+          }
+        ]
+      } as never)
+
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'artifact-1',
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              title: 'report.pdf',
+              type: 'file',
+              source: 'artifact',
+              path: 'artifact-version:stale-projection',
+              name: 'report.pdf',
+              format: 'pdf',
+              managedFileId: 'artifact-1',
+              selectedVersionId: 'artifact-v2'
+            }}
+          />
+        )
+      })
+
+      await vi.waitFor(() =>
+        expect(resolvePdfSource).toHaveBeenCalledWith({
+          projectId: 'project-1',
+          sessionId: 'session-owner',
+          sourceKind: 'artifact-version',
+          sourceFileId: 'artifact-1',
+          versionId: 'artifact-v2'
+        })
+      )
+      await vi.waitFor(() =>
+        expect(
+          container.textContent?.includes('PDF annotations are unavailable for this source.')
+        ).toBe(!imported)
+      )
+      expect(container.querySelector('[aria-label="report.pdf scrollable preview"]')).not.toBeNull()
+    }
+  )
+
+  it.each(['upload', 'artifact'] as const)(
+    'opens Figures & Tables for a finalized %s without Agent context',
+    async (kind) => {
+      const source = {
+        kind: kind === 'upload' ? ('upload-version' as const) : ('artifact-version' as const),
+        projectId: 'project-1',
+        sessionId: 'source-session',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        checksum: 'a'.repeat(64),
+        name: 'paper.pdf',
+        path:
+          kind === 'upload'
+            ? 'upload-version:project-1/source-session/file-1/version-1'
+            : 'artifact-version:version-1'
+      }
+      window.api = {
+        ...window.api,
+        bookmarks: { resolvePdfSource: vi.fn().mockResolvedValue({ ok: true, source }) },
+        pdfAnnotations: { list: vi.fn().mockResolvedValue({ items: [], total: 0 }) },
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 0, tags: [], assignments: [] }) },
+        localModels: {
+          getSnapshot: vi.fn().mockResolvedValue({
+            installedRevision: 'v1',
+            availability: 'ready',
+            updateAvailable: false
+          })
+        }
+      } as unknown as Window['api']
+      useSessionStore.setState({
+        selectedSessionId: 'session-owner',
+        sessions: [{ id: 'session-owner', projectId: 'project-1' }]
+      } as never)
+      await act(async () => {
+        root.render(
+          <PdfPreviewRenderer
+            item={{
+              id: 'file-1',
+              type: 'file',
+              format: 'pdf',
+              source: kind,
+              projectId: 'project-1',
+              sessionId: 'source-session',
+              managedFileId: 'file-1',
+              selectedVersionId: 'version-1',
+              title: 'paper.pdf',
+              name: 'paper.pdf',
+              path: source.path
+            }}
+          />
+        )
+        await flush()
+      })
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      const figures = screen.getByRole('tab', { name: /Figures & Tables/ })
+      await act(async () => fireEvent.mouseDown(figures, { button: 0 }))
+      expect(figures.getAttribute('aria-selected')).toBe('true')
+      expect(window.api.pdfStructure.parse).not.toHaveBeenCalled()
+      await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Analyze PDF' })))
+      expect(window.api.pdfStructure.parse).toHaveBeenCalledWith({
+        source: {
+          kind: 'managed',
+          projectId: 'project-1',
+          sourceKind: source.kind,
+          sourceFileId: 'file-1',
+          sourceVersionId: 'version-1'
+        },
+        page: 1,
+        requestId: expect.any(String)
+      })
+      expect(useSessionStore.getState().sessions[0].runtimeContext).toBeUndefined()
+      expect(screen.getByRole('tab', { name: 'Notes & Annotations' })).not.toBeNull()
+      await act(async () => root.render(<div />))
+      expect(window.api.pdfStructure.cancel).toHaveBeenCalledOnce()
+    }
+  )
 
   it('shows a native outline, expands nested sections, and navigates to their PDF pages', async () => {
     const getDestination = vi.fn().mockResolvedValue([{ num: 20, gen: 0 }])
@@ -1115,6 +3796,316 @@ describe('PdfPreviewContent', () => {
     )
     expect(container.querySelector('#pdf-navigation-sidebar')).toBeNull()
     expect(outlineToggle.getAttribute('aria-label')).toBe('Show navigation')
+  })
+
+  it('navigates and tracks distinct same-page outline destinations without changing zoom', async () => {
+    vi.useFakeTimers()
+    const page = await (
+      getPage as ReturnType<
+        typeof vi.fn<() => Promise<{ view?: number[]; getViewport: ReturnType<typeof vi.fn> }>>
+      >
+    )()
+    page.view = [0, 0, 600, 1200]
+    page.getViewport.mockImplementation(() => ({
+      width: 600,
+      height: 1200,
+      convertToViewportPoint: (x: number, y: number) => [x, 1200 - y]
+    }))
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getDestination: vi.fn().mockResolvedValue([0, { name: 'XYZ' }, 40, 600, 2]),
+        getOutline: vi.fn().mockResolvedValue([
+          { title: 'First heading', dest: [0, { name: 'XYZ' }, 40, 1100, null], items: [] },
+          { title: 'Second heading', dest: 'second', items: [] },
+          { title: 'Same destination alias', dest: [0, { name: 'FitH' }, 600], items: [] }
+        ]),
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn()
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/outline.pdf" name="outline.pdf" />)
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+    const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+    vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({
+      top: 0,
+      left: 0,
+      height: 400,
+      bottom: 400
+    } as DOMRect)
+    const pages = Array.from(container.querySelectorAll<HTMLElement>('[data-page-number]'))
+    pages.forEach((element, index) =>
+      vi.spyOn(element, 'getBoundingClientRect').mockImplementation(
+        () =>
+          ({
+            top: index * 1212 - scroll.scrollTop,
+            bottom: index * 1212 + 1200 - scroll.scrollTop,
+            left: 0,
+            width: 600,
+            height: 1200
+          }) as DOMRect
+      )
+    )
+    const first = screen.getByRole('treeitem', { name: 'First heading' })
+    const second = screen.getByRole('treeitem', { name: 'Second heading' })
+    const alias = screen.getByRole('treeitem', { name: 'Same destination alias' })
+    await act(async () => second.click())
+    expect(scroll.scrollTop).toBe(536)
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    await act(async () => {
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    await act(async () => alias.click())
+    expect(alias.getAttribute('aria-selected')).toBe('true')
+    await act(async () => first.click())
+    expect(scroll.scrollTop).toBe(36)
+    expect(first.getAttribute('aria-selected')).toBe('true')
+    await act(async () => {
+      scroll.scrollTop = 650
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(second.getAttribute('aria-selected')).toBe('true')
+    expect(Element.prototype.scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' })
+    await act(async () => {
+      scroll.scrollTop = 200
+      scroll.dispatchEvent(new Event('scroll'))
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(first.getAttribute('aria-selected')).toBe('true')
+    expect(container.textContent).toContain('100%')
+  })
+
+  it.each([
+    ['XYZ', [40, 600, null], 600],
+    ['FitH', [600], 600],
+    ['FitBH', [600], 600],
+    ['FitR', [40, 400, 200, 600], 600],
+    ['FitV', [40], 0],
+    ['FitBV', [40], 0],
+    ['XYZ', [null, null, null], 0],
+    ['Fit', [], 0],
+    ['FitB', [], 0]
+  ])(
+    'resolves %s outline coordinates on a single-page document',
+    async (type, coordinates, expectedTop) => {
+      const convertToViewportPoint = vi.fn((x: number, y: number) => [x - 10, 1220 - y])
+      const pdfPage = {
+        view: [10, 20, 610, 1220],
+        getViewport: () => ({ width: 600, height: 1200, convertToViewportPoint }),
+        getTextContent: async () => ({ items: [] }),
+        render: () => ({ promise: Promise.resolve(), cancel: vi.fn() }),
+        cleanup: vi.fn()
+      }
+      getPage.mockResolvedValue(pdfPage)
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 1,
+          getPage,
+          getOutline: async () => [
+            {
+              title: 'Destination',
+              dest: [0, { name: type }, ...(coordinates as unknown[])],
+              items: []
+            }
+          ],
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn()
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/single.pdf" name="single.pdf" />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      const scroll = container.querySelector<HTMLElement>('[role="region"]')!
+      const page = container.querySelector<HTMLElement>('[data-page-number="1"]')!
+      vi.spyOn(scroll, 'getBoundingClientRect').mockReturnValue({ top: 0, left: 0 } as DOMRect)
+      vi.spyOn(page, 'getBoundingClientRect').mockReturnValue({
+        top: 0,
+        left: 0,
+        width: 600,
+        height: 1200
+      } as DOMRect)
+      await act(async () => screen.getByRole('treeitem', { name: 'Destination' }).click())
+      // The crop box starts at y=20; numeric destinations are absolute PDF coordinates.
+      expect(scroll.scrollTop).toBeCloseTo(
+        Number(expectedTop) > 0 ? Number(expectedTop) + 20 - 64 : 0
+      )
+      expect(
+        screen.getByRole('treeitem', { name: 'Destination' }).getAttribute('aria-selected')
+      ).toBe('true')
+    }
+  )
+
+  it('discards outline coordinates resolved after the PDF is replaced', async () => {
+    let finish!: (value: unknown) => void
+    const delayed = new Promise((resolve) => {
+      finish = resolve
+    })
+    const initialPage = await (getPage as ReturnType<typeof vi.fn<() => Promise<unknown>>>)()
+    getPage.mockReturnValue(delayed)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValueOnce({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getOutline: async () => [
+          { title: 'Old destination', dest: [0, { name: 'XYZ' }, 0, 100, null], items: [] }
+        ],
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn()
+    } as never)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/old.pdf" name="old.pdf" />)
+      await flush()
+    })
+    getPage.mockResolvedValue(initialPage)
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/new.pdf" name="new.pdf" />)
+      await flush()
+      finish(initialPage)
+      await flush()
+    })
+    expect(container.querySelector('[aria-label="Show navigation"]')).toBeNull()
+    expect(container.textContent).not.toContain('Old destination')
+  })
+
+  it('omits redundant PDF page labels and preserves distinct labels', async () => {
+    await act(async () =>
+      root.render(
+        <PdfOutlineSidebar
+          document={{ getPage } as never}
+          items={[]}
+          pageCount={3}
+          pageLabels={['1', 'ii', '1']}
+          currentPage={1}
+          width={240}
+          onNavigate={vi.fn()}
+          onClose={vi.fn()}
+          onWidthChange={vi.fn()}
+        />
+      )
+    )
+    expect(screen.getByRole('button', { name: 'Page 1' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Page 2 · ii' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Page 3 · 1' })).not.toBeNull()
+  })
+
+  it.each(['missing', 'rejected', 'unresolvable'])(
+    'explains an unavailable %s outline and keeps Pages selected',
+    async (reason) => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({
+          numPages: 2,
+          getPage,
+          getOutline: () =>
+            reason === 'rejected'
+              ? Promise.reject(new Error('Invalid outline'))
+              : Promise.resolve(
+                  reason === 'missing'
+                    ? null
+                    : [{ title: 'Broken destination', dest: 'missing', items: [] }]
+                ),
+          getDestination: () => Promise.reject(new Error('Invalid destination')),
+          destroy: destroyDocument
+        }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path="/workspace/unavailable.pdf" name="paper.pdf" />)
+        await flush()
+      })
+      await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+      const outline = screen.getByRole('button', { name: 'Outline' })
+      expect(outline.getAttribute('aria-disabled')).toBe('true')
+      expect(outline.classList.contains('opacity-50')).toBe(true)
+      await act(async () => outline.focus())
+      expect(screen.getByRole('tooltip').textContent).toBe(
+        'No readable outline is available for this PDF'
+      )
+      await act(async () => outline.click())
+      expect(outline.getAttribute('aria-pressed')).toBe('false')
+      expect(screen.getByRole('button', { name: 'Pages' }).getAttribute('aria-pressed')).toBe(
+        'true'
+      )
+    }
+  )
+
+  it('floats navigation below 1120px and preserves its mode, document and docked width', async () => {
+    let width = 1150
+    const callbacks: ResizeObserverCallback[] = []
+    vi.stubGlobal(
+      'ResizeObserver',
+      class {
+        constructor(callback: ResizeObserverCallback) {
+          callbacks.push(callback)
+        }
+        observe = vi.fn()
+        disconnect = vi.fn()
+        unobserve = vi.fn()
+      }
+    )
+    vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width)
+    vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+      promise: Promise.resolve({
+        numPages: 2,
+        getPage,
+        getOutline: async () => [{ title: 'Introduction', dest: [0], items: [] }],
+        destroy: destroyDocument
+      }),
+      destroy: vi.fn().mockResolvedValue(undefined)
+    } as never)
+    await act(async () => {
+      root.render(
+        <div data-slot="file-preview-dialog">
+          <PdfPreviewContent path="/workspace/responsive.pdf" name="paper.pdf" />
+        </div>
+      )
+      await flush()
+    })
+    await act(async () => screen.getByRole('button', { name: 'Show navigation' }).click())
+    const loadCount = vi.mocked(createManagedPdfLoadingTask).mock.calls.length
+    const sidebar = screen.getByRole('complementary', { name: 'PDF navigation' })
+    expect(sidebar.classList.contains('absolute')).toBe(false)
+    await act(async () =>
+      fireEvent.keyDown(screen.getByRole('separator', { name: 'Resize navigation' }), {
+        key: 'ArrowRight'
+      })
+    )
+    expect(sidebar.style.width).toBe('256px')
+    await act(async () => screen.getByRole('button', { name: 'Pages' }).click())
+    const resize = async (next: number): Promise<void> => {
+      width = next
+      await act(async () => {
+        callbacks.forEach((callback) => callback([], {} as ResizeObserver))
+        await flush()
+      })
+    }
+    await resize(1119)
+    expect(sidebar.classList.contains('absolute')).toBe(true)
+    expect(screen.queryByRole('separator', { name: 'Resize navigation' })).toBeNull()
+    await resize(240)
+    expect(sidebar.style.width).toBe('224px')
+    await resize(1120)
+    expect(screen.getByRole('complementary', { name: 'PDF navigation' })).toBe(sidebar)
+    expect(sidebar.classList.contains('absolute')).toBe(false)
+    expect(sidebar.style.width).toBe('256px')
+    expect(screen.getByRole('button', { name: 'Pages' }).getAttribute('aria-pressed')).toBe('true')
+    expect(createManagedPdfLoadingTask).toHaveBeenCalledTimes(loadCount)
+    expect(destroyDocument).not.toHaveBeenCalled()
+    await resize(800)
+    expect(container.querySelector('[data-preview-escape-boundary]')).not.toBeNull()
+    await act(async () => fireEvent.keyDown(sidebar, { key: 'Escape' }))
+    expect(screen.queryByRole('complementary', { name: 'PDF navigation' })).toBeNull()
+    expect(container.querySelector('[data-preview-escape-boundary]')).toBeNull()
+    expect(document.activeElement).toBe(container.querySelector('[data-pdf-cursor-mode]'))
   })
 
   it('keeps the outline control hidden when the PDF has no native outline', async () => {
@@ -1721,6 +4712,283 @@ describe('PdfPreviewContent', () => {
     expect(container.querySelector('[title="Section"]')?.getAttribute('aria-selected')).toBe('true')
   })
 
+  it('keeps later same-page outline entries active when their destinations lack coordinates', async () => {
+    await act(async () =>
+      root.render(
+        <PdfOutlineSidebar
+          document={{ getPage } as never}
+          items={[
+            { id: 'first', title: 'First', pageNumber: 1, children: [] },
+            { id: 'second', title: 'Second', pageNumber: 1, children: [] }
+          ]}
+          pageCount={1}
+          currentPage={1}
+          position={{ pageNumber: 1, top: 0 }}
+          width={240}
+          onWidthChange={vi.fn()}
+          onClose={vi.fn()}
+          onNavigate={vi.fn()}
+        />
+      )
+    )
+    expect(container.querySelector('[title="First"]')?.getAttribute('aria-selected')).toBe('false')
+    expect(container.querySelector('[title="Second"]')?.getAttribute('aria-selected')).toBe('true')
+  })
+
+  describe('search coverage', () => {
+    const incompleteMessage = 'Search incomplete. Some pages could not be read.'
+    const textPage = (
+      text: string
+    ): { cleanup: ReturnType<typeof vi.fn>; getTextContent: ReturnType<typeof vi.fn> } => ({
+      cleanup: vi.fn(),
+      getTextContent: vi.fn().mockResolvedValue({ items: [{ str: text }] })
+    })
+    const renderSearchDocument = async (
+      searchGetPage: ReturnType<typeof vi.fn>,
+      path = '/workspace/search-coverage.pdf'
+    ): Promise<void> => {
+      vi.mocked(createManagedPdfLoadingTask).mockReturnValue({
+        promise: Promise.resolve({ numPages: 3, getPage: searchGetPage, destroy: destroyDocument }),
+        destroy: vi.fn().mockResolvedValue(undefined)
+      } as never)
+      await act(async () => {
+        root.render(<PdfPreviewContent path={path} name="search.pdf" />)
+        await flush()
+      })
+    }
+    const changeQuery = async (input: HTMLInputElement, query: string): Promise<void> => {
+      await act(async () => fireEvent.change(input, { target: { value: query } }))
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers()
+      // Keep viewport page rendering out of these full-document search assertions.
+      vi.stubGlobal(
+        'IntersectionObserver',
+        class {
+          observe = vi.fn()
+          unobserve = vi.fn()
+          disconnect = vi.fn()
+        }
+      )
+    })
+
+    it.each(['getPage', 'getTextContent'])(
+      'keeps available matches and announces incomplete coverage when %s fails',
+      async (failureStage) => {
+        const failedPage = {
+          cleanup: vi.fn(),
+          getTextContent: vi.fn().mockRejectedValue(new Error('Unreadable page'))
+        }
+        const searchGetPage = vi.fn(async (pageNumber: number) => {
+          if (pageNumber === 2) {
+            if (failureStage === 'getPage') throw new Error('Unreadable page')
+            return failedPage
+          }
+          return textPage(pageNumber === 1 ? 'needle' : 'needle needle')
+        })
+        await renderSearchDocument(searchGetPage)
+        const input = await openSearch('needle')
+
+        expect(input.parentElement?.textContent).toContain('1/3')
+        expect(searchGetPage.mock.calls.map(([pageNumber]) => pageNumber)).toEqual([1, 2, 3])
+        expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+        expect(document.getElementById(input.getAttribute('aria-describedby')!)?.textContent).toBe(
+          incompleteMessage
+        )
+        if (failureStage === 'getTextContent') expect(failedPage.cleanup).toHaveBeenCalledOnce()
+        await act(async () => screen.getByRole('button', { name: 'Next match' }).click())
+        expect(input.parentElement?.textContent).toContain('2/3')
+        await act(async () => screen.getByRole('button', { name: 'Previous match' }).click())
+        expect(input.parentElement?.textContent).toContain('1/3')
+      }
+    )
+
+    it('distinguishes all unreadable pages from a completed search with no matches', async () => {
+      await renderSearchDocument(
+        vi.fn(async (pageNumber: number) => {
+          if (pageNumber !== 2) throw new Error('Unreadable page')
+          return {
+            cleanup: vi.fn(),
+            getTextContent: vi.fn().mockRejectedValue(new Error('Unreadable text'))
+          }
+        })
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('0/0')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+      expect(screen.getByRole('button', { name: 'Next match' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('button', { name: 'Previous match' }).hasAttribute('disabled')).toBe(
+        true
+      )
+    })
+
+    it('announces a failed page while preserving matches before the remaining scan finishes', async () => {
+      let resolveLastPage: ((page: ReturnType<typeof textPage>) => void) | undefined
+      await renderSearchDocument(
+        vi.fn(async (pageNumber: number) => {
+          if (pageNumber === 1) return textPage('needle')
+          if (pageNumber === 2) throw new Error('Unreadable page')
+          return new Promise((resolve) => (resolveLastPage = resolve))
+        })
+      )
+      const input = await openSearch('needle')
+      expect(resolveLastPage).toBeDefined()
+      expect(input.parentElement?.textContent).toContain('1/1')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+      await act(async () => {
+        resolveLastPage?.(textPage('needle'))
+        await flush()
+      })
+      expect(input.parentElement?.textContent).toContain('1/2')
+      expect(screen.getByRole('status').textContent).toBe(incompleteMessage)
+    })
+
+    it.each([
+      { text: 'needle', count: '1/3' },
+      { text: 'other', count: '0/0' }
+    ])('shows $count without a warning for a fully readable document', async ({ text, count }) => {
+      await renderSearchDocument(vi.fn(async () => textPage(text)))
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain(count)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+    })
+
+    it('does not carry a replaced query failure into a later successful search', async () => {
+      let rejectOldRead: ((error: Error) => void) | undefined
+      const searchGetPage = vi
+        .fn()
+        .mockResolvedValueOnce({
+          cleanup: vi.fn(),
+          getTextContent: () =>
+            new Promise((_, reject) => {
+              rejectOldRead = reject
+            })
+        })
+        .mockImplementation(async () => textPage('replacement'))
+      await renderSearchDocument(searchGetPage)
+      const input = await openSearch('needle')
+      expect(rejectOldRead).toBeDefined()
+      await changeQuery(input, 'replacement')
+      await act(async () => {
+        rejectOldRead?.(new Error('Old query read failed'))
+        await flush()
+      })
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('does not carry an old document failure into the replacement document search', async () => {
+      let rejectOldPage: ((error: Error) => void) | undefined
+      await renderSearchDocument(vi.fn(() => new Promise((_, reject) => (rejectOldPage = reject))))
+      await openSearch('needle')
+      expect(rejectOldPage).toBeDefined()
+      await renderSearchDocument(
+        vi.fn(async () => textPage('needle')),
+        '/workspace/replacement.pdf'
+      )
+      const input = await openSearch('needle')
+      expect(input.parentElement?.textContent).toContain('1/3')
+      await act(async () => {
+        rejectOldPage?.(new Error('Old document page failed'))
+        await flush()
+      })
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('clears incomplete coverage when the query is cleared or search is closed', async () => {
+      await renderSearchDocument(vi.fn().mockRejectedValue(new Error('Unreadable page')))
+      const input = await openSearch('needle')
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await changeQuery(input, '')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      await changeQuery(input, 'needle')
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await act(async () => screen.getByRole('button', { name: 'Close search' }).click())
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      const reopened = await openSearch('')
+      expect(reopened.hasAttribute('aria-describedby')).toBe(false)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('ignores a page failure that arrives after search is closed', async () => {
+      let rejectRead: ((error: Error) => void) | undefined
+      await renderSearchDocument(vi.fn(() => new Promise((_, reject) => (rejectRead = reject))))
+      await openSearch('needle')
+      await act(async () => screen.getByRole('button', { name: 'Close search' }).click())
+      await act(async () => {
+        rejectRead?.(new Error('Closed search failed'))
+        await flush()
+      })
+      const input = await openSearch('')
+      expect(input.hasAttribute('aria-describedby')).toBe(false)
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+
+    it('clears incomplete coverage when a fallback search succeeds on retry', async () => {
+      let pageTwoReads = 0
+      const originalLoad = vi.fn(async (number: number) => {
+        if (number === 2 && ++pageTwoReads === 1) throw new Error('Transient fallback failure')
+        return textPage('needle')
+      })
+      const ready = {
+        status: 'ready' as const,
+        document: { numPages: 3, getPage: vi.fn(async () => textPage('needle')), destroy: vi.fn() },
+        pages: Array.from({ length: 3 }, () => ({ width: 600, height: 800, rotation: 0 })),
+        originalUnitCount: 0,
+        retainedUnitIds: []
+      }
+      let translationReady = true
+      vi.spyOn(translationDocuments, 'usePdfTranslationDocument').mockImplementation(
+        () =>
+          ({
+            ready: translationReady ? ready : undefined,
+            state: translationReady ? ready : { status: 'idle' },
+            updateAvailable: false,
+            isCurrent: translationReady,
+            unchangedLayoutUnitIds: [],
+            unfilledUnitIds: [],
+            layoutFailures: {},
+            refresh: vi.fn(),
+            retry: vi.fn(),
+            registerDisposer: () => () => {}
+          }) as never
+      )
+      await renderSearchDocument(originalLoad)
+      const input = await openSearch('')
+      await act(async () => screen.getByRole('button', { name: 'Search in Original' }).click())
+      await changeQuery(input, 'needle')
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+      translationReady = false
+      await renderSearchDocument(originalLoad)
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(input.parentElement?.textContent).toContain('1/2')
+      expect(screen.getByText(incompleteMessage)).toBeTruthy()
+      await act(async () => {
+        container.querySelector<HTMLElement>('[role="region"]')!.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: 'f',
+            metaKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(180))
+      expect(pageTwoReads).toBe(2)
+      expect(input.value).toBe('needle')
+      expect(input.parentElement?.textContent).toContain('1/3')
+      expect(screen.queryByText(incompleteMessage)).toBeNull()
+    })
+  })
+
   it('stops a stale full-document search before parsing the remaining pages', async () => {
     vi.useFakeTimers()
     vi.stubGlobal(
@@ -2026,8 +5294,8 @@ describe('PdfPreviewContent', () => {
   })
 
   it.each([
-    ['interaction', 'Show navigation', 'Hand', 800],
-    ['view', 'Page 1 of 2', 'Zoom in', 250]
+    ['interaction', 'Show navigation', 'Hand', 200],
+    ['view', 'Page 1 of 2', 'Zoom in', 200]
   ])(
     'delays the first hint and shares a 300ms skip window in the %s toolbar',
     async (_, firstLabel, nextLabel, delay) => {
@@ -2355,7 +5623,8 @@ describe('PdfPreviewContent', () => {
     await act(async () => {
       await vi.waitFor(() =>
         expect(
-          container.querySelector<HTMLElement>('[data-page-number="1"]')?.style.aspectRatio
+          container.querySelector<HTMLElement>('[data-page-number="1"] [data-pdf-page-ready]')
+            ?.style.aspectRatio
         ).toBe('2 / 1')
       )
     })
@@ -3138,7 +6407,7 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
-  it('keeps the same page location at the viewport top-left when zooming', async () => {
+  it('preserves viewport positions across zoom, native links and reading history', async () => {
     const clientWidthSpy = vi
       .spyOn(HTMLElement.prototype, 'clientWidth', 'get')
       .mockReturnValue(400)
@@ -3154,7 +6423,8 @@ describe('PdfPreviewContent', () => {
     getPage.mockResolvedValue({
       getViewport: vi.fn(({ scale }: { scale: number }) => ({
         width: 400 * scale,
-        height: 560 * scale
+        height: 560 * scale,
+        rotation: 0
       })),
       getTextContent: vi.fn().mockResolvedValue({ items: [], styles: {} }),
       render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
@@ -3196,6 +6466,10 @@ describe('PdfPreviewContent', () => {
           height
         } as DOMRect
       })
+      vi.spyOn(
+        page.querySelector<HTMLElement>('[data-pdf-page-rotation]')!,
+        'getBoundingClientRect'
+      ).mockImplementation(() => page.getBoundingClientRect())
     })
 
     await act(async () =>
@@ -3205,6 +6479,41 @@ describe('PdfPreviewContent', () => {
     await vi.waitFor(() => expect(container.textContent).toContain('125%'))
     expect(scroll.scrollTop).toBe(868)
     expect(scroll.scrollLeft).toBe(58.5)
+
+    const navigate = (): Parameters<typeof renderPdfNativeLinks>[0]['onNavigate'] =>
+      vi.mocked(renderPdfNativeLinks).mock.calls.at(-1)![0].onNavigate
+    await act(async () => navigate()({ pageNumber: 3, x: 0.2, y: 0.5 }))
+    expect(scroll.scrollTop).toBeCloseTo(16 + 2 * 712 + 350 - 72)
+    expect(scroll.scrollLeft).toBeCloseTo(16 + 100)
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Previous reading position' }).disabled
+    ).toBe(false)
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Next reading position' }).disabled
+    ).toBe(true)
+    // Manual movement and zoom at the destination become the forward destination.
+    scroll.scrollTop += 50
+    await act(async () => screen.getByRole('button', { name: 'Zoom in' }).click())
+    const destinationTop = scroll.scrollTop,
+      destinationLeft = scroll.scrollLeft
+    await act(async () => screen.getByRole('button', { name: 'Previous reading position' }).click())
+    expect(container.textContent).toContain('125%')
+    expect(scroll.scrollTop).toBeCloseTo(868)
+    expect(scroll.scrollLeft).toBeCloseTo(58.5)
+    await act(async () => screen.getByRole('button', { name: 'Next reading position' }).click())
+    expect(container.textContent).toContain('150%')
+    expect(scroll.scrollTop).toBeCloseTo(destinationTop)
+    expect(scroll.scrollLeft).toBeCloseTo(destinationLeft)
+    await act(async () => screen.getByRole('button', { name: 'Previous reading position' }).click())
+    await act(async () => navigate()({ pageNumber: 1, x: 0, y: 0 }))
+    expect(
+      screen.getByRole<HTMLButtonElement>('button', { name: 'Next reading position' }).disabled
+    ).toBe(true)
+    // Switching files in an unkeyed preview must not retain old document locations.
+    await act(async () =>
+      root.render(<PdfPreviewContent path="/workspace/new.pdf" name="new.pdf" source="local" />)
+    )
+    expect(screen.queryByRole('button', { name: 'Previous reading position' })).toBeNull()
 
     clientWidthSpy.mockRestore()
   })
@@ -3731,6 +7040,38 @@ describe('PdfPreviewContent', () => {
     clientWidthSpy.mockRestore()
   })
 
+  it('clears detached canvas storage on scroll-out and reacquires it on re-entry', async () => {
+    const observer = observe()
+    await act(async () => {
+      root.render(<PdfPreviewContent path="/workspace/release.pdf" name="release.pdf" />)
+      await flush()
+    })
+    const page = container.querySelector('[data-page-number="1"]')!
+    await observer.notify(page, true)
+    const firstCanvas = container.querySelector('canvas')!
+    expect(firstCanvas.width).toBeGreaterThan(0)
+    expect(firstCanvas.height).toBeGreaterThan(0)
+
+    await observer.notify(page, false)
+    expect(firstCanvas.isConnected).toBe(false)
+    expect(firstCanvas.width).toBe(0)
+    expect(firstCanvas.height).toBe(0)
+    expect(destroyDocument).not.toHaveBeenCalled()
+
+    await observer.notify(page, true)
+    const secondCanvas = container.querySelector('canvas')!
+    expect(secondCanvas).not.toBe(firstCanvas)
+    expect(secondCanvas.width).toBeGreaterThan(0)
+    expect(secondCanvas.height).toBeGreaterThan(0)
+    expect(getPage).toHaveBeenCalledTimes(2)
+
+    await act(async () => root.unmount())
+    expect(secondCanvas.isConnected).toBe(false)
+    expect(secondCanvas.width).toBe(0)
+    expect(secondCanvas.height).toBe(0)
+    expect(destroyDocument).toHaveBeenCalledOnce()
+  })
+
   it('treats a render canceled by scroll-out as teardown, not a page failure', async () => {
     let intersectionCallback: IntersectionObserverCallback | undefined
     vi.stubGlobal(
@@ -4208,4 +7549,126 @@ describe('PdfPreviewContent', () => {
       expect(deleteAnnotation).toHaveBeenCalledWith(expect.objectContaining({ id: 'bookmark-1' }))
     )
   })
+  it.each(['literature', 'upload'] as const)(
+    'handles selected annotation Escape only in the %s reader',
+    async (previewSource) => {
+      getPage.mockResolvedValue({
+        getViewport: vi.fn(() => ({ width: 600, height: 800, rotation: 0 })),
+        getTextContent: vi
+          .fn()
+          .mockResolvedValue({ items: [{ str: 'Selectable text' }], styles: {} }),
+        render: vi.fn(() => ({ promise: Promise.resolve(), cancel: vi.fn() })),
+        cleanup: vi.fn()
+      })
+      vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockReturnValue(1200)
+      const source = {
+        kind:
+          previewSource === 'literature'
+            ? ('literature-attachment-version' as const)
+            : ('upload-version' as const),
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        sourceFileId: 'file-1',
+        versionId: 'version-1',
+        name: 'paper.pdf',
+        path: `${previewSource === 'literature' ? 'literature-attachment-version' : 'upload-version'}:version-1`,
+        checksum: 'a'.repeat(64)
+      }
+      const annotation: SavedPdfAnnotation = {
+        id: 'bookmark-1',
+        projectId: source.projectId,
+        sessionId: source.sessionId,
+        version: 1,
+        origin: 'user',
+        target: {
+          source,
+          selector: {
+            kind: 'text',
+            pageNumber: 1,
+            exact: 'Selectable text',
+            position: { start: 0, end: 15 },
+            quads: [{ x: 0.1, y: 0.2, width: 0.3, height: 0.03 }],
+            extractorVersion: 'pdfjs-test',
+            pageRotation: 0,
+            coordinateVersion: 1
+          }
+        },
+        kind: 'underline',
+        color: 'pink',
+        tagIds: [],
+        note: 'Saved note',
+        createdAt: '2026-09-19T00:00:00.000Z',
+        updatedAt: '2026-09-19T00:00:00.000Z'
+      }
+      window.api = {
+        ...window.api,
+        tags: { snapshot: vi.fn().mockResolvedValue({ revision: 1, tags: [], assignments: [] }) },
+        pdfAnnotations: {
+          list: vi.fn().mockResolvedValue({ source, items: [annotation], total: 1 })
+        }
+      } as unknown as Window['api']
+      await act(async () => {
+        root.render(
+          <PdfAnnotationsProvider projectId={source.projectId} sessionId={source.sessionId}>
+            <PdfPreviewContent
+              path={source.path}
+              name={source.name}
+              source={previewSource}
+              projectId={source.projectId}
+              sessionId={source.sessionId}
+              managedFileId={source.sourceFileId}
+              selectedVersionId={source.versionId}
+              pdfBookmarkSource={source}
+            />
+          </PdfAnnotationsProvider>
+        )
+        await flush()
+      })
+      const highlight = await waitFor(() => {
+        const element = container.querySelector<HTMLButtonElement>(
+          '[data-pdf-bookmark-highlight="bookmark-1"]'
+        )
+        expect(element).not.toBeNull()
+        return element!
+      })
+      await act(async () => highlight.click())
+      const pdfRoot = container.querySelector<HTMLElement>('[data-pdf-preview-root]')!
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      expect(pdfRoot.hasAttribute('data-preview-escape-boundary')).toBe(
+        previewSource === 'literature'
+      )
+      const composingEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true,
+        isComposing: true
+      })
+      await act(async () => document.activeElement!.dispatchEvent(composingEscape))
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      // An inner panel owns its Escape, even when it is portalled outside the reader.
+      const marker = container.querySelector<HTMLButtonElement>('[data-pdf-annotation-marker]')!
+      await act(async () => marker.click())
+      const panel = await screen.findByRole('dialog')
+      await act(async () => fireEvent.keyDown(panel, { key: 'Escape' }))
+      expect(highlight.getAttribute('aria-pressed')).toBe('true')
+      const escape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => pdfRoot.dispatchEvent(escape))
+      expect(escape.defaultPrevented).toBe(previewSource === 'literature')
+      expect(highlight.getAttribute('aria-pressed')).toBe(
+        previewSource === 'literature' ? 'false' : 'true'
+      )
+      expect(pdfRoot.hasAttribute('data-preview-escape-boundary')).toBe(false)
+      const nextEscape = new KeyboardEvent('keydown', {
+        key: 'Escape',
+        bubbles: true,
+        cancelable: true
+      })
+      await act(async () => pdfRoot.dispatchEvent(nextEscape))
+      expect(nextEscape.defaultPrevented).toBe(false)
+    }
+  )
 })

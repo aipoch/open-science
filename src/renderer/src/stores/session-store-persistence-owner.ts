@@ -1,40 +1,50 @@
-import type {
-  ToolCallContent,
-  ToolCallLocation,
-  ToolCallStatus,
-  ToolKind
-} from '@agentclientprotocol/sdk'
+import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientprotocol/sdk'
 import type { StoreApi } from 'zustand'
+import type { ChatArtifact, ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
+export type {
+  ChatArtifact,
+  ChatMessage,
+  ChatSession,
+  ElicitationEditDraft,
+  SessionStatus,
+  ToolActivity,
+  ToolActivityStatus
+} from './session-store-contract'
 
-import type { ElicitationProjection, ElicitationValue } from '../../../shared/acp'
-import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
-import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
+import { activateConversationBranch } from '../../../shared/conversation-graph'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
-import type { PermissionProfileId } from '../../../shared/permission-profiles'
+import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
 import {
+  deriveSessionAttention,
   INTERRUPTED_SESSION_ERROR,
   materializeSessionConversationGraph,
   normalizeDelegationPolicy,
+  projectSessionAttention,
   sanitizeActivityGroup,
   sanitizePlanHistoryProjections,
-  sessionRevision,
   sanitizeToolActivity,
-  type PersistedArtifact,
-  type PersistedActiveRun,
-  type PersistedActivityGroup,
-  type PersistedChatMessage,
-  type PersistedChatSession,
-  type PersistedMessageRole,
-  type PersistedMessageStatus,
-  type PersistedSessionManifest,
-  type PersistedSessionStatus,
-  type PersistedToolActivity,
-  type SessionSummary
+  sessionRevision
 } from '../../../shared/session-persistence'
+import type { PersistedSessionManifest } from '../../../shared/session-persistence-envelope'
+import type {
+  PersistedActivityGroup,
+  PersistedArtifact,
+  PersistedChatMessage,
+  PersistedMessageRole,
+  PersistedMessageStatus,
+  PersistedToolActivity
+} from '../../../shared/session-message-contract'
+import type { PersistedActiveRun } from '../../../shared/session-run-contract'
+import type { PersistedChatSession, SessionSummary } from '../../../shared/session-persistence'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
+import {
+  acknowledgeSessionConversationCommands,
+  pendingSessionConversationCommands,
+  recordSessionConversationAuthority
+} from './session-conversation-intents'
 import {
   inferSessionInteractionState,
-  resolveSessionInteractionStatus,
-  type SessionInteractionState
+  resolveSessionInteractionStatus
 } from './session-store-interaction-state'
 import {
   mergeDelegatedWorkAuthorityProjection,
@@ -45,95 +55,13 @@ import {
   retainRuntimePlanProjection
 } from './session-store-persistence-merge'
 import * as sessionDetails from './session-store-session-details'
-import {
-  acknowledgeSessionConversationCommands,
-  pendingSessionConversationCommands,
-  recordSessionConversationAuthority
-} from './session-conversation-intents'
 
-export type SessionStatus = PersistedSessionStatus
 export type ChatMessageRole = PersistedMessageRole
 export type ChatMessageStatus = PersistedMessageStatus
-export type ChatMessage = PersistedChatMessage & { sortIndex?: number }
+
 export type ActiveRun = PersistedActiveRun
-export type ToolActivityStatus = ToolCallStatus
-export type ToolActivity = {
-  id: string
-  kind: 'tool'
-  title: string
-  activityGroupId?: string
-  promptMessageId?: string
-  status: ToolActivityStatus
-  toolDisposition?: 'declined' | 'permission-closed'
-  executionInvocationId?: string
-  eventIds: string[]
-  sortIndex: number
-  providerToolName?: string
-  toolKind?: ToolKind
-  toolContent?: ToolCallContent[]
-  toolLocations?: ToolCallLocation[]
-  rawInput?: unknown
-  rawOutput?: unknown
-  terminalOutput?: string
-  terminalExitCode?: number | null
-  elicitation?: ElicitationProjection
-  createdAt: number
-  updatedAt: number
-}
-export type ChatArtifact = PersistedArtifact & { isPublished?: boolean }
 
 // Renderer memory only: edits are separate from confirmed, durable draftAnswers.
-export type ElicitationEditDraft = {
-  requestId: string
-  values: Record<string, ElicitationValue | undefined>
-  activeQuestionIndex: number
-}
-
-export type ChatSession = Omit<
-  PersistedChatSession,
-  'messages' | 'activities' | 'permissionProfile' | 'artifacts'
-> & {
-  artifacts?: ChatArtifact[]
-  permissionProfile?: PermissionProfileId
-  messages: ChatMessage[]
-  activities?: ToolActivity[]
-  elicitationEditDrafts?: Record<string, ElicitationEditDraft>
-  activePlanProjection?: ActivePlanProjection
-  planHistoryProjections?: ActivePlanProjection[]
-  isPending?: boolean
-  // Transient presentation hint returned from Main's durable WSL setup binding. It carries no
-  // authority and is refreshed from startup summaries and create/resume responses rather than
-  // persisted by renderer.
-  wslSetup?: true
-  // Transient: the first send has captured Delegation, but Main has not acknowledged the new
-  // Session policy yet. Binding an Agent Session does not make this policy authoritative.
-  delegationPolicyAuthorityPending?: true
-  // Transient: renameSession wrote a title that disk has not acknowledged.
-  unsavedTitle?: true
-  interrupted?: boolean
-  fixLoopActive?: boolean
-  compacting?: boolean
-  agentStatus?: string
-  awaitingFirstAgentOutput?: boolean
-  agentPromptInFlight?: boolean
-  // Transient provenance owner for responses emitted while an interrupted turn is resumed.
-  activeRunRuntimeSegmentId?: string
-  specialistSwitchResetRequired?: boolean
-  // Transient: a restored durable choice resumed into a fresh Agent context. Keep the request id
-  // until its hidden continuation is accepted so a renderer/IPC retry replays the same history.
-  elicitationHistoryReplayRequestId?: string
-  branchSwitchBlocked?: boolean
-  conversationGraphSyncBlocked?: boolean
-  pendingContextReplayMessageId?: string
-  // Transient independent facts for the blocking lane. Plan remains owned by its durable
-  // projection, while Side chat remains an overlay that never settles these facts.
-  interactionState?: SessionInteractionState
-  // False only for a SQLite-backed startup row whose transcript JSON has not been opened yet.
-  contentLoaded?: false
-  activeMessageCount?: number
-  artifactCount?: number
-  presentedActivityAt?: number
-}
 
 export type StreamingMessageContent = {
   sessionId: string
@@ -170,6 +98,7 @@ export type ApplyDurableSessionProjectionInput = {
     | 'delegated-authority'
     | 'session-details-authority'
     | 'runtime-transcript-authority'
+    | 'prompt-rollback-authority'
     | 'archive-authority'
 }
 
@@ -198,6 +127,23 @@ const markExternallyHydratedSession = (
 ): void => {
   externallyHydratedSessionAuthorities.set(session, structuredClone(authority))
   recordSessionConversationAuthority(session, authority)
+}
+
+// Recovery replaces runtime authority while retaining only unsubmitted editable drafts. Keep the
+// authority marker on the new projection so the persistence saver cannot echo hydration as a write.
+export const retainSessionRecoveryDrafts = (
+  session: ChatSession,
+  previous: ChatSession
+): ChatSession => {
+  if (!previous.unsavedTitle && !previous.elicitationEditDrafts) return session
+  const retained: ChatSession = {
+    ...session,
+    elicitationEditDrafts: previous.elicitationEditDrafts,
+    ...(previous.unsavedTitle ? { title: previous.title, unsavedTitle: true } : {})
+  }
+  const authority = externallyHydratedSessionAuthorities.get(session)
+  if (authority) markExternallyHydratedSession(retained, authority)
+  return retained
 }
 
 export const createInitialSessionState = (): SessionStoreData => ({
@@ -329,6 +275,7 @@ export const toPersistedSession = (
     activities,
     activityGroups,
     isPending,
+    pendingBindingSessionId,
     wslSetup,
     delegationPolicyAuthorityPending,
     unsavedTitle,
@@ -346,11 +293,14 @@ export const toPersistedSession = (
     conversationGraphSyncBlocked,
     pendingContextReplayMessageId,
     interactionState,
+    liveInteractionState,
     activePlanProjection,
     contentLoaded,
     activeMessageCount,
     artifactCount,
     presentedActivityAt,
+    attention,
+    recordProblems,
     planHistoryProjections,
     runtimeContext,
     artifacts,
@@ -359,6 +309,7 @@ export const toPersistedSession = (
   } = session
 
   void isPending
+  void pendingBindingSessionId
   void wslSetup
   void delegationPolicyAuthorityPending
   void unsavedTitle
@@ -376,11 +327,14 @@ export const toPersistedSession = (
   void conversationGraphSyncBlocked
   void pendingContextReplayMessageId
   void interactionState
+  void liveInteractionState
   void activePlanProjection
   void contentLoaded
   void activeMessageCount
   void artifactCount
   void presentedActivityAt
+  void attention
+  void recordProblems
   void runtimeContext
 
   const persistedPlanHistory = sanitizePlanHistoryProjections(planHistoryProjections)
@@ -447,7 +401,11 @@ export const hydrateSession = (session: PersistedChatSession): ChatSession => {
         ? true
         : undefined
   }
-  return { ...hydrated, interactionState: inferSessionInteractionState(hydrated) }
+  return {
+    ...hydrated,
+    attention: deriveSessionAttention(hydrated),
+    interactionState: inferSessionInteractionState(hydrated)
+  }
 }
 
 const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
@@ -475,7 +433,11 @@ const hydrateSessionSummary = (summary: SessionSummary): ChatSession => ({
     permission: summary.presentedStatus === 'waiting-permission',
     elicitation: summary.presentedStatus === 'waiting-for-user',
     plan: summary.presentedStatus === 'waiting-plan-approval'
-  }
+  },
+  recordProblems: summary.recordProblems,
+  ...(summary.presentedStatus === 'error'
+    ? { attention: { recordProblems: summary.recordProblems ?? [] } }
+    : {})
 })
 
 const matchesPersistedPlanProjection = (
@@ -539,6 +501,9 @@ const withTransientSessionState = (
   const hydrated = hydrateSession(session)
   return {
     ...hydrated,
+    // Save receipts can rebuild the Session to attach durable upload identities. Preserve
+    // the same Plan until its full activity projection arrives, just as runtime echoes do.
+    activePlanProjection: retainRuntimePlanProjection(source, session),
     ...(hydrated.artifacts
       ? { artifacts: retainArtifactPublication(hydrated.artifacts, source) }
       : {}),
@@ -547,6 +512,7 @@ const withTransientSessionState = (
       sortIndex: sourceMessages.get(message.id)?.sortIndex
     })),
     isPending: source.isPending,
+    pendingBindingSessionId: source.pendingBindingSessionId,
     wslSetup: source.wslSetup,
     interrupted: source.interrupted ?? hydrated.interrupted,
     fixLoopActive: source.fixLoopActive,
@@ -574,7 +540,18 @@ const withTransientSessionState = (
     branchSwitchBlocked: source.branchSwitchBlocked,
     conversationGraphSyncBlocked: source.conversationGraphSyncBlocked,
     pendingContextReplayMessageId: source.pendingContextReplayMessageId,
-    interactionState: source.interactionState
+    interactionState: source.interactionState,
+    liveInteractionState: source.liveInteractionState,
+    // Recompute durable Attention from the fresh save receipt so a successful
+    // newer turn clears the previous turn's badge. Keep only the local graph-sync
+    // problem from the source projection; it is intentionally renderer-scoped.
+    attention: projectSessionAttention({
+      latestVisibleTurn: hydrated.attention?.turn,
+      recordProblems: [
+        ...(hydrated.attention?.recordProblems ?? []),
+        ...(source.conversationGraphSyncBlocked ? (['conversation-graph-sync'] as const) : [])
+      ]
+    })
   }
 }
 
@@ -602,7 +579,8 @@ const projectDurablePlanAuthority = (
     ? current.status
     : resolveSessionInteractionStatus(
         { ...current, runtimeContext: durable.runtimeContext },
-        interactionState
+        interactionState,
+        current.liveInteractionState?.presentationOnly !== true
       )
   return {
     ...current,
@@ -611,7 +589,7 @@ const projectDurablePlanAuthority = (
     runtimeContext: durable.runtimeContext,
     activePlanProjection: matchesPersistedPlanProjection(current.activePlanProjection, durable)
       ? current.activePlanProjection
-      : undefined,
+      : retainRuntimePlanProjection(current, durable),
     updatedAt: Math.max(current.updatedAt, durable.updatedAt)
   }
 }
@@ -873,6 +851,62 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
     set((state) => {
       const current = state.sessions.find((candidate) => candidate.id === session.id)
       if (!current) return state
+      if (mode === 'prompt-rollback-authority') {
+        if (sessionRevision(session) < sessionRevision(current)) return state
+        acknowledgeSessionConversationCommands(session)
+        let authority = session
+        const pending = pendingSessionConversationCommands(session.id)
+        if (pending.length) {
+          try {
+            authority = applySessionConversationCommands(authority, pending)
+          } catch (error) {
+            // Main already committed this rollback. Keeping the pre-rollback projection would leave
+            // a ghost prompt and run, so adopt Main's authority and drop only the commands that
+            // cannot replay on it from this projection; they stay queued for their own outcome.
+            console.warn(
+              'Pending conversation commands could not replay on the rollback authority',
+              error
+            )
+            for (const command of pending) {
+              try {
+                authority = applySessionConversationCommands(authority, [command])
+              } catch {
+                // This command conflicts with committed authority and is not projected.
+              }
+            }
+          }
+        }
+        // This response is Main's narrow conditional rollback, not a renderer baseline snapshot.
+        // Replay unrelated pending commands, but never union the removed optimistic identities back.
+        const localBranch = current.conversationGraph?.frames.find(
+          (frame) => frame.id === current.conversationGraph?.rootFrameId
+        )?.activeBranchId
+        if (
+          localBranch &&
+          authority.conversationGraph?.branches.some((branch) => branch.id === localBranch)
+        ) {
+          authority = {
+            ...authority,
+            conversationGraph: activateConversationBranch(authority.conversationGraph, localBranch)
+          }
+        }
+        const projected = withTransientSessionState(authority, current)
+        projected.interrupted = hydrateSession(authority).interrupted
+        projected.branchContextResetRequired = authority.branchContextResetRequired
+        projected.agentStatus = undefined
+        projected.awaitingFirstAgentOutput = undefined
+        markExternallyHydratedSession(projected, session)
+        return {
+          sessions: state.sessions.map((candidate) =>
+            candidate.id === session.id ? projected : candidate
+          ),
+          streamingMessages: pruneStreamingMessageContent(
+            state.streamingMessages,
+            session.id,
+            new Set(projected.messages.map(({ id }) => id))
+          )
+        } as Partial<State>
+      }
       if (mode === 'runtime-transcript-authority') {
         // Main lifecycle delivery can trail a direct command/save receipt. Once the live store has
         // observed a newer durable revision, an older transcript projection cannot replace it.
@@ -897,6 +931,14 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           mergeNewerPersistedSessionByIdentity(current, authority),
           current
         )
+        // Recovery aliases follow Main's committed state, including a successful attach with no
+        // eligible user anchor. Retaining this renderer-only flag would leave Resume visible.
+        projected.interrupted = hydrateSession(authority).interrupted
+        if (!authority.activeRun) {
+          projected.agentStatus = undefined
+          projected.awaitingFirstAgentOutput = undefined
+          projected.agentPromptInFlight = undefined
+        }
         markExternallyHydratedSession(projected, session)
         return {
           sessions: state.sessions.map((candidate) =>
@@ -991,14 +1033,18 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
       }
 
       if (mode === 'permission-authority') {
-        const permissionPending = session.runtimeContext?.permission?.state === 'pending'
+        const permissionPending =
+          (current.liveInteractionState?.presentationOnly !== true &&
+            current.liveInteractionState?.permission === true) ||
+          session.runtimeContext?.permission?.state === 'pending'
         const interactionState = {
           ...inferSessionInteractionState(current),
           permission: permissionPending
         }
         const status = resolveSessionInteractionStatus(
           { ...current, runtimeContext: session.runtimeContext },
-          interactionState
+          interactionState,
+          current.liveInteractionState?.presentationOnly !== true
         )
         const projected: ChatSession = {
           ...archive,
@@ -1035,7 +1081,10 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           activePlanProjection.revision > incomingRevision
         const interactionState = {
           ...inferSessionInteractionState(current),
-          permission: session.runtimeContext?.permission?.state === 'pending',
+          permission:
+            (current.liveInteractionState?.presentationOnly !== true &&
+              current.liveInteractionState?.permission === true) ||
+            session.runtimeContext?.permission?.state === 'pending',
           plan: projectionIsNewer
             ? activePlanProjection.approval === 'pending'
             : session.runtimeContext?.plan?.approval === 'pending'
@@ -1044,7 +1093,8 @@ export const createSessionPersistenceOwner = <State extends SessionStoreData>(
           ? current.status
           : resolveSessionInteractionStatus(
               { ...current, runtimeContext: session.runtimeContext },
-              interactionState
+              interactionState,
+              current.liveInteractionState?.presentationOnly !== true
             )
         const projected: ChatSession = {
           ...archive,

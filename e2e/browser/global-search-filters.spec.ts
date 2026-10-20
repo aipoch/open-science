@@ -46,3 +46,51 @@ test('starts with result groups even when old search history exists', async ({ p
   await expect(page.locator('.search-recent-queries')).toHaveCount(0)
   await expect(page.locator('[data-search-group="projects"]')).toBeVisible()
 })
+
+test('preserves composing keyboard defaults and normal Escape dismissal', async ({ page }) => {
+  await page.goto('/global-search-filters.html')
+  const input = page.getByRole('combobox', { name: 'Global search', exact: true })
+  await input.fill('Protein')
+  await input.press('ArrowDown')
+  const activeId = await input.getAttribute('aria-activedescendant')
+  for (const composition of [{ isComposing: true }, { isComposing: false, keyCode: 229 }]) {
+    for (const key of ['ArrowDown', 'Enter', 'Escape']) {
+      const defaultPrevented = await input.evaluate(
+        (element, init) => {
+          const event = new KeyboardEvent('keydown', { ...init, bubbles: true, cancelable: true })
+          element.dispatchEvent(event)
+          return event.defaultPrevented
+        },
+        { ...composition, key }
+      )
+      expect(defaultPrevented).toBe(false)
+      await expect(input).toHaveAttribute('aria-activedescendant', activeId!)
+      await expect(input).toBeFocused()
+      await expect(input).toHaveValue('Protein')
+      await expect(page.getByRole('dialog')).toBeVisible()
+    }
+  }
+  await input.press('Escape')
+  await expect(page.locator('[data-testid="global-search-detail"]')).toHaveAttribute(
+    'data-open',
+    'false'
+  )
+  await input.press('Escape')
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+})
+
+test('explains blocked search and exposes the existing recovery settings target', async ({
+  page
+}) => {
+  await page.goto('/global-search-filters.html?unready&recovery')
+  await page.getByRole('combobox', { name: 'Global search', exact: true }).fill('Protein')
+  await page.locator('[data-category="messages"]').click()
+  await expect(page.getByRole('status')).toContainText('Search is partially unavailable')
+  await expect(page.getByText('No results found', { exact: true })).toHaveCount(0)
+  await expect(page.locator('[data-category="messages"] small')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Review recovery options' }).click()
+  await expect(page.getByRole('dialog')).toHaveCount(0)
+  await expect(page.getByRole('status', { name: 'Recovery settings target' })).toHaveText(
+    'archived'
+  )
+})

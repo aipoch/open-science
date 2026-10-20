@@ -3,9 +3,6 @@
     "src/main/settings/service.ts",
     "src/main/settings/network-proxy-settings-owner.ts",
     "src/main/settings/settings-snapshot-commit-owner.ts",
-    "src/main/settings/reviewer-model-owner.ts",
-    "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts",
     "src/main/settings/application-commands.test.ts",
     "src/main/settings/application-commands.ts",
     "src/main/settings/integration-application-commands.test.ts",
@@ -19,7 +16,12 @@
     "src/main/settings/service.test.ts",
     "src/main/settings/settings-snapshot-commit-owner.test.ts",
     "src/main/settings/classification-settings.ts",
-    "src/main/settings/classification-settings.test.ts"
+    "src/main/settings/classification-images.ts",
+    "src/main/settings/classification-settings.test.ts",
+    "src/main/settings/classification-usage.ts",
+    "src/main/settings/classification-usage.test.ts",
+    "src/main/settings/file-commands.ts",
+    "src/main/settings/file-commands.test.ts"
   ],
   "interfacePaths": [
     "src/main/settings/service.ts",
@@ -30,7 +32,8 @@
     "src/main/settings/reviewer-model-owner.ts",
     "src/main/settings/settings-snapshot-commit-owner.ts",
     "src/main/settings/subagent-model-owner.ts",
-    "src/main/settings/vision-model-owner.ts"
+    "src/main/settings/vision-model-owner.ts",
+    "src/main/settings/file-commands.ts"
   ],
   "consumerModules": ["workspace_runtime"],
   "testFiles": {
@@ -41,7 +44,9 @@
       "src/main/settings/service.test.ts",
       "src/main/settings/service.providers.test.ts",
       "src/main/settings/service.connectors.test.ts",
-      "src/main/settings/classification-settings.test.ts"
+      "src/main/settings/classification-settings.test.ts",
+      "src/main/settings/classification-usage.test.ts",
+      "src/main/settings/file-commands.test.ts"
     ],
     "contract": [
       "src/main/settings/application-commands.test.ts",
@@ -61,7 +66,9 @@
       "src/preload/index.test.ts"
     ],
     "consumer": [
-      "packages/open-science/cli.test.ts",
+      "src/main/acp/prompt-preparation-owner.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
       "src/main/acp/backend-generation-owner.test.ts",
       "src/main/acp/runtime-provider-session-composition.test.ts",
       "src/main/acp/task-agent-port.test.ts",
@@ -76,7 +83,7 @@
       "src/main/acp/runtime.test.ts",
       "src/main/application-command-client.test.ts",
       "src/main/application-command-electron-adapter.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/delegation/production-framework-runtime.test.ts",
       "src/main/host-application-commands.test.ts",
       "src/main/index-fatal-errors.test.ts",
@@ -94,7 +101,18 @@
       "src/main/settings/workflows/connectors-diagnostic.test.ts",
       "src/main/web-service/artifact-download.integration.test.ts",
       "src/main/web-service/controller.test.ts",
-      "src/main/web-service/task-api.test.ts"
+      "src/main/web-service/task-api.test.ts",
+      "src/main/literature/smart-collections.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/composition/reviewer.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": [

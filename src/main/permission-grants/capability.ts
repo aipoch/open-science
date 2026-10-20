@@ -21,12 +21,10 @@ const notebookPermissionRuntimeQualifier = (runtime: string | undefined): string
     : undefined
 }
 const FILE_OPERATION_KEYS: Readonly<Record<string, string>> = {
-  Read: 'read',
-  Write: 'write',
-  Edit: 'edit',
-  MultiEdit: 'edit',
-  NotebookEdit: 'notebook_edit',
+  multiedit: 'edit',
+  notebookedit: 'notebook_edit',
   read: 'read',
+  write: 'write',
   edit: 'edit',
   delete: 'delete',
   move: 'move'
@@ -208,7 +206,10 @@ const capabilityFromLegacyCategory = (categoryKey: string): PermissionCapability
   }
 
   if (categoryKey.startsWith('file:')) {
-    const operation = FILE_OPERATION_KEYS[categoryKey.slice('file:'.length)]
+    const name = categoryKey.slice('file:'.length).toLowerCase()
+    const operation = Object.hasOwn(FILE_OPERATION_KEYS, name)
+      ? FILE_OPERATION_KEYS[name]
+      : undefined
     return operation ? { kind: 'file_operation', key: `file:${operation}` } : undefined
   }
 

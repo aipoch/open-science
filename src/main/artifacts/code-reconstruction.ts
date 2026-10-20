@@ -18,7 +18,8 @@ import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import type { ArtifactVersionReconstructionProvenance } from './provenance-read-model'
 import { readArtifactReconstructionEvidence } from './provenance-reconstruction-evidence'
-import { resolveArtifactReproducibilityExecutionPlan } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import { canonicalJson, type CanonicalJson } from './provenance-canonical'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
 
@@ -221,7 +222,10 @@ const sealedReplayRuns = (
     recipe.graphChecksum !== sha256(canonicalJson(graph as unknown as CanonicalJson))
   )
     return undefined
-  const plan = resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+  const plan = reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+    recipe,
+    'original-inputs'
+  )
   if (!plan || plan.frontier.claimScope !== 'end-to-end') return undefined
   const byId = new Map(execution.runs.map((run) => [run.runId, run]))
   const runs: ProvenanceNotebookRun[] = []

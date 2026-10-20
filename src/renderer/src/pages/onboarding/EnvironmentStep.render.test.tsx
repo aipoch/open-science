@@ -45,6 +45,42 @@ const continueButton = (): HTMLButtonElement | undefined =>
   ) as HTMLButtonElement | undefined
 
 describe('EnvironmentStep', () => {
+  it('lets an old Claude installation reach the agent update step', async () => {
+    useSettingsStore.setState({
+      environmentCheck: {
+        ...environment(false),
+        canAutoInstall: false,
+        runtime: { found: true, path: '/bin/claude', version: '2.1.117' },
+        checks: [
+          { id: 'system', label: 'System', status: 'passed', summary: 'Supported.' },
+          { id: 'storage', label: 'Storage', status: 'passed', summary: 'Writable.' },
+          {
+            id: 'secure-storage',
+            label: 'Credentials',
+            status: 'warning',
+            summary: 'Keyless setup is available.'
+          },
+          {
+            id: 'install-network',
+            label: 'Network',
+            status: 'passed',
+            summary: 'Runtime present.'
+          },
+          {
+            id: 'agent',
+            label: 'Claude runtime',
+            status: 'failed',
+            summary: 'Update Claude Code to 2.1.118 or later.'
+          }
+        ]
+      }
+    })
+    const onContinue = vi.fn()
+    await renderStep(onContinue)
+    expect(continueButton()?.disabled).toBe(false)
+    await clickButton(/^continue$/i)
+    expect(onContinue).toHaveBeenCalledOnce()
+  })
   it('localizes completed host checks instead of rendering IPC English', async () => {
     const completedEnvironment = {
       ...environment(true),
@@ -269,32 +305,34 @@ describe('EnvironmentStep', () => {
     expect(container.textContent).not.toContain('Install missing runtime')
   })
 
-  it('blocks Continue while a required host check fails', async () => {
-    // canAutoInstall false means a HOST item failed (not just the agent) — this step owns that.
-    const hostFailed: EnvironmentCheckResult = {
-      ...environment(false),
-      canAutoInstall: false,
-      checks: [
-        {
-          id: 'storage',
-          label: 'Disk space',
-          status: 'failed',
-          summary: 'Not enough free disk space.'
-        }
-      ]
+  it.each(['system', 'storage', 'secure-storage', 'install-network'] as const)(
+    'blocks Continue while the %s host check fails',
+    async (id) => {
+      const hostFailed: EnvironmentCheckResult = {
+        ...environment(false),
+        canAutoInstall: false,
+        checks: [
+          {
+            id,
+            label: 'Disk space',
+            status: 'failed',
+            summary: 'Not enough free disk space.'
+          }
+        ]
+      }
+      useSettingsStore.setState({ environmentCheck: hostFailed })
+
+      await renderStep()
+
+      expect(continueButton()?.disabled).toBe(true)
+      expect(container.textContent).toContain('Complete every required item above to continue.')
+      expect(container.textContent).toContain('Not enough free disk space.')
+      expect(container.textContent).toContain(
+        'Resolve the items marked Action needed, then choose Check again.'
+      )
+      expect(container.textContent).not.toContain('manual tab')
     }
-    useSettingsStore.setState({ environmentCheck: hostFailed })
-
-    await renderStep()
-
-    expect(continueButton()?.disabled).toBe(true)
-    expect(container.textContent).toContain('Complete every required item above to continue.')
-    expect(container.textContent).toContain('Not enough free disk space.')
-    expect(container.textContent).toContain(
-      'Resolve the items marked Action needed, then choose Check again.'
-    )
-    expect(container.textContent).not.toContain('manual tab')
-  })
+  )
 
   it('blocks Continue while a check is in flight or no result has landed yet', async () => {
     useSettingsStore.setState({ environmentCheck: undefined, isCheckingEnvironment: true })

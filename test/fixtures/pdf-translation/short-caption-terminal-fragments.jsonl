@@ -1,0 +1,3 @@
+{"name":"short caption last line joins its full-width preceding lines","neighbor":false,"secondY":0.12,"count":1,"caption":true,"width":0.08}
+{"name":"narrow ordinary paragraph footprint stays separate","neighbor":false,"secondY":0.12,"count":2,"width":0.08}
+{"name":"caption cannot consume another text region","neighbor":true,"secondY":0.12,"count":2,"caption":true,"width":0.08}

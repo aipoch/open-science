@@ -1,0 +1,4 @@
+{"name":"separate where and variable belong to the following explanation","tail":"is the estimated probability.","translated":true}
+{"name":"where with a symbolic condition stays inside the formula","tail":"= 0","translated":false}
+{"name": "parenthesized-where-explanation-retains-its-variable", "lead": "(where", "tail": "denotes the elementwise square).", "translated": true}
+{"name": "parenthesized-symbolic-condition-remains-formula", "lead": "(where", "tail": "= 0)", "translated": false}

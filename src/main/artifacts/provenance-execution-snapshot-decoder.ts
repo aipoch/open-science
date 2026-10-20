@@ -1,4 +1,4 @@
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import type {
   PersistedArtifactExecutionSnapshot,
   ProvenanceNotebookOutput
@@ -13,10 +13,7 @@ import {
 } from '../notebook/helper-evidence'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
 import { artifactAnalysisRevisionMatchesGraph } from './provenance-analysis-revision'
-import {
-  artifactReproducibilityRecipeMatchesSnapshot,
-  artifactReproducibilityRecipeValue
-} from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
 
 const recordValue = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -356,7 +353,7 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
       !artifactProvenanceGraphValue(snapshot.provenanceGraph)) ||
     (snapshot.reproducibilityRecipe !== undefined &&
       !recipeUnsupported &&
-      (!artifactReproducibilityRecipeValue(snapshot.reproducibilityRecipe) ||
+      (!reproductionRecipes.artifactReproducibilityRecipeValue(snapshot.reproducibilityRecipe) ||
         snapshot.provenanceGraph === undefined)) ||
     (snapshot.truncation !== undefined &&
       (!truncation ||
@@ -399,14 +396,17 @@ const executionSnapshotValue = (value: unknown): PersistedArtifactExecutionSnaps
   if (
     normalizedSnapshot.reproducibilityRecipe &&
     normalizedSnapshot.provenanceGraph &&
-    !artifactReproducibilityRecipeMatchesSnapshot(normalizedSnapshot.reproducibilityRecipe, {
-      provenanceGraph: normalizedSnapshot.provenanceGraph,
-      inputFiles: normalizedSnapshot.inputFiles,
-      runs: normalizedSnapshot.runs,
-      helperModules: normalizedSnapshot.helperModules,
-      helperEvidenceStatus: normalizedSnapshot.helperEvidenceStatus,
-      truncation: normalizedSnapshot.truncation
-    })
+    !reproductionRecipes.artifactReproducibilityRecipeMatchesSnapshot(
+      normalizedSnapshot.reproducibilityRecipe,
+      {
+        provenanceGraph: normalizedSnapshot.provenanceGraph,
+        inputFiles: normalizedSnapshot.inputFiles,
+        runs: normalizedSnapshot.runs,
+        helperModules: normalizedSnapshot.helperModules,
+        helperEvidenceStatus: normalizedSnapshot.helperEvidenceStatus,
+        truncation: normalizedSnapshot.truncation
+      }
+    )
   ) {
     return undefined
   }

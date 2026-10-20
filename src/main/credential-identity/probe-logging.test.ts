@@ -1,22 +1,11 @@
+import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 
-const fixture = vi.hoisted(() => ({ spawn: vi.fn(), lines: [] as string[] }))
+const fixture = vi.hoisted(() => ({ spawn: vi.fn() }))
 vi.mock('node:child_process', () => ({ spawnSync: fixture.spawn }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
-  return {
-    ...actual,
-    createLogger: (scope: string) => ({
-      ...actual.createLogger(scope),
-      info: (message: string, data: unknown) =>
-        fixture.lines.push(actual.formatLine('info', scope, message, data))
-    })
-  }
-})
 
 beforeEach(() => {
   vi.resetModules()
-  fixture.lines.length = 0
   fixture.spawn.mockReset()
   vi.stubGlobal(
     'process',
@@ -62,9 +51,13 @@ it.each([
       }
     })
     const { selectStartupCredentialIdentity } = await import('./bootstrap')
-    expect(selectStartupCredentialIdentity({ platform: 'darwin', packaged: false })).toMatchObject({
-      appName: selected,
-      exists: current === 'exists' || legacy === 'exists'
+    const lines = await captureDiagnosticLogs(() => {
+      expect(
+        selectStartupCredentialIdentity({ platform: 'darwin', packaged: false })
+      ).toMatchObject({
+        appName: selected,
+        exists: current === 'exists' || legacy === 'exists'
+      })
     })
     const executed =
       current === 'exists'
@@ -76,7 +69,7 @@ it.each([
     expect(fixture.spawn.mock.calls.map(([, args]) => args)).toEqual(
       executed.map(([name]) => [name])
     )
-    const records = fixture.lines.map((line) => JSON.parse(line))
+    const records = lines.map((line) => JSON.parse(line))
     expect(records.map(({ msg }) => msg)).toEqual([
       ...executed.flatMap(() => ['identity probe started', 'identity probe completed']),
       'identity selection completed'
@@ -103,9 +96,7 @@ it.each([
       })
     else expect(summary.skippedProbe).toBeUndefined()
     if (current === 'access-blocked') expect(summary.probes[0].reason).toBe('keychain-locked')
-    expect(fixture.lines.join('\n')).not.toMatch(
-      /RAW-HELPER-SECRET|PRIVATE-ACCOUNT|both-identities-absent/
-    )
+    expect(lines.join('\n')).not.toMatch(/RAW-HELPER-SECRET|PRIVATE-ACCOUNT|both-identities-absent/)
   }
 )
 
@@ -117,14 +108,16 @@ it('filters injected diagnostics and thrown errors in the final selection log', 
       throw new Error('RAW-EXCEPTION-SECRET')
     })
     .mockReturnValueOnce({ status: 'access-blocked', reason: 'RAW-PRIVATE-REASON', osStatus: 1.5 })
-  expect(selectCredentialIdentity({ platform: 'darwin', packaged: true, probe })).toMatchObject({
-    appName: 'Open-Science',
-    exists: false
+  const lines = await captureDiagnosticLogs(() => {
+    expect(selectCredentialIdentity({ platform: 'darwin', packaged: true, probe })).toMatchObject({
+      appName: 'Open-Science',
+      exists: false
+    })
   })
-  const summary = JSON.parse(fixture.lines.at(-1)!).data
+  const summary = JSON.parse(lines.at(-1)!).data
   expect(summary.probes).toEqual([
     { order: 1, appName: 'Open-Science', status: 'error', reason: 'probe-exception' },
     { order: 2, appName: 'Open Science', status: 'access-blocked' }
   ])
-  expect(fixture.lines.join('\n')).not.toMatch(/RAW-/)
+  expect(lines.join('\n')).not.toMatch(/RAW-/)
 })

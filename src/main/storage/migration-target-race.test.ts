@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, mkdtemp, rename, rm, writeFile, readFile, symlink } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -68,6 +69,7 @@ it.each([true, false])(
       expect(result.ok).toBe(false)
       expect(copy).not.toHaveBeenCalled()
     } finally {
+      await resetOwnership()
       await rm(fixture, { recursive: true, force: true })
     }
   }
@@ -133,6 +135,7 @@ it.each(['copy', 'direct'])(
     } finally {
       fault.afterMkdir = undefined
       clearMigrationPending()
+      await resetOwnership()
       await rm(fixture, { recursive: true, force: true })
     }
   }
@@ -174,6 +177,7 @@ it('does not reclaim an existing empty target replaced at the mkdir boundary', a
     }
   } finally {
     fault.beforeMkdir = undefined
+    await resetOwnership()
     await rm(fixture, { recursive: true, force: true })
   }
 })
@@ -240,7 +244,10 @@ it.each(['replace-target', 'link-provenance', 'unowned-inventory'])(
       expect(copy).not.toHaveBeenCalled()
     } finally {
       fault.afterRealpath = undefined
+      await resetOwnership()
       await rm(fixture, { recursive: true, force: true })
     }
   }
 )
+
+const resetOwnership = await configureTestElectronHost(await import('electron'))

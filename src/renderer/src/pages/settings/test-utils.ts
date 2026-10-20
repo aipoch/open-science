@@ -1,4 +1,5 @@
 import { act } from 'react'
+import { flushSync } from 'react-dom'
 
 // Opens a Radix dropdown/select menu in jsdom. Radix triggers open on pointerdown (not click), so
 // tests must dispatch the full pointerdown → pointerup → click sequence. Shared by the settings
@@ -20,3 +21,13 @@ const clickRadixMenuItem = (item: HTMLElement | null | undefined): void => {
 }
 
 export { clickRadixMenuItem, openRadixMenu }
+
+// Access switches live in a portal; open the resource's group before addressing its Main Agent.
+export const openResourceMainSwitch = (name: string): HTMLButtonElement | null => {
+  const trigger = Array.from(
+    document.querySelectorAll<HTMLButtonElement>('[data-slot="resource-assignment-trigger"]')
+  ).find((button) => button.getAttribute('aria-label') === `Manage access for ${name}`)
+  if (trigger?.getAttribute('aria-expanded') !== 'true')
+    act(() => flushSync(() => trigger?.click()))
+  return document.querySelector<HTMLButtonElement>('[role="switch"][aria-label="Main Agent"]')
+}

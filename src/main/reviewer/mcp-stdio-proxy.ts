@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js'
@@ -43,7 +44,7 @@ const createReviewerMcpStdioProxyConfig = ({
   command,
   args: [entryPath, REVIEWER_MCP_PROXY_ARG],
   env: [
-    { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+    ...nodeRuntimeEnvironmentEntries(),
     { name: 'OPEN_SCIENCE_REVIEWER_MCP_SOCKET_PATH', value: socketPath },
     { name: 'OPEN_SCIENCE_REVIEWER_MCP_TOKEN', value: token }
   ]

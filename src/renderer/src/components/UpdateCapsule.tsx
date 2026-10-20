@@ -13,6 +13,7 @@ import { useUpdateStore } from '@/stores/update-store'
 import { UPDATE_INSTALLATION_REQUIRED, type UpdateStatus } from '../../../shared/update'
 
 type UpdateCapsuleProps = {
+  withTooltipProvider?: boolean
   className?: string
   variant?: 'home' | 'session'
 }
@@ -77,7 +78,8 @@ const UpdateMark = ({
 // hover/focus, while Session keeps a single persistent action above the footer controls.
 const UpdateCapsule = ({
   className,
-  variant = 'home'
+  variant = 'home',
+  withTooltipProvider = true
 }: UpdateCapsuleProps): React.JSX.Element | null => {
   const { t } = useTranslation()
   const status = useUpdateStore((state) => state.status)
@@ -147,61 +149,60 @@ const UpdateCapsule = ({
     )
   }
 
-  return (
-    <TooltipProvider delayDuration={800}>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <button
-            type="button"
-            data-variant="home"
-            data-state={status.state}
-            onClick={() => openDialog()}
-            aria-label={label}
-            className={cn(
-              'update-reminder relative isolate inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-0 rounded-md bg-primary px-2 text-xs font-semibold whitespace-nowrap text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 motion-reduce:transform-none motion-reduce:transition-none',
-              hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
-              className
-            )}
-          >
-            {drawsAttention ? <UpdateAttention key={`${attentionKey}:attention`} /> : null}
-            <UpdateMark
-              key={drawsAttention ? `${attentionKey}:mark` : undefined}
-              Icon={Icon}
-              status={status}
-            />
-            <span className="update-action-label relative z-10" aria-hidden="true">
-              <span>
-                <span className="block ps-1.5 tabular-nums">{copy.action}</span>
-              </span>
-            </span>
-            {drawsAttention ? (
-              <span className="update-reminder-status-dot" aria-hidden="true" />
-            ) : null}
-          </button>
-        </TooltipTrigger>
-        <TooltipContent
-          data-update-details
-          side="bottom"
-          align="end"
-          sideOffset={6}
+  const tooltip = (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          data-variant="home"
+          data-state={status.state}
+          onClick={() => openDialog()}
+          aria-label={label}
           className={cn(
-            'flex w-28 flex-col border border-border bg-popover px-2 py-1.5 text-left text-popover-foreground shadow-menu',
-            hasError && 'border-danger-000/30'
+            'update-reminder relative isolate inline-flex h-8 min-w-8 shrink-0 cursor-pointer items-center justify-center gap-0 rounded-md bg-primary px-2 text-xs font-semibold whitespace-nowrap text-primary-foreground transition-[background-color,transform] duration-150 ease-out hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:h-11 [@media(pointer:coarse)]:min-w-11 motion-reduce:transform-none motion-reduce:transition-none',
+            hasError && 'bg-danger-000 text-white hover:bg-danger-000/90',
+            className
           )}
         >
-          <span
-            className={cn(
-              'text-[10px] font-medium leading-4 text-muted-foreground',
-              hasError && 'text-danger-000'
-            )}
-          >
-            {copy.title}
+          {drawsAttention ? <UpdateAttention key={`${attentionKey}:attention`} /> : null}
+          <UpdateMark
+            key={drawsAttention ? `${attentionKey}:mark` : undefined}
+            Icon={Icon}
+            status={status}
+          />
+          <span className="update-action-label relative z-10" aria-hidden="true">
+            <span>
+              <span className="block ps-1.5 tabular-nums">{copy.action}</span>
+            </span>
           </span>
-          <span className="text-xs font-semibold leading-4">{copy.action}</span>
-        </TooltipContent>
-      </Tooltip>
-    </TooltipProvider>
+          {drawsAttention ? (
+            <span className="update-reminder-status-dot" aria-hidden="true" />
+          ) : null}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent
+        data-update-details
+        side="bottom"
+        align="end"
+        sideOffset={6}
+        className={cn(
+          'flex w-28 flex-col border border-border bg-popover px-2 py-1.5 text-left text-popover-foreground shadow-menu',
+          hasError && 'border-danger-000/30'
+        )}
+      >
+        <span
+          className={cn(
+            'text-[10px] font-medium leading-4 text-muted-foreground',
+            hasError && 'text-danger-000'
+          )}
+        >
+          {copy.title}
+        </span>
+        <span className="text-xs font-semibold leading-4">{copy.action}</span>
+      </TooltipContent>
+    </Tooltip>
   )
+  return withTooltipProvider ? <TooltipProvider>{tooltip}</TooltipProvider> : tooltip
 }
 
 export { UpdateCapsule }

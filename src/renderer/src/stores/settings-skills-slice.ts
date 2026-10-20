@@ -1,17 +1,19 @@
 import type {
-  AgentHomeSkillRef,
-  AgentHomeSkillView,
   CreateSkillRequest,
   DeleteSkillRequest,
   ImportAgentHomeSkillsResult,
   ImportSkillResult,
   ImportSkillZipBatchResult,
   ScanRepoResult,
-  SkillBundlePreviewResult,
   SkillImportPreviewContent,
   SkillView,
   UpdateSkillRequest
 } from '../../../shared/settings'
+import type {
+  AgentHomeSkillRef,
+  AgentHomeSkillView,
+  SkillBundlePreviewResult
+} from '@aipoch/skills/document'
 
 import { createOptimisticBooleanCoordinator } from './settings-optimistic-boolean'
 

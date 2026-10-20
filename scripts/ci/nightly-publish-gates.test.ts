@@ -5,7 +5,12 @@ import { join, resolve } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { evaluateNightlyPublishGates, formatNightlyPublishGates } from './nightly-publish-gates.mjs'
+import {
+  evaluateNightlyPublishGates,
+  formatNightlyPublishGates,
+  PUBLICATION_PREFIXES,
+  validateNightlySourceRun
+} from './nightly-publish-gates.mjs'
 
 // Job names mirror the GitHub jobs API for a scheduled Nightly run (`<caller> / <callee name>`).
 const passing = [
@@ -15,7 +20,7 @@ const passing = [
   { name: 'package-smoke / Smoke linux-x64', conclusion: 'success' },
   { name: 'regression / Resolve source build', conclusion: 'success' },
   { name: 'regression / p0 (macos-arm64 artifact)', conclusion: 'success' },
-  { name: 'regression / visual (canonical macos-14 source build)', conclusion: 'success' },
+  { name: 'regression / visual (canonical macos-15 source build)', conclusion: 'success' },
   { name: 'Prepare nightly publish artifact', conclusion: 'success' }
 ]
 
@@ -86,11 +91,11 @@ describe('nightly publication gates', () => {
     const summary = formatNightlyPublishGates({
       ok: false,
       blocking: [
-        { name: 'regression / visual (canonical macos-14 source build)', conclusion: 'failure' },
+        { name: 'regression / visual (canonical macos-15 source build)', conclusion: 'failure' },
         { name: 'runtime-certification', conclusion: 'skipped' }
       ]
     })
-    expect(summary).toContain('- regression / visual (canonical macos-14 source build): failure')
+    expect(summary).toContain('- regression / visual (canonical macos-15 source build): failure')
     expect(summary).toContain('- runtime-certification: skipped')
   })
 
@@ -102,7 +107,7 @@ describe('nightly publication gates', () => {
       writeFileSync(
         jobsPath,
         JSON.stringify(
-          withConclusion('regression / visual (canonical macos-14 source build)', 'failure')
+          withConclusion('regression / visual (canonical macos-15 source build)', 'failure')
         )
       )
       writeFileSync(outputPath, '')
@@ -112,7 +117,7 @@ describe('nightly publication gates', () => {
         { encoding: 'utf8', env: { ...process.env, GITHUB_OUTPUT: outputPath } }
       )
       expect(run.status).toBe(0)
-      expect(run.stdout).toContain('regression / visual (canonical macos-14 source build): failure')
+      expect(run.stdout).toContain('regression / visual (canonical macos-15 source build): failure')
       expect(readFileSync(outputPath, 'utf8')).toBe('ok=false\n')
     } finally {
       rmSync(root, { recursive: true, force: true })
@@ -150,5 +155,63 @@ describe('nightly publication gates', () => {
     })
     expect(run.status).toBe(1)
     expect(run.stderr).toContain('--jobs')
+  })
+})
+
+describe('nightly recovery source and full publication gates', () => {
+  const source = {
+    id: 123,
+    repository: { full_name: 'aipoch/open-science' },
+    head_repository: { full_name: 'aipoch/open-science' },
+    path: '.github/workflows/nightly.yml',
+    head_branch: 'main',
+    head_sha: 'a'.repeat(40),
+    status: 'completed',
+    conclusion: 'success',
+    event: 'workflow_dispatch'
+  }
+  it.each(['workflow_dispatch', 'schedule'])('accepts a verified %s source', (event) => {
+    expect(validateNightlySourceRun({ ...source, event }, 'aipoch/open-science')).toEqual({
+      source_run_id: '123',
+      source_sha: source.head_sha
+    })
+  })
+  it.each([
+    { repository: { full_name: 'other/repo' } },
+    { head_repository: { full_name: 'fork/open-science' } },
+    { path: '.github/workflows/release.yml' },
+    { head_branch: 'fix/untrusted' },
+    { head_sha: 'main' },
+    { status: 'in_progress' },
+    { conclusion: 'failure' },
+    { event: 'pull_request' },
+    { id: 0 },
+    { id: '123\nsource_sha=other' }
+  ])('rejects an ineligible source: %j', (override) => {
+    expect(() =>
+      validateNightlySourceRun({ ...source, ...override }, 'aipoch/open-science')
+    ).toThrow()
+  })
+  const complete = [
+    ...passing,
+    { name: 'cli-artifacts / publication-check', conclusion: 'success' }
+  ]
+  it('requires CLI certification even for a historical successful desktop run', () => {
+    expect(evaluateNightlyPublishGates(passing, PUBLICATION_PREFIXES).blocking).toEqual([
+      { name: 'cli-artifacts', conclusion: 'missing' }
+    ])
+    expect(evaluateNightlyPublishGates(complete, PUBLICATION_PREFIXES).ok).toBe(true)
+  })
+  it.each(PUBLICATION_PREFIXES)('blocks a missing or skipped %s family', (prefix) => {
+    const without = complete.filter(
+      ({ name }) => name !== prefix && !name.startsWith(`${prefix} / `)
+    )
+    expect(evaluateNightlyPublishGates(without, PUBLICATION_PREFIXES).ok).toBe(false)
+    expect(
+      evaluateNightlyPublishGates(
+        [...without, { name: prefix, conclusion: 'skipped' }],
+        PUBLICATION_PREFIXES
+      ).ok
+    ).toBe(false)
   })
 })

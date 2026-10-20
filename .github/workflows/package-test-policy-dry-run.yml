@@ -1,0 +1,120 @@
+name: Package test policy dry-run
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: Comma-separated independent package names, or all
+        type: string
+        default: diagnostics
+permissions:
+  contents: read
+jobs:
+  policy:
+    name: Package test direction and lossless registration
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: node scripts/ci/npm-ci.mjs
+      # Exercise the same selector and registration guard as PR Gate, including real
+      # Git history and Vitest configuration, without full tests or publishing.
+      - run: >-
+          npx vitest run
+          scripts/ci/package-test-impact.test.ts
+          scripts/ci/check-module-ownership.test.ts
+          scripts/ci/module-test-impact.test.ts
+          scripts/ci/module-impact-inputs.test.ts
+          scripts/ci/pr-gate-workflow.test.ts
+          --maxWorkers=2
+      - name: Prepare isolated downstream-change fixture
+        id: fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          fixture="$RUNNER_TEMP/package-policy-fixture"
+          mkdir -p "$fixture/scripts/ci" "$fixture/packages/core/src" "$fixture/packages/compute/src" "$fixture/packages/durable-files/src" "$fixture/packages/resilient-download/src" "$fixture/src"
+          cp scripts/ci/package-test-impact.mjs "$fixture/scripts/ci/"
+          echo '{"schemaVersion":1,"packages":[{"root":"packages/core","dependencies":[]},{"root":"packages/compute","dependencies":[]},{"root":"packages/durable-files","dependencies":[]},{"root":"packages/resilient-download","dependencies":[]}]}' > "$fixture/scripts/ci/package-test-boundaries.json"
+          echo '{"name":"fixture-core","scripts":{"test":"vitest run"}}' > "$fixture/packages/core/package.json"
+          echo '{"name":"fixture-compute","scripts":{"test":"vitest run"}}' > "$fixture/packages/compute/package.json"
+          echo "export default { root: '$fixture/packages/compute', test: { name: 'compute', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/compute/vitest.config.ts"
+          echo '{"name":"fixture-durable-files","scripts":{"test":"vitest run"}}' > "$fixture/packages/durable-files/package.json"
+          echo "export default { root: '$fixture/packages/durable-files', test: { name: 'durable-files', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/durable-files/vitest.config.ts"
+          echo '{"name":"fixture-resilient-download","scripts":{"test":"vitest run"}}' > "$fixture/packages/resilient-download/package.json"
+          echo "export default { root: '$fixture/packages/resilient-download', test: { name: 'resilient-download', include: ['src/**/*.test.ts'] } }" > "$fixture/packages/resilient-download/vitest.config.ts"
+          touch "$fixture/packages/core/src/core.test.ts" "$fixture/packages/compute/src/compute.test.ts" "$fixture/packages/durable-files/src/durable.test.ts" "$fixture/packages/resilient-download/src/transport.test.ts" "$fixture/src/host.test.ts"
+          git -C "$fixture" init -q
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid add .
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm baseline
+          echo "base=$(git -C "$fixture" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+          echo '// downstream change' > "$fixture/src/host.ts"
+          git -C "$fixture" add .
+          git -C "$fixture" -c user.name=CI -c user.email=ci@example.invalid commit -qm downstream
+          echo "head=$(git -C "$fixture" rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - name: Select through the production action
+        uses: ./.github/actions/select-package-tests
+        with:
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          trusted-base: ${{ steps.fixture.outputs.base }}
+          working-directory: ${{ runner.temp }}/package-policy-fixture
+      - name: Verify actual Vitest discovery from exported environment
+        env:
+          VITEST_PORTABLE_CI: '1'
+        run: |
+          npx vitest list --config "$GITHUB_WORKSPACE/vitest.config.ts" --root "$RUNNER_TEMP/package-policy-fixture" --filesOnly --json > "$RUNNER_TEMP/package-policy-files.json"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
+          assert.deepEqual(files.map(({ file }) => file), [`${process.env.RUNNER_TEMP}/package-policy-fixture/src/host.test.ts`])
+          JS
+      - name: Retain the complete manual baseline
+        uses: ./.github/actions/select-package-tests
+        with:
+          enabled: 'false'
+          base: ${{ steps.fixture.outputs.base }}
+          head: ${{ steps.fixture.outputs.head }}
+          trusted-base: ${{ steps.fixture.outputs.base }}
+          working-directory: ${{ runner.temp }}/package-policy-fixture
+      - name: Verify the baseline includes the upstream package
+        env:
+          VITEST_PORTABLE_CI: '1'
+        run: |
+          npx vitest list --config "$GITHUB_WORKSPACE/vitest.config.ts" --root "$RUNNER_TEMP/package-policy-fixture" --filesOnly --json > "$RUNNER_TEMP/package-policy-files.json"
+          node --input-type=module <<'JS'
+          import assert from 'node:assert/strict'
+          import { readFileSync } from 'node:fs'
+          const files = JSON.parse(readFileSync(`${process.env.RUNNER_TEMP}/package-policy-files.json`, 'utf8'))
+          assert.deepEqual(files.map(({ file }) => file).sort(), [
+            'packages/core/src/core.test.ts',
+            'packages/compute/src/compute.test.ts',
+            'packages/durable-files/src/durable.test.ts',
+            'packages/resilient-download/src/transport.test.ts',
+            'src/host.test.ts'
+          ].map(file => `${process.env.RUNNER_TEMP}/package-policy-fixture/${file}`).sort())
+          JS
+
+  isolation:
+    name: Independent installed consumers
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Verify through the production package entry
+        uses: ./.github/actions/verify-packages
+        with:
+          selection: ${{ inputs.packages }}

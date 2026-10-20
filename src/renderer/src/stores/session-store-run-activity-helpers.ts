@@ -2,16 +2,16 @@ import type { ToolCallContent, ToolCallLocation, ToolKind } from '@agentclientpr
 
 import type { ElicitationAnswer, ElicitationProjection } from '../../../shared/acp'
 import { sanitizeActivityGroupTitle } from '../../../shared/activity-groups'
-import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type { PersistedActivityGroup } from '../../../shared/session-persistence'
-import { createSortIndex } from './session-store-message-graph-owner'
-import { inferSessionInteractionState } from './session-store-interaction-state'
+import type { ActivePlanProjection } from '../../../shared/session-plan/contract'
 import type {
   ChatSession,
   SessionStatus,
   ToolActivity,
   ToolActivityStatus
-} from './session-store-persistence-owner'
+} from './session-store-contract'
+import { inferSessionInteractionState } from './session-store-interaction-state'
+import { createSortIndex } from './session-store-message-graph-owner'
 
 export type UpsertToolActivityInput = {
   sessionId: string
@@ -19,10 +19,13 @@ export type UpsertToolActivityInput = {
   eventId: string
   timestamp?: number
   promptMessageId?: string
+  promptExecutionId?: string
   title?: string
   status?: string
   toolDisposition?: 'declined' | 'permission-closed'
   executionInvocationId?: string
+  // Set only by the main-process permission owner, never by provider metadata.
+  appOwned?: true
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]
@@ -203,6 +206,7 @@ export const projectToolActivity = (
       status: mergeToolActivityStatus(existingActivity.status, nextStatus),
       toolDisposition: input.toolDisposition ?? existingActivity.toolDisposition,
       executionInvocationId: input.executionInvocationId ?? existingActivity.executionInvocationId,
+      appOwned: input.appOwned ?? existingActivity.appOwned,
       providerToolName: input.providerToolName ?? existingActivity.providerToolName,
       toolKind: input.toolKind ?? existingActivity.toolKind,
       toolContent: input.toolContent ?? existingActivity.toolContent,
@@ -237,6 +241,7 @@ export const projectToolActivity = (
     status: nextStatus ?? 'pending',
     toolDisposition: input.toolDisposition,
     executionInvocationId: input.executionInvocationId,
+    appOwned: input.appOwned,
     eventIds: [input.eventId],
     sortIndex: createSortIndex(),
     activityGroupId: activeGroup?.id,

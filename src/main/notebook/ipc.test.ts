@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRuntimeService } from './runtime-service'
@@ -7,8 +8,8 @@ const { ipcHandlers, log } = vi.hoisted(() => ({
   log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 }))
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => log
 }))
 
@@ -133,6 +134,7 @@ describe('notebook IPC handlers', () => {
 
   it('registers every notebook channel and forwards the renderer payload unchanged', async () => {
     const service = {
+      runIndex: vi.fn().mockResolvedValue([{ runId: 'recorded-run' }]),
       state: vi.fn().mockResolvedValue({ sessionId: 'session-1' }),
       getProjectActivity: vi.fn().mockReturnValue({ kernels: [], backgroundRuns: [] }),
       inspectNamespace: vi.fn().mockResolvedValue({ status: 'unavailable' }),
@@ -151,6 +153,7 @@ describe('notebook IPC handlers', () => {
     registerNotebookIpcHandlers(createNotebookCommandWorkflows(service))
 
     expect([...ipcHandlers.keys()]).toEqual([
+      'notebook:run-index',
       'notebook:state',
       'notebook:project-activity',
       'notebook:inspect-namespace',
@@ -193,6 +196,11 @@ describe('notebook IPC handlers', () => {
     const run = { ...publicRun, ...forgedTurnContext }
     const execute = { ...publicExecute, ...forgedTurnContext }
 
+    expect(ipcHandlers.has('notebook:run-index')).toBe(true)
+    await expect(ipcHandlers.get('notebook:run-index')!(undefined, session)).resolves.toEqual([
+      { runId: 'recorded-run' }
+    ])
+    expect(service.runIndex).toHaveBeenCalledWith(session)
     await ipcHandlers.get('notebook:state')?.(undefined, session)
     await ipcHandlers.get('notebook:project-activity')?.(undefined, project)
     await ipcHandlers.get('notebook:inspect-namespace')?.(undefined, namespace)
@@ -276,3 +284,5 @@ describe('notebook IPC handlers', () => {
     expect(logged).not.toContain('kernel connection closed')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

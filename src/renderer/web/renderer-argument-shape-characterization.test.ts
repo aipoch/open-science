@@ -213,6 +213,25 @@ afterEach(() => {
 })
 
 describe('renderer argument-shape characterization', () => {
+  it('omits the Marketplace request on automatic refresh and retry over Web JSON transport', async () => {
+    const { useMarketplaceStore, resetMarketplaceStoreForTests } =
+      await import('../src/stores/marketplace-store')
+    resetMarketplaceStoreForTests()
+
+    await useMarketplaceStore.getState().refresh()
+    await useMarketplaceStore.getState().refresh({ forceRefresh: true })
+    // A failed load's Retry action takes the same unforced path as view entry.
+    useMarketplaceStore.setState({ lastRefreshFailed: true })
+    await useMarketplaceStore.getState().refresh()
+
+    expect(webInvocations).toEqual([
+      { channel: 'specialist:marketplace-list', args: [] },
+      { channel: 'specialist:marketplace-list', args: [{ forceRefresh: true }] },
+      { channel: 'specialist:marketplace-list', args: [] }
+    ])
+    expect(useMarketplaceStore.getState().lastRefreshFailed).toBe(false)
+  })
+
   it('waits for actual API registration when module loading outlasts the polling deadline', async () => {
     vi.resetModules()
     delete (window as unknown as { api?: unknown }).api
@@ -244,6 +263,18 @@ describe('renderer argument-shape characterization', () => {
       expected
     )
     await expect(invokeWeb(webApi, 'literature.lookupMetadata', args)).resolves.toEqual(expected)
+  })
+
+  it('exposes bounded candidate status reads with identical Electron and Web arguments', async () => {
+    const args = [{ candidateIds: ['candidate-a', 'candidate-b'] }]
+    const expected = { channel: 'literature:get-candidate-states', args }
+    electronMocks.invoke.mockResolvedValueOnce({ ok: true, result: { candidates: [] } })
+    await expect(
+      invokeElectron(electronApi, 'literature.getCandidateStates', args)
+    ).resolves.toEqual(expected)
+    await expect(invokeWeb(webApi, 'literature.getCandidateStates', args)).resolves.toEqual(
+      expected
+    )
   })
 
   it('loads the complete local Web callable surface from the real bootstrap', () => {

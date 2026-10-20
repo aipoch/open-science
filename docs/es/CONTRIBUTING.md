@@ -12,7 +12,7 @@ Sea respetuoso y constructivo en todas las interacciones. Asuma buenas intencion
 
 ### Requisitos previos
 
-- [Node.js](https://nodejs.org/) 22 (consulte [`.nvmrc`](../../.nvmrc)) y npm
+- [Node.js](https://nodejs.org/) 24 (consulte [`.nvmrc`](../../.nvmrc)) y npm
 - Git
 
 ### Instalación
@@ -72,12 +72,13 @@ Lea el documento del propietario existente antes de cambiar una de estas áreas 
 
 ## Estructura del proyecto
 
-Esta es una aplicación Electron creada con electron-vite, React y TypeScript. Tres capas de proceso de tiempo de ejecución y un módulo compartido se encuentran en `src/`:
+La interfaz web funciona con un backend Node independiente, sin Electron ni entorno gráfico.
 
-- `src/main/` — proceso principal de Electron (entorno de ejecución de ACP, persistencia de sesiones, artefactos, Notebook, proyectos y controladores de IPC).
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/`: puente de precarga que expone al renderizador una API `window.api` tipada.
 - `src/renderer/` — React UI (páginas, tiendas, componentes).
 - `src/shared/`: tipos y ayudantes compartidos entre procesos.
+- `packages/` — contiene paquetes de dominio independientes y auxiliares nativos
 
 ## Flujo de trabajo de desarrollo
 
@@ -234,8 +235,6 @@ ci(review): unify automated AI reviews
 - Incluya el mapeo de evidencia final de [Política de verificación](#política-de-verificación), indique que las comprobaciones enumeradas se ejecutaron después de la última edición material y mencione los riesgos detectados.
 - Mantenga los PR razonablemente pequeños y bien delimitados para que sean fáciles de revisar.
 - Asegúrese de que se apruebe el conjunto final de impacto de las pruebas o, cuando corresponda, la comprobación completa de respaldo.
-- Después de que pasen las comprobaciones del PR, fusiónelo directamente usando solo **squash merge**. No actualice la rama únicamente porque `main` haya avanzado; hágalo cuando existan conflictos de fusión o lo solicite un responsable de mantenimiento. El asunto del commit de squash debe conservar el formato Conventional Commits del título del PR.
-- Los cambios que no se limiten a la documentación y se fusionen en `main` activan el [workflow nocturno](../../.github/workflows/nightly.yml), que ejecuta la verificación posterior a la fusión y certifica el paquete multiplataforma en el commit resultante.
 
 ## Informar de problemas
 
@@ -246,10 +245,26 @@ Al presentar un informe de error, incluya:
 - Su sistema operativo y versión de la aplicación.
 - Registros o capturas de pantalla relevantes, si están disponibles.
 
-## Publicación del paquete npm
-
-Los responsables del mantenimiento deben seguir la [guía de publicación del paquete npm](../npm-release.md). Las versiones del paquete npm usan etiquetas `npm-v*` y se publican mediante el flujo de trabajo protegido `Publish npm package`.
-
 ## Licencia
 
 Al contribuir, acepta que sus contribuciones tendrán la [Licencia Apache 2.0](../../LICENSE), la misma licencia que cubre este proyecto.
+
+## Desarrollo y CI actuales
+
+La [guía en inglés](../../CONTRIBUTING.md) es la referencia normativa completa; esta traducción resume el flujo actual.
+
+- `npm run dev` compila el backend Node, prepara su ejecutable y abre Electron. El observador recompila los cambios de paquetes y backend; tras una compilación correcta, cierre la aplicación normalmente y reinicie el comando para cargar backend/Main/Preload. El renderer utiliza HMR.
+
+- Cada archivo nuevo en `src/` y `packages/`, incluidos recursos y fixtures, debe tener un único propietario en `scripts/ci/module-impact/<module-id>.json`. Conserve las pruebas del propietario, contratos y consumidores y las dependencias dinámicas. Después de `git add`, ejecute las comprobaciones de registro de la guía inglesa y `node scripts/ci/audit-module-ownership.mjs`.
+
+- Tras superar las comprobaciones obligatorias y la revisión, use la cola de fusión nativa cuando esté habilitada. La cola valida la revisión combinada antes del squash merge; conserve el título Conventional Commit. No omita comprobaciones obligatorias fallidas.
+
+- Nightly se ejecuta a diario a las 15:17 UTC o manualmente, no después de cada fusión. Source Regression añade dos veces al día la cobertura completa de Mac, delegación y paquetes. Los PR y la cola ejecutan los grupos seleccionados para cada nivel.
+
+- `npm test` conserva la suite completa. `npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` explica la selección del PR; `--tier queue` explica la cola. La evidencia incompleta conserva una selección más amplia. Las políticas de CI protegidas requieren revisión del propietario; los registros no pueden reducir la cobertura existente.
+
+- `packages/` contiene paquetes de dominio independientes y auxiliares nativos. La verificación aislada instala tarballs declarados en consumidores limpios; la instalación en línea es la predeterminada y `--offline` exige una caché completa. Las versiones estables incluyen cinco archivos CLI independientes; la publicación automática en npm sigue aplazada.
+
+- Se requieren las ocho traducciones: de, es, fr, zh-Hans, zh-Hant, ja, ko y ru. Consulte [AGENTS.md](../../AGENTS.md) y el [glosario](../i18n-glossary.md) para la terminología y los contextos.
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

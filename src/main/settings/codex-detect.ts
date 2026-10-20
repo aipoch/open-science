@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { execFile, spawn } from 'node:child_process'
 import { constants } from 'node:fs'
 import { access, mkdtemp, rm } from 'node:fs/promises'
@@ -5,8 +6,8 @@ import { homedir, tmpdir } from 'node:os'
 import path from 'node:path'
 import { promisify } from 'node:util'
 
-import { isSupportedCodexAcpVersion } from '../../shared/codex-runtime'
-import { createLogger } from '../logger'
+import { isSupportedCodexAcpVersion, isSupportedCodexCliVersion } from '../../shared/codex-runtime'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { augmentedPathEnv } from './shell-path'
 import { stripCodexCredentialEnv } from './process-tree'
 import { registerOwnedPosixProcessGroup, terminateProcessTree } from '../process-tree'
@@ -128,7 +129,7 @@ const detectCodex = async (
         : await detectNativeCodex(deps, signal)
       // The adapter is app-owned, while the native executable may be the bundled binary or a global
       // installation. Pin the resolved executable through CODEX_PATH in either case.
-      if (!nativeCodex) continue
+      if (!nativeCodex || !isSupportedCodexCliVersion(nativeCodex.version)) continue
       result.nativeCodexPath = nativeCodex.path
       result.nativeCodexVersion = nativeCodex.version
     }
@@ -305,7 +306,7 @@ const runAcpInitializeSmoke =
               stdio: ['pipe', 'pipe', 'ignore'],
               env: {
                 ...stripCodexCredentialEnv(augmentedPathEnv(process.env)),
-                ...(isJavaScript ? { ELECTRON_RUN_AS_NODE: '1' } : {}),
+                ...(isJavaScript ? { ...nodeRuntimeEnvironment() } : {}),
                 NO_BROWSER: '1',
                 CODEX_HOME: codexHome,
                 ...(opts.codexPath ? { CODEX_PATH: opts.codexPath } : {})
@@ -405,7 +406,7 @@ const runVersion =
         windowsHide: true,
         env: {
           ...augmentedPathEnv(process.env),
-          ...(isJavaScript ? { ELECTRON_RUN_AS_NODE: '1', NO_BROWSER: '1' } : {})
+          ...(isJavaScript ? { ...nodeRuntimeEnvironment(), NO_BROWSER: '1' } : {})
         },
         signal
       })

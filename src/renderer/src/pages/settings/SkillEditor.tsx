@@ -5,24 +5,18 @@ import { TooltipProvider } from '@/components/ui/tooltip'
 import type { TFunction } from 'i18next'
 import { AlertTriangle, ChevronDown, FileUp, Upload, X } from 'lucide-react'
 import { Dialog, RadioGroup } from 'radix-ui'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
-import type {
-  SkillDetailView,
-  SkillPackageFileInfo,
-  SkillReference
-} from '../../../../shared/settings'
-import { serializePersonalSkillDocument } from '../../../../shared/personal-skill-document'
-import {
-  isSkillPackageBudgetedPath,
-  SKILL_IMPORT_LIMITS
-} from '../../../../shared/skill-import-limits'
-import { parseSkillDocument } from '../../../../shared/skill-frontmatter'
+import type { SkillDetailView } from '../../../../shared/settings'
+import type { SkillPackageFileInfo, SkillReference } from '@aipoch/skills/document'
+import { serializePersonalSkillDocument } from '@aipoch/skills/document'
+import { isSkillPackageBudgetedPath, SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
+import { parseSkillDocument, parseSkillDocumentWithStatus } from '@aipoch/skills/document'
 import { ErrorNotice } from '@/components/error-notice'
 import { FileDropOverlay } from '@/components/FileDropOverlay'
 import { Button } from '@/components/ui/button'
-import { isSafeSkillReferenceName } from '../../../../shared/skill-reference-name'
+import { isSafeSkillReferenceName } from '@aipoch/skills/document'
 import { Input } from '@/components/ui/input'
 import {
   dialogBodyClassName,
@@ -154,7 +148,11 @@ const fileToBase64 = (file: File): Promise<string> =>
     reader.readAsDataURL(file)
   })
 
+export type SkillEditorLeaveState = { dirty: boolean; busy: boolean }
+
 type SkillEditorProps = {
+  onLeaveStateChange?: (state: SkillEditorLeaveState | null) => void
+  savingExternally?: boolean
   initial: SkillDraft
   onCancel: () => void
   onSave: (draft: SkillDraft) => Promise<void>
@@ -166,7 +164,13 @@ const SkillEditorAlert = ({ message }: { message: string }): React.JSX.Element =
 
 // Create/edit form for a personal skill: Identity (name/description) + Content (SKILL.md body).
 // Pasting a full SKILL.md with a frontmatter block auto-fills name/description.
-const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX.Element => {
+const SkillEditor = ({
+  initial,
+  onCancel,
+  onSave,
+  onLeaveStateChange,
+  savingExternally = false
+}: SkillEditorProps): React.JSX.Element => {
   const { t, i18n } = useTranslation()
   const { t: tCommon } = useTranslation()
   const isCreate = !initial.id
@@ -184,6 +188,9 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [body, setBody] = useState(initial.body)
   const [metadata, setMetadata] = useState(initial.metadata)
   const [frontmatterImportMode, setFrontmatterImportMode] = useState(false)
+  const lastValidImportedIdentity = useRef<{ name?: string; description?: string } | undefined>(
+    undefined
+  )
   const [contentMode, setContentMode] = useState<'write' | 'upload'>('write')
   const [references, setReferences] = useState<SkillEditorReference[]>(() =>
     (initial.references ?? []).map((ref) => ({
@@ -196,6 +203,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     (initial.references?.length ?? 0) > 0 || preservedPackageFiles.length > 0
   )
   const [saving, setSaving] = useState(false)
+  const [importingContent, setImportingContent] = useState(false)
   const [addingReferences, setAddingReferences] = useState(false)
   const [referenceProgress, setReferenceProgress] = useState<{
     completed: number
@@ -204,6 +212,23 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   const [referenceError, setReferenceError] = useState<string | null>(null)
   const [contentImportError, setContentImportError] = useState<string | null>(null)
   const [saveError, setSaveError] = useState<string | null>(null)
+
+  const dirty =
+    name !== initial.name ||
+    description !== initial.description ||
+    body !== initial.body ||
+    JSON.stringify(metadata ?? {}) !== JSON.stringify(initial.metadata ?? {}) ||
+    references.length !== (initial.references?.length ?? 0) ||
+    references.some(
+      (reference, index) =>
+        reference.path !== initial.references?.[index]?.path ||
+        reference.dataBase64 !== initial.references?.[index]?.dataBase64
+    )
+  const busy = saving || savingExternally || addingReferences || importingContent
+  useLayoutEffect(() => {
+    onLeaveStateChange?.({ dirty, busy })
+  }, [dirty, busy, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
 
   const currentName = name.trim()
 
@@ -271,15 +296,35 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     !addingReferences
 
   // Plain textarea edits are always literal body content and keep the separately displayed metadata.
-  // In import mode the visible frontmatter is authoritative, so removing it clears derived metadata.
+  // In import mode changed frontmatter fields sync identity; removing it clears derived metadata.
   const handleBodyChange = (value: string): void => {
     if (frontmatterImportMode) {
-      const parsed = parseSkillDocument(value)
+      const parsed = parseSkillDocumentWithStatus(value)
       if (parsed.hasFrontmatter) {
-        if (isCreate && parsed.name !== undefined) setName(parsed.name)
-        if (parsed.description !== undefined) setDescription(parsed.description)
+        if (parsed.frontmatterValid) {
+          // A transient YAML error must not erase the comparison baseline for untouched fields.
+          const previous = lastValidImportedIdentity.current
+          if (
+            isCreate &&
+            parsed.name !== undefined &&
+            (previous ? parsed.name !== previous.name : !name.trim())
+          ) {
+            setName(parsed.name)
+          }
+          if (
+            parsed.description !== undefined &&
+            (previous ? parsed.description !== previous.description : !description.trim())
+          ) {
+            setDescription(parsed.description)
+          }
+          lastValidImportedIdentity.current = {
+            name: parsed.name,
+            description: parsed.description
+          }
+        }
         setMetadata(parsed.metadata)
       } else {
+        lastValidImportedIdentity.current = undefined
         setMetadata(undefined)
         setFrontmatterImportMode(false)
       }
@@ -290,7 +335,11 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   // Explicit paste/upload/drop imports opt into frontmatter semantics. The raw block remains visible
   // in the textarea so users can edit or remove it; it is stripped only from the persisted body.
   const importContent = (value: string): void => {
-    const parsed = parseSkillDocument(value)
+    const parsed = parseSkillDocumentWithStatus(value)
+    lastValidImportedIdentity.current =
+      parsed.hasFrontmatter && parsed.frontmatterValid
+        ? { name: parsed.name, description: parsed.description }
+        : undefined
     if (parsed.hasFrontmatter) {
       if (isCreate && parsed.name && !name.trim()) setName(parsed.name)
       if (parsed.description && !description.trim()) setDescription(parsed.description)
@@ -316,6 +365,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 
   // Uploads a text/markdown file into the content body, then flips back to the Write editor.
   const importContentFile = async (file: File): Promise<void> => {
+    if (busy) return
     setContentImportError(null)
     if (file.size > SKILL_IMPORT_LIMITS.maxFileBytes) {
       setContentImportError(
@@ -326,6 +376,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
       return
     }
 
+    setImportingContent(true)
     try {
       importContent(await file.text())
       setContentMode('write')
@@ -335,6 +386,8 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
           ? error.message
           : t('Unable to read the selected content file.')
       )
+    } finally {
+      setImportingContent(false)
     }
   }
 
@@ -358,7 +411,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
   // Adds one or more supporting files to the references list (base64-encoded), replacing any
   // existing entry with the same name.
   const addReferences = async (files: File[]): Promise<void> => {
-    if (addingReferences || files.length === 0) return
+    if (busy || files.length === 0) return
 
     setReferenceError(null)
     if (files.some((file) => !isSafeSkillReferenceName(file.name))) {
@@ -414,16 +467,16 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 
   // Each content area is its own drop zone with an independent overlay state.
   const contentDrop = useFileDropZone({
-    enabled: true,
+    enabled: !busy,
     onFiles: (files) => void dropContent(files)
   })
   const referenceDrop = useFileDropZone({
-    enabled: !addingReferences,
+    enabled: !busy,
     onFiles: (files) => void addReferences(files)
   })
 
   const handleSave = async (): Promise<void> => {
-    if (!canSave) return
+    if (!canSave || busy) return
     setSaveError(null)
     setSaving(true)
     try {
@@ -449,7 +502,7 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
     <TooltipProvider delayDuration={200}>
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="min-h-0 flex-1 overflow-y-auto">
-          <div className="flex flex-col gap-4 p-5">
+          <fieldset disabled={busy} className="flex min-w-0 flex-col gap-4 p-5">
             <label data-slot="settings-editor-field" className="grid min-w-0 gap-1.5">
               <span className="text-sm font-medium text-foreground">{t('Name')}</span>
               <Input
@@ -710,15 +763,20 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
             </div>
             {budgetError ? <SkillEditorAlert message={budgetError} /> : null}
             {saveError ? <SkillEditorAlert message={saveError} /> : null}
-          </div>
+          </fieldset>
         </div>
 
         <div className="flex shrink-0 items-center justify-end gap-2 bg-card px-5 py-3">
-          <Button type="button" variant="ghost" onClick={onCancel}>
+          <Button type="button" variant="ghost" onClick={onCancel} disabled={busy}>
             {tCommon('Cancel')}
           </Button>
-          <Button type="button" onClick={() => void handleSave()} disabled={!canSave}>
-            {saving ? t('Saving…') : initial.id ? t('Save') : t('Publish')}
+          <Button
+            type="button"
+            onClick={() => void handleSave()}
+            disabled={!canSave || busy}
+            aria-busy={saving || savingExternally}
+          >
+            {saving ? t('Saving…') : initial.id ? t('Save') : t('Create skill')}
           </Button>
         </div>
       </div>
@@ -727,6 +785,8 @@ const SkillEditor = ({ initial, onCancel, onSave }: SkillEditorProps): React.JSX
 }
 
 type SkillEditLoaderProps = {
+  onLeaveStateChange?: (state: SkillEditorLeaveState | null) => void
+  onSaved?: () => void
   skillId: string
   onDone: () => void
 }
@@ -746,7 +806,12 @@ const toSkillDraft = (detail: SkillDetailView): SkillDraft => ({
 })
 
 // Loads an existing personal skill's content, then renders the editor pre-filled.
-const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.Element => {
+const SkillEditLoader = ({
+  skillId,
+  onDone,
+  onSaved,
+  onLeaveStateChange
+}: SkillEditLoaderProps): React.JSX.Element => {
   const { t } = useTranslation()
   const updateSkill = useSettingsStore((state) => state.updateSkill)
   const [draft, setDraft] = useState<SkillDraft | null>(null)
@@ -839,7 +904,7 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
       return
     }
     setConflict(null)
-    onDone()
+    ;(onSaved ?? onDone)()
   }
 
   const overwrite = async (): Promise<void> => {
@@ -858,7 +923,14 @@ const SkillEditLoader = ({ skillId, onDone }: SkillEditLoaderProps): React.JSX.E
 
   return (
     <>
-      <SkillEditor key={draft.etag} initial={draft} onCancel={onDone} onSave={saveDraft} />
+      <SkillEditor
+        key={draft.etag}
+        initial={draft}
+        onCancel={onDone}
+        onSave={saveDraft}
+        onLeaveStateChange={onLeaveStateChange}
+        savingExternally={resolving}
+      />
       <Dialog.Root
         open={conflict !== null}
         onOpenChange={(open) => {

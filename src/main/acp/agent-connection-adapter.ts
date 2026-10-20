@@ -17,6 +17,7 @@ import { Readable, Writable } from 'node:stream'
 import { StringDecoder } from 'node:string_decoder'
 
 import type { AgentFramework, ResolvedAgentBackend } from '../agent-framework'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { terminateProcessTree } from '../process-tree'
 import type {
   AcpBackendGenerationAttempt,
@@ -25,8 +26,8 @@ import type {
 import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
 import { readWorkspaceTextFile, writeWorkspaceTextFile } from './filesystem'
 
-type ResponsesBridgeLease = ResolvedAgentBackend['responsesBridgeLease']
-type AnthropicBridgeLease = ResolvedAgentBackend['anthropicBridgeLease']
+type ResponsesTransportLease = ResolvedAgentBackend['responsesTransportLease']
+type MessagesBridgeLease = ResolvedAgentBackend['messagesBridgeLease']
 type ProviderTransportLease = ResolvedAgentBackend['providerTransportLease']
 type CandidateCleanupStage =
   | 'connection'
@@ -56,6 +57,7 @@ type AcpAgentConnectionHooks = Readonly<{
   filesystem: Readonly<{
     resolveSessionCwd: (sessionId: string) => string
     protectedReadRoots: () => readonly string[]
+    listGrantedRoots?: () => Promise<readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]>
   }>
   onBackendResolved: (framework: AgentFramework['id']) => void
   onProcessSpawned: (framework: AgentFramework['id']) => void
@@ -112,8 +114,8 @@ class AcpAgentConnectionAdapter {
   ): Promise<AcpAgentConnectionCandidate> {
     let process: ChildProcessWithoutNullStreams | undefined
     let connection: ReturnType<AcpAgentConnectionAdapter['createClientConnection']> | undefined
-    let bridgeLease: ResponsesBridgeLease
-    let anthropicBridgeLease: AnthropicBridgeLease
+    let bridgeLease: ResponsesTransportLease
+    let messagesBridgeLease: MessagesBridgeLease
     let providerTransportLease: ProviderTransportLease
     let backendAttempt: AcpBackendGenerationAttempt | undefined
     let framework: AgentFramework['id'] = 'claude-code'
@@ -149,9 +151,9 @@ class AcpAgentConnectionAdapter {
           reportCleanupFailure('bridge-lease', error)
         }
       }
-      if (anthropicBridgeLease) {
+      if (messagesBridgeLease) {
         try {
-          await anthropicBridgeLease.release()
+          await messagesBridgeLease.release()
         } catch (error) {
           reportCleanupFailure('anthropic-bridge-lease', error)
         }
@@ -168,8 +170,8 @@ class AcpAgentConnectionAdapter {
     try {
       const backend = await input.resolveBackend()
       framework = backend.framework.id
-      bridgeLease = backend.responsesBridgeLease
-      anthropicBridgeLease = backend.anthropicBridgeLease
+      bridgeLease = backend.responsesTransportLease
+      messagesBridgeLease = backend.messagesBridgeLease
       providerTransportLease = backend.providerTransportLease
       backendAttempt = input.prepareBackend(backend)
       hooks.onBackendResolved(framework)
@@ -249,7 +251,7 @@ class AcpAgentConnectionAdapter {
           connection: openedConnection,
           framework,
           bridgeLease,
-          anthropicBridgeLease,
+          messagesBridgeLease,
           providerTransportLease
         })
         state = 'transferred'
@@ -303,17 +305,19 @@ class AcpAgentConnectionAdapter {
         (params) => params as Record<string, unknown>,
         (context) => hooks.observeClaudeSdkMessage(context.params)
       )
-      .onRequest(acp.methods.client.fs.readTextFile, (context) =>
+      .onRequest(acp.methods.client.fs.readTextFile, async (context) =>
         readWorkspaceTextFile(
           hooks.filesystem.resolveSessionCwd(context.params.sessionId),
           context.params,
-          [...hooks.filesystem.protectedReadRoots()]
+          [...hooks.filesystem.protectedReadRoots()],
+          (await hooks.filesystem.listGrantedRoots?.()) ?? []
         )
       )
-      .onRequest(acp.methods.client.fs.writeTextFile, (context) =>
+      .onRequest(acp.methods.client.fs.writeTextFile, async (context) =>
         writeWorkspaceTextFile(
           hooks.filesystem.resolveSessionCwd(context.params.sessionId),
-          context.params
+          context.params,
+          (await hooks.filesystem.listGrantedRoots?.()) ?? []
         )
       )
       .connect(stream)

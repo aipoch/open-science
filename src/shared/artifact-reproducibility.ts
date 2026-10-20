@@ -1,5 +1,16 @@
+import type {
+  ArtifactReproducibilityCheckComparison,
+  ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityReceiptComparison
+} from '@aipoch/reproducibility/contracts'
+export type {
+  ArtifactReproducibilityCheckComparison,
+  ArtifactReproducibilityCheckLogBase,
+  ArtifactReproducibilityCheckLog,
+  ArtifactReproducibilityReceiptComparison
+} from '@aipoch/reproducibility/contracts'
 import type { GetArtifactVersionProvenanceRequest } from './artifact-provenance'
-import type { OutputComparisonPolicy, OutputComparisonReport } from './output-comparison'
+import type { OutputComparisonPolicy } from '@aipoch/reproducibility/comparison'
 
 export type ArtifactReproducibilityCheckRequest = GetArtifactVersionProvenanceRequest & {
   frontierId: string
@@ -102,35 +113,6 @@ export type ImportArtifactEnvironmentLockResult =
       reused: boolean
     }
 
-export type ArtifactReproducibilityCheckComparison = {
-  relativePath: string
-  status: 'matched' | 'different'
-  reason?: 'missing' | 'not-file' | 'linked' | 'size-mismatch' | 'checksum-mismatch'
-}
-
-type ArtifactReproducibilityCheckLogBase = {
-  kernelKind: 'python' | 'r'
-  stream: 'stdout' | 'stderr'
-  text: string
-  recordedAt?: string
-  truncated?: boolean
-}
-
-export type ArtifactReproducibilityCheckLog = ArtifactReproducibilityCheckLogBase &
-  (
-    | {
-        source: 'environment'
-        requirementId: string
-        environmentIndex: number
-        environmentTotal: number
-      }
-    | {
-        source: 'notebook'
-        stepId: string
-        runIndex: number
-      }
-  )
-
 export type ArtifactReproducibilityCheckLogReference = {
   logChecksum: string
   entryCount: number
@@ -155,20 +137,6 @@ export type ArtifactReproducibilityFailedAttempt = {
   frontierId: string
   phase?: ArtifactReproducibilityCheckState['phase']
   checkLog: ArtifactReproducibilityCheckLogReference
-}
-
-export type ArtifactReproducibilityReceiptComparison = ArtifactReproducibilityCheckComparison & {
-  contentComparison?: OutputComparisonReport
-  contentComparisonUnavailableReason?:
-    'unsupported-format' | 'budget-exceeded' | 'comparison-failed'
-  stepId: string
-  entityId: string
-  expectedChecksum: string
-  expectedSizeBytes: number
-  actualChecksum?: string
-  actualSizeBytes?: number
-  outputCaptured?: true
-  outputCaptureReason?: 'too-large' | 'storage-limit' | 'unavailable'
 }
 
 export type ArtifactReproducibilityReceipt = {

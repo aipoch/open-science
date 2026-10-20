@@ -89,7 +89,8 @@ vi.mock('node:fs/promises', async (original) => {
   const actual = await original<typeof import('node:fs/promises')>()
   return { ...actual, mkdtemp: vi.fn(actual.mkdtemp), rename: vi.fn(actual.rename) }
 })
-vi.mock('./logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ error: vi.fn(), warn: vi.fn() }),
   diagnosticErrorFields: () => ({})
 }))

@@ -2,7 +2,7 @@ import { connect } from 'node:net'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { ProviderLoopbackHttpHost, writeProviderLoopbackJson } from './provider-loopback-http-host'
 
 type Connection = Readonly<{ baseUrl: string; token: string }>

@@ -88,4 +88,18 @@ describe('useWorkspaceSessionAgentConfiguration', () => {
       { preserveUpdatedAt: true }
     )
   })
+
+  it('does not rewrite imported research with this device’s resolved model configuration', () => {
+    renderConfigurationHook({
+      id: 'imported',
+      packageOrigin: {
+        importId: 'receipt',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64),
+        sourceProjectId: 'original-project',
+        sourceSessionId: 'original-session'
+      }
+    } as ChatSession)
+    expect(mocks.setAgentConfiguration).not.toHaveBeenCalled()
+  })
 })

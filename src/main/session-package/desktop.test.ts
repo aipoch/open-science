@@ -1,14 +1,18 @@
 import { initDataRoot } from '../storage-root'
 import { afterEach, expect, it, vi } from 'vitest'
 import { join } from 'node:path'
-import { mkdir, readFile, readdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, realpath, stat, writeFile } from 'node:fs/promises'
 import { basename, dirname } from 'node:path'
 import { dialog, shell } from 'electron'
 import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
 import { SessionRepository } from '../session-persistence/repository'
-import { englishNativeTranslator } from '../locale/main-process-messages'
+import { englishNativeTranslator, translateNativeMessage } from '../locale/main-process-messages'
 import { SessionPackageService } from './service'
 import { SessionPackageDesktop } from './desktop'
+import { BrowserPackageImport } from './browser-import'
+import { findBrowserImportPort } from './test-helpers/browser-import-port'
+// @ts-expect-error The published ESM entry uses a sibling browser-import.d.ts.
+import { prepareBrowserImport } from '../../../packages/open-science/browser-import.mjs'
 import { sessionPackageCommandContracts } from '../../shared/session-package'
 import * as fileIo from '../bounded-file-io'
 import * as fs from 'node:fs'
@@ -17,6 +21,8 @@ import * as zlib from 'node:zlib'
 import * as storageUsage from '../storage/usage'
 import * as fsPromises from 'node:fs/promises'
 import { c as createTar, x as extractTar } from 'tar'
+import { paceFileIo } from '../file-io-pacing'
+import { withPackageTransfer } from './transfer'
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs/promises')>())
@@ -211,16 +217,19 @@ it('keeps a missing original retryable and lets the user deliberately choose ano
   }
 })
 
-it('validates dropped package commands without expanding the destination model', () => {
+it('accepts dropped packages with an existing Project or deferred destination selection', () => {
   const parse = sessionPackageCommandContracts.import.args.parse
-  expect(parse([{ projectId: 'target' }, '/data/research.SCIENCE'])).toEqual([
-    { projectId: 'target' },
-    '/data/research.SCIENCE'
-  ])
+  for (const target of [undefined, {}, { projectId: 'target' }]) {
+    const args = [target, '/data/research.SCIENCE']
+    expect(parse(args)).toEqual(args)
+  }
   for (const args of [
-    [{}, '/data/research.science'],
     [{ projectName: 'New' }, '/data/research.science'],
+    [{ projectId: '' }, '/data/research.science'],
     [{ projectId: 'target' }, '/data/data.csv'],
+    [{}, '/data/data.csv'],
+    [{}, ''],
+    [{}, `${'a'.repeat(32768)}.science`],
     [{ projectId: 'target' }, '']
   ]) {
     expect(() => parse(args)).toThrow()
@@ -284,6 +293,9 @@ it('imports a dropped package into its Project without a picker or destination p
   expect(states).toContain('copying')
   expect(states).toContain('validating')
   expect(states).toContain('confirming')
+  const importing = states.indexOf('importing')
+  expect(importing).toBeGreaterThan(states.indexOf('confirming'))
+  expect(states.slice(importing)).not.toContain('validating')
   const saved = await repo.loadSession('target', result!.sessionId)
   expect(saved?.title).toBe('Dropped research')
   expect(saved?.packageOrigin).toBeDefined()
@@ -589,12 +601,13 @@ it.each(['insufficient', 'exact', 'unavailable'] as const)(
         defaultPath: expect.stringMatching(/^Capacity-\d{4}-\d{2}-\d{2}\.science$/)
       })
     )
-    expect(capacity).toHaveBeenCalledTimes(4)
+    expect(capacity).toHaveBeenCalledTimes(5)
     expect(queried.every((query) => query.afterPicker)).toBe(true)
     expect(queried[0].path).toContain('open-science-package-export-')
-    expect(queried[1].path).toContain('open-science-package-validation-')
-    expect(queried[2].path).toContain('open-science-package-dialog-')
-    expect(dirname(queried[3].path)).toBe(fixture.storageRoot)
+    expect(queried[1].path).toContain('open-science-package-export-')
+    expect(queried[2].path).toContain('open-science-package-validation-')
+    expect(queried[3].path).toContain('open-science-package-dialog-')
+    expect(dirname(queried[4].path)).toBe(fixture.storageRoot)
     expect(release).toHaveBeenCalledTimes(1)
     expect(
       (await readdir(fixture.storageRoot)).filter((name) => name.startsWith('.open-science-save-'))
@@ -1230,6 +1243,17 @@ it('queues OS files without reading payloads before project selection and cancel
     expect(desktop.hasActiveTransfer()).toBe(false)
     expect(JSON.stringify(desktop.operations.snapshot)).not.toContain(fixture.storageRoot)
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    const discarded = vi.fn()
+    await desktop.enqueueFile(join(fixture.storageRoot, 'discard.science'), discarded)
+    const requestId = desktop.operations.snapshot!.pendingImports!.find(
+      (file) => file.filename === 'discard.science'
+    )!.id
+    desktop.respond({
+      action: 'discard-import',
+      operationId: desktop.operations.snapshot!.id,
+      requestId
+    })
+    expect(discarded).toHaveBeenCalledOnce()
     const initial = desktop.operations.snapshot!
     desktop.respond({ action: 'cancel', operationId: initial.id })
     await vi.waitFor(() =>
@@ -1264,8 +1288,12 @@ it('checks project admission before copying an OS file and keeps a failed reques
     storageRoot: fixture.storageRoot,
     getClient: async () => fixture.client
   })
-  const reserve = vi.fn(async () => {
-    throw new Error('Project was archived')
+  const reserve = vi
+    .fn(async () => () => undefined)
+    .mockRejectedValueOnce(new Error('Project was archived'))
+  vi.spyOn(service, 'importFrom').mockResolvedValue({
+    projectId: 'archived',
+    sessionId: 'imported'
   })
   const copy = vi.spyOn(fileIo, 'copyFileWithinBudget')
   const desktop = new SessionPackageDesktop({
@@ -1275,8 +1303,9 @@ it('checks project admission before copying an OS file and keeps a failed reques
     reserveImport: reserve,
     afterImport: async () => undefined
   })
+  const released = vi.fn()
   try {
-    desktop.enqueueFile(input)
+    desktop.enqueueFile(input, released)
     await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
     desktop.respond({
       action: 'select-project',
@@ -1295,8 +1324,10 @@ it('checks project admission before copying an OS file and keeps a failed reques
     await vi.waitFor(() => expect(reserve).toHaveBeenCalledTimes(2))
     expect(desktop.operations.snapshot?.importTarget).toEqual({ projectId: 'archived' })
     expect(dialog.showOpenDialog).not.toHaveBeenCalled()
+    await vi.waitFor(() => expect(released).toHaveBeenCalledOnce())
   } finally {
     await desktop.close()
+    expect(released).toHaveBeenCalledOnce()
     await service.close()
   }
 })
@@ -1422,7 +1453,9 @@ it('carries a new-project draft from OS file selection through confirmation with
     expect(await fixture.client.project.count()).toBe(1)
     expect(reserveImport).not.toHaveBeenCalled()
     desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
-    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'), {
+      timeout: 10000
+    })
     const imported = desktop.operations.snapshot!.result!.imported!
     expect(
       await fixture.client.project.findUnique({ where: { id: imported.projectId } })
@@ -1431,6 +1464,61 @@ it('carries a new-project draft from OS file selection through confirmation with
   } finally {
     await desktop.close()
     await service.close()
+  }
+})
+
+it('applies Auto and live fixed rate changes to Fork I/O', async () => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] })
+  const result = { projectId: 'project', sessionId: 'child' }
+  const service = {
+    fork: vi.fn(async () =>
+      withPackageTransfer(async () => {
+        const pace = async (duration: number): Promise<void> => {
+          let finished = false
+          const pending = paceFileIo(32 * 1024 ** 2)!.then(() => {
+            finished = true
+          })
+          await vi.advanceTimersByTimeAsync(duration - 1)
+          expect(finished).toBe(false)
+          await vi.advanceTimersByTimeAsync(1)
+          await pending
+          expect(finished).toBe(true)
+        }
+        await pace(2000)
+        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        expect(desktop.operations.snapshot?.ioBytesPerSecond).toBe(16 * 1024 ** 2)
+        for (const rate of [128, 256]) {
+          desktop.respond({
+            action: 'set-speed',
+            operationId: desktop.operations.snapshot!.id,
+            bytesPerSecond: rate * 1024 ** 2
+          })
+          await pace((32 / rate) * 1000)
+        }
+        desktop.respond({
+          action: 'set-speed',
+          operationId: desktop.operations.snapshot!.id,
+          bytesPerSecond: null
+        })
+        expect(desktop.operations.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+        await pace(2000)
+        expect(desktop.operations.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+        return result
+      })
+    )
+  } as unknown as SessionPackageService
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: vi.fn()
+  })
+  try {
+    expect(await desktop.fork({ projectId: 'project', sessionId: 'source' })).toEqual(result)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    await desktop.close()
+    vi.useRealTimers()
   }
 })
 
@@ -1508,3 +1596,339 @@ it.each(['committed', 'unconfirmed'] as const)(
     await desktop.close()
   }
 )
+
+it.each([
+  ['en', false],
+  ['zh-Hans', false],
+  ['zh-Hans', true]
+] as const)(
+  'asks the user to update before importing a future package (%s, before target: %s)',
+  async (locale, validateBeforeTarget) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    await writeFile(
+      join(fixture.storageRoot, 'manifest.json'),
+      JSON.stringify({
+        format: 'open-science-session',
+        schemaVersion: 2
+      })
+    )
+    const archive = join(fixture.storageRoot, 'future.science')
+    await createTar({ cwd: fixture.storageRoot, file: archive, gzip: true }, ['manifest.json'])
+    const getClient = vi.fn(async () => fixture.client)
+    const afterImport = vi.fn(async () => undefined)
+    const service = new SessionPackageService({ storageRoot: fixture.storageRoot, getClient })
+    const desktop = createDesktop({
+      service,
+      afterImport,
+      withDataRootWrite: async (work) => work(),
+      translate: (key, options) => translateNativeMessage(locale, key, options)
+    })
+    try {
+      const message =
+        locale === 'en'
+          ? 'This Session package requires a newer version of Open Science. Update Open Science, then try importing it again.'
+          : '此会话研究包需要更新版本的 Open Science。请更新 Open Science 后重新导入。'
+      await expect(
+        desktop.import(
+          undefined,
+          undefined,
+          validateBeforeTarget ? {} : { projectName: 'Research' },
+          archive,
+          validateBeforeTarget
+        )
+      ).rejects.toThrow(message)
+      expect(desktop.operations.snapshot).toMatchObject({ state: 'failed', error: message })
+      expect(afterImport).not.toHaveBeenCalled()
+      expect(getClient).not.toHaveBeenCalled()
+    } finally {
+      await desktop.close()
+      await service.close()
+    }
+  }
+)
+
+it('reports a localized location and rule without exposing the matched value', async () => {
+  const { PackageSensitiveContentError } = await import('./sensitive-content')
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const failure = new PackageSensitiveContentError(
+    'notebooks/project/session/data.txt @17?token=synthetic-private-value',
+    'assignment'
+  )
+  vi.spyOn(service, 'exportTo').mockRejectedValue(failure)
+  const desktop = createDesktop({
+    service,
+    translate: (key, options) => translateNativeMessage('zh-Hans', key, options),
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => {}
+  })
+  try {
+    await expect(desktop.export({ projectId: 'project', sessionId: 'session' })).rejects.toThrow(
+      '疑似凭据的赋值'
+    )
+    expect(desktop.operations.snapshot?.error).toContain('data.txt @17')
+    expect(desktop.operations.snapshot?.error).not.toContain('synthetic-private-value')
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it('binds sensitive-content acknowledgement to one failed export and retains normal admission', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  await fixture.client.project.create({ data: { id: 'project', name: 'Private research' } })
+  const sessions = new SessionRepository(fixture.storageRoot)
+  await sessions.saveSession({
+    id: 'session',
+    projectId: 'project',
+    title: 'Private research',
+    cwd: '',
+    status: 'idle',
+    createdAt: 1,
+    updatedAt: 2,
+    messages: [
+      {
+        id: 'message',
+        role: 'agent',
+        content: 'Authorization: Bearer synthetic-private-value',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 2
+      }
+    ]
+  })
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const exportTo = vi.spyOn(service, 'exportTo')
+  const release = vi.fn()
+  const reserveExport = vi.fn(async () => release)
+  const destination = join(fixture.storageRoot, 'private.science')
+  vi.mocked(dialog.showSaveDialog).mockResolvedValue({ canceled: false, filePath: destination })
+  const desktop = createDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: (work) => work(),
+    afterImport: async () => undefined,
+    reserveExport,
+    onOperationChanged: (snapshot) => {
+      if (snapshot.kind === 'export' && snapshot.state === 'awaiting-selection')
+        queueMicrotask(() =>
+          desktop.respond({ action: 'select', operationId: snapshot.id, excludedStorageKeys: [] })
+        )
+    }
+  })
+  const request = { projectId: 'project', sessionId: 'session' }
+  try {
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'missing' })
+    ).toThrow()
+    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
+    const failed = desktop.operations.snapshot!
+    expect(failed.sensitiveContent).toHaveLength(1)
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: 'stale' })
+    ).toThrow()
+    await expect(
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+    ).resolves.toMatchObject({ state: 'succeeded' })
+    expect(exportTo.mock.calls[1][2]).toMatchObject({ allowSensitiveContent: true })
+    expect(reserveExport).toHaveBeenCalledTimes(2)
+    expect(release).toHaveBeenCalledTimes(2)
+    const expanded = join(fixture.storageRoot, 'expanded')
+    await mkdir(expanded)
+    await extractTar({ file: destination, cwd: expanded })
+    const document = JSON.parse(await readFile(join(expanded, 'session.json'), 'utf8'))
+    expect(document.session.messages[0].content).toBe(
+      'Authorization: Bearer synthetic-private-value'
+    )
+    expect(() =>
+      desktop.respond({ action: 'export-with-sensitive-content', operationId: failed.id })
+    ).toThrow()
+    await expect(desktop.export(request)).rejects.toThrow('Sensitive content detected')
+    expect(exportTo.mock.calls[2][2]).not.toHaveProperty('allowSensitiveContent')
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})
+
+it.each(['import', 'fork', 'unrelated-failure', 'cleanup-pending', 'running'] as const)(
+  'rejects acknowledgement for %s operations',
+  async (scenario) => {
+    const exportTo = vi.fn()
+    const desktop = createDesktop({
+      service: { exportTo } as unknown as SessionPackageService,
+      translate: englishNativeTranslator,
+      withDataRootWrite: (work) => work(),
+      afterImport: async () => undefined
+    })
+    const { buildSensitiveContentEvidence } = await import('./sensitive-content')
+    const pending = desktop.operations.run(
+      scenario === 'import' || scenario === 'fork' ? scenario : 'export',
+      { projectId: 'project', sessionId: 'session' },
+      async () => {
+        if (scenario !== 'unrelated-failure')
+          desktop.operations.setSensitiveContent([
+            buildSensitiveContentEvidence(
+              'secret',
+              { offset: 0, length: 6, rule: 'token' },
+              'session.json'
+            )
+          ])
+        if (scenario === 'cleanup-pending') desktop.operations.setCleanupPending(true)
+        if (scenario === 'running') {
+          expect(() =>
+            desktop.respond({
+              action: 'export-with-sensitive-content',
+              operationId: desktop.operations.snapshot!.id
+            })
+          ).toThrow()
+        }
+        throw new Error('Test failure')
+      }
+    )
+    await expect(pending).rejects.toThrow('Test failure')
+    if (scenario !== 'running')
+      expect(() =>
+        desktop.respond({
+          action: 'export-with-sensitive-content',
+          operationId: desktop.operations.snapshot!.id
+        })
+      ).toThrow()
+    expect(exportTo).not.toHaveBeenCalled()
+    await desktop.close()
+  }
+)
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))
+
+it.each(['valid', 'invalid'] as const)(
+  'validates a fully received %s browser package before asking for a destination',
+  async (kind) => {
+    const fixture = await createProvenanceTestFixture()
+    initDataRoot(fixture.storageRoot)
+    fixtures.push(fixture)
+    const contents = new Uint8Array(
+      kind === 'valid'
+        ? await readFile(join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science'))
+        : Buffer.from('not a package')
+    )
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const inspect = vi.spyOn(service, 'inspect')
+    const desktop = new SessionPackageDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      afterImport: async () => undefined
+    })
+    const progress: number[] = []
+    const staging = join(fixture.storageRoot, 'browser-staging')
+    const bridge = new BrowserPackageImport({
+      root: staging,
+      receive: (path, consumed) => desktop.enqueueFile(path, consumed, true),
+      onChanged: (transfers) => {
+        if (transfers[0]) progress.push(transfers[0].completedBytes)
+      }
+    })
+    const fetch = globalThis.fetch
+    const origin = 'https://research.example'
+    vi.spyOn(globalThis, 'fetch').mockImplementation((input, init) =>
+      fetch(input, { ...init, headers: { ...init?.headers, Origin: origin } })
+    )
+    try {
+      const transfer = prepareBrowserImport(new Blob([contents]), {
+        filename: 'browser.science',
+        origin,
+        port: await findBrowserImportPort()
+      })
+      await bridge.begin(transfer.url)
+      await expect(transfer.send()).resolves.toEqual({ received: true })
+      expect(progress.at(-1)).toBe(contents.length)
+      await vi.waitFor(() =>
+        expect(desktop.operations.snapshot?.state).toBe(
+          kind === 'valid' ? 'awaiting-selection' : 'failed'
+        )
+      )
+      expect(inspect).toHaveBeenCalledWith(
+        expect.stringContaining(await realpath(staging)),
+        expect.any(AbortSignal)
+      )
+      expect(await fixture.client.session.count()).toBe(0)
+      expect(dialog.showMessageBox).not.toHaveBeenCalled()
+      if (kind === 'valid') {
+        desktop.respond({
+          action: 'select-project',
+          operationId: desktop.operations.snapshot!.id,
+          target: { projectName: 'Browser import' }
+        })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.importPreview).toBeDefined())
+        expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
+        expect(await fixture.client.session.count()).toBe(0)
+        desktop.respond({ action: 'confirm-import', operationId: desktop.operations.snapshot!.id })
+        await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('succeeded'))
+        expect(await fixture.client.session.count()).toBe(1)
+        await vi.waitFor(async () => expect(await readdir(staging)).toEqual([]))
+      }
+    } finally {
+      await desktop.close()
+      await bridge.close()
+      await service.close()
+    }
+  }
+)
+
+it('cancels and releases only the browser source owned by the import queue', async () => {
+  const fixture = await createProvenanceTestFixture()
+  fixtures.push(fixture)
+  initDataRoot(fixture.storageRoot)
+  const service = new SessionPackageService({
+    storageRoot: fixture.storageRoot,
+    getClient: async () => fixture.client
+  })
+  const desktop = new SessionPackageDesktop({
+    service,
+    translate: englishNativeTranslator,
+    withDataRootWrite: async (work) => work(),
+    afterImport: async () => undefined
+  })
+  const first = join(fixture.storageRoot, 'first.science')
+  const second = join(fixture.storageRoot, 'second.science')
+  const contents = await readFile(
+    join(__dirname, 'fixtures/session-package-v0.31.1-minimal.science')
+  )
+  await writeFile(first, contents)
+  await writeFile(second, contents)
+  const released: string[] = []
+  try {
+    await desktop.enqueueFile(first, () => released.push('first'), true)
+    await vi.waitFor(() => expect(desktop.operations.snapshot?.state).toBe('awaiting-selection'))
+    await desktop.enqueueFile(second, () => released.push('second'), true)
+    await desktop.cancelReceivedFile(second)
+    expect(released).toEqual(['second'])
+    expect(desktop.operations.snapshot?.pendingImports).toEqual([])
+    expect(desktop.operations.snapshot?.state).toBe('awaiting-selection')
+    await desktop.cancelReceivedFile(first)
+    expect(released).toEqual(['second', 'first'])
+    expect(desktop.operations.snapshot?.state).toBe('cancelled')
+    expect(await fixture.client.session.count()).toBe(0)
+  } finally {
+    await desktop.close()
+    await service.close()
+  }
+})

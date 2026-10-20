@@ -83,7 +83,7 @@ describe('Backend selection ownership', () => {
   it('keeps pure selection policy free of transport ownership', () => {
     const source = readSource(ownerPath)
     expect(source).not.toMatch(
-      /ResponsesBridge|NativeResponses|create.*Bridge|start\(|close\(|keyRef|credential|lease|generation|orchestration/i
+      /ResponsesToChatCompletionsBridge|NativeResponses|create.*Bridge|start\(|close\(|keyRef|credential|lease|generation|orchestration/i
     )
   })
 

@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { isAbsolute, join, normalize, sep } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -9,8 +9,8 @@ import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { SettingsDocumentStore } from './document-store'
 import { SettingsRepository } from './repository'
 import type { StoredCustomMcpServer, StoredProvider } from './types'
-import { skillMutationOwnerFor } from '../skills/skill-mutation-owner'
-import { envDirectoryName } from '../notebook/runtime-paths'
+import { UserSkillSpecialistPackageAdapter } from '@aipoch/skills'
+import { envDirectoryName } from '@aipoch/environment'
 
 // Capture the warn calls the repository makes through createLogger. vi.hoisted runs before the
 // module's top-level code so the vi.mock factory can reference the same spy instance.
@@ -21,7 +21,8 @@ const loggerMock = vi.hoisted(() => ({
   error: vi.fn()
 }))
 const { warn: warnSpy } = loggerMock
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => loggerMock
 }))
 
@@ -55,13 +56,53 @@ afterEach(async () => {
 })
 
 describe('settings repository', () => {
+  it('does not rewrite a concurrently saved legacy data-root pointer', async () => {
+    const dir = await createStorageRoot()
+    const legacyRoot = join(dir, 'OpenScience')
+    await mkdir(legacyRoot)
+    const repository = new SettingsRepository(dir)
+    await writeFile(join(dir, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    const stale = await repository.getSettings()
+    expect(stale.dataRoot).toBeUndefined()
+
+    const saved = `{ "version": 2, "onboardingCompletedAt": 1, "dataRoot": ${JSON.stringify(legacyRoot)}, "opaque": { "keep": true } }\n`
+    await writeFile(join(dir, 'settings.json'), saved)
+
+    await expect(repository.persistLegacyDataRoot(legacyRoot, 1)).rejects.toThrow(
+      'data location changed'
+    )
+    expect(await readFile(join(dir, 'settings.json'), 'utf8')).toBe(saved)
+  })
+
+  it('preserves a concurrent Windows choice that differs only by case', async () => {
+    const dir = await createStorageRoot()
+    const legacyRoot = join(dir, 'OpenScience-DEV')
+    const selectedRoot = join(dir, 'OpenScience-dev')
+    await mkdir(legacyRoot)
+    const repository = new SettingsRepository(dir)
+    await writeFile(join(dir, 'settings.json'), '{"version":2,"onboardingCompletedAt":1}')
+    expect((await repository.getSettings()).dataRoot).toBeUndefined()
+    const saved = `{ "version": 2, "onboardingCompletedAt": 1, "dataRoot": ${JSON.stringify(selectedRoot)} }\n`
+    await writeFile(join(dir, 'settings.json'), saved)
+
+    const platform = vi.spyOn(process, 'platform', 'get').mockReturnValue('win32')
+    try {
+      await expect(repository.persistLegacyDataRoot(legacyRoot, 1)).rejects.toThrow(
+        'data location changed'
+      )
+    } finally {
+      platform.mockRestore()
+    }
+    expect(await readFile(join(dir, 'settings.json'), 'utf8')).toBe(saved)
+  })
+
   it('does not treat a failed validation write as recovery of an in-flight request', async () => {
     const store = new SettingsDocumentStore(await createStorageRoot())
     const repository = new SettingsRepository(store)
     await repository.upsertProvider(
       provider({
         lastValidatedAt: 1,
-        lastValidatedTarget: { model: 'a', endpoint: 'openai' }
+        lastValidatedTarget: { model: 'a', endpoint: 'chat-completions' }
       })
     )
     vi.spyOn(store, 'mutate').mockImplementationOnce(async (update) => {
@@ -73,7 +114,7 @@ describe('settings repository', () => {
         'p1',
         () => true,
         { ok: true, category: 'ok' },
-        { model: 'b', endpoint: 'openai' }
+        { model: 'b', endpoint: 'chat-completions' }
       )
     ).rejects.toThrow('Synthetic write failure')
     expect(
@@ -81,14 +122,14 @@ describe('settings repository', () => {
         'p1',
         () => true,
         { ok: false, category: 'model-not-found', status: 404 },
-        { model: 'b', endpoint: 'openai' },
+        { model: 'b', endpoint: 'chat-completions' },
         2
       )
     ).toBe(true)
     expect(
       providerValidationFailed((await repository.getSettings()).providers[0], {
         model: 'b',
-        endpoint: 'openai'
+        endpoint: 'chat-completions'
       })
     ).toBe(true)
   })
@@ -1085,7 +1126,7 @@ describe('settings repository', () => {
     const root = await createStorageRoot()
     const repository = new SettingsRepository(root)
     await repository.upsertProvider(provider())
-    const first = { model: 'model-a', endpoint: 'openai' as const }
+    const first = { model: 'model-a', endpoint: 'chat-completions' as const }
     const second = { model: 'model-b', endpoint: 'responses' as const }
     const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
     await repository.updateProviderValidationIfTargetMatches('p1', () => true, failure, first)
@@ -1094,7 +1135,9 @@ describe('settings repository', () => {
     const saved = (await new SettingsRepository(root).getSettings()).providers[0]
     expect(providerValidationFailed(saved, first)).toBe(true)
     expect(providerValidationFailed(saved, second)).toBe(true)
-    expect(providerValidationFailed(saved, { model: 'model-c', endpoint: 'openai' })).toBe(false)
+    expect(
+      providerValidationFailed(saved, { model: 'model-c', endpoint: 'chat-completions' })
+    ).toBe(false)
     expect(saved.lastValidationFailure?.targets).toHaveLength(2)
   })
 
@@ -1104,8 +1147,8 @@ describe('settings repository', () => {
       const root = await createStorageRoot()
       const repository = new SettingsRepository(root)
       await repository.upsertProvider(provider())
-      const first = { model: 'model-a', endpoint: 'openai' as const }
-      const second = { model: 'model-b', endpoint: 'openai' as const }
+      const first = { model: 'model-a', endpoint: 'chat-completions' as const }
+      const second = { model: 'model-b', endpoint: 'chat-completions' as const }
       const now = vi.spyOn(Date, 'now').mockReturnValue(1000)
       try {
         const failure = { ok: false, category: 'model-not-found' as const, status: 404 }
@@ -1152,13 +1195,13 @@ describe('settings repository', () => {
     await repository.upsertProvider(
       provider({
         lastValidatedAt: 1716999999999,
-        lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' },
+        lastValidatedTarget: { model: 'model-a', endpoint: 'messages' },
         lastValidationFailure: {
           at: 1717000000000,
           category: 'model-not-found',
           status: 404,
           message: 'nope',
-          target: { model: 'model-b', endpoint: 'anthropic' }
+          target: { model: 'model-b', endpoint: 'messages' }
         }
       })
     )
@@ -1166,14 +1209,14 @@ describe('settings repository', () => {
     const reloaded = await new SettingsRepository(root).getSettings()
     expect(reloaded.providers[0].lastValidatedTarget).toEqual({
       model: 'model-a',
-      endpoint: 'anthropic'
+      endpoint: 'messages'
     })
     expect(reloaded.providers[0].lastValidationFailure).toEqual({
       at: 1717000000000,
       category: 'model-not-found',
       status: 404,
       message: 'nope',
-      target: { model: 'model-b', endpoint: 'anthropic' }
+      target: { model: 'model-b', endpoint: 'messages' }
     })
   })
 
@@ -1688,9 +1731,11 @@ describe('settings repository: v2 official providers & activeModel migration', (
 
   it('serializes Main Skill enablement with package Skill replacement', async () => {
     const root = await createStorageRoot()
-    const owner = skillMutationOwnerFor(root)
-    const repository = new SettingsRepository(root, (operation) => owner.runExclusive(operation))
-    const release = await owner.acquire()
+    const owner = new UserSkillSpecialistPackageAdapter(root)
+    const repository = new SettingsRepository(root, (operation) =>
+      owner.runMutationExclusive(operation)
+    )
+    await owner.beginMutation('enablement-test', 'test', [])
     let settled = false
     const update = repository.setSkillEnabled('imported-a', false).finally(() => {
       settled = true
@@ -1698,7 +1743,7 @@ describe('settings repository: v2 official providers & activeModel migration', (
     await new Promise((resolve) => setImmediate(resolve))
     expect(settled).toBe(false)
 
-    release()
+    await owner.endMutation('enablement-test')
     await expect(update).resolves.toMatchObject({ disabledSkillIds: ['imported-a'] })
   })
 

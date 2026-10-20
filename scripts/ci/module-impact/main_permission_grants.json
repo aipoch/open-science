@@ -22,7 +22,8 @@
     "src/main/permission-grants/registry.test.ts",
     "src/main/permission-grants/registry.ts",
     "src/main/permission-grants/scope-liveness.test.ts",
-    "src/main/permission-grants/scope-liveness.ts"
+    "src/main/permission-grants/scope-liveness.ts",
+    "src/main/permission-grants/diagnostics.ts"
   ],
   "interfacePaths": [
     "src/main/permission-grants/application-commands.ts",
@@ -35,7 +36,8 @@
     "src/main/permission-grants/projection-controller.ts",
     "src/main/permission-grants/reconciliation.ts",
     "src/main/permission-grants/registry.ts",
-    "src/main/permission-grants/scope-liveness.ts"
+    "src/main/permission-grants/scope-liveness.ts",
+    "src/main/permission-grants/diagnostics.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -58,6 +60,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/composition/reviewer.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/client-interaction-owner.test.ts",
@@ -135,8 +140,7 @@
       "src/main/compute/session-catalog-hydration.integration.test.ts",
       "src/main/compute/skill-provisioning.test.ts",
       "src/main/compute/slurm.real-ssh.integration.test.ts",
-      "src/main/compute/ssh-runner.test.ts",
-      "src/main/connectors/application.test.ts",
+      "src/main/composition/connector-application.test.ts",
       "src/main/connectors/mcp-payload-pagination.integration.test.ts",
       "src/main/connectors/service.test.ts",
       "src/main/database/permission-approval-summary.test.ts",
@@ -226,10 +230,31 @@
       "src/renderer/src/pages/settings/SpecialistEditor.persistence.render.test.tsx",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/connectors/descriptors/variants-gnomad.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
-      "src/main/compute/cancellation-runtime.integration.test.ts"
+      "src/main/compute/cancellation-runtime.integration.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/compute/compute-submission-evidence-recovery.integration.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/session-diagnostics/export-evidence.integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

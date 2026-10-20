@@ -1,7 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-
-import type { PackageDiagnostic } from '../../../shared/specialist-package'
+import type { PackageDiagnostic } from '@aipoch/specialists'
 import { specialistDiagnosticCopy } from './specialist-diagnostics'
 
 // Every code emitted by zip-adapter.ts (scanArchive), package/validator.ts

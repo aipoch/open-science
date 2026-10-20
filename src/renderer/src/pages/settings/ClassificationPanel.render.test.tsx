@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { i18next } from '@/i18n'
 import { ModelPanel } from './ModelPanel'
 import type { ModelView } from './ModelPanel'
+import { classificationModelsForService } from '../../../../shared/classification'
 import type {
   ClassificationSnapshot,
   ClassificationMutationResult
@@ -16,19 +17,33 @@ const api = {
   getClassification: vi.fn(async () => state),
   updateClassification: vi.fn(async (request): Promise<ClassificationMutationResult> => {
     state = { ...state, revision: state.revision + 1 }
-    if (request.kind === 'save')
+    if (request.kind === 'save') {
+      const firstService = state.services.length === 0
       state.services = [
         {
           id: request.id,
           adapter: request.adapter,
           providerId: request.providerId,
           name: request.name,
+          modelId: request.modelId,
           configured: true,
           maskedKey: '••••-key'
         }
       ]
+      if (firstService) {
+        state.capabilitySelection = {
+          serviceId: request.id,
+          modelId: classificationModelsForService({
+            adapter: request.adapter,
+            modelId: request.modelId
+          })[0]?.id
+        }
+        state.smartCollections = state.capabilitySelection
+      }
+    }
     if (request.kind === 'bind') {
-      state.capabilitySelection = request.binding
+      if (request.feature === 'smart-collections') state.smartCollections = request.binding
+      else state.capabilitySelection = request.binding
     }
     if (request.kind === 'remove')
       state = { ...state, services: [], capabilitySelection: undefined }
@@ -59,7 +74,7 @@ afterEach(() => {
   cleanup()
   vi.unstubAllGlobals()
 })
-it('keeps classification optional, saves an account and binds the service independently', async () => {
+it('selects the first saved model for both features and allows either to be disabled', async () => {
   render(<Harness />)
   await screen.findByText('No model services added')
   expect(screen.queryByText('Chat provider fixture')).toBeNull()
@@ -76,12 +91,23 @@ it('keeps classification optional, saves an account and binds the service indepe
   expect(api.updateClassification).toHaveBeenCalledWith(
     expect.objectContaining({ kind: 'save', apiKey: 'secret-key' })
   )
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection).toEqual({
+    serviceId: state.services[0]?.id,
+    modelId: 'jev-latest'
+  })
+  expect(state.smartCollections).toEqual(state.capabilitySelection)
+  expect(screen.getByRole('combobox', { name: 'Automatic capability selection' }).textContent).toBe(
+    'Research account / Jev Latest'
+  )
+  expect(screen.getByRole('combobox', { name: 'Smart collections' }).textContent).toBe(
+    'Research account / Jev Latest'
+  )
   fireEvent.keyDown(screen.getByRole('combobox', { name: 'Automatic capability selection' }), {
     key: 'Enter'
   })
-  fireEvent.click(await screen.findByRole('option', { name: 'Research account / Jev Latest' }))
-  await waitFor(() => expect(state.capabilitySelection?.serviceId).toBeDefined())
+  fireEvent.click(await screen.findByRole('option', { name: 'Use default method' }))
+  await waitFor(() => expect(state.capabilitySelection).toBeUndefined())
+  expect(state.smartCollections?.serviceId).toBe(state.services[0]?.id)
   fireEvent.click(screen.getByRole('button', { name: 'Check model' }))
   await screen.findByText('Check passed')
   fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
@@ -216,7 +242,7 @@ it('shows the shared validation failure without saving, preserves the draft, and
   expect(screen.queryByText('Connection test failed.')).toBeNull()
   fireEvent.click(screen.getByText('Save'))
   expect(await screen.findByRole('heading', { name: 'TypeSafe AI' })).toBeTruthy()
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection?.serviceId).toBe(state.services[0]?.id)
 })
 it('shows the pending model check and actionable failure without changing the binding', async () => {
   state.services = [
@@ -266,7 +292,11 @@ it('opens help on click and binds skills and connectors through one model select
   await waitFor(() =>
     expect(state.capabilitySelection).toEqual({ serviceId: 'account', modelId: 'jev-latest' })
   )
-  expect(screen.getAllByRole('combobox')).toHaveLength(1)
+  expect(screen.getAllByRole('combobox')).toHaveLength(2)
+  expect(screen.getByRole('combobox', { name: 'Smart collections' }).textContent).toContain(
+    'Not configured'
+  )
+  expect(state.smartCollections).toBeUndefined()
 })
 
 it('reuses an existing OpenRouter account without displaying or resubmitting its key', async () => {
@@ -291,7 +321,10 @@ it('reuses an existing OpenRouter account without displaying or resubmitting its
       })
     )
   )
-  expect(state.capabilitySelection).toBeUndefined()
+  expect(state.capabilitySelection).toEqual({
+    serviceId: state.services[0]?.id,
+    modelId: 'typesafe/jev-1.13'
+  })
   fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
   fireEvent.click(await screen.findByText('Remove service'))
   expect(await screen.findByText(/keeps the shared account and key/)).toBeTruthy()
@@ -321,4 +354,124 @@ it('requires a new key when detaching a shared account', async () => {
       expect.objectContaining({ providerId: undefined, apiKey: 'replacement-key' })
     )
   )
+})
+
+it('offers Zen with its icon, key link, and two independently selectable classification models', async () => {
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  const option = await screen.findByRole('option', { name: 'OpenCode Zen' })
+  expect(option.querySelector('svg')).toBeTruthy()
+  fireEvent.click(option)
+  expect(screen.getByLabelText('Service name')).toHaveProperty('value', 'OpenCode Zen')
+  expect(screen.getByRole('link', { name: 'Get an API key' }).getAttribute('href')).toBe(
+    'https://opencode.ai/zen'
+  )
+  expect(screen.getByRole('combobox', { name: 'Model' }).textContent).toBe('Jev 1.13')
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'zen-key' } })
+  fireEvent.click(screen.getByText('Save'))
+  await screen.findByRole('heading', { name: 'OpenCode Zen' })
+  expect(state.capabilitySelection?.modelId).toBe('jev-1.13')
+  expect(state.smartCollections?.modelId).toBe('jev-1.13')
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Smart collections' }), { key: 'Enter' })
+  expect(await screen.findByRole('option', { name: 'OpenCode Zen / Jev 1.13' })).toBeTruthy()
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenCode Zen / Jev 1.13 Free' }))
+  await waitFor(() => expect(state.smartCollections?.modelId).toBe('jev-1.13-free'))
+  expect(state.capabilitySelection?.modelId).toBe('jev-1.13')
+})
+it('offers only matching Zen credentials and clears them when switching provider', async () => {
+  state.availableProviders = [
+    { id: 'legacy-router', name: 'Legacy router' },
+    { id: 'router', name: 'Router', vendorId: 'openrouter' },
+    { id: 'zen', name: 'Research Zen', vendorId: 'opencode', maskedKey: '••••4321' }
+  ]
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenCode Zen' }))
+  expect(screen.getByRole('combobox', { name: 'API key source' }).textContent).toContain(
+    'Research Zen'
+  )
+  expect(screen.queryByLabelText('API key')).toBeNull()
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'API key source' }), { key: 'Enter' })
+  expect(await screen.findByRole('option', { name: 'Research Zen · ••••4321' })).toBeTruthy()
+  expect(screen.queryByRole('option', { name: 'Router' })).toBeNull()
+  expect(screen.queryByRole('option', { name: 'Legacy router' })).toBeNull()
+  fireEvent.click(screen.getByRole('option', { name: 'Use a new API key' }))
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true)
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenRouter' }))
+  await waitFor(() =>
+    expect(screen.getByRole('combobox', { name: 'API key source' }).textContent).toContain(
+      'Legacy router'
+    )
+  )
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenCode Zen' }))
+  fireEvent.click(screen.getByText('Save'))
+  await waitFor(() =>
+    expect(api.updateClassification).toHaveBeenCalledWith(
+      expect.objectContaining({ adapter: 'opencode', providerId: 'zen', apiKey: undefined })
+    )
+  )
+})
+it('requires a new Zen key if only legacy OpenRouter snapshots are available', async () => {
+  state.availableProviders = [{ id: 'router', name: 'Legacy router' }]
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenCode Zen' }))
+  expect(screen.queryByRole('combobox', { name: 'API key source' })).toBeNull()
+  expect(screen.getByLabelText('API key')).toHaveProperty('required', true)
+  expect(screen.getByRole('button', { name: 'Save' })).toHaveProperty('disabled', true)
+})
+
+it('selects the free Zen model before saving and retains it when editing', async () => {
+  render(<Harness />)
+  fireEvent.click(await screen.findByText('Add service'))
+  fireEvent.keyDown(await screen.findByRole('combobox', { name: 'Provider' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'OpenCode Zen' }))
+  fireEvent.keyDown(screen.getByRole('combobox', { name: 'Model' }), { key: 'Enter' })
+  fireEvent.click(await screen.findByRole('option', { name: 'Jev 1.13 Free' }))
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'free-only-key' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await screen.findByRole('heading', { name: 'OpenCode Zen' })
+  expect(api.updateClassification).toHaveBeenCalledWith(
+    expect.objectContaining({
+      adapter: 'opencode',
+      modelId: 'jev-1.13-free',
+      apiKey: 'free-only-key'
+    })
+  )
+  expect(state.capabilitySelection?.modelId).toBe('jev-1.13-free')
+  expect(state.smartCollections?.modelId).toBe('jev-1.13-free')
+  fireEvent.click(screen.getByRole('button', { name: 'Edit' }))
+  expect((await screen.findByRole('combobox', { name: 'Model' })).textContent).toBe('Jev 1.13 Free')
+})
+it('edits a smart-only Zen service using its free binding and leaves feature bindings unchanged', async () => {
+  state.services = [
+    {
+      id: 'zen',
+      adapter: 'opencode',
+      name: 'Smart Zen',
+      configured: true,
+      modelId: 'jev-1.13',
+      maskedKey: '••••saved'
+    }
+  ]
+  state.smartCollections = { serviceId: 'zen', modelId: 'jev-1.13-free' }
+  render(<Harness />)
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+  expect((await screen.findByRole('combobox', { name: 'Model' })).textContent).toBe('Jev 1.13 Free')
+  fireEvent.change(screen.getByLabelText('API key'), { target: { value: 'replacement-key' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+  await screen.findByRole('heading', { name: 'Smart Zen' })
+  expect(api.updateClassification).toHaveBeenCalledWith(
+    expect.objectContaining({
+      modelId: 'jev-1.13-free',
+      apiKey: 'replacement-key'
+    })
+  )
+  expect(state.smartCollections).toEqual({ serviceId: 'zen', modelId: 'jev-1.13-free' })
+  expect(state.capabilitySelection).toBeUndefined()
 })

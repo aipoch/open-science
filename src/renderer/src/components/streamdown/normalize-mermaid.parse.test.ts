@@ -16,3 +16,11 @@ it.each([
   await expect(mermaid.parse(source)).resolves.toBeTruthy()
   await expect(mermaid.parse(normalizeMermaidChart(source))).resolves.toBeTruthy()
 })
+
+it('retains the installed parser error formats used to suppress futile retries', async () => {
+  await expect(mermaid.parse('graph TD\n A --> ]')).rejects.toThrow(/^Lexical error on line \d+\./)
+  await expect(mermaid.parse('graph TD\n A[')).rejects.toThrow(/^Parse error on line \d+:/)
+  await expect(mermaid.parse('not a diagram')).rejects.toThrow(
+    /^No diagram type detected matching given configuration for text:/
+  )
+})

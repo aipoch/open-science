@@ -1,3 +1,7 @@
+import {
+  refreshDesktopRecoveryReaders,
+  useDesktopRuntimeRecoveryStore
+} from '../../stores/desktop-runtime-recovery-store'
 // @vitest-environment jsdom
 import type {
   AcpPermissionResponse,
@@ -116,6 +120,7 @@ const mountRuntime = async (): Promise<{
 }
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   resetAcpRuntimeSnapshotRevisionForTests()
   capturedStateListener = undefined
   capturedEventListener = undefined
@@ -315,6 +320,20 @@ describe('useAcpRuntime payload construction', () => {
       memoryEnabled: true,
       turnIntent: 'plan-first'
     })
+  })
+
+  it('preserves the native compaction failure for the session error surface', async () => {
+    const failure = new Error('Session too large to compact')
+    acpApi.compactSession.mockRejectedValueOnce(failure)
+    const { result } = await mountRuntime()
+    let thrown: unknown
+    await act(async () => {
+      await result.current.compactSession('session-1').catch((error: unknown) => {
+        thrown = error
+      })
+    })
+    expect(thrown).toBe(failure)
+    expect(result.current.actionError).toBeNull()
   })
 
   it('requests native context compaction for one session', async () => {
@@ -807,4 +826,28 @@ describe('useAcpRuntime pending lifecycle', () => {
 
     expect(result.current.actionError).toBeNull()
   })
+})
+
+it('refreshes missed terminal state in the mounted recovery snapshot owner', async () => {
+  acpApi.getState.mockResolvedValue(
+    createSnapshot({ revision: 1, promptInFlight: true, promptInFlightSessionIds: ['session-1'] })
+  )
+  const { result, unmount } = await mountRuntime()
+  expect(result.current.state.promptInFlight).toBe(true)
+  acpApi.getState.mockResolvedValue(
+    createSnapshot({
+      revision: 2,
+      promptInFlight: false,
+      promptInFlightSessionIds: [],
+      pendingPermissions: []
+    })
+  )
+  await act(async () => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+    await refreshDesktopRecoveryReaders()
+  })
+  expect(result.current.state.promptInFlight).toBe(false)
+  expect(result.current.state.promptInFlightSessionIds).toEqual([])
+  expect(result.current.state.pendingPermissions).toEqual([])
+  unmount()
 })

@@ -1,0 +1,11 @@
+{"name": "swapped-text-order-preserves-upper-and-lower-indices", "base": "A", "upper": "t", "lower": "1", "translation": "结果 A1t 稳定。", "accepted": true}
+{"name": "unicode-power-retains-native-raised-digit-and-lowered-index", "base": "g", "upper": "2", "lower": "t", "translation": "结果 g²t 稳定。", "accepted": true}
+{"name": "changed-paired-index-retains-original", "base": "A", "upper": "t", "lower": "1", "translation": "结果 A2t 稳定。", "accepted": false}
+{"name": "parenthesized-upper-index-and-lower-letter-keep-both-levels", "base": "x", "upper": "(q)", "lower": "r", "translation": "结果 x(q)r 稳定。", "accepted": true}
+{"name": "parenthesized-index-does-not-accept-changed-lower-letter", "base": "x", "upper": "(q)", "lower": "r", "translation": "结果 x(q)s 稳定。", "accepted": false}
+{"name": "generated-script-anchors-stay-on-second-page-of-paragraph", "base": "x", "upper": "(q)", "lower": "r", "lead": "First inspect the result.", "translation": "首先检查结果。结果 x(q)r 稳定。", "accepted": true}
+{"name":"collection-limits-keep-native-upper-bound-and-lower-range","base":"{g}","upper":"N","lower":"j=1","translation":"结果 {g}Nj=1 稳定。","accepted":true}
+{"name":"changed-collection-bound-keeps-original-paragraph","base":"{g}","upper":"N","lower":"j=1","translation":"结果 {g}Mj=1 稳定。","accepted":false}
+{"name":"perpendicular-paired-index-retains-native-glyph-levels","base":"x","upper":"4","lower":"⊥","translation":"结果 x4⊥ 稳定。","accepted":true}
+{"name":"changed-perpendicular-index-keeps-original","base":"x","upper":"4","lower":"⊥","translation":"结果 x5⊥ 稳定。","accepted":false}
+{"name":"duplicated-perpendicular-token-keeps-original","base":"x","upper":"4","lower":"⊥","translation":"结果 x4⊥ 和 x4⊥ 稳定。","accepted":false}

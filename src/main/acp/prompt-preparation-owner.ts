@@ -1,45 +1,50 @@
-import type {
-  ClassifyReadingRoute,
-  ClassifySkills,
-  ClassificationUsage
-} from '../../shared/classification'
 import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { readFile } from 'node:fs/promises'
+import type {
+  ClassificationUsage,
+  ClassifyReadingRoute,
+  ClassifySkills
+} from '../../shared/classification'
+import type { PrepareSessionReading } from '../session-replay/session-reading'
+import { prepareReplayReferences } from './replay-reference-prompt'
 
-import type { AcpPromptRequest } from '../../shared/acp'
-import type { UploadedAttachment } from '../../shared/uploads'
-import type { ArtifactReference, FileReference } from '../../shared/artifacts'
-import type { NotebookPromptInput } from '../../shared/notebook'
-import { resolveFileTextBudget } from '../../shared/history-preamble'
-import type { NotebookHandoffContext } from '../notebook/runtime-service'
-import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework'
 import {
   createLogger,
   diagnosticErrorFields,
   errorLogFields,
   runWithDiagnosticCorrelation
-} from '../logger'
+} from '@aipoch/diagnostics/node'
+import type { AcpPromptRequest } from '../../shared/acp'
+import type { ArtifactReference, FileReference } from '../../shared/artifacts'
+import { resolveFileTextBudget } from '../../shared/history-preamble'
+import type { NotebookPromptInput } from '../../shared/notebook'
+import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
+import type { UploadedAttachment } from '../../shared/uploads'
+import type { ResolvedAgentBackend, SkillSelectorUsageObservation } from '../agent-framework/types'
+import type { NotebookHandoffContext } from '../notebook/session-read-model'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type {
   ContextUsageTracker,
   ContextWindowTurnHandle,
   SessionEstimateInput
 } from './context-usage-tracker'
+import type { ImageInputCompatibilityPort } from './image-input-compatibility-port'
+import type { AcpClassificationImageLoader } from './classification-image-loader'
+import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
-import type { ImageInputCompatibilityOwner } from './image-input-compatibility-owner'
+import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
+import type { SessionCapabilityPolicy } from './session-capability-owner'
 import type {
   AcpSessionPresentationPolicy,
   AcpSessionToolingAvailability
 } from './session-presentation-policy'
-import type { SessionCapabilityPolicy } from './session-capability-owner'
-import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
-import type { AcpProviderModelCallUsage } from './provider-turn-adapter'
 import { buildSessionReferencePrompt } from './session-reference-prompt'
-import { buildLiteratureReferencePrompt } from './literature-reference-prompt'
-import { hasCurrentPageIntent, hasFullDocumentIntent } from '../../shared/pdf-preparation-scope'
+import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
 
 const log = createLogger('acp-prompt-preparation-owner')
-type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+type SelectBridgeSkills = NonNullable<
+  ResolvedAgentBackend['responsesTransportLease']
+>['selectSkills']
 type NotebookTurnInputs = Readonly<{
   projectId: string
   appSessionId: string
@@ -49,7 +54,8 @@ type NotebookTurnInputs = Readonly<{
 }>
 type AcpPromptPreparationOwnerOptions = Readonly<{
   promptContent: Pick<AcpPromptContentOwner, 'prepare'>
-  imageInputCompatibility?: Pick<ImageInputCompatibilityOwner, 'prepare'>
+  classificationImages: Pick<AcpClassificationImageLoader, 'load'>
+  imageInputCompatibility?: Pick<ImageInputCompatibilityPort, 'prepare'>
   presentation: Pick<
     AcpSessionPresentationPolicy,
     'buildTurnPromptPrefix' | 'computeExecutionTargetReminder' | 'continuationText'
@@ -65,6 +71,7 @@ type AcpPromptPreparationOwnerOptions = Readonly<{
     | 'usage'
     | 'refreshUsage'
   >
+  prepareSessionReading?: PrepareSessionReading
   classifySkills?: ClassifySkills
   classifyReadingRoute?: ClassifyReadingRoute
   recordClassificationUsage?: (
@@ -249,7 +256,7 @@ class AcpPromptPreparationOwner {
         usage,
         sourceInvocationId
       }: SkillSelectorUsageObservation): void => {
-        const contextUsedTokens = usage.inputTokens + (usage.cachedReadTokens ?? 0)
+        const contextUsedTokens = usage.inputTokens + usage.cacheTokens
         preDispatchModelCalls.push({
           ...usage,
           ...(sourceInvocationId ? { sourceInvocationId } : {}),
@@ -287,6 +294,15 @@ class AcpPromptPreparationOwner {
                 text,
                 catalog,
                 signal: input.signal,
+                loadImages: async (signal) =>
+                  this.options.classificationImages.load({
+                    appSessionId: input.request.sessionId,
+                    projectId: input.projectId,
+                    currentImages: input.request.currentImages,
+                    currentUploads: input.request.attachments ?? [],
+                    signal
+                  }),
+                usageContext: { projectId: context.projectId, sessionId: context.sessionId },
                 observeUsage: (entry) => usage.push(entry)
               })
             } catch (error) {
@@ -404,15 +420,25 @@ class AcpPromptPreparationOwner {
               return undefined
             })
       if (await cancelled()) return cancelPrepared()
+      const selectedContent = await prepareReplayReferences(
+        skillPreparation.text,
+        input.request.historyPreamble,
+        input.projectId,
+        this.options.prepareSessionReading,
+        input.request.sessionId,
+        input.request.provenanceContext?.promptMessageId ?? input.fallbackPromptMessageId
+      )
+      if (await cancelled()) return cancelPrepared()
       const promptText = [
         input.protectedContext,
-        input.request.historyPreamble,
+        selectedContent.history,
         notebookHandoff ? notebookHandoffPrompt(notebookHandoff) : undefined,
         promptPrefix,
         memoryEnabled() ? recalledMemory : undefined,
         buildSessionReferencePrompt(input.request.referencedSessions),
         buildLiteratureReferencePrompt(input.request.parts),
-        skillPreparation.text
+        selectedContent.context,
+        selectedContent.text
       ]
         .filter((segment): segment is string => Boolean(segment))
         .join('\n\n')
@@ -455,6 +481,7 @@ class AcpPromptPreparationOwner {
           classified = await this.options.classifyReadingRoute({
             text: input.request.text,
             signal: input.signal,
+            usageContext: { projectId: context.projectId, sessionId: context.sessionId },
             observeUsage: (entry) => usage.push(entry)
           })
         } catch (error) {

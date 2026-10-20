@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -197,7 +198,8 @@ const concreteFrameworkRuntime = (
     getSessionFramework: () => framework,
     capturePromptForHandoff: () => ({
       prompt: { sessionId, text: 'original task' },
-      originatingTurnToken: 'original-user-turn'
+      originatingTurnToken: 'original-user-turn',
+      restoreSession: async () => undefined
     }),
     cancelPrompt: async (): Promise<AcpStateSnapshot> => fakeSnapshot(),
     waitForPromptRelease: async (): Promise<void> => undefined,
@@ -240,9 +242,6 @@ const concreteFrameworkRuntime = (
   })
 }
 
-// Hosted Windows full-suite shards can miss the default 1s waitFor before the broker emits.
-const APPROVAL_PROMPT_WAIT_MS = 10_000
-
 type CertificationOutcome = 'approved' | 'declined' | 'post-approval-race'
 type CertificationResult = {
   provider: FakeAcpProvider
@@ -256,7 +255,11 @@ const createProductionExecuteControlHarness = async (
 ): Promise<CertificationResult> => {
   const approved = outcome !== 'declined'
   const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
-  const broker = new AcpPermissionBroker((request) => emitted.push(request))
+  const approvalEmitted = deferred()
+  const broker = new AcpPermissionBroker((request) => {
+    emitted.push(request)
+    approvalEmitted.resolve()
+  })
   const approvalGateway = new AcpSpecialistApprovalGateway({
     bridge: createAcpBackedSpecialistBridge({
       request: async (payload, session) => {
@@ -304,7 +307,8 @@ const createProductionExecuteControlHarness = async (
         ? "await host.agents.switch('Approved Specialist'); return host.mcp('test', 'race')"
         : "return await host.agents.switch('Approved Specialist')"
     )
-    await vi.waitFor(() => expect(emitted).toHaveLength(1), { timeout: APPROVAL_PROMPT_WAIT_MS })
+    await approvalEmitted.promise
+    expect(emitted).toHaveLength(1)
     await broker.respond({
       requestId: emitted[0].requestId,
       optionId: emitted[0].options.find(
@@ -335,8 +339,10 @@ describe('completion gate through the real host.agents SDK and executeControl se
     const connectorStarted = deferred()
     const finishConnector = deferred<unknown>()
     const finishHandoff = deferred()
-    const firstSettled = vi.fn()
-    const retrySettled = vi.fn()
+    const firstSettlement = deferred()
+    const retrySettlement = deferred()
+    const firstSettled = vi.fn(() => firstSettlement.resolve())
+    const retrySettled = vi.fn(() => retrySettlement.resolve())
     const harness = await createExecuteControlHarness({
       connectorCall: async () => {
         connectorStarted.resolve()
@@ -367,10 +373,11 @@ describe('completion gate through the real host.agents SDK and executeControl se
       expect(firstSettled).not.toHaveBeenCalled()
       expect(retrySettled).not.toHaveBeenCalled()
       finishConnector.resolve({ done: true })
-      await vi.waitFor(() => {
-        expect(firstSettled).toHaveBeenCalledOnce()
-        expect(retrySettled).toHaveBeenCalledOnce()
-      })
+      // Observe both notifications while handoff is still blocked. The test timeout bounds real
+      // process/RPC cleanup without imposing vi.waitFor's shorter polling deadline on it.
+      await Promise.all([firstSettlement.promise, retrySettlement.promise])
+      expect(firstSettled).toHaveBeenCalledOnce()
+      expect(retrySettled).toHaveBeenCalledOnce()
       expect(harness.deliverToCurrentPrompt).not.toHaveBeenCalled()
       finishHandoff.resolve()
       expect(await firstResult).toBeInstanceOf(NotebookControlCompletionCapturedError)
@@ -482,7 +489,11 @@ describe('completion gate through the real host.agents SDK and executeControl se
 
   it('projects a real pending approval through local RPC and clears it when the card declines', async () => {
     const emitted: Array<Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0]> = []
-    const broker = new AcpPermissionBroker((request) => emitted.push(request))
+    const approvalEmitted = deferred()
+    const broker = new AcpPermissionBroker((request) => {
+      emitted.push(request)
+      approvalEmitted.resolve()
+    })
     const approvalGateway = new AcpSpecialistApprovalGateway({
       bridge: createAcpBackedSpecialistBridge({
         request: async (payload, session) => {
@@ -510,7 +521,13 @@ describe('completion gate through the real host.agents SDK and executeControl se
       const execution = harness.executeControl(
         "return await host.agents.switch('Approved Specialist')"
       )
-      await vi.waitFor(() => expect(emitted).toHaveLength(1), { timeout: APPROVAL_PROMPT_WAIT_MS })
+      await Promise.race([
+        approvalEmitted.promise,
+        execution.then((result) => {
+          throw new Error(`Control execution ended before approval: ${JSON.stringify(result)}`)
+        })
+      ])
+      expect(emitted).toHaveLength(1)
       await expect(lifecycle.getEvents('trusted-session')).resolves.toMatchObject([
         { phase: 'awaiting-approval', target: 'Approved Specialist' }
       ])
@@ -782,3 +799,5 @@ describe('completion gate through the real host.agents SDK and executeControl se
     }
   )
 })
+
+configureTestRuntimeMetadata()

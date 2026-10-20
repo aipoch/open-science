@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useTagStore } from '@/stores/tag-store'
 import { SettingsIconAction } from './SettingsLayout'
+import { connectorDescription } from './connector-copy'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
@@ -180,7 +181,7 @@ const SpecialistCapabilitiesSection = ({
       ...connectors.map((connector) => ({
         id: connector.id,
         name: connector.displayName,
-        description: connector.description,
+        description: connectorDescription(connector, t),
         mainEnabled: connector.enabled,
         available: true
       })),
@@ -212,7 +213,7 @@ const SpecialistCapabilitiesSection = ({
       }
     }
     return known.sort((a, b) => a.name.localeCompare(b.name))
-  }, [connectors, customServers, selectedConnectorIds, excludedConnectorIds])
+  }, [connectors, customServers, selectedConnectorIds, excludedConnectorIds, t])
 
   // Main-disabled installed Skills remain selectable for a Specialist. Persisted IDs absent from
   // the runtime-available catalog are rendered locally so the user can remove them without blocking
@@ -274,7 +275,7 @@ const SpecialistCapabilitiesSection = ({
       ...connectors.map((connector) => ({
         id: connector.id,
         name: connector.displayName,
-        description: connector.description,
+        description: connectorDescription(connector, t),
         mainEnabled: connector.enabled,
         available: true
       })),
@@ -296,7 +297,7 @@ const SpecialistCapabilitiesSection = ({
         )
       })
       .sort((a, b) => a.name.localeCompare(b.name))
-  }, [connectors, customServers, selectedConnectorIds])
+  }, [connectors, customServers, selectedConnectorIds, t])
 
   const filteredAddableSkills = useMemo(() => {
     const tagged =
@@ -639,7 +640,7 @@ const SpecialistCapabilitiesSection = ({
               )}
             </div>
 
-            <Tabs.Content value="skills">
+            <Tabs.Content value="skills" tabIndex={-1}>
               <div className="overflow-hidden rounded-lg border border-border">
                 {selectedSkillRows.length === 0 ? (
                   <p className="px-3 py-3.5 text-[12px] text-muted-foreground">
@@ -708,7 +709,7 @@ const SpecialistCapabilitiesSection = ({
               </p>
             </Tabs.Content>
 
-            <Tabs.Content value="connectors">
+            <Tabs.Content value="connectors" tabIndex={-1}>
               <div className="overflow-hidden rounded-lg border border-border">
                 {selectedConnectorRows.length === 0 ? (
                   <p className="px-3 py-3.5 text-[12px] text-muted-foreground">

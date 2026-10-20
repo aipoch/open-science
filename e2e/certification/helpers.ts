@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
+import { createProjectViaUi } from '../fixtures/project'
+import { submitPromptViaUi } from '../fixtures/conversation'
 
 const createProject = async (page: Page, name: string): Promise<string> => {
   const existingProjectIds = await page.evaluate(async () => {
@@ -8,10 +10,7 @@ const createProject = async (page: Page, name: string): Promise<string> => {
     }
     return (await bridge.api.projects.list()).map((project) => project.id)
   })
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(name)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, name)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   let projectId: string | undefined
@@ -44,8 +43,7 @@ const sendPrompt = async (
   const fixtureFailure = page.getByText(/^E2E fixture failure:/)
   const existingReplyCount = await expectedReply.count()
   const existingFailureCount = await fixtureFailure.count()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(
     expectedReply.nth(existingReplyCount).or(fixtureFailure.nth(existingFailureCount))
   ).toBeVisible({ timeout })

@@ -1,0 +1,358 @@
+import { createHash } from 'node:crypto'
+import { lstat, readFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import sharp from 'sharp'
+import { z } from 'zod'
+import { readFileWithinLimit } from './bounded-read.js'
+import {
+  checkPdfStructureDecodingBudget,
+  pdfTextRunsSchema,
+  pdfTableSourceItemsSchema,
+  pdfTableSourceSegmentSchema
+} from './result.js'
+import {
+  parsePdfStructureResult,
+  type PdfStructureIdentity,
+  type PdfStructureResult
+} from './result.js'
+
+const rect = z.tuple([
+  z.number().finite(),
+  z.number().finite(),
+  z.number().finite(),
+  z.number().finite()
+])
+const caption = z
+  .object({
+    text: z.string(),
+    rect,
+    page: z.number().int().positive().optional(),
+    regions: z
+      .array(z.object({ page: z.number().int().positive(), rect }))
+      .min(1)
+      .max(2)
+      .optional()
+  })
+  .optional()
+const candidate = z.object({
+  id: z.string().regex(/^[a-z0-9-]{1,80}$/),
+  page: z.number().int().positive(),
+  region: rect.optional(),
+  thumbnail: z.string().optional(),
+  caption,
+  issue: z.string().optional()
+})
+const rawNote = z.object({ text: z.string(), rect, page: z.number().int().positive().optional() })
+const rawTableData = z.object({
+  sourceViewport: z.object({ width: z.number().positive(), height: z.number().positive() }),
+  grid: z.array(z.array(z.string()).max(128)).max(256),
+  cells: z
+    .array(
+      z.object({
+        row: z.number(),
+        column: z.number(),
+        rowSpan: z.number(),
+        colSpan: z.number(),
+        text: z.string(),
+        textRuns: pdfTextRunsSchema.optional(),
+        sourceItems: pdfTableSourceItemsSchema.optional(),
+        sourceSegments: z
+          .array(pdfTableSourceSegmentSchema.omit({ region: true }).extend({ rect }))
+          .min(1)
+          .max(8192)
+          .optional(),
+        sourceRects: z.array(rect)
+      })
+    )
+    .max(2048),
+  unassigned: z.array(z.string()),
+  notes: z.array(rawNote).optional(),
+  issues: z.array(z.string())
+})
+const rawSchema = z.object({
+  sourceSha256: z.string(),
+  pageCount: z.number().int().positive(),
+  requestedPages: z.array(z.number()),
+  processedPages: z.array(z.number()),
+  auxiliaryPages: z.array(z.number().int().positive()).optional(),
+  pages: z.array(
+    z.object({
+      page: z.number(),
+      width: z.number().positive(),
+      height: z.number().positive(),
+      rotation: z.union([z.literal(0), z.literal(90), z.literal(180), z.literal(270)])
+    })
+  ),
+  figures: z
+    .array(candidate.extend({ sourceItems: pdfTableSourceItemsSchema.optional() }))
+    .max(128),
+  algorithms: z.array(candidate).max(32).default([]),
+  tables: z
+    .array(
+      z.union([
+        candidate.extend({ captionIssue: z.string().optional(), ...rawTableData.shape }),
+        candidate.extend({
+          parts: z
+            .array(rawTableData.extend({ title: z.string().min(1) }))
+            .min(2)
+            .max(8),
+          notes: z.array(rawNote).optional()
+        })
+      ])
+    )
+    .max(32),
+  navigation: z.object({
+    entries: z.array(z.object({ title: z.string(), page: z.number(), depth: z.number() }))
+  })
+})
+
+// Called only for the byte-bounded worker JSON or the result built from it.
+// Drop all optional origins together if they alone prevent an otherwise valid preview.
+// Shape/identity validation still runs afterwards; cached results remain strictly decoded.
+function fitSourceMetadataBudget(input: unknown): unknown {
+  const check = (value: unknown): void => {
+    checkPdfStructureDecodingBudget(value)
+    if (Buffer.byteLength(JSON.stringify(value)) > 8 * 1024 ** 2)
+      throw new Error('PDF structure exceeds manifest byte budget.')
+  }
+  try {
+    check(input)
+    return input
+  } catch {
+    const withoutOrigins: unknown = JSON.parse(
+      JSON.stringify(input, (key, value) =>
+        key === 'sourceItems' || key === 'sourceSegments' ? undefined : value
+      )
+    )
+    check(withoutOrigins)
+    return withoutOrigins
+  }
+}
+
+export const readWorkerResult = async (
+  root: string,
+  identity: PdfStructureIdentity,
+  thumbnails: Map<string, Uint8Array>
+): Promise<PdfStructureResult> => {
+  // The worker has exited. Validate each path component before reading any worker output.
+  for (const directory of [root, join(root, 'thumbnails')]) {
+    const info = await lstat(directory)
+    if (!info.isDirectory() || info.isSymbolicLink())
+      throw new Error('Unsafe PDF output directory.')
+  }
+  const manifest = await lstat(join(root, 'structure.json'))
+  if (!manifest.isFile() || manifest.isSymbolicLink())
+    throw new Error('Unsafe PDF output manifest.')
+  const input: unknown = JSON.parse(
+    await readFileWithinLimit(join(root, 'structure.json'), 8 * 1024 ** 2)
+  )
+  const raw = rawSchema.parse(fitSourceMetadataBudget(input))
+  if (raw.sourceSha256 !== identity.sourceChecksum) throw new Error('PDF worker source changed.')
+  for (const pages of [raw.requestedPages, raw.processedPages]) {
+    if (JSON.stringify(pages) !== JSON.stringify(identity.requestedPages))
+      throw new Error('PDF worker coverage mismatch.')
+  }
+  const covered = [...identity.requestedPages, ...(raw.auxiliaryPages ?? [])].sort((a, b) => a - b)
+  if (JSON.stringify(raw.pages.map(({ page }) => page)) !== JSON.stringify(covered))
+    throw new Error('PDF worker auxiliary coverage mismatch.')
+  let thumbnailBytes = 0
+  for (const item of [...raw.figures, ...raw.tables, ...raw.algorithms]) {
+    if (!item.region || !item.thumbnail) continue
+    if (item.thumbnail !== `thumbnails/${item.id}.png`)
+      throw new Error('PDF worker thumbnail identity mismatch.')
+    const info = await lstat(join(root, 'thumbnails', `${item.id}.png`))
+    thumbnailBytes += info.size
+    if (
+      !info.isFile() ||
+      info.isSymbolicLink() ||
+      info.size > 4 * 1024 ** 2 ||
+      thumbnailBytes > 64 * 1024 ** 2 - manifest.size
+    )
+      throw new Error('PDF worker images exceed their decoding budget.')
+  }
+  const issues: PdfStructureResult['issues'] = [
+    {
+      code: 'candidate-results',
+      detail:
+        'Candidate extraction can miss figures, tables, captions or cell content. Verify against the PDF.'
+    }
+  ]
+  const elements: PdfStructureResult['elements'] = []
+  const inventory: PdfStructureResult['thumbnails'] = []
+  const region = (
+    page: number,
+    box: number[],
+    width = 1,
+    height = 1
+  ): PdfStructureResult['elements'][number]['regions'][number] => {
+    const x = Math.max(0, Math.min(1, box[0] / width))
+    const y = Math.max(0, Math.min(1, box[1] / height))
+    const right = Math.max(0, Math.min(1, box[2] / width))
+    const bottom = Math.max(0, Math.min(1, box[3] / height))
+    if (right <= x || bottom <= y) throw new Error('PDF worker returned an empty region.')
+    return { page, x, y, width: Math.min(1 - x, right - x), height: Math.min(1 - y, bottom - y) }
+  }
+  for (const [kind, candidates] of [
+    ['figure', raw.figures],
+    ['algorithm', raw.algorithms],
+    ['table', raw.tables]
+  ] as const) {
+    for (const item of candidates) {
+      if (!item.region || !item.thumbnail) {
+        issues.push({
+          code: item.issue ?? 'unresolved-region',
+          detail: item.caption?.text ?? item.id
+        })
+        continue
+      }
+      const page = raw.pages.find((p) => p.page === item.page)
+      if (!page || item.thumbnail !== `thumbnails/${item.id}.png`)
+        throw new Error('PDF worker thumbnail identity mismatch.')
+      const captionRegions = item.caption
+        ? (
+            item.caption.regions ?? [
+              { page: item.caption.page ?? item.page, rect: item.caption.rect }
+            ]
+          ).map((part) => {
+            const source = raw.pages.find((p) => p.page === part.page)
+            if (!source) throw new Error('PDF worker caption page is missing.')
+            return region(part.page, part.rect, source.width, source.height)
+          })
+        : []
+      const path = join(root, 'thumbnails', `${item.id}.png`)
+      const stat = await lstat(path)
+      if (!stat.isFile() || stat.isSymbolicLink() || stat.size > 4 * 1024 ** 2)
+        throw new Error('Invalid PDF worker thumbnail.')
+      const bytes = await readFile(path)
+      const image = await sharp(bytes, { limitInputPixels: 2400 * 2400 }).metadata()
+      if (
+        !image.width ||
+        !image.height ||
+        image.width > 2400 ||
+        image.height > 2400 ||
+        image.format !== 'png'
+      )
+        throw new Error('Invalid PDF worker image.')
+      thumbnails.set(item.id, bytes)
+      inventory.push({
+        id: item.id,
+        mimeType: 'image/png',
+        width: image.width,
+        height: image.height,
+        sizeBytes: bytes.length,
+        sha256: createHash('sha256').update(bytes).digest('hex')
+      })
+      const element: PdfStructureResult['elements'][number] = {
+        id: item.id,
+        kind,
+        regions: [region(item.page, item.region)],
+        thumbnailId: item.id,
+        ...('sourceItems' in item && item.sourceItems ? { sourceItems: item.sourceItems } : {}),
+        ...(item.caption
+          ? {
+              caption: {
+                text: item.caption.text,
+                regions: captionRegions
+              }
+            }
+          : {}),
+        issues: item.issue ? [{ code: item.issue, detail: item.issue }] : []
+      }
+      const convertNote = (
+        note: z.infer<typeof rawNote>
+      ): NonNullable<NonNullable<typeof element.table>['notes']>[number] => {
+        const source = raw.pages.find((p) => p.page === (note.page ?? item.page))
+        if (!source) throw new Error('PDF worker note page is missing.')
+        return {
+          text: note.text,
+          regions: [region(source.page, note.rect, source.width, source.height)]
+        }
+      }
+      const convertTable = (
+        data: z.infer<typeof rawTableData>
+      ): NonNullable<typeof element.table> => {
+        return {
+          rowCount: data.grid.length,
+          columnCount: data.grid[0].length,
+          cells: data.cells.map((cell) => ({
+            row: cell.row,
+            column: cell.column,
+            rowSpan: cell.rowSpan,
+            columnSpan: cell.colSpan,
+            text: cell.text,
+            ...(cell.textRuns ? { textRuns: cell.textRuns } : {}),
+            ...(cell.sourceItems ? { sourceItems: cell.sourceItems } : {}),
+            ...(cell.sourceSegments
+              ? {
+                  sourceSegments: cell.sourceSegments.map(({ rect: box, ...segment }) => {
+                    if (
+                      segment.pageNumber !== item.page ||
+                      box[0] < 0 ||
+                      box[1] < 0 ||
+                      box[2] > data.sourceViewport.width ||
+                      box[3] > data.sourceViewport.height ||
+                      box[2] <= box[0] ||
+                      box[3] <= box[1]
+                    )
+                      throw new Error('Invalid PDF worker source segment region.')
+                    return {
+                      ...segment,
+                      region: region(
+                        item.page,
+                        box,
+                        data.sourceViewport.width,
+                        data.sourceViewport.height
+                      )
+                    }
+                  })
+                }
+              : {}),
+            regions: cell.sourceRects.map((box) =>
+              region(item.page, box, data.sourceViewport.width, data.sourceViewport.height)
+            )
+          })),
+          unassignedText: data.unassigned.map((text) => ({ text, regions: [] })),
+          ...(data.notes?.length
+            ? {
+                notes: data.notes.map(convertNote)
+              }
+            : {}),
+          issues: data.issues.map((code) => ({ code, detail: code }))
+        }
+      }
+      if ('parts' in item) {
+        element.tableParts = item.parts.map((part) => ({
+          title: part.title,
+          table: convertTable(part)
+        }))
+        element.tableNotes = item.notes?.map(convertNote)
+        element.issues = element.tableParts.flatMap((part) =>
+          part.table.issues.map((issue) => ({ ...issue }))
+        )
+      } else if ('cells' in item) {
+        element.issues = item.issues.map((code) => ({ code, detail: code }))
+        if (item.captionIssue)
+          element.issues.push({ code: item.captionIssue, detail: item.captionIssue })
+        if (item.grid.length && item.grid[0].length && item.cells.length)
+          element.table = convertTable(item)
+      }
+      elements.push(element)
+    }
+  }
+  return parsePdfStructureResult(
+    fitSourceMetadataBudget({
+      schemaVersion: 1,
+      ...identity,
+      pageCount: raw.pageCount,
+      requestedPages: raw.requestedPages,
+      processedPages: raw.processedPages,
+      ...(raw.auxiliaryPages ? { auxiliaryPages: raw.auxiliaryPages } : {}),
+      pages: raw.pages,
+      elements,
+      thumbnails: inventory,
+      navigation: raw.navigation.entries,
+      issues
+    }),
+    identity
+  )
+}

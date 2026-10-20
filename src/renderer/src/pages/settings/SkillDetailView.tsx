@@ -1,4 +1,3 @@
-import { ErrorNotice } from '@/components/error-notice'
 import { ScrollText } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -9,7 +8,7 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ResourceAvailability } from './ResourceAvailability'
 import { SettingsLoadNotice } from './SettingsLayout'
-import { specialistsUsingSkill, type SpecialistUsage } from './specialist-resource-scope'
+import { type SpecialistUsage } from './specialist-resource-scope'
 
 type SkillDetailViewProps = {
   skillId: string
@@ -54,11 +53,9 @@ const SkillDetailView = ({
   const { t } = useTranslation()
   const skill = useSettingsStore((state) => state.skills.find((item) => item.id === skillId))
   const setSkillEnabled = useSettingsStore((state) => state.setSkillEnabled)
-  const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
   const [detail, setDetail] = useState<SkillDetail | null>(null)
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading')
-  const [operationError, setOperationError] = useState<string | undefined>()
   const loadRequestRef = useRef(0)
 
   const loadDetail = async (): Promise<void> => {
@@ -120,17 +117,6 @@ const SkillDetailView = ({
   const genericMetadata = Object.entries(detail?.metadata ?? {}).filter(
     ([key]) => !DEDICATED_METADATA_KEYS.has(key.toLowerCase())
   )
-  const usages = specialistsUsingSkill(specialistItems, skillId)
-
-  const toggleSkill = async (): Promise<void> => {
-    setOperationError(undefined)
-    try {
-      await setSkillEnabled(skillId, !enabled)
-    } catch {
-      setOperationError(t('Could not save this setting. The previous value was restored.'))
-    }
-  }
-
   if (!detail) {
     return (
       <div className="p-5">
@@ -164,17 +150,16 @@ const SkillDetailView = ({
         <p className="mt-2 text-sm text-muted-foreground [text-wrap:pretty]">{description}</p>
       ) : null}
 
-      {operationError ? (
-        <ErrorNotice role="alert" tone="amber" className="mt-4" description={operationError} />
-      ) : null}
-
       <ResourceAvailability
-        mainEnabled={enabled}
-        mainRequired={(skill?.activationPolicy ?? detail.activationPolicy) === 'always-on'}
-        mainToggleLabel={t('Toggle {{name}}', { name })}
-        usages={usages}
-        onToggleMain={() => void toggleSkill()}
-        showAgentPopover
+        resource={{
+          id: skillId,
+          name,
+          kind: 'skill',
+          group: source ?? 'featured',
+          mainEnabled: enabled,
+          mainRequired: (skill?.activationPolicy ?? detail.activationPolicy) === 'always-on'
+        }}
+        onSetMain={(value) => setSkillEnabled(skillId, value)}
         onOpenSpecialist={onOpenSpecialist}
       />
 

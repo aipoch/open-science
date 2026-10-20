@@ -1,3 +1,5 @@
+import type { ClassificationUsageRecorder } from './classification-usage'
+import { AutomaticClassificationPausedError } from '../../shared/classification'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -7,7 +9,7 @@ import { SettingsRepository } from './repository'
 import { ClassificationSettingsOwner } from './classification-settings'
 import { classificationSettingsSchema } from './classification-config'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 
 vi.mock('./crypto', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./crypto')>()),
@@ -15,7 +17,7 @@ vi.mock('./crypto', async (importOriginal) => ({
   maskKey: (value: string) => `••••${value.slice(-4)}`,
   tryDecryptKey: (value: string) => Buffer.from(value.slice(4), 'base64').toString()
 }))
-vi.mock('../skills/net-fetch', () => ({ netFetchStandard: vi.fn() }))
+vi.mock('../network-fetch', () => ({ netFetchStandard: vi.fn() }))
 let dir: string
 let repository: SettingsRepository
 let owner: ClassificationSettingsOwner
@@ -145,6 +147,50 @@ it('validates a new service before writing any credential or configuration', asy
   expect(saved.revision).toBe(1)
   expect(fetchMock).toHaveBeenCalledOnce()
 })
+it('sends current images through the Jev System One endpoint on OpenCode Zen', async () => {
+  await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen classifier',
+    apiKey: 'zen-key'
+  })
+  await owner.mutate({ revision: 1, kind: 'bind', binding: { serviceId, modelId: 'jev-1.13' } })
+  fetchMock.mockClear()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 320, height: 280, channels: 3, background: 'blue' }
+  })
+    .png()
+    .toBuffer()
+  const image = {
+    mimeType: 'image/png' as const,
+    data: imageBytes.toString('base64'),
+    byteLength: imageBytes.byteLength
+  }
+  expect(await owner.selectSkills({ ...request(), loadImages: async () => [image] })).toEqual([
+    { name: candidate.name, path: candidate.path }
+  ])
+  const [url, init] = fetchMock.mock.calls[0]!
+  expect(url).toBe('https://opencode.ai/zen/v1/systemone')
+  expect(init?.headers).toMatchObject({
+    Authorization: 'Bearer zen-key',
+    'TypeSafe-Danger-Zone-Images': 'true'
+  })
+  expect(JSON.parse(String(init?.body)).assets).toHaveProperty(
+    JSON.parse(String(init?.body)).state.images[0]
+  )
+})
+it('keeps the empty-input fast path when the image loader finds no images', async () => {
+  await configure()
+  fetchMock.mockClear()
+
+  await expect(
+    owner.selectSkills({ ...request(), text: '', loadImages: async () => [] })
+  ).resolves.toEqual([])
+  expect(fetchMock).not.toHaveBeenCalled()
+})
 it('rejects a new invalid key without creating settings and redacts validation details', async () => {
   fetchMock.mockResolvedValueOnce(
     new Response(JSON.stringify({ error: { message: 'Invalid synthetic-bad-key' } }), {
@@ -203,6 +249,35 @@ it('does not accept a successful HTTP status without the validation answer', asy
   expect(result.validation).toMatchObject({ ok: false, category: 'unknown' })
   expect((await repository.getSettings()).classification).toBeUndefined()
 })
+it('selects the first validated service for both features without overriding later choices', async () => {
+  const first = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'typesafe',
+    name: 'First service',
+    apiKey: 'secret-api-key'
+  })
+  const binding = { serviceId, modelId: 'jev-latest' }
+  expect(first.capabilitySelection).toEqual(binding)
+  expect(first.smartCollections).toEqual(binding)
+  expect(
+    (await new ClassificationSettingsOwner(new SettingsRepository(dir)).snapshot()).smartCollections
+  ).toEqual(binding)
+
+  await owner.mutate({ revision: 1, kind: 'bind' })
+  await owner.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
+  const second = await owner.mutate({
+    revision: 3,
+    kind: 'save',
+    id: otherServiceId,
+    adapter: 'typesafe',
+    name: 'Second service',
+    apiKey: 'another-secret-key'
+  })
+  expect(second.capabilitySelection).toBeUndefined()
+  expect(second.smartCollections).toBeUndefined()
+})
 it('preserves historical unconfigured behavior and never registers a chat provider', async () => {
   expect(await owner.snapshot()).toEqual({ revision: 0, services: [], availableProviders: [] })
   expect(await owner.selectSkills(request())).toBeUndefined()
@@ -210,7 +285,8 @@ it('preserves historical unconfigured behavior and never registers a chat provid
   await configure()
   expect((await repository.getSettings()).providers).toEqual([])
   expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
-    'jev-latest'
+    'jev-latest',
+    'jev-preview'
   ])
   expect((await owner.snapshot()).services[0]).toMatchObject({
     configured: true,
@@ -282,6 +358,71 @@ it('sends only text and candidate metadata, maps paths locally, and separates us
       usage: { inputTokens: 20, outputTokens: 1, cacheTokens: 0, turnCount: 1 }
     })
   )
+})
+it.each([
+  ['TypeSafe', configure, 'https://api.typesafe.ai/v1/systemone', 'jev-preview'],
+  [
+    'OpenRouter',
+    () => configureRouter(false),
+    'https://openrouter.ai/api/v1/systemone',
+    'typesafe/jev-1.14'
+  ]
+] as const)(
+  'sends current images to Jev through %s System One',
+  async (_provider, setup, endpoint, model) => {
+    await setup()
+    if (model === 'typesafe/jev-1.14') {
+      await owner.mutate({ revision: 2, kind: 'bind', binding: { serviceId, modelId: model } })
+      fetchMock.mockClear()
+    } else {
+      await owner.mutate({ revision: 2, kind: 'bind', binding: { serviceId, modelId: model } })
+      fetchMock.mockClear()
+    }
+    const { default: sharp } = await import('sharp')
+    const imageBytes = await sharp({
+      create: { width: 320, height: 280, channels: 3, background: 'red' }
+    })
+      .png()
+      .toBuffer()
+    const image = {
+      mimeType: 'image/png' as const,
+      data: imageBytes.toString('base64'),
+      byteLength: imageBytes.byteLength
+    }
+    expect(
+      await owner.selectSkills({ ...request(), text: '', loadImages: async () => [image] })
+    ).toEqual([{ name: candidate.name, path: candidate.path }])
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(endpoint)
+    expect(init?.headers).toMatchObject({ 'TypeSafe-Danger-Zone-Images': 'true' })
+    const body = JSON.parse(String(init?.body))
+    expect(body.model).toBe(model)
+    expect(body.assets).toHaveProperty(body.state.images[0])
+    expect(body.state.images).toHaveLength(1)
+  }
+)
+it('falls back when an image exceeds the shared decoded-pixel limit', async () => {
+  await configure()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 4001, height: 4000, channels: 3, background: 'white' }
+  })
+    .png()
+    .toBuffer()
+
+  expect(
+    await owner.selectSkills({
+      ...request(),
+      loadImages: async () => [
+        {
+          mimeType: 'image/png',
+          data: imageBytes.toString('base64'),
+          byteLength: imageBytes.byteLength
+        }
+      ]
+    })
+  ).toBeUndefined()
+  expect(fetchMock).not.toHaveBeenCalled()
 })
 it('classifies ambiguous linked-PDF requests conservatively', async () => {
   await configure()
@@ -655,6 +796,277 @@ it.each([true, false])(
     ).toEqual({ serviceId, modelId: 'typesafe/jev-1.13' })
   }
 )
+it.each([true, false])(
+  'persists Zen classification and routes validation, probe and selected models with linked credentials=%s',
+  async (linked) => {
+    if (linked) {
+      await repository.upsertProvider({
+        id: providerId,
+        type: 'official',
+        vendorId: 'opencode',
+        name: 'Shared Zen',
+        keyRef: `enc:${Buffer.from('zen-key').toString('base64')}`
+      })
+    }
+    const saved = await owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'opencode',
+      name: 'Zen classifier',
+      ...(linked ? { providerId } : { apiKey: 'zen-key' })
+    })
+    expect(saved.capabilitySelection).toEqual({ serviceId, modelId: 'jev-1.13' })
+    expect(saved.smartCollections).toEqual(saved.capabilitySelection)
+    expect(saved.services[0]).toMatchObject({ adapter: 'opencode', configured: true })
+    expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
+      'jev-1.13',
+      'jev-1.13-free'
+    ])
+    if (linked) expect(saved.availableProviders[0]).toMatchObject({ vendorId: 'opencode' })
+    await owner.probe({ serviceId, revision: 1 })
+    await owner.mutate({
+      revision: 1,
+      kind: 'bind',
+      binding: { serviceId, modelId: 'jev-1.13-free' }
+    })
+    const reopened = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+    expect((await reopened.snapshot()).capabilitySelection).toEqual({
+      serviceId,
+      modelId: 'jev-1.13-free'
+    })
+    expect(await reopened.selectSkills(request())).toEqual([
+      { name: candidate.name, path: candidate.path }
+    ])
+    fetchMock.mockResolvedValueOnce(readingResponse(0.9, 0.1))
+    expect(await reopened.selectReadingRoute({ text: 'Read the full paper' })).toBe('full-document')
+    expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+      'jev-1.13',
+      'jev-1.13',
+      'jev-1.13-free',
+      'jev-1.13-free'
+    ])
+    for (const [url, init] of fetchMock.mock.calls) {
+      expect(url).toBe('https://opencode.ai/zen/v1/systemone')
+      expect(init?.headers).toMatchObject({ Authorization: 'Bearer zen-key' })
+      expect(init?.redirect).toBe('manual')
+      expect(JSON.parse(String(init?.body))).toHaveProperty('questions')
+    }
+    await expect(
+      reopened.mutate({
+        revision: 2,
+        kind: 'bind',
+        binding: { serviceId, modelId: 'typesafe/jev-1.13' }
+      })
+    ).rejects.toThrow('model is unavailable')
+    const serialized = JSON.stringify(await reopened.snapshot())
+    expect(serialized).not.toContain('zen-key')
+    expect(serialized).not.toContain('keyRef')
+  }
+)
+it('saves a free-only Zen account without trying paid inference and persists its selected default', async () => {
+  const probe = fetchMock.getMockImplementation()!
+  fetchMock.mockImplementation(async (...args) => {
+    const model = JSON.parse(String(args[1]?.body)).model
+    return model === 'jev-1.13' ? new Response('{}', { status: 402 }) : probe(...args)
+  })
+  const paid = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Free-only Zen',
+    apiKey: 'free-only-key',
+    modelId: 'jev-1.13'
+  })
+  expect(paid.validation?.ok).toBe(false)
+  expect((await repository.getSettings()).classification).toBeUndefined()
+  fetchMock.mockClear()
+  const saved = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Free-only Zen',
+    apiKey: 'free-only-key',
+    modelId: 'jev-1.13-free'
+  })
+  expect(saved.capabilitySelection).toEqual({ serviceId, modelId: 'jev-1.13-free' })
+  expect(saved.smartCollections).toEqual(saved.capabilitySelection)
+  expect(saved.services[0]?.modelId).toBe('jev-1.13-free')
+  expect((await repository.getSettings()).classification?.services[0]?.models).toEqual([
+    'jev-1.13-free',
+    'jev-1.13'
+  ])
+  const reopened = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+  expect((await reopened.snapshot()).services[0]?.modelId).toBe('jev-1.13-free')
+  expect(await reopened.probe({ serviceId, revision: 1 })).toEqual({ ok: true })
+  await reopened.mutate({ revision: 1, kind: 'bind' })
+  await reopened.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
+  expect(await reopened.probe({ serviceId, revision: 3 })).toEqual({ ok: true })
+  await reopened.mutate({
+    revision: 3,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Edited free account'
+  })
+  expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+    'jev-1.13-free',
+    'jev-1.13-free',
+    'jev-1.13-free',
+    'jev-1.13-free'
+  ])
+})
+it.each(['gpt-6.1-sol', 'jev-latest', 'typesafe/jev-1.13', 'unavailable-jev'])(
+  'rejects an unsupported Zen default %s before fetching',
+  async (modelId) => {
+    await expect(
+      owner.mutate({
+        revision: 0,
+        kind: 'save',
+        id: serviceId,
+        adapter: 'opencode',
+        name: 'Zen',
+        apiKey: 'key',
+        modelId
+      })
+    ).rejects.toThrow('model is unavailable')
+    expect(fetchMock).not.toHaveBeenCalled()
+  }
+)
+it.each([false, true])(
+  'uses a smart-only free binding for Zen probe and credential replacement with another capability service=%s',
+  async (otherCapabilityService) => {
+    await repository.mutateClassification(() => ({
+      revision: 1,
+      services: [
+        {
+          id: serviceId,
+          adapter: 'opencode',
+          name: 'Zen',
+          models: ['jev-1.13', 'jev-1.13-free'],
+          keyRef: `enc:${Buffer.from('old-key').toString('base64')}`
+        },
+        ...(otherCapabilityService
+          ? [
+              {
+                id: otherServiceId,
+                adapter: 'typesafe' as const,
+                name: 'Other',
+                models: ['jev-latest'],
+                keyRef: `enc:${Buffer.from('other-key').toString('base64')}`
+              }
+            ]
+          : [])
+      ],
+      capabilitySelection: otherCapabilityService
+        ? { serviceId: otherServiceId, modelId: 'jev-latest' }
+        : undefined,
+      smartCollections: { serviceId, modelId: 'jev-1.13-free' }
+    }))
+    expect(await owner.probe({ serviceId, revision: 1 })).toEqual({ ok: true })
+    const saved = await owner.mutate({
+      revision: 1,
+      kind: 'save',
+      id: serviceId,
+      adapter: 'opencode',
+      name: 'Zen replacement',
+      apiKey: 'new-key'
+    })
+    expect(saved.smartCollections).toEqual({ serviceId, modelId: 'jev-1.13-free' })
+    expect(saved.capabilitySelection).toEqual(
+      otherCapabilityService ? { serviceId: otherServiceId, modelId: 'jev-latest' } : undefined
+    )
+    expect(saved.services.find((service) => service.id === serviceId)?.modelId).toBe(
+      'jev-1.13-free'
+    )
+    expect(fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).model)).toEqual([
+      'jev-1.13-free',
+      'jev-1.13-free'
+    ])
+    expect(fetchMock.mock.calls[1]?.[1]?.headers).toMatchObject({ Authorization: 'Bearer new-key' })
+  }
+)
+it('preserves existing feature bindings when explicitly changing the Zen default', async () => {
+  const first = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    apiKey: 'key'
+  })
+  const saved = await owner.mutate({
+    revision: 1,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    modelId: 'jev-1.13-free'
+  })
+  expect(saved.capabilitySelection).toEqual(first.capabilitySelection)
+  expect(saved.smartCollections).toEqual(first.smartCollections)
+  expect(saved.services[0]?.modelId).toBe('jev-1.13-free')
+  expect(JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body)).model).toBe('jev-1.13-free')
+})
+it.each([
+  ['opencode', 'openrouter'],
+  ['opencode', 'opencode-go'],
+  ['openrouter', 'opencode'],
+  ['typesafe', 'opencode']
+] as const)('rejects %s classification linked to %s credentials', async (adapter, vendorId) => {
+  await repository.upsertProvider({
+    id: providerId,
+    type: 'official',
+    vendorId,
+    name: 'Wrong account',
+    keyRef: `enc:${Buffer.from('wrong-vendor-key').toString('base64')}`
+  })
+  await expect(
+    owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter,
+      name: 'Classifier',
+      providerId
+    })
+  ).rejects.toThrow('account is unavailable')
+  expect(fetchMock).not.toHaveBeenCalled()
+  expect((await repository.getSettings()).classification).toBeUndefined()
+})
+it('never sends a mismatched linked Zen credential read from persisted settings', async () => {
+  await addOpenRouter('wrong-vendor-key')
+  await repository.mutateClassification(() => ({
+    revision: 1,
+    services: [
+      { id: serviceId, adapter: 'opencode', name: 'Zen', models: ['jev-1.13'], providerId }
+    ],
+    capabilitySelection: { serviceId, modelId: 'jev-1.13' }
+  }))
+  expect((await owner.snapshot()).services[0]).toMatchObject({ configured: false, needsKey: true })
+  expect(await owner.selectSkills(request())).toBeUndefined()
+  expect(await owner.probe({ serviceId, revision: 1 })).toEqual({ ok: false })
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+it('leaves Zen settings unchanged when validation fails', async () => {
+  fetchMock.mockResolvedValueOnce(new Response('{}', { status: 401 }))
+  const saved = await owner.mutate({
+    revision: 0,
+    kind: 'save',
+    id: serviceId,
+    adapter: 'opencode',
+    name: 'Zen',
+    apiKey: 'invalid-zen'
+  })
+  expect(saved).toMatchObject({
+    revision: 0,
+    services: [],
+    validation: { ok: false, category: 'auth' }
+  })
+  expect((await repository.getSettings()).classification).toBeUndefined()
+})
 it('resolves a rotated shared key and falls back after the shared account is removed', async () => {
   await configureRouter()
   await addOpenRouter('rotated-key')
@@ -930,6 +1342,31 @@ it('supports a loopback custom TypeSafe-compatible endpoint without an API key',
     binding: { serviceId, modelId: model }
   })
   expect(bound.capabilitySelection).toEqual({ serviceId, modelId: model })
+
+  fetchMock.mockClear()
+  const { default: sharp } = await import('sharp')
+  const imageBytes = await sharp({
+    create: { width: 320, height: 280, channels: 3, background: 'green' }
+  })
+    .png()
+    .toBuffer()
+  const image = {
+    mimeType: 'image/png' as const,
+    data: imageBytes.toString('base64'),
+    byteLength: imageBytes.byteLength
+  }
+  expect(
+    await owner.selectSkills({ ...request(), text: '', loadImages: async () => [image] })
+  ).toEqual([{ name: candidate.name, path: candidate.path }])
+  const [imageUrl, imageInit] = fetchMock.mock.calls[0]!
+  expect(imageUrl).toBe(endpoint)
+  expect(imageInit?.headers).toMatchObject({
+    'Content-Type': 'application/json',
+    'TypeSafe-Danger-Zone-Images': 'true'
+  })
+  expect(JSON.parse(String(imageInit?.body)).assets).toHaveProperty(
+    JSON.parse(String(imageInit?.body)).state.images[0]
+  )
 })
 
 it('requires a key for a remote custom TypeSafe-compatible endpoint', async () => {
@@ -961,4 +1398,464 @@ it('rejects insecure custom endpoints before attempting validation', async () =>
     })
   ).rejects.toThrow('endpoint is invalid')
   expect(fetchMock).not.toHaveBeenCalled()
+})
+
+const literatureRequest = (): Parameters<ClassificationSettingsOwner['classifyLiterature']>[0] => ({
+  description: 'Original studies of resistance using single-cell sequencing.',
+  title: 'Single-cell resistance study',
+  abstract: 'We used single-cell sequencing to investigate resistance.',
+  signal: new AbortController().signal
+})
+const choiceResponse = (changes: Record<string, unknown> = {}): Response =>
+  new Response(
+    JSON.stringify({
+      model: 'jev-1.13.0',
+      answers: {
+        membership: {
+          type: 'choice',
+          choice: 'match',
+          confidence: 0.9,
+          probabilities: { match: 0.95, 'no-match': 0.01, uncertain: 0.04 },
+          ...changes
+        }
+      },
+      usage: { input_tokens: 42, output_tokens: 5 }
+    })
+  )
+it.each(['success', 'timeout', 'cancel'] as const)(
+  'gives background literature classification a bounded budget beyond fast routing: %s',
+  async (scenario) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    let respond!: (response: Response) => void
+    let requestSignal!: AbortSignal
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((resolve, reject) => {
+          respond = resolve
+          requestSignal = init!.signal!
+          requestSignal.addEventListener('abort', () => reject(requestSignal.reason), {
+            once: true
+          })
+          started()
+        })
+    )
+    const controller = new AbortController()
+    const result = owner
+      .classifyLiterature({ ...literatureRequest(), signal: controller.signal })
+      .then(
+        (value) => ({ value, error: undefined }),
+        (error) => ({ value: undefined, error })
+      )
+    await ready
+    await vi.advanceTimersByTimeAsync(4000)
+    expect(requestSignal.aborted).toBe(false)
+    if (scenario === 'success') {
+      respond(choiceResponse())
+      expect((await result).value).toMatchObject({ verdict: 'match' })
+    } else if (scenario === 'timeout') {
+      await vi.advanceTimersByTimeAsync(26000)
+      expect((await result).error).toMatchObject({ category: 'timeout' })
+      expect(requestSignal.aborted).toBe(true)
+    } else {
+      controller.abort()
+      expect((await result).error).toBeDefined()
+      expect(requestSignal.aborted).toBe(true)
+    }
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
+it.each(['skills', 'reading'] as const)(
+  'keeps %s routing on its fast timeout budget',
+  async (kind) => {
+    await configure()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    let started!: () => void
+    const ready = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    fetchMock.mockImplementation(
+      (_url, init) =>
+        new Promise((_resolve, reject) => {
+          init!.signal!.addEventListener('abort', () => reject(init!.signal!.reason), {
+            once: true
+          })
+          started()
+        })
+    )
+    const result =
+      kind === 'skills'
+        ? owner.selectSkills(request())
+        : owner.selectReadingRoute({ text: 'Read the paper' })
+    await ready
+    await vi.advanceTimersByTimeAsync(3000)
+    expect(await result).toBeUndefined()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(vi.getTimerCount()).toBe(0)
+  }
+)
+it('does not use capability selection as authorization to classify literature', async () => {
+  await configure()
+  await owner.mutate({ revision: 2, kind: 'bind', feature: 'smart-collections' })
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow('not configured')
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+it('persists independent smart collection binding without changing the capability binding', async () => {
+  await configure()
+  const snapshot = await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  expect(snapshot.smartCollections).toEqual(snapshot.capabilitySelection)
+  const restarted = new ClassificationSettingsOwner(new SettingsRepository(dir), fetchMock)
+  expect((await restarted.snapshot()).smartCollections).toEqual(snapshot.smartCollections)
+  const unbound = await owner.mutate({ revision: 3, kind: 'bind', feature: 'smart-collections' })
+  expect(unbound.smartCollections).toBeUndefined()
+  expect(unbound.capabilitySelection).toEqual(snapshot.capabilitySelection)
+})
+it.each(['typesafe', 'openrouter', 'opencode', 'custom'] as const)(
+  'classifies literature with a closed Choice contract through %s',
+  async (adapter) => {
+    await owner.mutate({
+      revision: 0,
+      kind: 'save',
+      id: serviceId,
+      adapter,
+      name: 'Classifier',
+      apiKey: 'secret',
+      ...(adapter === 'custom'
+        ? { baseUrl: 'https://classifier.example.test/decisions', modelId: 'local-model' }
+        : {})
+    })
+    await owner.mutate({
+      revision: 1,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    fetchMock.mockClear().mockResolvedValue(choiceResponse())
+    const observeUsage = vi.fn()
+    const result = await owner.classifyLiterature({ ...literatureRequest(), observeUsage })
+    expect(result).toMatchObject({ verdict: 'match', model: 'jev-1.13.0' })
+    const [url, init] = fetchMock.mock.calls[0]!
+    expect(url).toBe(
+      adapter === 'typesafe'
+        ? 'https://api.typesafe.ai/v1/systemone'
+        : adapter === 'openrouter'
+          ? 'https://openrouter.ai/api/alpha/decisions'
+          : adapter === 'opencode'
+            ? 'https://opencode.ai/zen/v1/systemone'
+            : 'https://classifier.example.test/decisions'
+    )
+    const body = JSON.parse(String(init?.body))
+    expect(body.questions.membership.type).toBe('choice')
+    expect(Object.keys(body.questions.membership.criteria)).toEqual([
+      'match',
+      'no-match',
+      'uncertain'
+    ])
+    expect(JSON.parse(body.state)).toEqual({
+      title: literatureRequest().title,
+      abstract: literatureRequest().abstract
+    })
+    expect(observeUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        usage: { inputTokens: 42, outputTokens: 5, cacheTokens: 0, turnCount: 1 }
+      })
+    )
+  }
+)
+it.each([
+  { choice: 'unknown' },
+  { probabilities: { match: 0.1, 'no-match': 0.8, uncertain: 0.1 } },
+  { probabilities: { match: 0.95, 'no-match': 0.9, uncertain: 0.1 } },
+  { type: 'noul', noul: 0.99 },
+  { probabilities: { match: 0.95, 'no-match': 0.01 } }
+])(
+  'rejects invalid literature decisions rather than silently excluding a paper: %j',
+  async (invalid) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    fetchMock.mockResolvedValue(choiceResponse(invalid))
+    await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+  }
+)
+it('does not send missing abstracts and rejects results made obsolete by configuration changes', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  await expect(owner.classifyLiterature({ ...literatureRequest(), abstract: '' })).rejects.toThrow(
+    'Insufficient'
+  )
+  expect(fetchMock).not.toHaveBeenCalled()
+  fetchMock.mockImplementation(async () => {
+    await owner.mutate({ revision: 3, kind: 'bind', feature: 'smart-collections' })
+    return choiceResponse()
+  })
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+})
+
+it.each([
+  [401, 'auth'],
+  [429, 'rate-limit'],
+  [500, 'service'],
+  [404, 'configuration']
+] as const)('returns a safe literature failure category for HTTP %s', async (status, category) => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  fetchMock.mockImplementation(async () => new Response('private-provider-message', { status }))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category,
+    message: 'Classification evaluation failed.'
+  })
+})
+it('distinguishes malformed literature responses from network failures', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  fetchMock.mockResolvedValueOnce(new Response('not-json'))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category: 'invalid-response'
+  })
+  fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    category: 'network'
+  })
+})
+
+it('selects only a supplied evidence passage and rejects an invented citation index', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  const response = await choiceResponse().json()
+  response.answers.evidence = { type: 'choice', choice: '0' }
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  const input = {
+    ...literatureRequest(),
+    abstract: '',
+    evidence: {
+      coverage: 'passages',
+      passages: [{ pageStart: 3, pageEnd: 3, content: 'Participants were randomly assigned.' }]
+    }
+  }
+  expect(await owner.classifyLiterature(input)).toMatchObject({
+    verdict: 'match',
+    evidenceIndex: 0
+  })
+  delete response.answers.evidence
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  const withoutCitation = await owner.classifyLiterature(input)
+  expect(withoutCitation).toMatchObject({ verdict: 'match' })
+  expect(withoutCitation.evidenceIndex).toBeUndefined()
+  response.answers.evidence = { type: 'choice', choice: 'none' }
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  expect((await owner.classifyLiterature(input)).evidenceIndex).toBeUndefined()
+  response.answers.evidence.choice = '999'
+  fetchMock.mockResolvedValue(new Response(JSON.stringify(response)))
+  await expect(owner.classifyLiterature(input)).rejects.toThrow()
+})
+
+it.each(['success', 'invalid', 'cancelled', 'network', 'retry'] as const)(
+  'accounts for actual literature provider attempts: %s',
+  async (scenario) => {
+    await configure()
+    await owner.mutate({
+      revision: 2,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+    const controller = new AbortController()
+    const recordRequest = vi.fn<
+      (event: import('../../shared/classification').ClassificationRequestUsage) => Promise<void>
+    >(async () => undefined)
+    owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+      observer: () => recordRequest
+    } as unknown as ClassificationUsageRecorder)
+    const observeUsage = vi.fn()
+    fetchMock.mockClear()
+    if (scenario === 'network') fetchMock.mockRejectedValueOnce(new Error('connection failed'))
+    else if (scenario === 'invalid')
+      fetchMock.mockResolvedValueOnce(choiceResponse({ choice: 'invalid' }))
+    else if (scenario === 'cancelled')
+      fetchMock.mockImplementationOnce(async () => {
+        controller.abort()
+        return choiceResponse()
+      })
+    else if (scenario === 'retry')
+      fetchMock
+        .mockResolvedValueOnce(
+          new Response(JSON.stringify({ usage: { input_tokens: 3, output_tokens: 1 } }), {
+            status: 429
+          })
+        )
+        .mockResolvedValueOnce(choiceResponse())
+    else fetchMock.mockResolvedValueOnce(choiceResponse())
+    const result = owner.classifyLiterature({
+      ...literatureRequest(),
+      signal: controller.signal,
+      observeUsage
+    })
+    if (scenario === 'success' || scenario === 'retry') await result
+    else await expect(result).rejects.toThrow()
+    const records = recordRequest.mock.calls.map(
+      (call) => call[0]
+    ) as unknown as import('../../shared/classification').ClassificationRequestUsage[]
+    const attempts = scenario === 'retry' ? 2 : 1
+    expect(records).toHaveLength(attempts * 2)
+    expect(new Set(records.map((entry) => entry.eventId)).size).toBe(attempts)
+    expect(records[0].status).toBe('started')
+    if (scenario === 'network') {
+      expect(records[1]).toMatchObject({ status: 'failed' })
+      expect(records[1].inputTokens).toBeUndefined()
+      expect(observeUsage).not.toHaveBeenCalled()
+    } else {
+      expect(records.at(-1)).toMatchObject({
+        inputTokens: 42,
+        outputTokens: 5,
+        status:
+          scenario === 'invalid' ? 'failed' : scenario === 'cancelled' ? 'interrupted' : 'completed'
+      })
+      expect(observeUsage).toHaveBeenCalledTimes(attempts)
+    }
+  }
+)
+
+it('does not send literature requests when recording their initial identity fails', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer: () => async () => {
+      throw new Error('database unavailable')
+    }
+  } as unknown as ClassificationUsageRecorder)
+  fetchMock.mockClear()
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toThrow()
+  expect(fetchMock).not.toHaveBeenCalled()
+})
+
+it('stops a provider retry when the automatic request budget is exhausted', async () => {
+  await configure()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  let attempts = 0
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer:
+      () => async (event: import('../../shared/classification').ClassificationRequestUsage) => {
+        if (event.status === 'started' && ++attempts > 1) {
+          throw new AutomaticClassificationPausedError('run-limit')
+        }
+      }
+  } as unknown as ClassificationUsageRecorder)
+  fetchMock.mockClear()
+  fetchMock.mockResolvedValueOnce(new Response('retry later', { status: 429 }))
+  await expect(owner.classifyLiterature(literatureRequest())).rejects.toMatchObject({
+    reason: 'run-limit'
+  })
+  expect(attempts).toBe(2)
+  expect(fetchMock).toHaveBeenCalledTimes(1)
+})
+
+it('records connection checks, capability selection and reading routing at the same provider boundary', async () => {
+  const records: {
+    context: import('../../shared/classification').ClassificationUsageContext
+    event: import('../../shared/classification').ClassificationRequestUsage
+  }[] = []
+  owner = new ClassificationSettingsOwner(repository, fetchMock, 3000, {
+    observer: (context) => async (event) => {
+      records.push({ context, event })
+    }
+  } as ClassificationUsageRecorder)
+  await configure()
+  await owner.probe({ serviceId, revision: 2 })
+  const usageContext = { projectId: 'project', sessionId: 'session' }
+  await owner.selectSkills({ ...request(), usageContext })
+  fetchMock.mockResolvedValueOnce(readingResponse(0.9, 0.1))
+  await owner.selectReadingRoute({ text: 'Read the full paper', usageContext })
+  const done = records.filter(({ event }) => event.status === 'completed')
+  expect(done.map(({ context }) => context.scenario)).toEqual([
+    'save-validation',
+    'probe',
+    'capability-selection',
+    'reading-route'
+  ])
+  expect(
+    done
+      .slice(2)
+      .every(({ context }) => context.sessionId === 'session' && context.projectId === 'project')
+  ).toBe(true)
+  expect(done.every(({ event }) => event.inputTokens! > 0)).toBe(true)
+  expect(new Set(done.map(({ event }) => event.eventId)).size).toBe(4)
+  const calls = fetchMock.mock.calls.length
+  await owner.selectSkills({ ...request(), signal: AbortSignal.abort() })
+  expect(fetchMock).toHaveBeenCalledTimes(calls)
+})
+
+it('notifies classification observers only after committed changes and releases subscriptions', async () => {
+  const changed = vi.fn()
+  const unsubscribe = owner.subscribe(changed)
+  await configure()
+  expect(changed).toHaveBeenCalled()
+  changed.mockClear()
+  await expect(
+    owner.mutate({
+      revision: -1,
+      kind: 'bind',
+      feature: 'smart-collections',
+      binding: { serviceId }
+    })
+  ).rejects.toThrow()
+  expect(changed).not.toHaveBeenCalled()
+  unsubscribe()
+  await owner.mutate({
+    revision: 2,
+    kind: 'bind',
+    feature: 'smart-collections',
+    binding: { serviceId }
+  })
+  expect(changed).not.toHaveBeenCalled()
 })

@@ -1,5 +1,5 @@
 import { createStore, type StoreApi } from 'zustand/vanilla'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   createInitialSettingsNavigationState,
@@ -7,6 +7,7 @@ import {
   type SettingsNavigationActions,
   type SettingsNavigationState
 } from './settings-navigation-slice'
+import { takeSettingsReturnFocusTarget } from './settings-return-focus'
 
 type TestStore = SettingsNavigationState & SettingsNavigationActions
 
@@ -23,7 +24,70 @@ describe('settings navigation slice', () => {
   let store: StoreApi<TestStore>
 
   beforeEach(() => {
+    takeSettingsReturnFocusTarget()
     store = createHarness()
+  })
+
+  afterEach(() => {
+    takeSettingsReturnFocusTarget()
+    vi.unstubAllGlobals()
+  })
+
+  it('captures the opener once and consumes it as transient focus state', () => {
+    class FocusTarget {}
+    const body = new FocusTarget()
+    const opener = new FocusTarget()
+    const settingsControl = new FocusTarget()
+    const documentStub = { activeElement: opener, body }
+    vi.stubGlobal('HTMLElement', FocusTarget)
+    vi.stubGlobal('document', documentStub)
+
+    store.getState().openSettings()
+    documentStub.activeElement = settingsControl
+    store.getState().openSettingsToPanel('storage')
+
+    expect(takeSettingsReturnFocusTarget()).toBe(opener)
+    expect(takeSettingsReturnFocusTarget()).toBeNull()
+  })
+
+  it('resolves a transient menu item to its connected menu trigger', () => {
+    class FocusTarget {
+      constructor(
+        private readonly role: string,
+        readonly id = '',
+        private readonly menu: FocusTarget | null = null,
+        private readonly controls: string | null = null
+      ) {}
+
+      isConnected = true
+
+      matches(selector: string): boolean {
+        return selector.includes('menuitem') && this.role === 'menuitem'
+      }
+
+      closest(selector: string): FocusTarget | null {
+        return selector.includes('[role="menu"]') && this.role === 'menuitem' ? this.menu : null
+      }
+
+      getAttribute(name: string): string | null {
+        return name === 'aria-controls' ? this.controls : null
+      }
+    }
+    const body = new FocusTarget('body')
+    const menu = new FocusTarget('menu', 'settings-menu')
+    const menuItem = new FocusTarget('menuitem', '', menu)
+    const trigger = new FocusTarget('button', '', null, 'settings-menu')
+    const documentStub = {
+      activeElement: menuItem,
+      body,
+      querySelectorAll: () => [trigger]
+    }
+    vi.stubGlobal('HTMLElement', FocusTarget)
+    vi.stubGlobal('document', documentStub)
+
+    store.getState().openSettings()
+
+    expect(takeSettingsReturnFocusTarget()).toBe(trigger)
   })
 
   it('opens normally without replacing a pending landing intent', () => {

@@ -1,5 +1,5 @@
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 
 type SessionUpdateOwner = 'delegated-work' | 'runtime-context' | 'runtime-transcript'
 type SessionUpdatePublisher = (session: PersistedChatSession, owner: SessionUpdateOwner) => void

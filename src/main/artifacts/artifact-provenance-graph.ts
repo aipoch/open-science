@@ -13,7 +13,7 @@ import {
   type ScientificOutputRisk
 } from '../../shared/execution-file-evidence'
 import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
-import type { NotebookDependencyProjection } from '../notebook/dependency-analysis'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 
 const SHA256_PATTERN = /^[a-f0-9]{64}$/u
@@ -61,7 +61,8 @@ const EXECUTION_FILE_EVIDENCE_REASONS = new Set<
   'compute-activity-lineage-missing',
   'dynamic-path-unresolved',
   'absolute-path-not-frozen',
-  'source-analysis-unsupported-call'
+  'source-analysis-unsupported-call',
+  'execution-incomplete'
 ])
 const SCIENTIFIC_OUTPUT_RISKS = new Set<ScientificOutputRisk>([
   'format-validity-not-verified',
@@ -787,7 +788,9 @@ const sealArtifactProvenanceGraph = (
     )
   )
   const completeKernelDependencyActivityIds = new Set<string>()
-  const missingKernelDependencyActivityIds = new Set<string>()
+  const missingDependencyActivityIds = new Set(
+    input.notebookDependencies?.unresolvedFileReadRunIds ?? []
+  )
   if (input.notebookDependencies) {
     for (const [activityId, candidate] of notebookCandidateById) {
       const dependencies = input.notebookDependencies.dependenciesByRunId?.[activityId]
@@ -806,7 +809,7 @@ const sealArtifactProvenanceGraph = (
           candidate.notebookRun.kernelEpochId !== dependency.notebookRun?.kernelEpochId ||
           dependency.activity.sequence >= candidate.activity.sequence
         ) {
-          missingKernelDependencyActivityIds.add(activityId)
+          missingDependencyActivityIds.add(activityId)
           completeKernelDependencyActivityIds.delete(activityId)
           continue
         }
@@ -815,6 +818,32 @@ const sealArtifactProvenanceGraph = (
           activityId,
           dependencyActivityId,
           authority: 'authoritative',
+          evidenceSource: 'dependency-analysis'
+        })
+      }
+    }
+    for (const [activityId, dependencies] of Object.entries(
+      input.notebookDependencies.fileDependenciesByRunId ?? {}
+    )) {
+      const candidate = notebookCandidateById.get(activityId)
+      if (!candidate) continue
+      for (const dependency of dependencies) {
+        const dependencyCandidate = notebookCandidateById.get(dependency.producerRunId)
+        if (
+          !dependencyCandidate ||
+          dependencyCandidate.activity.sequence >= candidate.activity.sequence
+        ) {
+          missingDependencyActivityIds.add(activityId)
+          continue
+        }
+        // Static source analysis plus an observed generation identifies the producer, but does
+        // not prove that the runtime opened this exact path. Keep the edge advisory so replay
+        // barriers remain conservative when runtime file evidence is incomplete.
+        mergeEdge(edges, {
+          kind: 'depends-on',
+          activityId,
+          dependencyActivityId: dependency.producerRunId,
+          authority: 'advisory',
           evidenceSource: 'dependency-analysis'
         })
       }
@@ -1107,11 +1136,14 @@ const sealArtifactProvenanceGraph = (
     const kernelDependenciesComplete = input.notebookDependencies
       ? completeKernelDependencyActivityIds.has(activityId)
       : fileReadsComplete
-    if (kernelDependenciesComplete) continue
-    if (missingKernelDependencyActivityIds.has(activityId)) reasons.add('history-truncated')
+    const missingDependency = missingDependencyActivityIds.has(activityId)
+    if (missingDependency) reasons.add('history-truncated')
+    if (kernelDependenciesComplete && !missingDependency) continue
     if (!fileReadsComplete) reasons.add('file-reads-unavailable')
-    if (!candidate.notebookRun.kernelEpochId) reasons.add('kernel-epoch-unknown')
-    reasons.add('kernel-dependencies-unavailable')
+    if (!kernelDependenciesComplete) {
+      if (!candidate.notebookRun.kernelEpochId) reasons.add('kernel-epoch-unknown')
+      reasons.add('kernel-dependencies-unavailable')
+    }
   }
 
   for (const activityId of selectedActivityIds) {

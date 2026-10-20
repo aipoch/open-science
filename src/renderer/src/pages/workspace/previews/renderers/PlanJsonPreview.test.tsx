@@ -165,3 +165,17 @@ describe('Plan-aware JSON preview', () => {
     expect(screen.queryByRole('heading')).toBeNull()
   })
 })
+
+it('keeps a read-only historical plan on its saved snapshot even when the session has live progress', async () => {
+  mockFile(JSON.stringify(planTestDocument))
+  useSessionStore.setState({
+    sessions: [{ id: 'session-1', activePlanProjection: planTestProjection('version-1') } as never]
+  })
+  render(<PlanJsonPreview item={item} readOnly />)
+  expect(
+    await screen.findByText(
+      'This plan is shown as a saved snapshot. Step progress is unavailable for archived sessions.'
+    )
+  ).toBeTruthy()
+  expect(screen.queryByLabelText('Analyze the data status: completed')).toBeNull()
+})

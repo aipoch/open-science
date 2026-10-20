@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act } from 'react'
+import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -10,13 +10,15 @@ type Snapshot = { content: string; presenting: boolean }
 const Probe = ({
   content,
   sourceOpen,
-  snapshots
+  snapshots,
+  animateOnMount
 }: {
   content: string
   sourceOpen: boolean
   snapshots: Snapshot[]
+  animateOnMount?: boolean
 }): null => {
-  const presentation = useSmoothStreamingContent(content, sourceOpen)
+  const presentation = useSmoothStreamingContent(content, sourceOpen, animateOnMount)
   const last = snapshots[snapshots.length - 1]
   if (
     !last ||
@@ -70,6 +72,74 @@ describe('useSmoothStreamingContent', () => {
       await advance(16)
     }
   }
+
+  it('accepts a provider burst beyond the engine argument limit and preserves exact Unicode through stop', async () => {
+    const target = 'a'.repeat(220_000) + '👩‍🔬e\u0301'.repeat(32)
+    await renderProbe('prefix')
+    await renderProbe('prefix' + target)
+    await advance(600)
+    const partial = snapshots.at(-1)!.content
+    expect(partial.length).toBeGreaterThan(0)
+    expect(('prefix' + target).startsWith(partial)).toBe(true)
+    await renderProbe('prefix' + target, false)
+    expect(snapshots.at(-1)).toEqual({ content: 'prefix' + target, presenting: false })
+    expect(vi.getTimerCount()).toBe(0)
+    await advance(1_000)
+    expect(snapshots.at(-1)).toEqual({ content: 'prefix' + target, presenting: false })
+  })
+
+  it.each([600, 601])(
+    'preserves ordinary close pacing through the %i-grapheme catch-up boundary',
+    async (size) => {
+      const target = 'x'.repeat(size)
+      await renderProbe(target)
+      await renderProbe(target, false)
+      expect(snapshots.at(-1)).toEqual(
+        size === 600 ? { content: '', presenting: true } : { content: target, presenting: false }
+      )
+      await advance(10_000)
+      expect(snapshots.at(-1)).toEqual({ content: target, presenting: false })
+    }
+  )
+
+  it('preserves intentional animation of a source mounted already closed', async () => {
+    await act(async () =>
+      root.render(
+        <Probe content="queued reply" sourceOpen={false} animateOnMount snapshots={snapshots} />
+      )
+    )
+    expect(snapshots.at(-1)).toEqual({ content: '', presenting: true })
+    await advance(1_000)
+    expect(snapshots.at(-1)).toEqual({ content: 'queued reply', presenting: false })
+  })
+
+  it('cleans pending animation when unmounted under StrictMode', async () => {
+    await act(async () =>
+      root.render(
+        <StrictMode>
+          <Probe content={'a'.repeat(1_000)} sourceOpen snapshots={snapshots} />
+        </StrictMode>
+      )
+    )
+    await advance(600)
+    expect(snapshots.at(-1)!.presenting).toBe(true)
+    await act(async () => root.render(null))
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('segments initial content once rather than on every presentation render', async () => {
+    const target = 'initial'.repeat(1_000)
+    const segment = vi.spyOn(Intl.Segmenter.prototype, 'segment')
+    try {
+      await renderProbe(target)
+      await advance(600)
+      await advanceFrames(8)
+      await renderProbe(target)
+      expect(segment.mock.calls.filter(([value]) => value === target)).toHaveLength(1)
+    } finally {
+      segment.mockRestore()
+    }
+  })
 
   it('prebuffers before revealing while the source is open', async () => {
     await renderProbe('a'.repeat(100))

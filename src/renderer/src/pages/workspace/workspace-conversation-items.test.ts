@@ -8,6 +8,7 @@ import { normalizeSessionFile } from '../../../../shared/session-persistence'
 import {
   createConversationItems,
   formatActivityTitle,
+  hidesBehindPresentationBarrier,
   isActivityActive
 } from './workspace-conversation-items'
 
@@ -453,6 +454,9 @@ describe('workspace conversation items', () => {
     const session: ChatSession = { ...baseSession, activities: [activity] }
 
     expect(formatActivityTitle(activity, undefined, t)).toBe('Compacting context')
+    expect(formatActivityTitle({ ...activity, status: 'failed' }, undefined, t)).toBe(
+      'Context compaction failed'
+    )
     expect(
       formatActivityTitle(
         { ...activity, status: 'completed', title: 'Context compaction cancelled' },
@@ -543,6 +547,156 @@ describe('workspace conversation items', () => {
 
     const configChangeItems = (session: ChatSession): ReturnType<typeof createConversationItems> =>
       createConversationItems(session).filter((item) => item.type === 'session-config-change')
+
+    it.each(['text', 'tool'] as const)(
+      'marks resumed framework output once before the first %s',
+      (kind) => {
+        const target = { ...targetA, frameworkId: 'codebuddy' as const }
+        const first = stampedUserMessage('original', 1, targetA)
+        const output = {
+          ...stampedUserMessage('resumed-output', 2),
+          role: 'agent' as const,
+          content: 'Resumed work'
+        }
+        const next = stampedUserMessage('next', 4, target)
+        const graph = createLinearConversationGraph({
+          sessionId: baseSession.id,
+          messages: [first, output, next],
+          frameworkId: 'claude-code',
+          createdAt: 1,
+          updatedAt: 4
+        })
+        graph.runtimeSegments.push({
+          id: 'resumed-segment',
+          agentFrameId: graph.rootFrameId,
+          frameworkId: 'codebuddy',
+          model: 'open-science-c0f6392995361092/model-a',
+          startedAt: 2
+        })
+        const activity = createActivity({
+          id: 'resumed-tool',
+          createdAt: output.createdAt,
+          sortIndex: 2
+        })
+        graph.messages.find((message) => message.id === output.id)!.runtimeSegmentId =
+          'resumed-segment'
+        graph.activities.push({
+          ...activity,
+          runtimeSegmentId: 'resumed-segment',
+          agentFrameId: graph.rootFrameId,
+          messageBranchId: graph.frames[0].activeBranchId,
+          promptMessageId: first.id
+        })
+        const session = {
+          ...baseSession,
+          conversationGraph: graph,
+          messages: kind === 'text' ? [first, output, next] : [first, next],
+          activities: kind === 'tool' ? [activity] : []
+        }
+        const items = createConversationItems(session)
+        const dividers = items.filter((item) => item.type === 'session-config-change')
+        expect(dividers).toHaveLength(1)
+        expect(dividers[0]).toMatchObject({
+          agentTarget: { frameworkId: 'codebuddy', model: 'model-a' }
+        })
+        expect(
+          dividers[0].type === 'session-config-change' && dividers[0].followsLiveActivity
+        ).toBe(kind === 'tool' ? true : undefined)
+        expect(items[1]).toBe(dividers[0])
+        expect(items[2].id).toBe(kind === 'text' ? output.id : 'activity-resumed-tool')
+        expect(createConversationItems(structuredClone(session))).toEqual(items)
+        expect(
+          configChangeItems({
+            ...session,
+            messages: [
+              ...session.messages,
+              stampedUserMessage('different-model', 5, { ...target, model: 'model-b' })
+            ]
+          })
+        ).toHaveLength(2)
+        expect(configChangeItems({ ...session, messages: [first], activities: [] })).toEqual([])
+        // An output from another Agent Frame must not borrow this branch's switch marker.
+        graph.runtimeSegments[1].agentFrameId = 'other-frame'
+        expect(
+          configChangeItems({ ...session, messages: kind === 'text' ? [first, output] : [first] })
+        ).toEqual([])
+        graph.runtimeSegments[1].agentFrameId = graph.rootFrameId
+        if (kind === 'text')
+          expect(
+            configChangeItems({
+              ...session,
+              messages: [first, { ...output, content: '' }],
+              activities: []
+            })
+          ).toEqual([])
+        graph.runtimeSegments[1].frameworkId = 'claude-code'
+        expect(
+          configChangeItems({ ...session, messages: kind === 'text' ? [first, output] : [first] })
+        ).toEqual([])
+      }
+    )
+
+    it('keeps a text-first resumed divider visible with its later tool while older text is paced', () => {
+      const first = stampedUserMessage('original', 1, targetA)
+      const oldText = { ...stampedUserMessage('old-text', 2), role: 'agent' as const }
+      const resumedText = { ...stampedUserMessage('resumed-text', 3), role: 'agent' as const }
+      const graph = createLinearConversationGraph({
+        sessionId: baseSession.id,
+        messages: [first, oldText, resumedText],
+        frameworkId: 'claude-code',
+        createdAt: 1,
+        updatedAt: 4
+      })
+      graph.runtimeSegments.push({
+        id: 'resumed-segment',
+        agentFrameId: graph.rootFrameId,
+        frameworkId: 'codebuddy',
+        startedAt: 3
+      })
+      graph.messages.find((message) => message.id === resumedText.id)!.runtimeSegmentId =
+        'resumed-segment'
+      const activity = createActivity({
+        id: 'resumed-tool',
+        createdAt: resumedText.createdAt + 1,
+        sortIndex: 4
+      })
+      graph.activities.push({
+        ...activity,
+        runtimeSegmentId: 'resumed-segment',
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.frames[0].activeBranchId,
+        promptMessageId: first.id
+      })
+      const session = {
+        ...baseSession,
+        conversationGraph: graph,
+        messages: [first, oldText, resumedText],
+        activities: [activity]
+      }
+      const items = createConversationItems(session)
+      const visibleAtBarrier = (barrier: number): typeof items =>
+        items.filter((item, index) => index <= barrier || !hidesBehindPresentationBarrier(item))
+      const paced = visibleAtBarrier(1)
+      const divider = items.find((item) => item.type === 'session-config-change')!
+      expect(paced.map((item) => item.id)).toEqual([
+        first.id,
+        oldText.id,
+        divider.id,
+        'activity-resumed-tool'
+      ])
+      expect(
+        visibleAtBarrier(items.length).filter((item) => item.type === 'session-config-change')
+      ).toEqual([divider])
+      expect(items.indexOf(divider)).toBeLessThan(
+        items.findIndex((item) => item.id === resumedText.id)
+      )
+
+      // Raw graph activities that are not projected cannot release a text-only marker.
+      const textOnlyDivider = configChangeItems({ ...session, activities: [] })[0]
+      expect(hidesBehindPresentationBarrier(textOnlyDivider)).toBe(true)
+      graph.activities[0].runtimeSegmentId = graph.runtimeSegments[0].id
+      expect(hidesBehindPresentationBarrier(configChangeItems(session)[0])).toBe(true)
+    })
 
     it('marks a model change above the new user message', () => {
       const session: ChatSession = {

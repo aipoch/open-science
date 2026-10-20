@@ -2,13 +2,15 @@ import {
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
-  MAX_ACP_SESSION_IMAGE_BYTES,
   normalizeClaudeCodeRefusalText,
   sanitizeAcpContextWindowSample,
   type AcpRuntimeEvent
 } from './acp'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  MAX_ACP_SESSION_IMAGE_BYTES
+} from './acp-image-contract'
 import { getActivityGroupTitleFromToolEvent, isActivityGroupToolEvent } from './activity-groups'
 import { artifactCreatedAtMs, type ArtifactFile } from './artifacts'
 import {
@@ -17,21 +19,24 @@ import {
   resolveActiveConversationMessages,
   resolveMessageBranchPath,
   validateConversationGraph,
-  type PersistedBranchActivityGroup,
   type PersistedAgentFrame,
+  type PersistedBranchActivityGroup,
   type PersistedConversationGraph,
   type PersistedMessageBranch,
   type PersistedMessageNode
 } from './conversation-graph'
+import { isClaudeApiResponseInterruption, isExpectedRunFailure } from './run-error-classification'
+import { createRuntimeAgentMessageId } from './runtime-message-identity'
+import { resolveRuntimeToolActivityId } from './runtime-tool-identity'
 import {
-  INTERRUPTED_TURN_ERROR,
+  isInLatestTurn,
+  legacySessionStateForOutcome,
   retainRecentSessionEventIds,
   type PersistedArtifact,
   type PersistedChatSession,
-  type PersistedToolActivityStatus
+  type PersistedToolActivityStatus,
+  type TurnOutcome
 } from './session-persistence'
-import { isClaudeApiResponseInterruption } from './run-error-classification'
-import { createRuntimeAgentMessageId } from './runtime-message-identity'
 
 export type RuntimeSessionScope = {
   promptMessageId: string
@@ -174,8 +179,12 @@ const terminalize = (
   const cancelled = event.kind === 'stop' && event.text === 'cancelled'
   const connectionLost =
     event.kind === 'error' &&
-    event.providerError === true &&
-    isClaudeApiResponseInterruption(event.text)
+    (event.interruptionCause === 'connection-lost' ||
+      (event.providerError === true && isClaudeApiResponseInterruption(event.text)))
+  const interrupted =
+    connectionLost ||
+    event.interruptionCause === 'app-restart' ||
+    event.interruptionCause === 'terminal-commit-failed'
   const failed = event.kind === 'error' || cancelled
   const responses = graph.messages.filter(
     (message) =>
@@ -211,7 +220,7 @@ const terminalize = (
     prompt.contextWindowSamples = [...(prompt.contextWindowSamples ?? []), sample]
     prompt.updatedAt = Math.max(prompt.updatedAt, event.timestamp)
   }
-  if ((cancelled || connectionLost) && prompt) prompt.interrupted = true
+  if ((cancelled || interrupted) && prompt) prompt.interrupted = true
   const pendingPermission = session.runtimeContext?.permission
   for (const activity of graph.activities) {
     if (
@@ -236,7 +245,13 @@ const terminalize = (
     }
   }
   completeGroups(graph.activityGroups, scope, event.timestamp)
-  if (session.activeRun?.promptMessageId === scope.promptMessageId) {
+  if (
+    session.activeRun?.promptMessageId === scope.promptMessageId ||
+    (event.artifactFailure &&
+      !session.activeRun &&
+      (session.runtimeTranscriptLastRun?.promptMessageId === scope.promptMessageId ||
+        isInLatestTurn(resolveActiveConversationMessages(graph), scope.promptMessageId)))
+  ) {
     const permissionPending = session.runtimeContext?.permission?.state === 'pending'
     const elicitationPending = graph.activities.some(
       (activity) =>
@@ -248,31 +263,55 @@ const terminalize = (
     )
     const planPending = session.runtimeContext?.plan?.approval === 'pending'
     const blocked = permissionPending || elicitationPending || planPending
-    session.activeRun = undefined
-    session.status = permissionPending
-      ? 'waiting-permission'
-      : elicitationPending
-        ? 'waiting-for-user'
-        : planPending
-          ? 'waiting-plan-approval'
-          : failed
-            ? 'error'
-            : 'idle'
-    session.error =
-      failed && !blocked
-        ? cancelled
-          ? INTERRUPTED_TURN_ERROR
-          : event.text || event.title
-        : undefined
-    session.errorReportable = event.kind === 'error' && !blocked ? !event.providerError : undefined
-    session.resumeRecovery =
-      (cancelled || connectionLost) && !blocked
+    const outcome: TurnOutcome = cancelled
+      ? { kind: 'cancelled', settledAt: event.timestamp, recovery: 'resume' }
+      : interrupted
         ? {
-            kind: 'resume-required',
-            cause: cancelled ? 'cancelled' : 'connection-lost',
-            promptMessageId: scope.promptMessageId
+            kind: 'interrupted',
+            settledAt: event.timestamp,
+            cause: event.interruptionCause ?? 'connection-lost',
+            error: event.text || event.title,
+            errorReportable: false,
+            recovery: 'resume'
           }
-        : undefined
+        : failed
+          ? {
+              kind: 'failed',
+              settledAt: event.timestamp,
+              error: event.text || event.title,
+              errorReportable:
+                event.errorReportable ??
+                (!event.providerError && !isExpectedRunFailure(event.text || event.title)),
+              ...(event.artifactFailure &&
+              responses.some((response) =>
+                response.artifactIds?.some((id) => {
+                  const artifact = session.artifacts?.find((candidate) => candidate.id === id)
+                  if (!artifact || artifact.kind !== 'managed-file') return false
+                  const segments = artifact.path.split(/[\\/]+/u)
+                  return Boolean(artifact.versionId) || segments.at(-3) === '.pending'
+                })
+              )
+                ? { recovery: 'retry-artifact-publication' as const }
+                : {})
+            }
+          : { kind: 'completed', settledAt: event.timestamp }
+    if (prompt && !blocked) {
+      prompt.turnOutcome = outcome
+      if (outcome.kind === 'completed' || outcome.kind === 'failed') delete prompt.interrupted
+    }
+    session.activeRun = undefined
+    if (blocked) {
+      session.status = permissionPending
+        ? 'waiting-permission'
+        : elicitationPending
+          ? 'waiting-for-user'
+          : 'waiting-plan-approval'
+      session.error = undefined
+      session.errorReportable = undefined
+      session.resumeRecovery = undefined
+    } else {
+      Object.assign(session, legacySessionStateForOutcome(outcome, scope.promptMessageId))
+    }
   }
 }
 
@@ -375,6 +414,21 @@ export const applyRuntimeSessionEvents = (
   )
   for (const event of events) {
     if (event.sessionId && event.sessionId !== session.id) continue
+    const terminalScope = event.terminalScope
+    if (terminalScope) {
+      if (
+        terminalScope.agentFrameId !== scope.agentFrameId ||
+        terminalScope.messageBranchId !== scope.messageBranchId ||
+        terminalScope.runtimeSegmentId !== scope.runtimeSegmentId
+      )
+        continue
+      const witness = session.activeRun ?? session.runtimeTranscriptLastRun
+      if (
+        witness?.promptMessageId === scope.promptMessageId &&
+        witness.startedAt !== terminalScope.startedAt
+      )
+        continue
+    }
     // A cancelled provider turn cannot regain transcript ownership through queued chunks. Native
     // artifact publication remains admissible because finalization may complete after cancellation.
     if (
@@ -458,17 +512,18 @@ export const applyRuntimeSessionEvents = (
       message.updatedAt = Math.max(message.updatedAt, event.timestamp)
       branch.updatedAt = Math.max(branch.updatedAt, event.timestamp)
     } else if ((event.kind === 'tool' || event.kind === 'compaction') && event.toolCallId) {
+      const toolCallId = resolveRuntimeToolActivityId(event.toolCallId, scope, graph.activities)
       if (event.kind === 'compaction') completeGroups(graph.activityGroups, scope, event.timestamp)
       if (
         event.kind === 'tool' &&
-        (isActivityGroupToolEvent(event) || groupControls.has(event.toolCallId))
+        (isActivityGroupToolEvent(event) || groupControls.has(toolCallId))
       ) {
-        groupControls.add(event.toolCallId)
+        groupControls.add(toolCallId)
         const title = getActivityGroupTitleFromToolEvent(event)
-        if (title && !graph.activityGroups.some(({ id }) => id === event.toolCallId)) {
+        if (title && !graph.activityGroups.some(({ id }) => id === toolCallId)) {
           completeGroups(graph.activityGroups, scope, event.timestamp)
           graph.activityGroups.push({
-            id: event.toolCallId,
+            id: toolCallId,
             title,
             sortIndex: event.timestamp,
             activityIds: [],
@@ -483,7 +538,7 @@ export const applyRuntimeSessionEvents = (
       }
       let activity = graph.activities.find(
         ({ id, agentFrameId, messageBranchId }) =>
-          id === event.toolCallId &&
+          id === toolCallId &&
           agentFrameId === scope.agentFrameId &&
           messageBranchId === scope.messageBranchId
       )
@@ -498,7 +553,7 @@ export const applyRuntimeSessionEvents = (
             candidate.completedAt === undefined
         )
         activity = {
-          id: event.toolCallId,
+          id: toolCallId,
           kind: 'tool',
           title:
             event.title?.trim() ||
@@ -526,6 +581,7 @@ export const applyRuntimeSessionEvents = (
       if (!wasTerminal && status) activity.status = status
       activity.toolDisposition = event.toolDisposition ?? activity.toolDisposition
       activity.executionInvocationId = event.executionInvocationId ?? activity.executionInvocationId
+      activity.appOwned = event.appOwned ?? activity.appOwned
       activity.providerToolName =
         event.kind === 'compaction'
           ? ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME

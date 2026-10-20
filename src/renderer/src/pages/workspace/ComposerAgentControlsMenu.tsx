@@ -10,12 +10,7 @@
 // auto-review: Specialist offers None / personal specialists / Create new…; Compute folds
 // the SSH host list and "Manage compute…" together. Both read from global stores.
 
-import {
-  DEFAULT_PERMISSION_PROFILE,
-  type PermissionProfileId,
-  type SessionPermissionProfileState
-} from '../../../../shared/permission-profiles'
-import type { AcpPermissionGrant } from '../../../../shared/acp'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   AlertTriangle,
   ArrowRight,
@@ -34,11 +29,16 @@ import {
   X
 } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
-import { AlertDialog } from 'radix-ui'
 import { useTranslation } from 'react-i18next'
+import type { AcpPermissionGrant } from '../../../../shared/acp-permission-contract'
+import {
+  DEFAULT_PERMISSION_PROFILE,
+  type PermissionProfileId,
+  type SessionPermissionProfileState
+} from '../../../../shared/permission-profiles'
 
-import { SpecialistSubmenu } from './SpecialistSubmenu'
 import { AgentControlMenuContent, AgentControlMenuItemTooltip } from './AgentControlMenuItemTooltip'
+import { SpecialistSubmenu } from './SpecialistSubmenu'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -249,10 +249,32 @@ const ComposerAgentControlsMenu = ({
   // ComposerModelPicker. Lazy-loaded on first open so the menu stays cheap while closed.
   const hosts = useComputeStore((state) => state.hosts)
   const isLoaded = useComputeStore((state) => state.isLoaded)
+  const loadError = useComputeStore((state) => state.loadError)
   const loadHosts = useComputeStore((state) => state.loadHosts)
   const openSettingsToCompute = useSettingsStore((state) => state.openSettingsToCompute)
 
   const sshHosts = hosts.filter((host) => host.sshAlias)
+  const selectedHostNames =
+    selectedComputeHosts?.map(
+      (providerId) =>
+        hosts.find((host) => host.providerId === providerId)?.displayName ?? providerId
+    ) ?? []
+  const additionalSelectedHosts = Math.max(0, selectedHostNames.length - 1)
+  const computeStatusLabel =
+    selectedHostNames[0] ??
+    (loadError
+      ? t('Unavailable')
+      : isLoaded
+        ? t('{{count}} hosts', { count: sshHosts.length, defaultValue_one: '{{count}} host' })
+        : t('Loading…'))
+  const computeTooltipDescription =
+    selectedHostNames.length === 1
+      ? t('Compute execution target: {{name}}', { name: selectedHostNames[0] })
+      : selectedHostNames.length > 1
+        ? t('Compute execution targets: {{names}}', { names: selectedHostNames.join(', ') })
+        : loadError
+          ? t('Unavailable')
+          : t('Run jobs on a remote SSH host, or manage hosts.')
 
   useEffect(() => {
     if (
@@ -640,10 +662,7 @@ const ComposerAgentControlsMenu = ({
               )}
 
               <DropdownMenuSub open={computeMenuOpen} onOpenChange={setComputeMenuOpen}>
-                <AgentControlMenuItemTooltip
-                  description={t('Run jobs on a remote SSH host, or manage hosts.')}
-                  submenu
-                >
+                <AgentControlMenuItemTooltip description={computeTooltipDescription} submenu>
                   <DropdownMenuSubTrigger className="items-center gap-2 px-2 py-1.5">
                     <Server
                       className="size-4 shrink-0 text-text-200"
@@ -653,10 +672,16 @@ const ComposerAgentControlsMenu = ({
                     <span className="min-w-0 flex-1 truncate text-[13px] font-medium leading-5">
                       {t('Compute')}
                     </span>
-                    {/* Align the chevron with the capsule chevrons on the Permission/Specialist
-                        rows: same px-2 (one vertical line) and text-text-100 (depth) as the
-                        capsule chevrons — Compute has no capsule, so the color is set here. */}
-                    <span className="flex shrink-0 items-center px-2 py-0.5 text-text-100">
+                    <span
+                      className="flex max-w-[156px] min-w-0 shrink-0 items-center gap-1 rounded-full bg-bg-200 px-2 py-0.5 text-[11px] font-medium leading-4 text-text-100"
+                      data-testid="compute-status-capsule"
+                    >
+                      <span className="min-w-0 max-w-[120px] truncate">{computeStatusLabel}</span>
+                      {additionalSelectedHosts > 0 ? (
+                        <span className="shrink-0 text-[10px] font-normal tabular-nums text-text-300">
+                          +{additionalSelectedHosts}
+                        </span>
+                      ) : null}
                       <ChevronRight
                         className="size-3 shrink-0 opacity-60"
                         strokeWidth={2}
@@ -711,7 +736,7 @@ const ComposerAgentControlsMenu = ({
                                   className="pointer-events-none"
                                 />
                               </DropdownMenuItem>
-                              <TooltipProvider delayDuration={300}>
+                              <TooltipProvider>
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <DropdownMenuItem
@@ -760,7 +785,11 @@ const ComposerAgentControlsMenu = ({
                     </>
                   ) : (
                     <DropdownMenuItem disabled className="px-2 py-1.5 text-[13px] text-text-300">
-                      {isLoaded ? t('No SSH hosts registered') : t('Loading…')}
+                      {loadError
+                        ? t('Unavailable')
+                        : isLoaded
+                          ? t('No SSH hosts registered')
+                          : t('Loading…')}
                     </DropdownMenuItem>
                   )}
                   <DropdownMenuSeparator />

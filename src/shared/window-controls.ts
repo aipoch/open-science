@@ -11,6 +11,38 @@ import type { ActiveSessionInfo } from './storage'
 // Renderer -> main: close the focused window (the fallback when no pane is open).
 export const WINDOW_CLOSE_CHANNEL = 'window:close'
 
+// Windows desktop chrome only. These are transient menu commands, never stored preferences.
+export const WINDOWS_TITLEBAR_HEIGHT = 36
+export type WindowsTitleBarMenu = 'file' | 'edit' | 'view' | 'help'
+export type WindowsTitleBarCommand = 'settings' | 'search'
+export const WINDOWS_TITLEBAR_LABELS = [
+  'Settings',
+  'Close window',
+  'Quit',
+  'Undo',
+  'Redo',
+  'Cut',
+  'Copy',
+  'Paste',
+  'Select all',
+  'Search',
+  'Zoom in',
+  'Zoom out',
+  'Reset zoom',
+  'Full screen',
+  'Documentation',
+  'GitHub'
+] as const
+export type WindowsTitleBarMenuRequest = {
+  menu: WindowsTitleBarMenu
+  x: number
+  y: number
+  settingsEnabled: boolean
+  searchEnabled: boolean
+  labels: Record<(typeof WINDOWS_TITLEBAR_LABELS)[number], string>
+}
+export type WindowsTitleBarAppearance = { color: string; symbolColor: string }
+
 // Main -> renderer: the close chord was pressed; the renderer decides pane-vs-window.
 export const CLOSE_ACTIVE_PANE_CHANNEL = 'shortcut:close-active-pane'
 
@@ -37,6 +69,7 @@ export const WINDOW_FIND_RESULT_CHANNEL = 'window:find-in-page-result'
 // focus the field, and re-run the remembered query. `followsSystem` lets the separate file:// overlay
 // live-follow OS changes without trying to read the renderer's origin-scoped localStorage.
 export const WINDOW_FIND_SHOW_CHANNEL = 'window:find-show'
+export const WINDOW_FIND_OFFICE_CHANNEL = 'window:find-office'
 
 // Main -> main renderer: the find overlay was hidden, so any temporary searchable expansion can be
 // released and the transcript can return to its previous bounded window.

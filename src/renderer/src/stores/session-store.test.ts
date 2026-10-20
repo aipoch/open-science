@@ -155,6 +155,28 @@ describe('session store', () => {
       if (action !== 'archive') expect(value.allowed, action).toBe(false)
     }
   })
+  it.each(['running', 'waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as const)(
+    'presents imported %s history without live attention or archive blocking',
+    (status) => {
+      const session = {
+        status,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      const projection = projectSessionActionability(session)
+      expect(projection.activity).toBe('inactive')
+      expect(projection.waitReason).toBeUndefined()
+      expect(projection.blockingInteraction).toBeUndefined()
+      expect(projection.attentionOwner).toBe('none')
+      expect(projection.actions.archive.allowed).toBe(true)
+      expect(projection.actions.startTurn.allowed).toBe(false)
+    }
+  )
   // Reset time and state so each store assertion starts from the same baseline.
   beforeEach(() => {
     vi.useFakeTimers()
@@ -402,6 +424,36 @@ describe('session store', () => {
     })
   })
 
+  it.each(['idle', 'error'] as const)(
+    'keeps foreground actions locked while runtime ownership outlives a %s projection',
+    (status) => {
+      const projection = projectSessionActionability({ status, agentPromptInFlight: true })
+
+      expect(projection).toMatchObject({
+        presentedStatus: 'running',
+        activity: 'running',
+        attentionOwner: 'agent'
+      })
+      for (const action of Object.values(projection.actions)) {
+        expect(action).toEqual({ allowed: false, disabledReason: 'session-running' })
+      }
+      expect(projectSessionActionability({ status }).activity).toBe('inactive')
+    }
+  )
+
+  it.each(['waiting-permission', 'waiting-for-user', 'waiting-plan-approval'] as const)(
+    'preserves %s while Main still owns the foreground prompt',
+    (status) => {
+      expect(projectSessionActionability({ status, agentPromptInFlight: true })).toMatchObject({
+        presentedStatus: status,
+        activity: 'waiting',
+        attentionOwner: 'user',
+        waitReason: status,
+        actions: { startTurn: { allowed: false } }
+      })
+    }
+  )
+
   it('keeps delegated Permission actionable without giving it the main Composer lane', () => {
     const actionability = projectSessionActionability(
       {
@@ -444,8 +496,7 @@ describe('session store', () => {
         updatedAt: 1
       } as ChatSession,
       {
-        credentialPending: true,
-        presentedWaitReason: 'waiting-for-user'
+        credentialPending: true
       }
     )
 
@@ -458,6 +509,46 @@ describe('session store', () => {
         startTurn: { allowed: false, disabledReason: 'credential-pending' },
         revise: { allowed: false, disabledReason: 'credential-pending' }
       }
+    })
+  })
+
+  it('presents an independent live approval as waiting while its Agent still owns the prompt', () => {
+    const projection = projectSessionActionability(
+      { status: 'running', agentPromptInFlight: true },
+      { rootPermissionPending: true }
+    )
+
+    expect(projection).toMatchObject({
+      presentedStatus: 'waiting-permission',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      waitReason: 'waiting-permission',
+      blockingInteraction: 'permission',
+      actions: { startTurn: { allowed: false, disabledReason: 'permission-pending' } }
+    })
+  })
+
+  it('presents a live input request before a simultaneous pending Plan', () => {
+    expect(
+      projectSessionActionability({ status: 'waiting-plan-approval' }, { elicitationPending: true })
+    ).toMatchObject({
+      presentedStatus: 'waiting-for-user',
+      activity: 'waiting',
+      attentionOwner: 'user',
+      blockingInteraction: 'elicitation'
+    })
+  })
+
+  it('presents an explicit pending Plan before ongoing Agent work', () => {
+    expect(
+      projectSessionActionability(
+        { status: 'running', agentPromptInFlight: true },
+        { planPending: true }
+      )
+    ).toMatchObject({
+      presentedStatus: 'waiting-plan-approval',
+      activity: 'waiting',
+      blockingInteraction: 'plan'
     })
   })
 
@@ -483,6 +574,29 @@ describe('session store', () => {
       changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
       changeMemory: { allowed: false, disabledReason: 'session-pending' }
     })
+  })
+
+  it('allows a failed creation to retry and change Agent configuration without unlocking branches', () => {
+    const failed = { status: 'error' as const, isPending: true }
+    expect(projectSessionActionability(failed).actions).toMatchObject({
+      startTurn: { allowed: true },
+      changeAgentControls: { allowed: true },
+      changeAutoReview: { allowed: false, disabledReason: 'session-pending' },
+      changeSpecialist: { allowed: false, disabledReason: 'session-pending' },
+      changeMemory: { allowed: false, disabledReason: 'session-pending' },
+      branchFromMessage: { allowed: false, disabledReason: 'session-pending' }
+    })
+    for (const facts of [
+      { hasRunningWork: true },
+      { rootPermissionPending: true },
+      { credentialPending: true },
+      { elicitationPending: true },
+      { planPending: true }
+    ]) {
+      const projection = projectSessionActionability(failed, facts)
+      expect(projection.actions.startTurn.allowed).toBe(false)
+      expect(projection.actions.changeAgentControls.allowed).toBe(false)
+    }
   })
 
   it('keeps replay-independent Session actions available while history replay is pending', () => {
@@ -1069,7 +1183,7 @@ describe('session store', () => {
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
   })
 
-  it('clears the first Agent output wait when disconnect or compaction takes ownership', () => {
+  it('clears the disconnected wait but does not let compaction supersede a live run', () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Continue the foreground request'
@@ -1086,7 +1200,7 @@ describe('session store', () => {
     useSessionStore.getState().setAwaitingFirstAgentOutput('transport-session-1', true)
     useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
 
-    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
   })
 
   it('hydrates runtime context as a read projection but never authors it in a renderer save', () => {
@@ -1469,6 +1583,105 @@ describe('session store', () => {
 
     expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(projection)
   })
+
+  it.each(['progress', 'upload', 'replacement'] as const)(
+    'keeps the Plan visible when a %s save receipt advances step progress',
+    (receipt) => {
+      useSessionStore.getState().hydrateSessions([
+        {
+          id: 'session-1',
+          projectId: 'project-1',
+          title: 'Plan approval',
+          cwd: '/workspace',
+          status: 'running',
+          runtimeContext: {
+            version: 1,
+            revision: 1,
+            plan: {
+              artifactId: 'artifact-version-1',
+              artifactVersionId: 'version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'approved',
+              originatingPromptMessageId: 'prompt-1',
+              stepStatuses: {}
+            }
+          },
+          messages: [
+            {
+              id: 'prompt-1',
+              role: 'user',
+              content: 'Execute the plan',
+              status: 'complete',
+              eventIds: [],
+              createdAt: 1,
+              updatedAt: 1,
+              uploads: [createUploadAttachment()]
+            }
+          ],
+          createdAt: 1,
+          updatedAt: 2
+        }
+      ])
+      const projection = {
+        ...createPlanProjection('version-1'),
+        approval: 'approved' as const,
+        originatingPromptMessageId: 'prompt-1',
+        lifecycle: 'approved' as const
+      }
+      useSessionStore.getState().setActivePlanProjection('session-1', projection)
+      const source = useSessionStore.getState().sessions[0]
+
+      useSessionStore.getState().applyDurableSessionProjection({
+        source,
+        session: {
+          ...toPersistedSession(source),
+          messages: source.messages.map((message) => ({
+            ...message,
+            uploads: [
+              createUploadAttachment(receipt === 'upload' ? { versionId: 'upload-version-1' } : {})
+            ]
+          })),
+          status: 'running',
+          runtimeContext: {
+            version: 1,
+            revision: 2,
+            plan: {
+              artifactId: 'artifact-version-1',
+              artifactVersionId: 'version-1',
+              artifactChecksum: 'a'.repeat(64),
+              approval: 'approved',
+              originatingPromptMessageId: 'prompt-1',
+              stepStatuses: { 'Step version-1': { status: 'in_progress', updatedAt: 3 } }
+            }
+          },
+          updatedAt: source.updatedAt + 1
+        },
+        mode: receipt === 'replacement' ? 'replace-persisted-if-current' : 'merge-upload-identities'
+      })
+
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toEqual({
+        ...projection,
+        revision: 2
+      })
+      if (receipt === 'upload') {
+        expect(useSessionStore.getState().sessions[0].messages[0].uploads?.[0].versionId).toBe(
+          'upload-version-1'
+        )
+      }
+      // The full activity projection can arrive after the save receipt at the same revision.
+      // Keeping the entrance visible must not prevent it from updating the displayed counts.
+      const progress = {
+        ...projection,
+        revision: 2,
+        lifecycle: 'in_progress' as const,
+        stepStatuses: { 'Step version-1': { status: 'in_progress' as const, updatedAt: 3 } },
+        stepStates: { 'Step version-1': { status: 'in_progress' as const } },
+        counts: { ...projection.counts, inProgress: 1 }
+      }
+      useSessionStore.getState().setActivePlanProjection('session-1', progress)
+      expect(useSessionStore.getState().sessions[0].activePlanProjection).toBe(progress)
+    }
+  )
 
   it('rebases the active Plan projection when Permission advances the runtime revision', () => {
     useSessionStore.getState().hydrateSessions([
@@ -2808,6 +3021,50 @@ describe('session store', () => {
     )
   })
 
+  it('keeps linked Sessions after projections and respects durable unlink', () => {
+    const binding = {
+      projectId: 'source-project',
+      sessionId: 'source',
+      contextId: 'snapshot',
+      title: 'Analysis',
+      branchId: 'main',
+      promptMessageId: 'prompt'
+    }
+    useSessionStore.getState().hydrateSessions([
+      {
+        id: 'receiving',
+        projectId: 'project',
+        title: 'Conversation',
+        cwd: '',
+        status: 'idle',
+        messages: [],
+        createdAt: 1,
+        updatedAt: 1,
+        runtimeContext: {
+          version: 1,
+          revision: 1,
+          sessionContext: { version: 1, bindings: [binding] }
+        }
+      }
+    ])
+    const source = useSessionStore.getState().sessions[0]
+    useSessionStore.getState().applyDurableSessionProjection({
+      source,
+      session: {
+        ...toPersistedSession(source),
+        runtimeContext: {
+          version: 1,
+          revision: 2,
+          sessionContext: { version: 1, bindings: [], lastPromptMessageId: 'prompt' }
+        }
+      },
+      mode: 'runtime-context-authority'
+    })
+    expect(useSessionStore.getState().sessions[0].runtimeContext?.sessionContext?.bindings).toEqual(
+      []
+    )
+  })
+
   it('preserves PDF context when delegated authority advances', () => {
     const pdfContext = createPdfContext()
     useSessionStore.getState().hydrateSessions([
@@ -4029,6 +4286,7 @@ describe('session store', () => {
       content: 'Start a pathway analysis'
     })
 
+    const firstStartedAt = useSessionStore.getState().sessions[0].activeRun!.startedAt
     const second = useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
       content: 'Add enrichment notes'
@@ -4042,7 +4300,7 @@ describe('session store', () => {
     expect(session.status).toBe('running')
     expect(session.activeRun).toEqual({
       promptMessageId: second?.messageId,
-      startedAt: Date.now()
+      startedAt: Math.max(Date.now(), firstStartedAt + 1)
     })
     expect(session.messages.map((message) => message.content)).toEqual([
       'Start a pathway analysis',
@@ -4914,7 +5172,7 @@ describe('session store', () => {
     })
   })
 
-  it('does not restore obsolete Ask and Plan waits after a Session resumes', () => {
+  it('keeps Main-owned Ask and Plan waits until an authoritative resume projection', () => {
     useSessionStore.setState({
       sessions: [
         {
@@ -4937,8 +5195,8 @@ describe('session store', () => {
     useSessionStore.getState().clearPermissionPending('session-restored-interactions')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'idle',
-      interactionState: { permission: false, elicitation: false, plan: false }
+      status: 'waiting-for-user',
+      interactionState: { permission: false, elicitation: true, plan: true }
     })
   })
 
@@ -6785,7 +7043,7 @@ describe('session store', () => {
       expect(session.messages[1]).toMatchObject({ status: 'complete' })
     })
 
-    it('markResumed clears the interrupted state so the composer is usable', () => {
+    it('markResumed updates provider binding while preserving Main-owned interruption', () => {
       hydrateInterrupted({
         providerSessionId: 'provider-session-old',
         providerContinuityToken: 'bridge-generation-old',
@@ -6834,14 +7092,14 @@ describe('session store', () => {
       })
       const session = useSessionStore.getState().sessions[0]
 
-      expect(session.interrupted).toBeUndefined()
-      expect(session.error).toBeUndefined()
-      expect(session.status).toBe('idle')
+      expect(session.interrupted).toBe(true)
+      expect(session.error).toBe('Session was interrupted before the app closed.')
+      expect(session.status).toBe('error')
       expect(session.agentFrameworkId).toBe('codex')
       expect(session.agentBackendId).toBe('codex:codex-isolated')
       expect(session.providerSessionId).toBe('provider-session-new')
       expect(session.providerContinuityToken).toBe('bridge-generation-new')
-      expect(session.resumeRecovery).toBeUndefined()
+      expect(session.resumeRecovery?.promptMessageId).toBe('prompt-1')
       expect(session.pendingHistoryReplay).toEqual({
         kind: 'before-message',
         messageId: 'prompt-1'
@@ -7241,11 +7499,13 @@ describe('session store public contract', () => {
     expect(directConsumerPaths()).toEqual([
       'src/renderer/src/components/NotificationBell.tsx',
       'src/renderer/src/components/NotificationLiveToast.tsx',
+      'src/renderer/src/components/SessionPackageOperation.tsx',
       'src/renderer/src/components/global-search/GlobalSearchDialog.tsx',
       'src/renderer/src/components/job-binding-utils.ts',
       'src/renderer/src/components/notification-inbox-presentation.ts',
       'src/renderer/src/hooks/useApplicationEventBindings.ts',
       'src/renderer/src/hooks/useLifecycleSync.ts',
+      'src/renderer/src/hooks/useSessionPendingInteractions.ts',
       'src/renderer/src/hooks/useUnreadTaskViewSync.ts',
       'src/renderer/src/lib/acp/history-preamble.ts',
       'src/renderer/src/lib/acp/runtime-event-presentation.ts',
@@ -7254,6 +7514,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/acp/workspace-elicitation-runtime.ts',
       'src/renderer/src/lib/acp/workspace-events.ts',
       'src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts',
+      'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
       'src/renderer/src/lib/acp/workspace-runtime-command-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-event-owner.ts',
       'src/renderer/src/lib/acp/workspace-runtime-prompt-preparation-owner.ts',
@@ -7267,6 +7528,7 @@ describe('session store public contract', () => {
       'src/renderer/src/lib/compute/useJobAnalysisEffect.ts',
       'src/renderer/src/lib/deep-link.ts',
       'src/renderer/src/lib/preview-persistence/preview-persistence.ts',
+      'src/renderer/src/lib/replay/timeline.ts',
       'src/renderer/src/lib/session-package-export.ts',
       'src/renderer/src/lib/session-persistence/session-persistence.ts',
       'src/renderer/src/pages/home/HomePage.tsx',
@@ -7283,9 +7545,12 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/NotebookPreview.tsx',
       'src/renderer/src/pages/workspace/PreviewFileSurface.tsx',
       'src/renderer/src/pages/workspace/ProjectComputeInbox.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionDiscussionSource.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.preview.tsx',
       'src/renderer/src/pages/workspace/SessionInfoPopover.tsx',
       'src/renderer/src/pages/workspace/SessionNotebookDialog.tsx',
+      'src/renderer/src/pages/workspace/SessionReplayPreview.tsx',
       'src/renderer/src/pages/workspace/SessionReproducibilityDialog.tsx',
       'src/renderer/src/pages/workspace/SideChatWorkbench.tsx',
       'src/renderer/src/pages/workspace/SubagentReleaseSurfaces.tsx',
@@ -7315,10 +7580,13 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/context-window-trend.ts',
       'src/renderer/src/pages/workspace/generate-plan-activity-projection.ts',
       'src/renderer/src/pages/workspace/preview-file-item.ts',
+      'src/renderer/src/pages/workspace/previews/LibraryChatButton.tsx',
       'src/renderer/src/pages/workspace/previews/PreviewToolContent.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
       'src/renderer/src/pages/workspace/previews/renderers/PlanJsonPreview.tsx',
+      'src/renderer/src/pages/workspace/project-file-mention.ts',
       'src/renderer/src/pages/workspace/project-files-query-model.ts',
+      'src/renderer/src/pages/workspace/replay/ReplayToolRecord.tsx',
       'src/renderer/src/pages/workspace/session-action-menu.ts',
       'src/renderer/src/pages/workspace/session-message-artifact-reference.ts',
       'src/renderer/src/pages/workspace/session-notebook-projection.ts',
@@ -7330,6 +7598,7 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/side-chat-availability.ts',
       'src/renderer/src/pages/workspace/tool-execution-phase.ts',
       'src/renderer/src/pages/workspace/use-pdf-context-action.ts',
+      'src/renderer/src/pages/workspace/use-project-file-mention-availability.ts',
       'src/renderer/src/pages/workspace/use-side-chat-controller.ts',
       'src/renderer/src/pages/workspace/use-workspace-branch-switch-guard.ts',
       'src/renderer/src/pages/workspace/useManagedVersionWorkflow.ts',
@@ -7347,6 +7616,8 @@ describe('session store public contract', () => {
       'src/renderer/src/pages/workspace/workspace-session-controller.ts',
       'src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.ts',
       'src/renderer/src/pages/workspace/workspace-session-details-controller.ts',
+      'src/renderer/src/pages/workspace/workspace-session-discussion.ts',
+      'src/renderer/src/pages/workspace/workspace-session-recovery.ts',
       'src/renderer/src/pages/workspace/workspace-skill-load.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-details.ts',
       'src/renderer/src/pages/workspace/workspace-tool-activity-groups.ts',
@@ -7433,6 +7704,7 @@ describe('session store public contract', () => {
       sessions: state.sessions.map((session) => ({
         ...session,
         isPending: true,
+        pendingBindingSessionId: 'durable-seed',
         unsavedTitle: true,
         interrupted: true,
         fixLoopActive: true,
@@ -7477,6 +7749,7 @@ describe('session store public contract', () => {
     expect(durable.messages[0]).not.toHaveProperty('sortIndex')
     for (const transientKey of [
       'isPending',
+      'pendingBindingSessionId',
       'unsavedTitle',
       'interrupted',
       'fixLoopActive',

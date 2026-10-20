@@ -6,7 +6,7 @@ import { ErrorNotice } from '@/components/error-notice'
  * contrast: inherited from the shared Button, Textarea, and workspace surface tokens
  * slop test: pass · component scope, existing workspace chrome and tokens preserved
  */
-import { useRef, useState } from 'react'
+import { useId, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import {
   CornerDownLeft,
@@ -116,6 +116,7 @@ const WorkspacePlanCard = ({
   stale = false,
   enabled = true,
   embedded = false,
+  expanded = true,
   className = '',
   onOpen,
   onRespond,
@@ -129,9 +130,13 @@ const WorkspacePlanCard = ({
     onResolved?: () => void
     enabled?: boolean
     embedded?: boolean
+    expanded?: boolean
     className?: string
   }>): React.JSX.Element => {
   const { t } = useTranslation()
+  const contentId = useId()
+  const composingResponseRef = useRef(false)
+  const submitKeyLabel = window.api?.platform === 'darwin' ? t('Return') : t('Enter')
 
   const decisionPending = projection.approval === 'pending' && !stale && enabled
   const [responseText, setResponseText] = useState('')
@@ -168,14 +173,20 @@ const WorkspacePlanCard = ({
           {t('⚠ A newer plan is active. This plan can no longer be approved.')}
         </div>
       ) : null}
-      <div className="p-4 sm:p-5">
-        <div className="flex flex-wrap items-start justify-between gap-3">
-          <div className="min-w-56 flex-1">
+      <div className={expanded ? 'p-4 sm:p-5' : 'px-4 py-3 sm:px-5'}>
+        <div
+          className={`flex flex-wrap justify-between gap-3 ${expanded ? 'items-start' : 'items-center'}`}
+        >
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
               <ListChecks className="size-3.5" strokeWidth={1.75} aria-hidden="true" />
               <span>{lifecycleLabel(projection, t)}</span>
             </div>
-            <div className="mt-1 min-w-0 break-words text-[17px] font-semibold leading-6 text-foreground">
+            <div
+              id={`${contentId}-summary`}
+              hidden={!expanded}
+              className="mt-1 min-w-0 break-words text-[17px] font-semibold leading-6 text-foreground"
+            >
               {projection.document.task_summary}
             </div>
           </div>
@@ -200,80 +211,128 @@ const WorkspacePlanCard = ({
             ) : null}
           </div>
         </div>
-        <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-text-100">
-          <span className="size-1.5 rounded-full bg-text-300" aria-hidden="true" />
-          {t(planConfidenceLabelKey(projection.document.feasibility.confidence))}
-        </div>
-        {decisionPending ? (
-          <form
-            className="mt-3 border-t border-border pt-3"
-            onSubmit={(event) => {
-              event.preventDefault()
-              if (decisionBusy) return
-              const text = responseText.trim()
-              if (!text) return
-              setDecisionBusy(true)
-              setDecisionError(undefined)
-              void (
-                onSubmitResponse?.(text) ??
-                Promise.reject(new Error(t('Unable to send Plan feedback.')))
-              )
-                .then(() => {
-                  setResponseText('')
-                  setResolvedProjectionKey(projectionKey)
-                  onResolved?.()
-                })
-                .catch((error: unknown) =>
-                  setDecisionError(
-                    error instanceof Error ? error.message : t('Unable to update the Plan.')
-                  )
+        <div id={`${contentId}-details`} hidden={!expanded}>
+          <div className="mt-3 inline-flex items-center gap-1.5 rounded-full bg-bg-200 px-2 py-1 text-[11px] font-medium text-text-100">
+            <span className="size-1.5 rounded-full bg-text-300" aria-hidden="true" />
+            {t(planConfidenceLabelKey(projection.document.feasibility.confidence))}
+          </div>
+          {decisionPending ? (
+            <form
+              className="mt-3 border-t border-border pt-3"
+              onSubmit={(event) => {
+                event.preventDefault()
+                if (decisionBusy) return
+                const text = responseText.trim()
+                if (!text) return
+                setDecisionBusy(true)
+                setDecisionError(undefined)
+                void (
+                  onSubmitResponse?.(text) ??
+                  Promise.reject(new Error(t('Unable to send Plan feedback.')))
                 )
-                .finally(() => setDecisionBusy(false))
-            }}
+                  .then(() => {
+                    setResponseText('')
+                    setResolvedProjectionKey(projectionKey)
+                    onResolved?.()
+                  })
+                  .catch((error: unknown) =>
+                    setDecisionError(
+                      error instanceof Error ? error.message : t('Unable to update the Plan.')
+                    )
+                  )
+                  .finally(() => setDecisionBusy(false))
+              }}
+            >
+              <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
+                {t('Respond to Plan')}
+              </label>
+              <div className="min-w-0 rounded-lg border border-input bg-bg-000 px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
+                <div className="flex items-start gap-2">
+                  <Pencil
+                    className="mt-1 size-3.5 shrink-0 text-muted-foreground"
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                  />
+                  <Textarea
+                    id={`plan-response-${projection.artifactVersionId}`}
+                    rows={1}
+                    aria-invalid={decisionError ? true : undefined}
+                    aria-describedby={`plan-response-shortcuts-${projection.artifactVersionId}${decisionError ? ` plan-response-error-${projection.artifactVersionId}` : ''}`}
+                    className="max-h-40 min-h-6 min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[15px] leading-6 shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+                    placeholder={t('Describe changes to the Plan…')}
+                    value={responseText}
+                    disabled={decisionBusy}
+                    onChange={(event) => setResponseText(event.target.value)}
+                    onCompositionStart={() => {
+                      composingResponseRef.current = true
+                    }}
+                    onCompositionEnd={() => {
+                      composingResponseRef.current = false
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key !== 'Enter' ||
+                        event.shiftKey ||
+                        event.altKey ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.nativeEvent.isComposing ||
+                        event.nativeEvent.keyCode === 229 ||
+                        composingResponseRef.current
+                      ) {
+                        return
+                      }
+                      event.preventDefault()
+                      if (!event.repeat && responseText.trim() && !decisionBusy)
+                        event.currentTarget.form?.requestSubmit()
+                    }}
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-t border-border/70 pt-2">
+                  <p
+                    id={`plan-response-shortcuts-${projection.artifactVersionId}`}
+                    className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+                  >
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {submitKeyLabel}
+                      </kbd>
+                      <span>{t('Send')}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {t('Shift')}
+                      </kbd>
+                      <span>{'+'}</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {submitKeyLabel}
+                      </kbd>
+                      <span>{t('New line')}</span>
+                    </span>
+                  </p>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    size="icon-lg"
+                    aria-label={t('Send Plan feedback')}
+                    disabled={decisionBusy || responseText.trim().length === 0}
+                    className="[@media(pointer:coarse)]:size-11"
+                  >
+                    <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                  </Button>
+                </div>
+              </div>
+            </form>
+          ) : null}
+        </div>
+        {decisionError ? (
+          <p
+            id={`plan-response-error-${projection.artifactVersionId}`}
+            role="alert"
+            className="mt-1 text-xs text-destructive"
           >
-            <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
-              {t('Respond to Plan')}
-            </label>
-            <div className="flex items-start gap-2">
-              <span
-                className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-300"
-                aria-hidden="true"
-              >
-                <Pencil className="size-4" strokeWidth={1.75} />
-              </span>
-              <Textarea
-                id={`plan-response-${projection.artifactVersionId}`}
-                rows={1}
-                aria-invalid={decisionError ? true : undefined}
-                aria-describedby={
-                  decisionError ? `plan-response-error-${projection.artifactVersionId}` : undefined
-                }
-                className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 shadow-none focus-visible:border-transparent dark:bg-transparent"
-                placeholder={t('Describe changes to the Plan…')}
-                value={responseText}
-                disabled={decisionBusy}
-                onChange={(event) => setResponseText(event.target.value)}
-              />
-              <Button
-                type="submit"
-                variant="outline"
-                size="icon-lg"
-                aria-label={t('Send Plan feedback')}
-                disabled={decisionBusy || responseText.trim().length === 0}
-              >
-                <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-              </Button>
-            </div>
-            {decisionError ? (
-              <p
-                id={`plan-response-error-${projection.artifactVersionId}`}
-                role="alert"
-                className="mt-1 pl-11 text-xs text-destructive"
-              >
-                {decisionError}
-              </p>
-            ) : null}
-          </form>
+            {decisionError}
+          </p>
         ) : null}
       </div>
     </article>

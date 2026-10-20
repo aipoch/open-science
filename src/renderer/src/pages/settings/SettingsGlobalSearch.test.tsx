@@ -1,3 +1,4 @@
+import { i18next } from '@/i18n'
 // @vitest-environment jsdom
 import { readdirSync, readFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
@@ -5,6 +6,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { LOCALES } from '../../../../shared/locale'
+import { AppVersionSection } from './AppVersionSection'
 import { SETTINGS_SEARCH_INDEX, SettingsGlobalSearch } from './SettingsGlobalSearch'
 import type { SettingsPanelId } from './settings-navigation'
 
@@ -41,14 +44,19 @@ const renderSearch = (onNavigate = vi.fn()): void => {
   act(() => {
     root.render(
       <div role="dialog">
-        <SettingsGlobalSearch panels={PANELS} onNavigate={onNavigate} />
+        <SettingsGlobalSearch
+          panels={PANELS}
+          onNavigate={(panel, onNavigated) => {
+            onNavigate(panel)
+            onNavigated()
+          }}
+        />
       </div>
     )
   })
 }
 
-const input = (): HTMLInputElement =>
-  document.body.querySelector<HTMLInputElement>('[aria-label="Search settings"]')!
+const input = (): HTMLInputElement => container.querySelector<HTMLInputElement>('input')!
 
 const typeQuery = (value: string): void => {
   const field = input()
@@ -84,6 +92,23 @@ const mountPanelRoot = (panel: string, html: string): void => {
 }
 
 describe('SettingsGlobalSearch', () => {
+  it('finds appearance and update information using Chinese labels', async () => {
+    await act(async () => {
+      await i18next.changeLanguage('zh-Hans')
+    })
+    try {
+      renderSearch()
+      for (const query of ['主题', '深色', '更新']) {
+        typeQuery(query)
+        expect(options().length, query).toBeGreaterThan(0)
+      }
+    } finally {
+      await act(async () => {
+        await i18next.changeLanguage('en')
+      })
+    }
+  })
+
   it('matches by label, keywords, and panel name, and reports no matches', () => {
     renderSearch()
 
@@ -101,6 +126,89 @@ describe('SettingsGlobalSearch', () => {
     typeQuery('zzzz-no-such-setting')
     expect(options()).toEqual([])
     expect(document.body.textContent).toContain('No matching settings')
+  })
+
+  it.each(LOCALES)('finds Help Center by English and translated labels in %s', async (locale) => {
+    await act(async () => i18next.changeLanguage(locale))
+    try {
+      renderSearch()
+      const label = `${i18next.t('Help Center')}${i18next.t('General')}`
+
+      for (const query of ['general', i18next.t('General')]) {
+        typeQuery(query)
+        expect(
+          options().map((option) => option.textContent),
+          query
+        ).toContain(label)
+      }
+
+      for (const query of ['help center', i18next.t('Help Center')]) {
+        typeQuery(query)
+        expect(
+          options().map((option) => option.textContent),
+          query
+        ).toEqual([label])
+      }
+
+      typeQuery(i18next.t('Read setup guides and troubleshooting.'))
+      expect(options().map((option) => option.textContent)).toEqual([label])
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
+  it.each([
+    'help',
+    'docs',
+    'documentation',
+    'guide',
+    'manual',
+    'tutorial',
+    'support',
+    'troubleshooting',
+    'faq',
+    '  HELP CENTER  '
+  ])('finds Help Center using the hidden %s search term', (query) => {
+    renderSearch()
+    typeQuery(query)
+    expect(options().map((option) => option.textContent)).toEqual(['Help CenterGeneral'])
+  })
+
+  it('navigates to and focuses the real Help Center link without opening the browser', () => {
+    const onNavigate = vi.fn()
+    const click = vi.fn()
+    act(() => {
+      root.render(
+        <>
+          <SettingsGlobalSearch
+            panels={PANELS}
+            onNavigate={(panel, onNavigated) => {
+              onNavigate(panel)
+              onNavigated()
+            }}
+          />
+          <div data-slot="settings-content-scroll" data-settings-active-panel="general">
+            <AppVersionSection />
+          </div>
+        </>
+      )
+    })
+    const link = container.querySelector<HTMLAnchorElement>(
+      '[data-settings-anchor="general.help-center"]'
+    )!
+    link.addEventListener('click', click)
+
+    typeQuery('help center')
+    pressKey('Enter')
+
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith('general')
+    expect(document.activeElement).toBe(link)
+    expect(link.classList.contains('settings-search-highlight')).toBe(true)
+    expect(link.hasAttribute('tabindex')).toBe(false)
+    expect(scrollIntoViewMock).toHaveBeenCalledOnce()
+    expect(click).not.toHaveBeenCalled()
+    expect(input().value).toBe('')
+    expect(container.querySelector('[role="listbox"]')).toBeNull()
   })
 
   it('wraps ArrowUp/ArrowDown through the results and Enter navigates to the active panel', () => {
@@ -126,6 +234,45 @@ describe('SettingsGlobalSearch', () => {
     expect(input().value).toBe('')
     expect(document.body.querySelector('[role="listbox"]')).toBeNull()
   })
+
+  it('scrolls only the list to reveal a keyboard-selected option', () => {
+    renderSearch()
+    typeQuery('network')
+    const list = document.body.querySelector<HTMLElement>('[role="listbox"]')!
+    vi.spyOn(list, 'getBoundingClientRect').mockReturnValue({ top: 100, bottom: 200 } as DOMRect)
+    vi.spyOn(options()[1], 'getBoundingClientRect').mockReturnValue({
+      top: 210,
+      bottom: 240
+    } as DOMRect)
+    pressKey('ArrowDown')
+    expect(list.scrollTop).toBe(40)
+    expect(document.activeElement).toBe(input())
+    expect(scrollIntoViewMock).not.toHaveBeenCalled()
+  })
+
+  it.each([{ isComposing: true }, { keyCode: 229 }])(
+    'leaves composition keystrokes to the input method: %j',
+    (composition) => {
+      const onNavigate = vi.fn()
+      renderSearch(onNavigate)
+      typeQuery('language')
+      for (const key of ['ArrowDown', 'ArrowUp', 'Enter', 'Escape']) {
+        const event = new KeyboardEvent('keydown', {
+          key,
+          bubbles: true,
+          cancelable: true,
+          ...composition
+        })
+        act(() => input().dispatchEvent(event))
+        expect(event.defaultPrevented).toBe(false)
+      }
+      expect(onNavigate).not.toHaveBeenCalled()
+      expect(input().value).toBe('language')
+      expect(input().getAttribute('aria-expanded')).toBe('true')
+      pressKey('Enter')
+      expect(onNavigate).toHaveBeenCalledWith('general')
+    }
+  )
 
   it('keeps focus on the input: options are not tabbable', () => {
     renderSearch()

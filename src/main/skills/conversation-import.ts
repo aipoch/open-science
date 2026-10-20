@@ -9,15 +9,15 @@ import type {
   ConversationSkillImportResult,
   ConversationSkillImportSelection,
   ImportSkillResult,
-  ScannedSkillView,
-  SkillBundlePreviewResult
+  ScannedSkillView
 } from '../../shared/settings'
+import type { SkillBundlePreviewResult } from '@aipoch/skills/document'
 import { parseUploadVersionReference } from '../../shared/uploads'
 import type { ManagedFileVersionService } from '../managed-file-versions/service'
 import type { UploadRepository } from '../uploads/repository'
-import { GITHUB_TOTAL_TIMEOUT_MS } from './github-import'
-import { SKILL_IMPORT_LIMITS } from './import-limits'
-import { isImportableSkillArchive, isImportableSkillArchivePath } from './skill-archive-sniffer'
+import { GITHUB_TOTAL_TIMEOUT_MS } from '@aipoch/skills/sources'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/sources'
+import { isImportableSkillArchive, isImportableSkillArchivePath } from '@aipoch/skills/sources'
 
 type SkillImportApprovalInfo = Omit<ConversationSkillImportApprovalRequest, 'id'>
 

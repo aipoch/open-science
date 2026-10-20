@@ -19,6 +19,7 @@ on:
           - notebook-sandbox
           - notebook-mutation
           - regressions
+          - scheduled-fixes
       test_name_pattern:
         description: Optional Vitest test-name regex for the regressions dry-run only
         type: string
@@ -55,10 +56,15 @@ jobs:
         with:
           workflow-file: windows-full-test.yml
 
+  windows_notebook_runtime:
+    needs: plan
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
+
   windows_dependencies:
     name: Prepare Windows test dependencies
-    needs: plan
-    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'notebook-mutation') }}
+    needs: [plan, windows_notebook_runtime]
+    if: ${{ needs.plan.outputs.should_test == 'true' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes' || inputs.mode == 'notebook-mutation') }}
     runs-on: windows-latest
     timeout-minutes: 20
     outputs:
@@ -71,12 +77,18 @@ jobs:
           persist-credentials: false
       - name: Setup Node
         id: node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           package-manager-cache: false
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Download Windows Notebook runtime
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Pack dependencies
         # Windows defaults to pwsh, which does not expand $RUNNER_TEMP. Pack into the same
         # runner.temp directory that upload-artifact reads, matching PR Gate's Windows E2E setup.
@@ -84,7 +96,7 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs pack-dependencies "$RUNNER_TEMP/windows-dependencies"
       - name: Upload dependencies
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-dependencies-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/windows-dependencies/
@@ -95,7 +107,7 @@ jobs:
   windows_full_test:
     name: Windows full test (${{ matrix.shard }}/8)
     needs: [plan, windows_dependencies]
-    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions')) }}
+    if: ${{ needs.plan.outputs.should_test == 'true' && needs.windows_dependencies.result == 'success' && (github.event_name != 'workflow_dispatch' || (inputs.mode == 'full' || inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes')) }}
     runs-on: windows-latest
     timeout-minutes: 60
     env:
@@ -103,19 +115,19 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        shard: ${{ fromJSON(inputs.mode == 'regressions' && '[1]' || '[1,2,3,4,5,6,7,8]') }}
+        shard: ${{ fromJSON((inputs.mode == 'regressions' || inputs.mode == 'scheduled-fixes') && '[1]' || '[1,2,3,4,5,6,7,8]') }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ needs.windows_dependencies.outputs.node_version }}
           package-manager-cache: false
 
       - name: Download dependencies
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
           path: ${{ runner.temp }}/windows-dependencies/
@@ -149,17 +161,21 @@ jobs:
           scripts/credential-helper-signing.test.ts
           src/main/credential-identity/sqlite-snapshot.test.ts
           src/main/local-models/owner.test.ts
+          packages/notebook-code-risk/src/code-risk-analysis.test.ts
+          src/main/notebook/code-risk-admission.test.ts
           src/main/notebook/input-registry.test.ts
           src/main/session-package/literature.test.ts
           src/main/session-plan/plan-context-file.test.ts
-          vitest.config.test.ts
+          test/config/vitest.config.test.ts
+          scripts/ci/notebook-analysis-native.test.ts
+          scripts/pdf-package-fixtures.test.ts
           scripts/ci/windows-test-sequencer.test.ts
           scripts/ci/release-workflows.test.ts
           scripts/windows-release-workflows.test.ts
           src/main/database/database-null-and-version-bounds.test.ts
           src/main/database/migration-service.test.ts
           src/main/notebook/runtime-service.test.ts
-          src/main/notebook/python-command.test.ts
+          packages/environment/src/python-command.test.ts
           src/main/notebook/kernel-executor.test.ts
           src/main/notebook/windows-repl-termination.integration.test.ts
           src/main/notebook/kernel-startup-retry.integration.test.ts
@@ -172,35 +188,70 @@ jobs:
           src/renderer/src/pages/literature/LiteratureLibraryPage.render.test.tsx
           src/main/notebook/shell-process-ownership.test.ts
           src/main/literature/batch-jobs.test.ts
-          src/main/notebook/source-file-access-analysis.test.ts
-          src/main/notebook/source-file-access-analysis.additional-omics.test.ts
-          src/main/notebook/source-file-access-analysis.clinical-formats.test.ts
-          src/main/notebook/source-file-access-analysis.workflow-orchestration.test.ts
+          src/main/literature/catalog.test.ts
+          src/main/literature/catalog-capacity.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.additional-omics.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.clinical-formats.test.ts
+          packages/notebook-analysis/src/source-file-access-analysis.workflow-orchestration.test.ts
           src/main/session-package/archive.test.ts
           src/main/session-package/service.test.ts
-          src/main/notebook/package-manager.test.ts
+          packages/environment/src/package-manager.test.ts
           src/main/notebook/package-process-sandbox.test.ts
           src/main/notebook/network-sandbox-owner.test.ts
-          src/main/notebook/dependency-analysis.test.ts
-          src/main/notebook/dependency-analysis.chord.test.ts
-          src/main/notebook/dependency-analysis.path-plot.test.ts
-          src/main/notebook/dependency-analysis.anndata.test.ts
+          packages/notebook-analysis/src/dependency-analysis.test.ts
+          src/main/notebook/working-file-observer.analysis-contract.integration.test.ts
+          packages/notebook-analysis/src/dependency-analysis.chord.test.ts
+          packages/notebook-analysis/src/dependency-analysis.path-plot.test.ts
+          packages/notebook-analysis/src/dependency-analysis.anndata.test.ts
           src/main/artifacts/artifact-reproducibility-outputs.test.ts
           src/main/acp/context-usage-static-context.test.ts
-          src/main/notebook/provisioner.test.ts
+          packages/environment/src/provisioner.test.ts
           src/main/notebook/reproduction-runtime.test.ts
-          src/main/notebook/recovery-coordinator.test.ts
+          packages/environment/src/recovery-coordinator.test.ts
           src/main/artifacts/provenance-repository.test.ts
           src/main/artifacts/provenance-write-contract.test.ts
           src/main/artifacts/artifact-reproducibility-export.test.ts
           src/main/agent-framework/opencode.test.ts
           src/main/logger.test.ts
+          packages/diagnostics/src/logger.test.ts
           src/main/delegation/production-composition.test.ts
           src/main/delegation/opencode-runtime-preparation.test.ts
           packages/notebook-network-sandbox/src/gateway.test.ts
           packages/notebook-network-sandbox/src/public-read-lifecycle.test.ts
           --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
           --testNamePattern="$TEST_NAME_PATTERN"
+
+      - name: Test scheduled Windows fixes
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'scheduled-fixes' }}
+        run: >-
+          npm test --
+          src/main/session-package/fork.test.ts
+          src/main/agents/completion-gate.execute-control.integration.test.ts
+          src/main/database/agent-memory-project-scope-migration.test.ts
+          src/main/database/migration-service.test.ts
+          src/main/managed-file-versions/version-file-operator.test.ts
+          src/main/settings/service.test.ts
+          src/main/compute/concurrency-integration.test.ts
+          src/main/compute/ambiguous-dispatch-recovery.integration.test.ts
+          src/main/notebook/runtime-service.rpc-retirement.test.ts
+          src/main/notebook/shell-npm-environment.test.ts
+          src/main/compute/ipc.test.ts
+          src/main/storage/ipc.test.ts
+          src/main/storage/command-owner.atomicity.test.ts
+          src/main/storage/migration-target-race.test.ts
+          src/main/notebook/code-risk-admission.test.ts
+          scripts/ci/windows-test-sequencer.test.ts
+          scripts/windows-release-workflows.test.ts
+          scripts/windows-notebook-sandbox-uninstall.test.ts
+          src/main/notebook/kernel-executor.test.ts
+          src/main/system-boot-identity.test.ts
+          src/main/system-boot-identity.windows.test.ts
+          src/main/update/deb-gate-recovery.test.ts
+          src/main/update/installation-executor.test.ts
+          src/main/update/installation-preparation.test.ts
+          src/main/update/installation-reboot-recovery.test.ts
+          --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
 
   notebook_sandbox:
     name: Windows Notebook sandbox lifecycle
@@ -215,9 +266,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Report Windows toolchain
         shell: powershell
@@ -266,12 +317,12 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: ${{ needs.windows_dependencies.outputs.node_version }}
           package-manager-cache: false
       - name: Download dependencies
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.windows_dependencies.outputs.artifact_id }}
           path: ${{ runner.temp }}/windows-dependencies/
@@ -286,7 +337,7 @@ jobs:
         run: e2e/fixtures/run-notebook-lifecycle-windows.ps1
       - name: Upload mutation evidence
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-notebook-mutation-evidence
           path: |
@@ -297,7 +348,15 @@ jobs:
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, windows_dependencies, windows_full_test, notebook_sandbox, notebook_mutation]
+    needs:
+      [
+        plan,
+        windows_notebook_runtime,
+        windows_dependencies,
+        windows_full_test,
+        notebook_sandbox,
+        notebook_mutation
+      ]
     if: ${{ always() && github.event_name == 'schedule' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

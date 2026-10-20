@@ -1,12 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { NotebookEnvironmentLock, NotebookKernelMetadata } from '../../shared/notebook'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookKernelMetadata } from '../../shared/notebook'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 import {
   NotebookEnvironmentManagementOwner,
   type NotebookEnvironmentManager
 } from './environment-management'
-import { envPrefix, pythonBin } from './runtime-paths'
+import { envPrefix, pythonBin } from '@aipoch/environment'
 
 type OwnerOptions = ConstructorParameters<typeof NotebookEnvironmentManagementOwner>[0]
 type EnvironmentSession =
@@ -139,6 +140,28 @@ describe('NotebookEnvironmentManagementOwner', () => {
     }
   )
 
+  it('lists without mutation and preserves the creation policy for the next request', async () => {
+    const {
+      owner,
+      options,
+      manager: configured
+    } = harness({
+      isAgentEnvironmentCreationEnabled: vi.fn().mockResolvedValue(false)
+    })
+    await expect(owner.manage({ action: 'list' })).resolves.toEqual({ environments: [] })
+    expect(options.isAgentEnvironmentCreationEnabled).not.toHaveBeenCalled()
+    expect(options.ensureRecovered).not.toHaveBeenCalled()
+    expect(options.environmentOperations.runMutation).not.toHaveBeenCalled()
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+    expect(configured?.removeEnvironment).not.toHaveBeenCalled()
+    await expect(
+      owner.manage({ action: 'create', name: 'analysis', language: 'python' })
+    ).rejects.toThrow('AGENT_ENVIRONMENT_CREATION_DISABLED')
+    expect(options.isAgentEnvironmentCreationEnabled).toHaveBeenCalledOnce()
+    expect(options.environmentOperations.runMutation).not.toHaveBeenCalled()
+    expect(configured?.createNamedEnvironment).not.toHaveBeenCalled()
+  })
+
   it('does not enter policy or recovery for an already cancelled request', async () => {
     const { owner, options } = harness()
     const cancellation = new AbortController()
@@ -205,7 +228,7 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'python',
       importedLock(),
       checksum,
-      { projectId: 'project-2' }
+      { context: { projectId: 'project-2' } }
     )
   })
 
@@ -295,9 +318,8 @@ describe('NotebookEnvironmentManagementOwner', () => {
       'python',
       ['numpy'],
       expect.objectContaining({
-        projectId: 'project-1',
-        sessionId: 'session-1',
-        workspaceCwd: '/workspace'
+        context: { projectId: 'project-1', sessionId: 'session-1' },
+        cwd: '/workspace'
       }),
       cancellation.signal
     )

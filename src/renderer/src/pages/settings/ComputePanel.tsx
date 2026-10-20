@@ -1,12 +1,14 @@
+import type { ComputeView } from '../../lib/settings-navigation'
 import { ErrorNotice } from '@/components/error-notice'
 import { Folder, Info, Plus, Server } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
+import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { consumeComputeHostsPreload, useComputeStore } from '@/stores/compute-store'
@@ -16,15 +18,7 @@ import { FileBrowserModal } from './FileBrowserModal'
 
 // The compute panel sub-view, driven by the settings navigation history. The add form and host detail
 // are separate components owned by SettingsPage; this panel renders the list + header banner only.
-export type ComputeView =
-  | { kind: 'list' }
-  | { kind: 'add' }
-  | {
-      kind: 'detail'
-      providerId: string
-      authenticationFocus?: import('../../../../shared/compute').ComputeAuthenticationErrorCode
-      authenticationRequestId?: number
-    }
+export type { ComputeView } from '../../lib/settings-navigation'
 
 type ComputePanelProps = {
   onNavigate: (view: ComputeView) => void
@@ -55,7 +49,7 @@ const HostCard = ({
   return (
     <div
       data-slot="compute-host-card"
-      className="flex items-center gap-3 rounded-xl border border-border px-3 py-3 transition-colors hover:border-ring/60"
+      className="relative flex items-center gap-3 rounded-xl border border-border px-3 py-3 transition-colors hover:border-ring/60"
     >
       <div
         className={cn(
@@ -71,7 +65,11 @@ const HostCard = ({
         <Server className="size-4" />
       </div>
 
-      <button type="button" onClick={onOpen} className="min-w-0 flex-1 text-left">
+      <button
+        type="button"
+        onClick={onOpen}
+        className="min-w-0 flex-1 text-left after:absolute after:-inset-px after:rounded-[inherit]"
+      >
         <span className="flex items-baseline gap-2">
           <span className="truncate text-sm font-medium text-foreground">{host.displayName}</span>
           <span className="truncate font-mono text-xs text-muted-foreground">
@@ -87,26 +85,28 @@ const HostCard = ({
         )}
       </button>
 
-      <TooltipProvider delayDuration={200}>
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <span className="inline-flex">
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-sm"
-                onClick={onBrowse}
-                aria-label={t('Browse files on {{name}}', { name: host.displayName })}
-                className="shrink-0 text-muted-foreground hover:text-foreground"
-              >
-                <Folder className="size-4" aria-hidden="true" />
-              </Button>
-            </span>
-          </TooltipTrigger>
-          <TooltipContent>{t('Browse files')}</TooltipContent>
-        </Tooltip>
-        <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
-      </TooltipProvider>
+      <div className="relative z-10 flex items-center gap-3">
+        <TooltipProvider delayDuration={200}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="inline-flex">
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-sm"
+                  onClick={onBrowse}
+                  aria-label={t('Browse files on {{name}}', { name: host.displayName })}
+                  className="shrink-0 text-muted-foreground hover:text-foreground"
+                >
+                  <Folder className="size-4" aria-hidden="true" />
+                </Button>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>{t('Browse files')}</TooltipContent>
+          </Tooltip>
+          <ComputeHostRemovalDialog host={host} onRemoved={onRemoved} />
+        </TooltipProvider>
+      </div>
 
       {status === 'last_probe_ok' ? (
         <Badge className="shrink-0 bg-status-success-surface text-status-success-foreground dark:bg-status-success-dark-surface/40 dark:text-status-success-dark-foreground">

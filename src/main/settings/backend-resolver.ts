@@ -1,7 +1,17 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 
-import type { CodexSubscriptionTransport, ReasoningEffort } from '../../shared/settings'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
+
+import {
+  buildActiveModelIncompatibleMessage,
+  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
+  NO_ACTIVE_PROVIDER_MESSAGE
+} from '../../shared/run-error-classification'
+import type { CodexSubscriptionTransport } from '../../shared/settings'
 import {
   DEFAULT_CONVERSATION_SKILL_IMPORT_ENABLED,
   DEFAULT_REASONING_EFFORT,
@@ -9,26 +19,28 @@ import {
   usesAppProviderTransport
 } from '../../shared/settings'
 import {
-  buildActiveModelIncompatibleMessage,
-  CODEX_BRIDGE_UNSUPPORTED_MESSAGE,
-  NO_ACTIVE_PROVIDER_MESSAGE
-} from '../../shared/run-error-classification'
-import type { ResolvedReasoningEffort } from '../../shared/reasoning-effort'
-import {
   getAgentFramework,
   releaseResolvedAgentBackendLeases,
+  type AgentFrameworkId,
   type AgentModelChangeTarget,
   type AgentModelRoute,
-  type AgentFrameworkId,
   type ResolvedAgentBackend
 } from '../agent-framework'
 import { codeBuddyStorageDir } from '../agent-framework/codebuddy'
-import { opencodeConfigDir } from '../agent-framework/opencode'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../agent-framework/codex'
-import { renderConnectorInstructions } from '../connectors/skill-doc'
+import { opencodeConfigDir } from '../agent-framework/opencode'
+import { renderConnectorInstructions } from '../connectors/skill-document-renderer'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
-import { buildProviderEnv } from './provider-env'
 import type { AgentRuntimeManager } from './agent-runtime-manager'
+import { BackendRoutePlanner } from './backend-route-planner'
+import {
+  BackendSelectionOwner,
+  type AgentBackendSelection,
+  type BackendSelectionResolution,
+  type ExplicitAgentBackendTarget
+} from './backend-selection-owner'
+import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
+import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
 import type { ConnectorSettingsModule } from './connector-settings'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
@@ -36,20 +48,13 @@ import {
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-accounts'
-import { ensureCodexAuthHome, resolveEffectiveCodexSubscriptionTransport } from './codex-auth'
-import type { StoredSettings } from './types'
-import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
-import {
-  BackendSelectionOwner,
-  type AgentBackendSelection,
-  type BackendSelectionResolution,
-  type ExplicitAgentBackendTarget
-} from './backend-selection-owner'
-import { BackendRoutePlanner } from './backend-route-planner'
+import type { ResolvedProvider } from './provider-env'
+import { buildProviderEnv } from './provider-env'
 import {
   ProviderTransportOwner,
   type ProviderTransportOwnerOptions
 } from './provider-transport-owner'
+import type { StoredSettings } from './types'
 
 export type { AgentBackendSelection, ExplicitAgentBackendTarget } from './backend-selection-owner'
 
@@ -62,6 +67,7 @@ export type AdmittedAgentBackendTarget = ExplicitAgentBackendTarget &
 export type AgentBackendResolutionContext = {
   forcedSkillIds?: string[]
   systemPromptAppends?: string[]
+  grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
   includeSkillAndConnectorContext?: boolean
   forceCodexNativeResponsesCompatibility?: boolean
 }
@@ -231,6 +237,33 @@ export class AgentBackendResolver {
     return this.resolveBackendSelection(await this.selection.resolveExplicitTarget(target), context)
   }
 
+  // Direct, tool-less features need the same admitted provider/model as an Agent session, but do
+  // not need a framework process. Resolve the provider through the existing runtime projection so
+  // credentials and vendor endpoints are still derived in one main-process-only seam.
+  async resolveExplicitDirectProvider(target: ExplicitAgentBackendTarget): Promise<{
+    providerId: string
+    provider: ResolvedProvider
+    reasoningEffortProfile: ReasoningEffortProfile
+  }> {
+    const selection = await this.selection.resolveExplicitTarget(target)
+    const stored = selection.settings.providers.find(({ id }) => id === selection.providerId)
+    if (!stored) throw new Error(NO_ACTIVE_PROVIDER_MESSAGE)
+    const runtime = this.providers.resolveRuntimeTarget(
+      stored,
+      selection.modelSelection,
+      getAgentFramework('opencode')
+    )
+    return {
+      providerId: selection.providerId,
+      provider: runtime.provider,
+      // Direct calls have no framework to negotiate an unknown gateway's capabilities.
+      reasoningEffortProfile:
+        stored.type === 'custom' && stored.reasoningEffortPreset === undefined
+          ? { supported: false }
+          : runtime.reasoningEffortProfile
+    }
+  }
+
   async resolveAdmittedTarget(
     target: AdmittedAgentBackendTarget,
     context: AgentBackendResolutionContext = {}
@@ -306,7 +339,7 @@ export class AgentBackendResolver {
     const forceNativeResponsesCompatibility =
       context.forceCodexNativeResponsesCompatibility === true &&
       framework.id === 'codex' &&
-      !target.needsChatResponsesBridge &&
+      !target.needsChatResponsesToChatCompletionsBridge &&
       !target.needsNativeResponsesCompatibility
     if (forceNativeResponsesCompatibility && isCodexSubscriptionProvider(target.provider.type)) {
       throw new Error(
@@ -393,8 +426,8 @@ export class AgentBackendResolver {
         systemPromptAppends: [userSkillDirectoryGuidance, connectorInstructions].filter(
           (append): append is string => Boolean(append)
         ),
-        ...(transport.anthropicBridgeLease
-          ? { anthropicBridgeLease: transport.anthropicBridgeLease }
+        ...(transport.messagesBridgeLease
+          ? { messagesBridgeLease: transport.messagesBridgeLease }
           : {})
       }
     }
@@ -434,7 +467,7 @@ export class AgentBackendResolver {
     const transport = await this.transports.acquire({ activeTarget: target, plan })
     const provider = transport.provider ?? target.provider
     const providerModelCatalog = transport.providerModelCatalog ?? plan.providerModelCatalog
-    const responsesBridge = transport.responsesBridge
+    const responsesConnection = transport.responsesConnection
     const persistentSystemPromptAppends = [
       ...(context.systemPromptAppends ?? []),
       ...(userSkillDirectoryGuidance ? [userSkillDirectoryGuidance] : []),
@@ -445,8 +478,11 @@ export class AgentBackendResolver {
       const modelConfig = framework.prepareModelConfig(provider, {
         storageRoot: this.storageRoot,
         executablePath,
+        ...(context.grantedLocalRoots?.length
+          ? { grantedLocalRoots: context.grantedLocalRoots }
+          : {}),
         ...(codexNativeVersion ? { nativeVersion: codexNativeVersion } : {}),
-        responsesBridge,
+        responsesConnection,
         reasoningEffort: sessionEffort,
         reasoningEfforts: supportedReasoningEfforts,
         providerModelCatalog,
@@ -472,8 +508,8 @@ export class AgentBackendResolver {
         ...(codexSubscriptionTransport ? { codexSubscriptionTransport } : {}),
         backendId: `${framework.id}:${backendProviderId}`,
         modelRoute,
-        ...(modelRoute === 'codex-bridge' && responsesBridge?.continuityToken
-          ? { providerContinuityToken: responsesBridge.continuityToken }
+        ...(modelRoute === 'codex-bridge' && responsesConnection?.continuityToken
+          ? { providerContinuityToken: responsesConnection.continuityToken }
           : {}),
         executablePath,
         ...(framework.id === 'opencode'
@@ -537,7 +573,7 @@ export class AgentBackendResolver {
                 authorization: `Basic ${Buffer.from(`opencode:${opencodeUsagePassword}`).toString('base64')}`
               }
             }),
-        responsesBridgeLease: responsesBridge?.lease,
+        responsesTransportLease: responsesConnection?.lease,
         providerTransportLease: transport.providerTransportLease
       }
     } catch (error) {
@@ -595,6 +631,10 @@ export class AgentBackendResolver {
             // The SDK rejects a settings file path combined with a session sandbox. Pass the exact
             // app-owned settings snapshot instead; settingsPath remains the CLI probe seam.
             settings: runtimeConfig.privateSettings,
+            // Share login and transcript storage, not personal instructions, tools or permissions.
+            settingSources: [],
+            strictMcpConfig: true,
+            permissionMode: 'default',
             ...skillProjectionOptions
           }
         : usesAppProviderTransport(provider.type)

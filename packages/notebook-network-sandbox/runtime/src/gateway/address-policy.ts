@@ -1,3 +1,4 @@
+import { networkInterfaces } from 'node:os'
 import { lookup } from 'node:dns/promises'
 import { isIP } from 'node:net'
 import { domainToASCII } from 'node:url'
@@ -10,7 +11,14 @@ type Rule = Readonly<{
   port?: number
 }>
 
+export type TrustedPrivateDestination = Readonly<{
+  hostname: string
+  port: number
+  approvedAddresses: readonly string[]
+}>
+
 type DestinationPolicyOptions = Readonly<{
+  trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
   deniedDomains: readonly string[]
@@ -173,13 +181,106 @@ const isInternetAddress = (address: string): boolean => {
   )
 }
 
+// Private trust is narrower than the complement of isInternetAddress. Never admit
+// loopback, metadata/link-local, CGNAT, transition encodings or host interfaces.
+const isPrivateServiceAddress = (address: string): boolean => {
+  if (address.includes('%')) return false
+  if (isIP(address) === 4) {
+    const value = ipv4Number(address)
+    return (
+      [
+        ['10.0.0.0', 8],
+        ['172.16.0.0', 12],
+        ['192.168.0.0', 16]
+      ] as const
+    ).some(([base, bits]) => ipv4In(value, base, bits))
+  }
+  const value = isIP(address) === 6 ? parseIpv6(address) : undefined
+  // AWS IMDS uses a unique-local address, rather than the usual link-local range.
+  // https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/instancedata-data-retrieval.html
+  return (
+    value !== undefined &&
+    value !== parseIpv6('fd00:ec2::254') &&
+    ipv6In(value, parseIpv6('fc00::')!, 7)
+  )
+}
+
+const canonicalAddress = (address: string): string => {
+  const unscoped = address.split('%', 1)[0]!
+  return isIP(unscoped) === 6 ? new URL(`http://[${unscoped}]/`).hostname.slice(1, -1) : unscoped
+}
+
+const isHostAddress = (address: string): boolean =>
+  Object.values(networkInterfaces()).some((entries) =>
+    entries?.some((entry) => canonicalAddress(entry.address) === canonicalAddress(address))
+  )
+
+const validPrivateService = (value: { hostname: string; port: number }): boolean =>
+  Boolean(
+    value &&
+    typeof value.hostname === 'string' &&
+    normalizeRequestedHost(value.hostname) === value.hostname &&
+    value.hostname.includes('.') &&
+    !isIP(value.hostname) &&
+    value.hostname !== 'localhost' &&
+    !value.hostname.endsWith('.localhost') &&
+    Number.isInteger(value.port) &&
+    value.port >= 1 &&
+    value.port <= 65535
+  )
+
+const validPrivateDestination = (value: TrustedPrivateDestination): boolean =>
+  validPrivateService(value) &&
+  Array.isArray(value.approvedAddresses) &&
+  value.approvedAddresses.length > 0 &&
+  value.approvedAddresses.every(
+    (address) => typeof address === 'string' && isPrivateServiceAddress(address)
+  )
+
+const reviewPrivateDestination = async (request: {
+  hostname: string
+  port: number
+}): Promise<
+  | { ok: true; destination: TrustedPrivateDestination }
+  | { ok: false; reason: 'invalid' | 'ineligible' | 'dns' }
+> => {
+  if (!request || typeof request.hostname !== 'string') return { ok: false, reason: 'invalid' }
+  // domainToASCII uses URL host parsing and would otherwise discard a path or query.
+  if (/[\s/\\:@?#%]/.test(request.hostname.trim())) return { ok: false, reason: 'invalid' }
+  const hostname = normalizeRequestedHost(request.hostname)
+  if (!hostname || !validPrivateService({ hostname, port: request.port }))
+    return { ok: false, reason: 'invalid' }
+  const addresses = await lookup(hostname, { all: true, verbatim: true }).then(
+    (records) => records.map(({ address }) => address),
+    () => []
+  )
+  if (!addresses.length) return { ok: false, reason: 'dns' }
+  if (addresses.some((address) => !isPrivateServiceAddress(address) || isHostAddress(address)))
+    return { ok: false, reason: 'ineligible' }
+  return {
+    ok: true,
+    destination: {
+      hostname,
+      port: request.port,
+      approvedAddresses: [...new Set(addresses.map(canonicalAddress))].sort()
+    }
+  }
+}
+
 class DestinationPolicy {
+  readonly #private: readonly TrustedPrivateDestination[]
   readonly #allowed: readonly Rule[]
   readonly #asked: readonly Rule[]
   readonly #denied: readonly Readonly<{ raw: string; rule: Rule }>[]
   readonly #reasons: Readonly<Record<string, string>>
 
   constructor(options: DestinationPolicyOptions) {
+    this.#private = (options.trustedPrivateDestinations ?? [])
+      .filter(validPrivateDestination)
+      .map((entry) => ({
+        ...entry,
+        approvedAddresses: entry.approvedAddresses.map(canonicalAddress)
+      }))
     this.#allowed = options.allowedDomains.map(parseRule)
     this.#asked = (options.askDomains ?? []).map(parseRule)
     this.#denied = options.deniedDomains.map((raw) => ({ raw, rule: parseRule(raw) }))
@@ -207,9 +308,23 @@ class DestinationPolicy {
       return { kind: 'deny', reason: 'host did not resolve', configurable: false }
     }
     if (addresses.some((address) => !isInternetAddress(address))) {
+      const trusted = this.#private.find((entry) => entry.hostname === host && entry.port === port)
+      if (
+        trusted &&
+        addresses.every(
+          (address) =>
+            isPrivateServiceAddress(address) &&
+            !isHostAddress(address) &&
+            trusted.approvedAddresses.includes(canonicalAddress(address))
+        )
+      ) {
+        return { kind: 'allow', address: addresses[0]! }
+      }
       return {
         kind: 'deny',
-        reason: 'destination resolves to a non-public network address',
+        reason: trusted
+          ? 'private service addresses changed or are ineligible; review the service in Settings'
+          : 'destination resolves to a non-public network address',
         configurable: false
       }
     }
@@ -228,5 +343,5 @@ class DestinationPolicy {
   }
 }
 
-export { DestinationPolicy, isInternetAddress }
+export { DestinationPolicy, isInternetAddress, reviewPrivateDestination, validPrivateDestination }
 export type { DestinationPolicyOptions, DestinationVerdict }

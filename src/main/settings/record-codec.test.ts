@@ -11,6 +11,7 @@ import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 describe('settings record codec', () => {
   it('keeps the private owner interface explicit', async () => {
     expect(Object.keys(await import('./record-codec')).sort()).toEqual([
+      'encodeProviderProtocolsForStorage',
       'sanitizeClaudeInfo',
       'sanitizeCodexInfo',
       'sanitizeComputeGrant',
@@ -29,7 +30,7 @@ describe('settings record codec', () => {
       model: 'model-a',
       baseUrl: 'https://gateway.example'
     }
-    const target = { model: 'model-a', endpoint: 'openai' }
+    const target = { model: 'model-a', endpoint: 'chat-completions' }
     const result = sanitizeProvider({
       ...base,
       lastValidationFailure: {
@@ -64,6 +65,17 @@ describe('settings record codec', () => {
         lastValidationFailure: { at: 10, category: 'model-not-found', targets: [target] }
       })?.lastValidationFailure
     ).toEqual({ at: 10, category: 'model-not-found' })
+  })
+
+  it.each([
+    ['anthropic', ['messages']],
+    ['openai', ['chat-completions']],
+    ['responses', ['responses']],
+    ['both', ['messages', 'chat-completions']]
+  ])('decodes the historical scalar apiType %s', (apiType, expected) => {
+    expect(
+      sanitizeProvider({ id: 'p', type: 'custom', name: 'Gateway', apiType })?.apiEndpoints
+    ).toEqual(expected)
   })
 
   it('rebuilds provider records from known fields without exposing plaintext credentials', () => {

@@ -1,10 +1,12 @@
+import type { ArchivedView } from '../../lib/settings-navigation'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { Archive, RotateCcw, Trash2 } from 'lucide-react'
-import { useMemo, useState } from 'react'
+import { Archive, LoaderCircle, RotateCcw, Trash2 } from 'lucide-react'
+import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
+import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
 import type { SessionCatalogRecovery } from '@/lib/session-persistence/session-persistence'
 import { DeleteProjectDialog } from '@/pages/home/DeleteProjectDialog'
@@ -17,7 +19,7 @@ import { useSessionStore } from '@/stores/session-store'
 import type { Project } from '../../../../shared/projects'
 import { sessionRevision } from '../../../../shared/session-persistence'
 
-export type ArchivedView = { kind: 'list' } | { kind: 'project'; projectId: string }
+export type { ArchivedView } from '../../lib/settings-navigation'
 
 type ArchivedPanelProps = {
   view: ArchivedView
@@ -26,6 +28,7 @@ type ArchivedPanelProps = {
   hasCompleteSessionCatalog?: boolean
   canDeleteProjects?: boolean
   onRetryCatalogRecovery?: () => void
+  sessionLoadError?: string
 }
 
 const describeError = (error: unknown, fallback: string): string =>
@@ -38,9 +41,13 @@ const ArchivedPanel = ({
   catalogRecovery = { kind: 'ready' },
   hasCompleteSessionCatalog = true,
   canDeleteProjects = true,
-  onRetryCatalogRecovery
+  onRetryCatalogRecovery,
+  sessionLoadError
 }: ArchivedPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const descriptionId = useId()
+  const recoveryDescriptionId = `${descriptionId}-recovery`
+  const restoreDescriptionId = `${descriptionId}-restore`
   const formatDate = useDateTimeFormat()
   const projects = useProjectStore((state) => state.projects)
   const updateProjectArchive = useProjectStore((state) => state.updateProjectArchive)
@@ -186,6 +193,11 @@ const ArchivedPanel = ({
       .finally(() => finishOperation(key))
   }
 
+  const isRestoring = (key: string): boolean =>
+    busyKeys.has(key) &&
+    key !== `session:${sessionToDelete?.id}` &&
+    key !== `project:${projectToDelete?.id}`
+
   const sessionRow = (session: ChatSession, projectArchived: boolean): React.JSX.Element => (
     <div key={session.id} className="flex items-center gap-3 rounded-lg border border-border p-3">
       <div className="min-w-0 flex-1">
@@ -207,11 +219,19 @@ const ArchivedPanel = ({
           variant="outline"
           size="sm"
           disabled={projectArchived || busyKeys.has(`session:${session.id}`)}
-          title={projectArchived ? t('Restore the project first.') : undefined}
+          aria-describedby={projectArchived ? restoreDescriptionId : undefined}
+          aria-busy={isRestoring(`session:${session.id}`)}
           onClick={() => restoreSession(session)}
         >
-          <RotateCcw className="size-3.5" aria-hidden="true" />
-          {t('Restore')}
+          {isRestoring(`session:${session.id}`) ? (
+            <LoaderCircle
+              className="size-3.5 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          ) : (
+            <RotateCcw className="size-3.5" aria-hidden="true" />
+          )}
+          {isRestoring(`session:${session.id}`) ? t('Restoring…') : t('Restore')}
         </Button>
       ) : null}
       <Button
@@ -220,9 +240,7 @@ const ArchivedPanel = ({
         size="sm"
         className="text-danger-000 hover:text-danger-000"
         disabled={!canDeleteProjects || busyKeys.has(`session:${session.id}`)}
-        title={
-          canDeleteProjects ? undefined : t('Retry project recovery before deleting projects.')
-        }
+        aria-describedby={!canDeleteProjects ? recoveryDescriptionId : undefined}
         onClick={() => {
           setPanelError(undefined)
           setSessionDeleteError(undefined)
@@ -237,6 +255,14 @@ const ArchivedPanel = ({
 
   return (
     <div className="space-y-5 p-5">
+      {sessionLoadError && catalogRecovery.kind === 'ready' ? (
+        <SessionPersistenceAlert
+          inline
+          title={t('Saved conversations could not be loaded')}
+          message={sessionLoadError}
+          onRetry={onRetryCatalogRecovery}
+        />
+      ) : null}
       <SessionCatalogRecoveryAlert
         recovery={catalogRecovery}
         inline
@@ -249,6 +275,14 @@ const ArchivedPanel = ({
         </InlineNotice>
       ) : null}
       <ProjectDeletionCleanupNotice />
+      {!canDeleteProjects ? (
+        <p id={recoveryDescriptionId} className="text-sm text-muted-foreground">
+          {t('Retry project recovery before deleting projects.')}
+        </p>
+      ) : null}
+      <span role="status" className="sr-only">
+        {Array.from(busyKeys).some(isRestoring) ? t('Restoring…') : ''}
+      </span>
       {selectedProject ? (
         <>
           <div className="flex flex-wrap items-start justify-between gap-3">
@@ -268,10 +302,20 @@ const ArchivedPanel = ({
                 variant="outline"
                 size="sm"
                 disabled={busyKeys.has(`project:${selectedProject.id}`)}
+                aria-busy={isRestoring(`project:${selectedProject.id}`)}
                 onClick={() => restoreProject(selectedProject)}
               >
-                <RotateCcw className="size-3.5" aria-hidden="true" />
-                {t('Restore project')}
+                {isRestoring(`project:${selectedProject.id}`) ? (
+                  <LoaderCircle
+                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                    aria-hidden="true"
+                  />
+                ) : (
+                  <RotateCcw className="size-3.5" aria-hidden="true" />
+                )}
+                {isRestoring(`project:${selectedProject.id}`)
+                  ? t('Restoring…')
+                  : t('Restore project')}
               </Button>
               <Button
                 type="button"
@@ -279,11 +323,7 @@ const ArchivedPanel = ({
                 size="sm"
                 className="text-danger-000 hover:text-danger-000"
                 disabled={!canDeleteProjects || busyKeys.has(`project:${selectedProject.id}`)}
-                title={
-                  canDeleteProjects
-                    ? undefined
-                    : t('Retry project recovery before deleting projects.')
-                }
+                aria-describedby={!canDeleteProjects ? recoveryDescriptionId : undefined}
                 onClick={() => openProjectDeleteDialog(selectedProject)}
               >
                 <Trash2 className="size-3.5" aria-hidden="true" />
@@ -293,6 +333,11 @@ const ArchivedPanel = ({
           </div>
           <section className="space-y-2">
             <h4 className="text-sm font-medium text-foreground">{t('Sessions')}</h4>
+            {selectedProjectSessions.some((session) => session.archivedAt !== undefined) ? (
+              <p id={restoreDescriptionId} className="text-sm text-muted-foreground">
+                {t('Restore the project first.')}
+              </p>
+            ) : null}
             {selectedProjectSessions.length > 0 ? (
               selectedProjectSessions.map((session) => sessionRow(session, true))
             ) : (

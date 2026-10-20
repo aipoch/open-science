@@ -223,6 +223,51 @@ describe('HomePage persistence recovery', () => {
     expect(container.textContent).toContain('Update Open-Science before archiving this project.')
   })
 
+  it('keeps an unrelated project archivable when damaged authority names another project', async () => {
+    const unaffectedProject: Project = {
+      ...project,
+      id: 'project-2',
+      name: 'Unaffected project'
+    }
+    const updateProjectArchive = vi.fn().mockResolvedValue({
+      ...unaffectedProject,
+      archivedAt: 2
+    })
+    useProjectStore.setState({
+      projects: [project, unaffectedProject],
+      updateProjectArchive
+    } as never)
+
+    await act(async () =>
+      root.render(
+        <HomePage
+          canDeleteProjects
+          hasCompleteSessionCatalog={false}
+          catalogRecovery={{
+            kind: 'damaged-authority',
+            affectedFiles: [{ projectId: project.id, fileName: 'broken.json' }]
+          }}
+          onOpenGlobalSearch={vi.fn()}
+        />
+      )
+    )
+
+    const archives = [...container.querySelectorAll<HTMLButtonElement>('button')].filter(
+      (button) => button.textContent?.trim() === 'Archive'
+    )
+    expect(archives).toHaveLength(2)
+    expect(archives[0]?.disabled).toBe(true)
+    expect(archives[1]?.disabled).toBe(false)
+
+    await act(async () => archives[1]?.click())
+
+    expect(updateProjectArchive).toHaveBeenCalledWith({
+      id: unaffectedProject.id,
+      archived: true,
+      expectedArchiveRevision: 0
+    })
+  })
+
   it('maps a raced incomplete-catalog archive rejection to index repair guidance', async () => {
     const updateProjectArchive = vi
       .fn()

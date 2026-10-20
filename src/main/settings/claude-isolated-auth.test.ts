@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -6,12 +7,21 @@ import { ClaudeIsolatedAuthController, type ClaudeIsolatedTokenStore } from './c
 // The browser flow spawns `claude setup-token`; mock node:child_process so tests can script the
 // subprocess's stdout/stderr/exit without launching anything. Each test sets `nextSpawn` to the
 // child it wants the next spawn() call to return.
-const spawnCalls: { command: string; args: string[]; env?: NodeJS.ProcessEnv }[] = []
+const spawnCalls: {
+  command: string
+  args: string[]
+  env?: NodeJS.ProcessEnv
+  windowsHide?: boolean
+}[] = []
 let nextSpawn: (() => FakeChild) | undefined
 
 vi.mock('node:child_process', () => ({
-  spawn: (command: string, args: string[], options?: { env?: NodeJS.ProcessEnv }) => {
-    spawnCalls.push({ command, args, env: options?.env })
+  spawn: (
+    command: string,
+    args: string[],
+    options?: { env?: NodeJS.ProcessEnv; windowsHide?: boolean }
+  ) => {
+    spawnCalls.push({ command, args, env: options?.env, windowsHide: options?.windowsHide })
     return (nextSpawn ?? (() => new FakeChild()))()
   }
 }))
@@ -284,6 +294,7 @@ describe('ClaudeIsolatedAuthController', () => {
       })
       expect(store.saveCalls).toEqual(['sk-ant-oat01-abc123'])
       expect(spawnCalls[0]?.command).toBe('/usr/bin/claude')
+      expect(spawnCalls[0]?.windowsHide).toBe(true)
       expect(spawnCalls[0]?.args).toEqual(['setup-token'])
       expect(spawnCalls[0]?.env?.CLAUDE_CONFIG_DIR).toBe('/tmp/app-claude')
     })
@@ -316,9 +327,10 @@ describe('ClaudeIsolatedAuthController', () => {
       await controller.loginIsolatedBrowser()
 
       expect(spawnCalls[0]).toMatchObject({
+        windowsHide: true,
         command: process.execPath,
         args: ['/resolved/cli.js', 'setup-token'],
-        env: { ELECTRON_RUN_AS_NODE: '1' }
+        env: { ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined }
       })
     })
 
@@ -427,3 +439,5 @@ describe('ClaudeIsolatedAuthController', () => {
     })
   })
 })
+
+configureTestRuntimeMetadata()

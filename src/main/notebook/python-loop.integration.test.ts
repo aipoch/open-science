@@ -1,7 +1,13 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
-import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
+import {
+  execFileSync,
+  spawn,
+  spawnSync,
+  type ChildProcessWithoutNullStreams
+} from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
@@ -22,7 +28,7 @@ import {
 } from './reported-python-callback.fixture'
 import { startWorkingFileObservation } from './working-file-observer'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import withVolcanoCells from './reported-with-volcano.fixture.json'
 import mixedVennCells from './reported-mixed-venn.fixture.json'
 import vennCounterCells from './reported-mixed-venn-counter.fixture.json'
@@ -123,7 +129,7 @@ gate('python_loop.py', () => {
       '\n# %%\n'
     )
     const runs: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     })
@@ -256,7 +262,7 @@ w.save(sys.argv[1])`,
         mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
         writeFileSync(join(dataRoot, 'inputs/source.csv'), 'x\n1\n2\n3\n')
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => runs }
         })
@@ -411,7 +417,7 @@ w.save(sys.argv[1])`,
           )
           const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1' })
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -521,7 +527,7 @@ w.save(sys.argv[1])`,
             'df=xl.parse(sheet_name=0)\ndf.to_csv("result.csv",index=False)\nxl.close()'
           ]
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -626,7 +632,7 @@ w.save(sys.argv[1])`,
         expect((await loop.send(`import os\nos.chdir(${JSON.stringify(dir)})`)).error).toBeNull()
       }
       for (const source of scripts) expect((await original.send(source)).error).toBeNull()
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       }).project({ projectId: 'p', sessionId: 's', completedRun: runs[4]! })
@@ -784,7 +790,7 @@ w.save(sys.argv[1])`,
       const original = startLoop(pyBin!, environment)
       let replay: ReturnType<typeof startLoop> | undefined
       const runs: NotebookRunRecord[] = []
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -1061,7 +1067,7 @@ w.save(sys.argv[1])`,
         inputFiles: [],
         ...files
       }
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => [run] }
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
@@ -1099,6 +1105,91 @@ w.save(sys.argv[1])`,
     } finally {
       original.child.kill()
       replay?.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each(['capture_probe', 'capture_alias'])(
+    'does not claim conflicting same-directory metadata is loaded for %s',
+    async (importName) => {
+      const root = mkdtempSync(join(tmpdir(), 'python-duplicate-metadata-'))
+      for (const version of ['1.0', '2.0']) {
+        const dist = join(root, `capture_probe-${version}.dist-info`)
+        mkdirSync(dist)
+        writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+        writeFileSync(join(dist, 'top_level.txt'), `${importName}\n`)
+        writeFileSync(join(dist, 'RECORD'), `${importName}.py,,\n`)
+      }
+      writeFileSync(join(root, `${importName}.py`), '__version__ = "1.0"\n')
+      const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+      try {
+        const response = await send(
+          `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import ${importName}`
+        )
+        expect(response.error).toBeNull()
+        const packages = response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+        expect(packages.filter((pkg) => pkg.loaded_state === 'loaded')).toEqual([
+          expect.objectContaining({ version: '1.0' })
+        ])
+        expect(packages).toContainEqual(
+          expect.objectContaining({ version: '2.0', loaded_state: 'unknown' })
+        )
+      } finally {
+        child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('keeps ambiguous same-directory versions unknown when the module has no version', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-unknown-metadata-'))
+    for (const version of ['1.0', '2.0']) {
+      const dist = join(root, `capture_probe-${version}.dist-info`)
+      mkdirSync(dist)
+      writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+      writeFileSync(join(dist, 'top_level.txt'), 'capture_alias\n')
+      writeFileSync(join(dist, 'RECORD'), 'capture_alias.py,,\n')
+    }
+    writeFileSync(join(root, 'capture_alias.py'), 'VALUE = 42\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_alias`
+      )
+      expect(response.error).toBeNull()
+      const packages = response.environment.packages.filter((pkg) => pkg.name === 'capture-probe')
+      expect(packages).toHaveLength(2)
+      expect(packages.every((pkg) => pkg.loaded_state === 'unknown')).toBe(true)
+    } finally {
+      child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('does not duplicate equivalent module and distribution release spellings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-equivalent-metadata-'))
+    const dist = join(root, 'capture_probe-2026.7.22.dist-info')
+    mkdirSync(dist)
+    writeFileSync(join(dist, 'METADATA'), 'Name: capture-probe\nVersion: 2026.7.22\n')
+    writeFileSync(join(dist, 'top_level.txt'), 'capture_probe\n')
+    writeFileSync(join(dist, 'RECORD'), 'capture_probe.py,,\n')
+    writeFileSync(join(root, 'capture_probe.py'), '__version__ = "2026.07.22"\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_probe`
+      )
+      expect(response.error).toBeNull()
+      expect(
+        response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+      ).toEqual([expect.objectContaining({ version: '2026.7.22', loaded_state: 'loaded' })])
+    } finally {
+      child.kill()
       rmSync(root, { recursive: true, force: true })
     }
   }, 60_000)
@@ -1543,4 +1634,155 @@ gate('Python execution boundaries', () => {
       first.child.kill()
     }
   }, 60000)
+})
+
+type DiagnosticResponse = {
+  req_id: string
+  error: string | null
+  result: string | null
+  output_truncated: boolean
+}
+
+const runRequests = (code: string, next = '1 + 1', limit = 16_384): DiagnosticResponse[] => {
+  const cwd = mkdtempSync(join(tmpdir(), 'python-diagnostics-'))
+  try {
+    const result = spawnSync(pyBin!, [LOOP], {
+      cwd,
+      env: { ...process.env, OPEN_SCIENCE_NOTEBOOK_TEXT_LIMIT_BYTES: String(limit) },
+      input: [
+        JSON.stringify({ req_id: 'failed-cell', code }),
+        JSON.stringify({ req_id: 'next-cell', code: next }),
+        ''
+      ].join('\n'),
+      encoding: 'utf8',
+      timeout: 30_000,
+      maxBuffer: 2 * 1024 * 1024
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.status, result.stderr).toBe(0)
+    const responses = result.stdout
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as DiagnosticResponse)
+    expect(responses.map((response) => response.req_id)).toEqual(['failed-cell', 'next-cell'])
+    expect(responses[0].error).toBeTruthy()
+    expect(responses[1].error).toBeNull()
+    // The full text budget may be reserved for diagnostics; print/result output can be empty.
+    return responses
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+gate('Python diagnostic failure recovery', () => {
+  it('survives the reported Python 3.12 Patsy frame-locals failure', () => {
+    const responses = runRequests(
+      "from patsy import dmatrices\ndmatrices('y ~ missing_column', {'y': [1, 2, 3]})",
+      '1 + 1',
+      32_768
+    )
+    expect(responses[0].error).toMatch(/PatsyError|NameError/)
+    expect(responses[1].result).toBe('2')
+  }, 40_000)
+
+  it('survives a formatter failure without requiring Patsy', () => {
+    const responses = runRequests(
+      [
+        'import traceback',
+        'def broken_formatter(*args, **kwargs):',
+        '    raise RuntimeError("formatter failed")',
+        'traceback.format_exc = broken_formatter',
+        'raise ValueError("original failure")'
+      ].join('\n')
+    )
+    expect(responses[0].error).toContain('ValueError: original failure')
+  }, 40_000)
+
+  it('does not invoke unsafe exception str or repr in the fallback', () => {
+    const responses = runRequests(
+      [
+        'import traceback',
+        'class BrokenError(Exception):',
+        '    def __str__(self): raise RuntimeError("unsafe str")',
+        '    def __repr__(self): raise RuntimeError("unsafe repr")',
+        'def broken_formatter(*args, **kwargs): raise RuntimeError("formatter failed")',
+        'traceback.format_exc = broken_formatter',
+        'raise BrokenError("original failure")'
+      ].join('\n')
+    )
+    expect(responses[0].error).toContain('BrokenError: original failure')
+  }, 40_000)
+
+  it('survives a NameError with non-iterable frame locals without Patsy', () => {
+    const responses = runRequests(
+      [
+        'class Locals:',
+        '    def __getitem__(self, key): raise KeyError(key)',
+        'eval("missing_column", {}, Locals())'
+      ].join('\n'),
+      '1 + 1',
+      32_768
+    )
+    expect(responses[0].error).toContain('NameError')
+    expect(responses[1].result).toBe('2')
+  }, 40_000)
+
+  it('retains the exception chain without formatting unsafe argument objects', () => {
+    const responses = runRequests(
+      [
+        'import traceback',
+        'class Unsafe:',
+        '    def __str__(self): raise RuntimeError("unsafe str")',
+        '    def __repr__(self): raise RuntimeError("unsafe repr")',
+        'def broken_formatter(*args, **kwargs): raise RuntimeError("formatter failed")',
+        'traceback.format_exc = broken_formatter',
+        'try:',
+        '    raise ValueError("root cause")',
+        'except ValueError as cause:',
+        '    raise RuntimeError(Unsafe()) from cause'
+      ].join('\n'),
+      '1 + 1',
+      32_768
+    )
+    expect(responses[0].error).toContain('ValueError: root cause')
+    expect(responses[0].error).toContain('RuntimeError: <message unavailable>')
+    expect(responses[1].result).toBe('2')
+  }, 40_000)
+
+  it('bounds fallback diagnostics by the UTF-8 budget', () => {
+    const responses = runRequests(
+      [
+        'import traceback',
+        'def broken_formatter(*args, **kwargs): raise RuntimeError("formatter failed")',
+        'traceback.format_exc = broken_formatter',
+        'raise ValueError("错误" * 10000)'
+      ].join('\n'),
+      '1 + 1',
+      128
+    )
+    expect(Buffer.byteLength(responses[0].error!, 'utf8')).toBeLessThanOrEqual(128)
+    expect(responses[0].output_truncated).toBe(true)
+  }, 40_000)
+
+  it('keeps the protocol alive when main-loop diagnostics and metadata both fail', () => {
+    const responses = runRequests(
+      [
+        'import __main__ as kernel, traceback',
+        'saved_figures = kernel._capture_figures',
+        'saved_environment = kernel._capture_environment',
+        'def broken(*args, **kwargs): raise ValueError("post-execution failure")',
+        'kernel._capture_figures = broken',
+        'kernel._capture_environment = broken',
+        'traceback.format_exc = broken'
+      ].join('\n'),
+      [
+        'kernel._capture_figures = saved_figures',
+        'kernel._capture_environment = saved_environment',
+        '1 + 1'
+      ].join('\n'),
+      32_768
+    )
+    expect(responses[0].error).toContain('post-execution failure')
+    expect(responses[1].result).toBe('2')
+  }, 40_000)
 })

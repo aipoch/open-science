@@ -15,7 +15,7 @@ import { basename, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import type { ArtifactFile } from '../../shared/artifacts'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import type {
   ArtifactMetadata,
   ArtifactPublicationStorage,
@@ -29,7 +29,7 @@ import {
   SAFE_SEGMENT_PATTERN
 } from './storage-layout'
 
-type ArtifactStorageAccessDurability = ArtifactDurability & {
+type ArtifactStorageAccessDurability = FileDurability & {
   readMarkerFile?: (path: string) => Promise<string>
 }
 

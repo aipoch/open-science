@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, expect, it, vi } from 'vitest'
-import type { SpecialistPackageCandidatePreview } from '../../../shared/specialist-package'
+import type { SpecialistPackageCandidatePreview } from '@aipoch/specialists'
 import { useSpecialistStore } from './specialist-store'
 
 afterEach(() => vi.restoreAllMocks())

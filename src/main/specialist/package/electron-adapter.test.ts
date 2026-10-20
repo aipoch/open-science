@@ -9,15 +9,18 @@ import {
 describe('saveSpecialistExport', () => {
   it('keeps archive bytes in main and treats native dialog cancellation as a no-op', async () => {
     const writeFile = vi.fn()
+    const publishUserFile = vi.fn()
     const result = await saveSpecialistExport(
       {
         showSaveDialog: vi.fn().mockResolvedValue({ canceled: true }),
-        writeFile
+        writeFile,
+        publishUserFile
       },
       { fileName: 'research-synth-1.3.0.zip', archiveBytes: new Uint8Array([1, 2, 3]) }
     )
 
     expect(result).toEqual({ saved: false })
+    expect(publishUserFile).not.toHaveBeenCalled()
     expect(writeFile).not.toHaveBeenCalled()
   })
 

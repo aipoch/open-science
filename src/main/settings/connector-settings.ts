@@ -30,7 +30,7 @@ import type {
   ValidateOpenAlexCredentialRequest
 } from '../../shared/settings'
 import { inferResourceId, validateResourceId } from '../../shared/resource-id'
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import {
   assertAddCustomServerLimits,
   assertCustomServerCapacity,
@@ -44,8 +44,11 @@ import { CONNECTOR_CATALOG } from '../connectors/catalog'
 import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe
-} from '../connectors/custom-mcp-bootstrap'
-import { hasAmbiguousCustomMcpCredentialNames } from '../connectors/custom-mcp-windows-credential-names'
+} from '../connectors/custom-mcp-config'
+import {
+  hasAmbiguousCustomMcpCredentialNames,
+  clearUnboundOAuthCredentials
+} from '@aipoch/connector-mcp-client'
 import { getConnectorTools } from '../connectors/registry'
 import { encryptKey, isEncryptionAvailable, tryDecryptKey } from './crypto'
 import { getCredentialStore } from './credential-store-mode'
@@ -72,7 +75,7 @@ import {
   CustomServerIdConflictError,
   customServerSecurityFingerprint
 } from './custom-server-identity'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp-url'
+import { assertSecureCustomMcpUrl } from '@aipoch/connector-mcp-client'
 
 type CustomServerSecurityChangeGuard = {
   commit(server: StoredCustomMcpServer): void
@@ -1176,9 +1179,10 @@ class ConnectorSettingsModule {
     if (!value) return undefined
     try {
       const parsed: unknown = JSON.parse(value)
-      return parsed && typeof parsed === 'object'
-        ? (parsed as StoredCustomMcpOAuthState)
-        : undefined
+      if (!parsed || typeof parsed !== 'object') return undefined
+      const state = parsed as StoredCustomMcpOAuthState
+      clearUnboundOAuthCredentials(state)
+      return state
     } catch {
       return undefined
     }

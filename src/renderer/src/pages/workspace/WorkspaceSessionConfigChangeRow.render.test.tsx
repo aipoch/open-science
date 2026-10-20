@@ -83,7 +83,7 @@ describe('WorkspaceSessionConfigChangeRow', () => {
   it('renders the framework and provider brand icons inline without a badge circle', () => {
     const html = renderRow()
 
-    // ClaudeCode brand mark (lobehub ClaudeColor) plus the custom-provider kind icon.
+    // ClaudeCode brand mark (internal Claude brand icon) plus the custom-provider kind icon.
     expect(html).toContain('<title>Claude</title>')
     expect(html).toContain('lucide-circle-plus')
     expect(html).not.toContain('lucide-sliders-horizontal')

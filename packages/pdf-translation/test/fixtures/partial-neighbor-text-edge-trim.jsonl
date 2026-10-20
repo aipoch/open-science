@@ -1,0 +1,6 @@
+{"name": "trim empty top edge without touching neighboring glyph", "neighborY": 710, "accepted": true}
+{"name": "reject overlapping neighboring glyph without empty separating edge", "neighborY": 707, "accepted": false}
+{"name": "trim overlapping extraction boxes only through empty margin", "neighborY": 714, "accepted": true, "neighborBottom": 712}
+{"name": "do-not-claim-small-glyph-outside-ink-only-within-tolerance", "neighborY": 711.9, "neighborText": "-", "neighborSize": 7, "accepted": true}
+{"name":"trim-neighbor-script-envelope-beside-distant-tall-glyph","neighborY":709.5,"tallPrefix":true,"accepted":true}
+{"name":"reject-neighbor-script-touching-owned-prose-with-tall-prefix","neighborY":707,"tallPrefix":true,"accepted":false}

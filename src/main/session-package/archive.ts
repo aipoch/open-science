@@ -1,3 +1,4 @@
+import { z } from 'zod'
 import { createReadStream, createWriteStream, type ReadStream } from 'node:fs'
 import { lstat, mkdir, open, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -7,19 +8,39 @@ import { Header, Pax, Parser } from 'tar'
 import {
   PACKAGE_MAX_BYTES,
   PACKAGE_MAX_FILE_BYTES,
+  PACKAGE_RO_CRATE_METADATA,
   sessionPackageManifestSchema,
   type SessionPackageManifest
 } from '../../shared/session-package'
-import { readFileWithinLimit } from '../storage/durable-json-file'
+import { readFileWithinLimit } from '@aipoch/durable-files'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
 import { assertPackageCapacity, packageCapacityChecker } from './capacity'
 
+// Keep this diagnostic stable across the inspection worker's error-message boundary.
+export const PACKAGE_REQUIRES_UPDATE = 'Session package requires a newer version of Open Science.'
+const compatibilityHeaderSchema = z.object({
+  format: z.literal('open-science-session'),
+  schemaVersion: z.number().int().positive(),
+  requiredFeatures: z.array(z.string().min(1)).optional()
+})
+const assertPackageCompatibility = (value: unknown): void => {
+  const header = compatibilityHeaderSchema.safeParse(value)
+  if (!header.success) return // Malformed/foreign packages retain normal validation errors.
+  const supportedFeatures = sessionPackageManifestSchema.shape.requiredFeatures.unwrap().element
+  if (
+    header.data.schemaVersion > sessionPackageManifestSchema.shape.schemaVersion.value ||
+    header.data.requiredFeatures?.some((feature) => !supportedFeatures.safeParse(feature).success)
+  )
+    throw new Error(PACKAGE_REQUIRES_UPDATE)
+}
+
 export const PACKAGE_MAX_JSON_BYTES = 256 * 1024 ** 2
 const MAX_MANIFEST_BYTES = 8 * 1024 ** 2
 const MAX_ENTRIES = 10004
-const ENTRY_PATH = /^(manifest\.json|session\.json|records\.json|README\.md|objects\/[a-f0-9]{64})$/
+const ENTRY_PATH =
+  /^(manifest\.json|session\.json|records\.json|ro-crate-metadata\.json|README\.md|objects\/[a-f0-9]{64})$/
 
 // The configured root may itself use a platform alias (/var -> /private/var). Below that owned
 // root, reject links at every level so a Notebook directory cannot include unrelated local data.
@@ -47,10 +68,40 @@ export const writePackageArchive = async (
   const manifest = sessionPackageManifestSchema.parse(
     await readPackageJson(join(directory, 'manifest.json'))
   )
-  const entries = [
-    { path: 'manifest.json', sizeBytes: (await stat(join(directory, 'manifest.json'))).size },
-    ...manifest.inventory
-  ]
+  // The manifest keeps one logical entry per storage key. The archive stores each shared object once.
+  const entriesByPath = new Map<
+    string,
+    Pick<SessionPackageManifest['inventory'][number], 'path' | 'sizeBytes' | 'checksum'> & {
+      storageKey?: string
+    }
+  >()
+  const addEntry = (
+    entry: Pick<SessionPackageManifest['inventory'][number], 'path' | 'sizeBytes' | 'checksum'> & {
+      storageKey?: string
+    }
+  ): void => {
+    const existing = entriesByPath.get(entry.path)
+    if (!existing) {
+      entriesByPath.set(entry.path, entry)
+      return
+    }
+    if (
+      !manifest.requiredFeatures?.includes('content-dedupe') ||
+      !entry.storageKey ||
+      !existing.storageKey ||
+      existing.storageKey === entry.storageKey ||
+      existing.sizeBytes !== entry.sizeBytes ||
+      existing.checksum !== entry.checksum
+    )
+      throw new Error('Session package inventory contains duplicate entries.')
+  }
+  addEntry({
+    path: 'manifest.json',
+    sizeBytes: (await stat(join(directory, 'manifest.json'))).size,
+    checksum: await fileChecksum(join(directory, 'manifest.json'), signal)
+  })
+  for (const entry of manifest.inventory) addEntry(entry)
+  const entries = [...entriesByPath.values()]
     .sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0))
     .map((entry) => {
       const header = new Header({
@@ -144,6 +195,7 @@ export const readPackageArchive = async (
     const checkCapacity = await packageCapacityChecker(directory)
     const entries = new Set<string>()
     let total = 0
+    let unknownEntries = false
     let invalid: Error | undefined
     const controller = new AbortController()
     const abort = (): void => controller.abort(signal?.reason)
@@ -155,7 +207,7 @@ export const readPackageArchive = async (
       maxMetaEntrySize: MAX_MANIFEST_BYTES,
       filter: (name, entry) => {
         const type = 'type' in entry ? entry.type : undefined
-        const isDirectory = name === 'objects/' && type === 'Directory'
+        const isDirectory = type === 'Directory'
         const limit =
           name === 'manifest.json'
             ? MAX_MANIFEST_BYTES
@@ -166,7 +218,8 @@ export const readPackageArchive = async (
         if (
           entries.has(name) ||
           entries.size >= MAX_ENTRIES ||
-          (!isDirectory && (type !== 'File' || !ENTRY_PATH.test(name))) ||
+          (!isDirectory && type !== 'File') ||
+          name.length > 2048 ||
           !Number.isSafeInteger(entry.size) ||
           entry.size < 0 ||
           entry.size > limit ||
@@ -184,6 +237,12 @@ export const readPackageArchive = async (
           return false
         }
         entries.add(name)
+        if (isDirectory ? name !== 'objects/' : !ENTRY_PATH.test(name)) {
+          // Never extract unknown entries. Read the manifest before choosing an incompatibility
+          // diagnostic, including archives whose future metadata precedes manifest.json.
+          unknownEntries = true
+          return false
+        }
         return true
       },
       onReadEntry: (entry) => {
@@ -206,6 +265,10 @@ export const readPackageArchive = async (
               createWriteStream(file, { flags: 'wx', mode: 0o600 }),
               { signal: controller.signal }
             )
+            if (entry.path === 'manifest.json')
+              assertPackageCompatibility(
+                JSON.parse(await readFileWithinLimit(file, MAX_MANIFEST_BYTES))
+              )
           })
           .catch((error: Error) => {
             invalid ??= error
@@ -232,6 +295,8 @@ export const readPackageArchive = async (
     } finally {
       signal?.removeEventListener('abort', abort)
     }
+    if (unknownEntries)
+      throw new Error('Session package contains an unsafe, duplicate or oversized entry.')
     return await validatePackageDirectory(directory, signal, entries)
   } finally {
     await input.close()
@@ -243,13 +308,47 @@ export const validatePackageDirectory = async (
   signal?: AbortSignal,
   entries?: Set<string>
 ): Promise<SessionPackageManifest> => {
-  const manifest = sessionPackageManifestSchema.parse(
-    JSON.parse(await readFileWithinLimit(join(directory, 'manifest.json'), MAX_MANIFEST_BYTES))
+  const rawManifest: unknown = JSON.parse(
+    await readFileWithinLimit(join(directory, 'manifest.json'), MAX_MANIFEST_BYTES)
   )
+  assertPackageCompatibility(rawManifest)
+  const manifest = sessionPackageManifestSchema.parse(rawManifest)
   const declared = new Set(['manifest.json', 'objects/'])
+  // Duplicate inventory paths are valid only as content-dedupe aliases with identical bytes.
+  const contentPaths = new Map<
+    string,
+    Pick<SessionPackageManifest['inventory'][number], 'sizeBytes' | 'checksum' | 'storageKey'>
+  >()
+  const metadata = manifest.inventory.filter((entry) => entry.path === PACKAGE_RO_CRATE_METADATA)
+  if (
+    Boolean(manifest.requiredFeatures?.includes('ro-crate')) !== (metadata.length === 1) ||
+    metadata.some((entry) => entry.kind !== 'metadata' || entry.storageKey !== undefined) ||
+    manifest.inventory.some(
+      (entry) => entry.kind === 'metadata' && entry.path !== PACKAGE_RO_CRATE_METADATA
+    )
+  )
+    throw new Error('RO-Crate package capability declaration is invalid.')
+  if (
+    manifest.inventory.reduce((sum, entry) => sum + (entry.storageKey ? entry.sizeBytes : 0), 0) >
+    PACKAGE_MAX_BYTES
+  )
+    throw new Error('Session package exceeds the reconstructed content limit.')
   for (const entry of manifest.inventory) {
-    if (declared.has(entry.path))
-      throw new Error('Session package inventory contains duplicate entries.')
+    const existing = contentPaths.get(entry.path)
+    if (declared.has(entry.path)) {
+      if (
+        !existing ||
+        !manifest.requiredFeatures?.includes('content-dedupe') ||
+        !entry.storageKey ||
+        !existing.storageKey ||
+        existing.storageKey === entry.storageKey ||
+        existing.sizeBytes !== entry.sizeBytes ||
+        existing.checksum !== entry.checksum
+      )
+        throw new Error('Session package inventory contains duplicate entries.')
+    } else {
+      contentPaths.set(entry.path, entry)
+    }
     declared.add(entry.path)
     const file = join(directory, entry.path)
     await assertPackageSourcePath(directory, entry.path)

@@ -1,36 +1,48 @@
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 
+import type { Logger } from '@aipoch/diagnostics/node'
+import {
+  EnvironmentManifestPublicationError,
+  EnvironmentStateTracker,
+  prepareNotebookWorkloadCache,
+  type EnvironmentCaptureTarget
+} from '@aipoch/environment'
+import {
+  unavailableNotebookDependencyProjection,
+  type NotebookDependencyInterpreter,
+  type NotebookDependencyProjection
+} from '@aipoch/notebook-analysis'
+import type { NotebookSourceFileAccessContext } from '@aipoch/notebook-analysis/contracts'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import type {
   ExecuteNotebookControlRequest,
   ExecuteShellRequest,
   NotebookCell,
-  NotebookLanguage,
   NotebookOutput,
   NotebookRunInputFile,
-  NotebookRunRecord,
   NotebookRunProvenanceContext,
+  NotebookRunRecord,
   NotebookRunSource,
   NotebookRunStatus,
-  ShellRuntimeBinding,
   NotebookWorkingFile,
-  RunNotebookCellRequest
+  RunNotebookCellRequest,
+  ShellRuntimeBinding
 } from '../../shared/notebook'
-import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import type { Logger } from '../logger'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { getAppClaudeConfigDir } from '../settings/provider-env'
 import { NotebookDataExecutionAdmissionOwner } from './data-execution-admission'
-import {
-  EnvironmentManifestPublicationError,
-  EnvironmentStateTracker,
-  type EnvironmentCaptureTarget
-} from './environment-state-tracker'
-import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRunTerminalizationOwner } from './run-terminalization'
+import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
+import type { TransientViewImage } from './execution-model-contract'
+import { getNotebookInputRoot } from './input-staging'
 import { notebookLaneKey, notebookLaneScope } from './lane-identity'
-import { NotebookRunSubmissionConflictError } from './repository'
+import { detectManagedRuntimeMutation } from './managed-runtime-guard'
+import { NotebookRunSubmissionConflictError, getNotebookFileEvidenceLocation } from './repository'
+import { NotebookRunTerminalizationOwner } from './run-terminalization'
 import type {
   NotebookSessionAggregate,
   NotebookSessionExecutionResult,
@@ -42,31 +54,26 @@ import { notebookInterpreterIdentity } from './session-aggregate'
 import {
   NotebookShellProcessAdapter,
   buildShellEnv,
-  type NotebookShellProcess,
-  type NotebookShellResult
+  type NotebookShellProcess
 } from './shell-process'
-import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
-import { startWorkingFileObservation } from './working-file-observer'
-import type { TransientViewImage } from './host-view-image-service'
-import {
-  unavailableNotebookDependencyProjection,
-  type NotebookDependencyInterpreter,
-  type NotebookDependencyProjection
-} from './dependency-analysis'
-import type { NotebookHelperModuleHost, NotebookHelperModuleScope } from './helper-module-host'
-import { getNotebookFileEvidenceLocation } from './repository'
-import { getNotebookInputRoot } from './input-staging'
+import type { NotebookShellResult } from './shell-process-contract'
 import {
   captureShellRuntimeBinding,
   defaultShellRuntimeBinding,
   shellRuntimePlatform
 } from './shell-runtime'
-import type { NotebookSourceFileAccessContext } from './dependency-analysis-types'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { startWorkingFileObservation } from './working-file-observer'
 
 type NotebookControlResult = Pick<
   NotebookSessionExecutionResult,
-  'stdout' | 'stderr' | 'traceback' | 'outputs' | 'truncated' | 'workingFiles' | 'fileEvidence'
+  | 'stdout'
+  | 'stderr'
+  | 'traceback'
+  | 'outputs'
+  | 'truncated'
+  | 'workingFiles'
+  | 'fileEvidence'
+  | 'recovery'
 > & {
   status: Exclude<NotebookRunStatus, 'queued' | 'running'>
   viewImages?: readonly TransientViewImage[]
@@ -139,6 +146,17 @@ type NotebookExecutionOwnerOptions = {
     session: NotebookSessionAggregate,
     run: NotebookRunRecord
   ) => Promise<NotebookSourceFileAccessContext | undefined>
+  reviewCode?: (
+    session: NotebookSessionAggregate,
+    run: NotebookRunRecord,
+    context: NotebookSourceFileAccessContext | undefined,
+    signal?: AbortSignal
+  ) => Promise<void>
+  prepareRuntimeSelection?: (
+    session: NotebookSessionAggregate,
+    language: NotebookLanguage,
+    signal?: AbortSignal
+  ) => Promise<void>
   helperModules: Pick<
     NotebookHelperModuleHost,
     'preflight' | 'plan' | 'commitInitialized' | 'loadedEvidence'
@@ -289,7 +307,8 @@ const controlResultFromRun = (run: NotebookRunRecord): NotebookControlResult => 
     outputs: run.outputs,
     ...(run.truncated ? { truncated: true } : {}),
     workingFiles: run.workingFiles,
-    fileEvidence: run.fileEvidence
+    fileEvidence: run.fileEvidence,
+    ...(run.recovery ? { recovery: run.recovery } : {})
   }
 }
 
@@ -546,20 +565,25 @@ class NotebookExecutionOwner {
   }
 
   async cancelShellRuns(
-    scope: { projectId?: string; sessionId?: string; laneKey?: string },
+    scope: { projectId?: string; sessionId?: string; laneKey?: string; runId?: string },
     reason: unknown
   ): Promise<{ reaped: boolean }> {
-    const runs = Array.from(this.liveShellRuns.values()).filter(
-      (run) =>
-        (scope.projectId === undefined || run.projectId === scope.projectId) &&
-        (scope.sessionId === undefined || run.sessionId === scope.sessionId) &&
-        (scope.laneKey === undefined || run.laneKey === scope.laneKey)
-    )
+    const runs = Array.from(this.liveShellRuns.entries())
+      .filter(
+        ([runId, run]) =>
+          (scope.runId === undefined || runId === scope.runId) &&
+          (scope.projectId === undefined || run.projectId === scope.projectId) &&
+          (scope.sessionId === undefined || run.sessionId === scope.sessionId) &&
+          (scope.laneKey === undefined || run.laneKey === scope.laneKey)
+      )
+      .map(([, run]) => run)
     const cancellationWrites = await Promise.allSettled(
       runs.map((run) => run.requestCancellation(reason))
     )
     for (const run of runs) run.controller.abort(reason)
     const settlements = await Promise.allSettled(runs.map((run) => run.settled))
+    const shellShutdown =
+      scope.runId === undefined ? await this.shellProcess.shutdown?.(scope) : undefined
     const failures = cancellationWrites.flatMap((result) =>
       result.status === 'rejected' ? [result.reason] : []
     )
@@ -567,7 +591,9 @@ class NotebookExecutionOwner {
       throw new AggregateError(failures, 'Shell cancellation intent could not be persisted.')
     }
     return {
-      reaped: settlements.every((result) => result.status === 'fulfilled' && result.value)
+      reaped:
+        shellShutdown?.reaped !== false &&
+        settlements.every((result) => result.status === 'fulfilled' && result.value)
     }
   }
 
@@ -677,6 +703,9 @@ class NotebookExecutionOwner {
     helperModuleIds?: readonly string[],
     onAdmitted?: (run: NotebookRunRecord) => void
   ): Promise<{ run: NotebookRunRecord; dependencyProjection: NotebookDependencyProjection }> {
+    if ((request.source ?? 'agent') === 'agent') {
+      await this.options.prepareRuntimeSelection?.(session, cell.language, signal)
+    }
     const admittedAt = Date.now()
     const executionCount = session.nextExecutionCount()
     const cwdBefore = session.cwd
@@ -842,10 +871,25 @@ class NotebookExecutionOwner {
                     kernelEpoch,
                     helperRequest
                   )
-                  reachedExecutor = true
                   const sourceFileAccessContext = await this.options
                     .sourceFileAccessContext?.(session, executionRun)
                     .catch(() => undefined)
+                  await this.options.reviewCode?.(
+                    session,
+                    executionRun,
+                    sourceFileAccessContext,
+                    signal
+                  )
+                  signal?.throwIfAborted()
+                  if (
+                    session.currentKernelEpochId(processKey) !== kernelEpochId ||
+                    !isDeepStrictEqual(session.runtimeBinding(cell.language), binding)
+                  ) {
+                    throw new Error(
+                      'Notebook runtime changed while code approval was pending. Retry against the current runtime.'
+                    )
+                  }
+                  reachedExecutor = true
                   let executionResult = await session
                     .execute({
                       runId,
@@ -1114,9 +1158,7 @@ class NotebookExecutionOwner {
     onExecutionSettled?: (error?: unknown) => void
   ): Promise<NotebookControlResult> {
     const admittedAt = Date.now()
-    const replWasTerminated =
-      session.kernelStatus('repl') === 'terminated' || session.hasDurableKernelTermination('repl')
-    const kernelEpochId = session.kernelEpoch('repl', replWasTerminated).id
+    const kernelEpochId = session.currentKernelEpochId('repl')
     const queuedRun: NotebookRunRecord = {
       runId: controlInvocationId,
       executionMode: request.background ? 'background' : 'foreground',
@@ -1131,6 +1173,7 @@ class NotebookExecutionOwner {
       source: 'agent',
       inputKind: 'cell',
       kernelKind: 'repl',
+      replPersistentBindings: true,
       script: request.code,
       status: 'queued',
       startedAt: admittedAt,
@@ -1149,10 +1192,6 @@ class NotebookExecutionOwner {
       processKey: 'repl'
     }
 
-    // Resolve and retain the Session-owned Host SDK capability before the durable admission point.
-    // The per-invocation scope is opened only when this FIFO entry actually dispatches.
-    signal?.throwIfAborted()
-    const mcpRpc = await session.resolveMcpRpcConnection(this.options.getMcpRpcConnectionResolver())
     signal?.throwIfAborted()
     const blockedMutation = detectManagedRuntimeMutation({
       source: request.code,
@@ -1179,8 +1218,6 @@ class NotebookExecutionOwner {
               request,
               durableAdmission.run,
               controlInvocationGeneration,
-              replWasTerminated,
-              mcpRpc,
               blockedMutation,
               signal
             ),
@@ -1260,14 +1297,20 @@ class NotebookExecutionOwner {
     request: ExecuteNotebookControlRequest,
     queuedRun: NotebookRunRecord,
     controlInvocationGeneration: number,
-    replWasTerminated: boolean,
-    mcpRpc: NotebookSessionMcpRpcConnection | undefined,
     blockedMutation: ReturnType<typeof detectManagedRuntimeMutation>,
     signal?: AbortSignal
   ): Promise<NotebookControlResult> {
+    // A lifecycle projection may have been appended after this entry already joined the FIFO.
+    await session.drainExecutorLifecycle()
     const replStatusBefore = session.kernelStatus('repl')
+    const replWasTerminated =
+      replStatusBefore === 'terminated' || session.hasDurableKernelTermination('repl')
+    const epoch = session.kernelEpoch('repl', replWasTerminated)
+    // The queued record describes admission. Persist the actual dispatch epoch in the existing
+    // queued -> running transition, before any process receives this invocation.
+    queuedRun = { ...queuedRun, kernelEpochId: epoch.id }
     const runId = queuedRun.runId
-    const kernelEpochId = queuedRun.kernelEpochId
+    const kernelEpochId = epoch.id
     const replEpochId = blockedMutation ? undefined : kernelEpochId
     let executedOnLiveKernel = !blockedMutation
     let reachedExecutor = false
@@ -1289,10 +1332,22 @@ class NotebookExecutionOwner {
               )
             )
           : (async () => {
+              const mcpRpc = await session.resolveMcpRpcConnection(
+                this.options.getMcpRpcConnectionResolver(),
+                epoch
+              )
+              signal?.throwIfAborted()
               const sourceFileAccessContext = await this.options
                 .sourceFileAccessContext?.(session, queuedRun)
                 .catch(() => undefined)
+              await this.options.reviewCode?.(session, queuedRun, sourceFileAccessContext, signal)
+              signal?.throwIfAborted()
+              if (session.currentKernelEpochId('repl') !== epoch.id) {
+                throw new Error('Notebook REPL epoch retired before dispatch.')
+              }
+              if (mcpRpc) session.retainControlInvocationConnection(runId, mcpRpc)
               const releaseControlInvocation = mcpRpc?.beginControlInvocation?.({
+                rootExecutionId: request.rootExecutionId,
                 turnId: runId,
                 controlInvocationGeneration,
                 toolInvocationId: runId,
@@ -1343,6 +1398,23 @@ class NotebookExecutionOwner {
                 .finally(() => releaseControlInvocation?.())
             })()
         ).catch((error: unknown) => {
+          // Preparation can yield after the Run starts but before the interpreter receives it.
+          if (
+            !reachedExecutor &&
+            signal?.aborted &&
+            error === signal.reason &&
+            !(error instanceof NotebookExecutionStopError)
+          ) {
+            return {
+              status: 'cancelled',
+              kernelDispatched: false,
+              stdout: '',
+              stderr: error instanceof Error ? error.message : String(error),
+              traceback: '',
+              cwdAfter: session.cwd,
+              outputs: []
+            }
+          }
           executedOnLiveKernel = false
           return errorToExecutionResult(error, session.cwd)
         }),
@@ -1386,6 +1458,7 @@ class NotebookExecutionOwner {
       traceback: result.traceback,
       outputs: result.outputs,
       ...(result.truncated ? { truncated: true } : {}),
+      ...(result.recovery ? { recovery: result.recovery } : {}),
       workingFiles: result.workingFiles,
       fileEvidence: result.fileEvidence
     }
@@ -1411,7 +1484,8 @@ class NotebookExecutionOwner {
       shellRuntimePlatform(runtimeBinding, platform),
       process.env,
       runtimeRoot,
-      prepareNotebookWorkloadCache(runtimeRoot)
+      prepareNotebookWorkloadCache(runtimeRoot),
+      runtimeBinding
     )
     const frozenShellContext: NonNullable<NotebookRunRecord['frozenShellContext']> = {
       cwd: session.cwd,
@@ -1543,6 +1617,7 @@ class NotebookExecutionOwner {
         // Recheck admission after async lookup - shutdown or revocation could have happened
         this.assertShellAdmissionAvailable(session)
         const shellProcessRequest = {
+          laneKey: notebookLaneKey(session.lane),
           runId,
           executionReference: runId,
           runtimeBinding,
@@ -1562,8 +1637,8 @@ class NotebookExecutionOwner {
         let durableAdmission: Awaited<ReturnType<NotebookRunTerminalizationOwner['admit']>>
         try {
           if (lifecycleSignal.aborted) throw lifecycleSignal.reason
-          // Production freezes sandbox roots, trust material, network decision state, and one-shot
-          // grants before durable admission. Injected test adapters may keep the legacy execute port.
+          // Freeze this request before admission. The lane validates it against the live cwd and
+          // activates per-command network grants when it reaches the front of its execution queue.
           preparedShell = await this.shellProcess.prepare?.(shellProcessRequest)
           durableAdmission = await this.options.runTerminalization.admit({ session, queuedRun })
         } catch (error) {
@@ -1615,6 +1690,13 @@ class NotebookExecutionOwner {
               shellConcurrency: { limit: lease.limit, slot: lease.slot }
             },
             invoke: async () => {
+              await this.options.reviewCode?.(
+                session,
+                durableAdmission.run,
+                undefined,
+                lifecycleSignal
+              )
+              lifecycleSignal.throwIfAborted()
               const workingFileObservation = await startWorkingFileObservation({
                 dataRoot: session.dataRoot,
                 notebookSessionRoot: frozenShellContext.notebookSessionRoot,
@@ -1712,7 +1794,8 @@ class NotebookExecutionOwner {
                 stdout: shellResult.stdout,
                 stderr: shellResult.stderr,
                 traceback: '',
-                cwdAfter: frozenShellContext.cwd,
+                cwdAfter: shellResult.cwd ?? frozenShellContext.cwd,
+                cwdBefore: shellResult.cwdBefore,
                 outputs,
                 truncated: shellResult.truncated,
                 workingFiles,

@@ -1,8 +1,9 @@
+import { configureTestElectronHost } from '../../../../test/runtime-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DeviceCredentialStore } from '../../../main/settings/device-credentials'
-import { PersistentOAuthClientProvider } from '../../../main/connectors/oauth-client'
+import { PersistentOAuthClientProvider } from '@aipoch/connector-mcp-client'
 
 vi.mock('electron', () => ({
   safeStorage: {
@@ -152,7 +153,11 @@ describe('settings Connectors slice', () => {
         oauth: {}
       })
       await credentials.saveOAuthState(credential.id, {
-        tokens: { access_token: 'old-token', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'old-token',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test'
+        }
       })
       const list = async (): Promise<{ credentials: DeviceCredentialView[] }> => ({
         credentials: (await credentials.list()).map((entry) => credentials.view(entry, []))
@@ -1072,7 +1077,10 @@ describe('settings Connectors slice', () => {
     expect(store.getState().pendingApprovals).toEqual([first, second])
 
     const pending = store.getState().respondApproval('first', 'session')
-    expect(store.getState().pendingApprovals).toEqual([first, second])
+    expect(store.getState().pendingApprovals).toEqual([
+      { ...first, responding: true, responseFailed: false },
+      second
+    ])
     expect(commands.respondConnectorApproval).toHaveBeenCalledWith({
       id: 'first',
       decision: 'session'
@@ -1097,7 +1105,9 @@ describe('settings Connectors slice', () => {
       'response failed'
     )
 
-    expect(store.getState().pendingApprovals).toEqual([request])
+    expect(store.getState().pendingApprovals).toEqual([
+      { ...request, responding: false, responseFailed: true }
+    ])
   })
 
   it('dismisses a settled approval idempotently', () => {
@@ -1139,3 +1149,5 @@ describe('settings Connectors slice', () => {
     expect(store.getState().pendingCredentialRequests).toEqual([])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -24,20 +24,46 @@
 // This module does NOT own conversational review or a permission card — that is the /customize Skill
 // (later slice). Ordinary mutations do not request a system permission card.
 
-import type { ConnectorReadModel, SkillCatalogReadModel } from './agents-service'
-import { applyNameOrIdFilter } from './name-or-id-filter'
-import type { SpecialistService } from '../specialist/service'
+// host.agents ordinary-mutation operation module (issue 03).
+//
+// This module implements ordinary Specialist mutations + read-back: create, mutable-field update,
+// enable/disable, and incremental whole-Skill/whole-Connector attach/detach. It is deliberately a
+// standalone module so issue 08 can compose it into the shared dispatcher without changing issues
+// 04/05. The privileged delete and switch operations stay out of scope here — they
+// require the injected approval gateway.
+//
+// Design rules (design.md §4/§5/§8, PRD §2/§4):
+//  - SpecialistService is the SINGLE domain mutation service. This module never writes the repository
+//    directly and never re-implements the Full/Selected collection rules; it only translates the
+//    private snake_case transport input into SpecialistService input and delegates.
+//  - Every successful mutation returns an actual post-write camelCase Profile read-back, never an
+//    echo of the requested input.
+//  - Skill/Connector references resolve an exact catalog ID first, otherwise an unambiguous public
+//    name, and persist only the stable ID.
+//  - update/delete-style mutations require the current existing revision; a stale revision fails
+//    without merge or retry (delegated to the repository's optimistic-concurrency check).
+//  - Errors are sanitized and prefixed `host.agents.<method>:` so system instructions, connector
+//    args, secrets, headers, environment values, and the RPC token never leak.
+//  - Main validates every payload before reaching the repository: unknown, malformed, non-finite,
+//    or wrong-shaped fields are rejected here.
+//
+// This module does NOT own conversational review or a permission card — that is the /customize Skill
+// (later slice). Ordinary mutations do not request a system permission card.
 import type {
   CreateSpecialistInput,
   SpecialistCapabilityMode,
   SpecialistFullAccessConfig,
-  SpecialistView,
   SpecialistSelectedConfig,
   UpdateSpecialistInput
-} from '../../shared/specialist'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+} from '@aipoch/specialists'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 import type { ApprovalGateway } from '../../shared/agents-contract'
+import type { SpecialistView } from '../../shared/specialist'
+import type { ConnectorReadModel } from '../connectors/read-model'
+import type { SpecialistService } from '../specialist/service'
 import { AgentsSafeError, agentsPublicError, formatAgentsError } from './agents-error'
+import type { SkillCatalogReadModel } from './catalog-contract'
+import { applyNameOrIdFilter } from './name-or-id-filter'
 
 // The catalog resolution seam this module consumes. It receives the ALREADY-PROJECTED public read
 // models (the same models the read slice returns from list_skills/list_connectors), so this module

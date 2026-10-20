@@ -1,5 +1,116 @@
 import { expect, test } from '@playwright/test'
 
+test('prepares PDF text and area evidence before the first conversation message', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/modal-library-close.html?preview=new-conversation')
+  const text = page.locator('.textLayer span').filter({ hasText: 'Literature attachment preview' })
+  await expect(text).toBeVisible()
+  const box = (await text.boundingBox())!
+  await page.mouse.move(box.x + 1, box.y + box.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(box.x + box.width - 1, box.y + box.height / 2, { steps: 8 })
+  await page.mouse.up()
+  await page.getByRole('button', { name: 'Citate', exact: true }).click()
+  await expect(page.locator('[data-annotation-draft-chip]')).toHaveCount(1)
+  await page.getByRole('button', { name: 'Select area for Agent', exact: true }).click()
+  const area = page.locator('[data-pdf-region-selection]')
+  await expect(area).toBeVisible()
+  const region = (await area.boundingBox())!
+  await page.mouse.move(region.x + 30, region.y + 130)
+  await page.mouse.down()
+  await page.mouse.move(region.x + 350, region.y + 225, { steps: 8 })
+  await page.mouse.up()
+  await expect(page.locator('[data-annotation-draft-chip]')).toHaveCount(2)
+  await page.getByRole('textbox', { name: 'Message draft' }).fill('Explain the selected evidence.')
+  await page.getByRole('button', { name: 'Capture first send' }).click()
+  const snapshot = JSON.parse((await page.locator('[data-send-snapshot]').textContent())!)
+  expect(snapshot.draftKey).toBe('new:draft-project')
+  expect(
+    snapshot.annotations.map(
+      (annotation: { selector: { kind: string } }) => annotation.selector.kind
+    )
+  ).toEqual(['text', 'region'])
+  expect(
+    snapshot.annotations.every(
+      (annotation: { source: { versionId: string; projectId: string } }) =>
+        annotation.source.versionId === 'version-2' &&
+        annotation.source.projectId === 'draft-project'
+    )
+  ).toBe(true)
+  expect(snapshot.pendingPdfContextVersions).toEqual([
+    {
+      sourceKind: 'literature-attachment-version',
+      sourceFileId: 'attachment-1',
+      sourceVersionId: 'version-2'
+    }
+  ])
+  await page.screenshot({ path: testInfo.outputPath('new-conversation-pdf-evidence.png') })
+  expect(errors).toEqual([])
+})
+
+test('floats notes by reader width while preserving drafts and the PDF layout', async ({
+  page
+}, testInfo) => {
+  await page.setViewportSize({ width: 1440, height: 960 })
+  const errors: string[] = []
+  page.on('pageerror', (error) => errors.push(error.message))
+  await page.goto('/modal-library-close.html?preview=new-conversation')
+  const reader = page.getByRole('region', { name: 'PDF preview', exact: true })
+  const original = reader.locator('[data-pdf-original-view]')
+  await expect(original.locator('canvas')).toBeVisible()
+  const originalWidth = (await original.boundingBox())!.width
+  await reader.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
+  const notes = reader.getByRole('complementary', { name: 'Notes & Annotations' })
+  await expect(notes).toBeVisible()
+  await expect(notes).toHaveCSS('width', '320px')
+  expect((await original.boundingBox())!.width).toBe(originalWidth)
+  await expect(reader.getByRole('separator', { name: 'Resize notes sidebar' })).toHaveCount(0)
+  await notes.getByRole('button', { name: 'Add note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add document note', exact: true }).press('Escape')
+  await expect(notes).toBeVisible()
+  await expect(page.getByRole('menu', { name: 'Add note' })).toHaveCount(0)
+  await notes.getByRole('button', { name: 'Add note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add document note', exact: true }).click()
+  const draft = notes.getByPlaceholder('Add a private note')
+  await draft.fill('Keep this draft across reader layouts.')
+  await page.screenshot({ path: testInfo.outputPath('floating-notes.png') })
+  // Resize the preview container while the application window stays wide.
+  await reader.evaluate((element) => {
+    element.style.width = '1200px'
+    element.style.flexShrink = '0'
+    element.previousElementSibling?.setAttribute('style', 'display:none')
+  })
+  await expect(reader.getByRole('separator', { name: 'Resize notes sidebar' })).toBeVisible()
+  await expect(original).toHaveCSS('right', '320px')
+  await expect(draft).toHaveValue('Keep this draft across reader layouts.')
+  await reader.evaluate((element) => {
+    element.style.width = '300px'
+  })
+  // The preview section has a 1px border outside the reader's content box.
+  await expect(notes).toHaveCSS('width', '283px')
+  await expect(original).toHaveCSS('right', '0px')
+  await expect(draft).toHaveValue('Keep this draft across reader layouts.')
+  await draft.press('Escape')
+  await expect(notes).toHaveCount(0)
+  const toggle = reader.getByRole('button', { name: 'Show notes sidebar', exact: true })
+  await expect(toggle).toBeFocused()
+  await toggle.click()
+  await expect(draft).toHaveValue('Keep this draft across reader layouts.')
+  await reader.getByRole('button', { name: 'Open full notes view', exact: true }).click()
+  await expect(reader.getByRole('tab', { name: 'Notes & Annotations' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
+  await expect(reader.getByPlaceholder('Add a private note')).toHaveValue(
+    'Keep this draft across reader layouts.'
+  )
+  expect(errors).toEqual([])
+})
+
 for (const reducedMotion of ['no-preference', 'reduce'] as const) {
   test(`attachment preview preserves its parent dialog with ${reducedMotion} motion`, async ({
     page
@@ -44,6 +155,26 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
       const preview = page.getByRole('dialog', { name: 'Preview paper.pdf', exact: true })
       await expect(preview.locator('[data-page-number="1"] canvas')).toBeVisible()
       const scroller = preview.getByRole('region', { name: 'paper.pdf scrollable preview' })
+      // Default application width (1280px): the 90vw modal has room for docked notes.
+      await preview.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
+      const notes = preview.getByRole('complementary', { name: 'Notes & Annotations' })
+      const separator = preview.getByRole('separator', { name: 'Resize notes sidebar' })
+      await expect(notes).toBeVisible()
+      await expect(separator).toBeVisible()
+      await expect(preview.locator('[data-pdf-original-view]')).toHaveCSS('right', '320px')
+      // Shrinking the application makes the same modal float notes, then restore docking.
+      await page.setViewportSize({ width: 1100, height: 900 })
+      await expect(separator).toHaveCount(0)
+      await expect(preview.locator('[data-pdf-original-view]')).toHaveCSS('right', '0px')
+      await scroller.focus()
+      await page.keyboard.press('Escape')
+      await expect(preview).toBeVisible()
+      await expect(notes).toHaveCount(0)
+      await preview.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await expect(separator).toBeVisible()
+      await expect(preview.locator('[data-pdf-original-view]')).toHaveCSS('right', '320px')
+      await preview.getByRole('button', { name: 'Hide notes sidebar', exact: true }).click()
       await scroller.click()
       await page.keyboard.press('Tab')
       expect(await preview.evaluate((element) => element.contains(document.activeElement))).toBe(
@@ -52,8 +183,13 @@ for (const reducedMotion of ['no-preference', 'reduce'] as const) {
       await scroller.hover()
       await page.mouse.wheel(0, 300)
       await expect.poll(() => scroller.evaluate((element) => element.scrollTop)).toBeGreaterThan(0)
-      // The preview owns the top scroll lock: its PDF scrolls while the background stays locked.
-      await expect(page.locator('body')).toHaveAttribute('data-scroll-locked', '1')
+      // Preview scroll isolation keeps the already-hidden body stable without a scrollbar lock.
+      await expect(page.locator('body')).not.toHaveAttribute('data-scroll-locked')
+      await expect(page.locator('body')).toHaveCSS('overflow-y', 'hidden')
+      await expect(page.locator('#root')).toHaveAttribute('inert', '')
+      await page.mouse.move(4, 450)
+      await page.mouse.wheel(0, 300)
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
       if (close === 'button') {
         await page.screenshot({ path: testInfo.outputPath('attachment-preview.png') })
         await preview.getByRole('button', { name: 'Close preview of paper.pdf' }).click()
@@ -267,10 +403,13 @@ for (const area of [false, true]) {
         const note = page.getByRole('dialog', { name: 'Annotation note', exact: true })
         await expect(note).toContainText('Saved selection note')
         await page.keyboard.press('Escape')
+        // Dismissal includes an exit animation and deferred focus return. Finish it before
+        // testing a new selection and keyboard activation instead of racing that lifecycle.
+        await expect(note).toHaveCount(0)
+        await expect(marker).toBeFocused()
         await highlight.click()
         await expect(highlight).toHaveAttribute('aria-pressed', 'true')
-        await marker.focus()
-        await page.keyboard.press('Enter')
+        await marker.press('Enter')
         await expect(note).toContainText('Saved selection note')
       })
     }

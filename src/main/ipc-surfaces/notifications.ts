@@ -1,3 +1,4 @@
+import type { DesktopNotificationDelivery } from '../notifications/desktop-delivery'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import {
   getTaskNotificationAvailability,
@@ -18,14 +19,17 @@ export const createNotificationElectronSurface = (
     TaskNotificationService,
     'peekPendingOpenSession' | 'takePendingOpenSession'
   >,
-  delivery: BuildTaskNotificationShowDeps
+  delivery: BuildTaskNotificationShowDeps,
+  remoteDelivery?: DesktopNotificationDelivery
 ): NamedElectronSurfaceAdapter =>
   createElectronSurfaceAdapter('task-notifications', () => {
     registerNotificationInboxIpcAdapter(inbox)
     ipcMainHandle('notifications:get-desktop-availability', () =>
-      getTaskNotificationAvailability(delivery)
+      remoteDelivery ? remoteDelivery.getAvailability() : getTaskNotificationAvailability(delivery)
     )
-    ipcMainHandle('notifications:send-test', () => showTestTaskNotification(delivery))
+    ipcMainHandle('notifications:send-test', () =>
+      remoteDelivery ? remoteDelivery.sendTest() : showTestTaskNotification(delivery)
+    )
     // Peek after hydration, then consume only the inspected target. An older IPC round trip
     // must not clear a newer click target; the shared task owner checks token identity.
     ipcMainHandle('notifications:peek-pending-open-session', () =>

@@ -1,3 +1,6 @@
+import { persistentContentReferences } from './prisma-content-references'
+import { discoveryJobOptions } from '../literature/discovery-adapters'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -8,9 +11,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
-import { LiteratureCitationStyleLibrary } from '../literature/citation-style-library'
-import { LiteratureCitationFormatter } from '../literature/citation-formatter'
-import { LiteratureBatchJobs } from '../literature/batch-jobs'
+import { LiteratureCitationStyleLibrary } from '@aipoch/literature-citations/styles'
+import { LiteratureCitationFormatter } from '@aipoch/literature-citations'
+import { LiteratureBatchJobs } from '@aipoch/literature-discovery'
 import { ContentRepository } from './content-repository'
 import { classifyDataRoot, commitDataRootSwitch, runDataRootMigration } from './migration-service'
 import { readMigrationMarker, scanInventory, writeMigrationMarker } from './migration-marker'
@@ -29,7 +32,11 @@ let config: string
 let client: PrismaClient
 const sha256 = (bytes: Buffer | string): string => createHash('sha256').update(bytes).digest('hex')
 const contentAt = (storageRoot: string): ContentRepository =>
-  new ContentRepository({ storageRoot, getClient: async () => client })
+  new ContentRepository({
+    references: persistentContentReferences,
+    storageRoot,
+    getClient: async () => client
+  })
 const deps = (): Parameters<typeof runDataRootMigration>[0] & {
   setDataRoot: ReturnType<typeof vi.fn<(path: string) => Promise<void>>>
 } => ({
@@ -112,6 +119,7 @@ const style = `<style xmlns="http://purl.org/net/xbiblio/csl" version="1.0" clas
 <bibliography><layout><text variable="title"/></layout></bibliography></style>`
 const jobsAt = (dataRoot: string): LiteratureBatchJobs =>
   new LiteratureBatchJobs({
+    ...discoveryJobOptions,
     path: join(dataRoot, 'literature', 'batch-jobs.json'),
     catalog: { get: vi.fn() },
     metadata: { complete: vi.fn(), applyReviewed: vi.fn() },
@@ -403,3 +411,5 @@ describe('literature migration authority validation', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -346,6 +346,14 @@ function Remove-ResetTree([string]$Path, [string]$Boundary) {
     else { [IO.File]::Delete($full) }
     return
   }
+  if (($item.Attributes -band [IO.FileAttributes]::ReadOnly) -ne 0) {
+    # Materialized Skills are intentionally read-only. Clear only that attribute before removing
+    # the owned tree; preserve hidden/system flags until the node itself is deleted.
+    [IO.File]::SetAttributes(
+      $full,
+      $item.Attributes -band (-bnot [IO.FileAttributes]::ReadOnly)
+    )
+  }
   if ($item.PSIsContainer) {
     # Retain settings until other children succeed, including in the legacy configuration root.
     $children = @(Get-ChildItem -LiteralPath $full -Force | Sort-Object { $_.Name -like 'settings.json*' })

@@ -28,7 +28,7 @@ const WorkspaceContextCompactionActivityRow = ({
   const note = isActive
     ? t('Summarizing earlier context…')
     : isFailed || isCancelled
-      ? t('Earlier context is unchanged.')
+      ? t('Your conversation history is preserved.')
       : t('Earlier context was summarized so the session can continue.')
   const iconClassName = cn(
     'size-3.5 shrink-0',

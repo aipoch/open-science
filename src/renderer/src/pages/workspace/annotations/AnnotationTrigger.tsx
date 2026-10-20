@@ -128,7 +128,7 @@ const AnnotationTrigger = ({
         />
       </PopoverAnchor>
       {hidden || !position.visible ? null : actions ? (
-        <TooltipProvider delayDuration={800}>
+        <TooltipProvider>
           <div
             ref={(element) => {
               triggerRef.current = element

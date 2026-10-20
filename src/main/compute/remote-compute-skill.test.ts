@@ -3,7 +3,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import { parseSkillDocument } from '../../shared/skill-frontmatter'
+import { parseSkillDocument } from '@aipoch/skills/document'
 
 const skillPath = join(process.cwd(), 'resources', 'skills', 'remote-compute-ssh', 'SKILL.md')
 

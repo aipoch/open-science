@@ -1,3 +1,4 @@
+import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
 import { constants, createReadStream } from 'node:fs'
 import { copyFile, lstat, mkdir, readdir, rename, rm, stat } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
@@ -319,7 +320,12 @@ class LegacyRecoveryOwner {
             checksum: version.checksum,
             createdAt: version.createdAt?.toISOString()
           },
-          version
+          version,
+          {
+            deferVisibility:
+              version.uploadFile.sessionId.startsWith('research-draft-') ||
+              version.uploadFile.sessionId.startsWith('research-submission-')
+          }
         )
       })
     )
@@ -392,7 +398,11 @@ class LegacyRecoveryOwner {
     sessionId: string,
     attachment: UploadedAttachment,
     version: UploadVersionRecord,
-    options: { preserveSource?: boolean; legacySessionUpload?: boolean } = {}
+    options: {
+      preserveSource?: boolean
+      legacySessionUpload?: boolean
+      deferVisibility?: boolean
+    } = {}
   ): Promise<UploadedAttachment> {
     const finalPath = resolve(this.storageRoot, ...version.contentStorageKey.split('/'))
     assertPathInsideRoot(
@@ -529,7 +539,11 @@ class LegacyRecoveryOwner {
               where: { id: current.id },
               data: { state: 'ready', contentBlobId }
             })
-      if (!lifecycle.writable) return updated
+      await bindManagedPdfVersion(tx, 'upload-version', updated.id)
+      // Research drafts keep immutable bytes before sending, without publishing them into Files.
+      // The existing live-save headless-Version path publishes the same Version when a message
+      // actually takes ownership. Startup recovery preserves this private origin boundary.
+      if (!lifecycle.writable || options.deferVisibility) return updated
       const shouldAdvanceHead =
         !file.currentVersion || file.currentVersion.versionNumber < updated.versionNumber
       if (shouldAdvanceHead) {

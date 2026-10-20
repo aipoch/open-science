@@ -1,6 +1,29 @@
+import type {
+  ArtifactReproducibilityProjection,
+  ArtifactReproducibilityRecipe
+} from '@aipoch/reproducibility/contracts'
+export type {
+  ArtifactReproducibilityBarrierReason,
+  ArtifactReproducibilityActivity,
+  ArtifactReproducibilityEntity,
+  ArtifactReproducibilityOutputGroup,
+  ArtifactReproducibilityEdge,
+  ArtifactReproducibilityStartFrontier,
+  ArtifactReproducibilityProjection,
+  ArtifactReproducibilityRecipeBarrier,
+  ArtifactReproducibilityEnvironmentRequirement,
+  ArtifactReproducibilityRecipeStep,
+  ArtifactReproducibilityRecipeFile,
+  ArtifactReproducibilityFrontierPlan,
+  ArtifactReproducibilityRecipe
+} from '@aipoch/reproducibility/contracts'
 import type { ArtifactFile, ArtifactSourceFileObservation, ArtifactWriteSource } from './artifacts'
-import type { NotebookExecutionContext } from './notebook-execution-context'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import type { ArtifactLiteratureManifest, ArtifactLiteratureRequest } from './artifact-literature'
+import type {
+  NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture
+} from '@aipoch/environment/contracts'
 import type {
   NotebookInputAssociation,
   NotebookInputAccessEvidence,
@@ -8,8 +31,6 @@ import type {
   NotebookHelperEvidenceStatus,
   NotebookKernelKind,
   NotebookInputFileSummary,
-  NotebookRunEnvironmentCapture,
-  NotebookRunEnvironmentLockCapture,
   NotebookRunInputFile,
   NotebookRunStatus
 } from './notebook'
@@ -20,7 +41,7 @@ import type {
   PersistedToolActivity
 } from './session-persistence'
 import type { ArtifactVersionReviewProjection } from './reviewer'
-import type { ComputeJobStatus } from './compute'
+import type { ComputeJobStatus } from '@aipoch/compute'
 import type {
   ExecutionFileEvidenceReason,
   ScientificOutputRisk,
@@ -179,35 +200,11 @@ export type GetArtifactVersionProvenanceRequest = GetArtifactLineageRequest & {
   versionId: string
 }
 
-export type ArtifactVersionIdentity = GetArtifactVersionProvenanceRequest
-
-const ARTIFACT_VERSION_LOCATOR_PREFIX = 'artifact-version:'
-
-// Renderer state persists this opaque, root-independent identity instead of a local filesystem path.
-// Main parses it and resolves the immutable Version through SQLite after every data-root migration.
-export const createArtifactVersionLocator = (identity: ArtifactVersionIdentity): string =>
-  `${ARTIFACT_VERSION_LOCATOR_PREFIX}${[
-    identity.projectId,
-    identity.appSessionId,
-    identity.artifactId,
-    identity.versionId
-  ]
-    .map(encodeURIComponent)
-    .join('/')}`
-
-export const parseArtifactVersionLocator = (value: string): ArtifactVersionIdentity | undefined => {
-  if (!value.startsWith(ARTIFACT_VERSION_LOCATOR_PREFIX)) return undefined
-  const parts = value.slice(ARTIFACT_VERSION_LOCATOR_PREFIX.length).split('/')
-  if (parts.length !== 4 || parts.some((part) => part.length === 0)) return undefined
-
-  try {
-    const [projectId, appSessionId, artifactId, versionId] = parts.map(decodeURIComponent)
-    if (!projectId || !appSessionId || !artifactId || !versionId) return undefined
-    return { projectId, appSessionId, artifactId, versionId }
-  } catch {
-    return undefined
-  }
-}
+export {
+  createArtifactVersionLocator,
+  parseArtifactVersionLocator
+} from './artifact-version-locator'
+export type { ArtifactVersionIdentity } from './artifact-version-locator'
 
 // Lineage crosses IPC and is persisted in renderer state, so it deliberately excludes root-bound
 // path/fileUrl fields. File access goes through the opaque Artifact Version locator above.
@@ -346,7 +343,7 @@ export type ArtifactPackageSourceEvidence =
   | { type: 'bioconductor'; version?: string }
 
 export type ArtifactVersionEnvironmentEvidence = {
-  execution_context?: import('./notebook-execution-context').NotebookExecutionContext
+  execution_context?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext
   capture_kind: 'completed-run'
   environment_name: string
   kernel_kind: 'python' | 'r'
@@ -646,164 +643,8 @@ export type ArtifactProvenanceGraph = {
   outputGroups?: ArtifactProvenanceGraphOutputGroup[]
 }
 
-export type ArtifactReproducibilityBarrierReason =
-  | ArtifactProvenanceGraphReason
-  | 'absolute-path-boundary'
-  | 'activity-evidence-not-complete'
-  | 'advisory-boundary'
-  | 'ambiguous-activity-order'
-
-export type ArtifactReproducibilityActivity = Pick<
-  ArtifactProvenanceGraphActivity,
-  'activityId' | 'kind' | 'sequence' | 'runIndex' | 'inclusion' | 'evidenceState'
->
-
-export type ArtifactReproducibilityEntity = {
-  entityId: string
-  kind: ArtifactProvenanceGraphEntity['kind']
-  label: string
-  checksum: string
-  sizeBytes: number
-  pathPortability?: 'relative' | 'absolute'
-  sourceKind?: NotebookRunInputFile['sourceKind']
-}
-
-export type ArtifactReproducibilityOutputGroup = {
-  outputId: string
-  activityId: string
-  label: string
-  storageShape: Exclude<ScientificOutputStorageShape, 'single-file'>
-  formatHint?: string
-  memberEntityIds: string[]
-  riskCodes: ScientificOutputRisk[]
-}
-
-export type ArtifactReproducibilityEdge =
-  | Pick<
-      Extract<ArtifactProvenanceGraphEdge, { kind: 'used' | 'generated' }>,
-      'kind' | 'activityId' | 'entityId' | 'authority' | 'evidenceSource'
-    >
-  | Pick<
-      Extract<ArtifactProvenanceGraphEdge, { kind: 'depends-on' }>,
-      'kind' | 'activityId' | 'dependencyActivityId' | 'authority' | 'evidenceSource'
-    >
-
-export type ArtifactReproducibilityStartFrontier = {
-  frontierId: string
-  kind: 'original-inputs' | 'checkpoint'
-  claimScope: 'end-to-end' | 'downstream-only'
-  eligibility: 'available' | 'limited' | 'blocked'
-  afterActivityId?: string
-  crossingEntityIds: string[]
-  downstreamActivityIds: string[]
-  reasonCodes: ArtifactReproducibilityBarrierReason[]
-  checkReasonCodes?: ArtifactReproducibilityRecipeBarrier[]
-  // File identities with no materialization entry in the saved plan; no live disk inspection.
-  unavailableEntityIds?: string[]
-}
-
 // Read-only renderer projection derived from the immutable graph. It deliberately excludes storage
 // keys, evidence object ids, and original absolute path strings.
-export type ArtifactReproducibilityProjection = {
-  completeness: ArtifactProvenanceGraph['completeness']
-  reasonCodes: ArtifactProvenanceGraphReason[]
-  checkReasonCodes?: ArtifactReproducibilityRecipeBarrier[]
-  targetEntityId: string
-  activities: ArtifactReproducibilityActivity[]
-  entities: ArtifactReproducibilityEntity[]
-  outputGroups: ArtifactReproducibilityOutputGroup[]
-  edges: ArtifactReproducibilityEdge[]
-  startFrontiers: ArtifactReproducibilityStartFrontier[]
-  executionRunCount: number
-  includedNotebookRunCount: number
-  skippedRunCount: number
-}
-
-export type ArtifactReproducibilityRecipeBarrier =
-  | 'target-graph-incomplete'
-  | 'target-graph-conservative'
-  | 'target-source-missing'
-  | 'required-run-missing'
-  | 'required-run-not-completed'
-  | 'required-source-truncated'
-  | 'unsupported-kernel-kind'
-  | 'environment-lock-missing'
-  | 'environment-lock-partial'
-  | 'activity-evidence-not-complete'
-  | 'helper-source-incomplete'
-  | 'execution-evidence-truncated'
-  | 'crossing-entity-unavailable'
-  | 'materialization-path-conflict'
-  | 'absolute-read-remapping-required'
-  | 'absolute-write-not-isolated'
-  | 'advisory-dependency'
-  | 'ambiguous-activity-order'
-  | 'compute-recipe-unavailable'
-  | 'recipe-budget-exceeded'
-
-export type ArtifactReproducibilityEnvironmentRequirement = {
-  requirementId: string
-  kernelKind: 'python' | 'r'
-  environmentName?: string
-  lockChecksum: string
-  lockState: 'available' | 'partial'
-}
-
-export type ArtifactReproducibilityRecipeStep =
-  | {
-      kind: 'notebook-run'
-      stepId: string
-      activityId: string
-      sequence: number
-      runId: string
-      runIndex: number
-      kernelKind: 'python' | 'r'
-      sourceChecksum: string
-      environmentRequirementId?: string
-      inputEntityIds: string[]
-      outputEntityIds: string[]
-    }
-  | {
-      kind: 'compute-job'
-      stepId: string
-      activityId: string
-      sequence: number
-      inputEntityIds: string[]
-      outputEntityIds: string[]
-    }
-
-export type ArtifactReproducibilityRecipeFile = {
-  entityId: string
-  checksum: string
-  sizeBytes: number
-  contentStorageKey: string
-  materializationPath: string
-}
-
-export type ArtifactReproducibilityFrontierPlan = {
-  frontierId: string
-  claimScope: 'end-to-end' | 'downstream-only'
-  afterActivityId?: string
-  stepIds: string[]
-  crossingFiles: ArtifactReproducibilityRecipeFile[]
-  reasonCodes: ArtifactReproducibilityRecipeBarrier[]
-}
-
-export type ArtifactReproducibilityRecipe = {
-  schemaVersion: 1
-  recipeId: string
-  targetVersionId: string
-  targetEntityId: string
-  targetChecksum: string
-  targetSourceEntityId?: string
-  graphChecksum: string
-  steps: ArtifactReproducibilityRecipeStep[]
-  frontiers: ArtifactReproducibilityFrontierPlan[]
-  environmentRequirements: ArtifactReproducibilityEnvironmentRequirement[]
-  capture:
-    | { state: 'sealed'; reasonCodes: [] }
-    | { state: 'blocked'; reasonCodes: ArtifactReproducibilityRecipeBarrier[] }
-}
 
 // Persisted only in main-process SQLite/immutable execution.json. storageKey is required to verify and
 // resolve the exact input Version, but this type must never cross the renderer IPC seam.

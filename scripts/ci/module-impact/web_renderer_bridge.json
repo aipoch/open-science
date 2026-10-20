@@ -20,6 +20,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/specialist/application-commands.test.ts",
       "src/renderer/src/pages/workspace/handoff-lifecycle-source.test.ts",
       "src/shared/renderer-surface-matrix.test.ts"
     ]

@@ -43,6 +43,27 @@ describe('publishUserFile', () => {
     await expect(readdir(root)).resolves.toEqual(['report.txt'])
   })
 
+  it('preserves the destination when cancellation occurs between replacement retries', async () => {
+    const destinationPath = join(root, 'report.txt')
+    await writeFile(destinationPath, 'existing bytes')
+    const controller = new AbortController()
+    const replace = vi.fn(async () => {
+      throw Object.assign(new Error('busy'), { code: 'EBUSY' })
+    })
+    await expect(
+      publishUserFile(destinationPath, (path) => writeFile(path, 'new bytes'), {
+        signal: controller.signal,
+        replace,
+        wait: async () => {
+          controller.abort(new Error('cancelled'))
+        }
+      })
+    ).rejects.toThrow('cancelled')
+    expect(replace).toHaveBeenCalledTimes(1)
+    await expect(readFile(destinationPath, 'utf8')).resolves.toBe('existing bytes')
+    await expect(readdir(root)).resolves.toEqual(['report.txt'])
+  })
+
   it('flushes complete bytes before atomically replacing the destination', async () => {
     const destinationPath = join(root, 'report.txt')
     await writeFile(destinationPath, 'old bytes')
@@ -204,3 +225,43 @@ describe('publishUserFile', () => {
     await expect(readFile(destinationPath, 'utf8')).resolves.toBe('new bytes')
   })
 })
+
+it.each(['private-file', 'fallback-copy', 'fallback-file'] as const)(
+  'does not commit an exclusive file cancelled at the %s barrier',
+  async (barrier) => {
+    const controller = new AbortController()
+    const destination = join(root, 'cancelled.txt')
+    const publishNoReplace = vi.fn(rename)
+    await expect(
+      publishUserFile(destination, (temporary) => writeFile(temporary, 'complete bytes'), {
+        exclusive: true,
+        signal: controller.signal,
+        linkFile: async () => {
+          throw Object.assign(new Error('no hard links'), { code: 'ENOTSUP' })
+        },
+        copyFileExclusive: async (source, target) => {
+          await copyFile(source, target, constants.COPYFILE_EXCL)
+          if (barrier === 'fallback-copy') controller.abort(new Error('cancel publication'))
+        },
+        durability: {
+          syncFile: async (path) => {
+            const fallback = path.includes('.open-science-publish-')
+            if (
+              (barrier === 'private-file' && !fallback) ||
+              (barrier === 'fallback-file' && fallback)
+            )
+              controller.abort(new Error('cancel publication'))
+          },
+          syncDirectory: vi.fn()
+        },
+        publishNoReplace
+      })
+    ).rejects.toThrow('cancel publication')
+    expect(publishNoReplace).not.toHaveBeenCalled()
+    expect(await readdir(root)).toEqual([])
+    await publishUserFile(destination, (temporary) => writeFile(temporary, 'retry bytes'), {
+      exclusive: true
+    })
+    expect(await readFile(destination, 'utf8')).toBe('retry bytes')
+  }
+)

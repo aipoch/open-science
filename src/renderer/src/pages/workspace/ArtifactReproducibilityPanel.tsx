@@ -48,7 +48,7 @@ import {
 } from '@/components/ui/select'
 import { ReproducibilityStartPreview } from './ReproducibilityStartPreview'
 import { previewNodeStart } from './artifact-reproducibility-start'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
@@ -75,7 +75,7 @@ import type { ScientificOutputRisk } from '../../../../shared/execution-file-evi
 import type {
   NotebookEnvironmentLockDiagnostic,
   NotebookRunEnvironmentLockCapture
-} from '../../../../shared/notebook'
+} from '@aipoch/environment/contracts'
 import {
   displayGraph,
   filterDisplayGraph,
@@ -430,7 +430,7 @@ const prefersReducedMotion = (): boolean =>
   window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
 
 const PanelTooltip = ({ children }: { children: ReactNode }): React.JSX.Element => (
-  <TooltipProvider delayDuration={350} skipDelayDuration={100}>
+  <TooltipProvider>
     <Tooltip>{children}</Tooltip>
   </TooltipProvider>
 )
@@ -2394,7 +2394,7 @@ export const ArtifactReproducibilityPanel = ({
                             {run.environmentName ? ` · ${run.environmentName}` : ''}
                           </p>
                           {details.map((detail, index) => (
-                            <p key={index} className="mt-1 leading-4 text-bg-000/75">
+                            <p key={index} className="mt-1 leading-4 text-muted-foreground">
                               {detail}
                             </p>
                           ))}
@@ -2403,7 +2403,9 @@ export const ArtifactReproducibilityPanel = ({
                       {checkIssues.map((issue) => (
                         <li key={issue.category} data-capture-issue={issue.category}>
                           <p className="font-medium leading-4">{issue.label}</p>
-                          <p className="mt-0.5 leading-4 text-bg-000/75">{issue.description}</p>
+                          <p className="mt-0.5 leading-4 text-muted-foreground">
+                            {issue.description}
+                          </p>
                         </li>
                       ))}
                     </ul>

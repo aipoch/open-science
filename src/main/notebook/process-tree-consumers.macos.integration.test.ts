@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { existsSync } from 'node:fs'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -145,3 +146,5 @@ describeMacOS('macOS process-tree consumers (real processes)', () => {
     }
   }, 15_000)
 })
+
+configureTestRuntimeMetadata()

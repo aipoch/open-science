@@ -78,7 +78,7 @@ export const claudeCodeFramework: AgentFramework = {
   // sessions via applyFlagSettings — no respawn needed.
   supportsLiveEffortChange: true,
   // Claude Code speaks only Anthropic /v1/messages.
-  supportedApiTypes: ['anthropic'],
+  supportedApiTypes: ['messages'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // Still routes through the existing spawner; env carries the resolved provider overrides.
@@ -101,7 +101,7 @@ export const claudeCodeFramework: AgentFramework = {
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     // settingSources:['user'] excludes workspace settings that could override the active provider.
-    // Shared mode adds app-owned settings/plugins at the SDK flag layer via sessionOptions.
+    // Shared mode excludes personal sources and supplies app-owned settings through sessionOptions.
     const sessionOptions = { ...(ctx.sessionOptions ?? {}) }
     const skillRuntime = recordValue(sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION])
     delete sessionOptions[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]
@@ -131,26 +131,8 @@ export const claudeCodeFramework: AgentFramework = {
           Skill: LOAD_SKILL_TOOL_CALLABLE_NAME
         }
       : sessionOptions.toolAliases
-    const sessionHooks = recordValue(sessionOptions.hooks)
-    const hooks = skillRuntimeEnabled
-      ? {
-          ...sessionHooks,
-          PreToolUse: [
-            ...(Array.isArray(sessionHooks.PreToolUse) ? sessionHooks.PreToolUse : []),
-            {
-              matcher: LOAD_SKILL_TOOL_CALLABLE_NAME,
-              hooks: [
-                async () => ({
-                  hookSpecificOutput: {
-                    hookEventName: 'PreToolUse' as const,
-                    permissionDecision: 'allow' as const
-                  }
-                })
-              ]
-            }
-          ]
-        }
-      : sessionOptions.hooks
+    // Skill approvals belong to the app Permission broker, including revocable existing grants.
+    const hooks = sessionOptions.hooks
     const disallowedTools = Object.freeze([
       ...new Set([
         ...stringArrayValue(sessionOptions.disallowedTools),

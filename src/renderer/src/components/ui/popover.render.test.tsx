@@ -104,3 +104,14 @@ it('preserves selection and closes one layer at a time with Escape, restoring fo
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Filters' }))
   )
 })
+
+it('uses a theme-matched surface for nested notices and secondary copy', () => {
+  renderPopover()
+  const content = screen.getByRole('dialog')
+  expect(content.className).toContain('bg-popover')
+  expect(content.className).toContain('text-popover-foreground')
+  expect(content.className).toContain('border-border')
+  expect(content.className).toContain('shadow-menu')
+  expect(content.className).not.toContain('bg-text-000')
+  expect(content.className).not.toContain('text-bg-000')
+})

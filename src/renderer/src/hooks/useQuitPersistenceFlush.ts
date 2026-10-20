@@ -14,6 +14,11 @@ import {
 import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspaceAgentRuntime'
 import { flushPreviewPersistence } from '../lib/preview-persistence/preview-persistence'
 import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
+import { flushComposerDrafts } from '../pages/workspace/composer-draft-storage'
+
+const flushDrafts = (): void => {
+  if (flushComposerDrafts().failed) throw new Error('Draft storage is unavailable.')
+}
 
 type QuitPersistenceFlushDeps = {
   suppressAutoReviews: () => void
@@ -40,6 +45,7 @@ export const completeQuitPersistenceFlush = async (
     await deps.drainRuntimeEvents()
     await deps.flushPersistence()
     await deps.flushPreviewPersistence()
+    flushDrafts()
     // Tab persistence does not save edited file content. Reuse Main's existing retry/force-quit gate.
     if (previewLeaveGuards.hasUnsavedChanges()) throw new Error('Preview has unsaved changes.')
   } catch (error) {
@@ -58,6 +64,7 @@ export const useQuitPersistenceFlush = (): QuitPersistenceFlushProjection => {
     await drainWorkspaceRuntimeEventsForPersistence()
     await flushSessionPersistence()
     await flushPreviewPersistence()
+    flushDrafts()
     setNotice(undefined)
   }, [])
 

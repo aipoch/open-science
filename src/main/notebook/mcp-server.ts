@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -26,7 +27,7 @@ import {
   shellRuntimeAgentContract,
   shellRuntimeBindingSchema
 } from './shell-runtime'
-import { redactRuntimeDiagnosticText } from './runtime-diagnostics'
+import { redactRuntimeDiagnosticText } from '@aipoch/diagnostics/node'
 import {
   memoryAgentRememberMcpOutputSchema,
   memoryAgentRememberRequestSchema,
@@ -47,7 +48,7 @@ const LOCAL_BACKGROUND_RUN_RECEIPT_GUIDANCE =
 const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   '<open_science_notebook_instructions>',
   'Guidance only applies when using open-science-notebook tools.',
-  'For materially different interpretations, app-owned `ask_user_question` must be the first tool call; do not inspect or use other tools first. Put all 1-3 known questions in one call with 2-4 options. Infer reversible details; omit Other (UI adds custom, agent-decide, Skip). Finish continues; pending ends the turn.',
+  'For materially different interpretations, app-owned `ask_user_question` is the first tool call; do not inspect or use other tools first. Send all 1-3 known questions in one call. Infer reversible details.',
   'Notebook preview is for code/results; keep explanations and diagnosis in chat.',
   'Use one `notebook_execute` per persistent Python/R cell; reuse `cellId`. For skill functions, repeat kernelSkillIds per dependent cell; call directly in code, never import. Data kernels cannot call connectors; use `repl_execute` only for Host SDK operations reported by `host.capabilities()` and `host.help()`. Move large cross-kernel data through `process.env.OPEN_SCIENCE_HANDOFF_DIR`.',
   HOST_SDK_DISCOVERY_GUIDANCE,
@@ -56,9 +57,9 @@ const NOTEBOOK_SYSTEM_PROMPT_APPEND = [
   'Use plain relative paths in the writable session workspace. Resolve connector handoff from `OPEN_SCIENCE_HANDOFF_DIR`; never overwrite a saved path or original user files.',
   'Use `inspect_packages` for versions and `manage_packages` for installs. Never install in cells/shells or outside `$OPEN_SCIENCE_RUNTIME_DIR`.',
   'MCP replies are bounded; full output stays in preview. Check errors and workingFiles. The notebook runtime does not classify files for you.',
-  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before replaying. Retry at most once when safe; repeated kernel failures mean stop Notebook tools and report the failure.',
+  'kernelDispatched: false = not sent; true = sent, not completed; absent means unknown. After kernel failure/timeout, check possible side effects before retrying.',
   'Beyond restricted reads, call `request_network_access`. A failed connection is not required.',
-  'Follow recovery guidance; never bypass protection/TLS. Check settings for setup failures.',
+  'Never bypass protection/TLS. Check settings for setup failures.',
   'Reads send URLs; grants permit uploads. Once: next matching command/session/runtime. Reconnect; side effects persist.',
   'Dependency status is not an execution verdict: `clear` means unchanged; `stale` means a tracked dependency changed after that run; `unknown` means incomplete tracking. `stale` does not mean the run failed or its captured output is incorrect; rerun only for current state.',
   'Call `write_artifact_file({ "filename": "plot.png", "source": { "kind": "localPath", "path": "plot.png" }, "producerRunId": "<runId>" })` from `open-science-artifacts`. Reuse saved relative filename and runId; inline small text. On validation errors, correct once; never repeat identical failed arguments.',
@@ -80,6 +81,13 @@ type NotebookMcpEnvironment = NotebookRpcConnection &
     shellRuntime?: ShellRuntimeBinding
     wslSetupTools?: boolean
   }
+
+export type NotebookToolEnvironmentOptions = Readonly<{
+  memoryTools?: boolean
+  shellRuntime?: ShellRuntimeBinding
+  wslSetupTools?: boolean
+  [key: string]: unknown
+}>
 
 type NotebookMcpServerConfigRequest = Omit<NotebookMcpEnvironment, 'memoryTools'> & {
   command: string
@@ -173,6 +181,10 @@ const userChoiceOptionSchema = z.object({
 const userChoiceQuestionSchema = z.object({
   question: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS),
   header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
+  kind: z
+    .enum(['single-select', 'multi-select'])
+    .default('single-select')
+    .describe('Single answer or combinable choices.'),
   options: z
     .array(userChoiceOptionSchema)
     .min(MIN_AGENT_USER_CHOICE_OPTIONS)
@@ -204,7 +216,7 @@ const wslSetupOpenTerminalSchema = {
 const INSPECT_PACKAGES_DOC = [
   "Read installed/missing/version metadata from the session's bound app-managed Python/R runtime without importing or changing packages.",
   'Use for requested version checks, not as a mandatory preflight after a clear missing-package error. Use notebook_execute to test actual importability.',
-  'There is no per-call environment. A missing default is prepared by notebook_execute; an external runtime must also be inspected through notebook_execute so execution receives approval.'
+  'No per-call environment. Inspect an external runtime through notebook_execute for code-risk review; it also prepares missing defaults. Bind first when multiple runtimes are enabled.'
 ].join('\n')
 
 const MANAGE_PACKAGES_DOC = [
@@ -249,7 +261,7 @@ const REPL_EXECUTE_DOC = [
   'Load Remote Compute (SSH) (`remote-compute-ssh`) for jobs. Compute Environment Setup (`compute-env-setup`) prepares named environment setup/repair instructions for users or administrators to execute.',
   HOST_SDK_DISCOVERY_GUIDANCE,
   'Use foreground when reasoning needs the result now; use background:true only for longer independent work. Background-safe calls include host.mcp, host.compute, host.llm, host.delegate, and read-only Host SDK operations. host.viewImage, host.agents.switch, and live user input are unsafe in background execution because their results require the live foreground response. Save the returned runId; do not poll frequently. A Turn end or MCP disconnect does not cancel an accepted background Run; cancel it explicitly with background_run. If a Host SDK operation reports BACKGROUND_HOST_METHOD_UNSAFE, continue in foreground.',
-  'Globals persist; trailing expressions return results for Agent inspection. Defaults allow the Host SDK maximum 30-minute bounded wait; timeoutMs overrides. To hand off large data from the REPL to Python/R, write under process.env.OPEN_SCIENCE_HANDOFF_DIR; Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path. Use notebook_execute for analysis.'
+  'Declarations and globals persist until restart/process loss; top-level return/await and later redeclaration work. No replay. Expressions return results. timeoutMs overrides the 30-minute Host SDK wait. Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR (shared with Python/R); use notebook_execute for analysis.'
 ].join('\n')
 
 // Stateless shell contract, embedded as the bash_execute description so the agent always sees it.
@@ -263,7 +275,9 @@ const buildShellExecuteDoc = (
     binding.kind === 'powershell' ? '$env:OPEN_SCIENCE_HANDOFF_DIR' : '$OPEN_SCIENCE_HANDOFF_DIR'
   const platformContract =
     binding.kind === 'powershell'
-      ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
+      ? binding.version === '5.1'
+        ? 'Target Windows PowerShell 5.1; aliases are not POSIX utilities and `&&` is unavailable. Use `if ($?) { ... }` for dependent commands.'
+        : 'Target PowerShell 7.6; aliases are not POSIX utilities. Use PowerShell syntax and inspect native program exit codes.'
       : undefined
   const exitCodeContract =
     binding.kind === 'powershell'
@@ -273,7 +287,7 @@ const buildShellExecuteDoc = (
   return [
     agentContract.executionDescription,
     ...(platformContract ? [platformContract] : []),
-    `Stateless: each call is a fresh process, so cwd, variables, jobs, and functions do not persist. It starts in the data-kernel workspace and shares the handoff directory exposed as ${handoffVariable}; do not resolve handoff relative to cwd.`,
+    `Calls serialize per lane/runtime and retain variables, exports, functions, and cwd. Cancel/timeout, exit, restart, or launch-context change resets its state; earlier commands are never replayed. Starts in data-kernel workspace. Handoff: ${handoffVariable}; never relative to cwd.`,
     exitCodeContract,
     'If a result includes recovery, follow its retry prerequisite and guidance. Recovery describes that attempt, not current runtime health; exitCode:null is not permission to repeat a command.',
     'Use foreground when reasoning needs the result now; use background:true for a longer independent command. Turn end or MCP disconnect does not stop an accepted background Run; explicitly cancel with background_run.',
@@ -345,7 +359,7 @@ const createNotebookMcpServerConfig = (request: NotebookMcpServerConfigRequest):
     command: request.command,
     args: [request.entryPath, NOTEBOOK_MCP_SERVER_ARG],
     env: [
-      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      ...nodeRuntimeEnvironmentEntries(),
       { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: request.endpoint },
       ...(request.socketPath
         ? [{ name: 'OPEN_SCIENCE_NOTEBOOK_RPC_SOCKET_PATH', value: request.socketPath }]
@@ -491,6 +505,9 @@ const resolveNotebookRpcFetch = (method: string): typeof fetchLocalRpc =>
 const NOTEBOOK_MCP_EXECUTION_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STATE_RESULT_LIMIT = 6_000
 const NOTEBOOK_MCP_CONTROL_RESULT_LIMIT = 8_000
+// Setup diagnostics include the bundled guide as well as structured checks. The generic control
+// budget would turn even the normal handoff into a truncated preview with no usable schema fields.
+const WSL_DIAGNOSTICS_RESULT_LIMIT = 24_000
 const NOTEBOOK_MCP_STREAM_PREVIEW_LIMIT = 8_000
 const NOTEBOOK_MCP_STATE_OUTPUT_PREVIEW_LIMIT = 600
 const MIME_INLINE_LIMIT = 8_000
@@ -1215,7 +1232,7 @@ const registerNotebookRpcTool = (
 
 // Projects the full session state a restart returns down to a compact confirmation: the agent only
 // needs to know the kernel reset and that history is preserved — not the entire cell/run history.
-const compactRestartResult = (raw: unknown): unknown => {
+const compactRestartResult = (raw: unknown, input: unknown = {}): unknown => {
   if (typeof raw !== 'object' || raw === null) return raw
   const state = raw as Record<string, unknown>
   const cells = Array.isArray(state.cells) ? state.cells.length : 0
@@ -1223,7 +1240,8 @@ const compactRestartResult = (raw: unknown): unknown => {
     sessionId: state.sessionId,
     kernelStatus: state.kernelStatus,
     status: 'restarted',
-    note: 'Kernel restarted; in-memory variables cleared. Run history is preserved (use notebook_state to view it).',
+    ...pickDefined(asRecord(input) ?? {}, ['language', 'environment', 'kernel']),
+    note: 'Interpreter state reset; a fresh process starts on the next execution. Saved history and files are not deleted; interrupted writes may be partial.',
     cells
   }
 }
@@ -1526,7 +1544,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'Collect 1-3 decisions when a request has materially different interpretations. Use this app-owned tool as the first tool call, before inspecting the workspace or using other tools, and include every known question in one call. Never print a textual choice list. Give each question 2-4 unique options with descriptions and omit Other; the app adds custom, agent-decide, and Skip. Questions appear one at a time. A pending result ends the turn normally; the app continues after Finish.',
+      'For materially different interpretations, use this app-owned tool as the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique, described options each. Never print choice lists or add Other (UI adds custom, agent-decide, Skip). Use multi-select only for combinable choices, never exclusive alternatives; otherwise single-select. Questions appear individually; multiple answers return as a JSON array of labels. Pending ends the turn; Finish continues.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,
@@ -1578,10 +1596,11 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
   },
   {
     name: 'bash_execute',
-    title: 'Execute a stateless shell command',
+    title: 'Execute a command in the session shell',
     description: BASH_EXECUTE_DOC,
     method: 'executeShell',
     inputSchema: bashExecuteToolSchema,
+    progressMessage: 'Shell command is still running.',
     mapResult: (raw, input) =>
       asRecord(input)?.background === true
         ? compactBackgroundRunSubmissionReceipt(raw)
@@ -1640,9 +1659,19 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'notebook_restart',
     title: 'Restart notebook interpreter',
     description:
-      'Restart the shared notebook interpreter, clearing in-memory variables (run history is preserved). Use when manage_packages reports needsRestart:true, to reload an updated package already imported in this session, or to deliberately clear the namespace / free memory. Installing a new Python package usually does not require a restart; follow the actual needsRestart result for the selected runtime.',
+      'Verify cleanup and reset variables; a fresh process starts on next execution. Preserves saved history/files. Target Python/R with language/environment or REPL with kernel:"repl". Without selectors, resets all session interpreters. Also use for needsRestart:true, reloading an imported package after an update, or clearing variables/freeing memory. A new Python package usually needs no restart.',
     method: 'restart',
-    inputSchema: {},
+    inputSchema: {
+      kernel: z
+        .literal('repl')
+        .optional()
+        .describe('Control interpreter; excludes language/environment.'),
+      language: z
+        .enum(['python', 'r'])
+        .optional()
+        .describe('Data-kernel language; requires environment.'),
+      environment: z.string().min(1).optional().describe('Environment paired with language.')
+    },
     mapResult: compactRestartResult,
     resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
   },
@@ -1727,7 +1756,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
       'Call this first in a WSL setup Session. It refreshes app-owned diagnostics and returns the bundled, version-matched setup guide markdown that governs the available setup tools.',
     method: 'wslSetupDiagnostics',
     inputSchema: {},
-    resultLimitChars: NOTEBOOK_MCP_CONTROL_RESULT_LIMIT
+    resultLimitChars: WSL_DIAGNOSTICS_RESULT_LIMIT
   },
   {
     name: 'wsl_setup_install_platform',
@@ -1770,7 +1799,7 @@ const WSL_SETUP_RPC_TOOLS: readonly NotebookRpcToolDefinition[] = [
 ]
 
 const notebookRpcToolsForEnvironment = (
-  environment: NotebookMcpEnvironment
+  environment: NotebookToolEnvironmentOptions
 ): readonly NotebookRpcToolDefinition[] => {
   const definitions = environment.wslSetupTools
     ? [...NOTEBOOK_RPC_TOOLS, ...WSL_SETUP_RPC_TOOLS]

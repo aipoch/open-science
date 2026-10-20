@@ -1,8 +1,8 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
 import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { ComposerEditor } from './ComposerEditor'
 import {
   domToDoc,
@@ -26,6 +26,13 @@ import {
   type ChatMessage,
   type ChatSession
 } from '@/stores/session-store'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 let container: HTMLDivElement
 let root: Root
@@ -806,6 +813,33 @@ describe('ComposerEditor', () => {
     act(() => {
       editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
     })
+    dispatchKey(editor(), 'Enter')
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+
+  it.each([
+    { boundary: 'before compositionstart', native: { isComposing: true } },
+    { boundary: 'after compositionend', native: { isComposing: true } },
+    { boundary: 'after compositionend with keyCode 229', native: { keyCode: 229 } }
+  ])('leaves Enter to the IME $boundary', ({ boundary, native }) => {
+    const onSubmit = vi.fn()
+    renderEditor({ onSubmit })
+    if (boundary.startsWith('after')) {
+      act(() => {
+        editor().dispatchEvent(new CompositionEvent('compositionstart', { bubbles: true }))
+        editor().dispatchEvent(new CompositionEvent('compositionend', { bubbles: true }))
+      })
+    }
+    const enter = new KeyboardEvent('keydown', {
+      key: 'Enter',
+      bubbles: true,
+      cancelable: true,
+      ...native
+    })
+    act(() => editor().dispatchEvent(enter))
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(enter.defaultPrevented).toBe(false)
+
     dispatchKey(editor(), 'Enter')
     expect(onSubmit).toHaveBeenCalledTimes(1)
   })

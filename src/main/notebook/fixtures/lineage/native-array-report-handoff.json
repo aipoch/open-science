@@ -1,0 +1,36 @@
+{
+  "description": "Reduced gzip, NPZ/RDS and read-before-overwrite boundary from live mixed-language scientific workflows, including base R write destinations; not an original model transcript.",
+  "input": "index\tvalue\n1\t0\n2\t1\n3\t0\n4\t-1\n5\t0\n6\t1\n7\t0\n8\t-1\n",
+  "cells": [
+    {
+      "language": "r",
+      "code": "con <- gzfile('inputs/signal.tsv.gz', 'rt')\nrecords <- read.delim(con)\nclose(con)\nsaveRDS(records, 'outputs/raw.rds')\nwrite.table(records, 'outputs/signal.tsv', sep='\\t', row.names=FALSE, quote=FALSE)",
+      "reads": ["inputs/signal.tsv.gz"],
+      "writes": ["outputs/raw.rds", "outputs/signal.tsv"]
+    },
+    {
+      "language": "python",
+      "code": "import numpy as np\nrecords = np.loadtxt('outputs/signal.tsv', delimiter='\\t', skiprows=1)\nsignal = records[:, 1]\npower = np.abs(np.fft.rfft(signal)) ** 2\nnp.savez('outputs/spectrum.npz', signal=signal, power=power)\nnp.savetxt('outputs/power.tsv', power, fmt='%.17g')",
+      "reads": ["outputs/signal.tsv"],
+      "writes": ["outputs/power.tsv", "outputs/spectrum.npz"]
+    },
+    {
+      "language": "r",
+      "code": "records <- readRDS('outputs/raw.rds')\nreference <- Mod(fft(records$value)) ** 2\nobserved <- scan('outputs/power.tsv', quiet=TRUE)\nstopifnot(isTRUE(all.equal(unname(reference[seq_along(observed)]), observed)))\nsaveRDS(list(power=observed, verified=TRUE), 'outputs/verified.rds')\nwrite('python-pending', 'outputs/report.txt')",
+      "reads": ["outputs/power.tsv", "outputs/raw.rds"],
+      "writes": ["outputs/report.txt", "outputs/verified.rds"]
+    },
+    {
+      "language": "python",
+      "code": "from pathlib import Path\nwith np.load('outputs/spectrum.npz', allow_pickle=False) as saved:\n    assert np.allclose(saved['power'], [0, 0, 16, 0, 0])\nprevious = Path('outputs/report.txt').read_text(encoding='utf-8')\nassert previous == 'python-pending\\n'\nPath('outputs/report.txt').write_text('python-reviewed\\n', encoding='utf-8')",
+      "reads": ["outputs/report.txt", "outputs/spectrum.npz"],
+      "writes": ["outputs/report.txt"]
+    },
+    {
+      "language": "r",
+      "code": "restored <- readRDS('outputs/verified.rds')\nprevious <- readLines('outputs/report.txt')\nstopifnot(identical(previous, 'python-reviewed'), restored$verified)\nbase::write('r-verified', file='outputs/report.txt')\ncat('NATIVE_HANDOFF_OK\\n')",
+      "reads": ["outputs/report.txt", "outputs/verified.rds"],
+      "writes": ["outputs/report.txt"]
+    }
+  ]
+}

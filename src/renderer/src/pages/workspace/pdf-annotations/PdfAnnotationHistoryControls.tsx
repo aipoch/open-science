@@ -16,7 +16,7 @@ export const PdfAnnotationHistoryControls = ({
   const annotations = usePdfAnnotations()
   const history = annotations.history(source)
   return (
-    <TooltipProvider delayDuration={250}>
+    <TooltipProvider>
       <div role="group" aria-label={t('Annotation history')} className="flex items-center gap-0.5">
         {(
           [

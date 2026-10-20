@@ -47,4 +47,14 @@ describe('WorkspaceComputeRecoveryBridge', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }))
     expect(mocks.retry).toHaveBeenCalledOnce()
   })
+
+  it('lets users dismiss a background recovery failure without stopping retry ownership', () => {
+    mocks.error = 'database busy'
+    render(<WorkspaceComputeRecoveryBridge enabled />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }))
+
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(mocks.retry).not.toHaveBeenCalled()
+  })
 })

@@ -2,6 +2,7 @@ import { expect } from '@playwright/test'
 import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { test } from './fixtures/electron-app'
 import { createProject } from './certification/helpers'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 for (const recovery of [
   'ordinary-generation',
@@ -26,7 +27,7 @@ for (const recovery of [
       await window.api.settings.upsertProvider({
         type: 'custom',
         name: 'Resume alternate provider',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'http://127.0.0.1:9/v1',
         model: 'resume-e2e-model',
         key: 'e2e-key'
@@ -34,8 +35,7 @@ for (const recovery of [
       await window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
     })
     await createProject(page, 'Resumed PNG publication')
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, PROMPT)
     if (isResume) {
       await expect(
         page.getByText('PNG recovery checkpoint reached.', { exact: false })

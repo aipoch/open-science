@@ -184,3 +184,9 @@ export {
   createWebCallerContext,
   hasCallerAuthority
 }
+
+// A desktop attachment proves a local native interaction surface. Browser locality alone does not.
+export const requireDesktopCaller = (context: CallerContext): void => {
+  if (context.surface !== 'electron')
+    throw new Error('This action must be approved from the Open-Science desktop app.')
+}

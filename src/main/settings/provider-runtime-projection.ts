@@ -1,30 +1,36 @@
-import { getCustomProviderBaseUrlError } from '../../shared/provider-base-url'
-import type { ChatApiEndpoint, ProviderView } from '../../shared/settings'
 import {
-  isClaudeSubscriptionProvider,
-  isCodexSubscriptionProvider,
-  isXaiSubscriptionProvider,
-  isProviderUsableByFramework,
-  providerEndpoints,
-  requiresChatCompletionsBridge
-} from '../../shared/settings'
+  type ModelProtocol,
+  isVendorModelMultimodal,
+  resolveVendorBaseUrl,
+  resolveVendorModelApiEndpoints,
+  resolveVendorChatCompletionsBaseUrl,
+  resolveVendorResponsesBaseUrl
+} from '@aipoch/providers'
 import {
   defaultVendorModel,
   getOfficialVendorModelIds,
-  isModelBridgeSupported,
-  isVendorModelMultimodal,
   resolveCustomModelContextWindow,
-  resolveModelContextWindow,
-  resolveVendorBaseUrl,
-  resolveVendorModelApiEndpoints,
-  resolveVendorOpenAiBaseUrl
-} from '../../shared/provider-registry'
+  resolveModelContextWindow
+} from '../../shared/provider-model-policy'
+import { getCustomProviderBaseUrlError } from '../../shared/provider-url-policy'
+import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
+import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+
 import {
   resolveProviderEffectiveModel,
   resolveProviderReasoningEffortProfile
 } from '../../shared/provider-reasoning-effort'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
+
 import { buildConfiguredModelUnavailableMessage } from '../../shared/run-error-classification'
+import type { ProviderView } from '../../shared/settings'
+import {
+  isClaudeSubscriptionProvider,
+  isCodexSubscriptionProvider,
+  isProviderUsableByFramework,
+  isXaiSubscriptionProvider,
+  providerEndpoints,
+  requiresChatCompletionsBridge
+} from '../../shared/settings'
 import type { AgentFrameworkId } from '../agent-framework'
 import { isOfficialOpenAiResponsesBase } from '../agent-framework/codex'
 import { hardenKeyMask, tryDecryptKey } from './crypto'
@@ -42,12 +48,12 @@ type ProviderRuntimeTarget = {
   providerType: StoredProvider['type']
   disconnectedAt?: number
   effectiveModel?: string
-  apiEndpoints: ChatApiEndpoint[]
+  apiEndpoints: ModelProtocol[]
   provider: ResolvedProvider
   reasoningEffortProfile: ReasoningEffortProfile
   frameworkCompatible: boolean
   modelBridgeSupported: boolean
-  needsChatResponsesBridge: boolean
+  needsChatResponsesToChatCompletionsBridge: boolean
   needsNativeResponsesCompatibility: boolean
 }
 
@@ -55,20 +61,21 @@ type ProviderRuntimeTarget = {
 // validation and runtime. Export one predicate so both paths prove the same protocol contract.
 const requiresNativeResponsesCompatibility = (
   provider: ResolvedProvider,
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): boolean =>
   framework.id === 'codex' &&
   framework.supportedApiTypes.includes('responses') &&
   providerEndpoints(provider).includes('responses') &&
   !isCodexSubscriptionProvider(provider.type) &&
   provider.vendorId !== 'openai' &&
-  !isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)
+  !isOfficialOpenAiResponsesBase(provider.chatCompletionsBaseUrl ?? provider.baseUrl)
 
 // Owns secret-aware provider projection inside main. It derives views, catalogs, effective models,
 // and ephemeral runtime targets without mutating durable selection or entering account lifecycles.
 class ProviderRuntimeProjectionOwner {
-  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
-    if (isXaiSubscriptionProvider(provider.type)) return ['anthropic', 'openai', 'responses']
+  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ModelProtocol[] {
+    if (isXaiSubscriptionProvider(provider.type))
+      return ['messages', 'chat-completions', 'responses']
     if (provider.type === 'official' && provider.vendorId) {
       return resolveVendorModelApiEndpoints(
         provider.vendorId,
@@ -78,7 +85,7 @@ class ProviderRuntimeProjectionOwner {
 
     return provider.apiEndpoints && provider.apiEndpoints.length > 0
       ? [...provider.apiEndpoints]
-      : ['anthropic']
+      : ['messages']
   }
 
   toProviderView(provider: StoredProvider, activeModel?: string): ProviderView {
@@ -130,7 +137,7 @@ class ProviderRuntimeProjectionOwner {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
     const availableModels = this.availableModels(storedProvider)
     if (
@@ -186,14 +193,14 @@ class ProviderRuntimeProjectionOwner {
         framework
       ),
       modelBridgeSupported: isModelBridgeSupported(storedProvider, effectiveModel),
-      needsChatResponsesBridge: requiresChatCompletionsBridge(provider, framework),
+      needsChatResponsesToChatCompletionsBridge: requiresChatCompletionsBridge(provider, framework),
       needsNativeResponsesCompatibility: requiresNativeResponsesCompatibility(provider, framework)
     }
   }
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget[] {
     return this.availableModels(storedProvider).map((model) =>
       this.resolveRuntimeTarget(storedProvider, { kind: 'required', model }, framework)
@@ -227,10 +234,10 @@ class ProviderRuntimeProjectionOwner {
         type: provider.type,
         vendorId: 'xai',
         baseUrl: resolveVendorBaseUrl('xai'),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl('xai'),
+        chatCompletionsBaseUrl: resolveVendorChatCompletionsBaseUrl('xai'),
         model,
         contextWindow: resolveModelContextWindow('xai', model),
-        apiEndpoints: ['anthropic', 'openai', 'responses'],
+        apiEndpoints: ['messages', 'chat-completions', 'responses'],
         supportsImageInput: isVendorModelMultimodal('xai', model)
       }
     }
@@ -241,7 +248,11 @@ class ProviderRuntimeProjectionOwner {
         type: 'custom',
         vendorId: provider.vendorId,
         baseUrl: resolveVendorBaseUrl(provider.vendorId, provider.region),
-        openaiBaseUrl: resolveVendorOpenAiBaseUrl(provider.vendorId, provider.region),
+        chatCompletionsBaseUrl: resolveVendorChatCompletionsBaseUrl(
+          provider.vendorId,
+          provider.region
+        ),
+        responsesBaseUrl: resolveVendorResponsesBaseUrl(provider.vendorId, provider.region),
         model,
         ...(contextWindow === undefined ? {} : { contextWindow }),
         key,
@@ -251,11 +262,14 @@ class ProviderRuntimeProjectionOwner {
     }
 
     const model = modelOverride ?? provider.model
+    // Hand-entered Claude subscription overrides retain their engine-specific context syntax.
     const contextWindow =
       provider.type === 'custom'
         ? resolveCustomModelContextWindow(provider.contextWindow)
         : isClaudeSubscriptionProvider(provider.type)
-          ? resolveModelContextWindow('anthropic', model)
+          ? /\[1m\]$/i.test(model ?? '')
+            ? 1_000_000
+            : resolveModelContextWindow('anthropic', model)
           : undefined
     return {
       type: provider.type,

@@ -386,6 +386,14 @@ make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
   original <- get(binding_name, envir = binding_env, inherits = FALSE)
   force(original)
   force(binding_name)
+  if (identical(binding_name, "save")) {
+    # save inspects the unevaluated names in ... and resolves them in envir.
+    # list(...) / do.call() would force those promises and substitute their values.
+    return(function(..., file = stop("'file' must be specified"), envir = parent.frame()) {
+      assert_runtime_write_allowed(list(file))
+      original(..., file = file, envir = envir)
+    })
+  }
   function(...) {
     args <- list(...)
     targets <- switch(
@@ -415,7 +423,6 @@ make_runtime_write_guard <- function(binding_name, binding_env = baseenv()) {
       dir.create = list(runtime_argument(args, "path", 1L)),
       download.file = list(runtime_argument(args, "destfile", 2L)),
       saveRDS = list(runtime_argument(args, "file", 2L)),
-      save = list(runtime_argument(args, "file", .Machine$integer.max)),
       cat = list(runtime_argument(args, "file", .Machine$integer.max)),
       file = {
         open_mode <- runtime_argument(args, "open", 2L)
@@ -945,6 +952,7 @@ capture_environment <- function(execution_context = NULL) {
 output_sink_policy_env <- new.env(parent = baseenv())
 output_sink_policy_env$state <- new.env(parent = emptyenv())
 output_sink_policy_env$state$protected_depth <- 0L
+output_sink_policy_env$state$protected_connections <- as.integer(con)
 output_sink_policy_env$kernel_sink <- base::sink
 guarded_output_sink <- function(
     file = NULL,
@@ -960,10 +968,26 @@ guarded_output_sink <- function(
 }
 environment(guarded_output_sink) <- output_sink_policy_env
 assign("guarded_output_sink", guarded_output_sink, output_sink_policy_env)
+# base::closeAllConnections closes descriptors directly after popping sinks. The sink guard alone
+# cannot protect the request stream or active capture descriptor. Retain base cleanup semantics for
+# user connections, including user-owned sinks, while excluding these kernel-owned descriptors.
+guarded_close_all_connections <- function() {
+  if (sink.number(type = "message") > 0L) kernel_sink(stderr(), type = "message")
+  while (sink.number(type = "output") > state$protected_depth) kernel_sink(type = "output")
+  gc()
+  connections <- setdiff(getAllConnections(), c(0L, 1L, 2L, state$protected_connections))
+  for (id in connections) close(getConnection(id))
+  invisible(NULL)
+}
+environment(guarded_close_all_connections) <- output_sink_policy_env
+assign("guarded_close_all_connections", guarded_close_all_connections, output_sink_policy_env)
 lockEnvironment(output_sink_policy_env, bindings = TRUE)
 if (bindingIsLocked("sink", baseenv())) unlockBinding("sink", baseenv())
 assign("sink", output_sink_policy_env$guarded_output_sink, envir = baseenv())
 lockBinding("sink", baseenv())
+if (bindingIsLocked("closeAllConnections", baseenv())) unlockBinding("closeAllConnections", baseenv())
+assign("closeAllConnections", output_sink_policy_env$guarded_close_all_connections, envir = baseenv())
+lockBinding("closeAllConnections", baseenv())
 
 run <- base::local({
   kernel_figures_dir <- figures_dir
@@ -1485,15 +1509,19 @@ run <- base::local({
       }
     }
     error <- NULL
+    execution_started <- FALSE
     interrupt_ack <- FALSE
     error_line <- NA_integer_
     stdout_path <- tempfile("open-science-r-stdout-")
     stdout_connection <- file(stdout_path, open = "wb")
+    stdout_connection_id <- as.integer(stdout_connection)
+    output_sink_state$protected_connections <- c(output_sink_state$protected_connections, stdout_connection_id)
     sink_depth <- sink.number(type = "output")
     kernel_sink(stdout_connection, type = "output")
     output_sink_state$protected_depth <- sink_depth + 1L
     on.exit({
       output_sink_state$protected_depth <- sink_depth
+      output_sink_state$protected_connections <- setdiff(output_sink_state$protected_connections, stdout_connection_id)
       while (sink.number(type = "output") > sink_depth) kernel_sink(type = "output")
       suppressWarnings(try(close(stdout_connection), silent = TRUE))
       unlink(stdout_path, force = TRUE)
@@ -1516,6 +1544,7 @@ run <- base::local({
           idx <- 0L
           tryCatch({
             for (idx in seq_along(exprs)) {
+              execution_started <- TRUE
               package_observer$record(exprs[[idx]])
               namespace_tracker$prepare(exprs[[idx]])
               res <- withVisible(eval(exprs[[idx]], envir = globalenv()))
@@ -1587,6 +1616,7 @@ run <- base::local({
       list()
     }
     list(stdout = stdout_text, stderr = "", error = if (is.null(error)) NA else error,
+         execution_started = isTRUE(execution_started),
          interrupt_ack = isTRUE(interrupt_ack),
          error_line = if (is.na(error_line)) NULL else error_line,
          result = NA, cwd = getwd(), figures = figures,

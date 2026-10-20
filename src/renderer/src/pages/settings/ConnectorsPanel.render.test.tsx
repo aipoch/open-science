@@ -1,3 +1,5 @@
+import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { openResourceMainSwitch } from './test-utils'
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
@@ -251,6 +253,21 @@ const clickItemByText = (role: string, text: string): void => {
 }
 
 describe('ConnectorsPanel (groups)', () => {
+  it.each([
+    ['Europe PMC', { kind: 'detail', id: 'europepmc' }],
+    ['My MCP', { kind: 'edit', id: 'custom-server-uuid' }]
+  ])('opens %s from row whitespace without duplicating title navigation', (name, destination) => {
+    const onNavigate = vi.fn()
+    act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
+    const row = Array.from(
+      document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
+    ).find((row) => row.textContent?.includes(name as string))!
+    act(() => row.querySelector<HTMLElement>('[data-slot="resource-row-content"]')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(destination)
+    onNavigate.mockClear()
+    act(() => row.querySelector<HTMLButtonElement>('button')!.click())
+    expect(onNavigate).toHaveBeenCalledExactlyOnceWith(destination)
+  })
   it('renders Featured connector rows with a toggle each and the Custom group', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
@@ -262,8 +279,10 @@ describe('ConnectorsPanel (groups)', () => {
     expect(document.body.textContent).toContain('Europe PMC')
     expect(document.body.textContent).toContain('OpenAlex')
     expect(document.body.textContent).toContain('My MCP')
-    // Three featured toggles + one custom toggle.
-    expect(document.body.querySelectorAll('[role="switch"]')).toHaveLength(4)
+    // Each resource exposes independent access controls in its popover.
+    expect(
+      document.body.querySelectorAll('[data-slot="resource-assignment-trigger"]')
+    ).toHaveLength(4)
     expect(document.body.querySelectorAll('[data-slot="settings-list-row"]')).toHaveLength(4)
     expect(document.body.querySelector('[data-slot="settings-section"]')).toBeNull()
     const addConnector = Array.from(
@@ -305,7 +324,7 @@ describe('ConnectorsPanel (groups)', () => {
     expect(header?.querySelector('h3')?.textContent).toContain('Installed')
     expect(header?.querySelector('[data-slot="badge"]')?.textContent).toBe('4')
     expect(header?.contains(actionBar!)).toBe(true)
-    expect(actionBar?.textContent).toContain('Manage')
+    expect(actionBar?.textContent).not.toContain('Manage')
     expect(toolbar?.contains(addConnector!)).toBe(false)
     expect(addConnector?.className).toContain('shrink-0')
     expect(actionBar?.lastElementChild).toBe(addConnector)
@@ -340,12 +359,6 @@ describe('ConnectorsPanel (groups)', () => {
         ?.getAttribute('data-resource-kind')
     ).toBe('connector')
     expect(europePmcRow?.querySelector('[data-slot="skill-usage-agents-trigger"]')).not.toBeNull()
-    expect(
-      pubmedRow?.querySelector('[aria-label="Toggle PubMed"]')?.getAttribute('data-state')
-    ).toBe('checked')
-    expect(
-      europePmcRow?.querySelector('[aria-label="Toggle Europe PMC"]')?.getAttribute('data-state')
-    ).toBe('unchecked')
   })
 
   it('combines Main Agent and Specialists in the All Agents/Specialists filter', () => {
@@ -392,9 +405,7 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={onNavigate} />)
     })
 
-    act(() =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle PubMed"]')?.click()
-    )
+    act(() => openResourceMainSwitch('PubMed')?.click())
     expect(useSettingsStore.getState().setConnectorEnabled).toHaveBeenCalledWith('pubmed', false)
 
     const row = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
@@ -490,13 +501,15 @@ describe('ConnectorsPanel (groups)', () => {
     const pubmedRow = Array.from(
       document.body.querySelectorAll<HTMLElement>('[data-slot="settings-list-row"]')
     ).find((row) => row.textContent?.includes('PubMed'))
+    const mainToggle = openResourceMainSwitch('PubMed')
+    expect(pubmedRow).toBeTruthy()
     await act(async () => {
-      pubmedRow?.querySelector<HTMLButtonElement>('[role="switch"]')?.click()
+      mainToggle?.click()
       await Promise.resolve()
     })
 
     expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
-      'Could not save this setting. The previous value was restored.'
+      'Could not update resource access. Refresh and try again.'
     )
   })
 
@@ -506,9 +519,7 @@ describe('ConnectorsPanel (groups)', () => {
       root.render(<ConnectorsPanel onNavigate={onNavigate} />)
     })
 
-    act(() =>
-      document.body.querySelector<HTMLButtonElement>('[aria-label="Toggle My MCP"]')?.click()
-    )
+    act(() => openResourceMainSwitch('My MCP')?.click())
     expect(useSettingsStore.getState().setCustomServerEnabled).toHaveBeenCalledWith(
       'custom-server-uuid',
       false
@@ -677,12 +688,8 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => {
       root.render(<ConnectorsPanel onNavigate={vi.fn()} />)
     })
-    const waitingToggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Toggle OAuth MCP"]'
-    )
-    expect(waitingToggle?.disabled).toBe(false)
-    expect(waitingToggle?.getAttribute('aria-disabled')).toBe('true')
-    expect(waitingToggle?.className).toContain('cursor-not-allowed')
+    const waitingToggle = openResourceMainSwitch('OAuth MCP')
+    expect(waitingToggle?.disabled).toBe(true)
     expect(waitingToggle?.getAttribute('data-state')).toBe('unchecked')
     act(() => waitingToggle?.click())
     expect(useSettingsStore.getState().setCustomServerEnabled).not.toHaveBeenCalled()
@@ -710,9 +717,7 @@ describe('ConnectorsPanel (groups)', () => {
       })
     })
     expect(document.body.textContent).toContain('Connected')
-    const connectedToggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Toggle OAuth MCP"]'
-    )
+    const connectedToggle = openResourceMainSwitch('OAuth MCP')
     expect(connectedToggle?.disabled).toBe(false)
     expect(connectedToggle?.getAttribute('aria-disabled')).toBeNull()
     expect(connectedToggle?.getAttribute('data-state')).toBe('checked')
@@ -846,11 +851,7 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => root.render(<ConnectorsPanel onNavigate={onNavigate} />))
 
     expect(document.body.textContent).toContain('Credentials unavailable')
-    expect(
-      document.body
-        .querySelector<HTMLButtonElement>('[aria-label="Toggle Credential unavailable MCP"]')
-        ?.getAttribute('aria-disabled')
-    ).toBe('true')
+    expect(openResourceMainSwitch('Credential unavailable MCP')?.disabled).toBe(true)
     act(() => clickButtonByText('Configure'))
     expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: 'credential-unavailable-mcp' })
   })
@@ -870,9 +871,7 @@ describe('ConnectorsPanel (groups)', () => {
     })
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
-    const toggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Toggle Enabled credential unavailable MCP"]'
-    )
+    const toggle = openResourceMainSwitch('Enabled credential unavailable MCP')
     expect(toggle?.getAttribute('data-state')).toBe('checked')
     expect(toggle?.getAttribute('aria-disabled')).toBeNull()
     act(() => toggle?.click())
@@ -921,9 +920,7 @@ describe('ConnectorsPanel (groups)', () => {
     act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
 
     expect(document.body.textContent).toContain('Sign-in required')
-    const expiredToggle = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Toggle Expired OAuth"]'
-    )
+    const expiredToggle = openResourceMainSwitch('Expired OAuth')
     expect(expiredToggle?.getAttribute('data-state')).toBe('checked')
     expect(expiredToggle?.getAttribute('aria-disabled')).toBeNull()
     await act(async () => clickButtonByText('Retry'))
@@ -1099,3 +1096,73 @@ describe('ConnectorsPanel (contact email)', () => {
     expect(document.body.textContent).not.toContain('Manage credentials')
   })
 })
+
+it('selects Featured Connectors in place and offers access controls instead of direct row switches', () => {
+  act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+  const select = container.querySelector<HTMLButtonElement>(
+    '[aria-label="Select multiple in Featured"]'
+  )
+  expect(select).not.toBeNull()
+  act(() => select!.click())
+  expect(
+    container.querySelectorAll('[data-slot="settings-list-row"] input[type="checkbox"]').length
+  ).toBeGreaterThan(0)
+  expect(container.querySelector('[data-slot="resource-assignment-trigger"]')).not.toBeNull()
+  expect(container.querySelector('[data-slot="settings-list-row"] [role="switch"]')).toBeNull()
+})
+
+// A persisted deletion may disappear from the catalog before permission cleanup finishes.
+it.each([false, true])(
+  'retains cleanup recovery after Clear selection, recreated=%s',
+  async (recreated) => {
+    useSpecialistStore.setState({ items: [], integrity: { status: 'ok' }, loadError: undefined })
+    const snapshot = {
+      connectors: seedConnectors,
+      customServers: [],
+      reservedCustomServerIds: ['custom-server-uuid'],
+      ncbi: { hasApiKey: false }
+    }
+    window.api = {
+      specialist: { list: vi.fn().mockResolvedValue({ items: [], integrity: { status: 'ok' } }) },
+      settings: { listConnectors: vi.fn().mockResolvedValue(snapshot) }
+    } as unknown as typeof window.api
+    const remove = vi
+      .fn()
+      .mockImplementationOnce(async () => {
+        useSettingsStore.setState({
+          customServers: [],
+          reservedCustomServerIds: ['custom-server-uuid']
+        })
+        throw new Error('cleanup failed after persistence')
+      })
+      .mockResolvedValue(undefined)
+    useSettingsStore.setState({ removeCustomServer: remove })
+    await act(async () => root.render(<ConnectorsPanel onNavigate={vi.fn()} />))
+    fireEvent.click(screen.getByRole('button', { name: 'Select multiple in Custom' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select My MCP' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Delete selected' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm deletion 1' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeTruthy())
+    fireEvent.click(screen.getByRole('button', { name: 'Clear selection' }))
+    expect(screen.getByRole('button', { name: 'Retry cleanup' })).toBeTruthy()
+    if (recreated) {
+      vi.mocked(window.api.settings.listConnectors).mockResolvedValue({
+        ...snapshot,
+        customServers: seedCustomServers
+      })
+    }
+    if (!recreated) remove.mockRejectedValueOnce(new Error('cleanup still unavailable'))
+    fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }))
+    if (!recreated) {
+      await waitFor(() => expect(remove).toHaveBeenCalledTimes(2))
+      await waitFor(() =>
+        expect(
+          screen.getByRole<HTMLButtonElement>('button', { name: 'Retry cleanup' }).disabled
+        ).toBe(false)
+      )
+      fireEvent.click(screen.getByRole('button', { name: 'Retry cleanup' }))
+    }
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Retry cleanup' })).toBeNull())
+    expect(remove).toHaveBeenCalledTimes(recreated ? 1 : 3)
+  }
+)

@@ -11,11 +11,15 @@ import {
 } from '@/components/action-menu/action-menu-model'
 import type { ChatSession } from '@/stores/session-store'
 import { useUpdateStore } from '@/stores/update-store'
+import { useComputeStore } from '@/stores/compute-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import type { SessionActionId, SessionActionInvocation } from './session-action-menu'
+import { SessionRow } from './WorkspaceSidebar'
 
 vi.mock('react-i18next', () => createI18nTestStub())
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -196,13 +200,16 @@ type SidebarProject = { id: string; name: string; description: string }
 
 const mountProjectSidebar = async (
   otherProjects: readonly SidebarProject[],
-  onOpenProject: (projectId: string) => void = vi.fn()
+  onOpenProject: (projectId: string) => void = vi.fn(),
+  onOpenSession: (sessionId: string) => void = vi.fn()
 ): Promise<{
+  container: HTMLElement
   cleanup: () => void
   openMenu: () => void
   rerenderProjects: (projects: readonly SidebarProject[]) => Promise<void>
   rerenderSessions: (sessions: ChatSession[]) => Promise<void>
   selectSession: (sessionId: string) => Promise<void>
+  setArchivePredicate: (predicate: (session: ChatSession) => boolean) => Promise<void>
 }> => {
   const { WorkspaceSidebar } = await import('./WorkspaceSidebar')
   const container = document.createElement('div')
@@ -212,6 +219,7 @@ const mountProjectSidebar = async (
   let selectedSessionId = 'session-a'
   let renderedProjects = otherProjects
   let renderedSessions = [createSession({ id: 'session-a' })]
+  let archivePredicate: ((session: ChatSession) => boolean) | undefined
   const render = (): void => {
     root.render(
       <WorkspaceSidebar
@@ -226,13 +234,14 @@ const mountProjectSidebar = async (
         onNewConversation={vi.fn()}
         isFilesOpen={false}
         onOpenFiles={vi.fn()}
-        onOpenSession={vi.fn()}
+        onOpenSession={onOpenSession}
         onOpenProject={onOpenProject}
         onRenameSession={vi.fn()}
         canDownloadArtifacts
         onDownloadArtifacts={vi.fn()}
         onViewNotebook={vi.fn()}
         onTogglePin={vi.fn()}
+        canArchiveSession={archivePredicate}
         onDeleteSession={vi.fn()}
         onOpenSettings={vi.fn()}
         onOpenProjectSettings={vi.fn()}
@@ -246,6 +255,7 @@ const mountProjectSidebar = async (
   })
 
   return {
+    container,
     cleanup: () => {
       act(() => root.unmount())
       container.remove()
@@ -263,6 +273,10 @@ const mountProjectSidebar = async (
     rerenderSessions: async (sessions) => {
       renderedSessions = sessions
       await act(async () => render())
+    },
+    setArchivePredicate: async (predicate) => {
+      archivePredicate = predicate
+      await act(async () => render())
     }
   }
 }
@@ -278,6 +292,14 @@ const collectElements = (node: ReactNode): ElementWithProps[] => {
 
       const element = child as ElementWithProps
       elements.push(element)
+      if (element.type === SessionRow) {
+        const renderRow = (
+          SessionRow as unknown as {
+            type: (props: Record<string, unknown>) => ReactNode
+          }
+        ).type
+        visit(renderRow(element.props))
+      }
       visit(element.props.children as ReactNode)
     })
   }
@@ -317,6 +339,9 @@ const getTextContent = (node: ReactNode): string => {
 }
 
 beforeEach(() => {
+  useComputeStore.setState({ pendingApprovals: [] })
+  useSettingsStore.setState({ pendingApprovals: [], pendingCredentialRequests: [] })
+  useSkillImportStore.setState(createInitialSkillImportState())
   useUpdateStore.setState({
     status: { state: 'up-to-date', current: '0.2.0', latest: '0.2.0' },
     isDialogOpen: false
@@ -331,6 +356,150 @@ const waitForPreviewDwell = async (): Promise<void> => {
 }
 
 describe('WorkspaceSidebar accessible render', () => {
+  it.each([
+    { mobileMode: false, canMutateConversations: true },
+    { mobileMode: true, canMutateConversations: true },
+    { mobileMode: false, canMutateConversations: false },
+    { mobileMode: true, canMutateConversations: false }
+  ])(
+    'opens the existing Session editor on double-click when permitted (mobile: $mobileMode, mutate: $canMutateConversations)',
+    async ({ mobileMode, canMutateConversations }) => {
+      const { WorkspaceSidebarView } = await import('./WorkspaceSidebar')
+      const active = createSession({ id: 'active', status: 'idle' })
+      const target = createSession({
+        id: 'target',
+        title: 'Target session',
+        status: 'idle',
+        contentLoaded: false
+      })
+      const onOpenSession = vi.fn()
+      const onRenameSession = vi.fn()
+      const tree = WorkspaceSidebarView({
+        now: Date.now(),
+        projectName: 'Example project',
+        sessions: [active, target],
+        activeSessionId: active.id,
+        canCreateConversation: true,
+        canMutateConversations,
+        canDeleteConversations: true,
+        onGoHome: vi.fn(),
+        onNewConversation: vi.fn(),
+        isFilesOpen: false,
+        onOpenFiles: vi.fn(),
+        onOpenSession,
+        onRenameSession,
+        canDownloadArtifacts: true,
+        onDownloadArtifacts: vi.fn(),
+        onViewNotebook: vi.fn(),
+        onTogglePin: vi.fn(),
+        onDeleteSession: vi.fn(),
+        onOpenSettings: vi.fn(),
+        onOpenProjectSettings: vi.fn(),
+        onNewProject: vi.fn(),
+        mobileMode
+      })
+      const elements = collectElements(tree)
+      const button = elements.find(
+        (element) =>
+          element.props['data-slot'] === 'session-open-button' &&
+          getTextContent(element).includes(target.title)
+      )
+      expect(button).toBeDefined()
+
+      ;(button?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+      expect(onOpenSession).toHaveBeenCalledExactlyOnceWith(target.id, 1)
+      expect(onRenameSession).not.toHaveBeenCalled()
+
+      ;(button?.props.onDoubleClick as () => void)()
+      if (canMutateConversations) {
+        expect(onRenameSession).toHaveBeenCalledExactlyOnceWith(target)
+      } else {
+        expect(onRenameSession).not.toHaveBeenCalled()
+      }
+      const row = elements.find((element) => element.props['data-session-id'] === target.id)
+      expect(row).toBeDefined()
+      expect(row?.props.onDoubleClick).toBeUndefined()
+    }
+  )
+
+  it('renders only affected rows when fresh page callbacks accompany selection and Session updates', async () => {
+    const rowComponent = SessionRow as unknown as {
+      type: (props: Record<string, unknown>) => ReactElement
+    }
+    const originalRender = rowComponent.type
+    const renderRow = vi.fn(originalRender)
+    rowComponent.type = renderRow
+    const sidebar = await mountProjectSidebar([])
+    const sessions = Array.from({ length: 30 }, (_, index) =>
+      createSession({ id: `session-${index}`, title: `Session ${index}` })
+    )
+
+    try {
+      renderRow.mockClear()
+      await sidebar.rerenderSessions(sessions)
+      expect(renderRow).toHaveBeenCalledTimes(30)
+
+      await sidebar.selectSession('session-0')
+      renderRow.mockClear()
+      await sidebar.selectSession('session-29')
+      expect(renderRow).toHaveBeenCalledTimes(2)
+
+      renderRow.mockClear()
+      await sidebar.rerenderProjects([])
+      expect(renderRow).not.toHaveBeenCalled()
+
+      renderRow.mockClear()
+      const renamedSessions = sessions.map((session, index) =>
+        index === 5
+          ? { ...session, title: 'Updated title', updatedAt: session.updatedAt + 1 }
+          : session
+      )
+      await sidebar.rerenderSessions(renamedSessions)
+      expect(renderRow).toHaveBeenCalledTimes(1)
+
+      renderRow.mockClear()
+      await sidebar.rerenderSessions(
+        renamedSessions.map((session, index) =>
+          index === 7 ? { ...session, status: 'waiting-permission' } : session
+        )
+      )
+      expect(renderRow).toHaveBeenCalledTimes(1)
+      expect(renderRow.mock.calls[0]?.[0].presentedStatus).toBe('waiting-permission')
+    } finally {
+      sidebar.cleanup()
+      rowComponent.type = originalRender
+    }
+  })
+
+  it('uses a changed archive predicate for Sessions added after existing rows agreed', async () => {
+    const rowComponent = SessionRow as unknown as {
+      type: (props: Record<string, unknown>) => ReactElement
+    }
+    const originalRender = rowComponent.type
+    const renderRow = vi.fn(originalRender)
+    rowComponent.type = renderRow
+    const sidebar = await mountProjectSidebar([])
+
+    try {
+      await sidebar.setArchivePredicate(() => false)
+      renderRow.mockClear()
+      await sidebar.setArchivePredicate((session) => session.id === 'future-session')
+      expect(renderRow).not.toHaveBeenCalled()
+
+      await sidebar.rerenderSessions([
+        createSession({ id: 'session-a' }),
+        createSession({ id: 'future-session' })
+      ])
+      const newRow = renderRow.mock.calls.find(
+        ([props]) => (props.session as ChatSession).id === 'future-session'
+      )?.[0]
+      expect(newRow?.archiveAvailable).toBe(true)
+    } finally {
+      sidebar.cleanup()
+      rowComponent.type = originalRender
+    }
+  })
+
   it('reveals the selected session without resetting scroll on session updates', async () => {
     const previous = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView')
     const revealed: HTMLElement[] = []
@@ -662,7 +831,6 @@ describe('WorkspaceSidebar accessible render', () => {
 
       expect(document.body.querySelector('[data-slot="dropdown-menu-content"]')).toBeNull()
       expect(document.body.querySelector('[data-slot="session-hover-preview"]')).toBeNull()
-
       await act(async () =>
         actionsTrigger.dispatchEvent(
           new FocusEvent('focusin', { bubbles: true, relatedTarget: actionsMenu })
@@ -748,7 +916,16 @@ describe('WorkspaceSidebar accessible render', () => {
         Array.from(menu?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       expect(menu?.querySelector('[data-slot="dropdown-menu-sub-trigger"]')?.textContent).toBe(
         'Export'
       )
@@ -761,15 +938,25 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
       expect(onOpenSession).not.toHaveBeenCalled()
 
-      openRadixMenu(
-        container.querySelector<HTMLButtonElement>('[aria-label="Open actions for Context target"]')
+      const actionsButton = container.querySelector<HTMLButtonElement>(
+        '[aria-label="Open actions for Context target"]'
       )
+      await openRadixMenu(actionsButton)
       const dropdown = document.body.querySelector<HTMLElement>('[aria-label="Session actions"]')
       expect(
         Array.from(dropdown?.querySelectorAll<HTMLElement>('[data-action-id]') ?? []).map(
           (item) => item.dataset.actionId
         )
-      ).toEqual(['toggle-pin', 'edit', 'download-artifacts', 'view-notebook', 'archive', 'delete'])
+      ).toEqual([
+        'toggle-pin',
+        'edit',
+        'discuss',
+        'view-replay',
+        'download-artifacts',
+        'view-notebook',
+        'archive',
+        'delete'
+      ])
       await clickRadixMenuItem(
         dropdown?.querySelector<HTMLElement>('[data-action-id="toggle-pin"]')
       )
@@ -832,6 +1019,8 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(actions.map((item) => item.dataset.actionId)).toEqual([
         'toggle-pin',
         'edit',
+        'discuss',
+        'view-replay',
         'view-notebook',
         'archive',
         'delete'
@@ -1592,7 +1781,7 @@ describe('WorkspaceSidebar accessible render', () => {
       expect(clearButton?.getAttribute('data-size')).toBe('icon-xs')
       expect(clearButton?.className).toContain('text-text-100')
       expect(clearButton?.className).toContain('hover:bg-bg-200')
-      expect(clearButton?.className).toContain('focus-visible:ring-3')
+      expect(clearButton?.className).toContain('focus-visible:keyboard-focus')
 
       const mouseDown = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
       await act(async () => {
@@ -2384,8 +2573,8 @@ describe('WorkspaceSidebar accessible render', () => {
     const secondTarget = getSessionActionTargetProps(tree, sessions[1].id)
 
     expect(notebookButton?.props.onClick).toBeTypeOf('function')
-    ;(notebookButton?.props.onClick as () => void)()
-    expect(onOpenSession).toHaveBeenCalledWith('session-a')
+    ;(notebookButton?.props.onClick as (event: { detail: number }) => void)({ detail: 1 })
+    expect(onOpenSession).toHaveBeenCalledWith('session-a', 1)
 
     await secondTarget.bindings.edit?.execute(secondTarget.invocation)
     expect(onRenameSession).toHaveBeenCalledWith(sessions[1])
@@ -2425,6 +2614,7 @@ describe('WorkspaceSidebar accessible render', () => {
       isFilesOpen: true,
       onOpenFiles,
       onOpenLiterature,
+      isLibraryOpen: true,
       isComputeOpen: false,
       onOpenCompute,
       onOpenSession: vi.fn(),
@@ -2469,6 +2659,8 @@ describe('WorkspaceSidebar accessible render', () => {
     ;(computeButton?.props.onClick as () => void)()
     expect(onOpenCompute).toHaveBeenCalledTimes(1)
 
+    expect(literatureButton?.props['aria-controls']).toBe('right-panel')
+    expect(literatureButton?.props['aria-pressed']).toBe(true)
     expect(literatureButton?.props.onClick).toBeTypeOf('function')
     ;(literatureButton?.props.onClick as () => void)()
     expect(onOpenLiterature).toHaveBeenCalledTimes(1)
@@ -2666,6 +2858,78 @@ describe('WorkspaceSidebar accessible render', () => {
 
     expect(html).toContain('>Active<')
     expect(html).toContain('Session status: Waiting for your answer')
+  })
+
+  it('keeps a remote approval in Active with its permission status until it settles', async () => {
+    const session = createSession({
+      id: 'remote-session',
+      title: 'Remote analysis',
+      status: 'idle',
+      updatedAt: 1
+    })
+    useComputeStore.setState({
+      pendingApprovals: [
+        {
+          id: 'remote-approval',
+          sessionId: session.id,
+          providerId: 'ssh:cluster',
+          providerName: 'Cluster',
+          operation: 'call_command',
+          shape: 'command',
+          intent: 'Run analysis',
+          willPersistUnencrypted: false,
+          commandPreview: 'python analysis.py',
+          commandFull: 'python analysis.py'
+        }
+      ]
+    })
+
+    const onOpenSession = vi.fn()
+    const originalApi = window.api
+    window.api = { ...originalApi, platform: 'linux' } as never
+    const sidebar = await mountProjectSidebar([], vi.fn(), onOpenSession)
+    try {
+      await sidebar.rerenderSessions([
+        createSession({
+          id: 'older-result',
+          title: 'Earlier result',
+          status: 'idle',
+          updatedAt: 1
+        }),
+        session
+      ])
+      expect(sidebar.container.innerHTML).toContain('>Active<')
+      expect(sidebar.container.innerHTML).toContain('Session status: Waiting for permission')
+      await act(async () =>
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: '1',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      )
+      expect(onOpenSession).toHaveBeenLastCalledWith(session.id)
+
+      await act(async () => useComputeStore.getState().dismissApproval('remote-approval'))
+      expect(sidebar.container.innerHTML).not.toContain('>Active<')
+      expect(sidebar.container.innerHTML).toContain('Session status: Idle')
+      await act(async () =>
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            key: '1',
+            ctrlKey: true,
+            bubbles: true,
+            cancelable: true
+          })
+        )
+      )
+      expect(onOpenSession).toHaveBeenLastCalledWith('older-result')
+    } finally {
+      sidebar.cleanup()
+      window.api = originalApi
+    }
   })
 
   it('moves a recently completed idle session to Today when its Active grace period expires', async () => {

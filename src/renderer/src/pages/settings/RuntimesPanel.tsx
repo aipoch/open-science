@@ -4,6 +4,8 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · macrostructure: Workbench · genre: modern-minimal · tone: technical/austere
  * theme: existing Open-Science Settings tokens · enrichment: none · motion: existing controls only
  */
+import * as AlertDialog from '@/components/ui/alert-dialog'
+import * as Dialog from '@/components/ui/dialog'
 import {
   CheckCircle2,
   FolderInput,
@@ -14,8 +16,6 @@ import {
   Upload,
   X
 } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
-import * as Dialog from '@/components/ui/dialog'
 import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -34,33 +34,29 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { Input } from '@/components/ui/input'
-import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useRuntimeSettingsStore } from '@/stores/runtime-settings-store'
-import {
-  isEnvEnabled,
-  type DiscoveredInterpreter,
-  type EnvPackage,
-  type RuntimeUsage
-} from '../../../../shared/notebook-runtime'
-import type { NotebookLanguage } from '../../../../shared/notebook'
-import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import { type DiscoveredInterpreter, type EnvPackage } from '@aipoch/environment/contracts'
 import type { ImportArtifactEnvironmentLockResult } from '../../../../shared/artifact-reproducibility'
-import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
+import type { NotebookLanguage } from '../../../../shared/notebook-language-contract'
+import { isEnvEnabled, type RuntimeUsage } from '../../../../shared/notebook-runtime'
+import type { Wsl2BashPreviewStatus } from '../../../../shared/wsl-setup'
+import { provisionProgressText } from '../workspace/provision-progress-text'
+import { PythonIcon, RIcon } from './language-icons'
+import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
+import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
 import {
   getSettingsSearchKeyShortcuts,
   useSettingsSearchShortcut
 } from './settings-search-shortcut'
-import { PythonIcon, RIcon } from './language-icons'
-import { NotebookRecoveryNotice } from './NotebookRecoveryNotice'
-import { NotebookNetworkProtectionBanner } from './NotebookNetworkProtectionBanner'
+import { SettingsRow, SettingsSection, SettingsToggle } from './SettingsLayout'
 import { useNotebookNetworkStatus } from './use-notebook-network-status'
 import { WslLocalShellSection } from './WslLocalShellSection'
-import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
-import { provisionProgressText } from '../workspace/provision-progress-text'
 
 // v4 Runtime Registry write surface: one CARD per discovered interpreter per language. Each card can
 // be enabled/disabled (the agent only ever sees enabled envs); external envs additionally expose a
@@ -68,6 +64,44 @@ import { provisionProgressText } from '../workspace/provision-progress-text'
 // acquisition/download flow, and "Add interpreter…" registers the user's own interpreter into the
 // discovery catalog. Effective enable/auth state loads from the PERSISTED per-language enablement
 // (runtime.getEnablement), then refreshes from each setter's returned enablement.
+
+// Native disabled controls cannot receive keyboard focus. Keep their disabled semantics and
+// expose the explanation on a focusable wrapper that also receives their pointer events.
+function RuntimeDisabledHint({
+  reason,
+  label,
+  className,
+  children
+}: {
+  reason?: string
+  label: string
+  className?: string
+  children: React.ReactNode
+}): React.JSX.Element {
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span
+            className={cn(
+              'inline-flex min-w-0',
+              reason &&
+                'cursor-not-allowed rounded-md outline-none focus-visible:ring-2 focus-visible:ring-ring [&>*]:pointer-events-none',
+              className
+            )}
+            role={reason ? 'group' : undefined}
+            aria-label={reason ? label : undefined}
+            aria-disabled={reason ? true : undefined}
+            tabIndex={reason ? 0 : undefined}
+          >
+            {children}
+          </span>
+        </TooltipTrigger>
+        {reason ? <TooltipContent>{reason}</TooltipContent> : null}
+      </Tooltip>
+    </TooltipProvider>
+  )
+}
 
 const LANGUAGES: ReadonlyArray<{ id: NotebookLanguage; label: string; icon: React.JSX.Element }> = [
   { id: 'python', label: 'Python', icon: <PythonIcon /> },
@@ -584,6 +618,38 @@ const RuntimesPanel = ({
     const showReady = env.runnable && !operationActive && operation?.error === undefined
     const defaultManaged = isDefaultManagedRuntime(language, env)
     const recoveryBlocked = operation?.error?.includes('RUNTIME_RECOVERY_BLOCKED') === true
+    const busyHint = busy
+      ? t('A runtime operation is in progress. Wait for it to finish, then try again.')
+      : undefined
+    const operationHint =
+      busyHint ??
+      (languageOperationActive(language)
+        ? t('This runtime is being set up. Wait for setup to finish, then try again.')
+        : undefined)
+    const installHint =
+      operationHint ??
+      (language === 'r' && !isInstallAuthorized(language, env) && !selectedRLibrary(env)?.trim()
+        ? t(
+            'Select a personal R library before allowing package installation. Use Advanced options to choose an existing folder.'
+          )
+        : undefined)
+    const libraryHint =
+      operationHint ??
+      (isInstallAuthorized(language, env)
+        ? t('Turn off Allow package install before changing the personal R library.')
+        : undefined)
+    const verifyHint =
+      busyHint ??
+      (!enabled
+        ? t('Enable this R runtime before authorizing access.')
+        : !env.runnable
+          ? t('This R runtime is not runnable. Resolve its reported issue, then click Recheck.')
+          : networkStatus.kind !== 'ready'
+            ? t(
+                'R access verification requires network protection to be ready. Review Network settings, then recheck runtimes.'
+              )
+            : undefined)
+
     return (
       <div
         key={env.envId}
@@ -709,24 +775,28 @@ const RuntimesPanel = ({
               )}
             </p>
             <div className="mt-2 flex flex-wrap gap-2">
-              <Button
-                type="button"
-                variant="outline"
-                size="sm"
-                disabled={busy || !enabled || !env.runnable || networkStatus.kind !== 'ready'}
-                onClick={() => void setSandboxAccess(env, true)}
-              >
-                {t('Authorize and verify')}
-              </Button>
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={busy}
-                onClick={() => void setSandboxAccess(env, false)}
-              >
-                {t('Remove R access')}
-              </Button>
+              <RuntimeDisabledHint reason={verifyHint} label={t('Authorize and verify')}>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  disabled={Boolean(verifyHint)}
+                  onClick={() => void setSandboxAccess(env, true)}
+                >
+                  {t('Authorize and verify')}
+                </Button>
+              </RuntimeDisabledHint>
+              <RuntimeDisabledHint reason={busyHint} label={t('Remove R access')}>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  disabled={busy}
+                  onClick={() => void setSandboxAccess(env, false)}
+                >
+                  {t('Remove R access')}
+                </Button>
+              </RuntimeDisabledHint>
             </div>
             {networkStatus.kind !== 'ready' ? (
               <p className="mt-2 text-xs text-muted-foreground">
@@ -758,50 +828,51 @@ const RuntimesPanel = ({
                     )
               }
             >
-              <div className="flex justify-end">
+              <RuntimeDisabledHint
+                reason={installHint}
+                label={t('Allow package install for {{label}}', { label: env.label })}
+              >
                 <SettingsToggle
                   enabled={isInstallAuthorized(language, env)}
                   onToggle={() => void toggleInstallAuthorized(language, env)}
-                  disabled={
-                    busy ||
-                    languageOperationActive(language) ||
-                    (language === 'r' &&
-                      !isInstallAuthorized(language, env) &&
-                      !selectedRLibrary(env)?.trim())
-                  }
+                  disabled={Boolean(installHint)}
                   aria-label={t('Allow package install for {{label}}', { label: env.label })}
                 />
-              </div>
+              </RuntimeDisabledHint>
             </SettingsRow>
             {language === 'r' ? (
               <div className="mt-2 space-y-2 text-xs">
                 {(env.personalRLibraries?.length ?? 0) > 1 ? (
-                  <select
-                    className="w-full rounded-md border border-input bg-background p-2"
-                    aria-label={t('Personal R package library')}
-                    value={selectedRLibrary(env) ?? ''}
-                    disabled={
-                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
-                    }
-                    onChange={(event) =>
-                      setInstallLibraries((current) => ({
-                        ...current,
-                        [env.envId]: event.target.value
-                      }))
-                    }
+                  <RuntimeDisabledHint
+                    reason={libraryHint}
+                    label={t('Personal R package library')}
+                    className="w-full"
                   >
-                    <option value="">{t('Select a personal R library')}</option>
-                    {[
-                      ...new Set([
-                        ...env.personalRLibraries!,
-                        ...(selectedRLibrary(env) ? [selectedRLibrary(env)!] : [])
-                      ])
-                    ].map((path) => (
-                      <option key={path} value={path}>
-                        {path}
-                      </option>
-                    ))}
-                  </select>
+                    <select
+                      className="w-full rounded-md border border-input bg-background p-2"
+                      aria-label={t('Personal R package library')}
+                      value={selectedRLibrary(env) ?? ''}
+                      disabled={Boolean(libraryHint)}
+                      onChange={(event) =>
+                        setInstallLibraries((current) => ({
+                          ...current,
+                          [env.envId]: event.target.value
+                        }))
+                      }
+                    >
+                      <option value="">{t('Select a personal R library')}</option>
+                      {[
+                        ...new Set([
+                          ...env.personalRLibraries!,
+                          ...(selectedRLibrary(env) ? [selectedRLibrary(env)!] : [])
+                        ])
+                      ].map((path) => (
+                        <option key={path} value={path}>
+                          {path}
+                        </option>
+                      ))}
+                    </select>
+                  </RuntimeDisabledHint>
                 ) : selectedRLibrary(env) ? (
                   <p
                     className="break-all text-muted-foreground"
@@ -823,17 +894,17 @@ const RuntimesPanel = ({
                       'If you have already set up a personal package folder in this R, select that folder here.'
                     )}
                   </p>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={
-                      busy || languageOperationActive('r') || isInstallAuthorized(language, env)
-                    }
-                    onClick={() => void chooseRLibrary(env)}
-                  >
-                    {t('Choose library folder…')}
-                  </Button>
+                  <RuntimeDisabledHint reason={libraryHint} label={t('Choose library folder…')}>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={Boolean(libraryHint)}
+                      onClick={() => void chooseRLibrary(env)}
+                    >
+                      {t('Choose library folder…')}
+                    </Button>
+                  </RuntimeDisabledHint>
                 </details>
               </div>
             ) : null}

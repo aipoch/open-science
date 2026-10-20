@@ -253,7 +253,8 @@ const RemoteOfficePreviewContent = ({
       })
       .then((result) => {
         if (!active) {
-          if (result.kind === 'started') void window.api.officePreview.close(result.sessionId)
+          if (result.kind === 'started')
+            void window.api.officePreview.close(result.sessionId).catch(() => undefined)
           return
         }
         if (result.kind === 'cancelled') return
@@ -286,7 +287,9 @@ const RemoteOfficePreviewContent = ({
     return () => {
       active = false
       removeStateListener()
-      if (openedSessionId) void window.api.officePreview.close(openedSessionId)
+      // The caller lifecycle also reclaims sessions when shutdown removes the IPC handler.
+      if (openedSessionId)
+        void window.api.officePreview.close(openedSessionId).catch(() => undefined)
     }
   }, [
     attempt,
@@ -365,7 +368,7 @@ const RemoteOfficePreviewContent = ({
         if (!active) return
         console.error('Failed to attach isolated Office preview frame', error)
         // IPC failures bypass the supervisor's normal unavailable result, so release explicitly.
-        void window.api.officePreview.close(frame.sessionId)
+        void window.api.officePreview.close(frame.sessionId).catch(() => undefined)
         setFrame(undefined)
         setFrameLoadGeneration(0)
         setState({ kind: 'error', error: 'RENDER_FAILED' })
@@ -375,6 +378,20 @@ const RemoteOfficePreviewContent = ({
       window.removeEventListener('message', handleMessage)
     }
   }, [frame, frameLoadGeneration, i18n])
+
+  useEffect(() => {
+    if (!frame || !['xls', 'xlsx', 'spreadsheet', 'pptx'].includes(extension)) return
+    return window.api.window?.onFindInOffice?.((sessionId) => {
+      if (sessionId !== frame.sessionId || state.kind !== 'ready') return
+      const message: OfficePreviewHostMessage = {
+        channel: OFFICE_PREVIEW_FRAME_MESSAGE_CHANNEL,
+        version: OFFICE_PREVIEW_FRAME_MESSAGE_VERSION,
+        type: 'find',
+        sessionId
+      }
+      frameRef.current?.contentWindow?.postMessage(message, OFFICE_PREVIEW_RUNTIME_ORIGIN)
+    })
+  }, [extension, frame, state.kind])
 
   const visibleState: OfficeHostState =
     ownsLease && !hasSourceIdentity ? { kind: 'error', error: 'FILE_READ_FAILED' } : state

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -265,3 +266,5 @@ describe('normalizeLegacyDataPaths (integration)', () => {
     ).resolves.toBeUndefined()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

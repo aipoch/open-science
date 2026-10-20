@@ -1,0 +1,9 @@
+{"name": "table-index-must-not-become-seed-count", "source": "Table 1: Results are medians of 5 runs with different seeds.", "translation": "表 1：结果是使用 1 种不同种子进行 5 次运行的中位数。", "rejected": true}
+{"name": "figure-index-must-not-become-group-count", "source": "Figure 3: Scores across independent groups at 20 epochs.", "translation": "图 3：3 组独立组在 20 轮时的得分。", "rejected": true}
+{"name": "caption-index-without-invented-count-is-valid", "source": "Table 1: Results are medians of 5 runs with different seeds.", "translation": "表 1：结果是采用不同种子进行 5 次运行的中位数。", "rejected": false}
+{"name": "explicit-repeated-count-remains-valid", "source": "Table 3: Scores across 3 groups at 20 epochs.", "translation": "表 3：3 组在 20 轮时的得分。", "rejected": false}
+{"name": "indefinite-article-may-become-one", "source": "Table 1: Results from a representative trial.", "translation": "表 1：来自 1 次代表性试验的结果。", "rejected": false}
+{"name": "spelled-count-may-become-digits", "source": "Figure 3: Scores across three groups.", "translation": "图 3：3 组的得分。", "rejected": false}
+{"name": "caption-index-is-not-part-of-decimal-or-model-name", "source": "Table 1: Model X1 improves by 1.5 percent.", "translation": "表 1：模型 X1 提升了 1.5%。", "rejected": false}
+{"name": "explicit-caption-reference-is-not-a-quantity", "source": "Table 1: This table reports scores across tasks.", "translation": "表 1：表 1 报告了各任务的得分。", "rejected": false}
+{"name": "caption-index-unit-conversion-is-not-invented-count", "source": "Table 1: The network has 1000 million parameters.", "translation": "表 1：网络有 1 billion 个参数。", "rejected": false}

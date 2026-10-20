@@ -1,4 +1,8 @@
 appId: com.aipoch.open-science
+protocols:
+  - name: Open-Science browser import
+    schemes:
+      - open-science
 productName: Open-Science
 copyright: Copyright © 2026 AIPOCH
 directories:
@@ -6,8 +10,14 @@ directories:
 # Apply a valid deep ad-hoc signature on macOS (no Developer ID available). Without this,
 # electron-builder ships an incompletely-signed bundle that Gatekeeper flags as "damaged"
 # on downloaded/quarantined copies, so the app won't launch on other machines. See the hook.
+beforePack: build/prepare-desktop.cjs
 afterPack: build/adhoc-sign.cjs
+afterSign: build/sign-windows.cjs
 files:
+  # Runtime code and resources are compiled/staged separately; repository tooling is not app data.
+  - '!{scripts,test,e2e,docs,release-notes,patches,prisma}{,/**/*}'
+  # CLI release archives and staging files can remain after a prior packaging run.
+  - '!out/{backend,standalone,desktop-backend,node-runtime,web,cli-artifacts,windows-installer}{,/**/*}'
   - '!**/.vscode/*'
   # Agent/AI tooling state lives in the project (.claude holds git worktrees — full nested repo
   # copies, easily >1GB — plus memory/logs; .codex is similar). electron-builder sweeps in everything
@@ -16,69 +26,61 @@ files:
   - '!.claude{,/**/*}'
   - '!.codex{,/**/*}'
   - '!**/{.worktree,.worktrees,.codegraph,.agents}{,/**/*}'
+  # Runtime source builds, diagnostic traces and internal plans are local-only artifacts.
+  - '!tmp{,/**/*}'
+  # electron-builder does not apply .gitignore: local papers, model spikes, screenshots and
+  # traces must never enter an installer built from a developer checkout.
+  - '!docs/{internal,superpowers}{,/**/*}'
+  - '!{test-results,playwright-report,blob-report,coverage,local,.dev-isolate,.hallmark,.scratch,.superpowers}{,/**/*}'
   - '!src/*'
   - '!electron.vite.config.{js,ts,mjs,cjs}'
   - '!{.eslintcache,eslint.config.mjs,.prettierignore,.prettierrc.yaml,dev-app-update.yml,CHANGELOG.md,README.md}'
   - '!{.env,.env.*,.npmrc,pnpm-lock.yaml}'
-  - '!packages/open-science{,/**/*}'
+  # Installed local packages are already copied through their node_modules runtime entry points.
+  - '!packages{,/**/*}'
   - '!{tsconfig.json,tsconfig.node.json,tsconfig.web.json}'
-  # Prisma is shipped via extraResources (see below), not inside the asar. Exclude it here so that at
-  # runtime `require('@prisma/client')` resolves the real copy in Contents/Resources/node_modules
-  # (app.asar's parent dir) instead of a broken in-asar copy that can't find its generated `.prisma`
-  # client — which otherwise crashes the main process at startup with
-  # "Cannot find module '.prisma/client/default'" (window never opens; dock icon bounces and quits).
-  - '!node_modules/@prisma/client{,/**/*}'
-  - '!node_modules/.prisma{,/**/*}'
-  # The bundled Claude native binary (~220MB) is never executed: the app spawns the ACP agent with
-  # CLAUDE_CODE_EXECUTABLE pointing at the user's system-installed claude, and claude-agent-acp only
-  # resolves this optional platform package when that env var is unset. Excluding it drops ~220MB.
-  # Wildcard every platform variant (darwin-arm64/-x64, linux-*, win32-*) so the exclusion holds no
-  # matter which OS the release job builds on — npm only installs the one matching the build host.
-  - '!node_modules/@anthropic-ai/claude-agent-sdk-*{,/**/*}'
+  # Business dependencies live in the ordinary Node backend. The Electron host only runs
+  # desktop integration; retaining these here duplicates the backend's native/PDF/AI payload.
+  - '!node_modules/{@prisma,.prisma,prisma,typescript}{,/**/*}'
+  - '!node_modules/{@huggingface,onnxruntime-*,pdfjs-dist,sharp,@img,@napi-rs,fontkit,pdf-lib,@embedpdf,@pdf-lib}{,/**/*}'
+  - '!node_modules/@aipoch/{pdf-structure,pdf-translation}{,/**/*}'
+  - '!node_modules/@anthropic-ai{,/**/*}'
+  - '!node_modules/@agentclientprotocol/claude-agent-acp{,/**/*}'
+  - '!node_modules/{tiktoken,js-tiktoken,web-tree-sitter,openchemlib,citeme-engine-wasm}{,/**/*}'
   # The internal Notebook sandbox is bundled into the main process by electron-vite. Keep its
   # vendored source/native trees out of app.asar; the executable resources are copied explicitly per
   # platform below so path resolution and code signing remain deterministic.
   - '!node_modules/@aipoch/notebook-network-sandbox{,/**/*}'
-  - '!packages/notebook-network-sandbox{,/**/*}'
-  # pdfjs-dist ships several redundant copies. The main process only loads `legacy/build` (text
-  # extraction) and needs `cmaps`/`standard_fonts` for CJK/CID PDFs; the renderer bundles its own
-  # copy via Vite. Drop the modern build, viewer, image decoders, TS types, and source maps
-  # (~16MB) so the packaged app carries only what runs.
-  - '!node_modules/pdfjs-dist/build{,/**/*}'
-  - '!node_modules/pdfjs-dist/web{,/**/*}'
-  - '!node_modules/pdfjs-dist/image_decoders{,/**/*}'
-  - '!node_modules/pdfjs-dist/types{,/**/*}'
-  - '!node_modules/pdfjs-dist/**/*.map'
+  # Micromamba is copied from this staging tree to the resources root by the platform-specific
+  # extraResources entries below. Keep the staging copies out of app.asar and avoid shipping a
+  # second, unused copy under app.asar.unpacked/resources/bin.
+  - '!resources/bin{,/**/*}'
 asarUnpack:
+  - node_modules/@aipoch/notebook-syntax/assets/**
+  - node_modules/@aipoch/literature-citations/resources/**
   - resources/**
+  - '!resources/bin{,/**/*}'
+  # The desktop credential bridge still launches these helpers from the Electron host.
   - node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*
   - node_modules/@aipoch/process-tree-native/build/Release/*.node
   - node_modules/@aipoch/safe-file-publisher-native/build/Release/*.node
-  # sharp loads its platform N-API binding and libvips shared libraries by physical path.
-  - node_modules/pdfjs-dist/**
-  - node_modules/@napi-rs/**
-  - node_modules/detect-libc/**
-  - node_modules/semver/**
-  - node_modules/sharp/**
-  - node_modules/@img/**
-  # The ACP agent runs as a spawned child process, so its entry must live outside the asar.
-  - node_modules/@agentclientprotocol/claude-agent-acp/**
-# The Prisma generated client (`node_modules/.prisma`) is produced by `prisma generate` and is NOT a
-# declared dependency, so electron-builder's node_modules collector never bundles it into the asar.
-# It also loads a native query engine (.dylib.node) by path, which can't run from inside an asar. Ship
-# the client + generated code as plain files under Contents/Resources/node_modules; Node's normal
-# directory walk from app.asar finds them there. (@prisma/client v6 has zero runtime deps, so the
-# client + .prisma pair is self-contained.)
 # The micromamba binary is added per-platform below (mac/win/linux extraResources), not here, so
 # the two extraResources lists don't collide.
 extraResources:
+  - from: out/desktop-backend
+    to: backend
+  # electron-builder excludes a source root's node_modules even for extraResources.
+  # Copy that directory explicitly so ordinary Node can resolve its staged dependencies.
+  - from: out/desktop-backend/node_modules
+    to: backend/node_modules
+  - from: out/node-runtime/${platform}-${arch}
+    to: node-runtime
   # Keep the project license readable outside app.asar on every platform.
   - from: LICENSE
     to: LICENSE.txt
-  - from: node_modules/.prisma
-    to: node_modules/.prisma
-  - from: node_modules/@prisma/client
-    to: node_modules/@prisma/client
+  # Keep the copied third-party provider icon paths' MIT notice readable in every packaged app.
+  - from: src/renderer/src/assets/provider-icons/LobeHub-icons-LICENSE
+    to: LobeHub-icons-LICENSE
   # Ship the `open-science` CLI as plain files (not in the asar) so the installed command-line launcher
   # can run it with the app's own Electron in Node mode. Only the runtime .mjs files; tests are excluded.
   - from: cli
@@ -89,11 +91,14 @@ extraResources:
     to: packages/open-science
     filter:
       - '*.mjs'
+      - '*.cjs'
       - '*.d.ts'
+      - '*.d.cts'
       - 'LICENSE'
       - 'package.json'
-# Windows: an unsigned NSIS installer. SmartScreen shows a bypassable "unknown publisher" prompt.
-# The afterPack ad-hoc-sign hook is a no-op off macOS, so it is safe on this target.
+# Windows: stable releases use Azure Artifact Signing; nightly and other builds remain unsigned.
+# The afterSign hook supplements missing bundled PE signatures for Store submissions after
+# electron-builder edits/signs the launcher. Existing helper/vendor signatures are preserved.
 win:
   # Windows ProgID is a persisted association identity; other platforms use a display name.
   fileAssociations:
@@ -103,6 +108,11 @@ win:
       mimeType: application/x-open-science-session
       role: Viewer
       rank: Default
+  # Preserve the exact pre-signed component bytes. The afterPack hook verifies their pinned hashes.
+  signExts:
+    - '!credential_identity_probe.exe'
+    - '!credential_key_validator.exe'
+    - '!credential_secret.exe'
   executableName: open-science
   icon: build/icon.ico
   artifactName: aipoch-${name}-${version}-win-${arch}.${ext}
@@ -119,6 +129,8 @@ win:
     # primary executable cannot even pass `--version` on a particular Windows machine.
     - from: resources/bin/win/${arch}/micromamba-compat.exe
       to: micromamba-compat.exe
+    - from: build/windows-update-handoff-uninstall.ps1
+      to: windows-update-handoff-uninstall.ps1
     - from: build/windows-runtime-cache-uninstall.ps1
       to: windows-runtime-cache-uninstall.ps1
     - from: build/windows-notebook-sandbox-uninstall.ps1
@@ -158,6 +170,9 @@ mac:
   # Minimum macOS to run the app (written to Info.plist LSMinimumSystemVersion). macOS 12 (Monterey)
   # and up; below this the OS refuses to launch. Independent of the CI build runner's macOS version.
   minimumSystemVersion: '12.0.0'
+  # Loose first-party components already have reviewed Developer ID signatures.
+  signIgnore:
+    - '/node_modules/@aipoch/(credential-identity-probe-native|process-tree-native|safe-file-publisher-native)/build/Release/'
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
     # Electron locates its Helper bundles using this internal name. Keep it aligned with productName.
@@ -165,8 +180,12 @@ mac:
     CFBundleDisplayName: Open-Science
     NSCameraUsageDescription: Application requests access to the device's camera.
     NSMicrophoneUsageDescription: Application requests access to the device's microphone.
-    NSDocumentsFolderUsageDescription: Application requests access to the user's Documents folder.
-    NSDownloadsFolderUsageDescription: Application requests access to the user's Downloads folder.
+    NSDesktopFolderUsageDescription: Open-Science needs access to Desktop files to browse, open, and save your research files.
+    NSDocumentsFolderUsageDescription: Open-Science needs access to Documents files to browse, open, and save your research files.
+    NSDownloadsFolderUsageDescription: Open-Science needs access to Downloads files to browse, open, and save your research files.
+    NSNetworkVolumesUsageDescription: Open-Science needs access to network volumes to browse, open, and save your research files.
+    NSRemovableVolumesUsageDescription: Open-Science needs access to removable volumes to browse, open, and save your research files.
+    NSLocalNetworkUsageDescription: Open-Science needs local network access to connect to compute hosts and services you configure.
   notarize: false
   extraResources:
     # Ship the ad-hoc-signed micromamba mach-O at Contents/Resources/micromamba, where
@@ -175,6 +194,8 @@ mac:
     - from: resources/bin/mac/${arch}/micromamba
       to: micromamba
 dmg:
+  # Bzip2 reduces the full desktop payload without changing the installed application.
+  format: UDBZ
   title: Open-Science
   background: build/dmg-background.png
   iconSize: 88

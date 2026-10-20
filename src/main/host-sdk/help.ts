@@ -937,10 +937,14 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
   id: 'host.sessions',
   path: 'host.sessions',
   aliases: ['sessions'],
-  summary: 'List or inspect read-only Session diagnostics in the current Project.',
+  summary: 'Inspect Sessions or read discussion records.',
   callForms: [
     { signature: 'await host.sessions.list(options?)', accepts: 'optional_list_options' },
-    { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' }
+    { signature: 'await host.sessions.inspect(sessionId)', accepts: 'exact_session_id' },
+    {
+      signature: 'await host.sessions.read(options?)',
+      accepts: 'optional_record_options'
+    }
   ],
   request: {
     fields: [
@@ -949,7 +953,7 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         type: 'string',
         required: true,
         when: 'inspect',
-        description: 'Exact Session id in the token-owned current Project.'
+        description: 'Exact Session id for inspect.'
       }
     ]
   },
@@ -980,12 +984,44 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
         required: false,
         default: 20,
         range: '1..100',
-        description: 'Maximum Sessions returned by list.'
+        description: 'list: 1..100 Sessions; read: 1..20000 characters, up to 50 index records.'
+      },
+      {
+        name: 'kind',
+        type: 'string',
+        required: false,
+        description:
+          'read: overview, context (nearby messages), message, activity, notebook-run, artifact-version, upload-version, review.'
+      },
+      {
+        name: 'id',
+        type: 'string',
+        required: false,
+        description: 'read: native record ID; selected records infer kind and branch.'
+      },
+      {
+        name: 'part',
+        type: "'input' | 'result' | 'record'",
+        required: false,
+        description: 'read only: defaults to the selected focus part.'
+      },
+      {
+        name: 'offset',
+        type: 'integer',
+        required: false,
+        default: 0,
+        description: 'read: character/index offset; prefer the returned next object.'
+      },
+      {
+        name: 'branchId',
+        type: 'string',
+        required: false,
+        description: 'read: optional linked Branch for browsing.'
       }
     ]
   },
   returns: {
-    type: 'SessionDiagnostic | SessionDiagnosticPage',
+    type: 'SessionDiagnostic | SessionDiagnosticPage | SessionRecordPage | SessionRecordText',
     listFields: [
       { name: 'totalCount', type: 'integer', required: true, description: 'Total matches.' },
       { name: 'nextCursor', type: 'string', required: false, description: 'Next page.' },
@@ -1013,13 +1049,18 @@ const SESSIONS_DESCRIPTOR: HostSdkHelpOperationDescriptor = {
     ]
   },
   constraints: [
-    'Main JavaScript control REPL only; Project scope comes from the session-bound token.',
-    'Read-only and metadata-only; use host.frames for transcript content and Branch traversal.',
-    'Live runtime fields are current evidence, not inferred historical state.'
+    'Main only. list/inspect use the current Project and return metadata, not transcripts.',
+    'read() returns focus/overview. Copy returned read/overview/nearby options.',
+    'Follow response.next. Text: 8000 chars default, 20000 max; index: 50 records. incomplete marks missing/truncated source.',
+    'Runtime evidence describes now, not history.'
   ],
   examples: [
     { title: 'List recent Sessions', code: 'await host.sessions.list({ limit: 20 })' },
-    { title: 'Inspect one Session', code: 'await host.sessions.inspect(sessionId)' }
+
+    {
+      title: 'Read a linked Session',
+      code: 'const selected = await host.sessions.read(); await host.sessions.read(selected.records[0].read)'
+    }
   ],
   resolveAvailability: ({ callerRole, capabilities }) =>
     callerRole === 'delegate'

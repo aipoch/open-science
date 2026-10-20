@@ -6,6 +6,20 @@ import {
 } from './configured-shell-runtime'
 
 describe('resolveConfiguredShellRuntimeBinding', () => {
+  it('binds newly provisioned protected Sessions to the verified Core runtime', async () => {
+    expect(resolveConfiguredShellRuntimeBinding({}, 'win32', true)).toEqual({
+      kind: 'powershell',
+      version: '7.6'
+    })
+    await expect(
+      resolveAvailableShellRuntimeBinding(
+        { localShellRuntime: 'powershell' },
+        async () => false,
+        'win32',
+        true
+      )
+    ).resolves.toEqual({ kind: 'powershell', version: '7.6' })
+  })
   it('uses an explicit PowerShell preference even while retaining a WSL profile', () => {
     expect(
       resolveConfiguredShellRuntimeBinding(

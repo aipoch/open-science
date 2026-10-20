@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { BackendRoutePlan } from './backend-route-planner'
-import { AnthropicProviderBridge } from './anthropic-provider-bridge'
+import { MessagesBridge } from './messages-bridge'
 import type { ProviderRuntimeTarget } from './provider-accounts'
 import { ProviderTransportOwner } from './provider-transport-owner'
 
@@ -13,18 +13,18 @@ const target: ProviderRuntimeTarget = {
   providerId: 'provider-a',
   providerType: 'custom',
   effectiveModel: 'model-a',
-  apiEndpoints: ['anthropic'],
+  apiEndpoints: ['messages'],
   provider: {
     type: 'custom',
     baseUrl: 'https://provider.example.test',
     model: 'model-a',
     key: 'synthetic-upstream-key',
-    apiEndpoints: ['anthropic']
+    apiEndpoints: ['messages']
   },
   reasoningEffortProfile: { supported: false },
   frameworkCompatible: true,
   modelBridgeSupported: false,
-  needsChatResponsesBridge: false,
+  needsChatResponsesToChatCompletionsBridge: false,
   needsNativeResponsesCompatibility: false
 }
 
@@ -86,8 +86,8 @@ describe('Claude ACP provider configuration', () => {
       )
     )
     const owner = new ProviderTransportOwner({
-      createAnthropicProviderBridge: (targets, initialTargetId) =>
-        new AnthropicProviderBridge(targets, initialTargetId, upstreamFetch)
+      createMessagesBridge: (targets, initialTargetId) =>
+        new MessagesBridge(targets, initialTargetId, upstreamFetch)
     })
     const generation = await owner.acquire({ activeTarget: target, plan })
 

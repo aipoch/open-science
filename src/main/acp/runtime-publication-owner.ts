@@ -1,19 +1,23 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import type {
-  AcpPermissionRequest,
   AcpRuntimeEvent,
   AcpRuntimeState,
   AcpStateSnapshot,
   AcpStateUpdate
 } from '../../shared/acp'
-import { sanitizeRawToolPayload, sanitizeToolDetailText } from '../../shared/tool-detail-sanitizer'
-import { createLogger } from '../logger'
-import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import {
+  sanitizeNotebookCodeReviewPayload,
+  sanitizeRawToolPayload,
+  sanitizeToolDetailText
+} from '../../shared/tool-detail-sanitizer'
 import {
   ACP_RUNTIME_EVENT_RETENTION_LIMIT,
   type AcpRuntimeSnapshotOwner,
   type RuntimeEventInput,
   type RuntimeSnapshotProjection
 } from './runtime-snapshot-owner'
+import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 
 // Dev-facing counters for the acp:state window coalescer; a throttled debug summary rides
 // the existing logger level gating (debug is dev-only), leaving production unaffected.
@@ -64,8 +68,22 @@ const projectPermissionRequest = (request: AcpPermissionRequest): AcpPermissionR
     ...requestProjection,
     title: sanitizeToolDetailText(request.title)
   }
-  const sanitizedRawInput =
-    rawInput === null ? null : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
+  const notebookReview =
+    request.appOwned === true &&
+    rawInput !== null &&
+    typeof rawInput === 'object' &&
+    'notebookCodeRisk' in rawInput
+  const sanitizedRawInput = notebookReview
+    ? sanitizeNotebookCodeReviewPayload(rawInput)
+    : rawInput === null
+      ? null
+      : sanitizeRawToolPayload(rawInput, MAX_PERMISSION_RAW_INPUT_CHARS)
+  // Never expose a selectable Allow without the host review's source and evidence.
+  if (notebookReview && sanitizedRawInput === undefined)
+    return {
+      ...sanitizedProjection,
+      options: request.options.filter((option) => option.kind.startsWith('reject_'))
+    }
 
   return rawInput === undefined
     ? sanitizedProjection
@@ -114,6 +132,12 @@ class AcpRuntimePublicationOwner {
   }
 
   pushEvent(event: RuntimeEventInput, onAppended?: () => void): void {
+    // Reserve host approval identities before any snapshot, durable projection or IPC subscriber
+    // can merge a provider update into an app-owned receipt. Provider normalization never sets appOwned.
+    if (event.kind === 'tool' && event.toolCallId?.startsWith('app-approval:') && !event.appOwned) {
+      log.warn('Ignored provider tool event using a reserved app approval identity')
+      return
+    }
     const interaction = event.sessionId
       ? this.options.interactions.current(event.sessionId)
       : undefined
@@ -181,6 +205,19 @@ class AcpRuntimePublicationOwner {
 
   publishPermissionRequest(request: AcpPermissionRequest): void {
     const publishedRequest = projectPermissionRequest(request)
+    if (request.appOwned && sanitizeNotebookCodeReviewPayload(request.rawInput)) {
+      this.pushEvent({
+        kind: 'tool',
+        level: 'info',
+        sessionId: request.sessionId,
+        toolCallId: request.toolCallId,
+        title: request.title,
+        providerToolName: 'Open-Science',
+        appOwned: true,
+        rawInput: request.rawInput,
+        status: 'in_progress'
+      })
+    }
 
     this.pushEvent({
       kind: 'permission',

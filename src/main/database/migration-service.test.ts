@@ -1,17 +1,18 @@
 import { access, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 
 import { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it } from 'vitest'
+import { setTimeout as delay } from 'node:timers/promises'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import { migrationSqlExecutor } from './migration-sql-executor'
+import { grantedLocalRootsMigration } from './migrations/0003-granted-local-roots'
 
-import { literatureCandidateInputSchema } from '../../shared/literature'
+import { literatureCandidateInputSchema } from '@aipoch/literature-library/contracts'
 import { LiteratureCatalog } from '../literature/catalog'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { adaptMigrationOperationsForCurrentSchema } from './legacy-baseline-adapter'
-import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
-import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
-import { applySqliteMigrationOperations } from './sqlite-schema-migrations'
 import {
   BASELINE_CHECKSUM,
   MIGRATION_MANIFEST,
@@ -23,6 +24,8 @@ import {
   verifyCurrentApplicationSchema,
   type MigrationManifestEntry
 } from './migration-service'
+import { RUNTIME_SCHEMA_TABLE_DDL_BY_NAME } from './migrations/0001-runtime-schema-baseline'
+import { databaseJsonConstraintsMigration } from './migrations/0008-database-json-constraints'
 
 const futureTestMigration = (): MigrationManifestEntry => {
   const id = '9997_test_suffix'
@@ -82,32 +85,6 @@ const legacyDraftMigrationManifest = (): readonly MigrationManifestEntry[] => {
     },
     ...MIGRATION_MANIFEST.slice(upstreamSuffixIndex, sessionProjectionIndex)
   ]
-}
-
-const createDatabaseAtReleasedManifest = async (
-  client: PrismaClient,
-  manifest: readonly MigrationManifestEntry[]
-): Promise<void> => {
-  await client.$executeRawUnsafe('PRAGMA foreign_keys = OFF')
-  for (const migration of manifest) {
-    for (const statement of migration.statements) await client.$executeRawUnsafe(statement)
-    await applySqliteMigrationOperations(client, migration.operations ?? [])
-  }
-  await client.$executeRawUnsafe(`CREATE TABLE "_open_science_migrations" (
-    "id" TEXT NOT NULL PRIMARY KEY,
-    "checksum" TEXT NOT NULL,
-    "appliedAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    CONSTRAINT "_open_science_migrations_checksum_check"
-      CHECK (length("checksum") = 64 AND "checksum" NOT GLOB '*[^0-9a-f]*')
-  )`)
-  for (const migration of manifest) {
-    await client.$executeRawUnsafe(
-      `INSERT INTO "_open_science_migrations" ("id", "checksum") VALUES (?, ?)`,
-      migration.id,
-      migration.checksum
-    )
-  }
-  await client.$executeRawUnsafe('PRAGMA foreign_keys = ON')
 }
 
 const createDatabaseAtMigration0005 = async (client: PrismaClient): Promise<void> => {
@@ -312,14 +289,61 @@ describe('application database migrations', () => {
   let client: PrismaClient | undefined
 
   afterEach(async () => {
+    vi.restoreAllMocks()
     await client?.$disconnect()
     if (storageRoot) await rm(storageRoot, { force: true, recursive: true })
+  })
+
+  it('adds journal storage to the previous release without changing historical references', async () => {
+    const journalMigrations: readonly MigrationManifestEntry[] = MIGRATION_MANIFEST.filter(
+      ({ id }) => /journal/i.test(id)
+    )
+    expect(journalMigrations.map(({ id }) => id)).toEqual(['0046_journal_attributes'])
+    expect(journalMigrations[0].operations ?? []).toEqual([])
+    expect(
+      journalMigrations[0].statements.every((statement) =>
+        /^CREATE (?:TABLE|(?:UNIQUE )?INDEX)\b/.test(statement.trim())
+      )
+    ).toBe(true)
+    storageRoot = await mkdtemp(join(tmpdir(), 'journal-schema-upgrade-'))
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtReleasedManifest(client)
+    await client.$executeRawUnsafe('DROP TABLE "JournalItemBinding"')
+    await client.$executeRawUnsafe('DROP TABLE "JournalDatasetEntry"')
+    await client.$executeRawUnsafe('DROP TABLE "JournalDataset"')
+    await client.$executeRawUnsafe('DROP TABLE "Journal"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id IN ('0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')`
+    )
+    await client.literatureItem.create({
+      data: {
+        id: 'synthetic-history',
+        itemType: 'journalArticle',
+        title: 'Independent migration fixture',
+        containerTitle: 'Imaginary Planetary Review'
+      }
+    })
+    const before = await client.literatureItem.findMany()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: [
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
+      ]
+    })
+    expect(await client.literatureItem.findMany()).toEqual(before)
+    expect(await client.$queryRawUnsafe('SELECT * FROM "Journal"')).toEqual([])
+    expect(await client.$queryRawUnsafe('SELECT * FROM "JournalDataset"')).toEqual([])
+    expect(await client.$queryRawUnsafe('PRAGMA foreign_key_check')).toEqual([])
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
   })
 
   it('adds empty metadata commit receipts without inventing proof for historical references', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-receipt-upgrade-'))
     client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.literatureItem.create({
       data: {
         id: 'historical-reference',
@@ -330,29 +354,40 @@ describe('application database migrations', () => {
       }
     })
     const before = await client.literatureItem.findMany()
+    await client.$executeRawUnsafe('DROP TABLE "JournalItemBinding"')
+    await client.$executeRawUnsafe('DROP TABLE "JournalDatasetEntry"')
+    await client.$executeRawUnsafe('DROP TABLE "JournalDataset"')
+    await client.$executeRawUnsafe('DROP TABLE "Journal"')
     await client.$executeRawUnsafe('DROP TABLE "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations')`
+      `DELETE FROM "_open_science_migrations" WHERE id IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')`
     )
     const ledger = await client.$queryRawUnsafe(
       'SELECT * FROM "_open_science_migrations" ORDER BY id'
     )
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       from: '0038_literature_search_text',
-      to: '0043_pdf_annotations',
+      to: '0050_literature_translation',
       applied: [
         '0039_literature_metadata_commit_receipt',
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     expect(await client.literatureMetadataCommitReceipt.count()).toBe(0)
     expect(await client.literatureItem.findMany()).toEqual(before)
     expect(
       await client.$queryRawUnsafe(
-        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations') ORDER BY id`
+        `SELECT * FROM "_open_science_migrations" WHERE id NOT IN ('0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0049_pascalcase_table_names', '0050_literature_translation') ORDER BY id`
       )
     ).toEqual(ledger)
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -363,7 +398,7 @@ describe('application database migrations', () => {
     client = createProjectDbClient(storageRoot)
     // Start from the released target shape, excluding this additive suffix. Replaying raw
     // historical rebuild SQL would bypass the runtime's existing foreign-key adapters.
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.$executeRawUnsafe(
       'ALTER TABLE "LiteratureAttachmentVersion" DROP COLUMN "provenanceJson"'
     )
@@ -554,24 +589,28 @@ describe('application database migrations', () => {
     )
   })
 
-  it('fills derived literature text when adopting an already current schema', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
-    await client.literatureItem.create({
-      data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
-    })
-    await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
-    await migrateApplicationDatabase(client)
-    expect(
-      (
-        await new LiteratureCatalog(async () => client!).search({
-          scope: 'library',
-          query: 'étude'
-        })
-      ).totalCount
-    ).toBe(1)
-  })
+  it(
+    'fills derived literature text when adopting an already current schema',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-adoption-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtReleasedManifest(client)
+      await client.literatureItem.create({
+        data: { id: 'adopted', itemType: 'book', title: 'ÉTUDE' }
+      })
+      await client.$executeRaw`DELETE FROM "_open_science_migrations" WHERE id >= '0038_literature_search_text'`
+      await migrateApplicationDatabase(client)
+      expect(
+        (
+          await new LiteratureCatalog(async () => client!).search({
+            scope: 'library',
+            query: 'étude'
+          })
+        ).totalCount
+      ).toBe(1)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('rolls back a failed literature text backfill and retries the upgrade', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'literature-search-rollback-'))
@@ -648,6 +687,36 @@ describe('application database migrations', () => {
     })
   })
 
+  it(
+    'commits a slow ordinary migration and its ledger entry atomically',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'slow-migration-'))
+      client = createProjectDbClient(storageRoot)
+      const execute = migrationSqlExecutor.execute
+      let delayed = false
+      vi.spyOn(migrationSqlExecutor, 'execute').mockImplementation(
+        async (target, statement, ...values) => {
+          if (!delayed && statement === grantedLocalRootsMigration.statements[0]) {
+            delayed = true
+            // Reproduce scanner/disk latency exceeding Prisma's default 5-second transaction.
+            await delay(6_000)
+          }
+          return execute(target, statement, ...values)
+        }
+      )
+
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+        applied: expect.arrayContaining([grantedLocalRootsMigration.id])
+      })
+      expect(delayed).toBe(true)
+      await expect(
+        client.$queryRawUnsafe('SELECT COUNT(*) AS count FROM "GrantedLocalRoot"')
+      ).resolves.toEqual([{ count: 0n }])
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
+
   it('records the runtime baseline once for a fresh database', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science 数据 baseline-'))
     client = createProjectDbClient(storageRoot)
@@ -702,10 +771,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: null,
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     expect(compatibility).toEqual([{ sqliteVersion: expect.stringMatching(/^\d+\.\d+\.\d+$/) }])
     await expect(
@@ -718,8 +794,8 @@ describe('application database migrations', () => {
     await expect(migrateApplicationDatabase(client)).resolves.toEqual({
       adoptedLegacy: false,
       applied: [],
-      from: '0043_pdf_annotations',
-      to: '0043_pdf_annotations'
+      from: '0050_literature_translation',
+      to: '0050_literature_translation'
     })
   })
 
@@ -735,7 +811,7 @@ describe('application database migrations', () => {
   it('upgrades a database at the released main tail without rewriting its ledger', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-main-tail-upgrade-'))
     client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.$executeRawUnsafe('DROP TABLE "BackgroundResultDelivery"')
     await client.$executeRawUnsafe('DROP TABLE IF EXISTS "LiteratureMetadataCommitReceipt"')
     await client.$executeRawUnsafe(
@@ -754,10 +830,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0033_compute_job_harvest_retry',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ name: string }>>`
@@ -808,80 +891,97 @@ describe('application database migrations', () => {
     ])
   })
 
-  it('keeps historical aggregate-only turn usage when adding exact model-call storage', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
-    client = createProjectDbClient(storageRoot)
-    await migrateApplicationDatabase(client)
-    await removeLiteratureFoundationSchema(client)
-    await client.$executeRawUnsafe('DROP TABLE "SessionModelCallUsage"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedReadTokens"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedWriteTokens"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "modelCallCount"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "frameworkId"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "providerId"')
-    await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "model"')
-    await client.$executeRawUnsafe(
-      'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
-    )
-    await client.$executeRawUnsafe(
-      `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
-    )
-    await removeComputeAnalysisSchema(client, true)
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
-    await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"')
-    await client.project.create({ data: { id: 'project-1', name: 'Project' } })
-    await client.$executeRawUnsafe(`INSERT INTO "Session" (
+  it(
+    'keeps historical aggregate-only turn usage when adding exact model-call storage',
+    async () => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-model-call-usage-'))
+      client = createProjectDbClient(storageRoot)
+      await createDatabaseAtReleasedManifest(client)
+      await removeLiteratureFoundationSchema(client)
+      await client.$executeRawUnsafe('DROP TABLE "SessionModelCallUsage"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedReadTokens"'
+      )
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionTurnUsage" DROP COLUMN "cachedWriteTokens"'
+      )
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "modelCallCount"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "frameworkId"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "providerId"')
+      await client.$executeRawUnsafe('ALTER TABLE "SessionTurnUsage" DROP COLUMN "model"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
+      )
+      await client.$executeRawUnsafe(
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0015_session_model_call_usage', '0016_compute_job_sensitive_data_encryption', '0017_agent_memory_project_scope', '0018_session_auxiliary_turn_usage', '0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation')`
+      )
+      await removeComputeAnalysisSchema(client, true)
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
+      await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
+      await client.$executeRawUnsafe(
+        'ALTER TABLE "ComputeJob" DROP COLUMN "sensitiveDataEncrypted"'
+      )
+      await client.project.create({ data: { id: 'project-1', name: 'Project' } })
+      await client.$executeRawUnsafe(`INSERT INTO "Session" (
       "id", "number", "projectId", "title", "status", "presentedStatus", "createdAtMs", "updatedAtMs"
     ) VALUES ('session-1', 1, 'project-1', 'Session', 'idle', 'idle', 1, 2)`)
-    await client.$executeRawUnsafe(`INSERT INTO "SessionTurnUsage" (
+      await client.$executeRawUnsafe(`INSERT INTO "SessionTurnUsage" (
       "sessionId", "messageId", "completedAtMs", "inputTokens", "cacheTokens", "outputTokens", "isRootFrame"
     ) VALUES ('session-1', 'message-1', 2, 10, 4, 3, true)`)
 
-    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
-      applied: [
-        '0015_session_model_call_usage',
-        '0016_compute_job_sensitive_data_encryption',
-        '0017_agent_memory_project_scope',
-        '0018_session_auxiliary_turn_usage',
-        '0019_session_usage_attribution',
-        '0020_compute_job_analysis_state',
-        '0021_compute_job_analysis_constraints',
-        '0022_memory_global_content_unique',
-        '0023_compute_job_operation',
-        '0024_compute_job_file_evidence',
-        '0025_managed_file_version_foundation',
-        '0026_compute_job_remote_cleanup',
-        '0027_project_session_defaults',
-        '0028_database_numeric_and_null_constraints',
-        '0029_compute_host_execution_mode',
-        '0030_literature_foundation',
-        '0031_project_archive_revision',
-        '0032_permission_approval_summary',
-        '0033_compute_job_harvest_retry',
-        '0034_background_result_delivery',
-        '0035_literature_pdf_provenance',
-        '0036_content_verification_observation',
-        '0037_literature_inbox_integrity',
-        '0038_literature_search_text',
-        '0039_literature_metadata_commit_receipt',
-        '0040_literature_collection_revision',
-        '0041_bookmarks',
-        '0042_classification_usage',
-        '0043_pdf_annotations'
-      ]
-    })
-    await expect(
-      client.sessionTurnUsage.findUnique({
-        where: { sessionId_messageId: { sessionId: 'session-1', messageId: 'message-1' } }
+      await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+        applied: [
+          '0015_session_model_call_usage',
+          '0016_compute_job_sensitive_data_encryption',
+          '0017_agent_memory_project_scope',
+          '0018_session_auxiliary_turn_usage',
+          '0019_session_usage_attribution',
+          '0020_compute_job_analysis_state',
+          '0021_compute_job_analysis_constraints',
+          '0022_memory_global_content_unique',
+          '0023_compute_job_operation',
+          '0024_compute_job_file_evidence',
+          '0025_managed_file_version_foundation',
+          '0026_compute_job_remote_cleanup',
+          '0027_project_session_defaults',
+          '0028_database_numeric_and_null_constraints',
+          '0029_compute_host_execution_mode',
+          '0030_literature_foundation',
+          '0031_project_archive_revision',
+          '0032_permission_approval_summary',
+          '0033_compute_job_harvest_retry',
+          '0034_background_result_delivery',
+          '0035_literature_pdf_provenance',
+          '0036_content_verification_observation',
+          '0037_literature_inbox_integrity',
+          '0038_literature_search_text',
+          '0039_literature_metadata_commit_receipt',
+          '0040_literature_collection_revision',
+          '0041_bookmarks',
+          '0042_classification_usage',
+          '0043_pdf_annotations',
+          '0044_literature_smart_collections',
+          '0045_literature_smart_pause_run',
+          '0046_journal_attributes',
+          '0047_session_replay',
+          '0048_pdf_annotation_sharing',
+          '0049_pascalcase_table_names',
+          '0050_literature_translation'
+        ]
       })
-    ).resolves.toMatchObject({
-      cachedReadTokens: null,
-      cachedWriteTokens: null,
-      modelCallCount: null
-    })
-    await expect(client.sessionModelCallUsage.count()).resolves.toBe(0)
-  })
+      await expect(
+        client.sessionTurnUsage.findUnique({
+          where: { sessionId_messageId: { sessionId: 'session-1', messageId: 'message-1' } }
+        })
+      ).resolves.toMatchObject({
+        cachedReadTokens: null,
+        cachedWriteTokens: null,
+        modelCallCount: null
+      })
+      await expect(client.sessionModelCallUsage.count()).resolves.toBe(0)
+    },
+    WINDOWS_SQLITE_TEST_TIMEOUT_MS
+  )
 
   it('upgrades a pre-ledger ComputeJob table while preserving historical rows', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-jobs-3a-to-current-'))
@@ -965,7 +1065,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -1010,7 +1117,7 @@ describe('application database migrations', () => {
 
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
       applied: expect.arrayContaining(['0010_compute_password_auth']),
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$executeRawUnsafe(
@@ -1076,10 +1183,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -1173,10 +1287,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0005_project_preview_state_owner_fk',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<
@@ -1299,7 +1420,7 @@ describe('application database migrations', () => {
       })
     ).rejects.toMatchObject({
       code: 'database_validation_failed',
-      migrationId: '0043_pdf_annotations'
+      migrationId: '0050_literature_translation'
     })
     expect(retired).toEqual([])
     await expect(access(backupPath)).resolves.toBeUndefined()
@@ -1316,7 +1437,7 @@ describe('application database migrations', () => {
     ).resolves.toEqual({
       adoptedLegacy: false,
       applied: ['9997_test_suffix'],
-      from: '0043_pdf_annotations',
+      from: '0050_literature_translation',
       to: '9997_test_suffix'
     })
     await expect(
@@ -1367,6 +1488,13 @@ describe('application database migrations', () => {
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
       { id: '0043_pdf_annotations' },
+      { id: '0044_literature_smart_collections' },
+      { id: '0045_literature_smart_pause_run' },
+      { id: '0046_journal_attributes' },
+      { id: '0047_session_replay' },
+      { id: '0048_pdf_annotation_sharing' },
+      { id: '0049_pascalcase_table_names' },
+      { id: '0050_literature_translation' },
       { id: '9997_test_suffix' }
     ])
   })
@@ -1462,10 +1590,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0001_runtime_schema_baseline',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     expect(backupEvents).toEqual([
       {
@@ -1562,7 +1697,14 @@ describe('application database migrations', () => {
       { id: '0040_literature_collection_revision' },
       { id: '0041_bookmarks' },
       { id: '0042_classification_usage' },
-      { id: '0043_pdf_annotations' }
+      { id: '0043_pdf_annotations' },
+      { id: '0044_literature_smart_collections' },
+      { id: '0045_literature_smart_pause_run' },
+      { id: '0046_journal_attributes' },
+      { id: '0047_session_replay' },
+      { id: '0048_pdf_annotation_sharing' },
+      { id: '0049_pascalcase_table_names' },
+      { id: '0050_literature_translation' }
     ])
   })
 
@@ -1699,6 +1841,13 @@ describe('application database migrations', () => {
         '0041_bookmarks',
         '0042_classification_usage',
         '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation',
         '9997_test_suffix'
       ],
       to: '9997_test_suffix'
@@ -1836,7 +1985,7 @@ describe('application database migrations', () => {
       adoptedLegacy: false,
       applied: MIGRATION_MANIFEST.slice(computePasswordAuthIndex).map(({ id }) => id),
       from: '0009_vision_evidence',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ projectId: string }>>`
@@ -1967,7 +2116,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -2107,7 +2263,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
@@ -2199,7 +2362,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -2294,7 +2464,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
@@ -2423,7 +2600,14 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ]
     })
     await expect(
@@ -2922,6 +3106,73 @@ describe('application database migrations', () => {
       client.$queryRaw<Array<{ id: string; name: string }>>`SELECT "id", "name" FROM "Project"`
     ).resolves.toEqual([{ id: 'legacy-project', name: 'Preserved' }])
   })
+  it('adds Session replay state and selections directly after the released migrations', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'session-replay-migration-'))
+    client = createProjectDbClient(storageRoot)
+    await createDatabaseAtReleasedManifest(client)
+    await client.$executeRawUnsafe('DROP TABLE "SessionDiscussionSnapshot"')
+    await client.$executeRawUnsafe('DROP TABLE "SessionReplayProgress"')
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id >= '0047_session_replay'`
+    )
+    await client.project.create({ data: { id: 'project', name: 'Project' } })
+    const session = await client.session.create({
+      data: {
+        id: 'ordinary',
+        number: 1,
+        projectId: 'project',
+        title: 'Keep my conversation',
+        status: 'idle',
+        presentedStatus: 'idle',
+        createdAtMs: 1,
+        updatedAtMs: 2
+      }
+    })
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({
+      applied: [
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
+      ]
+    })
+    expect(await client.session.findUnique({ where: { id: 'ordinary' } })).toEqual(session)
+    await client.sessionReplayProgress.create({
+      data: {
+        projectId: 'project',
+        sessionId: 'source',
+        stateJson: '{"timeMs":42}',
+        revision: 3
+      }
+    })
+    await client.sessionDiscussionSnapshot.create({
+      data: {
+        id: 'selection',
+        sourceProjectId: 'project',
+        sourceSessionId: 'source',
+        contextJson: '{"excerpt":"Saved selection"}'
+      }
+    })
+    await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
+    await expect(migrateApplicationDatabase(client)).resolves.toMatchObject({ applied: [] })
+    expect(await client.sessionReplayProgress.findFirst()).toMatchObject({
+      sessionId: 'source',
+      revision: 3,
+      updatedAt: expect.any(Date)
+    })
+    expect(await client.sessionDiscussionSnapshot.findFirst()).toMatchObject({
+      sourceProjectId: 'project',
+      sourceSessionId: 'source',
+      createdAt: expect.any(Date),
+      contextJson: '{"excerpt":"Saved selection"}'
+    })
+    // Existing Session rows intentionally restrict Project deletion.
+    await client.session.delete({ where: { id: 'ordinary' } })
+    await client.project.delete({ where: { id: 'project' } })
+    expect(await client.sessionReplayProgress.count()).toBe(0)
+    expect(await client.sessionDiscussionSnapshot.count()).toBe(0)
+  })
+
   it('prunes historical retained backups to the newest two without deleting an unknown backup', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-database-bounded-backups-'))
     const databasePath = join(storageRoot, 'open-science.db')
@@ -2946,8 +3197,8 @@ describe('application database migrations', () => {
         entries.filter((entry) => entry.endsWith('.backup')).sort()
       )
     ).resolves.toEqual([
-      'open-science.db.before-0042_classification_usage.backup',
-      'open-science.db.before-0043_pdf_annotations.backup',
+      'open-science.db.before-0049_pascalcase_table_names.backup',
+      'open-science.db.before-0050_literature_translation.backup',
       unknownBackupName
     ])
     expect(retired).toHaveLength(MIGRATION_MANIFEST.length - 2)
@@ -3259,10 +3510,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ currentVersionId: string | null }>>(
@@ -3321,7 +3579,7 @@ describe('application database migrations', () => {
         MIGRATION_MANIFEST.findIndex(({ id }) => id === '0009_vision_evidence')
       ).map(({ id }) => id),
       from: '0008_database_json_constraints',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
   })
@@ -3396,10 +3654,17 @@ describe('application database migrations', () => {
         '0040_literature_collection_revision',
         '0041_bookmarks',
         '0042_classification_usage',
-        '0043_pdf_annotations'
+        '0043_pdf_annotations',
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation'
       ],
       from: '0024_compute_job_file_evidence',
-      to: '0043_pdf_annotations'
+      to: '0050_literature_translation'
     })
     await expect(
       client.$queryRaw<Array<{ uploadVersionId: string }>>`

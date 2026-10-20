@@ -4,11 +4,13 @@ import { join } from 'node:path'
 
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { ComputeHost, CreateComputeHostRequest } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+import type { CreateComputeHostRequest } from '../../shared/compute'
+
+import type { BundledSkill } from '@aipoch/skills'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
-import type { BundledSkill } from '../skills/registry'
-import { createComputeHandlers } from './ipc'
 import type { ComputeService } from './compute-service'
+import { createComputeHandlers } from './ipc'
 import type { ComputeHostRepository } from './repository'
 import { COMPUTE_ENV_SETUP_SKILL_DIRECTORY, COMPUTE_SKILL_DIRECTORY } from './skill-doc'
 

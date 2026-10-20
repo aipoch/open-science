@@ -1,16 +1,22 @@
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
-import { ensureCodexAuthHome } from './codex-auth'
+import { type ModelProtocol, isOfficialVendorId } from '@aipoch/providers'
+import { defaultVendorModel } from '../../shared/provider-model-policy'
+import {
+  customProviderRequiresKey,
+  getCustomProviderBaseUrlError
+} from '../../shared/provider-url-policy'
+import { type ReasoningEffortProfile } from '../../shared/reasoning-effort'
+
 import type {
-  ChatApiEndpoint,
-  ProviderDraft,
   ProviderDeletionScenarioModelHandling,
-  ProviderView,
+  ProviderDraft,
   ProviderValidationTarget,
+  ProviderView,
   RefreshProviderModelsRequest,
   RefreshProviderModelsResult,
-  UpsertProviderRequest,
   SaveValidatedProviderResult,
+  UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
   XaiOAuthDeviceAuthorization
@@ -18,6 +24,7 @@ import type {
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
+  ENDPOINT_PATHS,
   XAI_SUBSCRIPTION_PROVIDER_ID,
   claudeIsolatedProviderIdentity,
   claudeSharedProviderIdentity,
@@ -26,54 +33,50 @@ import {
   isCodexSubscriptionProvider,
   isProviderUsableByFramework,
   isXaiSubscriptionProvider,
-  providerEndpoints,
   preferredEndpoint,
+  providerEndpoints,
   requiresChatCompletionsBridge,
-  xaiSubscriptionProviderIdentity,
-  ENDPOINT_PATHS
+  xaiSubscriptionProviderIdentity
 } from '../../shared/settings'
-import { defaultVendorModel, isOfficialVendorId } from '../../shared/provider-registry'
-import {
-  customProviderRequiresKey,
-  getCustomProviderBaseUrlError
-} from '../../shared/provider-base-url'
-import type { ReasoningEffortProfile } from '../../shared/reasoning-effort'
 import {
   DEFAULT_AGENT_FRAMEWORK_ID,
   getAgentFramework,
   type AgentFrameworkId
 } from '../agent-framework'
-import { netFetchStandard } from '../skills/net-fetch'
-import { type CodexAuthControllerPort } from './codex-auth'
+import { netFetchStandard } from '../network-fetch'
 import { type ClaudeIsolatedAuthControllerPort } from './claude-isolated-auth'
 import { type ClaudeSharedAuthControllerPort } from './claude-shared-auth'
+import { ensureCodexAuthHome, type CodexAuthControllerPort } from './codex-auth'
 import { encryptKey, maskKey, tryDecryptKey } from './crypto'
-import { validateProvider as validateProviderTarget } from './validate'
-import type { ResolvedProvider } from './provider-env'
-import { resolveCustomTokenLimits } from './provider-token-limits'
-import { resolveProviderDraft } from './provider-draft-projection'
 import {
   CLAUDE_SHARED_DISCONNECTED_MESSAGE,
   ProviderAuthLifecycleOwner
 } from './provider-auth-lifecycle'
+import { resolveProviderDraft } from './provider-draft-projection'
+import type { ResolvedProvider } from './provider-env'
+import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
+import {
+  assertProviderCapacity,
+  assertProviderDraftLimits,
+  assertProviderModelLimit
+} from './provider-resource-limits'
 import {
   ProviderRuntimeProjectionOwner,
   requiresNativeResponsesCompatibility,
   type ProviderRuntimeTarget,
   type RuntimeProviderModelSelection
 } from './provider-runtime-projection'
-import type { SettingsRepository } from './repository'
-import type { SystemProxyEnvironment } from './system-proxy'
-import type { StoredProvider, StoredSettings } from './types'
-import type { XaiOAuthControllerPort } from './xai-oauth'
-import { XaiProviderAccountOwner } from './xai-provider-account-owner'
-import { ProviderModelCatalogOwner } from './provider-model-catalog-owner'
-import { assertProviderCapacity, assertProviderDraftLimits } from './provider-resource-limits'
-import { assertProviderModelLimit } from './provider-resource-limits'
+import { resolveCustomTokenLimits } from './provider-token-limits'
 import {
   buildProviderValidationPatch,
   targetForValidationResult
 } from './provider-validation-state'
+import type { SettingsRepository } from './repository'
+import type { SystemProxyEnvironment } from './system-proxy'
+import type { StoredProvider, StoredSettings } from './types'
+import { validateProvider as validateProviderTarget } from './validate'
+import type { XaiOAuthControllerPort } from './xai-oauth'
+import { XaiProviderAccountOwner } from './xai-provider-account-owner'
 type ProviderAccountsModuleOptions = {
   repository: SettingsRepository
   storageRoot: string
@@ -322,14 +325,14 @@ class ProviderAccountsModule {
         existing !== undefined &&
         (existing.codexAuthMode !== provider.codexAuthMode || reimportCodexAuthentication)
     } else if (request.type === 'xai-subscription') {
-      provider.apiEndpoints = ['anthropic', 'openai', 'responses']
+      provider.apiEndpoints = ['messages', 'chat-completions', 'responses']
       provider.model = request.model?.trim() || existing?.model || defaultVendorModel('xai')
       if (existing?.fetchedModels) provider.fetchedModels = existing.fetchedModels
       if (existing?.keyRef) provider.keyRef = existing.keyRef
       if (existing?.accountEmail) provider.accountEmail = existing.accountEmail
       credentialsChanged = provider.model !== existing?.model
     } else if (request.type === 'claude-isolated') {
-      provider.apiEndpoints = ['anthropic']
+      provider.apiEndpoints = ['messages']
       if (existing?.keyRef) {
         provider.keyRef = existing.keyRef
         provider.keyMask = existing.keyMask
@@ -340,7 +343,7 @@ class ProviderAccountsModule {
       credentialsChanged = model !== existing?.model
       if (model) provider.model = model
     } else if (request.type === 'claude-shared') {
-      provider.apiEndpoints = ['anthropic']
+      provider.apiEndpoints = ['messages']
       const model =
         request.model === undefined ? existing?.model : request.model.trim() || undefined
       credentialsChanged = model !== existing?.model
@@ -381,7 +384,7 @@ class ProviderAccountsModule {
         request.reasoningEffortPreset ?? existing?.reasoningEffortPreset ?? 'standard-5'
       provider.reasoningEffortTransport =
         request.reasoningEffortTransport ?? existing?.reasoningEffortTransport ?? 'reasoning-effort'
-      provider.apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['anthropic']
+      provider.apiEndpoints = request.apiEndpoints ?? existing?.apiEndpoints ?? ['messages']
       credentialsChanged =
         Boolean(request.key) ||
         provider.baseUrl !== existing?.baseUrl ||
@@ -635,10 +638,10 @@ class ProviderAccountsModule {
       testedTarget: {
         model: provider.model,
         endpoint: preferredEndpoint(
-          provider.apiEndpoints ?? ['anthropic'],
+          provider.apiEndpoints ?? ['messages'],
           this.validationFrameworkEndpoints(provider, settings) ?? [
-            'anthropic',
-            'openai',
+            'messages',
+            'chat-completions',
             'responses'
           ]
         )
@@ -649,7 +652,7 @@ class ProviderAccountsModule {
   private validationFrameworkEndpoints(
     provider: ResolvedProvider,
     settings: StoredSettings
-  ): readonly ChatApiEndpoint[] | undefined {
+  ): readonly ModelProtocol[] | undefined {
     const framework = getAgentFramework(settings.agentFrameworkId ?? DEFAULT_AGENT_FRAMEWORK_ID)
     const incompatibility = this.frameworkIncompatibilityMessage(provider, framework)
     return isXaiSubscriptionProvider(provider.type)
@@ -774,8 +777,8 @@ class ProviderAccountsModule {
         : targetForValidationResult(result, {
             model: resolved.provider.model,
             endpoint: preferredEndpoint(
-              resolved.provider.apiEndpoints ?? ['anthropic'],
-              validationFrameworkEndpoints ?? ['anthropic', 'openai', 'responses']
+              resolved.provider.apiEndpoints ?? ['messages'],
+              validationFrameworkEndpoints ?? ['messages', 'chat-completions', 'responses']
             )
           })
     const validationPatch = buildProviderValidationPatch(stored, result, validationTarget)
@@ -838,7 +841,7 @@ class ProviderAccountsModule {
     return this.modelCatalog.refresh(request)
   }
 
-  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ChatApiEndpoint[] {
+  resolveProviderApiEndpoints(provider: StoredProvider, activeModel?: string): ModelProtocol[] {
     return this.runtimeProjection.resolveProviderApiEndpoints(provider, activeModel)
   }
 
@@ -860,14 +863,14 @@ class ProviderAccountsModule {
   resolveRuntimeTarget(
     storedProvider: StoredProvider,
     selection: RuntimeProviderModelSelection,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget {
     return this.runtimeProjection.resolveRuntimeTarget(storedProvider, selection, framework)
   }
 
   resolveRuntimeModelCatalog(
     storedProvider: StoredProvider,
-    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+    framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
   ): ProviderRuntimeTarget[] {
     return this.runtimeProjection.resolveRuntimeModelCatalog(storedProvider, framework)
   }
@@ -939,7 +942,7 @@ class ProviderAccountsModule {
       left.codexAuthMode === right.codexAuthMode &&
       left.codexTransport === right.codexTransport &&
       left.baseUrl === right.baseUrl &&
-      left.openaiBaseUrl === right.openaiBaseUrl &&
+      left.chatCompletionsBaseUrl === right.chatCompletionsBaseUrl &&
       left.model === right.model &&
       left.key === right.key &&
       (left.apiEndpoints ?? []).join(',') === (right.apiEndpoints ?? []).join(',')

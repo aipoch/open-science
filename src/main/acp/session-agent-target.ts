@@ -81,7 +81,7 @@ const resolveValidatedSessionAgentTarget = (
     claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
     includeAllClaudeSubscriptions: true,
     frameworkId: settings.agentFrameworkId,
-    frameworkEndpoints: framework?.supportedApiTypes ?? ['anthropic']
+    frameworkEndpoints: framework?.supportedApiTypes ?? ['messages']
   })
   const resolution = resolveSessionAgentConfiguration({
     providers: settings.providers,

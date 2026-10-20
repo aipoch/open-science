@@ -1,83 +1,30 @@
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
-
-import { strFromU8, unzipSync } from 'fflate'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-
-import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
 import {
-  buildContributionTemplateZip,
-  buildDeterministicSpecialistZip,
   createContributionTemplateExporter,
   resolveContributionTemplateReadmePath
 } from './contribution-template'
-import { validateSpecialistZip } from './zip-adapter'
-
-const catalog: SpecialistPackageCatalogSnapshot = {
-  appVersion: '0.9.2',
-  builtinSkills: [],
-  skills: [],
-  connectorIds: [],
-  protectedSpecialistIds: ['reviewer']
-}
 
 afterEach(() => {
   vi.unstubAllEnvs()
 })
 
 describe('contribution template ZIP', () => {
-  it('builds the fixed root package with valid application-generated metadata', () => {
-    const archiveBytes = buildContributionTemplateZip({
-      appVersion: '0.9.2',
-      readme: '中文指南\n\nEnglish guide\n',
-      packageId: '00000000-0000-4000-8000-000000000001'
-    })
-    const archive = unzipSync(archiveBytes)
-
-    expect(Object.keys(archive).sort()).toEqual(['README.txt', 'manifest.json', 'specialist.json'])
-    expect(JSON.parse(strFromU8(archive['manifest.json']))).toEqual({
-      schema_version: 1,
-      id: '00000000-0000-4000-8000-000000000001',
-      version: '0.1.0',
-      exported_with_app_version: '0.9.2'
-    })
-    expect(JSON.parse(strFromU8(archive['specialist.json']))).toEqual({
-      name: '',
-      description: '',
-      system_prompt: '',
-      skill_ids: [],
-      connector_ids: []
-    })
-    expect(strFromU8(archive['README.txt'])).toContain('中文指南')
-    expect(strFromU8(archive['README.txt'])).toContain('English guide')
-
-    const result = validateSpecialistZip(archiveBytes, catalog)
-    expect(result.preview.diagnostics).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: 'specialist.name-invalid', path: 'specialist.json' }),
-        expect.objectContaining({
-          code: 'specialist.description-invalid',
-          path: 'specialist.json'
-        }),
-        expect.objectContaining({
-          code: 'specialist.system-prompt-invalid',
-          path: 'specialist.json'
-        })
-      ])
-    )
-  })
-
   it('returns quietly without reading or writing template content when save is cancelled', async () => {
     const readReadme = vi.fn()
     const writeFile = vi.fn()
+    const publishUserFile = vi.fn()
     const exportContributionTemplate = createContributionTemplateExporter({
       appVersion: '0.9.2',
       showSaveDialog: vi.fn().mockResolvedValue({ canceled: true }),
       readReadme,
-      writeFile
+      writeFile,
+      publishUserFile
     })
 
     await expect(exportContributionTemplate()).resolves.toEqual({ saved: false })
+    expect(publishUserFile).not.toHaveBeenCalled()
     expect(readReadme).not.toHaveBeenCalled()
     expect(writeFile).not.toHaveBeenCalled()
   })
@@ -138,32 +85,5 @@ describe('contribution template ZIP', () => {
     expect(packagedPath).toContain(
       join('app.asar.unpacked', 'resources', 'specialists', 'template', 'v1', 'README.txt')
     )
-  })
-
-  it('keeps the deterministic ZIP writer reusable without injecting the generic template README', () => {
-    const files = {
-      'manifest.json': new TextEncoder().encode('{}\n'),
-      'specialist.json': new TextEncoder().encode('{}\n')
-    }
-
-    const first = buildDeterministicSpecialistZip(files)
-    const second = buildDeterministicSpecialistZip(files)
-
-    expect(first).toEqual(second)
-    expect(Object.keys(unzipSync(first)).sort()).toEqual(['manifest.json', 'specialist.json'])
-  })
-
-  it('builds a deterministic Specialist ZIP in a negative UTC timezone', () => {
-    vi.stubEnv('TZ', 'UTC')
-    const utcArchive = buildDeterministicSpecialistZip({
-      'specialist.json': new TextEncoder().encode('{}\n')
-    })
-    vi.stubEnv('TZ', 'America/Los_Angeles')
-
-    expect(
-      buildDeterministicSpecialistZip({
-        'specialist.json': new TextEncoder().encode('{}\n')
-      })
-    ).toEqual(utcArchive)
   })
 })

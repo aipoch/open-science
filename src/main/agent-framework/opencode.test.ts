@@ -146,10 +146,10 @@ describe('opencodeFramework.prepareModelConfig', () => {
 
     const rules = JSON.parse(config.env?.OPENCODE_CONFIG_CONTENT ?? '{}').permission
     expect(rules['*']).toBe('ask')
-    for (const tool of ['read', 'lsp', 'skill']) {
+    for (const tool of ['read', 'lsp']) {
       expect(rules[tool]).toBe('allow')
     }
-    for (const tool of ['edit', 'webfetch', 'websearch']) {
+    for (const tool of ['edit', 'webfetch', 'websearch', 'skill']) {
       expect(rules[tool]).toBe('ask')
     }
     for (const tool of ['bash', 'glob', 'grep', 'list']) expect(rules[tool]).toBe('deny')
@@ -215,7 +215,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       vendorId: 'opencode-go' as const,
       agentProviderId: 'open-science-go-model',
       baseUrl: 'http://127.0.0.1:41001/v1',
-      apiEndpoints: ['openai' as const],
+      apiEndpoints: ['chat-completions' as const],
       model: 'glm-5.3-flash',
       key: 'local-go-token'
     }
@@ -224,7 +224,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       vendorId: 'deepseek' as const,
       agentProviderId: 'open-science-deepseek-model',
       baseUrl: 'http://127.0.0.1:41002/v1',
-      apiEndpoints: ['openai' as const],
+      apiEndpoints: ['chat-completions' as const],
       model: 'deepseek-v4-flash',
       key: 'local-deepseek-token'
     }
@@ -250,7 +250,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
         vendorId: 'deepseek',
         agentProviderId: 'open-science-deepseek-model',
         baseUrl: 'http://127.0.0.1:41002/v1',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         model: 'deepseek-v4-flash',
         key: 'local-deepseek-token'
       },
@@ -292,6 +292,28 @@ describe('opencodeFramework.prepareModelConfig', () => {
     // The key rides the env as a reference only — never a plaintext literal in the pinned layer.
     expect(content.provider.anthropic.options.apiKey).toBe('{env:OPENCODE_APP_API_KEY}')
     expect(config.env?.OPENCODE_CONFIG_CONTENT).not.toContain('"k"')
+  })
+
+  it('pins the Anthropic driver for an app-generated provider id in both config layers', () => {
+    const config = opencodeFramework.prepareModelConfig(
+      {
+        type: 'custom',
+        agentProviderId: 'open-science-messages-model',
+        apiEndpoints: ['messages'],
+        baseUrl: 'http://127.0.0.1:41002',
+        model: 'claude-sonnet-4-5',
+        key: 'local-token'
+      },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    const file = config.configFiles?.find((entry) => entry.path.endsWith('opencode.json'))
+    for (const source of [file?.content, config.env?.OPENCODE_CONFIG_CONTENT]) {
+      const content = JSON.parse(source ?? '{}')
+      expect(content.provider['open-science-messages-model']).toMatchObject({
+        npm: '@ai-sdk/anthropic',
+        options: { baseURL: 'http://127.0.0.1:41002/v1' }
+      })
+    }
   })
 
   it('gives the Anthropic AI SDK a /v1 base so it requests /v1/messages', () => {
@@ -394,7 +416,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'kimi-k3',
         key: 'k',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         supportsImageInput: true
       },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
@@ -413,7 +435,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'gpt-x',
         key: 'k',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       },
       { storageRoot: '/data', executablePath: '/bin/opencode' }
     )
@@ -480,6 +502,16 @@ describe('opencodeFramework.prepareModelConfig', () => {
   it.each([
     ['minimax', 'MiniMax-M3', 'none', { thinking: { type: 'disabled' } }],
     ['minimax', 'MiniMax-M3', 'high', { thinking: { type: 'adaptive' } }],
+    // The package owns the full effort matrix; these cases verify both OpenCode config layers.
+    ...(['MiniMax-M3.1-Flash', 'MiniMax-M3.1-Flash-Preview'] as const).map(
+      (model) =>
+        [
+          'minimax',
+          model,
+          'high',
+          { reasoningEffort: 'high', thinking: { type: 'adaptive' } }
+        ] as const
+    ),
     ['xiaomimimo', 'mimo-v2.5-pro', 'none', { thinking: { type: 'disabled' } }],
     ['xiaomimimo', 'mimo-v2.5-pro', 'high', { thinking: { type: 'enabled' } }],
     ['apodex', 'apodex-1.1', 'none', {}],
@@ -501,8 +533,8 @@ describe('opencodeFramework.prepareModelConfig', () => {
           type: 'custom',
           vendorId,
           baseUrl: 'https://gw.example/anthropic',
-          openaiBaseUrl: 'https://gw.example/v1',
-          apiEndpoints: ['anthropic', 'openai'],
+          chatCompletionsBaseUrl: 'https://gw.example/v1',
+          apiEndpoints: ['messages', 'chat-completions'],
           model,
           key: 'k'
         },
@@ -524,7 +556,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       {
         type: 'custom',
         baseUrl: 'https://private-gateway.example/v1',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         model: 'private-model',
         key: 'k',
         reasoningEffortTransport: 'deepseek'
@@ -559,7 +591,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       type: 'official' as const,
       vendorId: 'deepseek' as const,
       baseUrl: 'https://api.deepseek.com/v1',
-      apiEndpoints: ['anthropic' as const],
+      apiEndpoints: ['messages' as const],
       model: 'deepseek-v4-pro',
       contextWindow: 128_000,
       key: 'k'
@@ -611,7 +643,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       type: 'custom' as const,
       agentProviderId: 'open-science-a',
       baseUrl: 'http://127.0.0.1:41001/v1',
-      apiEndpoints: ['openai' as const],
+      apiEndpoints: ['chat-completions' as const],
       model: 'model-a',
       key: 'local-token-a'
     }
@@ -619,7 +651,7 @@ describe('opencodeFramework.prepareModelConfig', () => {
       type: 'custom' as const,
       agentProviderId: 'open-science-b',
       baseUrl: 'http://127.0.0.1:41002/v1',
-      apiEndpoints: ['openai' as const],
+      apiEndpoints: ['chat-completions' as const],
       model: 'model-b',
       key: 'local-token-b'
     }
@@ -737,7 +769,7 @@ describe('buildOpencodeConfig', () => {
     )
 
     // Our rules override the base for every side-effecting built-in.
-    for (const tool of ['edit', 'webfetch', 'websearch']) {
+    for (const tool of ['edit', 'webfetch', 'websearch', 'skill']) {
       expect(config.permission[tool]).toBe('ask')
     }
     expect(config.permission.bash).toBe('deny')
@@ -747,7 +779,7 @@ describe('buildOpencodeConfig', () => {
       explore: { disable: true },
       scout: { disable: true }
     })
-    expect(config.permission.skill).toBe('allow')
+    expect(config.permission.skill).toBe('ask')
   })
 
   it('delegates every side-effecting tool (incl. MCP) via a "*" catch-all, allowing safe reads', () => {
@@ -759,7 +791,7 @@ describe('buildOpencodeConfig', () => {
 
     expect(config.permission['*']).toBe('ask')
     // Safe read-only tools run without prompting (parity with Claude's Ask mode).
-    for (const tool of ['read', 'lsp', 'skill']) {
+    for (const tool of ['read', 'lsp']) {
       expect(config.permission[tool]).toBe('allow')
     }
     // Mutating/external tools are pinned to ask (and unlisted MCP tools fall through to "*" → ask),
@@ -825,7 +857,7 @@ describe('buildOpencodeConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'gpt-x',
         key: 'k',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     )
 
@@ -842,7 +874,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw/v1',
         model: 'm',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       })
     )
     expect(both.model).toBe('openai-compatible/m')
@@ -857,7 +889,7 @@ describe('buildOpencodeConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'kimi-k3',
         key: 'k',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         supportsImageInput: true
       })
     )
@@ -874,7 +906,7 @@ describe('buildOpencodeConfig', () => {
         baseUrl: 'https://gw/v1',
         model: 'deepseek-v4-flash',
         key: 'k',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         supportsImageInput: false
       })
     )
@@ -902,10 +934,10 @@ describe('buildOpencodeConfig', () => {
       buildOpencodeConfig({
         type: 'custom',
         baseUrl: 'https://api.deepseek.com/anthropic',
-        openaiBaseUrl: 'https://api.deepseek.com/v1',
+        chatCompletionsBaseUrl: 'https://api.deepseek.com/v1',
         model: 'deepseek-v4-pro',
         key: 'sk-ds',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       })
     )
 
@@ -920,10 +952,10 @@ describe('buildOpencodeConfig', () => {
       buildOpencodeConfig({
         type: 'custom',
         baseUrl: 'https://api.z.ai/api/anthropic',
-        openaiBaseUrl: 'https://api.z.ai/api/paas/v4',
+        chatCompletionsBaseUrl: 'https://api.z.ai/api/paas/v4',
         model: 'glm-5.2',
         key: 'k',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       })
     )
 
@@ -941,7 +973,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://host/proxy',
         model: 'm',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     )
 
@@ -954,7 +986,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example',
         model: 'm',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     )
     expect(rooted.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
@@ -964,7 +996,7 @@ describe('buildOpencodeConfig', () => {
         type: 'custom',
         baseUrl: 'https://gw.example/v1',
         model: 'm',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     )
     expect(withV1.provider['openai-compatible'].options.baseURL).toBe('https://gw.example/v1')
