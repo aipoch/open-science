@@ -28,6 +28,7 @@ import {
 } from './specialist-package-adapter'
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
+import { normalizeImportedSkillName } from './skill-name'
 import { selectSkillManifestRoots } from './skill-bundle-paths'
 import { inspectSkillPackage } from './skill-package-inspection'
 import { extractZip, extractZipLenient } from './zip-extract'
@@ -45,12 +46,7 @@ import {
   type SkillReleasePackage,
   type InstalledSkillReleaseReceipt
 } from './skill-release'
-import {
-  UserSkillStore,
-  isUsableSkillName,
-  normalizeSkillName,
-  parseUserSkillId
-} from './user-skill-store'
+import { UserSkillStore, isUsableSkillName, parseUserSkillId } from './user-skill-store'
 
 type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
 type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
@@ -283,7 +279,7 @@ export class SkillBundleImportOwner {
       files.map((file) => file.relativePath),
       location.path.split('/').filter(Boolean).pop() ?? location.repo
     )
-    const baseName = normalizeSkillName(preview.name) || 'skill'
+    const baseName = normalizeImportedSkillName(preview.name) || 'skill'
 
     return this.transactions.runMutationRecovered(async () => {
       const existingDirectoryName = await this.findImportedDirectoryNameByUrl(url)
@@ -869,7 +865,7 @@ export class SkillBundleImportOwner {
   }
 
   private async replaceableImportedId(name: string): Promise<string | undefined> {
-    const target = normalizeSkillName(name)
+    const target = normalizeImportedSkillName(name)
     const matches = (await this.store.listSkillsLocked()).filter(
       (skill) => skill.source === 'imported' && skill.name.trim().toLowerCase() === target
     )
@@ -922,7 +918,7 @@ export class SkillBundleImportOwner {
     }
 
     const name = parseSkillDocument(skillMd.content.toString('utf8')).name?.trim()
-    const baseName = normalizeSkillName(name ?? 'skill') || 'skill'
+    const baseName = normalizeImportedSkillName(name ?? 'skill') || 'skill'
     const assignedName = await this.store.uniqueImportedName(baseName, reservedNames)
     await this.writeImported(assignedName, files, '', signature)
     return { status: 'imported', id: `imported-${assignedName}` }

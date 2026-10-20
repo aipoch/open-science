@@ -25,11 +25,20 @@ const normalizeSkillName = (name: string): string =>
     .replace(/^-+|-+$/g, '')
     .slice(0, SKILL_NAME_MAX_LENGTH)
 
+// Allocation and replacement previews must agree on an external Skill's local identity.
+const normalizeImportedSkillName = (name: string): string => {
+  const normalized = normalizeSkillName(name)
+  return isReservedSkillName(normalized)
+    ? `external-${normalized}`.slice(0, SKILL_NAME_MAX_LENGTH).replace(/-+$/, '')
+    : normalized
+}
+
 export {
   SAFE_SKILL_NAME,
   SKILL_NAME_MAX_LENGTH,
   assertUsableSkillName,
   isReservedSkillName,
   isUsableSkillName,
-  normalizeSkillName
+  normalizeSkillName,
+  normalizeImportedSkillName
 }
