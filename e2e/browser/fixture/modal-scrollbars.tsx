@@ -9,6 +9,7 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { initI18n } from '@/i18n'
 import { LiteratureLibraryPage } from '@/pages/literature/public/page'
 import { ReportErrorDialog } from '@/pages/workspace/ReportErrorDialog'
+import { GrantFolderAccessDialog } from '@/pages/workspace/GrantFolderAccessDialog'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
@@ -78,6 +79,33 @@ window.api = {
     onChanged: () => () => {}
   }
 } as unknown as typeof window.api
+if (mode === 'folder-grant') {
+  window.api = {
+    platform: 'darwin',
+    localFs: {
+      getRoots: async () => ({ home: '/Users/researcher', machineName: 'Test Mac' }),
+      listDrives: async () => [{ path: '/', label: 'Macintosh HD' }],
+      listGrantedRoots: async () => [],
+      listDir: async (path: string) => ({
+        resolvedPath: path,
+        truncated: false,
+        entries: Array.from({ length: 20 }, (_, index) => ({
+          name: `Research folder ${index + 1}`,
+          isDirectory: true,
+          size: 0,
+          mtimeMs: 0
+        }))
+      }),
+      grantRoot: async () => {
+        throw new Error(
+          'Notebook cleanup is incomplete; folder access changes are unavailable until cleanup is verified.\n'.repeat(
+            new URLSearchParams(location.search).has('longError') ? 30 : 1
+          )
+        )
+      }
+    }
+  } as unknown as typeof window.api
+}
 useNavigationStore.setState({
   view: 'library',
   pendingLiteratureItemId: mode ? undefined : reference.id
@@ -109,7 +137,13 @@ useSessionJobStore.setState({
 })
 createRoot(document.getElementById('root')!).render(
   <LiteratureRendererProvider host={literatureRendererHost}>
-    {mode === 'scroll-area' ? (
+    {mode === 'folder-grant' ? (
+      <GrantFolderAccessDialog
+        open
+        onOpenChange={() => {}}
+        initialPath="/Users/researcher/Library/CloudStorage/OneDrive-Personal/Research/Experiment/Figures/notebooks"
+      />
+    ) : mode === 'scroll-area' ? (
       <Dialog.Root open>
         <Dialog.Portal>
           <Dialog.Content

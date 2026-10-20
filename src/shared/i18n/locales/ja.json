@@ -1316,7 +1316,7 @@
     "Direct": "直接",
     "Directory": "ディレクトリ",
     "Directory contents": "ディレクトリの内容",
-    "Directory could not be accessed.": "ディレクトリにアクセスできませんでした。",
+    "Folder access could not be updated.": "フォルダーへのアクセス権を更新できませんでした。",
     "Directory path": "ディレクトリパス",
     "Disable after current work": "現在の作業後に無効にする",
     "Disable {{label}}?": "{{label}}を無効にしますか？",

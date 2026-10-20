@@ -1402,7 +1402,7 @@
     "Direct": "直连",
     "Directory": "目录",
     "Directory contents": "目录内容",
-    "Directory could not be accessed.": "无法访问该目录。",
+    "Folder access could not be updated.": "无法更新文件夹访问权限。",
     "Directory path": "目录路径",
     "Disable after current work": "当前工作完成后禁用",
     "Disable {{label}}?": "要禁用 {{label}} 吗？",

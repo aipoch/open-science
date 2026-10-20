@@ -1283,7 +1283,7 @@
     "Direct": "Direkt",
     "Directory": "Verzeichnis",
     "Directory contents": "Verzeichnisinhalte",
-    "Directory could not be accessed.": "Auf das Verzeichnis konnte nicht zugegriffen werden.",
+    "Folder access could not be updated.": "Der Ordnerzugriff konnte nicht aktualisiert werden.",
     "Directory path": "Verzeichnispfad",
     "Disable after current work": "Nach aktueller Arbeit deaktivieren",
     "Disable {{label}}?": "{{label}} deaktivieren?",

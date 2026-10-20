@@ -1402,7 +1402,7 @@
     "Direct": "直連",
     "Directory": "目錄",
     "Directory contents": "目錄內容",
-    "Directory could not be accessed.": "無法存取該目錄。",
+    "Folder access could not be updated.": "無法更新資料夾存取權限。",
     "Directory path": "目錄路徑",
     "Disable after current work": "目前工作完成後停用",
     "Disable {{label}}?": "要停用 {{label}} 嗎？",

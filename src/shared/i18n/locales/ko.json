@@ -1336,7 +1336,7 @@
     "Direct": "직접",
     "Directory": "디렉터리",
     "Directory contents": "디렉터리 내용",
-    "Directory could not be accessed.": "디렉터리에 액세스할 수 없습니다.",
+    "Folder access could not be updated.": "폴더 접근 권한을 업데이트하지 못했습니다.",
     "Directory path": "디렉터리 경로",
     "Disable after current work": "현재 작업 후 비활성화",
     "Disable {{label}}?": "비활성화할까요? 대상: {{label}}",

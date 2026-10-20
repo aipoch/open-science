@@ -1368,7 +1368,7 @@
     "Direct": "Directo",
     "Directory": "Directorio",
     "Directory contents": "Contenido del directorio",
-    "Directory could not be accessed.": "No se pudo acceder al directorio.",
+    "Folder access could not be updated.": "No se pudo actualizar el acceso a la carpeta.",
     "Directory path": "Ruta del directorio",
     "Disable after current work": "Desactivar después del trabajo actual",
     "Disable {{label}}?": "¿Desactivar {{label}}?",

@@ -1363,7 +1363,7 @@
     "Direct": "Прямой",
     "Directory": "Каталог",
     "Directory contents": "Содержимое каталога",
-    "Directory could not be accessed.": "Невозможно получить доступ к каталогу.",
+    "Folder access could not be updated.": "Не удалось обновить доступ к папке.",
     "Directory path": "Путь к каталогу",
     "Disable after current work": "Отключить после текущей работы",
     "Disable {{label}}?": "Отключить {{label}}?",
