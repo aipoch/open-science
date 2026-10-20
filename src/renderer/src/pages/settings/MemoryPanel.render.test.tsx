@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, useState } from 'react'
+import { act, StrictMode, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -282,6 +282,162 @@ describe('MemoryPanel', () => {
       })
       expect(onNavigate).toHaveBeenCalledExactlyOnceWith({ kind: 'list' })
       expect(container.querySelector('input[name="memory-category-name"]')).toBeNull()
+    }
+  )
+
+  it.each(['create', 'edit'] as const)(
+    'locks the note draft during %s until the save succeeds',
+    async (mode) => {
+      const pending = deferredCategorySave()
+      const save = vi.fn(async () => {
+        await pending.promise
+      })
+      useMemoryStore.setState({
+        categories: [aboutYouCategory({ entries: mode === 'edit' ? [memoryEntry()] : [] })],
+        createEntry: save,
+        updateEntry: save
+      })
+      await act(async () =>
+        root.render(
+          <StrictMode>
+            <MemoryPanel view={{ kind: 'list' }} onNavigate={vi.fn()} />
+          </StrictMode>
+        )
+      )
+      fireEvent.click(
+        mode === 'edit'
+          ? container.querySelector('button[aria-label="Edit note"]')!
+          : Array.from(container.querySelectorAll('button')).find(
+              (button) => button.textContent?.trim() === 'Add'
+            )!
+      )
+      const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
+      const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Cancel'
+      )!
+      const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Save'
+      )!
+      fireEvent.change(editor, { target: { value: 'Submitted note' } })
+      fireEvent.click(submit)
+
+      expect(editor.disabled).toBe(true)
+      expect(cancel.disabled).toBe(true)
+      expect(submit.disabled).toBe(true)
+      fireEvent.click(cancel)
+      fireEvent.keyDown(editor, { key: 'Escape' })
+      fireEvent.keyDown(editor, { key: 'Enter', ctrlKey: true })
+      expect(container.querySelector('textarea')).toBe(editor)
+      expect(save).toHaveBeenCalledTimes(1)
+      expect(save).toHaveBeenCalledWith(
+        mode === 'edit'
+          ? { id: 'entry-a', expectedRevision: 1, content: 'Submitted note' }
+          : { categoryId: 'memory-category-about-you', content: 'Submitted note' }
+      )
+
+      await act(async () => pending.resolve('saved'))
+      expect(container.querySelector('textarea')).toBeNull()
+    }
+  )
+
+  it.each(['create', 'edit'] as const)(
+    'retains the note draft after failed %s and allows an edited retry',
+    async (mode) => {
+      const pending = deferredCategorySave()
+      const save = vi
+        .fn<ReturnType<typeof useMemoryStore.getState>['createEntry']>()
+        .mockImplementationOnce(async () => {
+          await pending.promise
+        })
+        .mockResolvedValue(undefined)
+      useMemoryStore.setState({
+        categories: [aboutYouCategory({ entries: mode === 'edit' ? [memoryEntry()] : [] })],
+        createEntry: save,
+        updateEntry: save
+      })
+      await renderMemoryPanel()
+      fireEvent.click(
+        mode === 'edit'
+          ? container.querySelector('button[aria-label="Edit note"]')!
+          : Array.from(container.querySelectorAll('button')).find(
+              (button) => button.textContent?.trim() === 'Add'
+            )!
+      )
+      const editor = container.querySelector<HTMLTextAreaElement>('textarea')!
+      const cancel = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Cancel'
+      )!
+      const submit = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Save'
+      )!
+      fireEvent.change(editor, { target: { value: 'Keep this note draft' } })
+      fireEvent.click(submit)
+      await act(async () => pending.reject(new Error('Memory could not be updated.')))
+
+      expect(container.querySelector('textarea')).toBe(editor)
+      expect(editor.disabled).toBe(false)
+      expect(cancel.disabled).toBe(false)
+      expect(submit.disabled).toBe(false)
+      expect(editor.value).toBe('Keep this note draft')
+      fireEvent.change(editor, { target: { value: 'Edited retry' } })
+      await act(async () => fireEvent.click(submit))
+      expect(save).toHaveBeenCalledTimes(2)
+      expect(save).toHaveBeenLastCalledWith(
+        mode === 'edit'
+          ? { id: 'entry-a', expectedRevision: 1, content: 'Edited retry' }
+          : { categoryId: 'memory-category-about-you', content: 'Edited retry' }
+      )
+      expect(container.querySelector('textarea')).toBeNull()
+    }
+  )
+
+  it.each(['different category', 'original category'] as const)(
+    'keeps a replacement note draft in the %s when an unmounted save succeeds',
+    async (destination) => {
+      const pending = deferredCategorySave()
+      const createEntry = vi.fn(async () => {
+        await pending.promise
+      })
+      useMemoryStore.setState({
+        categories: [aboutYouCategory(), customCategory()],
+        createEntry
+      })
+      await renderMemoryPanel()
+      const buttonNamed = (name: string): HTMLButtonElement =>
+        Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
+          (button) => button.textContent?.trim() === name
+        )!
+      fireEvent.click(buttonNamed('Add'))
+      fireEvent.change(container.querySelector('textarea')!, {
+        target: { value: 'Original pending note' }
+      })
+      fireEvent.click(buttonNamed('Save'))
+      fireEvent.click(
+        Array.from(container.querySelectorAll('button')).find((button) =>
+          button.textContent?.includes('Category A')
+        )!
+      )
+      expect(container.querySelector('textarea')).toBeNull()
+      if (destination === 'original category') {
+        fireEvent.click(
+          Array.from(container.querySelectorAll('button')).find((button) =>
+            button.textContent?.includes('About you')
+          )!
+        )
+      }
+      fireEvent.click(buttonNamed('Add'))
+      const replacement = container.querySelector<HTMLTextAreaElement>('textarea')!
+      fireEvent.change(replacement, { target: { value: 'Keep this replacement draft' } })
+
+      await act(async () => pending.resolve('saved'))
+
+      expect(container.querySelector('textarea')).toBe(replacement)
+      expect(replacement.value).toBe('Keep this replacement draft')
+      expect(replacement.disabled).toBe(false)
+      expect(createEntry).toHaveBeenCalledExactlyOnceWith({
+        categoryId: 'memory-category-about-you',
+        content: 'Original pending note'
+      })
     }
   )
 
