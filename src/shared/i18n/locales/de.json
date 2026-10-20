@@ -47,7 +47,8 @@
     "Close window": "Fenster schließen",
     "Review potentially destructive code": "Potenziell destruktiven Code prüfen",
     "Confirm Notebook kernel and environment": "Notebook-Kernel und Umgebung bestätigen",
-    "Quit app": "App beenden"
+    "Quit app": "App beenden",
+    "Your unsaved changes will be lost.": "Ihre ungespeicherten Änderungen gehen verloren."
   },
   "native": {
     "Local State is in use by another process.": "Local State wird von einem anderen Prozess verwendet.",
@@ -122,7 +123,6 @@
     "{{taskName}} has a plan ready for review.": "Für {{taskName}} liegt ein Plan zur Prüfung vor.",
     "Review the proposed plan: {{summary}}": "Prüfen Sie den vorgeschlagenen Plan: {{summary}}",
     "Could not open the update installer: {{error}}": "Das Update-Installationsprogramm konnte nicht geöffnet werden: {{error}}",
-    "Your unsaved changes will be lost.": "Ihre ungespeicherten Änderungen gehen verloren.",
     "Import Environment lock": "Umgebungssperre importieren",
     "OK": "OK",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Warten Sie auf den Abschluss des Paketvorgangs oder brechen Sie ihn vor dem Beenden im Fortschrittsfenster ab.",
@@ -8185,6 +8185,8 @@
     "Export screening results (CSV)": "Screening-Ergebnisse exportieren (CSV)",
     "Screening results could not be exported.": "Die Screening-Ergebnisse konnten nicht exportiert werden.",
     "Screening data changed during export. Please try again.": "Die Screening-Daten wurden während des Exports geändert. Bitte versuchen Sie es erneut.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Die Befehlszeile wartet auf Netzwerkzugriff. Falls der Prozess beendet ist, geben Sie den Zugriff frei und führen Sie den Befehl ausdrücklich erneut aus. Er wird nicht automatisch wiederholt.",
+    "Delete local configuration?": "Lokale Konfiguration löschen?",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "„{{name}}“ und die gespeicherten Einstellungen und Zugangsdaten von diesem Gerät löschen? Nicht gespeicherte Änderungen werden ebenfalls verworfen. Die ursprüngliche Forschung und ihre Ergebnisse bleiben erhalten."
   }
 }

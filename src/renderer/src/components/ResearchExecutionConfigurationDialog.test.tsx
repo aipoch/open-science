@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { createI18nTestStub } from '../../../../test/i18n-test-stub'
 import type {
@@ -150,6 +150,8 @@ it('dismisses without saving credentials or authorizing any execution', async ()
   render(<ResearchExecutionConfigurationForm request={request} onResolved={resolved} />)
   fireEvent.change(screen.getByLabelText(/Provider key/), { target: { value: 'unsaved-secret' } })
   fireEvent.click(screen.getByRole('button', { name: 'Not now' }))
+  expect(api.resolve).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
   await waitFor(() => expect(resolved).toHaveBeenCalledOnce())
   expect(api.resolve).toHaveBeenCalledWith({
     configurationId: request.configurationId,
@@ -202,6 +204,19 @@ it('deletes only the selected local profile and does not settle or run the exper
     />
   )
   fireEvent.click(screen.getByRole('button', { name: 'Delete local configuration' }))
+  expect(api.remove).not.toHaveBeenCalled()
+  const confirmation = screen.getByRole('alertdialog')
+  expect(confirmation.textContent).toContain('Local provider')
+  expect(confirmation.textContent).toContain('saved settings and credentials')
+  expect(confirmation.textContent).toContain('original research and results are kept')
+  fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }))
+  expect(api.remove).not.toHaveBeenCalled()
+  fireEvent.click(screen.getByRole('button', { name: 'Delete local configuration' }))
+  fireEvent.click(
+    within(screen.getByRole('alertdialog')).getByRole('button', {
+      name: 'Delete local configuration'
+    })
+  )
   await waitFor(() =>
     expect(api.remove).toHaveBeenCalledWith({ ...request.scope, profileId: 'profile' })
   )
@@ -215,4 +230,115 @@ it('does not request native private configuration from the browser surface', asy
   await act(async () => {})
   expect(api.pending).not.toHaveBeenCalled()
   expect(screen.queryByRole('dialog')).toBeNull()
+})
+
+it.each(['escape', 'outside'])(
+  'protects credentials on %s dismissal and restores editing focus',
+  async (method) => {
+    const resolved = vi.fn()
+    render(<ResearchExecutionConfigurationForm request={request} onResolved={resolved} />)
+    const password = screen.getByLabelText(/Provider key/) as HTMLInputElement
+    fireEvent.change(password, { target: { value: 'unsaved-secret' } })
+    password.focus()
+    const dialog = screen.getByRole('dialog')
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    if (method === 'escape') fireEvent.keyDown(password, { key: 'Escape' })
+    else {
+      const overlay = dialog.previousElementSibling!
+      fireEvent.pointerDown(overlay, { button: 0, pointerType: 'mouse' })
+      fireEvent.pointerUp(overlay, { button: 0, pointerType: 'mouse' })
+      fireEvent.click(overlay, { button: 0 })
+    }
+    await screen.findByRole('alertdialog')
+    expect(api.resolve).not.toHaveBeenCalled()
+    expect(password.value).toBe('unsaved-secret')
+    fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+    await waitFor(() => expect(screen.queryByRole('alertdialog')).toBeNull())
+    expect(password.value).toBe('unsaved-secret')
+    expect(document.activeElement).toBe(password)
+    expect(resolved).not.toHaveBeenCalled()
+  }
+)
+
+it('keeps the draft on profile-switch cancellation and clears it only after an accepted switch', async () => {
+  render(
+    <ResearchExecutionConfigurationForm
+      request={{ ...request, preflight: { ...request.preflight, profiles: [profile] } }}
+      onResolved={vi.fn()}
+    />
+  )
+  const password = screen.getByLabelText(/Provider key/) as HTMLInputElement
+  fireEvent.change(screen.getByLabelText('Configuration name'), { target: { value: 'Draft name' } })
+  fireEvent.change(password, { target: { value: 'private-draft' } })
+  const select = screen.getByLabelText('Local configuration') as HTMLSelectElement
+  select.focus()
+  fireEvent.change(select, { target: { value: 'profile' } })
+  expect(api.inspect).not.toHaveBeenCalled()
+  expect(select.value).toBe('')
+  fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+  expect(password.value).toBe('private-draft')
+  expect((screen.getByLabelText('Configuration name') as HTMLInputElement).value).toBe('Draft name')
+  api.inspect.mockResolvedValue({
+    ...request.preflight,
+    profiles: [profile],
+    selectedProfileId: 'profile'
+  })
+  fireEvent.change(select, { target: { value: 'profile' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+  await waitFor(() => expect(select.value).toBe('profile'))
+  expect(password.value).toBe('')
+  expect((screen.getByLabelText('Configuration name') as HTMLInputElement).value).toBe(
+    'Local provider'
+  )
+  expect(api.save).not.toHaveBeenCalled()
+})
+
+it('retains fields when a confirmed profile switch fails', async () => {
+  api.inspect.mockRejectedValue(new Error('Unavailable'))
+  render(
+    <ResearchExecutionConfigurationForm
+      request={{ ...request, preflight: { ...request.preflight, profiles: [profile] } }}
+      onResolved={vi.fn()}
+    />
+  )
+  const password = screen.getByLabelText(/Provider key/) as HTMLInputElement
+  fireEvent.change(password, { target: { value: 'private-draft' } })
+  fireEvent.change(screen.getByLabelText('Local configuration'), { target: { value: 'profile' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Discard changes' }))
+  await screen.findByText(
+    'Could not update this local configuration. Your experiment has not been started.'
+  )
+  expect(password.value).toBe('private-draft')
+  expect(api.save).not.toHaveBeenCalled()
+})
+
+it('does not dismiss or switch profiles while a save is in flight', async () => {
+  let finish!: (value: ResearchExecutionProfileView) => void
+  api.save.mockImplementation(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  const resolved = vi.fn()
+  render(<ResearchExecutionConfigurationForm request={request} onResolved={resolved} />)
+  fireEvent.change(screen.getByLabelText('Configuration name'), { target: { value: 'Draft name' } })
+  fireEvent.change(screen.getByLabelText(/Provider key/), { target: { value: 'private-draft' } })
+  fireEvent.click(screen.getByRole('button', { name: 'Save configuration' }))
+  fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+  expect(api.resolve).not.toHaveBeenCalled()
+  expect(screen.queryByRole('alertdialog')).toBeNull()
+  expect(screen.getByRole('button', { name: 'Not now' }).hasAttribute('disabled')).toBe(true)
+  await act(async () => {
+    finish(profile)
+  })
+  await waitFor(() => expect(resolved).toHaveBeenCalledOnce())
+  expect(api.save).toHaveBeenCalledOnce()
+  expect(api.resolve).toHaveBeenCalledWith({
+    configurationId: request.configurationId,
+    outcome: 'configured',
+    profileId: 'profile'
+  })
 })

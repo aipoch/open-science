@@ -47,7 +47,8 @@
     "Close window": "창 닫기",
     "Review potentially destructive code": "잠재적으로 파괴적인 코드 검토",
     "Confirm Notebook kernel and environment": "Notebook 커널 및 환경 확인",
-    "Quit app": "앱 종료"
+    "Quit app": "앱 종료",
+    "Your unsaved changes will be lost.": "저장하지 않은 변경 사항이 사라집니다."
   },
   "native": {
     "Local State is in use by another process.": "다른 프로세스에서 Local State를 사용 중입니다.",
@@ -121,7 +122,6 @@
     "JSON report": "JSON 보고서",
     "Connector configuration": "커넥터 구성",
     "Import Connector configuration": "커넥터 구성 가져오기",
-    "Your unsaved changes will be lost.": "저장하지 않은 변경 사항이 사라집니다.",
     "Import Environment lock": "환경 잠금 가져오기",
     "OK": "확인",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "패키지 작업이 완료될 때까지 기다리거나 진행 상황 창에서 작업을 취소한 후 종료하세요.",
@@ -8023,6 +8023,8 @@
     "Export screening results (CSV)": "스크리닝 결과 내보내기(CSV)",
     "Screening results could not be exported.": "스크리닝 결과를 내보내지 못했습니다.",
     "Screening data changed during export. Please try again.": "내보내는 동안 스크리닝 데이터가 변경되었습니다. 다시 시도하세요.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "셸이 네트워크 접근 승인을 기다리고 있습니다. 프로세스가 종료된 경우 승인 후 명령을 직접 다시 실행하세요. 자동으로 다시 실행되지 않습니다.",
+    "Delete local configuration?": "로컬 구성을 삭제하시겠습니까?",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "이 기기에서 “{{name}}” 및 저장된 설정과 자격 증명을 삭제하시겠습니까? 저장하지 않은 편집 내용도 삭제됩니다. 원본 연구와 결과는 유지됩니다."
   }
 }

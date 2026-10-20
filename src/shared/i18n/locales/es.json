@@ -47,7 +47,8 @@
     "Close window": "Cerrar ventana",
     "Review potentially destructive code": "Revisar código potencialmente destructivo",
     "Confirm Notebook kernel and environment": "Confirmar el kernel y el entorno de Notebook",
-    "Quit app": "Cerrar la aplicación"
+    "Quit app": "Cerrar la aplicación",
+    "Your unsaved changes will be lost.": "Se perderán los cambios sin guardar."
   },
   "native": {
     "Local State is in use by another process.": "Otro proceso está utilizando Local State.",
@@ -123,7 +124,6 @@
     "JSON report": "Informe JSON",
     "Connector configuration": "Configuración del conector",
     "Import Connector configuration": "Importar configuración del conector",
-    "Your unsaved changes will be lost.": "Se perderán los cambios sin guardar.",
     "Import Environment lock": "Importar bloqueo de entorno",
     "OK": "Aceptar",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Espere a que termine la operación o cancélela en la ventana de progreso antes de salir.",
@@ -8353,6 +8353,8 @@
     "Export screening results (CSV)": "Exportar los resultados del cribado (CSV)",
     "Screening results could not be exported.": "No se pudieron exportar los resultados del cribado.",
     "Screening data changed during export. Please try again.": "Los datos del cribado cambiaron durante la exportación. Inténtelo de nuevo.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "La línea de comandos espera autorización para acceder a la red. Si el proceso ha finalizado, autorice el acceso y vuelva a ejecutar el comando explícitamente; no se ejecutará de nuevo automáticamente."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "La línea de comandos espera autorización para acceder a la red. Si el proceso ha finalizado, autorice el acceso y vuelva a ejecutar el comando explícitamente; no se ejecutará de nuevo automáticamente.",
+    "Delete local configuration?": "¿Eliminar la configuración local?",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "¿Eliminar «{{name}}» y sus ajustes y credenciales guardados de este dispositivo? También se descartarán los cambios sin guardar. Se conservarán la investigación original y sus resultados."
   }
 }

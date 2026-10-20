@@ -3,6 +3,7 @@ import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import {
   dialogBodyClassName,
   dialogCloseButtonClassName,
@@ -57,6 +58,12 @@ export const ResearchExecutionConfigurationForm = ({
   const [credentials, setCredentials] = useState<Record<string, string>>({})
   const [hosts, setHosts] = useState(initial?.allowedNetworkHosts.join('\n') ?? '')
   const [changes, setChanges] = useState(initial?.conditionChanges.join('\n') ?? '')
+  const [confirmation, setConfirmation] = useState<
+    | { kind: 'dismiss' }
+    | { kind: 'switch'; profileId?: string }
+    | { kind: 'delete'; profileId: string; name: string }
+  >()
+  const returnFocus = useRef<HTMLElement | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState(false)
   const pending = useRef(false)
@@ -68,6 +75,13 @@ export const ResearchExecutionConfigurationForm = ({
     }
   }, [])
   const selected = preflight.profiles.find((profile) => profile.profileId === profileId)
+  const dirty =
+    displayName !== (selected?.displayName ?? '') ||
+    hosts !== (selected?.allowedNetworkHosts.join('\n') ?? '') ||
+    changes !== (selected?.conditionChanges.join('\n') ?? '') ||
+    JSON.stringify(variables.map(({ name, value }) => [name, value])) !==
+      JSON.stringify(Object.entries(selected?.variables ?? {})) ||
+    Object.values(credentials).some((value) => value.length > 0)
   const configured = new Set(selected?.configuredCredentialKeys ?? [])
   const missingCredentials = preflight.slots.some(
     (slot) => slot.required && !configured.has(slot.key) && !credentials[slot.key]
@@ -104,7 +118,6 @@ export const ResearchExecutionConfigurationForm = ({
     pending.current = true
     setBusy(true)
     setError(false)
-    setCredentials({})
     try {
       const next = await window.api.researchExecutionProfiles.inspect({
         ...request.scope,
@@ -125,13 +138,15 @@ export const ResearchExecutionConfigurationForm = ({
     pending.current = true
     setBusy(true)
     setError(false)
-    setCredentials({})
     try {
       await window.api.researchExecutionProfiles.resolve({
         configurationId: request.configurationId,
         outcome: 'dismissed'
       })
-      if (mounted.current) onResolved()
+      if (mounted.current) {
+        setCredentials({})
+        onResolved()
+      }
     } catch {
       if (mounted.current) setError(true)
     } finally {
@@ -166,8 +181,7 @@ export const ResearchExecutionConfigurationForm = ({
         conditionChanges: lines(changes)
       })
       if (!mounted.current) return
-      setCredentials({})
-      setProfileId(profile.profileId)
+      resetFields(profile)
       setPreflight((current) => ({
         ...current,
         profiles: [
@@ -188,14 +202,15 @@ export const ResearchExecutionConfigurationForm = ({
       if (mounted.current) setBusy(false)
     }
   }
-  const remove = async (): Promise<void> => {
-    if (pending.current || !profileId) return
+  const remove = async (targetId: string): Promise<void> => {
+    if (pending.current) return
     pending.current = true
     setBusy(true)
     setError(false)
-    setCredentials({})
     try {
-      await window.api.researchExecutionProfiles.remove({ ...request.scope, profileId })
+      await window.api.researchExecutionProfiles.remove({ ...request.scope, profileId: targetId })
+      if (!mounted.current) return
+      resetFields()
       const next = await window.api.researchExecutionProfiles.inspect({
         ...request.scope,
         profileId: undefined
@@ -210,11 +225,29 @@ export const ResearchExecutionConfigurationForm = ({
       if (mounted.current) setBusy(false)
     }
   }
+  const requestChange = (intent: NonNullable<typeof confirmation>): void => {
+    if (pending.current || confirmation) return
+    if (intent.kind === 'switch' && intent.profileId === profileId) return
+    if (dirty || intent.kind === 'delete') {
+      returnFocus.current =
+        document.activeElement instanceof HTMLElement ? document.activeElement : null
+      setConfirmation(intent)
+    } else if (intent.kind === 'switch') void inspect(intent.profileId)
+    else void dismiss()
+  }
+  const confirmChange = (): void => {
+    if (!confirmation || pending.current) return
+    const intent = confirmation
+    setConfirmation(undefined)
+    if (intent.kind === 'switch') void inspect(intent.profileId)
+    else if (intent.kind === 'delete') void remove(intent.profileId)
+    else void dismiss()
+  }
   return (
     <Dialog.Root
       open
       onOpenChange={(open) => {
-        if (!open) void dismiss()
+        if (!open) requestChange({ kind: 'dismiss' })
       }}
     >
       <Dialog.Portal>
@@ -233,7 +266,7 @@ export const ResearchExecutionConfigurationForm = ({
               className={dialogCloseButtonClassName}
               aria-label={t('Close')}
               disabled={busy}
-              onClick={() => void dismiss()}
+              onClick={() => requestChange({ kind: 'dismiss' })}
             >
               <X className="size-4" aria-hidden="true" />
             </Button>
@@ -275,7 +308,9 @@ export const ResearchExecutionConfigurationForm = ({
                 className={fieldClass}
                 value={profileId ?? ''}
                 disabled={busy}
-                onChange={(event) => void inspect(event.target.value || undefined)}
+                onChange={(event) =>
+                  requestChange({ kind: 'switch', profileId: event.target.value || undefined })
+                }
               >
                 <option value="">{t('New local configuration')}</option>
                 {preflight.profiles.map((profile) => (
@@ -443,11 +478,25 @@ export const ResearchExecutionConfigurationForm = ({
           </div>
           <div className={`${dialogFooterClassName} flex-wrap`}>
             {profileId ? (
-              <Button variant="ghost" disabled={busy} onClick={() => void remove()}>
+              <Button
+                variant="ghost"
+                disabled={busy}
+                onClick={() =>
+                  requestChange({
+                    kind: 'delete',
+                    profileId,
+                    name: selected?.displayName ?? displayName
+                  })
+                }
+              >
                 {t('Delete local configuration')}
               </Button>
             ) : null}
-            <Button variant="outline" disabled={busy} onClick={() => void dismiss()}>
+            <Button
+              variant="outline"
+              disabled={busy}
+              onClick={() => requestChange({ kind: 'dismiss' })}
+            >
               {t('Not now')}
             </Button>
             <Button
@@ -466,6 +515,37 @@ export const ResearchExecutionConfigurationForm = ({
           </div>
         </Dialog.Content>
       </Dialog.Portal>
+      <ConfirmActionDialog
+        open={confirmation !== undefined}
+        title={
+          confirmation?.kind === 'delete'
+            ? t('Delete local configuration?')
+            : t('Discard unsaved changes?')
+        }
+        description={
+          confirmation?.kind === 'delete'
+            ? t(
+                'Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.',
+                { name: confirmation.name }
+              )
+            : t('Your unsaved changes will be lost.')
+        }
+        cancelLabel={confirmation?.kind === 'delete' ? t('Cancel') : t('Keep editing')}
+        confirmLabel={
+          confirmation?.kind === 'delete' ? t('Delete local configuration') : t('Discard changes')
+        }
+        destructive
+        onCancel={() => setConfirmation(undefined)}
+        onConfirm={confirmChange}
+        onCloseAutoFocus={(event) => {
+          const target = returnFocus.current
+          returnFocus.current = null
+          if (target?.isConnected && !target.matches(':disabled')) {
+            event.preventDefault()
+            target.focus()
+          }
+        }}
+      />
     </Dialog.Root>
   )
 }

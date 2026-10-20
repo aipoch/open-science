@@ -47,7 +47,8 @@
     "Close window": "Закрыть окно",
     "Review potentially destructive code": "Проверить потенциально разрушительный код",
     "Confirm Notebook kernel and environment": "Подтвердить ядро и окружение Notebook",
-    "Quit app": "Выйти из приложения"
+    "Quit app": "Выйти из приложения",
+    "Your unsaved changes will be lost.": "Несохранённые изменения будут потеряны."
   },
   "native": {
     "Local State is in use by another process.": "Local State используется другим процессом.",
@@ -124,7 +125,6 @@
     "JSON report": "Отчёт JSON",
     "Connector configuration": "Конфигурация коннектора",
     "Import Connector configuration": "Импорт конфигурации коннектора",
-    "Your unsaved changes will be lost.": "Несохранённые изменения будут потеряны.",
     "Import Environment lock": "Импортировать блокировку окружения",
     "OK": "ОК",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Дождитесь завершения операции или отмените её в окне хода выполнения перед выходом.",
@@ -8492,6 +8492,8 @@
     "Export screening results (CSV)": "Экспортировать результаты отбора (CSV)",
     "Screening results could not be exported.": "Не удалось экспортировать результаты отбора.",
     "Screening data changed during export. Please try again.": "Данные отбора изменились во время экспорта. Повторите попытку.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Командная строка ожидает разрешения на доступ к сети. Если процесс завершён, разрешите доступ и явно повторите команду. Автоматически она не запустится.",
+    "Delete local configuration?": "Удалить локальную конфигурацию?",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "Удалить «{{name}}» вместе с сохранёнными настройками и учётными данными с этого устройства? Несохранённые изменения также будут удалены. Исходное исследование и результаты сохранятся."
   }
 }

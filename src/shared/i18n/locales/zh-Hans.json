@@ -47,7 +47,8 @@
     "Close window": "关闭窗口",
     "Review potentially destructive code": "检查可能具有破坏性的代码",
     "Confirm Notebook kernel and environment": "确认 Notebook 内核和环境",
-    "Quit app": "退出应用"
+    "Quit app": "退出应用",
+    "Your unsaved changes will be lost.": "未保存的更改将会丢失。"
   },
   "native": {
     "Local State is in use by another process.": "Local State 正被其他进程占用。",
@@ -121,7 +122,6 @@
     "JSON report": "JSON 报告",
     "Connector configuration": "连接器配置",
     "Import Connector configuration": "导入连接器配置",
-    "Your unsaved changes will be lost.": "未保存的更改将会丢失。",
     "Import Environment lock": "导入环境锁文件",
     "OK": "确定",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "请等待包操作完成，或在进度窗口中取消操作后再退出。",
@@ -8025,6 +8025,8 @@
     "Export screening results (CSV)": "导出筛选结果（CSV）",
     "Screening results could not be exported.": "无法导出筛选结果。",
     "Screening data changed during export. Please try again.": "导出期间筛选数据发生了变化。请重试。",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。"
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "命令行正在等待网络访问批准。如果进程已结束，请批准后手动重试命令；系统不会自动重新执行。",
+    "Delete local configuration?": "删除本地配置？",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "要从此设备删除“{{name}}”及其保存的设置和凭据吗？未保存的编辑也将被放弃。原始研究和结果将保留。"
   }
 }

@@ -47,7 +47,8 @@
     "Close window": "ウィンドウを閉じる",
     "Review potentially destructive code": "破壊的な操作を含む可能性があるコードを確認",
     "Confirm Notebook kernel and environment": "Notebookのカーネルと環境を確認",
-    "Quit app": "アプリを終了"
+    "Quit app": "アプリを終了",
+    "Your unsaved changes will be lost.": "保存されていない変更は失われます。"
   },
   "native": {
     "Local State is in use by another process.": "Local State は別のプロセスで使用されています。",
@@ -121,7 +122,6 @@
     "JSON report": "JSON レポート",
     "Connector configuration": "コネクタ構成",
     "Import Connector configuration": "コネクタ構成のインポート",
-    "Your unsaved changes will be lost.": "保存されていない変更は失われます。",
     "Import Environment lock": "環境ロックをインポート",
     "OK": "OK",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "パッケージ操作が完了するまで待つか、進行状況ウィンドウでキャンセルしてから終了してください。",
@@ -8025,6 +8025,8 @@
     "Export screening results (CSV)": "スクリーニング結果をエクスポート（CSV）",
     "Screening results could not be exported.": "スクリーニング結果をエクスポートできませんでした。",
     "Screening data changed during export. Please try again.": "エクスポート中にスクリーニングデータが変更されました。もう一度お試しください。",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。"
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "シェルはネットワークアクセスの承認を待っています。プロセスが終了している場合は、承認後に明示的にコマンドを再実行してください。自動では再実行されません。",
+    "Delete local configuration?": "ローカル設定を削除しますか？",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "「{{name}}」と、このデバイスに保存された設定や認証情報を削除しますか？未保存の編集内容も破棄されます。元の研究と結果は保持されます。"
   }
 }

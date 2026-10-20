@@ -47,7 +47,8 @@
     "Close window": "Fermer la fenêtre",
     "Review potentially destructive code": "Examiner le code potentiellement destructeur",
     "Confirm Notebook kernel and environment": "Confirmer le noyau et l’environnement du Notebook",
-    "Quit app": "Quitter l’application"
+    "Quit app": "Quitter l’application",
+    "Your unsaved changes will be lost.": "Vos modifications non enregistrées seront perdues."
   },
   "native": {
     "Local State is in use by another process.": "Local State est utilisé par un autre processus.",
@@ -123,7 +124,6 @@
     "JSON report": "Rapport JSON",
     "Connector configuration": "Configuration du connecteur",
     "Import Connector configuration": "Importer la configuration du connecteur",
-    "Your unsaved changes will be lost.": "Vos modifications non enregistrées seront perdues.",
     "Import Environment lock": "Importer le verrou d’environnement",
     "OK": "OK",
     "Wait for the package operation to finish, or cancel it from the progress window before quitting.": "Attendez la fin de l’opération ou annulez-la dans la fenêtre de progression avant de quitter.",
@@ -8353,6 +8353,8 @@
     "Export screening results (CSV)": "Exporter les résultats du tri (CSV)",
     "Screening results could not be exported.": "Impossible d’exporter les résultats du tri.",
     "Screening data changed during export. Please try again.": "Les données du tri ont changé pendant l’exportation. Réessayez.",
-    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement."
+    "Shell is waiting for network access. If the process has ended, approve and retry the command explicitly; it will not run again automatically.": "Le terminal attend une autorisation d’accès au réseau. Si le processus est terminé, autorisez l’accès puis relancez explicitement la commande. Elle ne sera pas relancée automatiquement.",
+    "Delete local configuration?": "Supprimer la configuration locale ?",
+    "Delete “{{name}}” and its saved settings and credentials from this device? Unsaved edits will also be discarded. The original research and results are kept.": "Supprimer « {{name}} » ainsi que ses paramètres et identifiants enregistrés sur cet appareil ? Les modifications non enregistrées seront également perdues. La recherche originale et ses résultats sont conservés."
   }
 }
