@@ -418,6 +418,7 @@ describe('durable delegated process ownership', () => {
 
   it.skipIf(process.platform !== 'linux')(
     'recovers a live tree while a newer unrelated process remains running',
+    { repeats: 20, timeout: 15_000 },
     async () => {
       const owner = await setup()
       const child = owner.spawn(
@@ -489,8 +490,7 @@ describe('durable delegated process ownership', () => {
         unrelated.kill('SIGKILL')
         await closed
       }
-    },
-    15_000
+    }
   )
 
   it('does not erase historical ownership uncertainty with a clean cold scan', async () => {
