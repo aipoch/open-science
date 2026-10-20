@@ -1043,6 +1043,7 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
+    "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
     "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",

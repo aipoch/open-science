@@ -46,6 +46,12 @@ type NativeImportFile = {
 }
 class PackageSourceUnavailableError extends Error {}
 
+// Exact application-owned messages only: parser and filesystem errors can contain research data.
+const safeFailureMessages = new Set([
+  'Legacy file references must have immutable Versions before packaging.',
+  'Session or Notebook references missing file evidence.'
+])
+
 // Native pickers and the preload File bridge supply filesystem paths. A private archive freezes
 // the bytes reviewed in the confirmation before import or external save.
 export class SessionPackageDesktop {
@@ -454,11 +460,14 @@ export class SessionPackageDesktop {
         // Diagnostic capture must not change the package operation result.
       }
     }
-    createLogger('session-package').warn(
-      'Session package operation failed',
-      diagnosticErrorFields(error)
-    )
     const detail = error instanceof Error ? error.message : ''
+    const snapshot = this.operations.snapshot
+    createLogger('session-package').warn('Session package operation failed', {
+      ...diagnosticErrorFields(error),
+      operationId: snapshot?.id,
+      phase: snapshot?.progress.phase,
+      ...(safeFailureMessages.has(detail) ? { error: { message: detail } } : {})
+    })
     const translate = this.options.translate
     if (detail === PACKAGE_REQUIRES_UPDATE)
       throw new Error(

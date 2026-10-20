@@ -24,6 +24,8 @@ import * as fsPromises from 'node:fs/promises'
 import { c as createTar, x as extractTar } from 'tar'
 import { paceFileIo } from '../file-io-pacing'
 import { withPackageTransfer } from './transfer'
+import { initLogger, flushLogs } from '@aipoch/diagnostics/node'
+import { projectDiagnosticLog } from '../session-diagnostics/projection'
 
 vi.mock('node:fs/promises', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:fs/promises')>())
@@ -79,6 +81,127 @@ afterEach(async () => {
   vi.clearAllMocks()
   await Promise.all(fixtures.splice(0).map((fixture) => fixture.dispose()))
 })
+
+it.each([
+  {
+    name: 'unversioned reference',
+    versionId: undefined,
+    notebookJson: undefined,
+    reason: 'Legacy file references must have immutable Versions before packaging.'
+  },
+  {
+    name: 'missing version',
+    versionId: 'missing-version',
+    notebookJson: undefined,
+    reason: 'Session or Notebook references missing file evidence.'
+  },
+  {
+    name: 'unrecognized parser failure',
+    versionId: undefined,
+    notebookJson: 'private-study-canary private-research-canary',
+    reason: undefined
+  }
+])(
+  'retains safe preparation diagnostics for $name',
+  async ({ versionId, notebookJson, reason }) => {
+    const fixture = await createProvenanceTestFixture()
+    fixtures.push(fixture)
+    initDataRoot(fixture.storageRoot)
+    const logDir = join(fixture.storageRoot, 'logs')
+    initLogger({ logDir, mirrorToConsole: false })
+    const sessions = new SessionRepository(fixture.storageRoot)
+    await fixture.client.project.create({ data: { id: 'project-1', name: 'Research' } })
+    await sessions.saveSession({
+      id: 'session-1',
+      projectId: 'project-1',
+      title: 'Research',
+      cwd: '',
+      status: 'idle',
+      createdAt: 1,
+      updatedAt: 2,
+      messages: [
+        {
+          id: 'message-1',
+          role: 'agent',
+          content: '',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 2,
+          parts: [
+            {
+              type: 'artifact',
+              source: 'artifact',
+              id: 'artifact-1',
+              versionId,
+              name: 'private-study-canary.txt',
+              path: 'private-research-canary'
+            }
+          ]
+        }
+      ]
+    })
+    if (notebookJson) {
+      const notebookRoot = join(fixture.storageRoot, 'notebooks', 'project-1', 'session-1')
+      await mkdir(notebookRoot, { recursive: true })
+      await writeFile(join(notebookRoot, 'run.json'), notebookJson)
+    }
+    const request = { projectId: 'project-1', sessionId: 'session-1' }
+    const before = await sessions.loadSession(request.projectId, request.sessionId)
+    const service = new SessionPackageService({
+      storageRoot: fixture.storageRoot,
+      getClient: async () => fixture.client
+    })
+    const release = vi.fn()
+    const desktop = createDesktop({
+      service,
+      translate: englishNativeTranslator,
+      withDataRootWrite: async (work) => work(),
+      reserveExport: async () => release,
+      afterImport: async () => undefined
+    })
+    try {
+      const failure = await desktop.export(request).catch((error: unknown) => error)
+      if (reason) expect(causeMessages(failure)).toEqual([packageFailureMessage, reason])
+      else {
+        expect(failure).toBeInstanceOf(Error)
+        expect((failure as Error).cause).toBeInstanceOf(SyntaxError)
+        expect(((failure as Error).cause as Error).message).toContain('private-')
+      }
+      expect(desktop.operations.snapshot).toMatchObject({
+        state: 'failed',
+        progress: { phase: 'preparing' },
+        error: packageFailureMessage
+      })
+      expect(desktop.operations.active).toBe(false)
+      expect(release).toHaveBeenCalledOnce()
+      expect(dialog.showSaveDialog).not.toHaveBeenCalled()
+      expect(await sessions.loadSession(request.projectId, request.sessionId)).toEqual(before)
+      await flushLogs()
+      const logs = (await readFile(join(logDir, 'main.log'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+        .filter((record) => record.scope === 'session-package')
+      expect(JSON.stringify(logs)).not.toContain('private-study-canary')
+      expect(JSON.stringify(logs)).not.toContain('private-research-canary')
+      const warning = logs.find((record) => record.msg === 'Session package operation failed')
+      const expected = {
+        operationId: desktop.operations.snapshot!.id,
+        phase: 'preparing',
+        errorCategory: reason ? 'error' : 'syntax',
+        ...(reason ? { error: { message: reason } } : {})
+      }
+      expect(warning?.data).toEqual(expected)
+      expect(projectDiagnosticLog(warning)).toMatchObject({ diagnostics: expected })
+    } finally {
+      await desktop.close()
+      await service.close()
+      await flushLogs()
+      initDataRoot(undefined)
+    }
+  }
+)
 
 it.each([
   { destination: 'existing', mode: 'plain' },
