@@ -2,14 +2,11 @@ import type { TFunction } from 'i18next'
 import {
   ArrowUpRight,
   AtSign,
-  Boxes,
   Check,
   ChevronDown,
   Folder,
   Loader2,
   Monitor,
-  EyeOff,
-  Paperclip,
   Plus,
   Server
 } from 'lucide-react'
@@ -46,9 +43,14 @@ import { useProjectFileMentionAction } from './use-project-file-mention-action'
 import { useProjectFileMentionAvailability } from './use-project-file-mention-availability'
 import { useProjectFileMentionDrag } from './use-project-file-mention-drag'
 import type { MessageArtifact } from './preview-file-item'
+import { ProjectFilesFilterIcon, FilterMenuItem } from './project-files-filter-option'
 import { GrantedRootMenuRow } from './project-files-granted-root-menu-row'
 import { createProjectFilePreviewArtifact } from './project-files-preview-owner'
-import type { ProjectFilesFilterOption } from './project-files-query-model'
+import {
+  COLLAPSED_SESSION_OPTION_COUNT,
+  getCollapsedSessionOptions,
+  type ProjectFilesFilterOption
+} from './project-files-query-model'
 import { FILE_MISSING_TAG_KEY } from './previews/preview-errors'
 import { useNearViewport } from './previews/useNearViewport'
 import { useUnavailablePreviewProbe } from './previews/useUnavailablePreviewProbe'
@@ -58,37 +60,6 @@ type ProjectFilesViewMode = 'grid' | 'list'
 // Restricted collections provide ephemeral previews/actions and never invoke ordinary readers.
 type RestrictedFilePresentation = { preview: ReactNode; actions: ReactNode }
 
-// Keeps collection semantics visible in both the menu rows and the currently selected trigger.
-const ProjectFilesFilterIcon = ({
-  kind,
-  className
-}: {
-  kind: ProjectFilesFilterOption['kind']
-  className: string
-}): React.JSX.Element => {
-  if (kind === 'hidden') return <EyeOff className={className} aria-hidden="true" />
-  if (kind === 'uploads') {
-    return <Paperclip className={className} strokeWidth={1.8} aria-hidden="true" />
-  }
-  if (kind === 'session') {
-    return <Folder className={className} strokeWidth={1.8} aria-hidden="true" />
-  }
-  return <Boxes className={className} strokeWidth={1.8} aria-hidden="true" />
-}
-const COLLAPSED_SESSION_OPTION_COUNT = 5
-// Caps the collapsed menu at five sessions while reserving the final slot for an active session
-// that lies later in the independently paginated option catalog.
-const getCollapsedSessionOptions = (
-  options: ProjectFilesFilterOption[],
-  selectedOptionId: string
-): ProjectFilesFilterOption[] => {
-  const firstOptions = options.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
-  const selectedOption = options.find((option) => option.id === selectedOptionId)
-  if (!selectedOption || firstOptions.some((option) => option.id === selectedOptionId)) {
-    return firstOptions
-  }
-  return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
-}
 const MINUTE_MS = 60 * 1000
 const HOUR_MS = 60 * MINUTE_MS
 const DAY_MS = 24 * HOUR_MS
@@ -509,31 +480,6 @@ const ProjectFileItems = ({
     </div>
   )
 }
-
-const FilterMenuItem = ({
-  option,
-  isSelected,
-  onSelect
-}: {
-  option: ProjectFilesFilterOption
-  isSelected: boolean
-  onSelect: (optionId: string) => void
-}): React.JSX.Element => (
-  <DropdownMenuItem
-    role="menuitemradio"
-    aria-checked={isSelected}
-    data-filter-id={option.id}
-    className="gap-2"
-    onSelect={() => onSelect(option.id)}
-  >
-    <ProjectFilesFilterIcon kind={option.kind} className="size-4 shrink-0 text-text-300" />
-    <span className="min-w-0 flex-1 truncate">{option.label}</span>
-    {isSelected ? (
-      <Check className="size-4 shrink-0 text-primary" strokeWidth={2} aria-hidden="true" />
-    ) : null}
-    <span className="shrink-0 text-[11px] text-text-300">{option.count}</span>
-  </DropdownMenuItem>
-)
 
 // Session choices paginate independently so menu exploration never advances the visible files.
 const ProjectFilesFilterMenu = ({

@@ -2,6 +2,7 @@
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
     "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
+    "src/renderer/src/pages/workspace/project-files-filter-option.tsx",
     "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
     "src/renderer/src/pages/workspace/project-files-query-model.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts",
