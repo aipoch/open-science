@@ -1313,6 +1313,17 @@ async function startDesktop(): Promise<void> {
         disconnectedQuit = undefined
         recovery.setClosing(false)
       }))
+  const handleDisconnectedQuit = (): boolean => {
+    if (
+      updateCommitted ||
+      runtimeStopped ||
+      plannedRelaunch ||
+      recovery.state().phase === 'connected'
+    )
+      return false
+    void quitDisconnected().catch(reportError)
+    return true
+  }
   ipcMainHandle(DESKTOP_RUNTIME_RECOVERY_CHANNELS.quit, (event) => {
     requireRecoveryFrame(event)
     if (
@@ -1699,8 +1710,11 @@ async function startDesktop(): Promise<void> {
         recovery!.setClosing(false)
         if (!runtimeStopped && client!.ownsRuntime() && ready)
           void client!.lifecycle({ operation: 'release' }).catch((error) => {
-            // Rollback is best effort during OS-owned exit; a native modal must not prevent exit.
-            if (currentApplicationShutdownTrigger() === 'system')
+            // Disconnected quit owns one decision; rollback errors must not stack native modals.
+            if (
+              currentApplicationShutdownTrigger() === 'system' ||
+              recovery.state().phase !== 'connected'
+            )
               bootstrapLog.error('quit admission release failed', {
                 error: projectDiagnosticError(error, { configRoot, home: app.getPath('home') })
               })
@@ -1743,9 +1757,10 @@ async function startDesktop(): Promise<void> {
     log: diagnostics.log,
     flushLogs,
     requireCleanBackendShutdown: true,
+    handleDisconnectedQuit,
     onQuitError: (error) => {
       recovery!.setClosing(false)
-      reportError(error)
+      if (!handleDisconnectedQuit()) reportError(error)
     },
     shutdownBackends: async () => {
       if (!runtimeStopped) retainShutdownLease(await client!.quit())
