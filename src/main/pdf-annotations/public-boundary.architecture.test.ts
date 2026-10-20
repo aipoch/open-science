@@ -7,7 +7,7 @@ import { createConsumerDependencyReader } from '../../../scripts/ci/consumer-ret
 // @ts-expect-error The repository's JavaScript layer classifier has no declaration file.
 import { dependencyLayer } from '../../../scripts/ci/module-relationships.mjs'
 
-it('keeps annotation document storage and sharing behind the supported entries', () => {
+it('keeps annotation storage and native parsing behind the supported entries', () => {
   const root = resolve(import.meta.dirname, '../../..')
   const files = new Set<string>(
     execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
@@ -28,16 +28,21 @@ it('keeps annotation document storage and sharing behind the supported entries',
     'src/main/pdf-annotations/document-store.ts',
     'src/main/pdf-annotations/sharing.ts'
   ])
+  const nativeParserCore = 'src/main/pdf-annotations/native-import-core.ts'
+  const nativeParserConsumers = new Set([
+    'src/main/pdf-annotations/native-import.ts',
+    'src/main/pdf-annotations/native-import-worker-entry.ts'
+  ])
   const violations: string[] = []
   for (const source of files) {
-    if (
-      !/^(src|packages)\/.*\.[cm]?[jt]sx?$/.test(source) ||
-      source.startsWith('src/main/pdf-annotations/') ||
-      dependencyLayer(source) === 'test'
-    )
+    if (!/^(src|packages)\/.*\.[cm]?[jt]sx?$/.test(source) || dependencyLayer(source) === 'test')
       continue
     for (const target of reader.dependencies(source).paths) {
-      if (privateFiles.has(target)) violations.push(`${source} -> ${target}`)
+      if (
+        (privateFiles.has(target) && !source.startsWith('src/main/pdf-annotations/')) ||
+        (target === nativeParserCore && !nativeParserConsumers.has(source))
+      )
+        violations.push(`${source} -> ${target}`)
     }
   }
   expect(violations.sort()).toEqual([])
