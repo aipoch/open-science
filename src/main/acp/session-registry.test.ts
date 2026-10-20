@@ -298,8 +298,8 @@ describe('ACP session registry', () => {
     expect(registry.entries(true)).toEqual([])
     expect(registry.lookup('app-a')?.aggregate.snapshot()).toMatchObject({
       providerSessionId: undefined,
-      cwd: undefined,
-      projectId: undefined,
+      cwd: '/workspace',
+      projectId: 'project-1',
       frameworkId: 'codex',
       backendId: 'backend-1',
       permissionProfile: permissionProfile(),

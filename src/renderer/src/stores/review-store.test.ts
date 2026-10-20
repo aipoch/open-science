@@ -86,6 +86,54 @@ describe('review store', () => {
     ).toMatchObject({ verificationUnavailable: false, stale: false, updatedAt: 2000 })
   })
 
+  it('keeps a pushed reviewer log when a newer list summary omits it', async () => {
+    const logged = makeReview({
+      reviewerLog: [{ kind: 'message', text: 'captured action' }],
+      updatedAt: 1_000
+    })
+    useReviewStore.getState().handleReviewUpdate({ review: logged })
+
+    const summary = makeReview({
+      reviewerLog: [],
+      updatedAt: 2_000,
+      lifecycle: 'complete',
+      outcome: 'flagged'
+    })
+    const getForSession = vi.fn().mockResolvedValue([summary])
+    vi.stubGlobal('window', { api: { reviewer: { getForSession } } })
+
+    await useReviewStore.getState().loadReviewsForSession('session-1', 'project-1')
+
+    const [stored] = useReviewStore.getState().getReviewsForSession('session-1', 'project-1')
+    expect(stored).toMatchObject({
+      reviewerLog: [{ kind: 'message', text: 'captured action' }],
+      lifecycle: 'complete',
+      outcome: 'flagged',
+      updatedAt: 2_000
+    })
+    vi.unstubAllGlobals()
+  })
+
+  it('keeps a pushed reviewer log when a delayed older push arrives', () => {
+    const summary = makeReview({ reviewerLog: [], updatedAt: 2_000, lifecycle: 'complete' })
+    useReviewStore.getState().handleReviewUpdate({ review: summary })
+
+    useReviewStore.getState().handleReviewUpdate({
+      review: makeReview({
+        reviewerLog: [{ kind: 'message', text: 'late log' }],
+        updatedAt: 1_000,
+        lifecycle: 'running'
+      })
+    })
+
+    const [stored] = useReviewStore.getState().getReviewsForSession('session-1', 'project-1')
+    expect(stored).toMatchObject({
+      reviewerLog: [{ kind: 'message', text: 'late log' }],
+      lifecycle: 'complete',
+      updatedAt: 2_000
+    })
+  })
+
   it('selects every Review Run by audited anchor with root fallback and deterministic history order', () => {
     const reviews = [
       makeReview({

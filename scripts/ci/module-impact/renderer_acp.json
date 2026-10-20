@@ -14,8 +14,6 @@
     "src/renderer/src/lib/acp/useAcpRuntime.ts",
     "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx",
     "src/renderer/src/lib/acp/useWorkspaceElicitation.test.ts",
-    "src/renderer/src/lib/acp/useWorkspaceElicitation.ts",
-    "src/renderer/src/lib/acp/workspace-elicitation-runtime.ts",
     "src/renderer/src/lib/acp/workspace-permission-response-attempt-owner.ts",
     "src/renderer/src/lib/acp/workspace-prompt-preparation-lock.ts",
     "src/renderer/src/lib/acp/workspace-runtime-presentation-buffer.ts"
@@ -46,6 +44,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/renderer/src/lib/acp/workspace-subagent-runtime-presentation.test.ts",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/App.test.tsx",
@@ -98,7 +97,13 @@
       "src/renderer/web/bootstrap.test.ts",
       "src/renderer/web/renderer-argument-shape-characterization.test.ts",
       "src/renderer/src/lib/session-fork.test.ts",
-      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts"
+      "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/renderer/src/pages/workspace/SessionReplayPreview.test.tsx",
+      "src/renderer/src/lib/acp/workspace-prompt-admission.test.ts",
+      "src/renderer/src/lib/acp/workspace-prompt-rollback-failure.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts",
+      "src/renderer/src/components/desktop-runtime-recovery.test.tsx"
     ]
   },
   "capabilityOverlays": [],

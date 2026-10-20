@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
-  NotebookEnvironmentManifest,
   NotebookOutput,
   NotebookRunDocument,
   NotebookRunRecord,

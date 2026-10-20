@@ -67,7 +67,7 @@ describe('SessionPersistenceAlert', () => {
     expect(alert?.className).not.toContain('fixed')
     expect(alert?.className).not.toContain('border-destructive/40')
     expect(retry?.dataset.slot).toBe('button')
-    expect(retry?.className).toContain('focus-visible:ring-3')
+    expect(retry?.className).toContain('focus-visible:keyboard-focus')
     expect(retry?.className).toContain('disabled:pointer-events-none')
 
     act(() => retry?.click())
@@ -93,7 +93,7 @@ describe('SessionPersistenceAlert', () => {
 
     expect(dismiss?.dataset.slot).toBe('button')
     expect(dismiss?.getAttribute('aria-label')).toBe('Dismiss storage warning')
-    expect(dismiss?.className).toContain('focus-visible:ring-3')
+    expect(dismiss?.className).toContain('focus-visible:keyboard-focus')
     act(() => dismiss?.click())
     expect(onDismiss).toHaveBeenCalledOnce()
   })
@@ -123,4 +123,31 @@ describe('SessionPersistenceAlert', () => {
     expect(action?.parentElement).not.toBe(alert)
     expect(dismiss?.parentElement).not.toBe(action?.parentElement)
   })
+})
+
+it('dismisses a floating failure without changing its owner and keeps local recovery available', () => {
+  const retry = vi.fn()
+  const render = (message = 'unavailable', inline = false): void =>
+    root.render(
+      <SessionPersistenceAlert title="Storage" message={message} inline={inline} onRetry={retry} />
+    )
+  act(() => render())
+  act(() =>
+    container
+      .querySelector<HTMLButtonElement>('[data-testid="session-persistence-dismiss"]')!
+      .click()
+  )
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+  act(() => render())
+  expect(container.querySelector('[role="alert"]')).toBeNull()
+  expect(retry).not.toHaveBeenCalled()
+  act(() => render('unavailable', true))
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
+  expect(container.querySelector('[data-testid="session-persistence-dismiss"]')).toBeNull()
+  act(() =>
+    container.querySelector<HTMLButtonElement>('[data-testid="session-persistence-retry"]')!.click()
+  )
+  expect(retry).toHaveBeenCalledOnce()
+  act(() => render('different failure'))
+  expect(container.querySelector('[role="alert"]')).not.toBeNull()
 })

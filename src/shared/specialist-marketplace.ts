@@ -5,7 +5,7 @@ import type {
   SpecialistPackageCandidatePreview,
   SpecialistPackageInstallRequest,
   SpecialistPackageInstallResult
-} from './specialist-package'
+} from '@aipoch/specialists'
 
 export const SPECIALIST_MARKETPLACE_IPC = {
   LIST: 'specialist:marketplace-list',

@@ -1,0 +1,7 @@
+{"name":"two-level-native-parameter-group-keeps-exact-compound","change":"none","accepted":true}
+{"name":"changed-compound-parameter-is-not-preserved","change":"label","accepted":false}
+{"name":"duplicated-compound-is-not-an-unambiguous-copy","change":"duplicate","accepted":false}
+{"name":"extended-compound-identifier-is-not-prefix-matched","change":"extended","accepted":false}
+{"name":"flat-parameters-cannot-claim-nested-script-proof","change":"flat","accepted":false}
+{"name":"index-at-parameter-baseline-is-not-a-raised-second-level","change":"lowered-index","accepted":false}
+{"name":"missing-native-index-object-prevents-compound-proof","change":"missing","accepted":false}

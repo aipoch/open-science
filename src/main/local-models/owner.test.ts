@@ -1,14 +1,15 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash } from 'node:crypto'
 import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { net } from 'electron'
-import { DownloadChecksumError } from '../net/resilient-download'
+import { DownloadChecksumError } from '@aipoch/resilient-download'
 import { createLocalModelOwner } from './owner'
 import type { LocalModelRevision } from './catalog'
 import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
-import type { DownloadProgress } from '../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import { LOCAL_MODEL_NOT_INSTALLED } from '../../shared/local-models'
 import {
   acquireDataRootWriter,
@@ -17,7 +18,11 @@ import {
   waitForDataRootWriters
 } from '../storage/migration-state'
 import { composeApplicationRuntime } from '../application-runtime'
-import * as durableJson from '../storage/durable-json-file'
+import * as durableJson from '@aipoch/durable-files'
+
+vi.mock('@aipoch/durable-files', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/durable-files')>())
+}))
 
 vi.mock('electron', () => ({
   net: { fetch: vi.fn() },
@@ -941,3 +946,39 @@ describe('local model lifecycle', () => {
     expect(download).not.toHaveBeenCalled()
   })
 })
+
+it('isolates flat translation assets and receipts from parser model management', async () => {
+  const root = await prepare()
+  await seed(root)
+  const translated = {
+    ...revision('translation-v1'),
+    assets: revision('translation-v1').assets.map((asset, index) => ({
+      ...asset,
+      file: index ? 'model_quantized.onnx' : 'tokenizer_config.json'
+    }))
+  }
+  const owner = createLocalModelOwner({
+    dataRoot: () => root,
+    namespace: 'pdf-translation',
+    revisions: [translated],
+    download: installFile
+  })
+  await owner.install()
+  await waitForIdle(owner)
+  const use = await owner.acquireUse()
+  expect(
+    use.assets.every(
+      (asset) =>
+        dirname(asset.path) ===
+        join(root, 'models', 'pdf-translation', 'revisions', 'translation-v1')
+    )
+  ).toBe(true)
+  expect((await owner.remove()).inUse).toBe(true)
+  use.release()
+  await owner.remove()
+  expect(
+    JSON.parse(await readFile(join(root, 'models/pdf-tables/active.json'), 'utf8')).revision
+  ).toBe('v1')
+  await owner.close()
+})
+await configureTestElectronHost(await import('electron'))

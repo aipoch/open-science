@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { initDataRoot } from '../storage-root'
 // @ts-expect-error The published ESM entry uses a sibling index.d.ts.
 import { OpenScienceClient } from '../../../packages/open-science/index.mjs'
@@ -6,11 +7,9 @@ import { runTaskCommand } from '../../../packages/open-science/cli.mjs'
 import { join } from 'node:path'
 import { createHash } from 'node:crypto'
 import { readFile } from 'node:fs/promises'
-import { net } from 'electron'
 import { expect, it, vi } from 'vitest'
 
 vi.mock('electron', () => ({
-  net: { fetch: vi.fn() },
   protocol: {},
   ipcMain: { handle: vi.fn() },
   BrowserWindow: { getAllWindows: () => [] },
@@ -123,12 +122,9 @@ it.each(['historical', 'native'] as const)(
       },
       agent: {} as never
     })
-    // Only the Electron transport is bridged; capability resolution, verified file handles,
-    // protocol streaming, HTTP and the public client all execute their production implementations.
+    // Capability resolution, verified file handles,
+    // protocol streaming, HTTP and the public client execute their production implementations.
     const protocol = createManagedPreviewProtocolHandler(resources)
-    vi.mocked(net.fetch).mockImplementation((url, options) =>
-      protocol(new Request(String(url), options))
-    )
     let server: Awaited<ReturnType<typeof startWebHttpServer>> | undefined
     try {
       await fixture.client.project.create({ data: { id: 'project-1', name: 'Download fixture' } })
@@ -219,6 +215,7 @@ it.each(['historical', 'native'] as const)(
       expect(await readFile(version.path, 'utf8')).toBe(content)
       const emptyCommands = { commandNames: () => [], invoke: async () => undefined }
       server = await startWebHttpServer({
+        fetchPreview: protocol,
         host: '127.0.0.1',
         port: 0,
         token: 'synthetic-download-token',
@@ -309,10 +306,11 @@ it.each(['historical', 'native'] as const)(
     } finally {
       await server?.close()
       await tasks.dispose()
-      vi.mocked(net.fetch).mockReset()
       await fixture.dispose()
     }
   },
   // Exercise the real publication retry window as well as SQLite setup on slower CI hosts.
   30_000
 )
+
+await configureTestElectronHost(await import('electron'))

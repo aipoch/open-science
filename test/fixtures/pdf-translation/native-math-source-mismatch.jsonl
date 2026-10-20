@@ -1,0 +1,6 @@
+{"name": "unproven-math-accent-mapping-fails-closed", "native": "The quantity bx is fixed.", "source": "The quantity x̂ is fixed."}
+{"name": "unproven-fraction-reading-order-fails-closed", "native": "The ratio is 11+exp(-z).", "source": "The ratio is 1+exp(1-z)."}
+{"name": "canonical-decomposed-accent-keeps-native-source-offsets", "native": "Café value remains fixed.", "source": "Café value remains fixed.", "accepted": true}
+{"name": "missing-accent-is-not-canonically-equivalent", "native": "Cafe value remains fixed.", "source": "Café value remains fixed.", "accepted": false}
+{"name":"ascii-minus-and-math-minus-have-same-source-value","native":"Value -4 is fixed.","source":"Value −4 is fixed.","accepted":true}
+{"name":"missing-minus-is-not-the-same-source-value","native":"Value 4 is fixed.","source":"Value −4 is fixed.","accepted":false}

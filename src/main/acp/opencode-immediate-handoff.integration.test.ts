@@ -1,3 +1,5 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { PassThrough, Readable, Writable } from 'node:stream'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -170,7 +172,7 @@ const specialist: SpecialistView = {
 
 const catalog: AgentsCatalogSource = {
   listSkillCatalog: async () => [],
-  getConnectors: async () => ({ enabledIds: [], autoAllowIds: [] })
+  getConnectors: async () => projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] })
 }
 
 describe('OpenCode immediate handoff production path', () => {
@@ -323,3 +325,5 @@ describe('OpenCode immediate handoff production path', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

@@ -67,7 +67,7 @@ describe('ProviderList', () => {
       type: 'custom',
       baseUrl: 'https://gateway.example',
       model: 'some-model',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     } as unknown as ProviderView
 
     render(<ProviderList providers={[provider]} {...listProps} />)
@@ -99,9 +99,9 @@ describe('describeValidation', () => {
 describe('incompatibilityReason', () => {
   it('localizes the frame while keeping route paths and names verbatim', () => {
     const reason = incompatibilityReason(
-      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic'],
+      ['messages'],
       i18next.getFixedT('zh-Hans')
     )
 

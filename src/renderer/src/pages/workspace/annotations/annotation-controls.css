@@ -14,7 +14,7 @@
 
 .pdf-annotation-toolbar,
 [data-pdf-controls='view'] {
-  min-height: 2.5rem;
+  min-height: 2.25rem;
 }
 
 .pdf-area-action,
@@ -138,13 +138,9 @@
   transition-duration: 100ms;
   transition-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
 }
-.pdf-annotation-toolbar button[data-size='icon-sm'] {
-  width: 2rem;
-  height: 2rem;
-}
-[data-pdf-controls='view'] button[data-size='icon-sm'] {
-  width: 2rem;
-  height: 2rem;
+.pdf-annotation-toolbar button[data-size='icon'] {
+  width: 1.75rem;
+  height: 1.75rem;
 }
 .annotation-tool-button:active:not(:disabled),
 .annotation-color-button:active:not(:disabled) {
@@ -164,6 +160,7 @@
 }
 @media (pointer: coarse) {
   .pdf-annotation-toolbar button,
+  [data-pdf-controls='view'] button,
   .annotation-tool-button,
   .annotation-color-button {
     min-width: 44px;

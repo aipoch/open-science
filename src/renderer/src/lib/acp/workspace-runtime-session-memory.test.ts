@@ -1,8 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { AgentTurnProvenanceContext } from '../../../../shared/elicitation'
+import { SessionPersistenceStateOwner } from '../../../../main/session-persistence/state-owner'
 import { SessionSizeLimitError } from '../../../../shared/session-persistence'
 import { toPersistedSession, useSessionStore, type ChatSession } from '../../stores/session-store'
+import { resetSessionConversationIntentsForTests } from '../../stores/session-conversation-intents'
+import {
+  resetSessionPersistenceWriteFailuresForTests,
+  saveSessionInOrder
+} from '../session-persistence/session-persistence'
 import { sendWorkspaceMessage } from './workspace-runtime-command-owner'
 import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
 import { reconfigureWorkspaceMemory } from './workspace-runtime-session-memory-owner'
@@ -34,8 +40,11 @@ const session = (overrides: Partial<ChatSession> = {}): ChatSession => ({
 
 describe('workspace Session Memory reconfiguration', () => {
   beforeEach(() => {
+    resetSessionConversationIntentsForTests()
+    resetSessionPersistenceWriteFailuresForTests()
     useSessionStore.setState({ sessions: [session()], selectedSessionId: 'session-1' })
   })
+  afterEach(() => vi.unstubAllGlobals())
 
   it('persists the preference, replaces live capabilities, and schedules history replay', async () => {
     const flush = vi.fn(async () => undefined)
@@ -127,6 +136,37 @@ describe('workspace Session Memory reconfiguration', () => {
       pendingHistoryReplay: { kind: 'all' }
     })
 
+    // Memory reset is already durable; the next send now crosses Main's preparation/adoption
+    // boundary rather than receiving an unacknowledged echo of its optimistic snapshot.
+    let durable = toPersistedSession(useSessionStore.getState().sessions[0])
+    resetSessionConversationIntentsForTests()
+    const persistence = new SessionPersistenceStateOwner({
+      repository: {
+        loadSessionWithDiagnostics: async () => ({
+          status: 'found',
+          session: structuredClone(durable)
+        }),
+        saveSession: async (candidate) => {
+          durable = { ...structuredClone(candidate), revision: (durable.revision ?? 0) + 1 }
+          return structuredClone(durable)
+        }
+      },
+      fileIndex: { syncSession: vi.fn(async () => []) },
+      assertMutable: vi.fn(),
+      notifyFilesChanged: vi.fn(),
+      notifyRuntimeContextSessionUpdated: vi.fn(),
+      notifyRuntimeTranscriptSessionUpdated: vi.fn(),
+      log: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+    })
+    vi.stubGlobal('window', {
+      api: {
+        sessions: {
+          saveSession: persistence.saveSession.bind(persistence),
+          loadOne: async () => structuredClone(durable)
+        }
+      }
+    })
+
     const sent = await sendWorkspaceMessage(
       runtime as never,
       {
@@ -137,7 +177,12 @@ describe('workspace Session Memory reconfiguration', () => {
         agentFrameworkId: 'codex',
         agentBackendId: 'codex:provider-1'
       },
-      { flushPersistence: () => persist('session-1') }
+      {
+        flushPersistence: async () => {
+          await persist('session-1')
+          await saveSessionInOrder(toPersistedSession(useSessionStore.getState().sessions[0]))
+        }
+      }
     )
 
     expect(useSessionStore.getState().sessions[0]?.error).toBeUndefined()

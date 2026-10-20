@@ -303,7 +303,7 @@ const SessionMessageLink = ({
           collisionPadding={8}
           data-source-preview-hover-card=""
           aria-labelledby={sourcePreviewTitleId}
-          className="w-fit min-w-56 max-w-[min(24rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-000 shadow-card"
+          className="hover-bubble w-fit min-w-56 max-w-[min(24rem,calc(100vw-1rem))] border border-border-300 bg-bg-000 p-3 text-text-000 shadow-card"
           onOpenAutoFocus={(event) => event.preventDefault()}
           onCloseAutoFocus={(event) => event.preventDefault()}
           onEscapeKeyDown={() => dismissSourcePreview(true)}

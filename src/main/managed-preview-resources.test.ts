@@ -139,53 +139,100 @@ describe('ManagedPreviewResources', () => {
     expect(createId).not.toHaveBeenCalled()
   })
 
-  it('reads a logical managed version through its trusted lease and closes it on release', async () => {
-    const filePath = await createFile(Buffer.from('path replacement'))
-    const trustedBytes = Buffer.from('verified inode')
-    const close = vi.fn().mockResolvedValue(undefined)
-    const openManagedFileVersion = vi.fn().mockResolvedValue({
-      path: '/managed/verified.pdf',
-      size: trustedBytes.byteLength,
-      versionToken: 42,
-      snapshot: { dev: 1n, ino: 2n, size: BigInt(trustedBytes.byteLength), mtimeNs: 3n },
-      read: vi.fn(),
-      readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
-      copyTo: vi.fn(),
-      verifyUnchanged: vi.fn().mockResolvedValue(undefined),
-      close
-    })
-    const resolvePath = vi.fn().mockResolvedValue(filePath)
-    const resources = new ManagedPreviewResources({
-      resolvePath,
-      openManagedFileVersion,
-      createId: () => 'trusted-resource'
-    } as never)
+  it.each([undefined, '', 'fingerprint', 'A'.repeat(64), 123, 'a'.repeat(64)])(
+    'returns only a valid trusted Literature checksum (%s), without reading content',
+    async (checksum) => {
+      const lease = {
+        path: '/managed/paper.pdf',
+        size: 100,
+        versionToken: 1,
+        checksum,
+        snapshot: { dev: 1n, ino: 2n, size: 100n, mtimeNs: 3n },
+        read: vi.fn(),
+        readRange: vi.fn(),
+        verifyUnchanged: vi.fn(),
+        close: vi.fn().mockResolvedValue(undefined)
+      }
+      const resources = new ManagedPreviewResources({
+        resolvePath: vi.fn(),
+        openLiterature: async () => lease
+      } as never)
+      const resource = await resources.acquire(17, {
+        source: 'literature',
+        path: 'literature-attachment-version:one',
+        sourceChecksum: 'f'.repeat(64)
+      } as never)
+      expect(resource.sourceChecksum).toBe(checksum === 'a'.repeat(64) ? checksum : undefined)
+      expect(resource.size).toBe(100)
+      expect(lease.read).not.toHaveBeenCalled()
+      expect(lease.readRange).not.toHaveBeenCalled()
+      await expect(
+        resources.readRange(18, { resourceId: resource.id, begin: 0, end: 1 })
+      ).rejects.toThrow()
+      await resources.release(17, { resourceId: resource.id })
+      expect(lease.close).toHaveBeenCalledOnce()
+    }
+  )
 
-    const resource = await resources.acquire(17, {
-      source: 'upload',
-      projectId: 'project-1',
-      fileId: 'upload-1',
-      versionId: 'upload-v2'
-    })
+  it.each([
+    ['upload', 'upload-v2'],
+    ['upload', undefined],
+    ['artifact', 'artifact-v2'],
+    ['artifact', undefined]
+  ] as const)(
+    'reads a logical %s version %s through its trusted lease and closes it on release',
+    async (source, versionId) => {
+      const filePath = await createFile(Buffer.from('path replacement'))
+      const trustedBytes = Buffer.from('verified inode')
+      const close = vi.fn().mockResolvedValue(undefined)
+      const openManagedFileVersion = vi.fn().mockResolvedValue({
+        path: '/managed/verified.pdf',
+        version: { checksum: 'a'.repeat(64) },
+        size: trustedBytes.byteLength,
+        versionToken: 42,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(trustedBytes.byteLength), mtimeNs: 3n },
+        read: vi.fn(),
+        readRange: vi.fn(async (begin: number, end: number) => trustedBytes.subarray(begin, end)),
+        copyTo: vi.fn(),
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+        close
+      })
+      const resolvePath = vi.fn().mockResolvedValue(filePath)
+      const openLatestManagedFile = openManagedFileVersion
+      const resources = new ManagedPreviewResources({
+        resolvePath,
+        openManagedFileVersion,
+        openLatestManagedFile,
+        createId: () => 'trusted-resource'
+      } as never)
 
-    await expect(
-      resources.readRange(17, { resourceId: resource.id, begin: 0, end: trustedBytes.byteLength })
-    ).resolves.toEqual({
-      begin: 0,
-      end: trustedBytes.byteLength,
-      total: trustedBytes.byteLength,
-      data: new Uint8Array(trustedBytes)
-    })
-    expect(openManagedFileVersion).toHaveBeenCalledWith('upload', {
-      projectId: 'project-1',
-      fileId: 'upload-1',
-      versionId: 'upload-v2'
-    })
-    expect(resolvePath).not.toHaveBeenCalled()
+      const resource = await resources.acquire(17, {
+        source,
+        projectId: 'project-1',
+        fileId: 'upload-1',
+        ...(versionId ? { versionId } : {})
+      })
+      expect(resource.sourceChecksum).toBe('a'.repeat(64))
 
-    resources.release(17, { resourceId: resource.id })
-    expect(close).toHaveBeenCalledOnce()
-  })
+      await expect(
+        resources.readRange(17, { resourceId: resource.id, begin: 0, end: trustedBytes.byteLength })
+      ).resolves.toEqual({
+        begin: 0,
+        end: trustedBytes.byteLength,
+        total: trustedBytes.byteLength,
+        data: new Uint8Array(trustedBytes)
+      })
+      expect(openManagedFileVersion).toHaveBeenCalledWith(source, {
+        projectId: 'project-1',
+        fileId: 'upload-1',
+        ...(versionId ? { versionId } : {})
+      })
+      expect(resolvePath).not.toHaveBeenCalled()
+
+      resources.release(17, { resourceId: resource.id })
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
 
   it.each(['release', 'owner teardown', 'read failure'])(
     'keeps admitted protocol and IPC reads alive through %s, while rejecting new reads',

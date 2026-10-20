@@ -1,0 +1,4 @@
+{"name":"short-final-line-belongs-to-prose-after-fraction","tail":"size permits.","joined":true}
+{"name":"new-capitalized-paragraph-does-not-join-formula-tail","tail":"Separate paragraph.","joined":false}
+{"name":"earlier-native-column-tail-does-not-join-right-column-formula-prose","tail":"size permits.","joined":false,"tailFirst":true}
+{"name":"long-formula-prose-block-cannot-capture-short-left-column-tail","tail":"size permits.","joined":false,"continued":true}

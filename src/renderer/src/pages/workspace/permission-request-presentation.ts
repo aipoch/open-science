@@ -1,10 +1,5 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 
-import {
-  matchNotebookControlTool,
-  resolveNotebookLanguage,
-  resolveNotebookRunToolName
-} from './notebook-tool-names'
 import {
   buildLiteratureToolSummary,
   getLiteratureLibraryToolAction,
@@ -12,6 +7,11 @@ import {
   isLiteratureLibraryPdfReadTool,
   isLiteratureReadDocumentTool
 } from './literature-tool-presentation'
+import {
+  matchNotebookControlTool,
+  resolveNotebookLanguage,
+  resolveNotebookRunToolName
+} from './notebook-tool-names'
 
 type NotebookRuntime = 'python' | 'r' | 'js' | 'bash'
 
@@ -372,6 +372,24 @@ const isNetworkTool = (request: AcpPermissionRequest): boolean => {
 }
 
 const describePermissionRequest = (request: AcpPermissionRequest): PermissionPresentation => {
+  const appInput = request.appOwned ? getRequestInput(request) : undefined
+  if (appInput?.notebookCodeRisk) {
+    return {
+      actionTitle: 'Review potentially destructive code',
+      categoryLabel: 'Notebook',
+      description: 'Approval applies only to this run.',
+      hideToolIdentity: true
+    }
+  }
+  if (appInput?.notebookRuntimeSelection) {
+    return {
+      actionTitle: 'Confirm Notebook kernel and environment',
+      categoryLabel: 'Notebook',
+      description:
+        'Later Notebook runs use this environment. Approval does not cover package changes or code execution.',
+      hideToolIdentity: true
+    }
+  }
   const networkApproval = getNotebookNetworkApproval(request)
   if (networkApproval) {
     return {

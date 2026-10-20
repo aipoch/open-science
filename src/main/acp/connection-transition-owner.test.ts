@@ -3,6 +3,44 @@ import { describe, expect, it, vi } from 'vitest'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
 
 describe('AcpConnectionTransitionOwner', () => {
+  it.each([false, true])(
+    'holds a Skill-only reload barrier until teardown settles; failure=%s',
+    async (fail) => {
+      let blocked = true
+      let finish!: () => void
+      const teardown = new Promise<void>((resolve) => {
+        finish = resolve
+      })
+      const owner = new AcpConnectionTransitionOwner({
+        blockers: () => ({ reconnect: blocked, retirement: blocked }),
+        connectionGeneration: () => 1,
+        disconnect: async () => {
+          await teardown
+          if (fail) throw new Error('teardown failed')
+        },
+        onRetired: vi.fn(),
+        publishIdle: vi.fn(),
+        recoverFailedDeferredDisconnect: vi.fn(),
+        reportFailure: vi.fn()
+      })
+      owner.requestSkillsReload()
+      expect(owner.barrier).toBeUndefined()
+      blocked = false
+      owner.activityChanged()
+      const barrier = owner.barrier
+      expect(barrier).toBeDefined()
+      let released = false
+      void barrier!.then(() => {
+        released = true
+      })
+      await Promise.resolve()
+      expect(released).toBe(false)
+      finish()
+      await barrier
+      expect(owner.barrier).toBeUndefined()
+    }
+  )
+
   it('coalesces blocked provider and skills intents into one planned reconnect', async () => {
     let reconnectBlocked = true
     const disconnect = vi.fn(async () => undefined)

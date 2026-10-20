@@ -17,11 +17,17 @@ type DocumentIndex = {
 
 // Derived once per committed snapshot; all pages share it instead of scanning the Session list.
 export const indexPdfAnnotations = (
-  annotations: readonly PdfAnnotation[]
+  annotations: readonly PdfAnnotation[],
+  sourceGroups: readonly (readonly PdfAnnotationSource[])[] = []
 ): Map<string, DocumentIndex> => {
   const documents = new Map<string, DocumentIndex>()
+  const aliases = new Map<string, string>()
+  for (const group of sourceGroups)
+    for (const source of group)
+      aliases.set(pdfAnnotationSourceKey(source), pdfAnnotationSourceKey(group[0]))
   for (const annotation of annotations) {
-    const key = pdfAnnotationSourceKey(annotation.target.source)
+    const sourceKey = pdfAnnotationSourceKey(annotation.target.source)
+    const key = aliases.get(sourceKey) ?? sourceKey
     let document = documents.get(key)
     if (!document) {
       document = { annotations: [], pages: new Map() }
@@ -36,6 +42,13 @@ export const indexPdfAnnotations = (
       document.pages.set(selector.pageNumber, page)
     }
     page.push(annotation)
+  }
+  for (const group of sourceGroups) {
+    const existing = group
+      .map((source) => documents.get(pdfAnnotationSourceKey(source)))
+      .find(Boolean)
+    if (existing)
+      for (const source of group) documents.set(pdfAnnotationSourceKey(source), existing)
   }
   return documents
 }

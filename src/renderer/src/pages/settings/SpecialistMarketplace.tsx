@@ -1,3 +1,4 @@
+import type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { inlineNoticeClassName } from '@/components/ui/notice-chrome'
 import { InlineNotice } from '@/components/ui/inline-notice'
@@ -5,7 +6,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   BadgeCheck,
   CheckCircle2,
@@ -60,19 +61,7 @@ import {
   type SkillConflictResolutionMap
 } from './specialist-skill-conflicts'
 
-export type SpecialistMarketplaceView =
-  | { kind: 'marketplace' }
-  | { kind: 'marketplace-sources' }
-  | {
-      kind: 'marketplace-release'
-      sourceId: string
-      sourceName?: string
-      sourceTrust?: 'official' | 'user-approved'
-      id: string
-      version: string
-      installedVersion?: string
-      updateAvailable?: boolean
-    }
+export type { SpecialistMarketplaceView } from '../../lib/settings-navigation'
 
 type Props = {
   view: SpecialistMarketplaceView
@@ -188,6 +177,12 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
   // before any effect has fired. Once a snapshot exists the content renders immediately whatever
   // the refresh state, and a failed first load flips this to false so the error renders instead.
   const loading = snapshot === undefined && !lastRefreshFailed
+  // Remote Web exposes Marketplace browsing (list + release detail) but not the write actions yet;
+  // keep those controls disabled instead of failing at call time (#3328).
+  const canManageSources =
+    typeof window.api.specialist?.inspectGitHubMarketplaceSource === 'function'
+  const canInstallSpecialist =
+    typeof window.api.specialist?.prepareMarketplaceInstall === 'function'
   const [query, setQuery] = useState('')
   const [filter, setFilter] = useState<MarketplaceFilter>('all')
   const [repositoryUrl, setRepositoryUrl] = useState('')
@@ -592,7 +587,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               <Button
                 type="button"
                 onClick={() => void inspectSource()}
-                disabled={sourceBusy || !repositoryUrl.trim()}
+                disabled={sourceBusy || !repositoryUrl.trim() || !canManageSources}
                 aria-busy={Boolean(sourceBusy)}
               >
                 <span key={String(sourceBusy)} className="button-feedback">
@@ -628,7 +623,11 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   </div>
                 </div>
                 <div className="mt-3 flex justify-end">
-                  <Button type="button" onClick={() => void addSource()} disabled={sourceBusy}>
+                  <Button
+                    type="button"
+                    onClick={() => void addSource()}
+                    disabled={sourceBusy || !canManageSources}
+                  >
                     {t('Trust and add source')}
                   </Button>
                 </div>
@@ -681,6 +680,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                         label={t('Remove {{name}}', { name: source.name })}
                         icon={Trash2}
                         danger
+                        disabled={!canManageSources}
                         onClick={() => {
                           setSourceError(undefined)
                           setSourcePendingRemoval(source)
@@ -874,6 +874,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                   disabled={
                     installBusy ||
                     marketplacePreviewBlocked ||
+                    !canInstallSpecialist ||
                     (marketplaceSkillConflicts.length > 0 && !marketplaceConflictsResolved)
                   }
                   onClick={() => {
@@ -1380,11 +1381,11 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
               return (
                 <li
                   key={marketplaceListingKey(item)}
-                  className="group flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
+                  className="group relative flex flex-col rounded-xl border border-border bg-background p-4 text-center transition-[border-color,box-shadow] hover:border-foreground/20 hover:shadow-sm motion-reduce:transition-none"
                 >
                   <button
                     type="button"
-                    className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                    className="flex min-w-0 flex-1 cursor-pointer flex-col items-center rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring after:absolute after:-inset-px after:rounded-[inherit]"
                     onClick={navigate}
                   >
                     <SpecialistIdentity id={item.id} displayName={item.displayName} size="lg" />
@@ -1438,7 +1439,7 @@ const SpecialistMarketplace = ({ view, onNavigate }: Props): React.JSX.Element =
                       type="button"
                       variant="outline"
                       size="sm"
-                      className="shrink-0 cursor-pointer"
+                      className="relative z-10 shrink-0 cursor-pointer"
                       onClick={navigate}
                     >
                       {opensDetails ? t('View details') : t('Manage')}

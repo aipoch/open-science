@@ -1,10 +1,15 @@
 import { getSettingsPage } from './fixtures/settings-window'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import { PDFDocument, PDFDict, PDFName, PDFHexString } from 'pdf-lib'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { PDFDict, PDFDocument, PDFHexString, PDFName } from 'pdf-lib'
+import { createTestPdf } from '../test/fixtures/literature-pdf'
 import { test } from './fixtures/electron-app'
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
+import { openAllReferences } from './fixtures/library'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 test('imports external notes, preserves provenance through undo, and persists an empty annotated export', async ({
   app
@@ -52,8 +57,7 @@ test('imports external notes, preserves provenance through undo, and persists an
       title: 'Native annotation regression'
     })
   )
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(page)
   await page.getByText('Native annotation regression', { exact: true }).click()
   await page.locator('input[aria-label="Add PDF"]').setInputFiles(file)
   await expect(
@@ -99,7 +103,7 @@ test('imports external notes, preserves provenance through undo, and persists an
     .toBeLessThanOrEqual(1)
   await page.screenshot({ path: testInfo.outputPath('annotation-editor-replaces-selection.png') })
   await annotationEditor.getByRole('button', { name: 'Cancel', exact: true }).click()
-  await page.keyboard.press('Escape')
+  await expect(annotationEditor).toBeHidden()
   await page.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
   const notesSidebar = page.locator('[data-pdf-notes-sidebar="true"]')
   await expect(notesSidebar).toBeVisible()
@@ -123,7 +127,29 @@ test('imports external notes, preserves provenance through undo, and persists an
     .first()
     .click()
   await expect(originalView.locator('[data-pdf-bookmark-revealed="true"]')).toBeVisible()
+  const selectedMark = originalView
+    .locator('[data-pdf-bookmark-highlight][aria-pressed="true"]')
+    .first()
+  await expect(selectedMark).toBeVisible()
+  const selectedCard = notesSidebar
+    .locator('[data-annotation-id]')
+    .filter({ hasText: 'External highlight' })
+  const cardBounds = (await selectedCard.boundingBox())!
+  const quoteBounds = (await selectedCard.locator('blockquote').boundingBox())!
+  expect(quoteBounds.x - cardBounds.x).toBeGreaterThanOrEqual(8)
+  expect(
+    cardBounds.x + cardBounds.width - quoteBounds.x - quoteBounds.width
+  ).toBeGreaterThanOrEqual(8)
   await page.screenshot({ path: testInfo.outputPath('notes-sidebar-wide.png') })
+  await page.keyboard.press('Escape')
+  await expect(
+    originalView.locator('[data-pdf-bookmark-highlight][aria-pressed="true"]')
+  ).toHaveCount(0)
+  await expect(page.locator('[data-slot="file-preview-dialog"]')).toBeVisible()
+  await page.keyboard.press('Escape')
+  await expect(page.locator('[data-slot="file-preview-dialog"]')).toHaveCount(0)
+  await page.getByRole('button', { name: 'Preview native-notes.pdf', exact: true }).click()
+  await page.getByRole('button', { name: 'Show notes sidebar', exact: true }).click()
   await page.getByRole('button', { name: 'Show navigation', exact: true }).click()
   await expect(notesSidebar).toBeVisible()
   const toolbar = page.getByRole('tablist', { name: 'PDF reading mode' })
@@ -153,16 +179,28 @@ test('imports external notes, preserves provenance through undo, and persists an
   await notesSidebar
     .getByPlaceholder('Add a private note')
     .fill('Sidebar draft survives layout changes')
+  await app.setMainWindowSize(1280, 960)
+  await expect(resizeNotes).toBeVisible()
+  await expect(originalView).toHaveCSS('right', '368px')
   await app.setMainWindowSize(1100, 960)
-  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Show notes sidebar', exact: true })).toBeDisabled()
-  await expect(notesSidebar).toHaveCount(0)
+  await expect(
+    toolbar.getByRole('button', { name: 'Hide notes sidebar', exact: true })
+  ).toBeEnabled()
+  await expect(notesSidebar).toBeVisible()
+  await expect(resizeNotes).toHaveCount(0)
+  await expect(originalView).toHaveCSS('right', '0px')
+  await expect(notesSidebar.getByPlaceholder('Add a private note')).toHaveValue(
+    'Sidebar draft survives layout changes'
+  )
+  await page.screenshot({ path: testInfo.outputPath('notes-sidebar-floating.png') })
   await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
   await expect(page.getByPlaceholder('Add a private note')).toHaveValue(
     'Sidebar draft survives layout changes'
   )
   await page.getByRole('tab', { name: 'Original PDF', exact: true }).click()
   await app.setMainWindowSize(1440, 960)
+  await expect(resizeNotes).toHaveAttribute('aria-valuenow', '368')
+  await expect(originalView).toHaveCSS('right', '368px')
   await expect(notesSidebar.getByPlaceholder('Add a private note')).toHaveValue(
     'Sidebar draft survives layout changes'
   )
@@ -193,15 +231,7 @@ test('imports external notes, preserves provenance through undo, and persists an
   await page.getByRole('button', { name: 'Close preview of native-notes.pdf', exact: true }).click()
   await page.getByRole('button', { name: 'Close', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', {
-    name: 'Settings',
-    exact: true
-  })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Tags', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Tags')
   const taggedPdf = settings
     .locator('[data-slot="tag-resource-row"]')
     .filter({ hasText: 'native-notes.pdf' })
@@ -391,4 +421,275 @@ test('imports external notes, preserves provenance through undo, and persists an
     total: 0,
     nativeImport: { nativeRefs: [{ pageNumber: 1 }, { pageNumber: 1 }] }
   })
+})
+
+test('shares Workspace notes with Literature across two windows and reopening', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProjectViaUi(page, 'Shared PDF project')
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'shared-paper.pdf',
+    mimeType: 'application/pdf',
+    buffer: createTestPdf()
+  })
+  await submitPromptViaUi(page, 'Read the attached paper.')
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Preview uploaded attachment shared-paper.pdf', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await page.getByRole('button', { name: 'Add note', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add document note', exact: true }).click()
+  await page.getByLabel('Document note', { exact: true }).fill('Created in Workspace')
+  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
+  expect(
+    await page.evaluate(
+      async () =>
+        (
+          await window.api.literature.search({
+            scope: 'library',
+            entryKind: 'paper',
+            limit: 10
+          })
+        ).entries.length
+    )
+  ).toBe(0)
+  await app.setMainWindowSize(1440, 960)
+  await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
+  await expect(page.getByRole('menuitem', { name: 'Add to Literature', exact: true })).toBeVisible()
+  await page.screenshot({ path: testInfo.outputPath('add-to-literature-menu.png') })
+  await page.keyboard.press('Escape')
+  await app.setMainWindowZoomFactor(1.25)
+  await page.getByTestId('preview-file-content-surface').click({ button: 'right' })
+  await page.getByRole('menuitem', { name: 'Add to Literature', exact: true }).click()
+  const adding = page.getByRole('dialog', { name: 'Import PDF', exact: true })
+  await app.setMainWindowZoomFactor(1)
+  await expect(adding).toBeVisible()
+  await expect(
+    page.getByRole('heading', { name: 'Shared PDF project', exact: true, includeHidden: true })
+  ).toBeVisible()
+  await adding.getByRole('textbox', { name: 'Title', exact: true }).fill('Shared PDF reference')
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-import.png') })
+  await adding.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(adding).toBeHidden()
+  const identity = await page.evaluate(async () => {
+    const project = (await window.api.projects.list()).find(
+      (project) => project.name === 'Shared PDF project'
+    )!
+    const note = (await window.api.pdfAnnotations.list({ projectId: project.id })).items[0]
+    const result = await window.api.literature.search({
+      scope: 'library',
+      entryKind: 'paper',
+      query: 'Shared PDF reference',
+      limit: 10
+    })
+    const item = result.entries.find((entry) => 'item' in entry)!
+    if (!('attachments' in item)) throw new Error('Missing reference')
+    if (!item.projectIds.includes(project.id)) throw new Error('Missing Project reference link')
+    return { projectId: project.id, id: note.id, versionId: item.attachments[0].versions[0].id }
+  })
+  await page
+    .getByRole('dialog', { name: 'Shared PDF reference', exact: true })
+    .getByRole('button', { name: 'Close', exact: true })
+    .click()
+  await page.screenshot({ path: testInfo.outputPath('workspace-pdf-imported.png') })
+  await page.getByRole('button', { name: 'Back to Project', exact: true }).click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Created in Workspace')
+  const other = await app.openAdditionalRenderer()
+  await openAllReferences(other)
+  await other.getByText('Shared PDF reference', { exact: true }).click()
+  await other.getByRole('button', { name: 'Preview shared-paper.pdf', exact: true }).click()
+  await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  const note = other.locator(`[data-annotation-id="${identity.id}"]`)
+  await expect(note).toContainText('Created in Workspace')
+  await note.getByRole('button', { name: 'Edit annotation note' }).click()
+  await note.getByRole('textbox', { name: 'Annotation note' }).fill('Edited in Literature')
+  await note.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Edited in Literature')
+  await other.screenshot({ path: testInfo.outputPath('shared-literature-notes.png') })
+
+  const current = await page.evaluate(
+    async ({ projectId }) => (await window.api.pdfAnnotations.list({ projectId })).items[0],
+    identity
+  )
+  const writes = await Promise.allSettled([
+    page.evaluate(
+      ({ identity, updatedAt }) =>
+        window.api.pdfAnnotations.update({
+          projectId: identity.projectId,
+          id: identity.id,
+          expectedUpdatedAt: updatedAt,
+          note: 'Workspace concurrent edit'
+        }),
+      { identity, updatedAt: current.updatedAt }
+    ),
+    other.evaluate(
+      ({ identity, updatedAt }) =>
+        window.api.pdfAnnotations.update({
+          literatureVersionId: identity.versionId,
+          id: identity.id,
+          expectedUpdatedAt: updatedAt,
+          note: 'Literature concurrent edit'
+        }),
+      { identity, updatedAt: current.updatedAt }
+    )
+  ])
+  expect(writes.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+  expect(writes.filter((result) => result.status === 'rejected')).toHaveLength(1)
+  const winner = writes.find((result) => result.status === 'fulfilled')!
+  if (winner.status !== 'fulfilled') throw new Error('Missing committed edit')
+  await expect(note).toContainText(winner.value.note)
+  await expect(page.locator('[data-annotation-id]')).toContainText(winner.value.note)
+
+  const reopened = await app.restart()
+  const persisted = await reopened.evaluate(
+    async (identity) => ({
+      workspace: await window.api.pdfAnnotations.list({ projectId: identity.projectId }),
+      library: await window.api.pdfAnnotations.list({ literatureVersionId: identity.versionId })
+    }),
+    identity
+  )
+  expect(persisted.workspace.items.map((row) => [row.id, row.note])).toEqual([
+    [identity.id, winner.value.note]
+  ])
+  expect(persisted.library.items.map((row) => [row.id, row.note])).toEqual([
+    [identity.id, winner.value.note]
+  ])
+  await reopened.evaluate(
+    ({ identity, updatedAt }) =>
+      window.api.pdfAnnotations.delete({
+        literatureVersionId: identity.versionId,
+        id: identity.id,
+        expectedUpdatedAt: updatedAt
+      }),
+    { identity, updatedAt: persisted.library.items[0].updatedAt }
+  )
+  expect(
+    await reopened.evaluate(
+      async ({ projectId }) => (await window.api.pdfAnnotations.list({ projectId })).items.length,
+      identity
+    )
+  ).toBe(0)
+})
+
+test('shares independently imported native notes without duplication or resurrection', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  const pdf = await PDFDocument.create()
+  const sheet = pdf.addPage([300, 400])
+  sheet.drawText('Shared native evidence', { x: 20, y: 300, size: 12 })
+  sheet.node.set(
+    PDFName.of('Annots'),
+    pdf.context.obj([
+      pdf.context.register(
+        pdf.context.obj({
+          Type: 'Annot',
+          Subtype: 'Text',
+          Rect: [20, 200, 40, 220],
+          Contents: PDFHexString.fromText('Original embedded note')
+        })
+      )
+    ])
+  )
+  const bytes = Buffer.from(await pdf.save())
+  const path = join(await app.createTestDirectory('sharing-conflict'), 'native.pdf')
+  await writeFile(path, bytes)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProjectViaUi(page, 'Independent native notes')
+  await page.locator('input[type="file"][multiple]').setInputFiles(path)
+  await submitPromptViaUi(page, 'Read this annotated PDF.')
+  await expect(
+    page.getByText('Deterministic reply: Summarize the deterministic fixture.', { exact: true })
+  ).toBeVisible()
+  await page
+    .getByRole('button', { name: 'Preview uploaded attachment native.pdf', exact: true })
+    .click()
+  await page.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(page.locator('[data-annotation-id]')).toContainText('Original embedded note')
+  const projectId = await page.evaluate(
+    async () =>
+      (await window.api.projects.list()).find((p) => p.name === 'Independent native notes')!.id
+  )
+  const reference = await page.evaluate(
+    (item) => window.api.literature.transact({ kind: 'create-item', item }),
+    literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Independent native reference'
+    })
+  )
+  const other = await app.openAdditionalRenderer()
+  await openAllReferences(other)
+  await other.getByText('Independent native reference', { exact: true }).click()
+  await other.locator('input[aria-label="Add PDF"]').setInputFiles(path)
+  await expect(other.getByRole('button', { name: 'Preview native.pdf', exact: true })).toBeEnabled()
+  const versionId = await other.evaluate(
+    async (id) => (await window.api.literature.get(id))!.attachments[0].versions[0].id,
+    reference.id
+  )
+  await expect
+    .poll(() =>
+      other.evaluate(
+        async (literatureVersionId) =>
+          (await window.api.pdfAnnotations.list({ literatureVersionId })).total,
+        versionId
+      )
+    )
+    .toBe(1)
+  const left = await page.evaluate(async (projectId) => {
+    const note = (await window.api.pdfAnnotations.list({ projectId })).items[0]
+    return window.api.pdfAnnotations.update({
+      projectId,
+      id: note.id,
+      note: 'Workspace edit',
+      expectedUpdatedAt: note.updatedAt
+    })
+  }, projectId)
+  await other.evaluate(async (literatureVersionId) => {
+    const note = (await window.api.pdfAnnotations.list({ literatureVersionId })).items[0]
+    return window.api.pdfAnnotations.update({
+      literatureVersionId,
+      id: note.id,
+      note: 'Literature edit',
+      expectedUpdatedAt: note.updatedAt
+    })
+  }, versionId)
+  const library = await other.evaluate(
+    async (literatureVersionId) =>
+      (await window.api.pdfAnnotations.list({ literatureVersionId })).items[0],
+    versionId
+  )
+  expect(library.id).toBe(left.id)
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(1)
+  await expect(page.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.getByRole('button', { name: 'Preview native.pdf', exact: true }).click()
+  await other.getByRole('tab', { name: 'Notes & Annotations', exact: true }).click()
+  await expect(other.locator('[data-annotation-id]')).toContainText('Literature edit')
+  await other.screenshot({ path: testInfo.outputPath('independent-import-shared-notes.png') })
+  await other.evaluate(
+    (note) =>
+      window.api.pdfAnnotations.delete({
+        literatureVersionId: note.literatureVersionId!,
+        id: note.id,
+        expectedUpdatedAt: note.updatedAt
+      }),
+    library
+  )
+  await expect(page.locator('[data-annotation-id]')).toHaveCount(0)
+  const reopened = await app.restart()
+  expect(
+    await reopened.evaluate(
+      async (literatureVersionId) =>
+        (await window.api.pdfAnnotations.list({ literatureVersionId })).total,
+      versionId
+    )
+  ).toBe(0)
 })

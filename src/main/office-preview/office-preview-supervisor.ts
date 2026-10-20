@@ -30,11 +30,11 @@ type OfficePreviewSupervisorDependencies = {
   ) => Promise<OfficePreviewRuntimeResource>
   releaseResource: (ownerId: number, resourceId: string) => void | Promise<void>
   createSessionId: () => string
-  createRuntimeUrl: (sessionId: string) => string
+  createRuntimeUrl: (sessionId: string, extension: OfficePreviewOpenRequest['extension']) => string
   resolveFrameProcess: (
     parentOwnerId: number,
     runtimeUrl: string
-  ) => OfficePreviewFrameProcess | undefined
+  ) => OfficePreviewFrameProcess | undefined | Promise<OfficePreviewFrameProcess | undefined>
   getProcessMemoryUsageBytes?: (processId: number) => number | Promise<number>
   publishState?: (parentOwnerId: number, state: OfficePreviewRuntimeState) => void
 }
@@ -112,7 +112,7 @@ class OfficePreviewSupervisor {
         OFFICE_PREVIEW_MAX_FILE_BYTES
       )
       assertCurrentGeneration()
-      const runtimeUrl = this.dependencies.createRuntimeUrl(sessionId)
+      const runtimeUrl = this.dependencies.createRuntimeUrl(sessionId, request.extension)
       const start: OfficePreviewRuntimeStart = {
         sessionId,
         resource,
@@ -166,10 +166,11 @@ class OfficePreviewSupervisor {
     // Fail closed unless Chromium assigned the runtime frame to a different renderer process.
     let process: OfficePreviewFrameProcess | undefined
     try {
-      process = this.dependencies.resolveFrameProcess(parentOwnerId, session.runtimeUrl)
+      process = await this.dependencies.resolveFrameProcess(parentOwnerId, session.runtimeUrl)
     } catch {
       process = undefined
     }
+    if (this.sessions.get(sessionId) !== session) return undefined
     if (
       !process ||
       process.frameProcessId <= 0 ||
@@ -270,10 +271,11 @@ class OfficePreviewSupervisor {
     session.memoryPollInFlight = true
     try {
       // Re-resolve the frame on every poll so a crashed or replaced OOPIF cannot retain the session.
-      const process = this.dependencies.resolveFrameProcess(
+      const process = await this.dependencies.resolveFrameProcess(
         session.parentOwnerId,
         session.runtimeUrl
       )
+      if (this.sessions.get(sessionId) !== session) return
       if (
         !process ||
         process.frameProcessId !== session.frameProcessId ||
@@ -290,7 +292,11 @@ class OfficePreviewSupervisor {
       }
 
       const usage = await this.dependencies.getProcessMemoryUsageBytes(session.frameProcessId)
-      if (usage < OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES) return
+      if (
+        this.sessions.get(sessionId) !== session ||
+        usage < OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES
+      )
+        return
       this.publishState(session.parentOwnerId, session.requestId, {
         sessionId,
         phase: 'error',

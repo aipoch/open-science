@@ -171,7 +171,7 @@ describe('permission policy', () => {
       })
     ).toBeUndefined()
   })
-  it('approves only the runtime-verified Codex Skill loader without a redundant permission prompt', () => {
+  it('leaves verified Skill loaders to the shared grant lookup', () => {
     const request = createPermissionRequest('other', undefined, {
       title: 'mcp__skills__load_skill'
     })
@@ -183,7 +183,7 @@ describe('permission policy', () => {
     expect(resolveAutomaticPermission(request, context)).toBeUndefined()
     expect(
       resolveAutomaticPermission(withTrustedMcpToolIdentity(request, 'skills/load_skill'), context)
-    ).toBe('allow')
+    ).toBeUndefined()
     expect(
       resolveAutomaticPermission(withTrustedMcpToolIdentity(request, 'other/load_skill'), context)
     ).toBeUndefined()

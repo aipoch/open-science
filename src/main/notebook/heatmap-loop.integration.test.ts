@@ -1,3 +1,4 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { it, expect } from 'vitest'
 import { spawn } from 'node:child_process'
 import { createInterface } from 'node:readline'
@@ -12,7 +13,7 @@ import {
   type KernelLoopResponse
 } from './kernel-protocol'
 import { startWorkingFileObservation } from './working-file-observer'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import type { NotebookRunRecord } from '../../shared/notebook'
 import cells from './reported-heatmap.fixture.json'
 
@@ -154,7 +155,7 @@ for (const language of ['r', 'python'] as const) {
                 executionContext: response.environmentOverlay?.executionContext
               }
             }
-            const analyzer = new NotebookDependencyAnalyzer({
+            const analyzer = createNotebookDependencyAnalyzer({
               storageRoot: root,
               repository: { readSessionRuns: async () => [run] }
             })

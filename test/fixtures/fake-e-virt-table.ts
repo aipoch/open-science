@@ -16,11 +16,22 @@ style.textContent = [
 document.head.appendChild(style)
 
 class TestEVirtTable {
-  ctx = { body: { headIndex: 0, tailIndex: 20 }, scrollY: 0 }
+  ctx: {
+    body: { headIndex: number; tailIndex: number }
+    scrollY: number
+    containerElement: HTMLElement
+    isTarget: (event: Event) => boolean
+  }
   private readonly handlers = new Map<string, () => void>()
   private rows: Array<Record<string, unknown>> = []
 
-  constructor() {
+  constructor(target: HTMLElement) {
+    this.ctx = {
+      body: { headIndex: 0, tailIndex: 20 },
+      scrollY: 0,
+      containerElement: target,
+      isTarget: (event) => event.target instanceof Node && target.contains(event.target)
+    }
     const harness = (
       globalThis as typeof globalThis & {
         __openScienceTestTableHarness?: TestTableHarness

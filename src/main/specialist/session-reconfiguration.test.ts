@@ -1,8 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const loggerSpies = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({
@@ -231,6 +231,56 @@ describe('SessionSpecialistReconfiguration', () => {
     expect(persisted).toEqual({ specialistId: profile.id })
     await expect(owner.assertUserPromptReady('session-1')).resolves.toBeUndefined()
   })
+
+  it('rearms an applied binding before retry and keeps it pending if replacement fails', async () => {
+    let persisted: { specialistId?: string; specialistBindingPending?: true } = {
+      specialistId: profile.id
+    }
+    const applyRuntime = vi.fn(async () => {
+      expect(persisted.specialistBindingPending).toBe(true)
+      throw new Error('replacement failed')
+    })
+    const owner = new SessionSpecialistReconfiguration({
+      sessionBinding: bindingService(),
+      loadBinding: async () => persisted,
+      persistBinding: async (_sessionId, specialistId, pending) => {
+        persisted = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime
+    })
+
+    await expect(owner.applyPersisted('session-1', profile.id)).rejects.toThrow(
+      'replacement failed'
+    )
+    expect(persisted.specialistBindingPending).toBe(true)
+    await expect(owner.assertUserPromptReady('session-1')).rejects.toThrow(/has not been applied/)
+  })
+
+  it.each([undefined, true] as const)(
+    'does not rearm an obsolete handoff over a different durable target (pending=%s)',
+    async (specialistBindingPending) => {
+      const persistBinding = vi.fn()
+      const applyRuntime = vi.fn()
+      const owner = new SessionSpecialistReconfiguration({
+        sessionBinding: bindingService(),
+        loadBinding: async () => ({
+          specialistId: 'different-specialist',
+          specialistBindingPending
+        }),
+        persistBinding,
+        applyRuntime
+      })
+
+      await expect(owner.applyPersisted('session-1', profile.id)).rejects.toThrow(
+        'The persisted Specialist binding changed before runtime application.'
+      )
+      expect(persistBinding).not.toHaveBeenCalled()
+      expect(applyRuntime).not.toHaveBeenCalled()
+    }
+  )
 
   it('reports a pending state when runtime applied but the marker clear failed', async () => {
     const binding = bindingService()

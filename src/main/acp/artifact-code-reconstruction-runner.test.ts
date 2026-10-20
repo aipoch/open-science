@@ -307,7 +307,7 @@ describe('ArtifactCodeReconstructionRunner cleanup', () => {
     const release = vi.fn(async () => undefined)
     const resolved: ResolvedAgentBackend = {
       ...backend(codexFramework),
-      responsesBridgeLease: {
+      responsesTransportLease: {
         selectSkills: vi.fn(async () => []),
         registerReviewerSession: vi.fn(),
         unregisterReviewerSession: vi.fn(() => false),

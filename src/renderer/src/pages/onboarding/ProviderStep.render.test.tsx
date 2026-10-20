@@ -4,6 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -113,7 +115,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -138,7 +140,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -158,7 +160,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -166,7 +168,7 @@ describe('ProviderStep', () => {
 
     await renderStep({
       initialValue: {
-        ...createEmptyProviderFormValue({ apiEndpoint: 'anthropic' }),
+        ...createEmptyProviderFormValue({ apiEndpoint: 'messages' }),
         providerFormTouched: true
       }
     })
@@ -596,7 +598,7 @@ describe('ProviderStep', () => {
         {
           id: 'claude-code',
           displayName: 'Claude Code',
-          supportedApiTypes: ['anthropic'],
+          supportedApiTypes: ['messages'],
           supportsSkills: true
         }
       ]
@@ -616,8 +618,15 @@ describe('ProviderStep', () => {
 
     expect(container.textContent).not.toContain("isn't compatible with Claude Code")
     expect(saveAndActivateProvider).toHaveBeenCalledWith(
-      expect.objectContaining({ vendorId: 'opencode', model: 'claude-fable-5' })
+      expect.objectContaining({
+        vendorId: 'opencode',
+        model: expect.any(String),
+        apiEndpoints: ['messages']
+      })
     )
+    const { model } = saveAndActivateProvider.mock.calls[0][0]
+    expect(getOfficialVendorModelIds('opencode')).toContain(model)
+    expect(resolveVendorModelApiEndpoints('opencode', model)).toContain('messages')
   })
 
   // Switches the auth picker to the isolated "Sign in with Open-Science" mode — the only path that
@@ -811,7 +820,7 @@ describe('ProviderStep', () => {
 
     await vi.waitFor(() => {
       expect(persistProvider).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.6' })
+        expect.objectContaining({ type: 'xai-subscription', model: 'grok-4.7' })
       )
       expect(validateProvider).toHaveBeenCalledWith({
         providerId: 'builtin-xai-subscription'

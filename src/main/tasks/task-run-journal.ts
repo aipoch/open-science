@@ -17,7 +17,7 @@ import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 
 const TASK_RUN_JOURNAL_FILE = 'task-runs.json'
 const TASK_RUN_JOURNAL_VERSION = 1 as const

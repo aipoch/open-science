@@ -1,8 +1,9 @@
+import type { CredentialsServiceId, CredentialsView } from '../../lib/settings-navigation'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { BookOpen, Check, KeyRound, Server, Trash2, X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -36,12 +37,8 @@ import { localizeCredentialError } from './credential-error-message'
 import { SettingsSection } from './SettingsLayout'
 import { UnpaywallCredentialForm } from './UnpaywallCredentialForm'
 
-export type CredentialsServiceId = 'github' | 'literature' | 'openalex' | 'unpaywall'
-export type CredentialsView =
-  | { kind: 'list' }
-  | { kind: 'service'; serviceId: CredentialsServiceId }
-  | { kind: 'create' }
-  | { kind: 'credential'; id: string }
+export type { CredentialsServiceId } from '../../lib/settings-navigation'
+export type { CredentialsView } from '../../lib/settings-navigation'
 type DesktopCredentialAvailability = 'checking' | 'available' | 'unavailable'
 
 type CredentialsPanelProps = {
@@ -314,7 +311,7 @@ export function CredentialsPanel({
           <p className="mt-1 text-sm text-muted-foreground">
             {isOpenAlex
               ? t(
-                  'Used by OpenAlex tools in the Literature Connector. Every OpenAlex request requires this key.'
+                  'Used by OpenAlex tools in the Literature Connector. Basic queries work without a key; adding one raises your daily limit.'
                 )
               : t(
                   'Contact information and an optional NCBI API key used by research-service Connector calls.'
@@ -452,7 +449,7 @@ export function CredentialsPanel({
     {
       id: 'openalex' as const,
       label: t('OpenAlex'),
-      description: t('API key required by OpenAlex tools in the Literature Connector.'),
+      description: t('Optional API key for OpenAlex tools in the Literature Connector.'),
       configured: openAlex.hasApiKey,
       desktopOnly: true,
       Icon: BookOpen

@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -12,7 +13,7 @@ import {
 import { SKILL_IMPORT_MCP_SERVER_ARG } from '../mcp-server-args'
 import { fetchLocalRpc, type LocalRpcTransport } from '../local-rpc-transport'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
-import { parseGitHubSkillUrl } from './github-import'
+import { parseGitHubSkillUrl } from '@aipoch/skills/sources'
 
 const requestSkillImportToolSchema = {
   attachment_uri: z
@@ -136,7 +137,7 @@ const createSkillImportMcpServerConfig = ({
   command,
   args: [entryPath, SKILL_IMPORT_MCP_SERVER_ARG],
   env: [
-    { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+    ...nodeRuntimeEnvironmentEntries(),
     { name: 'OPEN_SCIENCE_SKILL_IMPORT_RPC_ENDPOINT', value: endpoint },
     ...(socketPath
       ? [{ name: 'OPEN_SCIENCE_SKILL_IMPORT_RPC_SOCKET_PATH', value: socketPath }]

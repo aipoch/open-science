@@ -1,10 +1,12 @@
 import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
-import type { PersistedChatSession } from '../src/shared/session-persistence'
 import { createProject, sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
-import { setTheme } from './fixtures/settings-preferences'
+import { openSettingsPage, setTheme } from './fixtures/settings-preferences'
+import { homeNewProjectButton } from './fixtures/project'
+import { setViewport } from './fixtures/viewport'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const prepareVisualPage = async (page: Page): Promise<void> => {
   await page.emulateMedia({ reducedMotion: 'reduce' })
@@ -17,11 +19,11 @@ const prepareVisualPage = async (page: Page): Promise<void> => {
     content:
       '[data-slot="message-scroller-button"][data-direction="start"] { visibility: hidden !important; }'
   })
-}
-
-const setViewport = async (page: Page, width: number, height = 800): Promise<void> => {
-  await page.setViewportSize({ width, height })
-  await expect.poll(() => page.evaluate(() => window.innerWidth)).toBe(width)
+  // Runtime probes depend on the host and can finish between captures. HomePage render tests
+  // cover the repair action; keep its transient status out of these layout baselines.
+  await page.addStyleTag({
+    content: 'button[aria-label="Open environment repair"] { visibility: hidden !important; }'
+  })
 }
 
 const setVisualState = async (
@@ -101,83 +103,39 @@ const expectStableScreenshot = async (
   })
 }
 
-const seedHomeActivitySessions = async (page: Page, cwd: string): Promise<void> => {
-  await page.evaluate(
-    async ({ sessionCwd }) => {
-      const bridge = globalThis as unknown as {
-        api: {
-          projects: {
-            create: (request: { name: string; description: string }) => Promise<{ id: string }>
-          }
-          sessions: {
-            saveSession: (session: PersistedChatSession) => Promise<unknown>
-          }
-        }
-      }
-      const project = await bridge.api.projects.create({
-        name: 'Mobile activity project',
-        description: 'Responsive activity-card fixture.'
-      })
-      const now = Date.now()
-      const sessions: PersistedChatSession[] = [
-        {
-          id: 'mobile-needs-you-session',
-          projectId: project.id,
-          title: 'Review a long session result on iPhone',
-          cwd: sessionCwd,
-          status: 'waiting-for-user',
-          messages: [],
-          activities: [
-            {
-              id: 'mobile-needs-you-activity',
-              kind: 'tool',
-              title: 'Waiting for an answer',
-              status: 'in_progress',
-              sortIndex: 1,
-              eventIds: [],
-              elicitation: {
-                message: 'Choose one',
-                fields: [{ id: 'choice', label: 'Choice', kind: 'text' }],
-                state: 'pending',
-                durable: {
-                  kind: 'agent-user-choice',
-                  requestId: 'mobile-needs-you-choice'
-                }
-              },
-              createdAt: now - 2_000,
-              updatedAt: now - 1_000
-            }
-          ],
-          createdAt: now - 2_000,
-          updatedAt: now - 1_000
-        },
-        {
-          id: 'mobile-running-session',
-          projectId: project.id,
-          title: 'Run a long analysis on iPhone',
-          cwd: sessionCwd,
-          status: 'running',
-          messages: [],
-          createdAt: now - 1_000,
-          updatedAt: now
-        },
-        {
-          id: 'mobile-running-secondary-session',
-          projectId: project.id,
-          title: 'Run another active analysis on iPhone',
-          cwd: sessionCwd,
-          status: 'running',
-          messages: [],
-          createdAt: now,
-          updatedAt: now + 1_000
-        }
-      ]
-
-      for (const session of sessions) await bridge.api.sessions.saveSession(session)
-    },
-    { sessionCwd: cwd }
+const seedHomeActivitySessions = async (page: Page): Promise<void> => {
+  await page.evaluate(() =>
+    window.api.settings.setSessionDetailsModel({ configuration: { mode: 'disabled' } })
   )
-
+  await createProject(page, 'Mobile activity project')
+  // Main owns Session state. Create live turns through admission rather than trying to
+  // establish running/waiting state with a renderer whole-Session save.
+  const prompts = [
+    'Review a long session result on iPhone. Ask a restart verification question.',
+    'Run a long analysis on iPhone. Hold the turn outcome fixture.',
+    'Run another active analysis on iPhone. Hold the turn outcome fixture.'
+  ]
+  for (const [index, prompt] of prompts.entries()) {
+    if (index > 0) await page.getByRole('button', { name: 'New', exact: true }).click()
+    await submitPromptViaUi(page, prompt)
+    await expect(
+      page
+        .getByText(
+          index === 0 ? 'Restart verification dataset?' : 'Turn outcome cancellation checkpoint.',
+          { exact: true }
+        )
+        .first()
+    ).toBeVisible()
+  }
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const { sessions } = await window.api.sessions.loadAll()
+        return sessions.map(({ status }) => status).sort()
+      })
+    )
+    .toEqual(['running', 'running', 'waiting-for-user'])
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await expect(
     page.getByRole('region', { name: 'Session updates' }).getByRole('button')
   ).toHaveCount(3)
@@ -196,7 +154,7 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
 
   await expectStableScreenshot(page, 'home-empty.png')
 
-  await page.getByRole('button', { name: 'New project' }).click()
+  await homeNewProjectButton(page).click()
   const projectDialog = page.getByRole('dialog', { name: 'New project' })
   await expect(projectDialog).toBeVisible()
   await expectStableScreenshot(page, 'project-create-dialog.png')
@@ -204,15 +162,13 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await projectDialog.getByLabel('Name').fill('Visual baseline project')
   await projectDialog.getByRole('button', { name: 'Create project' }).click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
+  await expect(
+    page.getByRole('button', { name: 'Choose a .science file', exact: true })
+  ).toBeVisible()
   // macOS runner text/icon rasterization differs slightly from the local baseline (about 0.21%).
   await expectStableScreenshot(page, 'workspace-empty.png', 0.003)
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'General', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'General')
   await expect(settings.getByRole('heading', { name: 'Appearance' })).toBeVisible()
   const appVersion = settings.getByRole('region', { name: 'App version' })
   await appVersion.getByRole('button').evaluateAll((elements) => {
@@ -225,16 +181,21 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
   // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.
-  await settings.locator('[data-slot="settings-navigation-scroll"]').evaluate((element) => {
-    element.scrollTop = 0
-  })
+  await prepareVisualPage(await getSettingsPage(page))
+  await settings
+    .locator('[data-slot="settings-navigation-scroll"], [data-slot="settings-content-scroll"]')
+    .evaluateAll((elements) => {
+      for (const element of elements) element.scrollTop = 0
+    })
+  await expect(settings.getByRole('heading', { name: 'Appearance', exact: true })).toBeInViewport()
   await expectStableScreenshot(await getSettingsPage(page), 'settings-general.png', 0.004)
 })
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
-  const page = await app.completeOnboarding()
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
   await page.emulateMedia({ reducedMotion: 'reduce' })
-  await seedHomeActivitySessions(page, await app.createTestDirectory('mobile-activity-project'))
+  await seedHomeActivitySessions(page)
 
   for (const width of [320, 375, 390, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
@@ -336,18 +297,10 @@ test('keeps representative conversation, project, and recovery states visually s
   await expectStableScreenshot(page, 'provenance-desktop-light.png')
   await provenance.getByRole('button', { name: 'Close Provenance' }).click()
   await preview.getByRole('button', { name: 'Close preview of provenance-evidence.txt' }).click()
-  await page
-    .getByRole('tablist', { name: 'Open previews' })
-    .getByRole('tab', { name: 'Files' })
-    .press('Delete')
+  await page.getByTestId('preview-tab-strip').getByRole('tab', { name: 'Files' }).press('Delete')
 
   await setVisualState(page, { theme: 'Dark', width: 1280 })
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Compute')
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   await setViewport(await getSettingsPage(page), 767)
   await expectStableScreenshot(await getSettingsPage(page), 'compute-narrow-dark.png')

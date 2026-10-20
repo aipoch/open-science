@@ -7,7 +7,7 @@ import {
   DownloadChecksumError,
   DownloadSourceError,
   resilientDownload
-} from '../net/resilient-download'
+} from '@aipoch/resilient-download'
 import { PDF_TABLE_MODEL_REVISIONS } from './catalog'
 import { downloadLocalModelAsset } from './download'
 import { localModelDownloadSources } from './download-sources'
@@ -34,11 +34,7 @@ const response = (bytes: Buffer = body): Response =>
   new Response(new Uint8Array(bytes), {
     headers: { 'Content-Length': String(bytes.length), ETag: '"model-v1"' }
   })
-const downloadNow: typeof resilientDownload = (url, path, opts) =>
-  resilientDownload(url, path, {
-    ...opts,
-    deps: { ...opts?.deps, sleep: async () => undefined }
-  })
+const downloadNow = resilientDownload
 const isProbe = (init?: RequestInit): boolean =>
   new Headers(init?.headers).get('Range') === `bytes=0-${body.length - 1}`
 
@@ -425,18 +421,9 @@ describe('download source failover', () => {
   it.each(['ENOSPC', 'EACCES', 'EIO'])('does not switch source after %s on disk', async (code) => {
     const path = await target()
     const failure = Object.assign(new Error(code), { code })
-    const download = vi.fn<typeof resilientDownload>((url, target, opts) =>
-      resilientDownload(url, target, {
-        ...opts,
-        deps: {
-          ...opts?.deps,
-          createWriteStreamImpl: () => {
-            throw failure
-          },
-          sleep: async () => undefined
-        }
-      })
-    )
+    const download = vi.fn<typeof resilientDownload>(async () => {
+      throw failure
+    })
     await expect(
       downloadLocalModelAsset(
         asset,
@@ -481,24 +468,13 @@ describe('download source failover', () => {
     { kind: 'response', suffix: '.part.meta' },
     { kind: 'http', suffix: '.part.meta' }
   ])(
-    'stops on storage failure cleaning up $suffix after a $kind error',
-    async ({ kind, suffix }) => {
+    'does not switch source when the downloader reports storage failure cleaning $suffix after $kind',
+    async ({ kind }) => {
       const path = await target()
       const failure = Object.assign(new Error('cannot remove partial'), { code: 'EACCES' })
-      let downloading = false
-      const download = vi.fn<typeof resilientDownload>((url, target, opts) =>
-        resilientDownload(url, target, {
-          ...opts,
-          deps: {
-            ...opts?.deps,
-            rmImpl: async (file) => {
-              if (downloading && file === path + suffix) throw failure
-              await rm(file, { force: true })
-            },
-            sleep: async () => undefined
-          }
-        })
-      )
+      const download = vi.fn<typeof resilientDownload>(async () => {
+        throw failure
+      })
       await expect(
         downloadLocalModelAsset(
           asset,
@@ -509,7 +485,6 @@ describe('download source failover', () => {
             download,
             fetchImpl: async (_url, init) => {
               if (isProbe(init)) return response()
-              downloading = true
               if (kind === 'http') return new Response(null, { status: 403 })
               return kind === 'checksum'
                 ? response(Buffer.alloc(body.length))

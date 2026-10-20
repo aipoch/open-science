@@ -4,15 +4,15 @@ import type {
   ComputeAuthenticationMode,
   ComputeExecutionMode,
   ComputeHost,
+  SshOverrides
+} from '@aipoch/compute'
+import type {
   ComputePasswordCapability,
   CreateComputeHostRequest,
-  CreatePasswordComputeHostRequest,
-  SshOverrides
+  CreatePasswordComputeHostRequest
 } from '../../../../shared/compute'
-import {
-  isHostConnectionPortValid,
-  parseHostConnectionPort
-} from '../../../../shared/compute-host-connection-profile'
+
+import { isHostConnectionPortValid, parseHostConnectionPort } from '@aipoch/compute'
 import {
   computeAuthenticationPresentation,
   isComputeAuthenticationErrorCode

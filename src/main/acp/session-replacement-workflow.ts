@@ -185,9 +185,13 @@ export class AcpSessionReplacementWorkflow {
         })
       }
 
+      // A drained/reconnected Claude runtime may retain the App Session without a provider
+      // attachment. Its approved handoff still needs a fresh session with the new identity and
+      // staged replay; treating the missing attachment as a successful no-op strands continuation.
+      // Failed Codex reconfiguration also leaves no attachment. Reuse pending-binding recovery:
+      // adopt fresh context and request history replay, rather than report an applied no-op.
       const requiresContextReset =
-        this.deps.currentFrameworkId() === 'claude-code' &&
-        this.deps.registry.lookup(sessionId)?.attachment !== undefined
+        this.deps.currentFrameworkId() === 'claude-code' || (isCodex && !previousAttachment)
       if (requiresContextReset) {
         const snapshot = aggregate.snapshot()
         await this.reset({

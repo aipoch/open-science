@@ -28,7 +28,7 @@ describe('SubagentModelSelect', () => {
           id: 'opencode',
           displayName: 'OpenCode',
           supportsSkills: true,
-          supportedApiTypes: ['openai']
+          supportedApiTypes: ['chat-completions']
         }
       ],
       setSubagentModel: vi.fn(async () => undefined)
@@ -98,7 +98,7 @@ describe('SubagentModelSelect', () => {
           id: 'provider-b',
           type: 'custom',
           name: 'Provider B',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-b',
           models: ['model-b'],
           supportsImageInput: false,
@@ -144,7 +144,7 @@ describe('SubagentModelSelect', () => {
           id: 'provider-a',
           type: 'custom',
           name: 'Provider A',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-a',
           models: ['model-a'],
           reasoningEffortPreset: 'low-medium-high',
@@ -156,7 +156,7 @@ describe('SubagentModelSelect', () => {
           id: 'provider-b',
           type: 'custom',
           name: 'Provider B',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-b',
           models: ['model-b'],
           reasoningEffortPreset: 'standard-5',
@@ -208,7 +208,7 @@ describe('SubagentModelSelect', () => {
           id: 'provider-a',
           type: 'custom',
           name: 'Provider A',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-a',
           models: ['model-a'],
           reasoningEffortPreset: 'none-high',
@@ -276,7 +276,7 @@ describe('SessionDetailsModelSelect', () => {
           id: 'opencode',
           displayName: 'OpenCode',
           supportsSkills: true,
-          supportedApiTypes: ['openai']
+          supportedApiTypes: ['chat-completions']
         }
       ],
       activeProviderId: 'provider-a',
@@ -286,7 +286,7 @@ describe('SessionDetailsModelSelect', () => {
           id: 'provider-a',
           type: 'custom',
           name: 'Provider A',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-a',
           models: ['model-a'],
           supportsImageInput: false,
@@ -324,7 +324,7 @@ describe('SessionDetailsModelSelect', () => {
           id: 'provider-a',
           type: 'custom',
           name: 'Provider A',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'model-a',
           models: ['model-a'],
           reasoningEffortPreset: 'unsupported',
@@ -376,7 +376,7 @@ describe('VisionModelSelect', () => {
           id: 'opencode',
           displayName: 'OpenCode',
           supportsSkills: true,
-          supportedApiTypes: ['openai']
+          supportedApiTypes: ['chat-completions']
         }
       ],
       providers: [
@@ -384,7 +384,7 @@ describe('VisionModelSelect', () => {
           id: 'text-provider',
           type: 'custom',
           name: 'Text Provider',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'text-model',
           models: ['text-model'],
           supportsImageInput: false,
@@ -395,7 +395,7 @@ describe('VisionModelSelect', () => {
           id: 'vision-provider',
           type: 'custom',
           name: 'Vision Provider',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           model: 'vision-model',
           models: ['vision-model'],
           supportsImageInput: true,

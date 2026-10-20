@@ -1,5 +1,5 @@
 import { toAcpTurnTokenUsage } from '../../shared/acp'
-import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpModelStepTokenUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,
@@ -258,7 +258,11 @@ export const createClaudeCodeTurnAdapter = (
             turnUsage
           }))
         const exactLastModelStepUsage = exactModelCalls?.at(-1) ?? finalLastModelStepUsage
+        const contextUsedTokens = exactLastModelStepUsage
+          ? exactLastModelStepUsage.inputTokens + exactLastModelStepUsage.cacheTokens
+          : undefined
         const result: AcpProviderTurnResult = {
+          ...(Number.isSafeInteger(contextUsedTokens) ? { contextUsedTokens } : {}),
           ...(turnUsage ? { turnUsage } : {}),
           ...(finalModelTurnCount > 0 ? { modelTurnCount: finalModelTurnCount } : {}),
           ...(exactLastModelStepUsage ? { lastModelStepUsage: exactLastModelStepUsage } : {}),

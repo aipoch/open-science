@@ -1,10 +1,9 @@
-import { resolveEffectiveSpecialistSkills } from '../../shared/specialist'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
 import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { DelegatedProcessOwnership } from './process-ownership'
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { chmod, lstat, mkdir, readdir, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-
 import {
   materializeSessionConversationGraph,
   type PersistedChatSession
@@ -309,8 +308,13 @@ const createProductionDelegatedFrameworkRuntime = (
               ? { artifactCurrentRunFile: input.artifactCurrentRunFile }
               : {}),
             async confirmProcessCleanup() {
-              await ownership.recover({ ...input.session, attemptId: input.attemptId }, true)
-              ownership.assertClear({ ...input.session, attemptId: input.attemptId })
+              const selection = { ...input.session, attemptId: input.attemptId }
+              const hadOwnership = ownership.receipts(selection).length > 0
+              await ownership.recover(selection, true)
+              ownership.assertClear(selection)
+              // Empty receipts alone are not evidence: a runtime can fail before registering
+              // a process. Only successful recovery of recorded ownership supersedes its failure.
+              return hadOwnership ? true : undefined
             },
             async releaseResources() {
               preparedAttempts.delete(input.attemptId)
@@ -418,6 +422,7 @@ const createProductionDelegatedFrameworkRuntime = (
           preparedSkills: owned.preparedSkills,
           runtimeCallbacks: callbacks,
           delegatedNotebookConnection: owned.connection,
+          delegatedRuntimeHome: scope.runtimeHome,
           permissionGrantContext: {
             projectId: scope.provenance.projectId,
             sessionId: scope.provenance.sessionId

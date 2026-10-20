@@ -79,7 +79,7 @@ const TiffPageControls = ({
   ]
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <div className="absolute bottom-3 left-3 z-10 flex items-center gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur">
         {actions.map(({ label, icon: Icon, disabled, onClick }) => (
           <Tooltip key={label}>

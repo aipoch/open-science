@@ -32,15 +32,16 @@ const EnvironmentStep = ({
   const checkEnvironment = useSettingsStore((state) => state.checkEnvironment)
   const agentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
 
-  // environmentCheck.ready covers the agent runtime too, so it can't gate this host-only step.
-  // When the agent is the only gap the main process reports canAutoInstall — which by definition
-  // means every host check passed.
+  // Agent and Notebook setup belong to later steps. An installed but incompatible agent can
+  // make both ready and canAutoInstall false, so inspect host failures directly here.
   const hostReady =
     !isCheckingEnvironment &&
     !isSelectingAgent &&
     environmentCheck !== undefined &&
     environmentCheck.agentFrameworkId === agentFrameworkId &&
-    (environmentCheck.ready === true || environmentCheck.canAutoInstall === true)
+    environmentCheck.checks.every(
+      (check) => check.id === 'agent' || check.id === 'python' || check.status !== 'failed'
+    )
 
   return (
     <>

@@ -1,0 +1,4 @@
+{"name":"closed-citation-stop-with-raised-linked-footnote","kind":"footnote","citationStop":true,"translation":"完整比较记录独立观测（Doran 等，2037）。⁸ 全段保留固定设置和邻段边界。","expectedCode":null}
+{"name":"flat-footnote-after-citation-cannot-reuse-raised-identity","kind":"body-number","citationStop":true,"translation":"完整比较记录独立观测（Doran 等，2037）。⁸ 全段保留固定设置和邻段边界。","expectedCode":"annotations"}
+{"name":"changed-linked-footnote-after-citation","kind":"footnote","citationStop":true,"translation":"完整比较记录独立观测（Doran 等，2037）。⁹ 全段保留固定设置和邻段边界。","expectedCode":"annotations"}
+{"name":"duplicate-linked-footnote-after-citation","kind":"footnote","citationStop":true,"translation":"完整比较记录独立观测（Doran 等，2037）。⁸ 全段保留固定设置和邻段边界。另见⁸。","expectedCode":"annotations"}

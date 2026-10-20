@@ -35,6 +35,37 @@ const delegatedSession = (
   updatedAt: 2
 })
 
+it('drops imported historical attempts without hiding actual runtime work', () => {
+  const delegated = createDelegatedActivityProjection()
+  const session = delegatedSession([
+    { agentFrameId: 'child', attempts: [delegatedAttempt('a1', 'running')] }
+  ])
+  delegated.recordSession(session)
+  expect(delegated.getActiveDelegatedSessions()).toHaveLength(1)
+  const imported = {
+    ...session,
+    packageOrigin: {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+  }
+  delegated.recordSession(imported)
+  expect(delegated.getActiveDelegatedSessions()).toEqual([])
+  const runtimeSession = { projectId: session.projectId, sessionId: session.id }
+  expect(
+    detectActiveSessions({
+      runtime: { getActivePromptSessions: () => [runtimeSession] },
+      sideChat: { getActivePromptSessions: () => [] },
+      delegated,
+      notebook: { getActiveNotebookSessions: () => [] }
+    })
+  ).toEqual([{ ...runtimeSession, kind: 'agent' }])
+  expect(imported.runtimeContext?.delegatedWork?.records[0].attempts[0].status).toBe('running')
+})
+
 describe('detectActiveSessions', () => {
   it('tags runtime prompts as agent and notebook sessions as notebook', () => {
     const result = detectActiveSessions({

@@ -29,7 +29,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('./logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   getLogFileStatus: async () => logStatus.value
 }))
 
@@ -149,3 +150,5 @@ describe('logs IPC handlers', () => {
     expect(showItemInFolder).not.toHaveBeenCalled()
   })
 })
+
+await (await import('../../test/runtime-host')).configureTestElectronHost(await import('electron'))

@@ -1,3 +1,4 @@
+import { desktopRuntimeWritable } from '../../../stores/desktop-runtime-recovery-store'
 import { useEffect, useState } from 'react'
 
 import type { ManagedPreviewResource } from '../../../../../shared/preview-resources'
@@ -43,7 +44,7 @@ const useManagedPreviewResource = (
   } = item
 
   useEffect(() => {
-    if (!enabled) return
+    if (!enabled || !desktopRuntimeWritable()) return
 
     let disposed = false
     let acquiredResource: ManagedPreviewResource | undefined

@@ -1,19 +1,28 @@
+import { ApplicationStartup } from '@/components/ApplicationStartup'
+import { DesktopRuntimeRecovery } from '@/components/desktop-runtime-recovery'
 import './assets/main.css'
 
 import { StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App'
 import { ApplicationErrorBoundary } from '@/components/application-error-boundary'
-import { DatabaseStartupGate } from '@/components/database-startup-gate'
 import { installStreamdown } from '@/components/streamdown/install-streamdown'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
+import {
+  applyInterfaceScale,
+  isDesktopRenderer,
+  resolveInterfaceScale
+} from '@/lib/interface-scale'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
 import { startNetworkMonitor } from '@/stores/network-store'
 import { installRendererFailureDiagnostics } from './renderer-diagnostics'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { startLocalePreferenceSync } from '@/stores/locale-store'
+import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
+import { WindowsTitleBar } from '@/components/WindowsTitleBar'
+import { configureComposerDraftStorage } from '@/pages/workspace/composer-draft-storage'
 
 const rendererBootMark = 'open-science:renderer-boot-start'
 performance.mark(rendererBootMark)
@@ -34,6 +43,9 @@ installRendererFailureDiagnostics({
 
 // Apply the saved theme to <html> before the first paint so dark mode doesn't flash light on startup.
 applyTheme(resolveInitialTheme())
+const preparingInterfaceScale = applyInterfaceScale(resolveInterfaceScale()).catch(() => undefined)
+// Install the shortcut subscription even when Settings has not been opened yet.
+useInterfaceScaleStore.getState()
 
 // Swallow file drops that miss an explicit dropzone: without this, Electron navigates the whole window
 // to the dropped file (file://…), tearing down the app. Dropzones call stopPropagation/preventDefault
@@ -44,6 +56,7 @@ window.addEventListener('drop', (event) => event.preventDefault())
 // Load only the selected language before mounting, retaining a translated first app paint.
 const initialLocale = resolveInitialLocale()
 const startRenderer = (): void => {
+  if (isDesktopRenderer()) configureComposerDraftStorage('desktop-profile', 'profile')
   initI18n(initialLocale)
   applyHtmlLang(initialLocale)
   startLocalePreferenceSync()
@@ -65,26 +78,33 @@ const startRenderer = (): void => {
 
   rendererRoot.render(
     <StrictMode>
-      <ApplicationErrorBoundary>
-        <DatabaseStartupGate>
-          <App />
-        </DatabaseStartupGate>
-      </ApplicationErrorBoundary>
+      <WindowsTitleBar>
+        <ApplicationErrorBoundary>
+          <ApplicationStartup>
+            <App />
+            <DesktopRuntimeRecovery />
+          </ApplicationStartup>
+        </ApplicationErrorBoundary>
+      </WindowsTitleBar>
     </StrictMode>
   )
   performance.mark('open-science:renderer-render-scheduled')
 }
 const preparing = prepareI18nLocale(initialLocale)
-if (preparing) {
-  void preparing.then(startRenderer).catch((error: unknown) => {
-    initI18n('en')
-    const StartupFailure = (): never => {
-      throw error
-    }
-    createRoot(document.getElementById('root')!).render(
-      <ApplicationErrorBoundary>
-        <StartupFailure />
-      </ApplicationErrorBoundary>
-    )
-  })
-} else startRenderer()
+{
+  void Promise.all([preparing, preparingInterfaceScale])
+    .then(startRenderer)
+    .catch((error: unknown) => {
+      initI18n('en')
+      const StartupFailure = (): never => {
+        throw error
+      }
+      createRoot(document.getElementById('root')!).render(
+        <WindowsTitleBar>
+          <ApplicationErrorBoundary>
+            <StartupFailure />
+          </ApplicationErrorBoundary>
+        </WindowsTitleBar>
+      )
+    })
+}

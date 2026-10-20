@@ -13,8 +13,8 @@ type SessionInterruptedBannerProps = {
 const resumeButtonClassName =
   'gap-1.5 rounded-md bg-bg-200 text-sm text-text-000 hover:bg-bg-300 hover:text-text-000'
 
-// Neutral recovery banner for a session interrupted by an app restart. The Resume button re-attaches
-// the ACP runtime; while that request is in flight it is disabled so a second click cannot double-resume.
+// Neutral recovery banner for an interrupted session. Resume continues the interrupted execution,
+// reconnecting the ACP runtime when needed. Disable it in flight to prevent duplicate resumes.
 const SessionInterruptedBanner = ({
   message,
   isDisabled,
@@ -24,7 +24,10 @@ const SessionInterruptedBanner = ({
   const { t } = useTranslation()
 
   return (
-    <div className="mb-2 flex items-center gap-3 rounded-lg bg-bg-200/50 px-3 py-2">
+    <div
+      data-slot="session-recovery-notice"
+      className="mb-2 flex items-center gap-3 rounded-lg bg-bg-200/50 px-3 py-2"
+    >
       <p className="min-w-0 flex-1 break-words text-sm leading-5 text-text-000">{message}</p>
       <Button
         type="button"

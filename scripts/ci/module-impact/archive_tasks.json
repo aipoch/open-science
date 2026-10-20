@@ -1,0 +1,18 @@
+{
+  "ownerPaths": [
+    "src/main/archive-tasks/core.ts",
+    "src/main/archive-tasks/index.test.ts",
+    "src/main/archive-tasks/index.ts",
+    "src/main/archive-tasks/worker-runner.ts",
+    "src/main/archive-tasks/worker.ts"
+  ],
+  "interfacePaths": ["src/main/archive-tasks/index.ts", "src/main/archive-tasks/worker-runner.ts"],
+  "testFiles": {
+    "owner": ["src/main/archive-tasks/index.test.ts"],
+    "contract": ["src/main/skills/export.test.ts", "src/main/skill-marketplace/service.test.ts"],
+    "consumer": []
+  },
+  "consumerModules": [],
+  "capabilityOverlays": [],
+  "fallbackCapability": "main_runtime"
+}

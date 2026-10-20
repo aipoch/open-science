@@ -1,9 +1,16 @@
-import { classificationSettingsSchema } from './classification-config'
 import { isAbsolute } from 'node:path'
+import { classificationSettingsSchema } from './classification-config'
 
+import type { GrantedLocalRoot } from '../../shared/local-fs'
+import { isLanguagePreference } from '../../shared/locale'
+import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import { isPermissionProfileId } from '../../shared/permission-profiles'
+import type { ProjectFilesFilterPreference } from '../../shared/settings'
 import {
   CODEX_SUBSCRIPTION_PROVIDER_ID,
-  SETTINGS_FILE_VERSION,
   codexSubscriptionProviderIdentity,
   DEFAULT_SESSION_DETAILS_MODEL_CONFIGURATION,
   isAppIconVariant,
@@ -12,24 +19,13 @@ import {
   isCodexSubscriptionProvider,
   isCodexSubscriptionProviderId,
   isReasoningEffort,
+  SETTINGS_FILE_VERSION,
   type SessionDetailsModelConfiguration,
   type SubagentModelConfiguration,
   type VisionModelConfiguration
 } from '../../shared/settings'
-import { isPermissionProfileId } from '../../shared/permission-profiles'
-import { isLanguagePreference } from '../../shared/locale'
-import { normalizeNetworkProxySettings } from '../../shared/network-proxy'
-import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
-import type { GrantedLocalRoot } from '../../shared/local-fs'
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement } from '../../shared/notebook-runtime'
-import type { ProjectFilesFilterPreference } from '../../shared/settings'
-import {
-  createEmptySettings,
-  type StoredComputeGrant,
-  type StoredProvider,
-  type StoredSettings
-} from './types'
+import { isRecord } from '../value-guards'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
 import {
   sanitizeClaudeInfo,
   sanitizeCodexInfo,
@@ -38,8 +34,12 @@ import {
   sanitizePackageMirror,
   sanitizeProvider
 } from './record-codec'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { isRecord } from '../value-guards'
+import {
+  createEmptySettings,
+  type StoredComputeGrant,
+  type StoredProvider,
+  type StoredSettings
+} from './types'
 
 // Checks for plain JSON objects so untrusted settings payloads can be sanitized safely.
 const asString = (value: unknown): string | undefined =>

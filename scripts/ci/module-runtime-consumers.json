@@ -1,11 +1,15 @@
 {
+  "scripts/check-skill-package-boundary.mjs": [
+    "src/main/skills/package-boundary.architecture.test.ts"
+  ],
   "src/main/session-package/inspection-worker-entry.ts": ["src/main/ipc.ts"],
   "packages/process-tree-native/src/process_tree_native.cc": [
     "packages/process-tree-native/index.cjs"
   ],
   "packages/process-tree-native/index.cjs": [
     "src/main/process-tree.ts",
-    "src/main/process-tree-native-loading.macos.integration.test.ts"
+    "src/main/process-tree-native-loading.macos.integration.test.ts",
+    "src/main/update/installation-occupancy.ts"
   ],
   "packages/safe-file-publisher-native/src/safe_file_publisher_native.cc": [
     "packages/safe-file-publisher-native/index.cjs"
@@ -21,6 +25,175 @@
   "src/main/pdf-annotations/native-import-worker-entry.ts": [
     "src/main/pdf-annotations/native-import.ts"
   ],
-  "src/main/settings/archive-task-worker.ts": ["src/main/settings/archive-tasks.ts"],
-  "src/renderer/src/settings.tsx": ["src/main/windows.ts"]
+  "packages/credential-identity-probe-native/src/credential_secret.cc": [
+    "packages/credential-identity-probe-native/index.cjs"
+  ],
+  "packages/credential-identity-probe-native/src/credential_secret_linux.h": [
+    "packages/credential-identity-probe-native/src/credential_secret.cc"
+  ],
+  "packages/credential-identity-probe-native/index.cjs": [
+    "src/main/credential-identity/node-cipher.ts",
+    "src/main/credential-identity/probe.ts",
+    "src/main/credential-identity/windows-profile-key.ts"
+  ],
+  "packages/literature-citations/resources/NOTICE.md": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/american-medical-association.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/apa.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/chicago-author-date.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/harvard-cite-them-right.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/ieee.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/locales-en-US.xml": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/locales-zh-CN.xml": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/mla.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/nature.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "packages/literature-citations/resources/vancouver.csl": [
+    "packages/literature-citations/src/citation-style-library.ts"
+  ],
+  "resources/compute-askpass-win.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.cjs": ["src/main/compute/connection-adapters.ts"],
+  "resources/compute-askpass.sh": ["src/main/compute/connection-adapters.ts"],
+  "packages/notebook-syntax/assets/tree-sitter-bash.LICENSE": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-bash.provenance.json": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-bash.wasm": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-javascript.LICENSE": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-javascript.provenance.json": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-javascript.wasm": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-python.wasm": [
+    "packages/notebook-syntax/src/index.ts"
+  ],
+  "packages/notebook-syntax/assets/tree-sitter-r.wasm": ["packages/notebook-syntax/src/index.ts"],
+  "packages/notebook-syntax/assets/web-tree-sitter.wasm": ["packages/notebook-syntax/src/index.ts"],
+  "resources/notebook/python_loop.py": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/r_loop.R": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/repl_loop.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/kernel_process_host.js": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts",
+    "src/main/notebook/shell-process-ownership.windows-posix.ts"
+  ],
+  "resources/notebook/package.json": [
+    "src/main/notebook/kernel-executor.ts",
+    "src/main/notebook/runtime-service.ts"
+  ],
+  "resources/notebook/file_evidence_worker.js": ["src/main/notebook/working-file-observer.ts"],
+  "resources/find-overlay/index.html": [
+    "resources/find-overlay/findOverlay.js",
+    "src/main/windows.ts"
+  ],
+  "resources/find-overlay/findOverlay.js": ["src/main/find-overlay.ts"],
+  "src/main/session-diagnostics/worker-entry.ts": ["src/main/composition/session-foundation.ts"],
+  "packages/pdf-structure/resources/host.mjs": ["packages/pdf-structure/src/engine.ts"],
+  "packages/pdf-structure/resources/scratch.mjs": ["packages/pdf-structure/src/engine.ts"],
+  "packages/pdf-structure/resources/literature-pdf-extract.mjs": [
+    "packages/pdf-structure/resources/host.mjs"
+  ],
+  "packages/pdf-structure/resources/literature-pdf-structure.mjs": [
+    "packages/pdf-structure/resources/literature-pdf-extract.mjs"
+  ],
+  "packages/pdf-structure/resources/literature-pdf-onnx.mjs": [
+    "packages/pdf-structure/resources/literature-pdf-extract.mjs"
+  ],
+  "packages/pdf-translation/resources/worker.mjs": [
+    "packages/pdf-translation/src/writer.ts",
+    "packages/pdf-translation/src/resources.ts"
+  ],
+  "packages/skills/src/user-skill-repository.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-store.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/agent-home-skill-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-bundle-import-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-import-contracts.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-mutation-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/skill-package-transaction-owner.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-catalog-observer.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/skills/src/user-skill-compatibility-index.ts": [
+    "src/main/skills/user-skill-repository.architecture.test.ts"
+  ],
+  "packages/compute/src/job-dispatcher.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts"
+  ],
+  "packages/compute/src/job-poller.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts"
+  ],
+  "packages/compute/src/job-deletion-owner.ts": [
+    "src/main/compute/compute-password-auth.architecture.test.ts",
+    "src/main/projects/project-owned-data.catalog.architecture.test.ts"
+  ],
+  "packages/compute/src/model.ts": ["src/main/compute/compute-password-auth.architecture.test.ts"],
+  "packages/compute/src/compute-job-lifecycle.ts": [
+    "src/main/projects/project-owned-data.catalog.architecture.test.ts"
+  ],
+  "src/shared/settings.ts": ["cli/connector-contract.test.ts"],
+  "packages/open-science/index.d.ts": ["cli/connector-contract.test.ts"],
+  "packages/reproducibility/src/contracts.ts": ["scripts/electron-vite-config.test.ts"],
+  "packages/reproducibility/src/comparison-contracts.ts": ["scripts/electron-vite-config.test.ts"],
+  "packages/reproducibility/src/execution-context.ts": ["scripts/electron-vite-config.test.ts"],
+  "packages/resilient-download/test/transport.mjs": [
+    "scripts/check-resilient-download-package.mjs"
+  ],
+  "resources/pdf-translation-local/worker.mjs": [
+    "src/main/literature/pdf-translation/local.ts",
+    "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+  ],
+  "src/main/archive-tasks/worker.ts": ["src/main/archive-tasks/index.ts"],
+  "src/renderer/src/settings.tsx": ["src/main/windows.ts"],
+  "src/main/skill-marketplace/archive-worker.ts": [
+    "src/main/skill-marketplace/archive-verification.ts"
+  ]
 }

@@ -9,15 +9,14 @@ import { ApplicationCommandError } from '../../shared/application-command-contra
 // A stale client cannot commit after a successor is elected. In-flight writes pin ownership until
 // their durable commit finishes, so expiration never permits two writers inside a repository call.
 export class RuntimeWriterOwner {
-  private owner?: { clientId: string; token: string; expiresAt: number }
+  private owner?: { clientId: string; token: string; expiresAt: number; isAlive?: () => boolean }
   private writes = 0
   constructor(
     private readonly now = Date.now,
-    private readonly createToken = randomUUID,
-    private readonly isLocalWriterAlive: (clientId: string) => boolean | undefined = () => undefined
+    private readonly createToken = randomUUID
   ) {}
-  claim(clientId: string): RuntimeWriterLease {
-    const alive = this.owner && this.isLocalWriterAlive(this.owner.clientId)
+  claim(clientId: string, isAlive?: () => boolean): RuntimeWriterLease {
+    const alive = this.owner?.isAlive?.()
     if (
       !this.owner ||
       ((alive === false || (alive !== true && this.owner.expiresAt <= this.now())) &&
@@ -26,7 +25,8 @@ export class RuntimeWriterOwner {
       this.owner = {
         clientId,
         token: this.createToken(),
-        expiresAt: this.now() + RUNTIME_WRITER_LEASE_MS
+        expiresAt: this.now() + RUNTIME_WRITER_LEASE_MS,
+        isAlive
       }
     }
     if (this.owner.clientId !== clientId) return { validForMs: 4_000 }
@@ -38,7 +38,8 @@ export class RuntimeWriterOwner {
       !this.owner ||
       this.owner.clientId !== clientId ||
       this.owner.token !== token ||
-      (this.isLocalWriterAlive(clientId) !== true && this.owner.expiresAt <= this.now())
+      this.owner.isAlive?.() === false ||
+      (this.owner.isAlive?.() !== true && this.owner.expiresAt <= this.now())
     ) {
       throw new ApplicationCommandError(RUNTIME_WRITER_LOST, 'Runtime projection writer changed.')
     }

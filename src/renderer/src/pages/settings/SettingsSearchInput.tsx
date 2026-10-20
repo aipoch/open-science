@@ -8,20 +8,20 @@ import { cn } from '@/lib/utils'
 
 import {
   getSettingsSearchKeyShortcuts,
-  useSettingsSearchShortcut
+  useSettingsSearchShortcut,
+  type SettingsSearchScope
 } from './settings-search-shortcut'
 
 type SettingsSearchInputProps = Omit<ComponentProps<typeof Input>, 'ref' | 'type'> & {
   containerClassName?: string
-  // ⌘K priority within the same topmost dialog; the dialog-wide settings search passes a higher
-  // value so panel-scoped fields that mounted later do not capture the shortcut.
-  shortcutPriority?: number
+  // Local fields add Alt so they never advertise or claim the global settings shortcut.
+  shortcutScope?: SettingsSearchScope
 }
 
 export const SettingsSearchInput = ({
   className,
   containerClassName,
-  shortcutPriority,
+  shortcutScope = 'local',
   value,
   defaultValue,
   onChange,
@@ -30,7 +30,7 @@ export const SettingsSearchInput = ({
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const isMac = window.api?.platform === 'darwin'
-  useSettingsSearchShortcut(inputRef, true, shortcutPriority ?? 0)
+  useSettingsSearchShortcut(inputRef, true, shortcutScope)
   const [uncontrolledText, setUncontrolledText] = useState(
     typeof defaultValue === 'string' ? defaultValue : ''
   )
@@ -54,7 +54,7 @@ export const SettingsSearchInput = ({
   }
 
   return (
-    <div className={cn('group relative flex-1', containerClassName)}>
+    <div className={cn('group relative min-w-0 flex-1', containerClassName)}>
       <Search
         className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
         aria-hidden="true"
@@ -68,25 +68,28 @@ export const SettingsSearchInput = ({
         value={value}
         defaultValue={defaultValue}
         onChange={handleChange}
-        aria-keyshortcuts={getSettingsSearchKeyShortcuts()}
+        aria-keyshortcuts={getSettingsSearchKeyShortcuts(shortcutScope)}
         className={cn(
-          'peer pl-8 pr-2.5 [&::-webkit-search-cancel-button]:hidden [&:placeholder-shown:not(:focus)]:pr-20',
+          'peer pl-8 pr-2.5 [&::-webkit-search-cancel-button]:hidden',
+          shortcutScope === 'global' && '[&:placeholder-shown:not(:focus)]:pr-20',
           // The clear button needs more room than the text-only padding once the field has text.
           hasText && 'pr-8!',
           className
         )}
       />
-      <span
-        aria-hidden="true"
-        className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 peer-[:placeholder-shown:not(:focus)]:flex"
-      >
-        <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
-          {isMac ? '⌘' : 'Ctrl'}
-        </kbd>
-        <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
-          K
-        </kbd>
-      </span>
+      {shortcutScope === 'global' ? (
+        <span
+          aria-hidden="true"
+          className="pointer-events-none absolute right-2 top-1/2 hidden -translate-y-1/2 items-center gap-1 peer-[:placeholder-shown:not(:focus)]:flex"
+        >
+          <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
+            {isMac ? '⌘' : 'Ctrl'}
+          </kbd>
+          <kbd className="inline-flex h-5 min-w-5 items-center justify-center rounded border border-border bg-muted px-1 font-mono text-[10px] leading-none text-muted-foreground shadow-sm">
+            K
+          </kbd>
+        </span>
+      ) : null}
       {hasText ? (
         <Button
           type="button"

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { spawnSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import filesystem from 'node:fs'
@@ -22,12 +23,15 @@ import { pathToFileURL } from 'node:url'
 import { expect, it, vi } from 'vitest'
 
 import { DEFAULT_NOTEBOOK_NETWORK_SETTINGS } from '../../shared/notebook-network'
-import { defaultSpawn, installPackages, type InstallSpawn } from './package-manager'
-import { micromambaSpawnEnv, resolveMicromamba } from './micromamba'
+import { defaultSpawn } from './environment-process'
+import { installPackages, type InstallSpawn } from '@aipoch/environment'
+import { micromambaSpawnEnv, resolveMicromamba } from '@aipoch/environment'
 import { NotebookNetworkSandboxOwner } from './network-sandbox-owner'
 import { sandboxedPackageSpawn } from './package-process-sandbox'
-import { createProductionProvisioner } from './provisioner'
-import { envPrefix, rLibraryDir, rScriptBin, runtimeRoot } from './runtime-paths'
+import { createProductionProvisioner } from './environment-production'
+import { envPrefix, rLibraryDir, rScriptBin, runtimeRoot } from '@aipoch/environment'
+
+configureTestRuntimeMetadata()
 
 // Use an already staged binary; this check never downloads tools or packages.
 const micromamba = resolveMicromamba() ?? ''
@@ -671,16 +675,14 @@ it.skipIf(process.platform !== 'darwin' || !existsSync(micromamba))(
 
       await expect(
         provisioner.createNamedEnvironment('analysis', 'python', [], {
-          projectId: 'project',
-          sessionId: 'session',
-          workspaceCwd: storageRoot
+          context: { projectId: 'project', sessionId: 'session' },
+          cwd: storageRoot
         })
       ).resolves.toMatchObject({ name: 'analysis', language: 'python', ready: false })
       await expect(
         provisioner.createNamedEnvironment('r-stats', 'r', [], {
-          projectId: 'project',
-          sessionId: 'session',
-          workspaceCwd: storageRoot
+          context: { projectId: 'project', sessionId: 'session' },
+          cwd: storageRoot
         })
       ).resolves.toMatchObject({ name: 'r-stats', language: 'r', ready: false })
       for (const deniedPath of [

@@ -13,6 +13,7 @@ import type { ResolvedActionMenuEntry } from './action-menu-model'
 export const PointerActionMenu = <ActionId extends string>({
   entries,
   pointer,
+  align = 'start',
   testId,
   contentClassName,
   compact,
@@ -24,6 +25,7 @@ export const PointerActionMenu = <ActionId extends string>({
 }: {
   entries: readonly ResolvedActionMenuEntry<ActionId>[]
   pointer: { x: number; y: number }
+  align?: 'start' | 'end'
   testId: string
   contentClassName?: string
   compact?: boolean
@@ -51,7 +53,7 @@ export const PointerActionMenu = <ActionId extends string>({
         />
       </DropdownMenuTrigger>
       <DropdownMenuContent
-        align="start"
+        align={align}
         sideOffset={0}
         className={cn('min-w-[9.5rem] p-1', contentClassName)}
         data-testid={testId}

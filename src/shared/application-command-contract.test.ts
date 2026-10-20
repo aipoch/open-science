@@ -101,3 +101,19 @@ it('does not forward parameters on unrelated command failures', () => {
     })
   ).toThrow(expect.objectContaining({ code: 'invalid-command-result' }))
 })
+
+// Failure categories must survive both JSON transport and the renderer's typed reconstruction.
+it.each([
+  'settings-storage-unavailable',
+  'settings-invalid',
+  'settings-credential-unavailable'
+] as const)('round-trips %s without exposing private diagnostics', (code) => {
+  const error = Object.assign(new ApplicationCommandError(code, 'Settings could not be loaded.'), {
+    cause: new Error('/private/profile/secret')
+  })
+  const wire = JSON.parse(
+    JSON.stringify({ ok: false, error: toApplicationCommandErrorEnvelope(error) })
+  )
+  expect(wire.error).toEqual({ code, message: 'Settings could not be loaded.' })
+  expect(() => unwrapApplicationCommandOutcome(wire)).toThrow(expect.objectContaining({ code }))
+})

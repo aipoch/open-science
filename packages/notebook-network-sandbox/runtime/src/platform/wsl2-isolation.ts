@@ -331,6 +331,9 @@ const sanitizedHostEnvironment = (): NodeJS.ProcessEnv => {
     env.SystemRoot = systemRoot
     env.WINDIR = systemRoot
   }
+  // WSL can emit localized, BOM-less UTF-16LE diagnostics when stdout/stderr is redirected.
+  // Keep host-side WSL calls consistent with the setup owner without forwarding the full host env.
+  env.WSL_UTF8 = '1'
   return env
 }
 
@@ -465,6 +468,28 @@ const openWsl2GatewayBridge: Wsl2GatewayBridgeOpener = async ({
   return bridge
 }
 
+const WSL_UNC_PREFIX = /^\\\\(wsl\.localhost|wsl\$)\\([^\\]+)(?:\\(.*))?$/isu
+
+const isWindowsPath = (path: string): boolean =>
+  WINDOWS_PATH.test(path) || WSL_UNC_PREFIX.test(path)
+
+/**
+ * Translates a `\\wsl.localhost\<distro>\...` (or legacy `\\wsl$\...`) path
+ * straight to its guest absolute path when it names the launch target distro.
+ * This is the form Windows Explorer shows for distro files, so folders
+ * authorized from there must map without shelling out to wslpath. Returns
+ * undefined for anything else (drive-letter paths, other distros) so callers
+ * fall through to the regular mapping.
+ */
+export const mapWslUncPath = (path: string, distro: string): string | undefined => {
+  const match = WSL_UNC_PREFIX.exec(path)
+  if (!match) return undefined
+  if (match[2].toLowerCase() !== distro.toLowerCase()) return undefined
+  const guest = `/${(match[3] ?? '').replace(/\\/g, '/')}`
+  if (/[\0\r\n]/u.test(guest)) return undefined
+  return guest
+}
+
 const validateTarget = (target: Wsl2Target): void => {
   if (!target.profileId.trim() || !target.distro.trim() || /[\0\r\n]/u.test(target.distro)) {
     throw new Error('WSL2 sandbox profile is invalid.')
@@ -478,6 +503,12 @@ const defaultPathMapper =
   (target: Wsl2Target): Wsl2PathMapper =>
   async (path, signal) => {
     signal?.throwIfAborted()
+    // A \\wsl.localhost (or legacy \\wsl$) path already names a location inside
+    // the target distro: strip the prefix instead of shelling out to wslpath.
+    // This is also how Windows Explorer addresses distro files, so authorized
+    // folders picked from there keep working instead of failing every launch.
+    const unc = mapWslUncPath(path, target.distro)
+    if (unc) return unc
     if (!WINDOWS_PATH.test(path)) {
       if (path.startsWith('/')) return path
       throw new Error('Only canonical Windows or absolute guest paths are supported.')
@@ -636,7 +667,8 @@ const createLaunchPathMapper = (
   request: Wsl2LaunchRequest
 ): ((path: string) => Promise<string>) => {
   const mapPath = request.mapPath ?? defaultPathMapper(request.target)
-  return async (path: string): Promise<string> => {
+  const mappedPaths = new Map<string, Promise<string>>()
+  const resolvePath = async (path: string): Promise<string> => {
     try {
       const mapped = await mapPath(path, request.signal)
       request.signal?.throwIfAborted()
@@ -646,6 +678,17 @@ const createLaunchPathMapper = (
       request.signal?.throwIfAborted()
       throw new Error('WSL2 sandbox path mapping failed.')
     }
+  }
+  // Share in-flight and completed mappings only within this launch. Later launches must observe
+  // the selected distro's current mounts instead of reusing a process-wide path cache.
+  return async (path: string): Promise<string> => {
+    request.signal?.throwIfAborted()
+    let mapped = mappedPaths.get(path)
+    if (!mapped) {
+      mapped = resolvePath(path)
+      mappedPaths.set(path, mapped)
+    }
+    return mapped
   }
 }
 
@@ -679,7 +722,7 @@ const createGuestEnvironment = async (
       throw new Error('WSL2 sandbox path environment key is reserved.')
     }
     if (
-      !WINDOWS_PATH.test(value) ||
+      !isWindowsPath(value) ||
       ![...request.filesystem.readOnlyRoots, ...request.filesystem.readWriteRoots].some((root) =>
         containsWindowsPath(root, value)
       )
@@ -687,6 +730,9 @@ const createGuestEnvironment = async (
       throw new Error('WSL2 sandbox path environment is not authorized.')
     }
     environment[key] = await map(value)
+  }
+  if (environment.NPM_CONFIG_PREFIX) {
+    environment.PATH = `${environment.NPM_CONFIG_PREFIX}/bin:${environment.PATH}`
   }
   return environment
 }
@@ -778,8 +824,18 @@ const buildBubblewrapArguments = (
   for (const mount of allowedMounts) {
     args.push(mount.kind === 'readOnly' ? '--ro-bind' : '--bind', mount.path, mount.path)
   }
-  for (const root of explicitDeniedWriteRoots) args.push('--ro-bind', root, root)
-  for (const root of explicitDeniedReadRoots) args.push('--tmpfs', root)
+  for (const root of explicitDeniedWriteRoots) {
+    // A hidden root needs no host source: it may not exist in a fresh profile.
+    if (!explicitDeniedReadRoots.includes(root)) args.push('--ro-bind', root, root)
+  }
+  for (const root of explicitDeniedReadRoots) {
+    args.push('--tmpfs', root)
+    // The masking mount replaces prior bind permissions. Keep combined read/write
+    // denials read-only instead of exposing a writable temporary replacement.
+    if (deniedWriteRoots.some((denied) => containsPosixPath(denied, root))) {
+      args.push('--remount-ro', root)
+    }
+  }
   // This remount is non-recursive: explicit writable child mounts remain writable while ungranted
   // siblings under the sensitive scaffolding become read-only.
   for (const root of sensitiveRoots) args.push('--remount-ro', root)

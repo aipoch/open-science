@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { randomUUID } from 'node:crypto'
 import { readFile, realpath, rm, stat } from 'node:fs/promises'
 import { dirname, isAbsolute, join, relative, sep } from 'node:path'
@@ -34,7 +35,7 @@ import {
 } from '../../shared/execution-file-evidence'
 import { ArtifactRepository } from './repository'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
-import { defaultArtifactDurability, type ArtifactDurability } from './durability'
+import { defaultFileDurability, type FileDurability } from '@aipoch/durable-files'
 import {
   ArtifactProvenanceVersionWriter,
   normalizeArtifactFilename as normalizeFilename,
@@ -90,18 +91,20 @@ import { ContentRepository, type OpenedContent } from '../storage/content-reposi
 import { digestFileWithinBudget } from '../bounded-file-io'
 import {
   ArtifactLiteratureManifestOwner,
+  type ReadArtifactLiteratureItems,
   type RecordArtifactLiteraturePdfReadRequest,
   type RecordArtifactLiteratureSearchRequest
 } from './literature-manifest'
 import { readPreparedLiteratureSidecar } from './prepared-literature-sidecar'
 import { validateArtifactSaveSource } from './save-request'
-import type { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+import type { NotebookDependencyAnalyzer } from '@aipoch/notebook-analysis'
 
 const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 type ArtifactProvenanceRepositoryOptions = {
   storageRoot: string
   getClient: () => Promise<PrismaClient>
+  readLiteratureItems?: ReadArtifactLiteratureItems
   inputAuthority?: Pick<ImmutableInputAuthority, 'validateVersion'>
   compatibilityRepository?: ArtifactRepository
   notebookRepository?: Pick<NotebookRunRepository, 'readSessionDocuments'>
@@ -112,7 +115,7 @@ type ArtifactProvenanceRepositoryOptions = {
   ) => Promise<PersistedChatSession | undefined>
   createId?: () => string
   now?: () => Date
-  durability?: ArtifactDurability
+  durability?: FileDurability
   resourceBudgets?: LocalResourceBudgetOverrides
   versionFileOperator?: VersionFileOperator & VersionFileRecovery
   managedFileVersions?: Pick<ManagedFileVersionService, 'openVersion'>
@@ -239,7 +242,7 @@ class ArtifactProvenanceRepository {
   private readonly contentRepository: ContentRepository
   private readonly createId: () => string
   private readonly now: () => Date
-  private readonly durability: ArtifactDurability
+  private readonly durability: FileDurability
   private readonly dependencyReader: ArtifactProvenanceDependencyReader
   private readonly finalizationRecovery: ArtifactProvenanceFinalizationRecovery
   private readonly literatureManifestOwner: ArtifactLiteratureManifestOwner
@@ -256,6 +259,7 @@ class ArtifactProvenanceRepository {
 
   constructor(private readonly options: ArtifactProvenanceRepositoryOptions) {
     this.contentRepository = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: options.storageRoot,
       getClient: options.getClient
     })
@@ -265,7 +269,7 @@ class ArtifactProvenanceRepository {
       options.notebookRepository ?? new NotebookRunRepository(options.storageRoot)
     this.createId = options.createId ?? randomUUID
     this.now = options.now ?? (() => new Date())
-    this.durability = options.durability ?? defaultArtifactDurability
+    this.durability = options.durability ?? defaultFileDurability
     this.versionFileOperator =
       options.versionFileOperator ??
       new NodeVersionFileOperator({ storageRoot: options.storageRoot })
@@ -276,7 +280,7 @@ class ArtifactProvenanceRepository {
       resourceBudgets: options.resourceBudgets,
       now: () => this.now().getTime()
     })
-    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.getClient)
+    this.literatureManifestOwner = new ArtifactLiteratureManifestOwner(options.readLiteratureItems)
     const inputAuthority =
       options.inputAuthority ??
       new ImmutableInputAuthority({
@@ -429,7 +433,7 @@ class ArtifactProvenanceRepository {
                 activity_id: job.id,
                 provider_id: job.providerId,
                 shape: job.shape,
-                status: job.status as import('../../shared/compute').ComputeJobStatus,
+                status: job.status as import('@aipoch/compute').ComputeJobStatus,
                 file_evidence: {
                   state: fileEvidence?.state ?? 'unavailable',
                   ...(fileEvidence?.evidenceId ? { evidence_id: fileEvidence.evidenceId } : {}),

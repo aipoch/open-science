@@ -1,5 +1,9 @@
+import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { ErrorNotice } from '@/components/error-notice'
-import { PackageOperationIndicator } from '@/components/SessionPackageOperation'
+import {
+  PackageExportProgressButton,
+  PackageOperationIndicator
+} from '@/components/SessionPackageOperation'
 /* Hallmark · macrostructure: operational-home-dashboard · genre: modern-minimal · tone: quiet/technical · anchor: teal
  * pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · icons: pass (30)
  * slop: pass (42–49) · mobile: pass (34, 49, 50–57)
@@ -44,6 +48,10 @@ import { useProjectStore } from '@/stores/project-store'
 import { useArchiveUndoStore } from '@/stores/archive-undo-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectFormDialog } from '@/hooks/useProjectFormDialog'
+import {
+  useSessionPendingInteractions,
+  type SessionPendingInteractionFacts
+} from '@/hooks/useSessionPendingInteractions'
 import { startWslSetupConversation } from '@/lib/wsl-support-handoff'
 import { GitHubStarBadge } from '@/components/GitHubStarBadge'
 import { NetworkStatusIndicator } from '@/components/NetworkStatusIndicator'
@@ -55,7 +63,7 @@ import { APP } from '../../../../shared/app-config'
 import { earliestCurrentDelegatedAttemptStartedAt } from '../../../../shared/delegated-work-projection'
 import type { Project } from '../../../../shared/projects'
 import type { EnvironmentCheckItem, EnvironmentCheckResult } from '../../../../shared/settings'
-import { getEnvironmentRepairPanel } from '../settings/settings-navigation'
+import { getEnvironmentRepairPanel } from '@/lib/settings-navigation'
 import {
   isSessionWaitReason,
   projectPresentedSessionActionability,
@@ -120,9 +128,9 @@ const getRequiredEnvironmentFailures = (
 const getHomeSessionActivity = (
   session: ChatSession,
   hasNonTerminalCompute: boolean,
-  credentialPending: boolean
+  pendingInteractions: SessionPendingInteractionFacts = {}
 ): HomeSessionActivity | undefined => {
-  const actionability = projectPresentedSessionActionability(session, { credentialPending })
+  const actionability = projectPresentedSessionActionability(session, pendingInteractions)
   if (actionability.waitReason) return actionability.waitReason
   if (actionability.activity === 'running' || hasNonTerminalCompute) return 'running'
   return undefined
@@ -144,11 +152,14 @@ const sectionHeadingClassName =
 
 const listCardClassName = 'rounded-2xl bg-bg-000 p-1.5 shadow-card'
 
+const emptyStateClassName =
+  'flex min-h-[180px] flex-col items-center justify-center rounded-2xl border border-dashed border-border p-6 text-center'
+
 const rowClassName =
   'group flex w-full items-center gap-2 rounded-xl px-2.5 py-2.5 text-left hover:bg-bg-300 sm:px-3'
 
 const rowActionClassName =
-  'shrink-0 rounded p-0.5 text-text-300 opacity-100 transition-opacity duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100'
+  'inline-flex size-7 shrink-0 items-center justify-center rounded text-text-300 opacity-100 transition-opacity duration-150 ease-out hover:bg-bg-400 hover:text-text-000 focus-visible:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 data-[state=open]:opacity-100'
 
 const withSessionDescriptionTooltip = (
   description: string | undefined,
@@ -205,7 +216,7 @@ const HomePage = ({
   const openSettings = useSettingsStore((state) => state.openSettings)
   const environmentCheck = useSettingsStore((state) => state.environmentCheck)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
-  const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const pendingInteractions = useSessionPendingInteractions()
   const requiredEnvironmentFailures = getRequiredEnvironmentFailures(environmentCheck)
   const environmentRepairPanel = getEnvironmentRepairPanel(requiredEnvironmentFailures)
 
@@ -252,6 +263,12 @@ const HomePage = ({
     [activeProjects]
   )
 
+  const isProjectArchiveBlockedByCatalogRecovery = (projectId: string): boolean => {
+    if (hasCompleteSessionCatalog) return false
+    if (effectiveCatalogRecovery.kind !== 'damaged-authority') return true
+    return effectiveCatalogRecovery.affectedFiles.some((file) => file.projectId === projectId)
+  }
+
   // Non-pending sessions only; pending ones have no durable project yet.
   const persistedSessions = useMemo(
     () =>
@@ -294,23 +311,13 @@ const HomePage = ({
     return startedAtBySession
   }, [computeJobsById])
 
-  const credentialPendingSessionIds = useMemo(
-    () =>
-      new Set(
-        pendingCredentialRequests.flatMap((request) =>
-          request.sessionId ? [request.sessionId] : []
-        )
-      ),
-    [pendingCredentialRequests]
-  )
-
   const sessionUpdates = useMemo<HomeSessionUpdate[]>(() => {
     const updates = persistedSessions.flatMap<HomeSessionUpdate>((session) => {
       const computeStartedAt = activeComputeStartedAtBySession.get(session.id)
       const activity = getHomeSessionActivity(
         session,
         computeStartedAt !== undefined,
-        credentialPendingSessionIds.has(session.id)
+        pendingInteractions.get(session.id)
       )
 
       if (activity) {
@@ -345,7 +352,7 @@ const HomePage = ({
     )
   }, [
     activeComputeStartedAtBySession,
-    credentialPendingSessionIds,
+    pendingInteractions,
     persistedSessions,
     unreadCompletedBySession
   ])
@@ -381,14 +388,14 @@ const HomePage = ({
             getHomeSessionActivity(
               session,
               activeComputeStartedAtBySession.has(session.id),
-              credentialPendingSessionIds.has(session.id)
+              pendingInteractions.get(session.id)
             ) === 'running'
         ).length,
         waitingCount: projectSessions.filter((session) => {
           const activity = getHomeSessionActivity(
             session,
             activeComputeStartedAtBySession.has(session.id),
-            credentialPendingSessionIds.has(session.id)
+            pendingInteractions.get(session.id)
           )
           return activity !== undefined && isSessionWaitReason(activity)
         }).length,
@@ -401,17 +408,15 @@ const HomePage = ({
         Number(Boolean(right.project.pinned)) - Number(Boolean(left.project.pinned)) ||
         right.lastActivityAt - left.lastActivityAt
     )
-  }, [
-    activeComputeStartedAtBySession,
-    activeProjects,
-    credentialPendingSessionIds,
-    persistedSessions
-  ])
+  }, [activeComputeStartedAtBySession, activeProjects, pendingInteractions, persistedSessions])
 
   const recentSessions = useRecentSessions(
     persistedSessions,
     isProjectsLoaded && !loadError && hasCompleteSessionCatalog
   )
+
+  const bothListsEmpty =
+    isProjectsLoaded && !loadError && projectSummaries.length === 0 && recentSessions.length === 0
 
   const showArtifactCounts = hasCompleteSessionCatalog && recentSessions.length === 0
 
@@ -493,7 +498,7 @@ const HomePage = ({
   }
 
   const canArchiveProject = (project: Project): boolean =>
-    hasCompleteSessionCatalog &&
+    !isProjectArchiveBlockedByCatalogRecovery(project.id) &&
     canDeleteProjects &&
     project.archivedAt === undefined &&
     !sessions.some(
@@ -502,13 +507,13 @@ const HomePage = ({
         getHomeSessionActivity(
           session,
           activeComputeStartedAtBySession.has(session.id),
-          credentialPendingSessionIds.has(session.id)
+          pendingInteractions.get(session.id)
         ) !== undefined
     )
 
   const archiveUnavailableReason = (project: Project): string | undefined => {
     if (!canDeleteProjects) return t('Retry project recovery before archiving.')
-    if (!hasCompleteSessionCatalog) {
+    if (isProjectArchiveBlockedByCatalogRecovery(project.id)) {
       if (effectiveCatalogRecovery.kind === 'damaged-authority') {
         return t(
           'Project archive is unavailable because a damaged conversation cannot be verified.'
@@ -636,532 +641,602 @@ const HomePage = ({
   }
 
   return (
-    <TooltipProvider delayDuration={200}>
-      <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
-        <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
-          <header className="flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
-                <a
-                  href={APP.links.website}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 hover:text-text-100"
-                >
-                  Open-Science
-                </a>
-                {hasCompleteSessionCatalog &&
-                (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
-                  <div className="flex items-center gap-1.5 text-xs font-medium">
-                    {activeSessionCounts.waiting > 0 ? (
-                      <span className="text-session-waiting">
-                        {t('{{count}} waiting on you', { count: activeSessionCounts.waiting })}
-                      </span>
-                    ) : null}
-                    {activeSessionCounts.waiting > 0 && activeSessionCounts.running > 0 ? (
-                      <span className="text-text-300" aria-hidden="true">
-                        ·
-                      </span>
-                    ) : null}
-                    {activeSessionCounts.running > 0 ? (
-                      <span className="text-session-running">
-                        {t('{{count}} running', { count: activeSessionCounts.running })}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : null}
+    <TooltipProvider>
+      <ProjectPackageDropZone canImport className="relative h-svh">
+        <main className="h-svh overflow-y-auto bg-bg-10 text-text-000">
+          <div className="mx-auto max-w-[1080px] px-4 py-5 pb-12 sm:px-8 sm:py-7 sm:pb-16">
+            <header className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                  <a
+                    href={APP.links.website}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-serif text-[26px] font-medium leading-none tracking-[-0.02em] text-text-000 hover:text-text-100"
+                  >
+                    Open-Science
+                  </a>
+                  {hasCompleteSessionCatalog &&
+                  (activeSessionCounts.waiting > 0 || activeSessionCounts.running > 0) ? (
+                    <div className="flex items-center gap-1.5 text-xs font-medium">
+                      {activeSessionCounts.waiting > 0 ? (
+                        <span className="text-session-waiting">
+                          {t('{{count}} waiting on you', { count: activeSessionCounts.waiting })}
+                        </span>
+                      ) : null}
+                      {activeSessionCounts.waiting > 0 && activeSessionCounts.running > 0 ? (
+                        <span className="text-text-300" aria-hidden="true">
+                          ·
+                        </span>
+                      ) : null}
+                      {activeSessionCounts.running > 0 ? (
+                        <span className="text-session-running">
+                          {t('{{count}} running', { count: activeSessionCounts.running })}
+                        </span>
+                      ) : null}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-              <div className="mt-1 text-[11px] text-muted-foreground">{t('Beta')}</div>
-            </div>
-            <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
-              {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
-                <button
-                  type="button"
-                  onClick={() => openSettingsToPanel(environmentRepairPanel)}
-                  className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 hover:border-danger-000/55 hover:bg-danger-900/80"
-                  aria-label={t('Open environment repair')}
-                >
-                  <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                  <span className="hidden sm:inline">
-                    {requiredEnvironmentFailures.length === 1
-                      ? t('{{label}} needs attention', {
-                          label: requiredEnvironmentFailures[0].label
-                        })
-                      : t('{{count}} environment items need attention', {
-                          count: requiredEnvironmentFailures.length
-                        })}
-                  </span>
-                  <span className="sm:hidden">{t('Environment')}</span>
-                </button>
-              ) : null}
-              <NetworkStatusIndicator variant="pill" />
-              <span className="hidden sm:inline-flex">
-                <GitHubStarBadge variant="home" />
-              </span>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={onOpenGlobalSearch}
-                aria-label={t('Search')}
-                title={t('Search (Cmd/Ctrl+K)')}
-              >
-                <Search className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="size-9 rounded-lg text-text-300"
-                onClick={() => openLibrary('user')}
-                aria-label={t('Library')}
-                title={t('Library')}
-              >
-                <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
-              </Button>
-              <NotificationBell />
-              <button
-                type="button"
-                aria-label={t('Model settings')}
-                data-settings-trigger="home"
-                onClick={openSettings}
-                className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
-              >
-                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-              </button>
-              <UpdateCapsule />
-              {/* Account button hidden for now; restore when the account flow lands. */}
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-8 gap-1 rounded-md px-3 text-xs"
-                onClick={openCreateDialog}
-                aria-label={t('New project')}
-              >
-                <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
-                <span className="hidden sm:inline">{t('New project')}</span>
-              </Button>
-            </div>
-          </header>
-          <PackageOperationIndicator />
+              <div className="flex flex-wrap items-center justify-end gap-1">
+                {requiredEnvironmentFailures.length > 0 && environmentRepairPanel ? (
+                  <button
+                    type="button"
+                    onClick={() => openSettingsToPanel(environmentRepairPanel)}
+                    className="inline-flex h-8 cursor-pointer items-center gap-1.5 rounded-md border border-danger-000/35 bg-danger-900 px-2.5 text-xs font-medium text-danger-000 hover:border-danger-000/55 hover:bg-danger-900/80"
+                    aria-label={t('Open environment repair')}
+                  >
+                    <CircleAlert className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                    <span className="hidden sm:inline">
+                      {requiredEnvironmentFailures.length === 1
+                        ? t('{{label}} needs attention', {
+                            label: requiredEnvironmentFailures[0].label
+                          })
+                        : t('{{count}} environment items need attention', {
+                            count: requiredEnvironmentFailures.length
+                          })}
+                    </span>
+                    <span className="sm:hidden">{t('Environment')}</span>
+                  </button>
+                ) : null}
+                <NetworkStatusIndicator variant="pill" withTooltipProvider={false} />
+                <PackageExportProgressButton iconOnly />
+                <span className="hidden sm:inline-flex">
+                  <GitHubStarBadge variant="home" withTooltipProvider={false} />
+                </span>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 rounded-lg text-text-300"
+                      onClick={onOpenGlobalSearch}
+                      aria-label={t('Search')}
+                    >
+                      <Search className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('Search (Cmd/Ctrl+K)')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="size-9 rounded-lg text-text-300"
+                      onClick={() => openLibrary('user')}
+                      aria-label={t('Library')}
+                    >
+                      <BookOpenText className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('Library')}</TooltipContent>
+                </Tooltip>
+                <NotificationBell withTooltipProvider={false} />
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <button
+                      type="button"
+                      data-settings-trigger="home"
+                      aria-label={t('Settings')}
+                      onClick={openSettings}
+                      className="inline-flex size-9 items-center justify-center rounded-lg text-text-300 hover:bg-bg-300 hover:text-text-000"
+                    >
+                      <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('Settings')}</TooltipContent>
+                </Tooltip>
+                <UpdateCapsule withTooltipProvider={false} />
+                {/* Account button hidden for now; restore when the account flow lands. */}
+                <Tooltip>
+                  <TooltipTrigger
+                    asChild
+                    onFocus={(event) => {
+                      if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+                    }}
+                  >
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-8 gap-1 rounded-md px-3 text-xs"
+                      onClick={openCreateDialog}
+                      aria-label={t('New project')}
+                    >
+                      <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      <span className="hidden sm:inline">{t('New project')}</span>
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">{t('New project')}</TooltipContent>
+                </Tooltip>
+              </div>
+            </header>
+            <PackageOperationIndicator />
 
-          {sessionUpdates.length > 0 ? (
-            <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
-              <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
-                {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
-                  const waitReason = isSessionWaitReason(activity) ? activity : undefined
-                  const waiting = waitReason !== undefined
-                  const completed = activity === 'completed'
-                  // A finished session reads "just now" rather than the bare bucket, so the two cases
-                  // stay separate keys instead of being assembled from a translated fragment.
-                  const isJustNow = relativeTimeParts(activityTimestamp).unit === 'now'
-                  const relativeActivityTime = relativeTime(activityTimestamp)
-                  const markingRead = markingReadSessionIds.has(session.id)
-                  const markReadFailed = markReadErrorSessionIds.has(session.id)
+            {sessionUpdates.length > 0 ? (
+              <section className="mt-8 sm:mt-10" aria-label={t('Session updates')}>
+                <div className="grid grid-cols-1 gap-3 py-1 md:grid-cols-2">
+                  {sessionUpdates.map(({ session, activity, activityTimestamp }) => {
+                    const waitReason = isSessionWaitReason(activity) ? activity : undefined
+                    const waiting = waitReason !== undefined
+                    const completed = activity === 'completed'
+                    // A finished session reads "just now" rather than the bare bucket, so the two cases
+                    // stay separate keys instead of being assembled from a translated fragment.
+                    const isJustNow = relativeTimeParts(activityTimestamp).unit === 'now'
+                    const relativeActivityTime = relativeTime(activityTimestamp)
+                    const markingRead = markingReadSessionIds.has(session.id)
+                    const markReadFailed = markReadErrorSessionIds.has(session.id)
 
-                  return (
-                    <div key={session.id} className="home-session-card group relative min-w-0">
-                      {withSessionDescriptionTooltip(
-                        session.description,
-                        <button
-                          type="button"
-                          // Fixed height sized to the tallest content (status row + title +
-                          // two-line description, ~154px); cards without a description keep the
-                          // height and mt-auto sinks the project line.
-                          className="flex h-[156px] w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
-                          onClick={() => openSession(session.projectId, session.id, 'user')}
-                          aria-label={
-                            waitReason
-                              ? t(homeSessionWaitAriaLabelKeys[waitReason], {
-                                  title: session.title
-                                })
-                              : completed
-                                ? t('Open session {{title}}, completed', { title: session.title })
-                                : t('Open session {{title}}, running', { title: session.title })
-                          }
-                        >
-                          {/* Status leads the card — the Home grid answers "what needs me" at a glance. */}
-                          <span className="flex w-full items-center justify-between gap-3">
+                    return (
+                      <div key={session.id} className="home-session-card group relative min-w-0">
+                        {withSessionDescriptionTooltip(
+                          session.description,
+                          <button
+                            type="button"
+                            // Fixed height sized to the tallest content (status row + title +
+                            // two-line description, ~154px); cards without a description keep the
+                            // height and mt-auto sinks the project line.
+                            className="flex h-[156px] w-full min-w-0 cursor-pointer flex-col rounded-2xl bg-bg-000 pb-3 px-[18px] pt-4 text-left shadow-card hover:bg-bg-200 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                            onClick={() => openSession(session.projectId, session.id, 'user')}
+                            aria-label={
+                              waitReason
+                                ? t(homeSessionWaitAriaLabelKeys[waitReason], {
+                                    title: session.title
+                                  })
+                                : completed
+                                  ? t('Open session {{title}}, completed', { title: session.title })
+                                  : t('Open session {{title}}, running', { title: session.title })
+                            }
+                          >
+                            {/* Status leads the card — the Home grid answers "what needs me" at a glance. */}
+                            <span className="flex w-full items-center justify-between gap-3">
+                              <span
+                                className={cn(
+                                  'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
+                                  waiting
+                                    ? 'bg-session-waiting/10 text-session-waiting'
+                                    : completed
+                                      ? 'bg-success-000/10 text-success-000'
+                                      : 'bg-session-running/10 text-session-running'
+                                )}
+                              >
+                                {completed ? (
+                                  <Check className="size-3" strokeWidth={2} aria-hidden="true" />
+                                ) : waiting ? (
+                                  <span
+                                    className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
+                                    aria-hidden="true"
+                                  />
+                                ) : (
+                                  <LoaderCircle
+                                    className="size-3.5 animate-spin motion-reduce:animate-none"
+                                    strokeWidth={2}
+                                    aria-hidden="true"
+                                  />
+                                )}
+                                {t(
+                                  waitReason
+                                    ? sessionWaitReasonLabelKeys[waitReason]
+                                    : completed
+                                      ? 'Completed'
+                                      : 'Running'
+                                )}
+                              </span>
+                              {/* Flush right on every card — a reserved dismiss gap leaves the time
+                              floating left of where a long truncated title ends. */}
+                              <span className="shrink-0 text-xs text-text-100">
+                                {completed
+                                  ? isJustNow
+                                    ? t('just now')
+                                    : relativeActivityTime
+                                  : waiting
+                                    ? t('waiting {{time}}', { time: relativeActivityTime })
+                                    : t('running {{time}}', { time: relativeActivityTime })}
+                              </span>
+                            </span>
                             <span
                               className={cn(
-                                'inline-flex shrink-0 items-center gap-1.5 rounded-md px-2 py-1 text-xs font-medium',
-                                waiting
-                                  ? 'bg-session-waiting/10 text-session-waiting'
-                                  : completed
-                                    ? 'bg-success-000/10 text-success-000'
-                                    : 'bg-session-running/10 text-session-running'
+                                'mt-2.5 min-w-0 max-w-full truncate text-base font-semibold text-text-000',
+                                !waiting && !completed && 'home-session-title-running'
                               )}
                             >
-                              {completed ? (
-                                <Check className="size-3" strokeWidth={2} aria-hidden="true" />
-                              ) : waiting ? (
+                              {session.title}
+                            </span>
+                            {session.description?.trim() ? (
+                              <span
+                                data-testid="session-description-preview"
+                                className="mt-1.5 line-clamp-2 break-words text-xs leading-[1.4] text-text-300"
+                              >
+                                {session.description.trim()}
+                              </span>
+                            ) : null}
+                            <span className="mt-auto w-full truncate pt-3 text-xs text-text-100">
+                              {projectNames.get(session.projectId) ?? t('Unknown project')}
+                            </span>
+                          </button>
+                        )}
+                        {completed ? (
+                          <button
+                            type="button"
+                            className={cn(
+                              "home-session-dismiss absolute top-3 right-3 inline-flex size-9 cursor-pointer items-center justify-center rounded-lg text-text-300 transition-opacity duration-150 ease-out before:absolute before:-inset-1 before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none",
+                              markReadFailed && 'text-danger-000'
+                            )}
+                            onClick={() => void dismissCompletedSession(session.id)}
+                            disabled={markingRead}
+                            aria-busy={markingRead}
+                            aria-label={
+                              markReadFailed
+                                ? t('Retry marking completed session {{title}} as read', {
+                                    title: session.title
+                                  })
+                                : t('Mark completed session {{title}} as read', {
+                                    title: session.title
+                                  })
+                            }
+                            title={
+                              markReadFailed ? t('Could not mark as read. Try again.') : undefined
+                            }
+                          >
+                            {markingRead ? (
+                              <LoaderCircle
+                                className="size-4 animate-spin motion-reduce:animate-none"
+                                strokeWidth={2}
+                                aria-hidden="true"
+                              />
+                            ) : (
+                              <X className="size-4" strokeWidth={2} aria-hidden="true" />
+                            )}
+                            {markReadFailed ? (
+                              <span className="sr-only" role="alert">
+                                {t('Could not mark this completed session as read. Try again.')}
+                              </span>
+                            ) : null}
+                          </button>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                </div>
+              </section>
+            ) : null}
+
+            <div
+              className={cn(
+                'grid grid-cols-1 gap-7 sm:gap-8 lg:grid-cols-2',
+                sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
+              )}
+            >
+              <section
+                className={cn('min-w-0', bothListsEmpty && 'lg:flex lg:flex-col')}
+                aria-label={t('Projects')}
+              >
+                <h2 className={sectionHeadingClassName}>
+                  <GalleryVerticalEnd
+                    className="size-4 text-text-100"
+                    strokeWidth={2}
+                    aria-hidden="true"
+                  />
+                  {t('Projects')}
+                </h2>
+                {projectActionError ? (
+                  <div
+                    className="mb-3 rounded-2xl border border-danger-000/30 px-4 py-3 text-sm text-danger-000"
+                    role="alert"
+                  >
+                    {projectActionError}
+                  </div>
+                ) : null}
+                <ProjectDeletionCleanupNotice className="mb-3 rounded-2xl px-4 py-3" />
+                {loadError ? (
+                  <ErrorNotice
+                    role="alert"
+                    description={t('Open-Science could not load projects. Retry to continue.')}
+                    primaryButton={{
+                      label: isRetryingProjects ? t('Retrying...') : t('Retry'),
+                      loading: isRetryingProjects,
+                      onClick: retryProjectLoad
+                    }}
+                  />
+                ) : !isProjectsLoaded && projectSummaries.length === 0 ? (
+                  <div
+                    role="status"
+                    className="px-4 py-10 text-center text-sm text-muted-foreground"
+                  >
+                    {t('Loading…')}
+                  </div>
+                ) : projectSummaries.length === 0 ? (
+                  <div className={cn(emptyStateClassName, bothListsEmpty && 'lg:flex-1')}>
+                    <h3 className="text-[15px] font-medium leading-5 text-foreground">
+                      {t('Create a project, start a conversation')}
+                    </h3>
+                    <p className="mt-2 text-[13px] leading-5 text-muted-foreground">
+                      {t('Keep your files and conversations together in a project.')}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="mt-5 h-auto min-h-8 max-w-full gap-1.5 rounded-md px-3 py-1.5 text-xs whitespace-normal"
+                      onClick={openCreateDialog}
+                    >
+                      <Plus className="size-3.5" strokeWidth={2} aria-hidden="true" />
+                      {t('New project')}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className={listCardClassName}>
+                    {projectSummaries.map(
+                      ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
+                        <div
+                          key={project.id}
+                          className={cn(rowClassName, 'relative')}
+                          title={project.description || project.name}
+                        >
+                          <button
+                            type="button"
+                            className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left after:absolute after:inset-0 after:rounded-[inherit]"
+                            onClick={() => openProject(project.id, 'user')}
+                          >
+                            <span className="min-w-0 truncate font-semibold text-text-000">
+                              {project.name}
+                            </span>
+                            {project.pinned ? (
+                              <>
+                                <Star
+                                  className="size-4 shrink-0 fill-current text-session-waiting"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                                <span className="sr-only">{t('Pinned project')}</span>
+                              </>
+                            ) : null}
+                            {project.isExample ? (
+                              <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
+                                {t('Example')}
+                              </span>
+                            ) : null}
+                            {hasCompleteSessionCatalog && waitingCount > 0 ? (
+                              <span
+                                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
+                                aria-label={t('{{count}} waiting on you', { count: waitingCount })}
+                              >
                                 <span
                                   className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
                                   aria-hidden="true"
                                 />
-                              ) : (
+                                <span aria-hidden="true">{waitingCount}</span>
+                              </span>
+                            ) : null}
+                            {hasCompleteSessionCatalog && runningCount > 0 ? (
+                              <span
+                                className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
+                                aria-label={t('{{count}} running', { count: runningCount })}
+                              >
                                 <LoaderCircle
-                                  className="size-3.5 animate-spin motion-reduce:animate-none"
+                                  className="size-3 animate-spin motion-reduce:animate-none"
                                   strokeWidth={2}
                                   aria-hidden="true"
                                 />
-                              )}
-                              {t(
-                                waitReason
-                                  ? sessionWaitReasonLabelKeys[waitReason]
-                                  : completed
-                                    ? 'Completed'
-                                    : 'Running'
-                              )}
-                            </span>
-                            {/* Flush right on every card — a reserved dismiss gap leaves the time
-                              floating left of where a long truncated title ends. */}
-                            <span className="shrink-0 text-xs text-text-100">
-                              {completed
-                                ? isJustNow
-                                  ? t('just now')
-                                  : relativeActivityTime
-                                : waiting
-                                  ? t('waiting {{time}}', { time: relativeActivityTime })
-                                  : t('running {{time}}', { time: relativeActivityTime })}
-                            </span>
+                                <span aria-hidden="true">{runningCount}</span>
+                              </span>
+                            ) : null}
+                          </button>
+                          <span className="hidden shrink-0 text-xs text-text-100 sm:inline">
+                            {hasCompleteSessionCatalog
+                              ? t('{{count}} sessions', {
+                                  defaultValue_one: '{{count}} session',
+                                  count: sessionCount
+                                })
+                              : t('Session count unavailable')}
                           </span>
-                          <span
-                            className={cn(
-                              'mt-2.5 min-w-0 max-w-full truncate text-base font-semibold text-text-000',
-                              !waiting && !completed && 'home-session-title-running'
-                            )}
-                          >
+                          {showArtifactCounts && artifactCounts.has(project.id) ? (
+                            <span className="hidden shrink-0 tabular-nums text-xs text-text-100 sm:inline">
+                              {t('{{count}} artifacts', {
+                                defaultValue_one: '{{count}} artifact',
+                                count: artifactCounts.get(project.id)
+                              })}
+                            </span>
+                          ) : null}
+                          <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
+                            {relativeTime(lastActivityAt)}
+                          </span>
+                          <DropdownMenu>
+                            <DropdownMenuTrigger asChild>
+                              <button
+                                type="button"
+                                className={cn(rowActionClassName, 'relative z-10')}
+                                aria-label={t('Open actions for {{name}}', { name: project.name })}
+                              >
+                                <MoreVertical
+                                  className="size-3.5"
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                              </button>
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent
+                              aria-label={t('Project actions')}
+                              className="w-max min-w-0"
+                              align="end"
+                              sideOffset={6}
+                            >
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={pinningProjectIds.has(project.id)}
+                                onSelect={() => toggleProjectPin(project)}
+                              >
+                                <Star
+                                  className={cn('size-4', project.pinned && 'fill-current')}
+                                  strokeWidth={2}
+                                  aria-hidden="true"
+                                />
+                                {t(project.pinned ? 'Unpin project' : 'Pin project')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2"
+                                onSelect={() => openEditDialog(project)}
+                              >
+                                <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
+                                {t('Settings')}
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                className="gap-2"
+                                disabled={
+                                  !canArchiveProject(project) || archivingProjectIds.has(project.id)
+                                }
+                                aria-describedby={
+                                  archiveUnavailableReason(project)
+                                    ? `archive-reason-${project.id}`
+                                    : undefined
+                                }
+                                onSelect={() => archiveProject(project)}
+                              >
+                                <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
+                                {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
+                                {archivingProjectIds.has(project.id)
+                                  ? t('Archiving…')
+                                  : t('Archive', { context: 'verb' })}
+                              </DropdownMenuItem>
+                              {archiveUnavailableReason(project) ? (
+                                <p
+                                  id={`archive-reason-${project.id}`}
+                                  className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
+                                >
+                                  {archiveUnavailableReason(project)}
+                                </p>
+                              ) : null}
+                              <DropdownMenuSeparator />
+                              <DropdownMenuItem
+                                className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
+                                disabled={!canDeleteProjects}
+                                aria-describedby={
+                                  !canDeleteProjects ? `delete-reason-${project.id}` : undefined
+                                }
+                                onSelect={() => openDeleteDialog(project)}
+                              >
+                                <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
+                                {t('Delete')}
+                              </DropdownMenuItem>
+                              {!canDeleteProjects ? (
+                                <p
+                                  id={`delete-reason-${project.id}`}
+                                  className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
+                                >
+                                  {t('Retry project recovery before deleting projects.')}
+                                </p>
+                              ) : null}
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                        </div>
+                      )
+                    )}
+                  </div>
+                )}
+              </section>
+
+              <section
+                className={cn('min-w-0', bothListsEmpty && 'lg:flex lg:flex-col')}
+                aria-label={t('Recent sessions')}
+              >
+                <h2 className={sectionHeadingClassName}>
+                  <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
+                  {t('Recent sessions')}
+                </h2>
+                {recentSessions.length === 0 ? (
+                  <div
+                    className={cn(
+                      emptyStateClassName,
+                      'text-[13px] leading-5 text-muted-foreground',
+                      bothListsEmpty && 'lg:flex-1'
+                    )}
+                  >
+                    {t('Sessions you start will appear here.')}
+                  </div>
+                ) : (
+                  <div className={listCardClassName}>
+                    {recentSessions.map((session) => (
+                      <button
+                        key={session.id}
+                        type="button"
+                        className={cn(rowClassName, 'cursor-pointer items-start')}
+                        onClick={() => openSession(session.projectId, session.id, 'user')}
+                        title={session.title}
+                      >
+                        <span
+                          className="mt-1 inline-flex size-3 shrink-0 items-center justify-center"
+                          aria-hidden="true"
+                        >
+                          <span className="size-[7px] rounded-full border border-text-100" />
+                        </span>
+                        <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <span className="truncate text-sm font-medium text-text-000">
                             {session.title}
                           </span>
-                          {session.description?.trim() ? (
-                            <span
-                              data-testid="session-description-preview"
-                              className="mt-1.5 line-clamp-2 break-words text-xs leading-[1.4] text-text-300"
-                            >
-                              {session.description.trim()}
-                            </span>
-                          ) : null}
-                          <span className="mt-auto w-full truncate pt-3 text-xs text-text-100">
+                          <span className="truncate text-xs text-text-100">
                             {projectNames.get(session.projectId) ?? t('Unknown project')}
                           </span>
-                        </button>
-                      )}
-                      {completed ? (
-                        <button
-                          type="button"
-                          className={cn(
-                            "home-session-dismiss absolute top-3 right-3 inline-flex size-9 cursor-pointer items-center justify-center rounded-lg text-text-300 transition-opacity duration-150 ease-out before:absolute before:-inset-1 before:content-[''] hover:bg-bg-300 hover:text-text-000 focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-400 disabled:cursor-wait disabled:opacity-60 motion-reduce:transition-none",
-                            markReadFailed && 'text-danger-000'
-                          )}
-                          onClick={() => void dismissCompletedSession(session.id)}
-                          disabled={markingRead}
-                          aria-busy={markingRead}
-                          aria-label={
-                            markReadFailed
-                              ? t('Retry marking completed session {{title}} as read', {
-                                  title: session.title
-                                })
-                              : t('Mark completed session {{title}} as read', {
-                                  title: session.title
-                                })
-                          }
-                          title={
-                            markReadFailed ? t('Could not mark as read. Try again.') : undefined
-                          }
-                        >
-                          {markingRead ? (
-                            <LoaderCircle
-                              className="size-4 animate-spin motion-reduce:animate-none"
-                              strokeWidth={2}
-                              aria-hidden="true"
-                            />
-                          ) : (
-                            <X className="size-4" strokeWidth={2} aria-hidden="true" />
-                          )}
-                          {markReadFailed ? (
-                            <span className="sr-only" role="alert">
-                              {t('Could not mark this completed session as read. Try again.')}
-                            </span>
-                          ) : null}
-                        </button>
-                      ) : null}
-                    </div>
-                  )
-                })}
-              </div>
-            </section>
-          ) : null}
-
-          <div
-            className={cn(
-              'grid grid-cols-1 gap-7 sm:gap-8 lg:grid-cols-2',
-              sessionUpdates.length > 0 ? 'mt-8' : 'mt-8 sm:mt-10'
-            )}
-          >
-            <section className="min-w-0" aria-label={t('Projects')}>
-              <h2 className={sectionHeadingClassName}>
-                <GalleryVerticalEnd
-                  className="size-4 text-text-100"
-                  strokeWidth={2}
-                  aria-hidden="true"
-                />
-                {t('Projects')}
-              </h2>
-              {projectActionError ? (
-                <div
-                  className="mb-3 rounded-2xl border border-danger-000/30 px-4 py-3 text-sm text-danger-000"
-                  role="alert"
-                >
-                  {projectActionError}
-                </div>
-              ) : null}
-              <ProjectDeletionCleanupNotice className="mb-3 rounded-2xl px-4 py-3" />
-              {loadError ? (
-                <ErrorNotice
-                  role="alert"
-                  description={t('Open-Science could not load projects. Retry to continue.')}
-                  primaryButton={{
-                    label: isRetryingProjects ? t('Retrying...') : t('Retry'),
-                    loading: isRetryingProjects,
-                    onClick: retryProjectLoad
-                  }}
-                />
-              ) : !isProjectsLoaded && projectSummaries.length === 0 ? (
-                <div role="status" className="px-4 py-10 text-center text-sm text-muted-foreground">
-                  {t('Loading…')}
-                </div>
-              ) : projectSummaries.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                  {t('No projects yet. Create one to get started.')}
-                </div>
-              ) : (
-                <div className={listCardClassName}>
-                  {projectSummaries.map(
-                    ({ project, sessionCount, runningCount, waitingCount, lastActivityAt }) => (
-                      <div
-                        key={project.id}
-                        className={rowClassName}
-                        title={project.description || project.name}
-                      >
-                        <button
-                          type="button"
-                          className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left"
-                          onClick={() => openProject(project.id, 'user')}
-                        >
-                          <span className="min-w-0 truncate font-semibold text-text-000">
-                            {project.name}
-                          </span>
-                          {project.pinned ? (
-                            <>
-                              <Star
-                                className="size-4 shrink-0 fill-current text-session-waiting"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              <span className="sr-only">{t('Pinned project')}</span>
-                            </>
-                          ) : null}
-                          {project.isExample ? (
-                            <span className="shrink-0 rounded bg-bg-300 px-1.5 py-0.5 text-[10px] font-medium text-text-100">
-                              {t('Example')}
-                            </span>
-                          ) : null}
-                          {hasCompleteSessionCatalog && waitingCount > 0 ? (
-                            <span
-                              className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-waiting"
-                              aria-label={t('{{count}} waiting on you', { count: waitingCount })}
-                            >
-                              <span
-                                className="size-1.5 rounded-full bg-session-waiting motion-safe:animate-pulse"
-                                aria-hidden="true"
-                              />
-                              <span aria-hidden="true">{waitingCount}</span>
-                            </span>
-                          ) : null}
-                          {hasCompleteSessionCatalog && runningCount > 0 ? (
-                            <span
-                              className="inline-flex shrink-0 items-center gap-1 text-xs font-medium text-session-running"
-                              aria-label={t('{{count}} running', { count: runningCount })}
-                            >
-                              <LoaderCircle
-                                className="size-3 animate-spin motion-reduce:animate-none"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              <span aria-hidden="true">{runningCount}</span>
-                            </span>
-                          ) : null}
-                        </button>
-                        <span className="hidden shrink-0 text-xs text-text-100 sm:inline">
-                          {hasCompleteSessionCatalog
-                            ? t('{{count}} sessions', {
-                                defaultValue_one: '{{count}} session',
-                                count: sessionCount
-                              })
-                            : t('Session count unavailable')}
                         </span>
-                        {showArtifactCounts && artifactCounts.has(project.id) ? (
-                          <span className="hidden shrink-0 tabular-nums text-xs text-text-100 sm:inline">
-                            {t('{{count}} artifacts', {
-                              defaultValue_one: '{{count}} artifact',
-                              count: artifactCounts.get(project.id)
-                            })}
-                          </span>
-                        ) : null}
-                        <span className="hidden w-8 shrink-0 text-right text-xs text-text-000 sm:inline">
-                          {relativeTime(lastActivityAt)}
+                        <span className="shrink-0 text-xs text-text-000">
+                          {relativeTime(session.updatedAt)}
                         </span>
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <button
-                              type="button"
-                              className={rowActionClassName}
-                              aria-label={t('Open actions for {{name}}', { name: project.name })}
-                            >
-                              <MoreVertical
-                                className="size-3.5"
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                            </button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            aria-label={t('Project actions')}
-                            className="w-max min-w-0"
-                            align="end"
-                            sideOffset={6}
-                          >
-                            <DropdownMenuItem
-                              className="gap-2"
-                              disabled={pinningProjectIds.has(project.id)}
-                              onSelect={() => toggleProjectPin(project)}
-                            >
-                              <Star
-                                className={cn('size-4', project.pinned && 'fill-current')}
-                                strokeWidth={2}
-                                aria-hidden="true"
-                              />
-                              {t(project.pinned ? 'Unpin project' : 'Pin project')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2"
-                              onSelect={() => openEditDialog(project)}
-                            >
-                              <Settings className="size-4" strokeWidth={2} aria-hidden="true" />
-                              {t('Settings')}
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              className="gap-2"
-                              disabled={
-                                !canArchiveProject(project) || archivingProjectIds.has(project.id)
-                              }
-                              aria-describedby={
-                                archiveUnavailableReason(project)
-                                  ? `archive-reason-${project.id}`
-                                  : undefined
-                              }
-                              onSelect={() => archiveProject(project)}
-                            >
-                              <Archive className="size-4" strokeWidth={2} aria-hidden="true" />
-                              {/* The verb. Bare 'Archive' is the noun (a .zip) in the file browser. */}
-                              {archivingProjectIds.has(project.id)
-                                ? t('Archiving…')
-                                : t('Archive', { context: 'verb' })}
-                            </DropdownMenuItem>
-                            {archiveUnavailableReason(project) ? (
-                              <p
-                                id={`archive-reason-${project.id}`}
-                                className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
-                              >
-                                {archiveUnavailableReason(project)}
-                              </p>
-                            ) : null}
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="gap-2 text-danger-000 data-[highlighted]:bg-danger-900 data-[highlighted]:text-danger-000"
-                              disabled={!canDeleteProjects}
-                              aria-describedby={
-                                !canDeleteProjects ? `delete-reason-${project.id}` : undefined
-                              }
-                              onSelect={() => openDeleteDialog(project)}
-                            >
-                              <Trash2 className="size-4" strokeWidth={2} aria-hidden="true" />
-                              {t('Delete')}
-                            </DropdownMenuItem>
-                            {!canDeleteProjects ? (
-                              <p
-                                id={`delete-reason-${project.id}`}
-                                className="max-w-64 px-2 pb-2 text-xs text-muted-foreground"
-                              >
-                                {t('Retry project recovery before deleting projects.')}
-                              </p>
-                            ) : null}
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </div>
-                    )
-                  )}
-                </div>
-              )}
-            </section>
-
-            <section className="min-w-0" aria-label={t('Recent sessions')}>
-              <h2 className={sectionHeadingClassName}>
-                <Clock className="size-4 text-text-100" strokeWidth={2} aria-hidden="true" />
-                {t('Recent sessions')}
-              </h2>
-              {recentSessions.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-border-200/70 px-4 py-10 text-center text-sm text-muted-foreground">
-                  {t('Sessions you start will appear here.')}
-                </div>
-              ) : (
-                <div className={listCardClassName}>
-                  {recentSessions.map((session) => (
-                    <button
-                      key={session.id}
-                      type="button"
-                      className={cn(rowClassName, 'cursor-pointer items-start')}
-                      onClick={() => openSession(session.projectId, session.id, 'user')}
-                      title={session.title}
-                    >
-                      <span
-                        className="mt-1 inline-flex size-3 shrink-0 items-center justify-center"
-                        aria-hidden="true"
-                      >
-                        <span className="size-[7px] rounded-full border border-text-100" />
-                      </span>
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate text-sm font-medium text-text-000">
-                          {session.title}
-                        </span>
-                        <span className="truncate text-xs text-text-100">
-                          {projectNames.get(session.projectId) ?? t('Unknown project')}
-                        </span>
-                      </span>
-                      <span className="shrink-0 text-xs text-text-000">
-                        {relativeTime(session.updatedAt)}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </section>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </section>
+            </div>
           </div>
-        </div>
 
-        <ProjectFormDialog {...projectFormDialogProps} />
+          <ProjectFormDialog {...projectFormDialogProps} />
 
-        <DeleteProjectDialog
-          project={projectToDelete}
-          sessionCount={deleteTargetSessionCount}
-          hasCompleteSessionCatalog={hasCompleteSessionCatalog}
-          canDelete={canDeleteProjects}
-          isDeleting={isDeletingProject}
-          error={deleteProjectError}
-          onCancel={closeDeleteDialog}
-          onConfirmDelete={confirmDeleteProject}
-        />
-      </main>
+          <DeleteProjectDialog
+            project={projectToDelete}
+            sessionCount={deleteTargetSessionCount}
+            hasCompleteSessionCatalog={hasCompleteSessionCatalog}
+            canDelete={canDeleteProjects}
+            isDeleting={isDeletingProject}
+            error={deleteProjectError}
+            onCancel={closeDeleteDialog}
+            onConfirmDelete={confirmDeleteProject}
+          />
+        </main>
+      </ProjectPackageDropZone>
     </TooltipProvider>
   )
 }

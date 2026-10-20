@@ -13,20 +13,59 @@ type UpdateStore = {
   closeDialog: () => void
   download: () => Promise<void>
   cancel: () => Promise<void>
+  recheck: () => Promise<void>
+  recover: () => Promise<void>
   apply: (options?: UpdateApplyOptions) => Promise<void>
+}
+
+const updateDialogRequested = (status: UpdateStatus, current: boolean): boolean => {
+  if (status.outcome) return false
+  const recovery = status.recovery
+  return (
+    current ||
+    Boolean(
+      recovery &&
+      (recovery.canRecover || status.state === 'applying' || recovery.runtime !== 'running')
+    )
+  )
 }
 
 let cleanupUpdateSubscriptions: (() => void) | undefined
 let statusRevision = 0
+let latestUpdateRequest = 0
+let acknowledgedOutcome: string | undefined
+const outcomeIdentity = (status: UpdateStatus): string =>
+  `${status.recovery?.operationId ?? status.latest}:${status.outcome}`
+const consumeAcknowledgedOutcome = (status: UpdateStatus): UpdateStatus => {
+  if (!status.outcome) acknowledgedOutcome = undefined
+  return status.outcome && outcomeIdentity(status) === acknowledgedOutcome
+    ? { ...status, outcome: undefined }
+    : status
+}
 
 // ponytail: local observation order protects replies from newer live state. Arbitrarily reordered
 // broadcasts would require a main-process revision shared by every response and event.
 const acceptUpdateResponse = async (request: () => Promise<UpdateStatus | void>): Promise<void> => {
+  useUpdateStore.setState((state) => ({ status: { ...state.status, error: undefined } }))
   const revision = statusRevision
-  const status = await request()
-  if (!status || revision !== statusRevision) return
-  statusRevision += 1
-  useUpdateStore.setState({ status })
+  const requestId = ++latestUpdateRequest
+  try {
+    const response = await request()
+    if (!response || revision !== statusRevision || requestId !== latestUpdateRequest) return
+    const status = consumeAcknowledgedOutcome(response)
+    statusRevision += 1
+    useUpdateStore.setState((state) => ({
+      status,
+      isDialogOpen: updateDialogRequested(status, state.isDialogOpen)
+    }))
+  } catch (error) {
+    if (requestId !== latestUpdateRequest) return
+    // A failed IPC acknowledgement does not establish a new update phase. Keep the last
+    // authoritative snapshot and expose the failure through the existing error presentation.
+    useUpdateStore.setState((state) => ({
+      status: { ...state.status, error: error instanceof Error ? error.message : String(error) }
+    }))
+  }
 }
 
 // Single source of truth for update state in the renderer. The main process broadcasts every
@@ -49,13 +88,16 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
       .then((info) =>
         set((s) => ({ appInfo: info, status: { ...s.status, current: info.version } }))
       )
+      .catch(() => undefined)
     // Status events don't carry downloadProgress. A strategy that emits progress (with speed) then
     // immediately a status (electron-updater does on every tick) would otherwise wipe the speed the
     // progress event just set. Preserve downloadProgress across a status update while downloading so
     // DownloadProgressLine keeps rendering speed/ETA on Win/Linux.
-    const removeStatusListener = api.onStatus((status) => {
+    const removeStatusListener = api.onStatus((incoming) => {
+      const status = consumeAcknowledgedOutcome(incoming)
       statusRevision += 1
       set((s) => ({
+        isDialogOpen: updateDialogRequested(status, s.isDialogOpen),
         status: {
           ...status,
           downloadProgress: status.state === 'downloading' ? s.status.downloadProgress : undefined
@@ -83,6 +125,7 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     const cleanup = (): void => {
       if (!active) return
       active = false
+      latestUpdateRequest += 1
       statusRevision += 1
       removeStatusListener?.()
       removeProgressListener?.()
@@ -98,7 +141,15 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await acceptUpdateResponse(() => api.check())
   },
 
-  openDialog: () => set({ isDialogOpen: true }),
+  openDialog: () => {
+    const status = get().status
+    if (status.outcome) {
+      acknowledgedOutcome = outcomeIdentity(status)
+      // Acknowledgement only consumes feedback. Preserve all runtime/installation safety facts.
+      set({ isDialogOpen: true, status: { ...status, outcome: undefined } })
+      void get().recheck()
+    } else set({ isDialogOpen: true })
+  },
 
   // Closing the dialog aborts any in-flight download. Cancel a request unconditionally rather than
   // gating on the local 'downloading' state: right after clicking Download the 'downloading' broadcast
@@ -121,7 +172,16 @@ export const useUpdateStore = create<UpdateStore>((set, get) => ({
     await acceptUpdateResponse(() => cancel())
   },
 
+  recheck: async () => {
+    await acceptUpdateResponse(() => window.api.update.recheck())
+  },
+
+  recover: async () => {
+    await acceptUpdateResponse(() => window.api.update.recover())
+  },
+
   apply: async (options?: UpdateApplyOptions) => {
+    acknowledgedOutcome = undefined
     const api = window.api?.update
     if (!api) return
     await acceptUpdateResponse(() => api.apply(options))

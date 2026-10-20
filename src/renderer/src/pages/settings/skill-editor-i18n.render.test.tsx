@@ -2,7 +2,7 @@
 // The editor's translation risks are the validation messages (computed in a useMemo, so they go
 // stale unless `t` is a dependency), the reserved-prefix list (joined with a locale-specific "or",
 // not a hardcoded English one), the two <Trans> hints that wrap a path in <code>, and the footer
-// verb that switches between Publish and Save.
+// verb that switches between Create skill and Save.
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -73,25 +73,25 @@ describe('SkillEditor copy', () => {
     })
 
     expect(container.textContent).toContain('References')
-    expect(container.textContent).toContain('Publish')
+    expect(container.textContent).toContain('Create skill')
 
     switchTo('zh-Hans')
     expect(container.textContent).toContain('参考文件')
-    expect(container.textContent).toContain('发布')
+    expect(container.textContent).toContain('创建技能')
 
     switchTo('zh-Hant')
     // 參考檔案, not 參考文件 — `file` is 檔案 in Traditional, and 文件 there means `document`.
     expect(container.textContent).toContain('參考檔案')
   })
 
-  it('uses Save instead of Publish when editing an existing skill', () => {
+  it('uses Save instead of Create skill when editing an existing skill', () => {
     render({ ...blank, id: 'personal-alpha', name: 'Alpha' })
     expect(container.textContent).toContain('Save')
-    expect(container.textContent).not.toContain('Publish')
+    expect(container.textContent).not.toContain('Create skill')
 
     switchTo('zh-Hant')
     expect(container.textContent).toContain('儲存')
-    expect(container.textContent).not.toContain('發布')
+    expect(container.textContent).not.toContain('建立技能')
   })
 
   it('re-renders validation messages on a language switch', () => {

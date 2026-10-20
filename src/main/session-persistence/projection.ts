@@ -13,16 +13,19 @@ import {
   type SessionSummary,
   type SessionUsageProjection
 } from '../../shared/session-persistence'
+import { deriveSessionAttention } from '../../shared/session-persistence'
 
-// Match upload publication's admission budget on the shared single-connection SQLite client.
+// Session projection writes contend with upload publication and other metadata writes on the
+// shared single-connection SQLite client. Keep transaction admission bounded, but allow the
+// Windows disk contention seen during large upload batches to drain before failing the save.
 // Execution deadlines and rollback behavior remain Prisma defaults.
 const runProjectionTransaction = <Result>(
   client: Pick<PrismaClient, '$transaction'>,
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
-): Promise<Result> => client.$transaction(operation, { maxWait: 10_000 })
+): Promise<Result> => client.$transaction(operation, { maxWait: 30_000 })
 
 const PROJECTION_STATE_ID = 'session-projection'
-const PROJECTION_VERSION = 5
+const PROJECTION_VERSION = 7
 const SESSION_NUMBER_SEQUENCE_ID = 'global'
 const MAX_SAFE_INTEGER_BIGINT = BigInt(Number.MAX_SAFE_INTEGER)
 const MAX_SQLITE_INT = 2_147_483_647
@@ -254,6 +257,7 @@ const chunksOf = <Value>(values: readonly Value[], size: number): Value[][] => {
 }
 
 const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus => {
+  if (session.packageOrigin) return deriveSessionAttention(session) ? 'error' : 'idle'
   if (
     session.runtimeContext?.permission?.state === 'pending' ||
     session.status === 'waiting-permission'
@@ -261,18 +265,22 @@ const presentedStatus = (session: PersistedChatSession): PersistedSessionStatus 
     return 'waiting-permission'
   }
   if (session.status === 'waiting-for-user') return 'waiting-for-user'
-  if (session.status === 'waiting-plan-approval') {
+  if (
+    session.status === 'waiting-plan-approval' ||
+    session.runtimeContext?.plan?.approval === 'pending'
+  ) {
     return 'waiting-plan-approval'
   }
   if (hasAnswerableDelegatedQuestion(session)) return 'waiting-for-user'
   if (
+    session.activeRun !== undefined ||
     session.status === 'running' ||
-    (session.status.startsWith('waiting-') && session.activeRun !== undefined) ||
     hasCurrentRunningDelegatedAttempt(session)
   ) {
     return 'running'
   }
-  return session.status.startsWith('waiting-') ? 'idle' : session.status
+  if (deriveSessionAttention(session)) return 'error'
+  return 'idle'
 }
 
 const projectionMessages = sessionUsageMessages
@@ -433,10 +441,11 @@ export const buildSessionProjection = (session: PersistedChatSession): SessionPr
       updatedAt: finiteNonNegativeInteger(session.updatedAt),
       presentedActivityAt: finiteNonNegativeInteger(presentedActivityAt),
       needsStartupRecovery:
-        session.status === 'running' ||
-        session.activeRun !== undefined ||
-        hasCurrentRunningDelegatedAttempt(session) ||
-        hasPendingArtifact(session)
+        !session.packageOrigin &&
+        (session.activeRun !== undefined ||
+          session.status === 'running' ||
+          hasCurrentRunningDelegatedAttempt(session) ||
+          hasPendingArtifact(session))
     },
     turnUsage,
     modelCalls,
@@ -931,7 +940,16 @@ export class SessionProjectionRepository {
 
   async usage(): Promise<SessionUsageProjection> {
     const client = await this.client()
-    const [projects, sessions, usage, auxiliaryUsage, runs, artifacts] = await client.$transaction([
+    const [
+      projects,
+      sessions,
+      usage,
+      auxiliaryUsage,
+      runs,
+      artifacts,
+      classificationUsage,
+      translationUsage
+    ] = await client.$transaction([
       client.project.findMany({ select: { createdAt: true } }),
       client.session.findMany({
         where: { deletedAtMs: null },
@@ -946,6 +964,24 @@ export class SessionProjectionRepository {
       client.sessionArtifactRef.findMany({
         where: { session: { deletedAtMs: null } },
         select: { artifactId: true, artifactCreatedAtMs: true }
+      }),
+      client.classificationUsage.findMany({
+        select: {
+          scenario: true,
+          occurredAt: true,
+          inputTokens: true,
+          outputTokens: true,
+          usageIncomplete: true
+        }
+      }),
+      client.pdfTranslationUsage.findMany({
+        select: {
+          occurredAt: true,
+          inputTokens: true,
+          cacheTokens: true,
+          outputTokens: true,
+          usageIncomplete: true
+        }
       })
     ])
     const liveSessionIds = new Set(sessions.map(({ id }) => id))
@@ -976,6 +1012,9 @@ export class SessionProjectionRepository {
           liveSessionIds.has(event.sessionId)
             ? [
                 {
+                  ...(event.source === 'classification'
+                    ? { source: 'classification' as const }
+                    : {}),
                   timestamp: Number(event.completedAtMs),
                   inputTokens: Number(event.inputTokens),
                   cacheTokens: Number(event.cacheTokens),
@@ -983,7 +1022,26 @@ export class SessionProjectionRepository {
                 }
               ]
             : []
-        )
+        ),
+        ...translationUsage.map((event) => ({
+          source: 'literature-translation' as const,
+          timestamp: event.occurredAt.getTime(),
+          inputTokens: Number(event.inputTokens ?? 0n),
+          cacheTokens: Number(event.cacheTokens ?? 0n),
+          outputTokens: Number(event.outputTokens ?? 0n),
+          usageIncomplete: event.usageIncomplete
+        })),
+        ...classificationUsage.map((event) => ({
+          source: event.scenario.startsWith('literature-')
+            ? ('literature-classification' as const)
+            : ('classification' as const),
+          scenario: event.scenario,
+          timestamp: event.occurredAt.getTime(),
+          inputTokens: Number(event.inputTokens ?? 0n),
+          cacheTokens: 0,
+          outputTokens: Number(event.outputTokens ?? 0n),
+          usageIncomplete: event.usageIncomplete
+        }))
       ],
       totalArtifacts: artifactCreatedAt.size
     }

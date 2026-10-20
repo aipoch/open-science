@@ -13,6 +13,7 @@ export type DarwinProcessTable = {
 }
 
 export function getDarwinProcess(pid: number): DarwinProcessIdentity | null
+export function getDarwinProcessArguments(pid: number): string[] | null
 export function getDarwinEnvironmentValue(pid: number, name: string): string | false | null
 export function listDarwinProcesses(): DarwinProcessTable | null
 

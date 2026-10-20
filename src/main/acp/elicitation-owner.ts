@@ -277,7 +277,27 @@ export const validateElicitationAnswers = (
   if (request.fields.some((field) => field.required && !seen.has(field.id))) {
     throw new Error('Required structured input is missing')
   }
-  return candidates
+  const questions = resolveAgentUserChoiceQuestions(request.fields)
+  if (questions) {
+    for (const question of questions) {
+      const choice = candidates.find((answer) => answer.fieldId === question.choiceField.id)
+      const custom = candidates.find((answer) => answer.fieldId === question.customField.id)
+      if ((choice && custom) || (Array.isArray(choice?.value) && choice.value.length === 0)) {
+        throw new Error('Invalid structured input response')
+      }
+    }
+  }
+  return candidates.map((answer) => {
+    const field = fields.get(answer.fieldId)!
+    return questions && Array.isArray(answer.value)
+      ? {
+          ...answer,
+          value: field
+            .options!.filter((option) => (answer.value as string[]).includes(option.value))
+            .map((option) => option.value)
+        }
+      : answer
+  })
 }
 
 const isLosslessFieldProjection = (

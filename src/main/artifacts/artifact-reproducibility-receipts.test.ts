@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import type { ArtifactReproducibilityReceipt } from '../../shared/artifact-reproducibility'
 import { sha256 } from './provenance-canonical'
-import { compareReproducedContent } from './output-comparison'
+import { compareReproducedContent } from '@aipoch/reproducibility'
 import {
   ArtifactReproducibilityReceiptStore,
   validateArtifactReproducibilityReceiptStorage,

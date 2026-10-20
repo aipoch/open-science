@@ -1,8 +1,11 @@
-import { realpath, writeFile } from 'node:fs/promises'
+import { readFile, realpath, writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createPreviewPptx } from './fixtures/pptx'
 import { sendPrompt } from './certification/helpers'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Project files journey'
 const FILE_NAME = 'research-notes.md'
@@ -19,11 +22,15 @@ const SCRIPT_CONTENT = '#!/bin/bash\n# stable\necho "old"\n'
 const SCRIPT_VERSION_TWO_CONTENT = '#!/bin/bash\n# stable\necho "new"\n'
 
 const createTwoPagePdf = (): Buffer => {
+  const content =
+    'BT /F1 20 Tf 54 730 Td (Research methods - sample paper) Tj 0 -40 Td /F1 12 Tf (1. Research question) Tj 0 -24 Td (How does treatment dose affect the measured response?) Tj 0 -40 Td (2. Study design) Tj 0 -24 Td (Compare a control group with three treatment groups.) Tj 0 -24 Td (Record observations, then inspect uncertainty and limitations.) Tj ET'
   const objects = [
     '<< /Type /Catalog /Pages 2 0 R >>',
     '<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>',
-    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << >> >>'
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 6 0 R >>',
+    '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>',
+    `<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`
   ]
   const offsets: number[] = []
   let body = '%PDF-1.4\n'
@@ -39,10 +46,7 @@ const createTwoPagePdf = (): Buffer => {
 }
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -93,7 +97,9 @@ const reconstructedDiffText = async (
     }
   })
 
-test('edits uploaded Markdown versions and keeps diff navigation coherent', async ({ app }) => {
+test('edits uploaded Markdown versions and keeps diff navigation coherent @pr-mainline-files', async ({
+  app
+}) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
@@ -105,8 +111,7 @@ test('edits uploaded Markdown versions and keeps diff navigation coherent', asyn
   })
   await expect(page.getByRole('button', { name: `Remove attachment ${FILE_NAME}` })).toBeVisible()
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached research notes.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Use the attached research notes.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
 
   await page.getByRole('button', { name: 'Files', exact: true }).click()
@@ -216,23 +221,94 @@ test('links a multi-page PDF upload as Reading context in a new project', async 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
+  await page.setViewportSize({ width: 1440, height: 900 })
+  const captureChinese = async (name: string): Promise<void> => {
+    await page.keyboard.press('Escape')
+    await page.mouse.move(5, 5)
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
+    await page.screenshot({ path: test.info().outputPath(name) })
+    await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+    await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+  }
 
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'paper.pdf',
     mimeType: 'application/pdf',
     buffer: createTwoPagePdf()
   })
-  await expect(page.getByTestId('automatic-reading-suggestion')).toContainText(
-    '1 PDF will be linked when sent'
-  )
+  const readingSuggestion = page.getByTestId('automatic-reading-suggestion')
+  await expect(readingSuggestion).toContainText('paper.pdf')
+  await expect(readingSuggestion.getByRole('status')).toHaveText('Link on send')
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Summarize the attached paper.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await expect(page.getByTestId('new-conversation-start')).toBeVisible()
+  await captureChinese('pdf-staged-new-conversation.png')
+  const originalEditor = await page.getByRole('textbox', { name: 'Ask anything' }).elementHandle()
+  await submitPromptViaUi(page, 'Summarize the attached paper.')
 
   await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
+  const readingPicker = page.getByRole('button', { name: 'Choose PDFs for Reading' })
+  await readingPicker.focus()
+  for (const name of ['Open PDF context paper.pdf', 'Remove PDF context paper.pdf']) {
+    await page.keyboard.press('Tab')
+    const control = page.getByRole('button', { name, exact: true })
+    await expect(control).toBeFocused()
+    const outline = await control.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        style: style.outlineStyle,
+        width: parseFloat(style.outlineWidth),
+        offset: parseFloat(style.outlineOffset)
+      }
+    })
+    expect(outline.style).toBe('solid')
+    expect(outline.width).toBeGreaterThanOrEqual(2)
+    // The horizontal scroller clips outside paint: both halves must keep their outline inside.
+    expect(outline.offset).toBeLessThanOrEqual(-outline.width)
+  }
+  await page.keyboard.press('Shift+Tab')
+  await expect(
+    page.getByRole('button', { name: 'Open PDF context paper.pdf', exact: true })
+  ).toBeFocused()
+  await page.screenshot({ path: test.info().outputPath('reading-context-focus.png') })
+
   await expect(page.getByRole('button', { name: 'Page 1 of 2' })).toBeVisible()
   await expect(page.getByText('PDF context Version is unavailable in this Project.')).toHaveCount(0)
   await expect(page.getByText('Managed file reference requires a logical identity.')).toHaveCount(0)
+
+  await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
+  expect(await originalEditor!.evaluate((node) => node.isConnected)).toBe(true)
+  await expect(page.getByTestId('conversation-composer-dock')).toHaveAttribute(
+    'data-placement',
+    'bottom'
+  )
+  await captureChinese('pdf-reading-after-send.png')
+  // Both ordinary and Reading conversations share the workspace annotation authority.
+  // Starting/binding a Session must not recreate its unrelated open file preview.
+  for (const reading of [false, true]) {
+    await page.getByRole('button', { name: 'New', exact: true }).click()
+    if (reading) {
+      await page.getByRole('button', { name: 'Read with agent', exact: true }).click()
+      await expect(page.getByTestId('new-conversation-start')).toBeVisible()
+      await captureChinese('pdf-reading-new-conversation.png')
+    }
+    const preview = page.getByTestId('preview-card')
+    await preview.getByRole('button', { name: 'Zoom in', exact: true }).click()
+    const zoom = reading ? '150%' : '125%'
+    await expect(preview.getByText(zoom, { exact: true })).toBeVisible()
+    const scroller = await preview
+      .getByRole('region', { name: 'paper.pdf scrollable preview' })
+      .elementHandle()
+    await sendPrompt(
+      page,
+      `Keep the ${reading ? 'Reading' : 'ordinary'} preview.`,
+      'Deterministic reply:'
+    )
+    expect(await scroller!.evaluate((node) => node.isConnected)).toBe(true)
+    await expect(preview.getByText(zoom, { exact: true })).toBeVisible()
+    if (reading) await expect(page.getByTestId('pdf-context-bar')).toContainText('paper.pdf')
+    await scroller!.dispose()
+  }
 })
 
 test('shows structured text replacements with character-level highlights', async ({ app }) => {
@@ -284,19 +360,183 @@ test('loads managed image previews from Project files', async ({ app }) => {
     buffer: IMAGE_CONTENT
   })
   await expect(page.getByRole('button', { name: `Remove attachment ${IMAGE_NAME}` })).toBeVisible()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Use the attached image.')
-  await page.getByRole('button', { name: 'Send message' }).click()
-  // File previews depend on the committed upload, not on the agent finishing its reply.
-  await expect(
-    page.getByRole('button', { name: `Preview uploaded attachment ${IMAGE_NAME}`, exact: true })
-  ).toBeVisible()
-
+  await submitPromptViaUi(page, 'Use the attached image.')
+  // The attachment chip is optimistic. Wait for Main to commit the upload before
+  // navigating away from the new Session and asking the Project index for its files.
+  await expect
+    .poll(() =>
+      page.evaluate(async (name) => {
+        const { sessions } = await window.api.sessions.loadAll()
+        return sessions.some((session) =>
+          session.messages.some((message) =>
+            message.uploads?.some((upload) => upload.name === name && Boolean(upload.versionId))
+          )
+        )
+      }, IMAGE_NAME)
+    )
+    .toBe(true)
   await page.getByRole('button', { name: 'Files', exact: true }).click()
   const image = page.getByRole('img', { name: `Preview of ${IMAGE_NAME}` })
   await expect(image).toBeVisible()
   await expect
     .poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth))
     .toBeGreaterThan(0)
+})
+
+test.describe('Preview scroll isolation', () => {
+  test.use({ windowMode: 'normal' })
+
+  test('scrolls the preview without mutating the application scrollbar styles', async ({ app }) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await app.setMainWindowSize(1280, 900)
+    await createProject(page)
+    await page.locator('input[type="file"][multiple]').setInputFiles({
+      name: 'scroll.pdf',
+      mimeType: 'application/pdf',
+      buffer: createTwoPagePdf()
+    })
+    await sendPrompt(page, 'Use the attached PDF.', 'Deterministic reply:')
+    await page.getByRole('button', { name: 'Files', exact: true }).click()
+    const trigger = page.getByRole('button', { name: 'Preview uploaded file scroll.pdf' })
+    const body = page.locator('body')
+    await expect(body).toHaveCSS('overflow-y', 'hidden')
+
+    for (let cycle = 0; cycle < 2; cycle++) {
+      await trigger.click()
+      const preview = page.getByRole('dialog', { name: 'Preview scroll.pdf' })
+      await expect(preview).toBeVisible()
+      await expect(body).not.toHaveAttribute('data-scroll-locked')
+      await expect(page.locator('#root')).toHaveAttribute('inert', '')
+      const scroller = preview.getByRole('region', { name: 'scroll.pdf scrollable preview' })
+      await expect
+        .poll(() => scroller.evaluate((node) => node.scrollHeight - node.clientHeight))
+        .toBeGreaterThan(100)
+      const before = await scroller.evaluate((node) => node.scrollTop)
+      await scroller.hover({ position: { x: 100, y: 100 } })
+      await page.mouse.wheel(0, 250)
+      await expect.poll(() => scroller.evaluate((node) => node.scrollTop)).toBeGreaterThan(before)
+      await page.keyboard.press('Tab')
+      expect(await preview.evaluate((node) => node.contains(document.activeElement))).toBe(true)
+      await preview.getByRole('button', { name: 'Close preview of scroll.pdf' }).click()
+      await expect(preview).toBeHidden()
+      await expect(page.locator('#root')).not.toHaveAttribute('inert')
+      await expect(trigger).toBeFocused()
+      await expect(body).toHaveCSS('overflow-y', 'hidden')
+      await expect(body).not.toHaveAttribute('data-scroll-locked')
+      expect(await page.evaluate(() => window.scrollY)).toBe(0)
+    }
+  })
+})
+
+test('normalizes OpenCode inline thinking before publishing sanitized message images', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await app.setMainWindowSize(1024, 720)
+  expect(page.url()).toMatch(/^file:/)
+  await page.evaluate(async () => {
+    const settings = await window.api.settings.upsertProvider({
+      type: 'custom',
+      name: 'Inline thinking replay',
+      apiEndpoints: ['chat-completions'],
+      baseUrl: 'http://127.0.0.1:9/v1',
+      model: 'MiniMax-M3',
+      key: 'e2e-key',
+      supportsImageInput: true
+    })
+    const provider = settings.providers.find((p) => p.name === 'Inline thinking replay')!
+    await window.api.settings.setActiveProvider({ id: provider.id, model: 'MiniMax-M3' })
+  })
+  await page.reload({ waitUntil: 'domcontentloaded' })
+  await createProject(page)
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: 'sanitized-performance.png',
+    mimeType: 'image/png',
+    buffer: await readFile('e2e/fixtures/sanitized-performance.png')
+  })
+  await expect(
+    page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
+  ).toBeVisible()
+  const prompt = 'Replay inline thinking. Render the sanitized message images.'
+  await submitPromptViaUi(page, prompt)
+  const images = page.locator(
+    '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
+  )
+  // The response text can render before the artifact references have been resolved into image
+  // nodes. Wait for the turn to finish before scrolling individual figures into view.
+  await expect(page.getByTestId('message-completion-live-region')).toContainText(
+    'Response completed.',
+    { timeout: 60_000 }
+  )
+  // Offscreen figures stay as placeholders until they approach the viewport.
+  // Visit each figure so this also verifies decoding on smaller Windows windows.
+  for (const index of [1, 2, 3]) {
+    await page
+      .getByText(`Synthetic figure ${index}. This image contains generated geometry only.`, {
+        exact: true
+      })
+      .scrollIntoViewIfNeeded()
+    const alt = `Sanitized message figure ${index}`
+    await expect
+      .poll(() =>
+        page.evaluate((label) => {
+          // The placeholder is replaced by <img> while loading. Resolve it fresh on each poll,
+          // then scroll the image itself so native lazy loading can begin below the caption.
+          const figure = [
+            ...document.querySelectorAll<HTMLElement>(
+              '[data-slot="message-scroller-content"] [data-session-artifact-image], [data-slot="message-scroller-content"] [data-session-artifact-image-status]'
+            )
+          ].find((node) => node.querySelector('img')?.alt === label || node.textContent === label)
+          figure?.scrollIntoView({ block: 'center' })
+          const img = figure?.querySelector('img')
+          return img
+            ? { complete: img.complete, width: img.naturalWidth, height: img.naturalHeight }
+            : undefined
+        }, alt)
+      )
+      .toEqual({ complete: true, width: 1024, height: 1024 })
+  }
+  await expect(images).toHaveCount(3)
+  const events = await page.evaluate(async () => (await window.api.acp.getState()).events)
+  expect(
+    events
+      .filter((e) => e.kind === 'thought')
+      .map((e) => e.text)
+      .join('')
+  ).toContain('Synthetic reasoning only.')
+  expect(
+    events
+      .filter((e) => e.kind === 'message' && e.role === 'assistant')
+      .map((e) => e.text)
+      .join('')
+  ).not.toMatch(/Synthetic reasoning|<\/?think>/)
+  const saved = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  const session = saved.find((s) =>
+    s.messages.some((m) => m.role === 'user' && m.content.includes('Replay inline thinking.'))
+  )!
+  expect(
+    session.messages
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  ).not.toMatch(/Synthetic reasoning|<\/?think>/)
+  await page.screenshot({ path: test.info().outputPath('inline-thinking-images.png') })
+  page = await app.restart()
+  const restored = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions)
+  expect(
+    restored
+      .find((s) => s.id === session.id)
+      ?.messages.filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  ).toBe(
+    session.messages
+      .filter((m) => m.role === 'agent')
+      .map((m) => m.content)
+      .join('')
+  )
 })
 
 test.describe('Workspace dividers', () => {
@@ -329,6 +569,122 @@ test.describe('Workspace dividers', () => {
       'aria-selected',
       'true'
     )
+  })
+
+  test('keeps Session actions clear of the collapsed preview toggle', async ({ app }, testInfo) => {
+    const page = app.page
+    await sendPrompt(page, 'Check the session header layout.', 'Deterministic reply:')
+    const previewToggle = page.getByTestId('workspace-preview-toggle')
+    const actions = page.getByTestId('session-header-menu-trigger')
+    await previewToggle.click()
+    await expect(previewToggle).toHaveAttribute('aria-expanded', 'false')
+
+    for (const [width, zoom] of [
+      [1280, 1],
+      [1100, 1.25],
+      [1100, 0.8]
+    ]) {
+      await app.setMainWindowSize(width, 900)
+      await app.setMainWindowZoomFactor(zoom)
+      await expect(previewToggle).toBeVisible()
+      await expect
+        .poll(() =>
+          page.getByTestId('conversation-header').evaluate((header) => {
+            const toggle = document.querySelector('[data-testid="workspace-preview-toggle"]')!
+            const toggleRect = toggle.getBoundingClientRect()
+            return [...header.querySelectorAll('button')]
+              .filter((button) => button.getBoundingClientRect().width > 0)
+              .every((button) => button.getBoundingClientRect().right <= toggleRect.left - 8)
+          })
+        )
+        .toBe(true)
+      await actions.click()
+      await expect(page.getByTestId('session-header-menu')).toBeVisible()
+      await page.keyboard.press('Escape')
+      await previewToggle.click()
+      await expect(previewToggle).toHaveAttribute('aria-expanded', 'true')
+      await previewToggle.click()
+      await expect(previewToggle).toHaveAttribute('aria-expanded', 'false')
+    }
+    await page.screenshot({ path: testInfo.outputPath('session-header-spacing.png') })
+
+    // Electron's minimum window width is wider than the mobile breakpoint; zoom into it.
+    await app.setMainWindowSize(1100, 900)
+    await app.setMainWindowZoomFactor(1.5)
+    await expect(previewToggle).toHaveCount(0)
+    const mobileToggle = page.getByTestId('conversation-header').getByRole('button', {
+      name: 'Expand preview panel'
+    })
+    await expect(mobileToggle).toBeVisible()
+    const actionsBox = (await actions.boundingBox())!
+    const toggleBox = (await mobileToggle.boundingBox())!
+    expect(actionsBox.x + actionsBox.width).toBeLessThanOrEqual(toggleBox.x - 8)
+    await mobileToggle.click()
+    await expect(page.getByRole('dialog', { name: 'Preview', exact: true })).toBeVisible()
+  })
+
+  test('keeps decoded message images visible when resizing and opening their preview', async ({
+    app
+  }) => {
+    const page = app.page
+    await app.setMainWindowSize(1280, 900)
+    // Exercise the normal upload and provider publication paths using generated geometry only.
+    await page.locator('input[type="file"][multiple]').setInputFiles({
+      name: 'sanitized-performance.png',
+      mimeType: 'image/png',
+      buffer: await readFile('e2e/fixtures/sanitized-performance.png')
+    })
+    await expect(
+      page.getByRole('button', { name: 'Remove attachment sanitized-performance.png' })
+    ).toBeVisible()
+    await submitPromptViaUi(page, 'Render the sanitized message images.')
+    const images = page.locator(
+      '[data-slot="message-scroller-content"] [data-session-artifact-image] img'
+    )
+    await expect(images).toHaveCount(3)
+    const image = images.last()
+    await image.scrollIntoViewIfNeeded()
+    await expect
+      .poll(() =>
+        image.evaluate((element: HTMLImageElement) => ({
+          complete: element.complete,
+          width: element.naturalWidth,
+          height: element.naturalHeight
+        }))
+      )
+      .toEqual({ complete: true, width: 1024, height: 1024 })
+    await expect(image).toBeInViewport({ ratio: 0.5 })
+    for (const side of ['left', 'right'] as const) {
+      const handle = page.getByRole('separator', { name: `Resize ${side} panel` })
+      const box = (await handle.boundingBox())!
+      const x = box.x + box.width / 2
+      const y = box.y + box.height / 2
+      await page.mouse.move(x, y)
+      await expect(handle).toHaveAttribute('data-separator', /hover|focus/)
+      await page.mouse.down()
+      await page.mouse.move(x + (side === 'left' ? 60 : -60), y, { steps: 6 })
+      await expect
+        .poll(async () => Math.abs((await handle.boundingBox())!.x - box.x))
+        .toBeGreaterThan(30)
+      await expect(image).toBeInViewport({ ratio: 0.5 })
+      await page.mouse.move(x, y, { steps: 6 })
+      await page.mouse.up()
+      await expect.poll(async () => (await handle.boundingBox())!.x).toBeCloseTo(box.x, 0)
+    }
+    await image.click()
+    const modal = page.getByRole('dialog', {
+      name: 'Preview sanitized-performance.png',
+      exact: true
+    })
+    await expect(modal).toBeVisible()
+    await expect
+      .poll(() =>
+        modal.locator('img').evaluate((element: HTMLImageElement) => element.naturalWidth)
+      )
+      .toBe(1024)
+    await modal.getByRole('button', { name: 'Close preview of sanitized-performance.png' }).click()
+    await expect(modal).toBeHidden()
+    await expect(image).toBeInViewport({ ratio: 0.5 })
   })
 
   for (const side of ['left', 'right'] as const) {
@@ -509,4 +865,119 @@ test('preserves expanded uploads after saving a file version', async ({ app }, t
   ).toEqual(previousLabels)
   await rows.last().scrollIntoViewIfNeeded()
   await page.screenshot({ path: testInfo.outputPath('expanded-uploads-after-save.png') })
+})
+
+test('reviews an uploaded PowerPoint without remounting its paged surface', async ({ app }) => {
+  test.setTimeout(180_000)
+  const fileName = 'preview-fixture.pptx'
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+
+  await page.locator('input[type="file"][multiple]').setInputFiles({
+    name: fileName,
+    mimeType: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+    buffer: createPreviewPptx()
+  })
+  await expect(page.getByRole('button', { name: `Remove attachment ${fileName}` })).toBeVisible()
+  await sendPrompt(page, 'Review the attached presentation.', 'Deterministic reply:')
+
+  // Present the window before pointer input enters the isolated Office frame. Hidden Windows
+  // BrowserWindows can expose the frame DOM before its compositor accepts mouse input.
+  await app.showMainWindow()
+  await page.getByRole('button', { name: 'Files', exact: true }).click()
+  await page.getByRole('button', { name: `Preview uploaded file ${fileName}`, exact: true }).click()
+  const preview = page.getByRole('dialog', { name: `Preview ${fileName}`, exact: true })
+  await expect(preview).toBeVisible()
+  const host = preview.locator('[data-office-preview-state="ready"]')
+  await expect(host).toBeVisible({ timeout: 90_000 })
+  const officeFrame = page.frameLocator('iframe[data-office-preview-frame]')
+  const counter = officeFrame.locator('.pptx-review-counter')
+  const stage = officeFrame.locator('.pptx-review-stage')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 1.', { exact: true })).toBeVisible()
+
+  const root = officeFrame.locator('.pptx-review')
+  const toolbar = officeFrame.locator('.pptx-review-toolbar')
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const navigationBounds = await toolbar
+    .getByRole('button', { name: 'Hide navigation' })
+    .boundingBox()
+  const zoomInBounds = await toolbar.getByRole('button', { name: 'Zoom in' }).boundingBox()
+  const findBounds = await toolbar.getByRole('button', { name: 'Find', exact: true }).boundingBox()
+  await expect(
+    toolbar.getByRole('button', { name: 'Find', exact: true }).locator('svg')
+  ).toBeVisible()
+  expect(navigationBounds).not.toBeNull()
+  expect(zoomInBounds).not.toBeNull()
+  expect(findBounds).not.toBeNull()
+  expect(navigationBounds!.x).toBeLessThan(findBounds!.x)
+  expect(zoomInBounds!.x).toBeLessThan(findBounds!.x)
+  expect(findBounds!.x - zoomInBounds!.x - zoomInBounds!.width).toBeLessThan(20)
+  expect(Math.abs(navigationBounds!.y - findBounds!.y)).toBeLessThan(2)
+  await officeFrame.getByRole('button', { name: 'Zoom in' }).click()
+  await expect(officeFrame.getByRole('button', { name: 'Reset zoom' })).toHaveText('125%')
+  await expect(stage).toHaveAttribute('tabindex', '0')
+  await stage.focus()
+  await page.keyboard.press('ArrowRight')
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 2.', { exact: true })).toBeVisible()
+  await officeFrame.getByRole('button', { name: 'Page 3' }).click()
+  await expect(counter).toHaveText('3 / 3')
+  await expect(officeFrame.getByText('Speaker notes for slide 3.', { exact: true })).toBeVisible()
+
+  await expect
+    .poll(() => stage.evaluate((element) => element.scrollWidth > element.clientWidth))
+    .toBe(true)
+  await expect
+    .poll(() =>
+      officeFrame
+        .locator('.pptx-review-notes')
+        .evaluate((element) => element.getBoundingClientRect().height)
+    )
+    .toBeLessThan(170)
+  await expect(root).toHaveCount(1)
+  await officeFrame.getByRole('button', { name: 'Find', exact: true }).click()
+  await expect(toolbar.locator(':scope > button').first()).toHaveAttribute(
+    'aria-label',
+    'Hide navigation'
+  )
+  const find = officeFrame.getByRole('searchbox', { name: 'Find' })
+  await find.fill('Preview slide 2')
+  await toolbar.evaluate((element) => {
+    element.style.width = '480px'
+  })
+  const narrowToolbarBounds = await toolbar.boundingBox()
+  const narrowFindBounds = await toolbar.locator('.pptx-review-find').boundingBox()
+  expect(narrowToolbarBounds).not.toBeNull()
+  expect(narrowFindBounds).not.toBeNull()
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeGreaterThan(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width - 20
+  )
+  expect(narrowFindBounds!.x + narrowFindBounds!.width).toBeLessThanOrEqual(
+    narrowToolbarBounds!.x + narrowToolbarBounds!.width + 2
+  )
+  await toolbar.evaluate((element) => {
+    element.style.width = ''
+  })
+  await expect(counter).toHaveText('2 / 3')
+  await expect(officeFrame.locator('.pptx-search-highlight')).toBeVisible()
+  await expect(officeFrame.locator('.pptx-review-find-context')).toContainText('Preview slide 2')
+  await find.fill('Speaker notes for slide 1')
+  await expect(counter).toHaveText('1 / 3')
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveText(
+    'Speaker notes for slide 1'
+  )
+  await expect(officeFrame.locator('.pptx-search-highlight')).toHaveCount(0)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
+  await expect(officeFrame.locator('.pptx-review-notes-body mark')).toHaveCount(0)
+  const findTrigger = officeFrame.getByRole('button', { name: 'Find', exact: true })
+  await expect(findTrigger).toBeFocused()
+  await findTrigger.press(process.platform === 'darwin' ? 'Meta+f' : 'Control+f')
+  await expect(find).toBeFocused()
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await officeFrame.getByRole('button', { name: 'Close search' }).click()
 })

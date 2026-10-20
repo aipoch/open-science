@@ -9,7 +9,7 @@ import {
 } from './identity'
 import { AcpRuntime } from '../acp/runtime.test-utils'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 import type { SpecialistView } from '../../shared/specialist'
 import * as acp from '@agentclientprotocol/sdk'
 import { EventEmitter } from 'node:events'

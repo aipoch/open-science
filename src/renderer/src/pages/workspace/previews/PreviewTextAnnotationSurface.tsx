@@ -1,59 +1,59 @@
-import type {
-  PdfAnnotationSource,
-  PdfAnnotationTarget
-} from '../../../../../shared/pdf-annotations'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
 import {
-  Highlighter,
   Check,
   Copy,
+  Highlighter,
   ListCollapse,
   MessageCircleQuestionMark,
   Quote
 } from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type {
+  PdfAnnotationSource,
+  PdfAnnotationTarget
+} from '../../../../../shared/pdf-annotations'
 
 import { ErrorNotice } from '@/components/error-notice'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import {
-  resolveManagedProjectFileAnnotationIdentity,
-  type Annotation,
-  type PdfAnnotation,
-  type TextAnnotation
-} from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
-import type { PreviewFileRendererProps } from './preview-types'
+import type {
+  Annotation,
+  PdfAnnotation,
+  TextAnnotation
+} from '../../../../../shared/annotation-contract'
+import { resolveManagedProjectFileAnnotationIdentity } from '../../../../../shared/annotations'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import type { TextBookmarkTarget } from '../../../../../shared/bookmarks'
 import { type PdfMarkColor, type PdfMarkKind } from '../../../../../shared/pdf-bookmarks'
-import { useBookmarks } from '../bookmarks/bookmark-context'
-import { usePdfAnnotations } from '../pdf-annotations/pdf-annotations-context'
-import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
+import { createAnnotationId } from '../annotations/annotation-id'
 import {
+  retryPendingAnnotationReveal,
   revealTextAnnotationRange,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation,
   subscribeBookmarkReveal,
   subscribeBookmarkRevealPreparation,
-  type BookmarkRevealTarget,
-  retryPendingAnnotationReveal
+  type BookmarkRevealTarget
 } from '../annotations/annotation-reveal'
 import { isBackwardSelection } from '../annotations/annotation-trigger-anchor'
-import { createAnnotationId } from '../annotations/annotation-id'
+import type { AnnotationTriggerAction } from '../annotations/AnnotationTrigger'
+import {
+  pdfTextSelectorForRange,
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange,
+  textAnnotationAnchorForRange
+} from '../annotations/text-annotation-range'
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
   type AnnotationControl,
   type PdfTextMarkStyle
 } from '../annotations/TextAnnotationEditors'
-import type { AnnotationTriggerAction } from '../annotations/AnnotationTrigger'
-import {
-  pdfTextSelectorForRange,
-  textAnnotationAnchorForRange,
-  quoteOccurrenceForRange,
-  reconcileTextAnnotationRanges,
-  retargetTextAnnotationRange
-} from '../annotations/text-annotation-range'
+import { useBookmarks } from '../bookmarks/bookmark-context'
+import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
+import { usePdfAnnotations } from '../pdf-annotations/pdf-annotations-context'
+import type { PreviewFileRendererProps } from './preview-types'
 
 type RangeAnnotation = TextAnnotation
 
@@ -320,7 +320,7 @@ const ensureBookmarkHighlightStyle = (markKind: PdfMarkKind, color: PdfMarkColor
   if (document.getElementById(styleId)) return
   const style = document.createElement('style')
   style.id = styleId
-  const selector = `::highlight(${bookmarkHighlightKey(markKind, color)})`
+  const selector = `[data-preview-text-annotation-surface]::highlight(${bookmarkHighlightKey(markKind, color)})`
   const value = bookmarkColorValue(color)
   style.textContent =
     markKind === 'highlight'
@@ -347,12 +347,13 @@ const getBookmarkHighlight = (
 
 const clearBookmarkHighlights = (ranges: Iterable<Range>): void => {
   if (!globalThis.CSS?.highlights) return
+  const ownedRanges = Array.from(ranges)
   const legacy = CSS.highlights.get(BOOKMARK_HIGHLIGHT_PREFIX)
-  for (const range of ranges) legacy?.delete(range)
+  for (const range of ownedRanges) legacy?.delete(range)
   for (const markKind of ['highlight', 'underline', 'squiggly', 'strikethrough', 'area'] as const) {
     for (const color of ['yellow', 'blue', 'green', 'pink', 'purple'] as const) {
       const highlight = CSS.highlights.get(bookmarkHighlightKey(markKind, color))
-      for (const range of ranges) highlight?.delete(range)
+      for (const range of ownedRanges) highlight?.delete(range)
     }
   }
 }
@@ -362,7 +363,7 @@ const getDraftHighlight = (): Highlight | undefined => {
   if (!document.getElementById(DRAFT_HIGHLIGHT_STYLE_ID)) {
     const style = document.createElement('style')
     style.id = DRAFT_HIGHLIGHT_STYLE_ID
-    style.textContent = `::highlight(${DRAFT_HIGHLIGHT_NAME}) {
+    style.textContent = `[data-preview-text-annotation-surface]::highlight(${DRAFT_HIGHLIGHT_NAME}) {
       background-color: color-mix(in oklab, var(--primary) 22%, transparent);
       text-decoration: underline 0.125rem var(--primary);
     }`
@@ -604,9 +605,13 @@ export const PreviewTextAnnotationSurface = ({
     )
     for (const bookmark of matchingBookmarks) {
       if (bookmark.target.kind !== 'text') continue
-      getBookmarkHighlight('highlight', 'yellow')?.add(
-        ownedBookmarkRanges.current.get(bookmark.id)!
-      )
+      // The quote may be gone from regenerated content (e.g. a report the agent
+      // rewrote after the bookmark was saved): reconcileTextAnnotationRanges then
+      // omits the id and there is nothing to highlight. Skip it instead of throwing
+      // Highlight.add(undefined), which crashed the whole surface on every mount.
+      const range = ownedBookmarkRanges.current.get(bookmark.id)
+      if (!range) continue
+      getBookmarkHighlight('highlight', 'yellow')?.add(range)
     }
     measureAnnotationControls()
     retryPendingAnnotationReveal()

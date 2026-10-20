@@ -1,0 +1,11 @@
+{"name":"unfinished-prose-must-not-copy-neighbor-equation","source":"When the parameter approaches","translation":"当参数趋近于零时，v̂t = 1。","neighbors":["the limit v̂t = 1"],"rejected":true}
+{"name":"admitted-accented-variable-remains-valid","source":"Estimate v̂t remains stable.","translation":"估计值 v̂t 保持稳定。","neighbors":["the limit v̂t = 1"],"rejected":false}
+{"name":"ordinary-fragment-is-not-completed","source":"When the parameter approaches","translation":"当参数趋近于","neighbors":["the limit v̂t = 1"],"rejected":false}
+{"name":"unfinished-clause-must-not-import-neighbor-indexed-parameter","source":"Choose γ2 to be","translation":"选择 γ2，使 γ1 趋于零。","neighbors":["γ1 approaches zero"],"rejected":true}
+{"name":"source-indexed-parameter-keeps-its-identity","source":"Choose γ12 to be","translation":"选择 γ12 为","neighbors":["γ1 approaches zero"],"rejected":false}
+{"name":"subscript-spelling-does-not-hide-neighbor-leakage","source":"Choose γ2 to be","translation":"选择 γ2，使 γ₁ 趋于零。","neighbors":["γ1 approaches zero"],"rejected":true}
+{"name":"flattened-power-before-index-is-not-evidence-of-leakage","source":"With γt1 and γt2","translation":"使用 γ1 的 t 次方和 γ2 的 t 次方","neighbors":["γ1 and γ2 are coefficients"],"rejected":false}
+{"name": "unfinished-list-item-must-not-copy-adjacent-scaling-formula", "source": "2. Apply the selected method and scale only", "translation": "2. 应用所选方法，并且仅缩放分支中的权重，因子为 Q−3n−3。", "neighbors": ["the weights inside each branch by Q−3n−3."], "rejected": true}
+{"name": "source-admitted-scaling-expression-is-valid", "source": "Scale by Q−3n−3.", "translation": "按 Q−3n−3 缩放。", "neighbors": ["the weights inside each branch by Q−3n−3."], "rejected": false}
+{"name": "unfinished-list-item-must-not-borrow-next-leading-count", "source": "3. Add a scalar initialized at 1 and a bias initialized at", "translation": "3. 添加初始化为1的标量，以及初始化为0的偏置。", "neighbors": ["0) before each layer."], "rejected": true}
+{"name": "unfinished-list-item-can-stop-without-completion", "source": "3. Add a scalar initialized at 1 and a bias initialized at", "translation": "3. 添加初始化为1的标量，以及偏置，其初始化为", "neighbors": ["0) before each layer."], "rejected": false}

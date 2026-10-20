@@ -4,6 +4,20 @@ import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const boundary = vi.hoisted(() => ({ home: '', logger: { info: vi.fn(), error: vi.fn() } }))
+vi.mock('../desktop-interaction', () => ({
+  desktopInteraction: () => ({
+    cliLauncherEnvironment: () => ({
+      platform: process.platform,
+      packaged: true,
+      homeDir: boundary.home,
+      userDataDir: join(boundary.home, 'profile'),
+      cliEntryPath: join(process.resourcesPath, 'cli', 'index.mjs'),
+      appExecPath: process.execPath,
+      appImagePath: process.env.APPIMAGE,
+      pathVar: process.env.PATH ?? ''
+    })
+  })
+}))
 vi.mock('electron', () => ({
   app: {
     isPackaged: true,
@@ -11,7 +25,10 @@ vi.mock('electron', () => ({
   },
   ipcMain: { handle: vi.fn() }
 }))
-vi.mock('../logger', () => ({ createLogger: () => boundary.logger }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => boundary.logger
+}))
 vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return { ...actual, lstat: vi.fn(actual.lstat), rename: vi.fn(actual.rename) }
@@ -136,6 +153,13 @@ describe.skipIf(process.platform === 'win32')(
                 cliEntryPath: join(boundary.home, '.mount_old', 'resources', 'cli', 'index.mjs')
               }
         const target = (await installCliLauncher(other)).target
+        if (kind === 'old FUSE mount') {
+          // Preserve an actual historical launcher; the new planner intentionally emits Node.
+          await writeFile(
+            target,
+            `#!/bin/sh\n# Open-Science command-line launcher. Managed by the app. Format version: 1.\nOPEN_SCIENCE_APP_PATH='${other.appExecPath}' ELECTRON_RUN_AS_NODE=1 exec '/missing' '/missing.mjs' "$@"\n`
+          )
+        }
         const owner = createCliCommandOwner()
         expect(await owner.getStatus()).toMatchObject({ installed: false })
         await owner.ensureCurrent()

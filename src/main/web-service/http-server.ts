@@ -1,59 +1,80 @@
+import { projectSessionEventPayload } from '../session-event-payload'
+import { RUNTIME_PAYLOAD_CAPABILITY } from '../../shared/runtime-payload-transfer'
+import { runtimePayloadTransfers } from '../runtime-payload-transfers'
 import { createHash } from 'node:crypto'
-import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { readFile, stat } from 'node:fs/promises'
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http'
 import { extname, resolve, sep } from 'node:path'
 import { Readable } from 'node:stream'
 import { pipeline } from 'node:stream/promises'
 import type { ReadableStream as NodeReadableStream } from 'node:stream/web'
 import { promisify } from 'node:util'
 import { gzip } from 'node:zlib'
+import { parseRpcJson, stringifyRpcJson } from '../rpc-json'
+import type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebSocketAccess
+} from './external-access-contract'
+export type {
+  ExternalWebAccess,
+  ExternalWebAccessAuthorization,
+  ExternalWebAccessDecision,
+  ExternalWebSocketAccess
+} from './external-access-contract'
 
-import { net } from 'electron'
 import { WebSocket, WebSocketServer } from 'ws'
 
+import {
+  createLogger,
+  diagnosticErrorFields,
+  runWithDiagnosticCorrelation
+} from '@aipoch/diagnostics/node'
 import {
   ApplicationCommandError,
   toApplicationCommandErrorEnvelope
 } from '../../shared/application-command-contract'
+import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
+import type {
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest
+} from '../../shared/session-configuration'
 import { PlanCommandError } from '../../shared/session-plan/contract'
+import type {
+  CreateTaskProjectRequest,
+  StartTaskRunRequest,
+  TaskPlanResponseRequest,
+  UpdateTaskAgentRoutingRequest,
+  UpdateTaskProjectRequest
+} from '../../shared/task-api'
+import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
 import type { WebRpcErrorCode } from '../../shared/web-rpc-contract'
+import {
+  isWebRpcChannel,
+  WEB_EVENT_STREAM_PROTOCOL_VERSION,
+  WEB_RPC_CAPABILITIES,
+  WEB_RPC_PROTOCOL_VERSION,
+  webRpcRequestSchema
+} from '../../shared/web-rpc-contract'
+import { createApplicationCommandClient } from '../application-command-client'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
+import type { ApplicationEventSource } from '../application-events'
 import {
   createTaskCallerContext,
   createWebCallerContext,
   type CallerContext
 } from '../caller-context'
-import { createApplicationCommandClient } from '../application-command-client'
-import type { ApplicationCommandComposition } from '../application-command-composition'
-import type { ApplicationEventSource } from '../application-events'
+import { createWebSocketFrameBudget, createWebSocketFrameSender } from '../websocket-frame-sender'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
-import { createLogger, diagnosticErrorFields, runWithDiagnosticCorrelation } from '../logger'
-import {
-  WEB_RPC_CAPABILITIES,
-  WEB_EVENT_STREAM_PROTOCOL_VERSION,
-  isWebRpcChannel,
-  WEB_RPC_PROTOCOL_VERSION,
-  webRpcRequestSchema
-} from '../../shared/web-rpc-contract'
-import { RENDERER_CONTRACT_CATALOG } from '../../shared/renderer-contract-catalog'
 import {
   projectPublicTaskEvents,
   projectPublicTaskProgressEvent,
   projectWebRendererEvent
 } from './application-event-projections'
-import { InternalWebEventStream } from './internal-web-event-stream'
 import { authenticateRequest, persistAuthCookie } from './auth'
-import type {
-  CreateTaskProjectRequest,
-  StartTaskRunRequest,
-  TaskPlanResponseRequest,
-  UpdateProjectSessionDefaultsRequest,
-  UpdateSessionConfigurationRequest,
-  UpdateTaskAgentRoutingRequest,
-  UpdateTaskProjectRequest
-} from '../../shared/task-api'
-import { TASK_EVENT_STREAM_PROTOCOL_VERSION } from '../../shared/task-api'
-import { TaskApiError, type HeadlessTaskApi } from './task-api'
+import { InternalWebEventStream } from './internal-web-event-stream'
 import { PublicTaskEventStream } from './public-task-event-stream'
+import { TaskApiError, type HeadlessTaskApi } from './task-api'
 
 const MAX_RPC_BODY_BYTES = 64 * 1024 * 1024
 // Preserve one maximum-size request per logical client while leaving the same amount of capacity
@@ -64,8 +85,7 @@ const MAX_WEB_RPC_RESPONSE_BYTES = 16 * 1024 * 1024
 const MIN_GZIP_BYTES = 1_024
 const INTERNAL_SERVER_ERROR_MESSAGE = 'Internal server error'
 const DEFAULT_EVENT_HEARTBEAT_INTERVAL_MS = 10_000
-// The replay stream retains 16 MiB. Keep 64 KiB for its mandatory ready frame and framing overhead.
-const MAX_WEBSOCKET_BUFFERED_BYTES = 16 * 1024 * 1024 + 64 * 1024
+const MAX_WEB_EVENT_FRAME_BYTES = 16 * 1024 * 1024 + 64 * 1024
 const MAX_WEBSOCKET_INBOUND_BYTES = 1_024
 const TASK_IDEMPOTENCY_TTL_MS = 24 * 60 * 60 * 1_000
 const MAX_TASK_IDEMPOTENCY_ENTRIES = 1_024
@@ -83,7 +103,7 @@ const gzipAsync = promisify(gzip)
 const log = createLogger('web-service')
 const STATIC_RESPONSE_SECURITY_HEADERS = {
   'content-security-policy':
-    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
+    "default-src 'self'; script-src 'self'; worker-src 'self' blob:; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; media-src 'self' https: blob:; frame-src 'self'; connect-src 'self' ws: wss:; frame-ancestors 'none'",
   'x-frame-options': 'DENY',
   'referrer-policy': 'no-referrer'
 } as const
@@ -116,6 +136,7 @@ const MIME_TYPES: Record<string, string> = {
 const COMPRESSIBLE_EXTENSIONS = new Set(['.css', '.html', '.js', '.mjs', '.json', '.svg'])
 
 type WebServerOptions = {
+  fetchPreview?: (request: Request) => Promise<Response>
   host: string
   port: number
   token: string
@@ -181,7 +202,7 @@ type WebServerOptions = {
     appVersion: string
     configRoot: string
     platform: string
-    versions: { electron: string; chrome: string; node: string }
+    versions: { electron?: string; chrome?: string; node: string }
   }
 }
 
@@ -441,51 +462,9 @@ const applicationCommandErrorStatus = (error: ApplicationCommandError): number =
   return 500
 }
 
-const sendWebSocketMessage = (socket: WebSocket, message: string): boolean => {
-  if (socket.readyState !== WebSocket.OPEN) return false
-  if (socket.bufferedAmount + Buffer.byteLength(message) > MAX_WEBSOCKET_BUFFERED_BYTES) {
-    socket.terminate()
-    return false
-  }
-
-  try {
-    socket.send(message, (error) => {
-      if (error) socket.terminate()
-    })
-    return true
-  } catch {
-    socket.terminate()
-    return false
-  }
-}
-
-export type ExternalWebAccessAuthorization = {
-  kind: 'authorized' | 'authorized-pairing-manager'
-  principalId: string
-  isCurrent: () => boolean
-}
-
-export type ExternalWebAccessDecision = ExternalWebAccessAuthorization | 'handled' | 'denied'
-
-export type ExternalWebSocketAccess = {
-  principalId: string
-  isCurrent: () => boolean
-}
-
 // Optional authentication boundary for a loopback reverse proxy. The normal localhost token path
 // remains unchanged; an isolated remote-access adapter can authenticate its own origin/cookies or
 // render a pairing page without coupling the web server to a tunnel provider.
-export type ExternalWebAccess = {
-  authorizeHttp: (
-    request: IncomingMessage,
-    response: ServerResponse,
-    url: URL
-  ) => Promise<ExternalWebAccessDecision>
-  authorizeWebSocket: (
-    request: IncomingMessage,
-    url: URL
-  ) => Promise<ExternalWebSocketAccess | undefined>
-}
 
 export type RunningWebServer = {
   port: number
@@ -508,16 +487,7 @@ const json = (
   value: unknown,
   maxBytes = Number.POSITIVE_INFINITY
 ): void => {
-  const content = JSON.stringify(value ?? null, (_key, child) => {
-    if (child instanceof ArrayBuffer || ArrayBuffer.isView(child)) {
-      const bytes =
-        child instanceof ArrayBuffer
-          ? new Uint8Array(child)
-          : new Uint8Array(child.buffer, child.byteOffset, child.byteLength)
-      return { $binary: Buffer.from(bytes).toString('base64') }
-    }
-    return child
-  })
+  const content = stringifyRpcJson(value)
   const contentBytes = Buffer.byteLength(content)
   if (contentBytes > maxBytes) throw new WebRpcResponseBudgetExceededError()
   response.writeHead(status, {
@@ -617,17 +587,7 @@ const readJsonBody = async (
     throw error
   }
   if (chunks.length === 0) return {}
-  return JSON.parse(Buffer.concat(chunks, size).toString('utf8'), (_key, child) => {
-    if (
-      child &&
-      typeof child === 'object' &&
-      '$binary' in child &&
-      typeof child.$binary === 'string'
-    ) {
-      return Uint8Array.from(Buffer.from(child.$binary, 'base64'))
-    }
-    return child
-  })
+  return parseRpcJson(Buffer.concat(chunks, size).toString('utf8'))
 }
 
 const taskErrorStatus = (error: TaskApiError): number => {
@@ -914,7 +874,8 @@ const taskError = (response: ServerResponse, error: unknown): void => {
 const streamPreview = async (
   request: IncomingMessage,
   response: ServerResponse,
-  url: URL
+  url: URL,
+  fetchPreview: WebServerOptions['fetchPreview']
 ): Promise<void> => {
   const previewPath = url.pathname.slice('/preview/'.length)
   const slash = previewPath.indexOf('/')
@@ -928,6 +889,7 @@ const streamPreview = async (
   await streamPreviewResource(
     request,
     response,
+    fetchPreview,
     `open-science-preview://${encodeURIComponent(resourceId)}${suffix}`
   )
 }
@@ -935,6 +897,7 @@ const streamPreview = async (
 const streamPreviewResource = async (
   request: IncomingMessage,
   response: ServerResponse,
+  fetchPreview: WebServerOptions['fetchPreview'],
   resourceUrl: string,
   responseOverrides: Record<string, string> = {}
 ): Promise<void> => {
@@ -947,11 +910,14 @@ const streamPreviewResource = async (
   const headers = new Headers()
   if (request.headers.range) headers.set('range', request.headers.range)
   try {
-    const upstream = await net.fetch(resourceUrl, {
-      method: request.method,
-      headers,
-      signal: abortController.signal
-    })
+    if (!fetchPreview) throw new Error('Managed preview serving is not configured.')
+    const upstream = await fetchPreview(
+      new Request(resourceUrl, {
+        method: request.method,
+        headers,
+        signal: abortController.signal
+      })
+    )
     if (abortController.signal.aborted) return
     const responseHeaders: Record<string, string> = {}
     upstream.headers.forEach((value, key) => {
@@ -987,7 +953,8 @@ const handleTaskApiRequest = async (
   requestBodyBudgetRegistry: RequestBodyBudgetRegistry,
   idempotencyRegistry: TaskIdempotencyRegistry,
   externalAuthorization?: ExternalWebAccessAuthorization,
-  waitUntilTasksReady?: () => Promise<void>
+  waitUntilTasksReady?: () => Promise<void>,
+  fetchPreview?: WebServerOptions['fetchPreview']
 ): Promise<boolean> =>
   tasks.runWithCallerContext(callerContext, async () => {
     try {
@@ -1300,7 +1267,7 @@ const handleTaskApiRequest = async (
         assertExternalAuthorizationCurrent(externalAuthorization)
         const artifact = await tasks.acquireArtifact(decodeURIComponent(artifactMatch[1]))
         try {
-          await streamPreviewResource(request, response, artifact.url, {
+          await streamPreviewResource(request, response, fetchPreview, artifact.url, {
             'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(artifact.name)}`
           })
         } finally {
@@ -1371,6 +1338,8 @@ const serveStatic = async (
 
 const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWebServer> => {
   const sockets = new Set<WebSocket>()
+  const outboundBudget = createWebSocketFrameBudget()
+  const senders = new WeakMap<WebSocket, ReturnType<typeof createWebSocketFrameSender>>()
   const externalSockets = new Map<WebSocket, ExternalWebSocketAccess>()
   const publicEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
   const internalEventSockets = new Map<WebSocket, 'legacy' | 'replay'>()
@@ -1436,7 +1405,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   }
 
   const sendCurrentWebSocketMessage = (socket: WebSocket, message: string): boolean =>
-    isWebSocketAuthorizationCurrent(socket) && sendWebSocketMessage(socket, message)
+    isWebSocketAuthorizationCurrent(socket) && (senders.get(socket)?.send(message) ?? false)
 
   const handleRequest = async (
     request: IncomingMessage,
@@ -1507,7 +1476,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             .digest('hex'),
           taskCapabilities: options.tasks ? ['permission-prompts-none'] : [],
           rpcProtocolVersion: WEB_RPC_PROTOCOL_VERSION,
-          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [],
+          rpcCapabilities: auth.ok ? WEB_RPC_CAPABILITIES : [RUNTIME_PAYLOAD_CAPABILITY],
           rpcChannels,
           eventStream: internalEventStream.cursor(),
           restrictedRpcChannels
@@ -1559,7 +1528,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
           requestBodyBudgetRegistry,
           taskIdempotencyRegistry,
           externalAuthorization,
-          options.waitUntilTasksReady
+          options.waitUntilTasksReady,
+          options.fetchPreview
         ))
       ) {
         return
@@ -1672,7 +1642,8 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             dispatcher,
             channel,
             callerContext,
-            parsed.data.args
+            parsed.data.args,
+            parsed.data
           )
           assertExternalAuthorizationCurrent(externalAuthorization)
           json(
@@ -1727,7 +1698,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
         url.pathname.startsWith('/preview/') &&
         (request.method === 'GET' || request.method === 'HEAD')
       ) {
-        await streamPreview(request, response, url)
+        await streamPreview(request, response, url, options.fetchPreview)
         return
       }
 
@@ -1788,6 +1759,23 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   wsServer.on('connection', (socket, request) => {
+    senders.set(
+      socket,
+      createWebSocketFrameSender(
+        socket,
+        (failure) => {
+          log.warn('web event transport terminated', failure)
+        },
+        {
+          // Preserve the HTTP event stream’s existing framing allowance.
+          maxFrameBytes: MAX_WEB_EVENT_FRAME_BYTES,
+          socketByteBudget: MAX_WEB_EVENT_FRAME_BYTES,
+          budget: outboundBudget,
+          isAuthorized: () => isWebSocketAuthorizationCurrent(socket),
+          writeTimeoutMs: 30_000
+        }
+      )
+    )
     const url = new URL(request.url ?? '/', `http://${request.headers.host ?? '127.0.0.1'}`)
     const clientNonce = parseClientNonce(url.searchParams.getAll('client'))
     const externalAuthorization = externalSockets.get(socket)
@@ -1864,6 +1852,15 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       if (requestedProtocol === null) {
         internalEventSockets.set(socket, 'legacy')
       } else if (requestedProtocol !== String(WEB_EVENT_STREAM_PROTOCOL_VERSION)) {
+        // Old pages already request a reload on a resync frame or a newer protocol version.
+        sendCurrentWebSocketMessage(
+          socket,
+          JSON.stringify({
+            kind: 'resync-required',
+            ...internalEventStream.cursor(),
+            reason: 'stream-changed'
+          })
+        )
         socket.close(1002, 'Unsupported event stream protocol')
         return
       } else {
@@ -1886,7 +1883,11 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
   })
 
   const removeBroadcastSink = options.applicationEvents.subscribe((event) => {
-    const internalProjection = projectWebRendererEvent(event)
+    const projection = projectWebRendererEvent(event)
+    const internalProjection = projection
+      ? { ...projection, payload: projectSessionEventPayload(projection) }
+      : undefined
+    const needsPayloadClient = internalProjection?.payload !== projection?.payload
     const publicMessages = projectPublicTaskEvents(event, (sessionId, promptMessageId) =>
       options.tasks?.resolveActiveRun?.(sessionId, promptMessageId)
     ).map((projection) => publicTaskEventStream.publish(projection))
@@ -1904,6 +1905,10 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
       } else if (internalEventSockets.get(socket) === 'replay') {
         if (replayInternalMessage) sendCurrentWebSocketMessage(socket, replayInternalMessage)
       } else if (legacyInternalMessage) {
+        if (needsPayloadClient) {
+          socket.close(1002, 'Reload to receive large Session updates')
+          continue
+        }
         sendCurrentWebSocketMessage(socket, legacyInternalMessage)
       }
     }
@@ -1994,6 +1999,7 @@ const startWebHttpServer = async (options: WebServerOptions): Promise<RunningWeb
             : error
         }
       }
+      await runtimePayloadTransfers.settleReleased()
       server.closeAllConnections()
       await closePromise
       if (cleanupError) throw cleanupError

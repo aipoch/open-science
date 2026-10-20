@@ -69,3 +69,59 @@ it('allows retry after a refresh failure', async () => {
   consoleError.mockRestore()
   act(() => root.unmount())
 })
+
+it('lets the bottom toast recovery notice be dismissed without marking notifications read', () => {
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  const BrokenNotification = (): React.JSX.Element => {
+    throw new Error('damaged notification')
+  }
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+  act(() => {
+    root.render(
+      <NotificationErrorBoundary surface="toast">
+        <BrokenNotification />
+      </NotificationErrorBoundary>
+    )
+  })
+
+  expect(container.querySelector('[data-notification-recovery-toast]')).not.toBeNull()
+  fireEvent.click(container.querySelector('button[aria-label="Close"]')!)
+  expect(container.querySelector('[data-notification-recovery-toast]')).toBeNull()
+
+  act(() => root.unmount())
+  consoleError.mockRestore()
+})
+
+it('restores the toast boundary when a newer notification snapshot arrives after dismissal', async () => {
+  const container = document.createElement('div')
+  const root = createRoot(container)
+  let broken = true
+  const Notification = (): React.JSX.Element => {
+    if (broken) throw new Error('damaged notification')
+    return <span>New notification</span>
+  }
+  const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+
+  act(() => {
+    root.render(
+      <NotificationErrorBoundary surface="toast">
+        <Notification />
+      </NotificationErrorBoundary>
+    )
+  })
+  fireEvent.click(container.querySelector('button[aria-label="Close"]')!)
+
+  broken = false
+  await act(async () => {
+    useNotificationInboxStore.setState({ revision: 2 })
+    await Promise.resolve()
+  })
+
+  expect(container.textContent).toContain('New notification')
+  expect(container.querySelector('[data-notification-recovery-toast]')).toBeNull()
+
+  act(() => root.unmount())
+  consoleError.mockRestore()
+})

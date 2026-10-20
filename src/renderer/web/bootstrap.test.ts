@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import webHtml from './index.html?raw'
 
 import {
   WEB_EVENT_STREAM_PROTOCOL_VERSION,
@@ -22,9 +23,6 @@ const themeMocks = vi.hoisted(() => ({
 
 vi.mock('@/lib/theme', () => themeMocks)
 vi.mock('../src/main', () => ({}))
-vi.mock('../../main/remote-access/openscience-logo.svg?raw', () => ({
-  default: '<svg viewBox="0 0 1 1"></svg>'
-}))
 
 type SocketEventName = 'open' | 'message' | 'close'
 type SocketEvent = { data?: unknown; code?: number }
@@ -57,7 +55,9 @@ class FakeWebSocket {
 }
 
 type WebApi = {
+  getRuntimeVersions: Window['api']['getRuntimeVersions']
   storage: Window['api']['storage']
+  sessions: Window['api']['sessions']
   uploads: Record<'appendTransfer' | 'getTransferStatus', (request: unknown) => Promise<unknown>>
   specialist: Record<
     | 'beginPackageUpload'
@@ -199,14 +199,8 @@ beforeEach(() => {
   FakeWebSocket.instances = []
   document.documentElement.removeAttribute('data-open-science-notebook-network-unavailable')
   document.documentElement.removeAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)
-  document.body.innerHTML = `
-    <div id=open-science-connection-state role=status>
-      <div class=open-science-connection-panel>
-        <span id=open-science-connection-logo></span>
-        <p id=open-science-connection-message>Connecting to remote computer…</p>
-      </div>
-    </div>
-  `
+  document.body.innerHTML = new DOMParser().parseFromString(webHtml, 'text/html').body.innerHTML
+  vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
   sessionStorage.clear()
   sessionStorage.setItem('open-science-web-client', 'web-client-1')
   delete (window as unknown as { api?: unknown }).api
@@ -228,6 +222,7 @@ afterEach(() => {
   vi.clearAllTimers()
   vi.useRealTimers()
   vi.unstubAllGlobals()
+  vi.restoreAllMocks()
   sessionStorage.clear()
   localStorage.clear()
   document.body.innerHTML = ''
@@ -235,10 +230,38 @@ afterEach(() => {
 })
 
 describe('Web bootstrap event connection', () => {
+  it('uses the desktop particle loader before React startup and releases it when replaced', async () => {
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue({
+      arc: vi.fn(),
+      beginPath: vi.fn(),
+      clearRect: vi.fn(),
+      fill: vi.fn(),
+      restore: vi.fn(),
+      save: vi.fn()
+    } as unknown as CanvasRenderingContext2D)
+    const cancelFrame = vi.spyOn(window, 'cancelAnimationFrame')
+    await loadBootstrap()
+    expect(document.querySelector('#open-science-connection-logo canvas')).not.toBeNull()
+    expect(document.querySelector('.open-science-connection-name')).toBeNull()
+    expect(document.querySelector('.open-science-connection-spinner')).toBeNull()
+    document.getElementById('root')!.replaceChildren(document.createElement('main'))
+    await vi.waitFor(() => expect(cancelFrame).toHaveBeenCalled())
+    expect(document.querySelector('canvas')).toBeNull()
+  })
+
   it('records the caller location returned by bootstrap', async () => {
     await loadBootstrap()
 
     expect(document.documentElement.getAttribute(WEB_CALLER_LOCATION_ATTRIBUTE)).toBe('local')
+  })
+
+  it('starts the existing Web API with ordinary Node runtime versions', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({ ...bootstrapPayload, versions: { node: '24.21.0' } }))
+    )
+    const api = await loadBootstrap()
+    expect(api.getRuntimeVersions()).toEqual({ node: '24.21.0' })
   })
 
   it('recognizes an older local protocol-v1 Main from its local-only capability', async () => {
@@ -1094,6 +1117,136 @@ describe('Web bootstrap event connection', () => {
     window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
   })
 
+  it('aborts an in-flight snapshot page on disconnect and still sends its release', async () => {
+    let readSignal: AbortSignal | undefined
+    const released = vi.fn()
+    const snapshotId = '38cbf4bf-879b-4295-af03-fb0ee7e00a30'
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one'],
+              rpcCapabilities: ['bounded-payload-v1']
+            })
+          )
+        const body = JSON.parse(String(init?.body))
+        if (body.transfer?.kind === 'read') {
+          readSignal = init?.signal ?? undefined
+          return new Promise<Response>((_resolve, reject) => {
+            readSignal?.addEventListener('abort', () => reject(readSignal?.reason), { once: true })
+          })
+        }
+        if (body.transfer?.kind === 'release') released(body.transfer)
+        return Promise.resolve(
+          Response.json({
+            protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+            ok: true,
+            result: body.transfer ? null : { $payload: { snapshotId, byteLength: 2 } }
+          })
+        )
+      })
+    )
+    const api = await loadBootstrap()
+    const request = api.sessions.loadOne({ projectId: 'p', sessionId: 's' })
+    const outcome = expect(request).rejects.toThrow('could not be confirmed')
+    await vi.waitFor(() => expect(readSignal).toBeDefined())
+    FakeWebSocket.instances[0].emit('close')
+    expect(readSignal?.aborted).toBe(true)
+    await outcome
+    expect(released).toHaveBeenCalledExactlyOnceWith({ kind: 'release', snapshotId })
+  })
+
+  it('replays an interrupted large Session update instead of skipping its received cursor', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one']
+            })
+          )
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true })
+        })
+      })
+    )
+    await loadBootstrap()
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+    socket.emit('message', {
+      data: eventFrame(1, 'session:updated', {
+        kind: 'session-invalidation',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        revision: 2,
+        originClientId: 'other'
+      })
+    })
+    socket.emit('close')
+    await vi.advanceTimersByTimeAsync(1_000)
+    expect(new URL(FakeWebSocket.instances[1].url).searchParams.get('after')).toBe('0')
+  })
+
+  it('keeps replay gated until a large Session update has been applied', async () => {
+    let complete!: (response: Response) => void
+    const opened = vi.fn()
+    const phases: string[] = []
+    const phaseListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENTS_OPEN_EVENT, opened)
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, phaseListener)
+    vi.stubGlobal(
+      'fetch',
+      vi.fn((input: RequestInfo | URL) => {
+        if (String(input) === '/api/bootstrap')
+          return Promise.resolve(
+            Response.json({
+              ...bootstrapPayload,
+              rpcChannels: ['sessions:load-one']
+            })
+          )
+        return new Promise<Response>((resolve) => {
+          complete = resolve
+        })
+      })
+    )
+    try {
+      await loadBootstrap()
+      const socket = FakeWebSocket.instances[0]
+      socket.emit('open')
+      socket.emit('message', {
+        data: eventFrame(1, 'session:updated', {
+          kind: 'session-invalidation',
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          revision: 2,
+          originClientId: 'other'
+        })
+      })
+      socket.emit('message', { data: readyFrame(1) })
+      expect(opened).not.toHaveBeenCalled()
+      expect(phases.at(-1)).toBe('replaying')
+      complete(
+        Response.json({
+          protocolVersion: WEB_RPC_PROTOCOL_VERSION,
+          ok: true,
+          result: { id: 'session-1', projectId: 'project-1', revision: 2 }
+        })
+      )
+      await vi.waitFor(() => expect(opened).toHaveBeenCalledOnce())
+      expect(phases.at(-1)).toBe('live')
+    } finally {
+      window.removeEventListener(WEB_EVENTS_OPEN_EVENT, opened)
+      window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, phaseListener)
+    }
+  })
+
   it('signals stores to refresh only after replay reaches the live cursor', async () => {
     const listener = vi.fn()
     window.addEventListener(WEB_EVENTS_OPEN_EVENT, listener)
@@ -1149,6 +1302,33 @@ describe('Web bootstrap event connection', () => {
         reason: 'cursor-expired'
       })
     })
+    await vi.advanceTimersByTimeAsync(20_000)
+
+    expect(phases).toContain('reload-required')
+    expect(FakeWebSocket.instances).toHaveLength(1)
+    window.removeEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+  })
+
+  it('requests one reload immediately when the server signals a newer event protocol', async () => {
+    const phases: string[] = []
+    const stateListener = (event: Event): void => {
+      phases.push((event as CustomEvent<{ phase: string }>).detail.phase)
+    }
+    window.addEventListener(WEB_EVENT_CONNECTION_STATE_EVENT, stateListener)
+    await loadBootstrap()
+
+    FakeWebSocket.instances[0].emit('open')
+    FakeWebSocket.instances[0].emit('message', {
+      data: JSON.stringify({
+        kind: 'resync-required',
+        protocolVersion: WEB_EVENT_STREAM_PROTOCOL_VERSION + 1,
+        streamId: 'stream-1',
+        latestSequence: 4,
+        reason: 'stream-changed'
+      })
+    })
+    expect(phases.at(-1)).toBe('reload-required')
+    FakeWebSocket.instances[0].emit('close', { code: 1002 })
     await vi.advanceTimersByTimeAsync(20_000)
 
     expect(phases).toContain('reload-required')

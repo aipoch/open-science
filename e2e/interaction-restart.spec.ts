@@ -1,35 +1,120 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import type { PersistedChatSession } from '../src/shared/session-persistence'
+import type { NotebookRunRecord } from '../src/shared/notebook'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const scenarios = [
   { action: 'approve', restart: true },
   { action: 'dismiss', restart: true },
   { action: 'comment', restart: true },
+  { action: 'comment', restart: 'crash' },
+  { action: 'comment', restart: false },
   { action: 'question', restart: true },
   { action: 'question', restart: false },
   { action: 'permission-allow', restart: true },
   { action: 'permission-deny', restart: true }
 ] as const
 
+for (const transition of ['live', 'restart', 'crash'] as const) {
+  test(`keeps native questions answerable after ${transition}`, async ({ app }, testInfo) => {
+    test.setTimeout(180_000)
+    await app.completeOnboarding()
+    let page = await app.configureFakeAgent()
+    await createProjectViaUi(page, 'Question authority')
+    const prompt = 'Ask a restart verification question. Include four questions.'
+    await submitPromptViaUi(page, prompt)
+    await expect(page.getByRole('status', { name: 'Question 1 of 4', exact: true })).toBeVisible()
+    const identity = await page.evaluate(async () => {
+      const session = (await window.api.sessions.loadAll()).sessions[0]
+      return { projectId: session.projectId, sessionId: session.id }
+    })
+    await expect
+      .poll(async () =>
+        page.evaluate(async (id) => {
+          const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)
+          return session?.activities?.some((a) => a.elicitation?.state === 'pending')
+        }, identity.sessionId)
+      )
+      .toBe(true)
+
+    if (transition === 'restart' || transition === 'crash') {
+      if (transition === 'crash') {
+        page = await app.restartAfterCrash({ force: true })
+      } else {
+        const quittingPage = page
+        const restarting = app.restart()
+        await quittingPage
+          .getByRole('button', { name: 'Quit', exact: true })
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => quittingPage.getByRole('button', { name: 'Quit', exact: true }).click())
+          .catch(() => undefined)
+        page = await restarting
+      }
+    }
+    if (transition !== 'live') {
+      await page
+        .getByRole('region', { name: 'Recent sessions', exact: true })
+        .getByRole('button', { name: /^Ask a restart verification question\./ })
+        .click()
+      await testInfo.attach('session-after-transition', {
+        body: JSON.stringify(
+          await page.evaluate(async (id) => {
+            const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)
+            return {
+              projectId: session?.projectId,
+              sessionId: session?.id,
+              elicitation: session?.activities?.find((a) => a.elicitation)?.elicitation
+            }
+          }, identity.sessionId),
+          null,
+          2
+        ),
+        contentType: 'application/json'
+      })
+    }
+
+    for (let index = 1; index <= 4; index += 1) {
+      await expect(
+        page.getByRole('status', { name: `Question ${index} of 4`, exact: true })
+      ).toBeVisible()
+      await page.getByText('Dataset Alpha', { exact: true }).first().click()
+      if (index < 4) await page.getByRole('button', { name: 'Next question', exact: true }).click()
+    }
+    await page.screenshot({ path: testInfo.outputPath('fourth-question.png') })
+    await page.getByRole('button', { name: 'Finish', exact: true }).click()
+    await expect(
+      page.getByText('Restart verification: Question answer delivered.', { exact: false })
+    ).toBeVisible({ timeout: 40_000 })
+    const saved = await page.evaluate(async (id) => {
+      const session = (await window.api.sessions.loadAll()).sessions.find((s) => s.id === id)!
+      return {
+        projectId: session.projectId,
+        sessionId: session.id,
+        answerCount: session.activities?.find((a) => a.elicitation)?.elicitation?.answers?.length
+      }
+    }, identity.sessionId)
+    expect(saved).toEqual({ ...identity, answerCount: 4 })
+    await page.screenshot({ path: testInfo.outputPath('answered.png') })
+  })
+}
+
 for (const { action, restart } of scenarios) {
-  test(`delivers ${action} ${restart ? 'after a real application restart' : 'in the live session'}`, async ({
+  test(`delivers ${action} ${restart === 'crash' ? 'after an application crash with a parked Plan' : restart ? 'after a real application restart' : 'in the live session'}`, async ({
     app
   }, testInfo) => {
     test.setTimeout(180_000)
     await app.completeOnboarding()
     let page = await app.configureFakeAgent()
-    await page.getByRole('button', { name: 'New project' }).click()
-    const dialog = page.getByRole('dialog', { name: 'New project' })
-    await dialog.getByLabel('Name').fill(`Restart ${action}`)
-    await dialog.getByRole('button', { name: 'Create project' }).click()
+    await createProjectViaUi(page, `Restart ${action}`)
     const permission = action === 'permission-allow' || action === 'permission-deny'
     const prompt = permission
       ? 'Request restart verification permission.'
       : action === 'question'
         ? 'Ask a restart verification question.'
         : 'Create a restart verification Plan.'
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, prompt)
     if (permission) await expect(page.getByTestId('permission-card')).toBeVisible()
     else if (action === 'question')
       await expect(
@@ -55,20 +140,99 @@ for (const { action, restart } of scenarios) {
         contentType: 'application/json'
       })
     await page.screenshot({ path: testInfo.outputPath('before-restart.png') })
+    if (action === 'comment' && restart === true) {
+      const panel = page.getByTestId('plan-composer')
+      const expandedHeight = (await panel.boundingBox())!.height
+      await expect(
+        panel.locator('article').getByRole('button', { name: 'Collapse Plan' })
+      ).toHaveCount(0)
+      const toggleBounds = (await page
+        .getByRole('button', { name: 'Collapse Plan' })
+        .boundingBox())!
+      expect(toggleBounds.y + toggleBounds.height).toBeLessThanOrEqual(
+        (await panel.locator('article').boundingBox())!.y
+      )
+      await panel.screenshot({ path: testInfo.outputPath('expanded-plan-control.png') })
+      const panelBounds = (await panel.boundingBox())!
+      expect(
+        Math.abs(toggleBounds.x + toggleBounds.width / 2 - panelBounds.x - panelBounds.width / 2)
+      ).toBeLessThan(1)
+      await page.getByRole('button', { name: 'Collapse Plan' }).hover()
+      await panel.screenshot({ path: testInfo.outputPath('hover-plan-control.png') })
+      const controlX = toggleBounds.x + toggleBounds.width / 2
+      const controlY = toggleBounds.y + toggleBounds.height / 2
+      await page.mouse.move(controlX, controlY)
+      await page.mouse.down()
+      await page.mouse.move(controlX, controlY - 24, { steps: 4 })
+      await page.mouse.move(controlX, controlY, { steps: 4 })
+      await page.mouse.up()
+      await expect(page.getByRole('button', { name: 'Collapse Plan' })).toHaveAttribute(
+        'aria-expanded',
+        'true'
+      )
+      await page.getByRole('textbox', { name: 'Respond to Plan' }).fill('Keep this revision draft.')
+      await page.getByRole('button', { name: 'Collapse Plan' }).click()
+      await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toBeHidden()
+      await expect(page.getByRole('button', { name: 'Approve', exact: true }).first()).toBeVisible()
+      expect((await panel.boundingBox())!.height).toBeLessThan(expandedHeight)
+      await page.screenshot({ path: testInfo.outputPath('collapsed-plan.png') })
+      await panel.screenshot({ path: testInfo.outputPath('collapsed-plan-control.png') })
+      await page.getByRole('button', { name: 'Expand Plan' }).focus()
+      await page.keyboard.press('Enter')
+      await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toHaveValue(
+        'Keep this revision draft.'
+      )
+      await page.getByRole('button', { name: 'Collapse Plan' }).click()
+    }
     if (restart) {
-      const quittingPage = page
-      const restarting = app.restart()
-      // A live generate_plan waiter triggers the ordinary running-work quit confirmation.
-      const confirmQuit = quittingPage.getByRole('button', { name: 'Quit', exact: true })
-      await confirmQuit
-        .waitFor({ state: 'visible', timeout: 5_000 })
-        .then(() => confirmQuit.click())
-        .catch(() => undefined)
-      page = await restarting
+      if (restart === 'crash') {
+        await expect
+          .poll(async () =>
+            page.evaluate(async () =>
+              (await window.api.sessions.loadAll()).sessions[0]?.activities?.some(
+                ({ id }) => id === 'e2e-restart-plan-generation'
+              )
+            )
+          )
+          .toBe(true)
+        expect(
+          await page.evaluate(async () =>
+            Boolean((await window.api.sessions.loadAll()).sessions[0]?.activeRun)
+          )
+        ).toBe(true)
+        page = await app.restartAfterCrash({ force: true })
+      } else {
+        const quittingPage = page
+        const restarting = app.restart()
+        // A live generate_plan waiter triggers the ordinary running-work quit confirmation.
+        const confirmQuit = quittingPage.getByRole('button', { name: 'Quit', exact: true })
+        await confirmQuit
+          .waitFor({ state: 'visible', timeout: 5_000 })
+          .then(() => confirmQuit.click())
+          .catch(() => undefined)
+        page = await restarting
+      }
       await page
         .getByRole('region', { name: 'Recent sessions' })
         .getByRole('button', { name: prompt })
         .click()
+      if (action === 'comment' && restart === true) {
+        await expect(page.getByRole('button', { name: 'Collapse Plan' })).toBeVisible()
+        await expect(page.getByRole('textbox', { name: 'Respond to Plan' })).toBeVisible()
+      }
+    }
+    if (action === 'comment' && !restart) {
+      await page.evaluate(async () => {
+        const session = (await window.api.sessions.loadAll()).sessions[0]
+        await window.api.acp.cancel({ sessionId: session.id })
+      })
+      await expect
+        .poll(async () =>
+          page.evaluate(async () =>
+            Boolean((await window.api.sessions.loadAll()).sessions[0]?.activeRun)
+          )
+        )
+        .toBe(false)
     }
     if (action === 'approve' || action === 'dismiss' || action === 'comment') {
       const stoppedPlan = await page.evaluate(async () => {
@@ -113,7 +277,21 @@ for (const { action, restart } of scenarios) {
       await page.getByRole('button', { name: 'Send Plan feedback' }).click()
     }
     const expected = `Restart verification: ${action === 'approve' ? 'Plan approval' : action === 'dismiss' ? 'Plan dismissal' : action === 'comment' ? 'Plan feedback' : action === 'permission-allow' ? 'Permission approval' : action === 'permission-deny' ? 'Permission denial' : 'Question answer'} delivered.`
-    await expect(page.getByText(expected, { exact: false })).toBeVisible({ timeout: 40_000 })
+    try {
+      await expect(page.getByText(expected, { exact: false })).toBeVisible({ timeout: 40_000 })
+    } finally {
+      if (action === 'comment') {
+        await testInfo.attach('plan-feedback-delivery', {
+          body: JSON.stringify(
+            await page.evaluate(async () => ({
+              sessions: (await window.api.sessions.loadAll()).sessions,
+              runtime: await window.api.acp.getState()
+            }))
+          ),
+          contentType: 'application/json'
+        })
+      }
+    }
     await expect
       .poll(async () =>
         page.evaluate(async (text) => {
@@ -142,10 +320,123 @@ for (const { action, restart } of scenarios) {
         })
       )
       .toEqual([{ status: 'idle', active: false }])
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify interaction follow-up.')
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, 'Verify interaction follow-up.')
     await expect(page.getByText('Interaction follow-up completed.', { exact: false })).toBeVisible()
     await page.screenshot({ path: testInfo.outputPath('after-response.png') })
+  })
+}
+
+for (const secondDecision of ['allow', 'deny'] as const) {
+  test(`preserves a second permission across another restart and requires explicit ${secondDecision}`, async ({
+    app
+  }, testInfo) => {
+    test.setTimeout(240_000)
+    await app.completeOnboarding()
+    let page = await app.configureFakeAgent()
+    await createProjectViaUi(page, `Permission handoff ${secondDecision}`)
+    const prompt = 'Verify consecutive permissions after restart.'
+    await submitPromptViaUi(page, prompt)
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const readSession = async (): Promise<PersistedChatSession> =>
+      page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
+    await expect
+      .poll(async () => (await readSession()).runtimeContext?.permission?.state)
+      .toBe('pending')
+    const initial = await readSession()
+    expect(initial.runtimeContext?.permission?.request.rawInput).toMatchObject({
+      code: 'return { marker: "permission-handoff-first" }'
+    })
+    expect(initial.runtimeContext?.permission?.request.isMcp).toBe(true)
+    const firstRequestId = initial.runtimeContext!.permission!.request.requestId
+
+    page = await app.restart()
+    await page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    expect((await readSession()).runtimeContext?.permission?.request.requestId).toBe(firstRequestId)
+    const allowOnce = async (): Promise<void> => {
+      const approval = page.getByTestId('permission-actions').getByTestId('allow-primary')
+      await expect(approval).toHaveText('Allow')
+      await approval.click()
+    }
+    await allowOnce()
+
+    // Reproduce the production failure: the restored exact call succeeds, then a different
+    // provider-owned MCP call asks within the same continuation instead of silently being cancelled.
+    await expect
+      .poll(async () => (await readSession()).runtimeContext?.permission?.request.rawInput, {
+        timeout: 40_000
+      })
+      .toMatchObject({ code: 'return { marker: "permission-handoff-second" }' })
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const next = await readSession()
+    const secondPermission = next.runtimeContext!.permission!
+    expect(secondPermission.state).toBe('pending')
+    expect(secondPermission.request.requestId).not.toBe(firstRequestId)
+    expect(secondPermission.originatingPromptMessageId).toBe(
+      initial.runtimeContext!.permission!.originatingPromptMessageId
+    )
+    const readRuns = async (): Promise<NotebookRunRecord[]> =>
+      page.evaluate(async (session) => {
+        const state = await window.api.notebook.state({
+          projectId: session.projectId,
+          sessionId: session.id,
+          workspaceCwd: session.cwd
+        })
+        return state.runs.filter((run) => run.script.includes('permission-handoff-'))
+      }, initial)
+    const beforeSecondDecision = await readRuns()
+    expect(beforeSecondDecision).toHaveLength(1)
+    expect(beforeSecondDecision[0]).toMatchObject({
+      script: 'return { marker: "permission-handoff-first" }',
+      status: 'completed'
+    })
+    await page.screenshot({ path: testInfo.outputPath('second-permission-before-restart.png') })
+    await testInfo.attach('second-permission', {
+      body: JSON.stringify(secondPermission),
+      contentType: 'application/json'
+    })
+
+    page = await app.restart()
+    await page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    await expect(page.getByTestId('permission-card')).toBeVisible()
+    const restored = await readSession()
+    expect(restored.id).toBe(initial.id)
+    expect(restored.runtimeContext?.permission).toEqual(secondPermission)
+    expect(restored.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    expect(await readRuns()).toEqual(beforeSecondDecision)
+    await page.screenshot({ path: testInfo.outputPath('second-permission-restored.png') })
+    if (secondDecision === 'allow') await allowOnce()
+    else await page.getByTestId('permission-actions').getByTestId('deny-button').click()
+    const answer =
+      secondDecision === 'allow'
+        ? 'Permission handoff: both calls executed once.'
+        : 'Permission handoff: second call denied without execution.'
+    await expect(page.getByText(answer, { exact: false })).toBeVisible({ timeout: 40_000 })
+    await expect.poll(async () => (await readSession()).status).toBe('idle')
+    const final = await readSession()
+    expect(final.runtimeContext?.permission).toBeUndefined()
+    expect(final.messages.filter((message) => message.role === 'user')).toHaveLength(1)
+    const runs = await readRuns()
+    expect(runs.filter((run) => run.script.includes('permission-handoff-first'))).toHaveLength(1)
+    expect(runs.filter((run) => run.script.includes('permission-handoff-second'))).toHaveLength(
+      secondDecision === 'allow' ? 1 : 0
+    )
+    expect(runs.every((run) => run.status === 'completed')).toBe(true)
+    const providerPrompts = await app.readFakeAgentPrompts()
+    await testInfo.attach('provider-prompts', {
+      body: JSON.stringify(providerPrompts),
+      contentType: 'application/json'
+    })
+    // Session-title generation may use a separate provider Session. Count only this task's
+    // original prompt and its two hidden permission continuations, not auxiliary model work.
+    expect(providerPrompts.filter((entry) => entry.sessionId === initial.id)).toHaveLength(3)
+    await page.screenshot({ path: testInfo.outputPath('permission-handoff-finished.png') })
   })
 }
 
@@ -155,14 +446,8 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
   test.setTimeout(180_000)
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Cancellation publication')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Publish then wait for cancellation.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await createProjectViaUi(page, 'Cancellation publication')
+  await submitPromptViaUi(page, 'Publish then wait for cancellation.')
   await expect(
     page.getByText('Artifact published; waiting for cancellation.', { exact: false })
   ).toBeVisible({ timeout: 60_000 })
@@ -191,8 +476,7 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
     message.artifactIds?.includes(artifact.id)
   )!
   expect(owner).toBeDefined()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Verify interaction follow-up.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Verify interaction follow-up.')
   await expect(page.getByText('Interaction follow-up completed.', { exact: false })).toBeVisible()
   await expect
     .poll(async () =>
@@ -208,4 +492,55 @@ test('keeps a committed Artifact Version when cancelled and immediately followed
   ).toEqual([owner.id])
   expect(after.activeRun).toBeUndefined()
   expect(after.messages.filter((message) => message.role === 'user')).toHaveLength(2)
+})
+
+test('cancels an active provider turn on ordinary quit and resumes it after restart', async ({
+  app
+}, testInfo) => {
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProjectViaUi(page, 'Quit active conversation')
+  const prompt = 'Hold the turn outcome fixture.'
+  await submitPromptViaUi(page, prompt)
+  await expect(
+    page.getByText('Turn outcome cancellation checkpoint.', { exact: true })
+  ).toBeVisible()
+  const before = await page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0])
+  expect(before.status).toBe('running')
+  expect(before.activeRun).toBeDefined()
+
+  const [restart, quit] = await Promise.allSettled([
+    app.restart(),
+    page.getByRole('button', { name: 'Quit', exact: true }).click()
+  ])
+  // Settle both operations before fixture cleanup, even if the window closes before the click.
+  if (restart.status === 'rejected') throw restart.reason
+  if (quit.status === 'rejected') throw quit.reason
+  page = restart.value
+  const restored = await page.evaluate(
+    async () => (await window.api.sessions.loadAll()).sessions[0]
+  )
+  await testInfo.attach('active-turn-after-ordinary-quit', {
+    body: JSON.stringify(restored),
+    contentType: 'application/json'
+  })
+  expect(restored.id).toBe(before.id)
+  expect(restored.activeRun).toBeUndefined()
+  expect(restored.messages.find((message) => message.role === 'user')?.turnOutcome).toMatchObject({
+    kind: 'cancelled',
+    recovery: 'resume'
+  })
+  await page
+    .getByRole('region', { name: 'Recent sessions' })
+    .getByRole('button', { name: prompt })
+    .click()
+  await expect(page.getByText('Turn outcome resumed successfully.', { exact: true })).toHaveCount(0)
+  await page.getByRole('button', { name: 'Resume session', exact: true }).click()
+  await expect(page.getByText('Turn outcome resumed successfully.', { exact: true })).toBeVisible()
+  await expect
+    .poll(() =>
+      page.evaluate(async () => (await window.api.sessions.loadAll()).sessions[0]?.status)
+    )
+    .toBe('idle')
 })

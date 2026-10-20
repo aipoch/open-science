@@ -40,13 +40,13 @@ const FRAMEWORKS: AgentFrameworkView[] = [
     id: 'claude-code',
     displayName: 'Claude Code',
     supportsSkills: true,
-    supportedApiTypes: ['anthropic']
+    supportedApiTypes: ['messages']
   },
   {
     id: 'opencode',
     displayName: 'OpenCode',
     supportsSkills: true,
-    supportedApiTypes: ['anthropic', 'openai']
+    supportedApiTypes: ['messages', 'chat-completions']
   },
   {
     id: 'codex',
@@ -151,7 +151,7 @@ describe('ActiveModelSelect', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'Gateway', apiEndpoints: ['anthropic'], models: ['m1'] })
+        provider({ id: 'p1', name: 'Gateway', apiEndpoints: ['messages'], models: ['m1'] })
       ],
       setActiveProvider
     })
@@ -172,7 +172,7 @@ describe('ActiveModelSelect', () => {
         provider({
           id: 'p1',
           name: 'DeepSeek',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['deepseek-chat']
         })
       ],
@@ -195,7 +195,12 @@ describe('ActiveModelSelect', () => {
       agentFrameworkId: 'opencode',
       agentFrameworks: FRAMEWORKS,
       providers: [
-        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['ds-1'] })
+        provider({
+          id: 'p1',
+          name: 'DeepSeek',
+          apiEndpoints: ['chat-completions'],
+          models: ['ds-1']
+        })
       ],
       setActiveProvider: vi.fn().mockResolvedValue(undefined)
     })
@@ -219,7 +224,7 @@ describe('ActiveModelSelect', () => {
           type: 'official',
           vendorId: 'opencode',
           name: 'Mixed catalog',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['kimi-k2.7-code', 'gpt-5.6-sol']
         })
       ],
@@ -260,7 +265,7 @@ describe('ActiveModelSelect', () => {
         provider({
           id: 'p1',
           name: 'DeepSeek',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['ds-a', 'ds-b']
         })
       ]
@@ -280,10 +285,10 @@ describe('ActiveModelSelect', () => {
         provider({
           id: 'p1',
           name: 'Anthropic',
-          apiEndpoints: ['anthropic'],
+          apiEndpoints: ['messages'],
           models: ['opus', 'sonnet']
         }),
-        provider({ id: 'p2', name: 'OpenAI', apiEndpoints: ['openai'], models: ['gpt'] })
+        provider({ id: 'p2', name: 'OpenAI', apiEndpoints: ['chat-completions'], models: ['gpt'] })
       ],
       setActiveProvider: vi.fn().mockResolvedValue(undefined)
     })

@@ -1,3 +1,4 @@
+import { LoaderCircle } from 'lucide-react'
 import { useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -66,6 +67,9 @@ const NotebookStep = ({ onBack }: NotebookStepProps): React.JSX.Element => {
             t('Optional — nothing here is required to finish setup.')
           )}
         </p>
+        <span role="status" className="sr-only">
+          {isCompleting ? t('Finishing setup…') : ''}
+        </span>
         <div className="flex items-center gap-2">
           <Button
             type="button"
@@ -81,9 +85,16 @@ const NotebookStep = ({ onBack }: NotebookStepProps): React.JSX.Element => {
             // Leaving mid-create would strand a half-built env (the user can cancel it from the
             // card to finish).
             disabled={envProvisioning || isCompleting}
+            aria-busy={isCompleting}
             className="px-4"
           >
-            {t('Finish')}
+            {isCompleting ? (
+              <LoaderCircle
+                className="size-4 animate-spin motion-reduce:animate-none"
+                aria-hidden="true"
+              />
+            ) : null}
+            {isCompleting ? t('Finishing setup…') : t('Finish')}
           </Button>
         </div>
       </CardFooter>

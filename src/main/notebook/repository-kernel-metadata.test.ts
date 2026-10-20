@@ -34,6 +34,35 @@ afterEach(async () => {
 })
 
 describe('notebook repository kernel metadata', () => {
+  it('round-trips the new REPL marker without backfilling historical runs', async () => {
+    const root = await createStorageRoot()
+    const repository = new NotebookRunRepository(root)
+    const lane = createRootNotebookLane('default-project', 'session-1', 'root-frame-session-1')
+    await repository.loadOrCreate({
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root,
+      lane
+    })
+    const legacy = { ...runFor('repl'), runId: 'legacy' }
+    const current = { ...runFor('repl'), runId: 'current', replPersistentBindings: true as const }
+    for (const run of [legacy, current])
+      await repository.appendRun({
+        projectId: 'default-project',
+        sessionId: 'session-1',
+        lane,
+        run
+      })
+    const runs = await new NotebookRunRepository(root).readSessionRuns(
+      'default-project',
+      'session-1'
+    )
+    expect(runs.find((run) => run.runId === 'legacy')).not.toHaveProperty('replPersistentBindings')
+    expect(runs.find((run) => run.runId === 'current')).toMatchObject({
+      replPersistentBindings: true
+    })
+  })
+
   it.each<NotebookKernelKind>(['r', 'repl', 'bash'])(
     'does not persist a document-level language for %s-only history',
     async (kernelKind) => {

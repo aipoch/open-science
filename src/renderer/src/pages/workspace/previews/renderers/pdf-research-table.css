@@ -1,6 +1,4 @@
-/* Hallmark · component: research table · genre: editorial · theme: existing app tokens
- * Quiet horizontal rules, grouped cells and tabular numerals; preserve source structure.
- * Pre-emit critique: P4 H4 E4 S5 R5 V4. */
+/* Preserve source spans without guessing which rows are headers. */
 
 .pdf-research-table-scroll {
   max-width: 100%;
@@ -28,43 +26,22 @@
 .pdf-research-table td {
   min-width: 6rem;
   padding: 0.625rem 1rem;
-  border-bottom: 1px solid var(--color-border-200);
+  border: 1px solid var(--color-border-200);
+  background: var(--color-bg-000);
   vertical-align: top;
   text-align: start;
 }
 
-.pdf-research-table tr:first-child > td {
-  background: color-mix(in srgb, var(--color-primary) 7%, var(--color-bg-000));
-  border-bottom-color: var(--color-border-300);
-  font-weight: 600;
-}
-
-.pdf-research-table td:first-child {
-  min-width: 10rem;
-}
-
-.pdf-research-table td[colspan]:not([colspan='1']) {
-  background: color-mix(in srgb, var(--color-primary) 5%, var(--color-bg-000));
-  font-weight: 600;
-  border-inline: 1px solid var(--color-border-200);
-}
-
 .pdf-research-table td[rowspan]:not([rowspan='1']) {
   vertical-align: middle;
-  border-inline-end: 1px solid var(--color-border-200);
-}
-
-.pdf-research-table td[colspan]:not([colspan='1']):not(:first-child) {
-  text-align: center;
 }
 
 .pdf-research-table td[data-numeric] {
-  text-align: end;
   white-space: nowrap;
 }
 
 @media (hover: hover) {
-  .pdf-research-table tr:hover > td {
+  .pdf-research-table td:hover {
     background: color-mix(in srgb, var(--color-primary) 8%, var(--color-bg-000));
   }
 }

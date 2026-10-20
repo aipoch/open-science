@@ -1,3 +1,4 @@
+import { useOverlayLayer } from './overlay-layer'
 import * as React from 'react'
 import { Select as SelectPrimitive } from 'radix-ui'
 import { Check, ChevronDown, ChevronUp } from 'lucide-react'
@@ -36,6 +37,7 @@ function SelectTrigger({
 
 function SelectContent({
   className,
+  style,
   children,
   position = 'popper',
   scrollToTopOnOpen = false,
@@ -46,6 +48,7 @@ function SelectContent({
   // choices above the viewport (issue #294).
   scrollToTopOnOpen?: boolean
 }): React.JSX.Element {
+  const layer = useOverlayLayer()
   const viewportRef = React.useRef<HTMLDivElement>(null)
 
   // The content mounts fresh on every open. Radix scrolls the selected item into view once the
@@ -99,6 +102,7 @@ function SelectContent({
           className
         )}
         {...props}
+        style={layer > 40 ? { ...style, zIndex: layer + 10 } : style}
       >
         <SelectScrollUpButton />
         <SelectPrimitive.Viewport

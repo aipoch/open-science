@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookRunDocument } from '../../shared/notebook'
@@ -236,3 +237,5 @@ describe('NotebookRuntimeService exportIpynb', () => {
     expect(r.cells.map((cell) => cell.source.join(''))).toEqual(['print(2)', '%%bash\nls'])
   })
 })
+
+configureTestRuntimeMetadata()

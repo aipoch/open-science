@@ -1,0 +1,3 @@
+{"name":"compact-root-fraction-keeps-numerator-out-of-prose","numeratorX":103,"scripts":false,"expected":"α/(√t)"}
+{"name":"root-fraction-preserves-nested-numerator-scripts","numeratorX":104,"scripts":true,"expected":"β_1^2/(√β_2)"}
+{"name":"off-axis-raised-variable-is-not-a-numerator","numeratorX":90,"scripts":false}

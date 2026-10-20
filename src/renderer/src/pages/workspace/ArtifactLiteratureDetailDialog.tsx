@@ -1,11 +1,13 @@
 import { ErrorNotice } from '@/components/error-notice'
-import { useLiteratureChanges } from '@/pages/literature/useLiteratureChanges'
+import { JournalAttributes } from '@/pages/literature/public/components'
+import { useLiteratureChanges } from '@/pages/literature/public/events'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 import * as Dialog from '@/components/ui/dialog'
-import { FileText, X } from 'lucide-react'
+import { ArrowUpRight, FileText, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { Button } from '@/components/ui/button'
 import {
   dialogCloseButtonClassName,
@@ -14,19 +16,21 @@ import {
   dialogPanelClassName,
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
-import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { cn } from '@/lib/utils'
-import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import {
   createLiteratureIdentifierUrl,
   normalizeLiteratureIdentifierValue,
-  type LiteratureItemInput,
-  type LiteratureItemType,
-  type LiteratureItemView
-} from '../../../../shared/literature'
+  type LiteratureItemType
+} from '@aipoch/literature-citations/contracts'
+import { type LiteratureItemInput } from '@aipoch/literature-library/item'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 
 type ArtifactLiteratureDetailDialogProps = Readonly<{
   snapshotOnly?: boolean
+  liveMetadata?: boolean
+  onViewInLiterature?: () => void
+  onCloseAutoFocus?: (event: Event) => void
   reference: ArtifactLiteratureReference | undefined
   onOpenChange: (open: boolean) => void
 }>
@@ -70,6 +74,9 @@ const formatBytes = (bytes: number): string => {
 const ArtifactLiteratureDetailDialog = ({
   reference,
   snapshotOnly = false,
+  liveMetadata = false,
+  onViewInLiterature,
+  onCloseAutoFocus,
   onOpenChange
 }: ArtifactLiteratureDetailDialogProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -107,7 +114,7 @@ const ArtifactLiteratureDetailDialog = ({
   const loadStatus = snapshotOnly
     ? 'idle'
     : (resolvedReference?.status ?? (reference ? 'loading' : 'idle'))
-  const item = reference?.item
+  const item = liveMetadata ? (resolvedReference?.item?.item ?? reference?.item) : reference?.item
   const attachments = snapshotOnly ? [] : (resolvedReference?.item?.attachments ?? [])
   const itemTypeLabels: Record<LiteratureItemType, string> = {
     journalArticle: t('Journal article'),
@@ -132,6 +139,7 @@ const ArtifactLiteratureDetailDialog = ({
           {/* Artifact preview panels occupy layers 60/61; keep both child surfaces above them. */}
           <Dialog.Overlay className={cn(dialogOverlayClassName, 'z-[65]')} />
           <Dialog.Content
+            onCloseAutoFocus={onCloseAutoFocus}
             className={dialogPanelClassName(
               'z-[65] flex max-h-[85svh] w-[min(680px,calc(100vw-2rem))] flex-col p-0'
             )}
@@ -174,9 +182,11 @@ const ArtifactLiteratureDetailDialog = ({
 
             <div className="min-h-0 flex-1 divide-y divide-border-300/80 overflow-y-auto px-5 text-sm">
               <p className="py-3 text-xs text-muted-foreground">
-                {snapshotOnly
-                  ? t('Saved reference metadata from the Session package.')
-                  : t('Saved reference metadata. Attachments reflect the current Library entry.')}
+                {liveMetadata
+                  ? t('Current Library entry.')
+                  : snapshotOnly
+                    ? t('Saved reference metadata from the Session package.')
+                    : t('Saved reference metadata. Attachments reflect the current Library entry.')}
               </p>
               {loadStatus === 'missing' || loadStatus === 'error' ? (
                 <ErrorNotice
@@ -207,6 +217,18 @@ const ArtifactLiteratureDetailDialog = ({
                     {item.abstract}
                   </p>
                 </section>
+              ) : null}
+
+              {!snapshotOnly ? (
+                <JournalAttributes
+                  item={item}
+                  itemId={
+                    liveMetadata && resolvedReference?.status === 'ready'
+                      ? resolvedReference.itemId
+                      : undefined
+                  }
+                  detail
+                />
               ) : null}
 
               <section className="py-4">
@@ -294,6 +316,14 @@ const ArtifactLiteratureDetailDialog = ({
                 </section>
               ) : null}
             </div>
+            {onViewInLiterature && (
+              <div className="flex shrink-0 justify-end border-t border-border px-5 py-3">
+                <Button size="sm" onClick={onViewInLiterature}>
+                  {t('View in Literature')}
+                  <ArrowUpRight aria-hidden="true" />
+                </Button>
+              </div>
+            )}
           </Dialog.Content>
         </Dialog.Portal>
       ) : null}

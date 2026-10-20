@@ -76,11 +76,32 @@ const installFromManagedSource = async (frameworkName: string): Promise<void> =>
 }
 
 describe('AgentStep', () => {
+  it('keeps an incompatible Claude installation visible and requires an update', async () => {
+    useSettingsStore.setState({
+      agentFrameworkId: 'claude-code',
+      agentFrameworks: twoFrameworks,
+      claude: { resolvedPath: '/bin/claude', version: '2.1.117' },
+      preflight: {
+        claudeReady: true,
+        opencodeReady: false,
+        codexReady: false,
+        codebuddyReady: false,
+        agentFrameworkId: 'claude-code',
+        agentReady: true,
+        activeProviderReady: false
+      }
+    })
+    await renderStep()
+    expect(container.textContent).toContain('2.1.117')
+    expect(container.textContent).toContain('Update Claude Code to 2.1.118 or later')
+    expect(container.textContent).not.toContain('Requires Codex ACP v2.1.118')
+    expect(container.querySelector('[role="radio"]')).toBeNull()
+  })
   it('reuses the Settings agent cards without automatic or manual setup modes', async () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       preflight: {
         claudeReady: true,
         opencodeReady: false,
@@ -101,7 +122,7 @@ describe('AgentStep', () => {
     const panel = container.querySelector('section[aria-label="Set up the agent runtime"]')
     expect(panel?.querySelector('h2')?.textContent).toBe('Set up the agent runtime')
     expect(panel?.textContent).toContain(
-      'Pick the agent Open-Science drives, then install it. Only this agent needs to be installed to continue.'
+      'Use the selected runtime if it is ready. Choose another only if you need its provider support. You will connect a model in the next step.'
     )
     expect(panel?.querySelector('button')?.textContent).toContain('Re-detect')
     expect(container.textContent).not.toContain('Agent framework')
@@ -140,7 +161,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/broken/claude' },
+      claude: { resolvedPath: '/broken/claude', version: '2.1.118' },
       preflight: {
         claudeReady: false,
         opencodeReady: false,
@@ -165,7 +186,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/broken/opencode' },
       setAgentFramework,
       preflight: {
@@ -196,7 +217,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/broken/opencode' },
       installOpencode,
       preflight: {
@@ -266,9 +287,9 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
       preflight: {
         claudeReady: true,
         opencodeReady: true,
@@ -299,8 +320,8 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
       preflight: {
         claudeReady: true,
         opencodeReady: false,
@@ -342,7 +363,7 @@ describe('AgentStep', () => {
         agentReady: true,
         activeProviderReady: false
       },
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       environmentCheck: environment(true)
     })
     const onContinue = vi.fn()
@@ -442,7 +463,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -461,31 +482,38 @@ describe('AgentStep', () => {
     expect(setAgentFramework).toHaveBeenCalledWith('codex')
   })
 
-  it('does not auto-select an outdated Codex adapter from a stale ready preflight', async () => {
-    const setAgentFramework = vi.fn().mockResolvedValue(undefined)
-    useSettingsStore.setState({
-      agentFrameworkId: 'claude-code',
-      agentFrameworks: threeFrameworks,
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.1.4' },
-      setAgentFramework,
-      preflight: {
-        claudeReady: false,
-        opencodeReady: false,
-        codexReady: false,
-        codebuddyReady: false,
+  it.each([
+    ['1.1.4', '0.157.1'],
+    ['1.6.2', '0.153.4'],
+    ['1.6.2', undefined]
+  ])(
+    'does not auto-select unsupported Codex %s / %s from a stale ready preflight',
+    async (version, nativeVersion) => {
+      const setAgentFramework = vi.fn().mockResolvedValue(undefined)
+      useSettingsStore.setState({
         agentFrameworkId: 'claude-code',
-        agentReady: false,
-        activeProviderReady: false
-      },
-      environmentCheck: environment(false)
-    })
+        agentFrameworks: threeFrameworks,
+        codex: { resolvedPath: '/bin/codex-acp', version, nativeVersion },
+        setAgentFramework,
+        preflight: {
+          claudeReady: false,
+          opencodeReady: false,
+          codexReady: true,
+          codebuddyReady: false,
+          agentFrameworkId: 'claude-code',
+          agentReady: false,
+          activeProviderReady: false
+        },
+        environmentCheck: environment(false)
+      })
 
-    await renderStep()
+      await renderStep()
 
-    expect(setAgentFramework).not.toHaveBeenCalled()
-    expect(container.querySelector('[aria-label="Use Codex"]')).toBeNull()
-    expect(container.textContent).toContain('Update required')
-  })
+      expect(setAgentFramework).not.toHaveBeenCalled()
+      expect(container.querySelector('[aria-label="Use Codex"]')).toBeNull()
+      expect(container.textContent).toContain('Update required')
+    }
+  )
 
   it('queues the user choice behind the initial installed-agent preference', async () => {
     let releaseAutoSelect: (() => void) | undefined
@@ -499,7 +527,7 @@ describe('AgentStep', () => {
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
       setAgentFramework,
       preflight: {
         claudeReady: false,
@@ -539,8 +567,8 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
-      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
+      codex: { resolvedPath: '/bin/codex-acp', version: '1.6.2', nativeVersion: '0.157.1' },
       installOpencode,
       setAgentFramework,
       checkEnvironment,
@@ -568,7 +596,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: twoFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
       setAgentFramework,
       preflight: {
@@ -595,7 +623,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: twoFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode', version: '1.0.0' },
       setAgentFramework,
       preflight: {
@@ -634,7 +662,7 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: twoFrameworks,
-      claude: { resolvedPath: '/bin/claude', version: '2.1.0' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       setAgentFramework,
       checkEnvironment,
       preflight: {
@@ -674,9 +702,9 @@ describe('AgentStep', () => {
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: threeFrameworks,
-      claude: { resolvedPath: '/bin/claude' },
+      claude: { resolvedPath: '/bin/claude', version: '2.1.118' },
       opencode: { resolvedPath: '/bin/opencode' },
-      codex: { resolvedPath: '/bin/codex-acp' },
+      codex: { resolvedPath: '/bin/codex-acp', nativeVersion: '0.157.1' },
       isDetectingCodex: true,
       preflight: {
         claudeReady: true,

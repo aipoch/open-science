@@ -15,7 +15,7 @@ import {
   loadSkillDocument
 } from './runtime-mcp-server'
 
-import { SkillRegistry } from './registry'
+import { SkillRegistry } from '@aipoch/skills'
 import { ClaudeCodeSkillMaterializer } from './materializer'
 
 const roots: string[] = []

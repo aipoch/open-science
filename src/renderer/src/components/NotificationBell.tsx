@@ -29,6 +29,7 @@ import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ErrorNotice } from './error-notice'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
 import { NotificationErrorBoundary } from './NotificationErrorBoundary'
 import { NotificationEventIcon } from './NotificationEventIcon'
 import {
@@ -49,6 +50,7 @@ import { runNotificationTask } from './notification-safety'
 
 type NotificationBellProps = Readonly<{
   className?: string
+  withTooltipProvider?: boolean
   side?: 'top' | 'right' | 'bottom' | 'left'
   align?: 'start' | 'center' | 'end'
   onOpen?: () => void
@@ -88,6 +90,7 @@ const VIEWPORT_MARGIN = 8
 const PANEL_GAP = 8
 const PANEL_MAX_WIDTH = 440
 const MOBILE_MESSAGE_CENTER_QUERY = '(max-width: 47.999rem)'
+const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)'
 
 const clamp = (value: number, minimum: number, maximum: number): number =>
   Math.min(Math.max(value, minimum), maximum)
@@ -258,6 +261,49 @@ const NotificationBellContent = ({
   const sessions = useSessionStore((state) => state.sessions)
   const projects = useProjectStore((state) => state.projects)
   const groups = presentNotificationInbox(items, sessions, projects)
+  const [ringSequence, setRingSequence] = useState<number>()
+  const [dotPopSequence, setDotPopSequence] = useState<number>()
+
+  useEffect(() => {
+    const initial = useNotificationInboxStore.getState()
+    let previousSequence = initial.status === 'ready' ? initial.latestSequence : undefined
+    let previousUnreadCount = initial.unreadCount
+    const reducedMotion = window.matchMedia?.(REDUCED_MOTION_QUERY)
+    const unsubscribe = useNotificationInboxStore.subscribe((snapshot) => {
+      if (snapshot.status !== 'ready') return
+      const priorSequence = previousSequence
+      const priorCount = previousUnreadCount
+      previousSequence = Math.max(previousSequence ?? 0, snapshot.latestSequence)
+      previousUnreadCount = snapshot.unreadCount
+      if (
+        priorSequence === undefined ||
+        snapshot.latestSequence <= priorSequence ||
+        reducedMotion?.matches ||
+        !snapshot.items.some(
+          (item) =>
+            item.sequence > priorSequence &&
+            item.readAt === undefined &&
+            item.targetInvalidatedAt === undefined
+        )
+      ) {
+        return
+      }
+      setRingSequence(snapshot.latestSequence)
+      setDotPopSequence(
+        priorCount === 0 && snapshot.unreadCount > 0 ? snapshot.latestSequence : undefined
+      )
+    })
+    const stopForReducedMotion = (): void => {
+      if (!reducedMotion?.matches) return
+      setRingSequence(undefined)
+      setDotPopSequence(undefined)
+    }
+    reducedMotion?.addEventListener('change', stopForReducedMotion)
+    return () => {
+      unsubscribe()
+      reducedMotion?.removeEventListener('change', stopForReducedMotion)
+    }
+  }, [])
 
   const updatePanelPosition = useCallback((): void => {
     if (isMobile) return
@@ -469,40 +515,61 @@ const NotificationBellContent = ({
 
   return (
     <div ref={rootRef} className="relative inline-flex shrink-0">
-      <button
-        ref={triggerRef}
-        data-notification-bell-trigger="true"
-        data-notification-bell-id={panelId}
-        type="button"
-        aria-label={
-          unreadCount > 0
-            ? t('Messages, {{count}} unread', { count: unreadCount })
-            : t('Messages, no unread messages')
-        }
-        aria-expanded={open}
-        aria-controls={panelId}
-        onClick={() => {
-          const nextOpen = !open
-          setOpen(nextOpen)
-          if (nextOpen) {
-            window.dispatchEvent(new Event(NOTIFICATION_CENTER_OPENED_EVENT))
-            onOpen?.()
-            runNotificationTask(refresh)
-          }
-        }}
-        className={cn(
-          "relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out before:absolute before:-inset-1.5 before:content-[''] hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 md:before:hidden",
-          className
-        )}
-      >
-        <Bell className="size-4" strokeWidth={2} aria-hidden="true" />
-        {unreadCount > 0 ? (
-          <span
-            className="absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000"
-            aria-hidden="true"
-          />
-        ) : null}
-      </button>
+      <Tooltip>
+        <TooltipTrigger
+          asChild
+          onFocus={(event) => {
+            if (!event.currentTarget.matches(':focus-visible')) event.preventDefault()
+          }}
+        >
+          <button
+            ref={triggerRef}
+            data-notification-bell-trigger="true"
+            data-notification-bell-id={panelId}
+            type="button"
+            aria-label={
+              unreadCount > 0
+                ? t('Messages, {{count}} unread', { count: unreadCount })
+                : t('Messages, no unread messages')
+            }
+            aria-expanded={open}
+            aria-controls={panelId}
+            onClick={() => {
+              const nextOpen = !open
+              setOpen(nextOpen)
+              if (nextOpen) {
+                window.dispatchEvent(new Event(NOTIFICATION_CENTER_OPENED_EVENT))
+                onOpen?.()
+                runNotificationTask(refresh)
+              }
+            }}
+            className={cn(
+              "relative inline-flex size-9 shrink-0 items-center justify-center rounded-lg text-text-300 transition-colors duration-150 ease-out before:absolute before:-inset-1.5 before:content-[''] hover:bg-bg-300 hover:text-text-000 active:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-bg-000 md:before:hidden",
+              className
+            )}
+          >
+            <Bell
+              key={`bell-${ringSequence ?? 'idle'}`}
+              className={cn('size-4', ringSequence !== undefined && 'message-bell-ring')}
+              strokeWidth={2}
+              aria-hidden="true"
+              onAnimationEnd={() => setRingSequence(undefined)}
+            />
+            {unreadCount > 0 ? (
+              <span
+                key={`dot-${dotPopSequence ?? 'idle'}`}
+                className={cn(
+                  'absolute right-1.5 top-1.5 size-2 rounded-full bg-destructive ring-2 ring-bg-000',
+                  dotPopSequence !== undefined && 'message-bell-dot-pop'
+                )}
+                aria-hidden="true"
+                onAnimationEnd={() => setDotPopSequence(undefined)}
+              />
+            ) : null}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side={side}>{t('Message center')}</TooltipContent>
+      </Tooltip>
       {open
         ? createPortal(
             <>
@@ -650,10 +717,16 @@ const NotificationBellContent = ({
   )
 }
 
-const NotificationBell = (props: NotificationBellProps): React.JSX.Element => (
-  <NotificationErrorBoundary surface="center" className={props.className}>
-    <NotificationBellContent {...props} />
-  </NotificationErrorBoundary>
-)
+const NotificationBell = ({
+  withTooltipProvider = true,
+  ...props
+}: NotificationBellProps): React.JSX.Element => {
+  const content = (
+    <NotificationErrorBoundary surface="center" className={props.className}>
+      <NotificationBellContent {...props} />
+    </NotificationErrorBoundary>
+  )
+  return withTooltipProvider ? <TooltipProvider>{content}</TooltipProvider> : content
+}
 
 export { NotificationBell }

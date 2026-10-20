@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { Captions, ChevronRight, Eye, SearchCheck, Workflow, type LucideIcon } from 'lucide-react'
 import type { TFunction } from 'i18next'
+import { Captions, ChevronRight, Eye, SearchCheck, Workflow, type LucideIcon } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Badge } from '@/components/ui/badge'
@@ -11,12 +11,14 @@ import {
   configuredModelKey,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import type { ProviderView, ReasoningEffort } from '../../../../shared/settings'
-import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+import { type ReasoningEffort } from '../../../../shared/model-preference-contract'
 import {
   resolveReasoningEffortControl,
   type ReasoningEffortProfile
 } from '../../../../shared/reasoning-effort'
+import { resolveProviderReasoningEffortProfile } from '../../../../shared/provider-reasoning-effort'
+
+import type { ProviderView } from '../../../../shared/settings'
 import { SettingsSection } from './SettingsLayout'
 import {
   ReviewerModelSelect,

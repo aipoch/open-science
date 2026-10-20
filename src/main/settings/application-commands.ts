@@ -1,3 +1,8 @@
+import { z } from 'zod'
+import { defineApplicationCommandContract } from '../../shared/application-command-contract'
+import { parseSettingsSnapshot } from '../../shared/settings'
+import { requireDesktopCaller } from '../caller-context'
+import type { PrivateDestinationRequest } from '../../shared/notebook-network-settings'
 import type {
   AppIconPreview,
   ClaudeInstallEvent,
@@ -85,6 +90,7 @@ type CoreSettingsCommandStore = Pick<
   | 'detectOpencode'
   | 'getConnectorDetail'
   | 'getPackageMirror'
+  | 'reviewNotebookPrivateDestination'
   | 'getNotebookNetworkStatus'
   | 'getLocalShellRuntimePreference'
   | 'getWsl2BashPreviewStatus'
@@ -93,11 +99,15 @@ type CoreSettingsCommandStore = Pick<
   | 'getPreflight'
   | 'getSettingsView'
   | 'getSkillDetail'
+  | 'resolveSkillDocument'
+  | 'listAgentHomeSkills'
+  | 'previewCustomServerTemplateExport'
   | 'installClaude'
   | 'installCodeBuddy'
   | 'installCodex'
   | 'installOpencode'
   | 'installNotebookNetwork'
+  | 'cancelNotebookNetworkSetup'
   | 'installMissingWslDependencies'
   | 'installRecommendedWslDistro'
   | 'installWslPlatform'
@@ -150,6 +160,22 @@ type SwitchToPowerShellResult = Awaited<
 type UseWsl2BashResult = Awaited<ReturnType<LocalShellSettingsWorkflows['useWsl2Bash']>>
 
 const settingsCoreApplicationCommands = Object.freeze({
+  resolveSkillDocument: defineApplicationCommand<
+    'settings:resolve-skill-document',
+    Readonly<Parameters<CoreSettingsCommandStore['resolveSkillDocument']>>,
+    StoreResult<'resolveSkillDocument'>
+  >('settings:resolve-skill-document'),
+  listAgentHomeSkills: defineApplicationCommand<
+    'settings:list-agent-home-skills',
+    Readonly<Parameters<CoreSettingsCommandStore['listAgentHomeSkills']>>,
+    StoreResult<'listAgentHomeSkills'>
+  >('settings:list-agent-home-skills'),
+  previewCustomServerTemplateExport: defineApplicationCommand<
+    'settings:preview-custom-server-template-export',
+    Readonly<Parameters<CoreSettingsCommandStore['previewCustomServerTemplateExport']>>,
+    StoreResult<'previewCustomServerTemplateExport'>
+  >('settings:preview-custom-server-template-export'),
+
   getSkillMarketplaceBatch: defineApplicationCommand<
     'settings:get-skill-marketplace-batch',
     readonly [],
@@ -230,6 +256,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [],
     StoreResult<'getPackageMirror'>
   >('settings:get-package-mirror'),
+  reviewNotebookPrivateDestination: defineApplicationCommand<
+    'settings:review-notebook-private-destination',
+    readonly [request: PrivateDestinationRequest],
+    StoreResult<'reviewNotebookPrivateDestination'>
+  >('settings:review-notebook-private-destination'),
   getNotebookNetworkStatus: defineApplicationCommand<
     'settings:get-notebook-network-status',
     readonly [],
@@ -259,7 +290,10 @@ const settingsCoreApplicationCommands = Object.freeze({
     'settings:get-settings',
     readonly [],
     StoreResult<'getSettingsView'>
-  >('settings:get-settings'),
+  >(
+    'settings:get-settings',
+    defineApplicationCommandContract(z.tuple([]), { parse: parseSettingsSnapshot })
+  ),
   getSkillDetail: defineApplicationCommand<
     'settings:get-skill-detail',
     readonly [id: string],
@@ -285,6 +319,11 @@ const settingsCoreApplicationCommands = Object.freeze({
     readonly [request: InstallOpencodeRequest],
     StoreResult<'installOpencode'>
   >('settings:install-opencode'),
+  cancelNotebookNetworkSetup: defineApplicationCommand<
+    'settings:cancel-notebook-network-setup',
+    [],
+    boolean
+  >('settings:cancel-notebook-network-setup'),
   installNotebookNetwork: defineApplicationCommand<
     'settings:install-notebook-network',
     readonly [],
@@ -501,18 +540,24 @@ const settingsCoreApplicationCommandGroup = defineApplicationCommandGroup('setti
   settingsCoreApplicationCommands.getClassification,
   settingsCoreApplicationCommands.getGitHubTokenStatus,
   settingsCoreApplicationCommands.getPackageMirror,
+  settingsCoreApplicationCommands.reviewNotebookPrivateDestination,
   settingsCoreApplicationCommands.getNotebookNetworkStatus,
   settingsCoreApplicationCommands.getLocalShellRuntimePreference,
   settingsCoreApplicationCommands.getWsl2BashPreviewStatus,
   settingsCoreApplicationCommands.getWslSetupStatus,
   settingsCoreApplicationCommands.getPreflight,
   settingsCoreApplicationCommands.getSettings,
+  settingsCoreApplicationCommands.resolveSkillDocument,
+  settingsCoreApplicationCommands.listAgentHomeSkills,
+  settingsCoreApplicationCommands.previewCustomServerTemplateExport,
+
   settingsCoreApplicationCommands.getSkillDetail,
   settingsCoreApplicationCommands.installClaude,
   settingsCoreApplicationCommands.installCodeBuddy,
   settingsCoreApplicationCommands.installCodex,
   settingsCoreApplicationCommands.installOpencode,
   settingsCoreApplicationCommands.installNotebookNetwork,
+  settingsCoreApplicationCommands.cancelNotebookNetworkSetup,
   settingsCoreApplicationCommands.removeNotebookNetwork,
   settingsCoreApplicationCommands.isEncryptionAvailable,
   settingsCoreApplicationCommands.isNpmAvailable,
@@ -583,6 +628,19 @@ const registerCoreSettingsApplicationCommands = (
 
   try {
     scope.registerGroup(settingsCoreApplicationCommandGroup, {
+      'settings:resolve-skill-document': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.resolveSkillDocument(args[0])
+      },
+      'settings:list-agent-home-skills': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.listAgentHomeSkills()
+      },
+      'settings:preview-custom-server-template-export': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.service.previewCustomServerTemplateExport(args[0])
+      },
+
       'settings:cancel-claude-login': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:cancel-claude-login')
         return dependencies.service.cancelClaudeLogin()
@@ -616,6 +674,10 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.service.getGitHubTokenStatus()
       },
       'settings:get-package-mirror': () => dependencies.service.getPackageMirror(),
+      'settings:review-notebook-private-destination': ({ args, callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:review-notebook-private-destination')
+        return dependencies.service.reviewNotebookPrivateDestination(args[0])
+      },
       'settings:get-notebook-network-status': () => dependencies.service.getNotebookNetworkStatus(),
       'settings:get-local-shell-runtime-preference': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:get-local-shell-runtime-preference')
@@ -655,6 +717,10 @@ const registerCoreSettingsApplicationCommands = (
         return dependencies.snapshotCommits.projectAfter(
           dependencies.service.installOpencode(args[0], dependencies.emitInstallEvent)
         )
+      },
+      'settings:cancel-notebook-network-setup': ({ callerContext }) => {
+        requireLocalCaller(callerContext, 'settings:cancel-notebook-network-setup')
+        return dependencies.service.cancelNotebookNetworkSetup()
       },
       'settings:install-notebook-network': ({ callerContext }) => {
         requireLocalCaller(callerContext, 'settings:install-notebook-network')

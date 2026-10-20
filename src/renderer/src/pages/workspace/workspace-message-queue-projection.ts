@@ -1,3 +1,4 @@
+import type { MessageQueueItem } from './composer-contract'
 import { queueItemIsBusy } from './workspace-message-queue-admission'
 import {
   MESSAGE_QUEUE_ANNOUNCEMENTS,
@@ -5,7 +6,6 @@ import {
 } from './workspace-message-queue-announcement'
 import {
   WorkspaceMessageQueueOwner,
-  type MessageQueueItem,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 

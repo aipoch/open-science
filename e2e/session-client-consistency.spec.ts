@@ -223,7 +223,7 @@ test('preserves a Web message edit while another client changes the selected Bra
   }
 })
 
-test('keeps one unsent prompt and its draft when retrying a Session revision conflict', async ({
+test('keeps the draft without appending an unsent prompt when retrying a Session revision conflict', async ({
   app,
   browser
 }, testInfo) => {
@@ -270,12 +270,15 @@ test('keeps one unsent prompt and its draft when retrying a Session revision con
     await composer.fill(draft)
     await send.click()
     await expect(web.getByText(conflict, { exact: true })).toBeVisible()
-    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(1)
+    // Preparation fails before append; Main's rollback leaves the existing history unchanged.
+    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
     await expect(composer).toHaveText(draft)
     await expect(send).toBeEnabled()
+    // An unresolved conflict also blocks later preparation until the Session is reloaded.
     await send.click()
     await expect(send).toBeEnabled()
-    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(1)
+    await expect(web.getByText(conflict, { exact: true })).toBeVisible()
+    await expect(conversation.getByText(draft, { exact: true })).toHaveCount(0)
     await expect(composer).toHaveText(draft)
     expect((await app.readFakeAgentPrompts()).length).toBe(dispatchedBefore)
     await web.screenshot({ path: testInfo.outputPath('revision-conflict-retry.png') })

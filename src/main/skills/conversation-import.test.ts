@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -544,6 +544,67 @@ describe('ConversationSkillImporter', () => {
     expect((await skills.list()).map((skill) => skill.name)).toEqual(['paper-finder'])
     expect(onSkillsChanged).toHaveBeenCalledOnce()
   })
+
+  it.each(['cancel', 'changed content'] as const)(
+    'does not import a previewed attachment after %s',
+    async (decision) => {
+      const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))
+      roots.push(root)
+      const uploads = new UploadRepository(root)
+      const skills = new UserSkillRepository(root)
+      const bundle = (workflow: string): Buffer =>
+        buildZip([
+          {
+            path: 'paper-finder/SKILL.md',
+            content: Buffer.from(
+              `---\nname: Paper Finder\ndescription: Finds papers.\n---\n${workflow}`
+            )
+          }
+        ])
+      const [staged] = await stageUploadFixtures(uploads, {
+        files: [{ name: 'paper-finder.skill', content: bundle('Original').toString('base64') }]
+      })
+      const [attachment] = await uploads.finalizePendingSessionUploads('session-1', [staged])
+      const importBundle = vi.fn(
+        (archive: Buffer, items: Parameters<typeof skills.importFromZipBatch>[1]) =>
+          skills.importFromZipBatch(archive, items)
+      )
+      const onSkillsChanged = vi.fn()
+      const broker = new SkillImportApprovalBroker({
+        broadcast: vi.fn(),
+        generateId: () => 'approval-1'
+      })
+      const importer = new ConversationSkillImporter({
+        uploads,
+        createCancellationGuard: (sessionId, turnToken, attachmentUri) =>
+          broker.createCancellationGuard(sessionId, turnToken, attachmentUri),
+        previewBundle: (archive) => skills.previewZip(archive),
+        importBundle,
+        requestApproval: async (request) => {
+          expect(request.previews).toHaveLength(1)
+          if (decision === 'cancel') return { id: 'approval-1', cancelled: true }
+          await writeFile(attachment.path, bundle('Modified'))
+          return { id: 'approval-1', items: [{ subPath: request.previews[0].subPath }] }
+        },
+        onSkillsChanged
+      })
+      broker.beginSessionTurn('session-1', 'turn-1')
+      broker.allowSessionTurnAttachment('session-1', 'turn-1', pathToFileURL(attachment.path).href)
+      const result = importer.request({
+        sessionId: 'session-1',
+        turnToken: 'turn-1',
+        attachmentUri: pathToFileURL(attachment.path).href
+      })
+      if (decision === 'cancel') {
+        await expect(result).resolves.toEqual({ status: 'cancelled', skills: [] })
+      } else {
+        await expect(result).rejects.toThrow('changed after it was previewed')
+      }
+      expect(importBundle).not.toHaveBeenCalled()
+      expect(onSkillsChanged).not.toHaveBeenCalled()
+      expect(await skills.list()).toEqual([])
+    }
+  )
 
   it('imports a native project-scoped Upload Version using its verified Session ownership', async () => {
     const root = await mkdtemp(join(tmpdir(), 'conversation-skill-import-'))

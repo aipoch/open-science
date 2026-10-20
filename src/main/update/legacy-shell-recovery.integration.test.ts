@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -116,7 +117,7 @@ it.each(['confirmed', 'changed', 'runtime-blocked', 'new-record', 'claimed', 'co
           beforeConfirmation
         )
       } else {
-        expect(updater.quitAndInstall).toHaveBeenCalledWith(true, true)
+        expect(updater.quitAndInstall).toHaveBeenCalledWith(false, true)
         expect(durability).toHaveBeenCalledOnce()
         expect(await readdir(join(root, 'shell-process-ownership'))).toEqual([])
         const backupRoot = join(root, 'shell-process-ownership-backups')
@@ -135,3 +136,5 @@ it.each(['confirmed', 'changed', 'runtime-blocked', 'new-record', 'claimed', 'co
     }
   }
 )
+
+configureTestRuntimeMetadata()

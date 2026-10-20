@@ -10,7 +10,7 @@ import { expect, it } from 'vitest'
 import { claudeCodeFramework } from './claude-code'
 import { createCodexFramework } from './codex'
 import { terminateProcessTree } from '../process-tree'
-import { ResponsesBridge } from '../settings/responses-bridge'
+import { ResponsesToChatCompletionsBridge } from '../settings/responses-to-chat-completions-bridge'
 import { NativeResponsesCompatibilityProxy } from '../settings/native-responses-compatibility'
 
 const claudeNative = process.env.CLAUDE_NATIVE_PATH
@@ -263,7 +263,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
         engine === 'claude-code'
           ? undefined
           : engine === 'codex-bridge'
-            ? new ResponsesBridge(target, upstream)
+            ? new ResponsesToChatCompletionsBridge(target, upstream)
             : new NativeResponsesCompatibilityProxy(target, upstream)
       const bridge = await proxy?.start()
       const framework = engine === 'claude-code' ? claudeCodeFramework : createCodexFramework()
@@ -274,9 +274,9 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
           key: 'synthetic-isolation-key',
           apiEndpoints:
             engine === 'claude-code'
-              ? ['anthropic']
+              ? ['messages']
               : engine === 'codex-bridge'
-                ? ['openai']
+                ? ['chat-completions']
                 : ['responses'],
           model: engine === 'claude-code' ? 'claude-sonnet-4-5' : 'probe-model',
           contextWindow: 128000
@@ -284,7 +284,7 @@ readline.createInterface({input:process.stdin}).on('line', async line => {
         {
           storageRoot: root,
           executablePath: engine === 'claude-code' ? claudeNative! : codexAdapter!,
-          ...(bridge ? { responsesBridge: bridge } : {})
+          ...(bridge ? { responsesConnection: bridge } : {})
         }
       )
       for (const file of config.configFiles ?? []) {

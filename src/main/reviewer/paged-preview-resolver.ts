@@ -1,3 +1,4 @@
+import { DesktopCapabilityUnavailable } from '../desktop-interaction'
 import type { Rectangle } from 'electron'
 
 import type { ManagedPreviewResource } from '../../shared/preview-resources'
@@ -38,7 +39,13 @@ type ReviewerPreviewWindow = {
   destroy(): void
 }
 
+export type ReviewerOfficeRenderRequest = Pick<
+  Parameters<ReviewerPagedContentResolver>[0],
+  'artifactVersionId' | 'format' | 'pages' | 'includePreview' | 'maxBytes' | 'signal'
+>
+
 type ReviewerPagedPreviewDependencies = {
+  renderOffice?: ReviewerPagedContentResolver
   createWindow(): ReviewerPreviewWindow
   createSessionId(): string
   createRuntimeUrl(sessionId: string): string
@@ -131,7 +138,8 @@ const throwIfAborted = (signal?: AbortSignal): void => {
 }
 
 const createReviewerPagedContentResolver = (
-  dependencies: ReviewerPagedPreviewDependencies
+  dependencies: Pick<ReviewerPagedPreviewDependencies, 'renderPdfPages'> &
+    Partial<ReviewerPagedPreviewDependencies>
 ): ReviewerPagedContentResolver => {
   const resolveOne: ReviewerPagedContentResolver = async (request) => {
     if (request.pages.length < 1 || request.pages.length > MAX_REVIEWER_PREVIEW_PAGES) {
@@ -176,178 +184,208 @@ const createReviewerPagedContentResolver = (
           : {})
       }
     }
-    const previewWindow = dependencies.createWindow()
-    const ownerId = previewWindow.webContents.id
-    let resource: ManagedPreviewResource | undefined
-    let acquisition: Promise<ManagedPreviewResource> | undefined
-    const destroyWindow = (): void => {
-      if (!previewWindow.isDestroyed()) previewWindow.destroy()
-    }
-    let rejectLifecycle: (error: Error) => void = () => undefined
-    const lifecycleFailure = new Promise<never>((_, reject) => {
-      rejectLifecycle = reject
-    })
-    const failLifecycle = (error: Error): void => {
-      destroyWindow()
-      rejectLifecycle(error)
-    }
-    const onAbort = (): void =>
-      failLifecycle(
-        request.signal?.reason instanceof Error
-          ? request.signal.reason
-          : new Error('Reviewer page preview was aborted.')
-      )
-    const onRendererGone = (): void =>
-      failLifecycle(new Error('Reviewer page preview renderer exited unexpectedly.'))
-    request.signal?.addEventListener('abort', onAbort, { once: true })
-    previewWindow.webContents.once('render-process-gone', onRendererGone)
-    const timeout = setTimeout(
-      () => failLifecycle(new Error('Reviewer page preview timed out.')),
-      120_000
+    if (dependencies.renderOffice) return dependencies.renderOffice(request)
+    if (
+      !dependencies.createWindow ||
+      !dependencies.acquireResource ||
+      !dependencies.releaseResource ||
+      !dependencies.createSessionId ||
+      !dependencies.createRuntimeUrl
     )
-    let memoryPollInFlight = false
-    const memoryPoll = dependencies.getProcessMemoryUsageBytes
-      ? setInterval(() => {
-          if (memoryPollInFlight || previewWindow.isDestroyed()) return
-          memoryPollInFlight = true
-          void Promise.resolve(
-            dependencies.getProcessMemoryUsageBytes!(previewWindow.webContents.getOSProcessId())
-          )
-            .then((bytes) => {
-              if (bytes >= OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES) {
-                failLifecycle(new Error('Reviewer page preview exceeded its memory limit.'))
-              }
-            })
-            .catch((error: unknown) =>
-              failLifecycle(error instanceof Error ? error : new Error(String(error)))
-            )
-            .finally(() => {
-              memoryPollInFlight = false
-            })
-        }, OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS)
-      : undefined
-    const guarded = <Result>(operation: Promise<Result>): Promise<Result> =>
-      Promise.race([operation, lifecycleFailure])
-
-    try {
-      acquisition = dependencies.acquireResource(
-        ownerId,
-        request.path,
-        request.filename,
-        request.verifiedObservation,
-        request.verifiedChecksum,
-        MAX_REVIEWER_PREVIEW_SOURCE_BYTES
-      )
-      resource = await guarded(acquisition)
-      throwIfAborted(request.signal)
-      const sessionId = dependencies.createSessionId()
-      await guarded(previewWindow.loadURL(dependencies.createRuntimeUrl(sessionId)))
-      throwIfAborted(request.signal)
-      const initialization = parseInitialization(
-        await guarded(
-          previewWindow.webContents.executeJavaScript(
-            runtimeCall('initialize', {
-              sessionId,
-              resource,
-              format: request.format,
-              pages: request.pages
-            })
-          )
-        )
-      )
-      const pages: Array<{ pageNumber: number; text: string }> = []
-      const media: Array<{ pageNumber: number; data: string; mimeType: string }> = []
-      const limitations: NonNullable<
-        Awaited<ReturnType<ReviewerPagedContentResolver>>['limitations']
-      > = []
-      let returnedBytes = 0
-      const availablePages = new Set(initialization.availablePages ?? request.pages)
-
-      for (const pageNumber of [...new Set(request.pages)]) {
-        if (!availablePages.has(pageNumber)) {
-          limitations.push({
-            kind: 'truncated',
-            subjectId: request.artifactVersionId,
-            detail: `Rendered document did not contain requested page ${pageNumber}.`
-          })
-          continue
-        }
-        throwIfAborted(request.signal)
-        const prepared = parsePage(
-          await guarded(
-            previewWindow.webContents.executeJavaScript(runtimeCall('preparePage', { pageNumber }))
-          ),
-          pageNumber
-        )
-        const textBytes = Buffer.byteLength(prepared.text, 'utf8')
-        if (returnedBytes + textBytes <= request.maxBytes) {
-          pages.push({ pageNumber, text: prepared.text })
-          returnedBytes += textBytes
-        } else {
-          pages.push({ pageNumber, text: '' })
-          limitations.push({
-            kind: 'budget-exhausted',
-            subjectId: request.artifactVersionId,
-            detail: `Rendered page ${pageNumber} text exceeded the Reviewer preview budget.`
-          })
-        }
-
-        if (!request.includePreview) continue
-        let captured = await guarded(previewWindow.webContents.capturePage(prepared.rect))
-        let encoded = captured.toJPEG(80)
-        let data = encoded.toString('base64')
-        while (returnedBytes + data.length > request.maxBytes) {
-          const size = captured.getSize()
-          const width = Math.floor(size.width * 0.75)
-          const height = Math.floor(size.height * 0.75)
-          if (width < 320 || height < 240) break
-          captured = captured.resize({ width, height, quality: 'better' })
-          encoded = captured.toJPEG(65)
-          data = encoded.toString('base64')
-        }
-        if (returnedBytes + data.length > request.maxBytes) {
-          limitations.push({
-            kind: 'budget-exhausted',
-            subjectId: request.artifactVersionId,
-            detail: `Rendered page ${pageNumber} image exceeded the Reviewer preview budget.`
-          })
-          continue
-        }
-        media.push({ pageNumber, data, mimeType: 'image/jpeg' })
-        returnedBytes += data.length
-      }
-
-      return {
-        pageCount: initialization.pageCount,
-        ...(initialization.pageCountComplete !== undefined
-          ? { pageCountComplete: initialization.pageCountComplete }
-          : {}),
-        pages,
-        ...(media.length > 0 ? { media } : {}),
-        ...(limitations.length > 0 ? { limitations } : {})
-      }
-    } finally {
-      clearTimeout(timeout)
-      if (memoryPoll) clearInterval(memoryPoll)
-      request.signal?.removeEventListener('abort', onAbort)
-      previewWindow.webContents.removeListener('render-process-gone', onRendererGone)
-      destroyWindow()
-      if (resource) {
-        await dependencies.releaseResource(ownerId, resource.id)
-      } else if (acquisition) {
-        // Lifecycle failure can win the race while capability acquisition is still in flight.
-        // Attach an owner-scoped late release without delaying abort/timeout completion.
-        void acquisition
-          .then((lateResource) => dependencies.releaseResource(ownerId, lateResource.id))
-          .catch(() => undefined)
-      }
-    }
+      throw new DesktopCapabilityUnavailable('Reviewer DOCX/PPTX page rendering')
+    return renderReviewerOfficePreview(
+      dependencies as ReviewerPagedPreviewDependencies,
+      request,
+      (ownerId) =>
+        dependencies.acquireResource!(
+          ownerId,
+          request.path,
+          request.filename,
+          request.verifiedObservation,
+          request.verifiedChecksum,
+          MAX_REVIEWER_PREVIEW_SOURCE_BYTES
+        ),
+      dependencies.releaseResource
+    )
   }
+
   let queue: Promise<unknown> = Promise.resolve()
   return (request) => {
     const result = queue.then(() => resolveOne(request))
     queue = result.catch(() => undefined)
     return result
+  }
+}
+
+// Owns only the Chromium rendering lifetime. In remote mode the Node caller retains the resource
+// lease and revokes it after this operation settles; no filesystem path or observation proof crosses.
+export async function renderReviewerOfficePreview(
+  dependencies: Pick<
+    ReviewerPagedPreviewDependencies,
+    'createWindow' | 'createSessionId' | 'createRuntimeUrl' | 'getProcessMemoryUsageBytes'
+  >,
+  request: ReviewerOfficeRenderRequest,
+  acquireResource: (ownerId: number) => Promise<ManagedPreviewResource>,
+  releaseResource?: ReviewerPagedPreviewDependencies['releaseResource']
+): ReturnType<ReviewerPagedContentResolver> {
+  const previewWindow = dependencies.createWindow()
+  const ownerId = previewWindow.webContents.id
+  let resource: ManagedPreviewResource | undefined
+  let acquisition: Promise<ManagedPreviewResource> | undefined
+  const destroyWindow = (): void => {
+    if (!previewWindow.isDestroyed()) previewWindow.destroy()
+  }
+  let rejectLifecycle: (error: Error) => void = () => undefined
+  const lifecycleFailure = new Promise<never>((_, reject) => {
+    rejectLifecycle = reject
+  })
+  const failLifecycle = (error: Error): void => {
+    destroyWindow()
+    rejectLifecycle(error)
+  }
+  const onAbort = (): void =>
+    failLifecycle(
+      request.signal?.reason instanceof Error
+        ? request.signal.reason
+        : new Error('Reviewer page preview was aborted.')
+    )
+  const onRendererGone = (): void =>
+    failLifecycle(new Error('Reviewer page preview renderer exited unexpectedly.'))
+  request.signal?.addEventListener('abort', onAbort, { once: true })
+  previewWindow.webContents.once('render-process-gone', onRendererGone)
+  const timeout = setTimeout(
+    () => failLifecycle(new Error('Reviewer page preview timed out.')),
+    120_000
+  )
+  let memoryPollInFlight = false
+  const memoryPoll = dependencies.getProcessMemoryUsageBytes
+    ? setInterval(() => {
+        if (memoryPollInFlight || previewWindow.isDestroyed()) return
+        memoryPollInFlight = true
+        void Promise.resolve(
+          dependencies.getProcessMemoryUsageBytes!(previewWindow.webContents.getOSProcessId())
+        )
+          .then((bytes) => {
+            if (bytes >= OFFICE_PREVIEW_PROCESS_MEMORY_LIMIT_BYTES) {
+              failLifecycle(new Error('Reviewer page preview exceeded its memory limit.'))
+            }
+          })
+          .catch((error: unknown) =>
+            failLifecycle(error instanceof Error ? error : new Error(String(error)))
+          )
+          .finally(() => {
+            memoryPollInFlight = false
+          })
+      }, OFFICE_PREVIEW_PROCESS_MEMORY_POLL_MS)
+    : undefined
+  const guarded = <Result>(operation: Promise<Result>): Promise<Result> =>
+    Promise.race([operation, lifecycleFailure])
+
+  try {
+    acquisition = acquireResource(ownerId)
+    resource = await guarded(acquisition)
+    throwIfAborted(request.signal)
+    const sessionId = dependencies.createSessionId()
+    await guarded(previewWindow.loadURL(dependencies.createRuntimeUrl(sessionId)))
+    throwIfAborted(request.signal)
+    const initialization = parseInitialization(
+      await guarded(
+        previewWindow.webContents.executeJavaScript(
+          runtimeCall('initialize', {
+            sessionId,
+            resource,
+            format: request.format,
+            pages: request.pages
+          })
+        )
+      )
+    )
+    const pages: Array<{ pageNumber: number; text: string }> = []
+    const media: Array<{ pageNumber: number; data: string; mimeType: string }> = []
+    const limitations: NonNullable<
+      Awaited<ReturnType<ReviewerPagedContentResolver>>['limitations']
+    > = []
+    let returnedBytes = 0
+    const availablePages = new Set(initialization.availablePages ?? request.pages)
+
+    for (const pageNumber of [...new Set(request.pages)]) {
+      if (!availablePages.has(pageNumber)) {
+        limitations.push({
+          kind: 'truncated',
+          subjectId: request.artifactVersionId,
+          detail: `Rendered document did not contain requested page ${pageNumber}.`
+        })
+        continue
+      }
+      throwIfAborted(request.signal)
+      const prepared = parsePage(
+        await guarded(
+          previewWindow.webContents.executeJavaScript(runtimeCall('preparePage', { pageNumber }))
+        ),
+        pageNumber
+      )
+      const textBytes = Buffer.byteLength(prepared.text, 'utf8')
+      if (returnedBytes + textBytes <= request.maxBytes) {
+        pages.push({ pageNumber, text: prepared.text })
+        returnedBytes += textBytes
+      } else {
+        pages.push({ pageNumber, text: '' })
+        limitations.push({
+          kind: 'budget-exhausted',
+          subjectId: request.artifactVersionId,
+          detail: `Rendered page ${pageNumber} text exceeded the Reviewer preview budget.`
+        })
+      }
+
+      if (!request.includePreview) continue
+      let captured = await guarded(previewWindow.webContents.capturePage(prepared.rect))
+      let encoded = captured.toJPEG(80)
+      let data = encoded.toString('base64')
+      while (returnedBytes + data.length > request.maxBytes) {
+        const size = captured.getSize()
+        const width = Math.floor(size.width * 0.75)
+        const height = Math.floor(size.height * 0.75)
+        if (width < 320 || height < 240) break
+        captured = captured.resize({ width, height, quality: 'better' })
+        encoded = captured.toJPEG(65)
+        data = encoded.toString('base64')
+      }
+      if (returnedBytes + data.length > request.maxBytes) {
+        limitations.push({
+          kind: 'budget-exhausted',
+          subjectId: request.artifactVersionId,
+          detail: `Rendered page ${pageNumber} image exceeded the Reviewer preview budget.`
+        })
+        continue
+      }
+      media.push({ pageNumber, data, mimeType: 'image/jpeg' })
+      returnedBytes += data.length
+    }
+
+    return {
+      pageCount: initialization.pageCount,
+      ...(initialization.pageCountComplete !== undefined
+        ? { pageCountComplete: initialization.pageCountComplete }
+        : {}),
+      pages,
+      ...(media.length > 0 ? { media } : {}),
+      ...(limitations.length > 0 ? { limitations } : {})
+    }
+  } finally {
+    clearTimeout(timeout)
+    if (memoryPoll) clearInterval(memoryPoll)
+    request.signal?.removeEventListener('abort', onAbort)
+    previewWindow.webContents.removeListener('render-process-gone', onRendererGone)
+    destroyWindow()
+    if (resource && releaseResource) {
+      await releaseResource(ownerId, resource.id)
+    } else if (acquisition && releaseResource) {
+      // Lifecycle failure can win the race while capability acquisition is still in flight.
+      // Attach an owner-scoped late release without delaying abort/timeout completion.
+      void acquisition
+        .then((lateResource) => releaseResource(ownerId, lateResource.id))
+        .catch(() => undefined)
+    }
   }
 }
 

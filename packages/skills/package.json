@@ -1,0 +1,58 @@
+{
+  "name": "@aipoch/skills",
+  "version": "0.1.0",
+  "private": true,
+  "description": "File-based Skill catalog, imports, transactions and runtime projections",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./document": {
+      "types": "./dist/document.d.ts",
+      "default": "./dist/document.js"
+    },
+    "./sources": {
+      "types": "./dist/sources.d.ts",
+      "default": "./dist/sources.js"
+    },
+    "./projection": {
+      "types": "./dist/projection.d.ts",
+      "default": "./dist/projection.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/typescript.mjs -p tsconfig.json",
+    "typecheck": "node scripts/typescript.mjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build",
+    "verify:package": "node scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "diff": "9.0.0",
+    "fflate": "0.8.3",
+    "js-yaml": "^4.1.0",
+    "marked": "^17.0.6",
+    "zod": "^4.6.5",
+    "@aipoch/durable-files": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "@types/js-yaml": "^4.0.9",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "esbuild": "^0.28.2"
+  }
+}

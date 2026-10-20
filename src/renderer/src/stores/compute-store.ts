@@ -1,16 +1,14 @@
 import { create } from 'zustand'
 
+import type { ComputeExecutionMode, ComputeHost, ProbeResult } from '@aipoch/compute'
 import type {
   ChangeComputeHostAuthenticationRequest,
   ComputeApprovalDecision,
   ComputeApprovalRequest,
-  ComputeHost,
-  ComputeExecutionMode,
   CreateComputeHostRequest,
   CreatePasswordComputeHostRequest,
-  ResetPasswordComputeHostRequest,
   DeleteComputeHostRequest,
-  ProbeResult
+  ResetPasswordComputeHostRequest
 } from '../../../shared/compute'
 
 type ComputeApprovalBase = {
@@ -84,7 +82,11 @@ type ComputeStoreData = {
   // Tracks which hosts are currently being probed so the UI can show a Probing... state.
   probingIds: Set<string>
   // Pending compute approval requests, oldest first. Answered one at a time.
-  pendingApprovals: ComputeApproval[]
+  pendingApprovals: (ComputeApproval & {
+    closed?: boolean
+    responding?: boolean
+    responseFailed?: boolean
+  })[]
 }
 
 type ComputeStore = ComputeStoreData & {
@@ -110,6 +112,7 @@ type ComputeStore = ComputeStoreData & {
   setExecutionMode: (providerId: string, executionMode: ComputeExecutionMode) => Promise<void>
   // Queues an incoming approval request (from the main-process compute gate).
   enqueueApproval: (request: ComputeApprovalRequest) => void
+  closeApproval: (id: string) => void
   // Removes a request after Main reports response, timeout, or cancellation settlement.
   dismissApproval: (id: string) => void
   // Sends the user's approval decision back to main and removes the request from the queue.
@@ -444,6 +447,20 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     )
   },
 
+  closeApproval: (id) => {
+    const request = get().pendingApprovals.find((item) => item.id === id)
+    if (!request || request.closed) return
+    set((state) => ({
+      pendingApprovals: state.pendingApprovals.map((item) =>
+        item.id === id ? { ...item, closed: true } : item
+      )
+    }))
+    // Release the UI even if Main cannot acknowledge cancellation; never race an approval.
+    if (!request.responding)
+      void get()
+        .respondApproval(id, 'deny')
+        .catch(() => undefined)
+  },
   dismissApproval: (id) => {
     set((state) => ({
       pendingApprovals: state.pendingApprovals.filter((request) => request.id !== id)
@@ -452,10 +469,24 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
 
   // Sends the user's scoped decision back to main and removes the head request from the queue.
   respondApproval: async (id, decision) => {
-    await window.api.compute.respondApproval({ id, decision })
-    set((state) => ({
-      pendingApprovals: state.pendingApprovals.filter((r) => r.id !== id)
-    }))
+    const request = get().pendingApprovals.find((item) => item.id === id)
+    if (!request || request.responding) return
+    const patch = (fields: { responding?: boolean; responseFailed?: boolean }): void =>
+      set((state) => ({
+        pendingApprovals: state.pendingApprovals.map((item) =>
+          item.id === id ? { ...item, ...fields } : item
+        )
+      }))
+    patch({ responding: true, responseFailed: false })
+    try {
+      await window.api.compute.respondApproval({ id, decision })
+      get().dismissApproval(id)
+    } catch (error) {
+      patch({ responseFailed: true })
+      throw error
+    } finally {
+      patch({ responding: false })
+    }
   }
 }))
 

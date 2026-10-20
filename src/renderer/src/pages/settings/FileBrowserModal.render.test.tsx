@@ -1,19 +1,20 @@
 // @vitest-environment jsdom
+import { fireEvent, getByRole, screen, waitFor } from '@testing-library/react'
+import axe from 'axe-core'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, screen, getByRole, waitFor } from '@testing-library/react'
-import axe from 'axe-core'
-import { openRadixMenu, clickRadixMenuItem } from './test-utils'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 
-import type { ComputeHost } from '../../../../shared/compute'
-import type { DirListing, LocalFile } from '../../../../shared/remote-fs'
-import { FileBrowserModal } from './FileBrowserModal'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { i18next } from '@/i18n'
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import type { DirListing, LocalFile } from '../../../../shared/remote-fs'
+import { FileBrowserModal } from './FileBrowserModal'
 
 let container: HTMLDivElement
 let root: Root

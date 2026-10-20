@@ -15,8 +15,8 @@ import {
   type UpdateDownloadOptions,
   type UpdateStatus
 } from '../../shared/update'
-import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
-import type { Logger } from '../logger'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { createMacInstallationGuard } from '../mac-installation'
 import { downloadInstaller } from './downloader'
 import { fetchManifest } from './manifest'

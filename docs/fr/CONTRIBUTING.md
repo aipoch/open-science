@@ -17,7 +17,7 @@ aidez à faire de ce projet un lieu accueillant pour tout le monde.
 
 ### Prérequis
 
-- [Node.js](https://nodejs.org/) 22 (voir [`.nvmrc`](../../.nvmrc)) et npm
+- [Node.js](https://nodejs.org/) 24 (voir [`.nvmrc`](../../.nvmrc)) et npm
 - Git
 
 ### Installation
@@ -87,15 +87,13 @@ puis exécutez ses contrôles ciblés :
 
 ## Structure du projet
 
-Il s'agit d'une application Electron construite avec electron-vite, React et
-TypeScript. Trois couches de processus d'exécution et un module partagé se
-trouvent sous `src/` :
+L’interface Web fonctionne avec un backend Node ordinaire, sans Electron ni affichage graphique.
 
-- `src/main/` — processus principal Electron (runtime ACP, persistance des
-  sessions, artefacts, Notebook, projets, gestionnaires IPC).
+- `src/main/` — Node backend / Electron host (ACP, Notebook, IPC).
 - `src/preload/` — pont preload exposant un `window.api` typé au renderer.
 - `src/renderer/` — interface React (pages, stores, composants).
 - `src/shared/` — types et helpers partagés entre les processus.
+- `packages/` — contient les paquets de domaine indépendants et les auxiliaires natifs
 
 ## Flux de développement
 
@@ -335,15 +333,6 @@ ci(review): unify automated AI reviews
 - Conservez des PR raisonnablement petites et ciblées pour faciliter la revue.
 - Assurez-vous que le Test Impact Set final, ou le repli complet lorsqu'il est
   requis, passe.
-- Une fois les contrôles de la pull request passés, fusionnez-la directement
-  en utilisant **squash merge uniquement**. Ne mettez pas à jour la branche
-  seulement parce que `main` a avancé ; mettez-la à jour en cas de conflits de
-  fusion ou si un mainteneur le demande. Le sujet du commit squash doit
-  conserver le format Conventional Commit du titre de la pull request.
-- Les changements non documentaires fusionnés dans `main` déclenchent le
-  [workflow Nightly](../../.github/workflows/nightly.yml), qui exécute une
-  vérification post-fusion et une certification de paquets multiplateforme sur
-  le commit résultant.
 
 ## Signaler des problèmes
 
@@ -354,14 +343,28 @@ Lorsque vous déposez un rapport de bogue, incluez :
 - Votre système d'exploitation et la version de l'application.
 - Les journaux ou captures d'écran pertinents, s'ils sont disponibles.
 
-## Publier le paquet npm
-
-Les mainteneurs doivent suivre le [guide de publication du paquet
-npm](../npm-release.md). Les versions du paquet npm utilisent des tags
-`npm-v*` et sont publiées via le workflow protégé `Publish npm package`.
-
 ## Licence
 
 En contribuant, vous acceptez que vos contributions soient concédées sous la
 [licence Apache 2.0](../../LICENSE), la même licence que celle qui couvre ce
 projet.
+
+## Développement et CI actuels
+
+Le [guide anglais](../../CONTRIBUTING.md) fait autorité pour les règles complètes ; cette traduction résume le fonctionnement actuel.
+
+- `npm run dev` construit le backend Node, prépare son exécutable et ouvre Electron. Le watcher reconstruit les paquets et le backend ; après un build réussi, quittez normalement l’application et relancez la commande pour charger backend/Main/Preload. Le renderer utilise HMR.
+
+- Chaque nouveau fichier sous `src/` et `packages/`, ressources et fixtures comprises, doit avoir exactement un propriétaire dans `scripts/ci/module-impact/<module-id>.json`. Préservez les tests propriétaires, contrats, consommateurs et dépendances dynamiques. Après `git add`, exécutez les vérifications du guide anglais et `node scripts/ci/audit-module-ownership.mjs`.
+
+- Après les vérifications obligatoires et la revue, utilisez la file de fusion native lorsqu’elle est activée. Elle valide la révision combinée avant le squash merge ; conservez le titre Conventional Commit. Ne contournez pas les contrôles obligatoires en échec.
+
+- Nightly se déclenche chaque jour à 15:17 UTC ou manuellement, pas après chaque fusion. Source Regression ajoute deux fois par jour les suites complètes Mac, délégation et paquets. Les PR et la file exécutent leurs groupes sélectionnés.
+
+- `npm test` reste complet. `npm run test:affected:explain -- --base origin/main --head HEAD --tier pr` explique la sélection PR ; `--tier queue` explique la file. Une preuve incomplète conserve une sélection plus large. Les politiques CI protégées exigent une revue du propriétaire ; les registres ne peuvent réduire la couverture existante.
+
+- `packages/` contient les paquets de domaine indépendants et les auxiliaires natifs. Les vérifications isolées installent les tarballs déclarés dans des consommateurs propres ; le mode en ligne est normal, `--offline` exige un cache complet. Les versions stables publient cinq archives CLI autonomes ; la publication npm automatique reste différée.
+
+- Les huit traductions sont requises : de, es, fr, zh-Hans, zh-Hant, ja, ko et ru. Consultez [AGENTS.md](../../AGENTS.md) et le [glossaire](../i18n-glossary.md) pour les termes et les contextes.
+
+[Package workflows](../package-workflows.md) · [Development](development-quick-reference.md)

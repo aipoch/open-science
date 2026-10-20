@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -11,10 +12,6 @@ const native = vi.hoisted(() => ({
   directory: '',
   window: null as unknown,
   saveDialog: vi.fn()
-}))
-vi.mock('../windows', () => ({
-  createSettingsWindow: vi.fn(),
-  isTrustedAppContents: vi.fn(() => false)
 }))
 vi.mock('electron', async () => {
   const { EventEmitter } = await import('node:events')
@@ -30,6 +27,20 @@ vi.mock('electron', async () => {
     BrowserWindow: { fromWebContents: () => native.window },
     app: { getPath: () => native.directory },
     dialog: { showSaveDialog: native.saveDialog }
+  }
+})
+
+import { configureDesktopFileInteraction } from '../desktop-interaction'
+configureDesktopFileInteraction({
+  chooseSavePath: (options) => native.saveDialog(options),
+  chooseFiles: async () => {
+    throw new Error('Unexpected open dialog')
+  },
+  confirm: async () => {
+    throw new Error('Unexpected confirmation')
+  },
+  printConversationPdf: async () => {
+    throw new Error('Unexpected PDF')
   }
 })
 
@@ -155,12 +166,7 @@ describe('desktop utilities Electron production surface', () => {
       'cli:get-status',
       'cli:install',
       'cli:uninstall',
-      WINDOW_CLOSE_CHANNEL,
-      'window:open-settings',
-      'window:settings-ready',
-      'window:settings-context',
-      'window:navigate-workspace',
-      'window:workspace-navigated'
+      WINDOW_CLOSE_CHANNEL
     ])
     expect(eventChannels.map((channel) => ipcMain.listenerCount(channel))).toEqual([2, 1, 1])
     await installed.uninstall()
@@ -305,3 +311,5 @@ describe('desktop utilities Electron production surface', () => {
     expect(eventChannels.slice(1).map((name) => ipcMain.listenerCount(name))).toEqual([0, 0])
   })
 })
+
+await configureTestElectronHost(await import('electron'))

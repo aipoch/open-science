@@ -1,19 +1,19 @@
-import type { AcpMessageImage } from '../../../../shared/acp'
-import type { ChatMessage } from '../../stores/session-store'
+import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type {
   HistoryReplayDescriptor,
   HistoryReplayTarget
-} from '../../../../shared/history-preamble'
+} from '../../../../shared/history-replay-contract'
+import { resolveModelContextWindow } from '../../../../shared/provider-model-policy'
 import { buildSessionHistoryReplay } from '../../../../shared/session-history-replay'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
-import type { UploadedAttachment } from '../../../../shared/uploads'
 import {
   requiresChatCompletionsBridge,
   type AgentFrameworkId,
   type AgentFrameworkView,
   type ProviderView
 } from '../../../../shared/settings'
-import { resolveModelContextWindow } from '../../../../shared/provider-registry'
+import type { UploadedAttachment } from '../../../../shared/uploads'
+import type { ChatMessage } from '../../stores/session-store'
 
 export const resolveHistoryReplayTarget = (
   frameworkId: AgentFrameworkId | undefined,

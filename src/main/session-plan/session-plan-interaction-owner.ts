@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto'
 import { PlanCommandError } from '../../shared/session-plan/contract'
 
 type SessionPlanInteractionIdentity = Readonly<{
@@ -25,6 +26,7 @@ type SessionPlanProviderPause = {
 }
 
 type SessionPlanInteractionRow = {
+  reviewRequest?: Readonly<{ artifactVersionId: string; id: string }>
   providerPause?: SessionPlanProviderPause
   identity?: SessionPlanInteractionIdentity
   approvalReservation?: string
@@ -109,11 +111,21 @@ class SessionPlanInteractionOwner {
       reject = fail
     })
     row.approval = { interactionId, response, resolve, reject }
+    if (row.identity) {
+      // Keep this identity after settlement so receipt refreshes do not reopen the
+      // submitted card. Only another actual approval wait creates a new review.
+      row.reviewRequest = { artifactVersionId: row.identity.artifactVersionId, id: randomUUID() }
+    }
     return response
   }
 
   approvalResponseFor(sessionId: string): Promise<unknown> | undefined {
     return this.rows.get(sessionId)?.approval?.response
+  }
+
+  reviewRequestIdFor(sessionId: string, artifactVersionId: string): string | undefined {
+    const review = this.rows.get(sessionId)?.reviewRequest
+    return review?.artifactVersionId === artifactVersionId ? review.id : undefined
   }
 
   suspendProvider(
@@ -258,6 +270,7 @@ class SessionPlanInteractionOwner {
   private prune(sessionId: string, row: SessionPlanInteractionRow): void {
     if (
       !row.providerPause &&
+      !row.reviewRequest &&
       !row.identity &&
       !row.approvalReservation &&
       !row.approval &&

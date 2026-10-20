@@ -25,6 +25,7 @@ const unavailable = (operation: string): (() => Promise<never>) =>
 const createRuntime = (
   overrides: Partial<NotebookCommandRuntime> = {}
 ): NotebookCommandRuntime => ({
+  runIndex: unavailable('runIndex'),
   state: unavailable('state'),
   getProjectActivity: vi.fn(() => ({ kernels: [], backgroundRuns: [] })),
   inspectNamespace: unavailable('inspectNamespace'),
@@ -123,6 +124,7 @@ describe('Notebook command workflows', () => {
         promptMessageId: 'forged-prompt'
       },
       executionInvocationId: 'forged-invocation',
+      rootExecutionId: 'forged-execution',
       registeredInputFiles: [],
       inputRunLeaseId: 'forged-lease'
     }

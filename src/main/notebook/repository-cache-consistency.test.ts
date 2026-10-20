@@ -18,6 +18,20 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   return { ...actual, readFile: fsMocks.readFile, stat: fsMocks.stat }
 })
 
+vi.mock('@aipoch/durable-files', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/durable-files')>()
+  return {
+    ...actual,
+    readDurableJsonFile: (path, decode, dependencies, options) =>
+      actual.readDurableJsonFile(
+        path,
+        decode,
+        { readFile: fsMocks.readFile, stat: fsMocks.stat, ...dependencies },
+        options
+      )
+  } satisfies typeof actual
+})
+
 import { NotebookRunRepository } from './repository'
 
 let storageRoot: string | undefined

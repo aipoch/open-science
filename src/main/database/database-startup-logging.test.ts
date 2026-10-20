@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import type { PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { formatLine, type Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
+import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { createProjectDbClient } from '../projects/prisma-client'
 import { createDatabaseStartupLogging } from './database-startup-logging'
 import { DatabaseValidationError } from './database-validation-error'
@@ -135,7 +136,14 @@ describe('database startup logging', () => {
               '0040_literature_collection_revision',
               '0041_bookmarks',
               '0042_classification_usage',
-              '0043_pdf_annotations'
+              '0043_pdf_annotations',
+              '0044_literature_smart_collections',
+              '0045_literature_smart_pause_run',
+              '0046_journal_attributes',
+              '0047_session_replay',
+              '0048_pdf_annotation_sharing',
+              '0049_pascalcase_table_names',
+              '0050_literature_translation'
             ],
             adoptedLegacy: true
           })
@@ -188,7 +196,7 @@ describe('database startup logging', () => {
     )
   })
 
-  it('records structured validation details through the mandatory redactor', () => {
+  it('records structured validation details through the mandatory redactor', async () => {
     const sensitiveValue = 'customer-secret-value'
     const cause = new DatabaseValidationError('Schema mismatch.', {
       kind: 'test-mismatch',
@@ -210,7 +218,7 @@ describe('database startup logging', () => {
     logging.reportBlocked(error)
 
     const record = records.find(({ message }) => message === 'database startup blocked')!
-    const line = formatLine('error', 'main', record.message, record.data)
+    const [line] = await captureDiagnosticLogs((sink) => sink.error(record.message, record.data))
     expect(line).not.toContain(sensitiveValue)
     expect(JSON.parse(line)).toMatchObject({
       level: 'error',

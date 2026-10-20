@@ -1,6 +1,6 @@
 import type { ReproducibilitySource } from './reproducibility-source'
 import type { Dirent } from 'node:fs'
-import { validOutputComparisonReport } from './output-comparison'
+import { validOutputComparisonReport } from '@aipoch/reproducibility'
 import { lstat, readFile, readdir } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import {
@@ -30,7 +30,7 @@ import {
   readDurableJsonFile,
   recoverDurableJsonDirectory,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import {
   readReproducibilityEnvironmentLock,

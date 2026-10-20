@@ -1,7 +1,8 @@
+import { useLiteratureHost } from './renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open-Science tokens · enrichment: none */
-import { ArrowLeft, BookOpenText, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
+import { ArrowLeft, BookOpenText, Eye, FileText, LoaderCircle, Trash2, Upload } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -17,12 +18,13 @@ import { cn } from '@/lib/utils'
 import {
   LITERATURE_CSL_MAX_BYTES,
   type LiteratureCitationStyleView
-} from '../../../../shared/literature'
+} from '@aipoch/literature-citations/contracts'
 
 type CitationStylesViewProps = Readonly<{
   styles?: LiteratureCitationStyleView[]
   onBack: () => void
   onStylesChange: (styles: LiteratureCitationStyleView[]) => void
+  embedded?: boolean
 }>
 
 type CitationStylePreview = NonNullable<LiteratureCitationStyleView['preview']>
@@ -33,8 +35,11 @@ type CitationStylePreviewState =
 const CitationStylesView = ({
   styles,
   onBack,
-  onStylesChange
+  onStylesChange,
+  embedded = false
 }: CitationStylesViewProps): React.JSX.Element => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(styles === undefined)
@@ -52,6 +57,7 @@ const CitationStylesView = ({
   >()
   const previewRequestsRef = useRef(new Set<string>())
   const [activePreviewId, setActivePreviewId] = useState<string | null>(null)
+  const [skipEntryAnimation, setSkipEntryAnimation] = useState(false)
   const activePreviewRef = useRef<string | null>(null)
   const pinnedRef = useRef(false)
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -121,7 +127,7 @@ const CitationStylesView = ({
   useEffect(() => {
     if (styles !== undefined) return
     let active = true
-    void window.api.literature.citationStyles({ kind: 'list' }).then(
+    void hostApi.literature.citationStyles({ kind: 'list' }).then(
       (result) => {
         if (!active) return
         onStylesChange(result.styles)
@@ -136,7 +142,7 @@ const CitationStylesView = ({
     return () => {
       active = false
     }
-  }, [onStylesChange, styles])
+  }, [hostApi.literature, onStylesChange, styles])
 
   const loadPreview = useCallback(
     (style: LiteratureCitationStyleView): void => {
@@ -148,7 +154,7 @@ const CitationStylesView = ({
         return
       previewRequestsRef.current.add(style.id)
       setPreviewStates((current) => ({ ...current, [style.id]: { status: 'loading' } }))
-      void window.api.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
+      void hostApi.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
         (result) => {
           const preview = result.preview
           if (preview?.styleId !== style.id) previewRequestsRef.current.delete(style.id)
@@ -166,20 +172,23 @@ const CitationStylesView = ({
         }
       )
     },
-    [previewStates]
+    [hostApi.literature, previewStates]
   )
 
   const showPreview = useCallback(
     (style: LiteratureCitationStyleView, trigger: HTMLButtonElement, immediate = false): void => {
       cancelPreviewTimer()
       if (pinnedRef.current && activePreviewRef.current !== style.id) return
+      if (activePreviewRef.current === style.id) return
+      const instant = immediate || activePreviewRef.current !== null || warmRef.current
       const show = (): void => {
         previewTriggerRef.current = trigger
         activePreviewRef.current = style.id
+        setSkipEntryAnimation(instant)
         setActivePreviewId(style.id)
         loadPreview(style)
       }
-      if (immediate || activePreviewRef.current || warmRef.current) show()
+      if (instant) show()
       else previewTimerRef.current = setTimeout(show, 200)
     },
     [loadPreview]
@@ -198,7 +207,7 @@ const CitationStylesView = ({
     }
     setImporting(true)
     try {
-      const result = await window.api.literature.citationStyles({
+      const result = await hostApi.literature.citationStyles({
         kind: 'import',
         content: await file.text()
       })
@@ -215,7 +224,7 @@ const CitationStylesView = ({
     setError(undefined)
     setDeletingId(styleId)
     try {
-      const result = await window.api.literature.citationStyles({ kind: 'delete', styleId })
+      const result = await hostApi.literature.citationStyles({ kind: 'delete', styleId })
       onStylesChange(result.styles)
     } catch {
       setError('delete-failed')
@@ -336,14 +345,21 @@ const CitationStylesView = ({
           </PopoverAnchor>
           <PopoverContent
             ref={previewContentRef}
+            data-skip-entry-animation={skipEntryAnimation}
             aria-label={`${t('Preview')}: ${style.title}`}
             tabIndex={-1}
             side="top"
             align="end"
             collisionPadding={8}
-            className="max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
+            className="hover-bubble max-h-[min(24rem,var(--radix-popover-content-available-height))] min-h-0 w-80 max-w-[calc(100vw-1rem)] space-y-2.5 overflow-y-auto overscroll-contain break-words p-3 select-text"
             onPointerEnter={cancelPreviewTimer}
             onPointerLeave={scheduleClosePreview}
+            onFocusOutside={(event) => {
+              // The custom anchor's opening focus must not immediately dismiss its preview.
+              const target = event.detail.originalEvent.target
+              if (target instanceof Node && previewTriggerRef.current?.contains(target))
+                event.preventDefault()
+            }}
             onFocusCapture={() => {
               cancelPreviewTimer()
               pinnedRef.current = true
@@ -377,11 +393,11 @@ const CitationStylesView = ({
             {example ? (
               <>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('In-text citation')}</p>
+                  <p className="font-medium text-muted-foreground">{t('In-text citation')}</p>
                   <p className="mt-0.5 leading-5">{example.inText}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('Reference')}</p>
+                  <p className="font-medium text-muted-foreground">{t('Reference')}</p>
                   <p className="mt-0.5 leading-5">{example.reference}</p>
                 </div>
               </>
@@ -410,6 +426,10 @@ const CitationStylesView = ({
             ) : null}
           </PopoverContent>
         </Popover>
+        <span className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground">
+          <Eye className="size-3.5" aria-hidden="true" />
+          {t('Preview')}
+        </span>
         {style.source === 'custom' ? (
           <Button
             type="button"
@@ -439,13 +459,21 @@ const CitationStylesView = ({
 
   return (
     <>
-      <div className="mx-auto flex h-full w-full max-w-4xl flex-col overflow-y-auto px-4 py-6 [scrollbar-width:none] lg:px-6 lg:py-8 [&::-webkit-scrollbar]:hidden">
+      <div className="flex h-full w-full flex-col overflow-y-auto px-4 py-6 [scrollbar-width:none] lg:px-6 lg:py-8 [&::-webkit-scrollbar]:hidden">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="min-w-0">
-            <Button type="button" variant="ghost" size="sm" className="-ml-2 mb-3" onClick={onBack}>
-              <ArrowLeft className="size-4" aria-hidden="true" />
-              {t('Back to references')}
-            </Button>
+            {!embedded ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className="-ml-2 mb-3"
+                onClick={onBack}
+              >
+                <ArrowLeft className="size-4" aria-hidden="true" />
+                {t('Back to references')}
+              </Button>
+            ) : null}
             <h2 className="text-2xl font-semibold tracking-tight">{t('Citation styles')}</h2>
             <p className="mt-1 max-w-2xl text-sm leading-6 text-muted-foreground">
               {t('Choose the styles available when formatting references and documents.')}

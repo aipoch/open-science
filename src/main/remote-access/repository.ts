@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import type { RemoteAccessMode } from '../../shared/remote-access'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 const REMOTE_ACCESS_FILE = 'remote-access.json'
 const REMOTE_ACCESS_VERSION = 5 as const

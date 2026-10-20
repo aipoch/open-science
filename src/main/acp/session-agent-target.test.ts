@@ -15,7 +15,7 @@ import {
 const provider = (
   id: string,
   model: string,
-  apiEndpoints: ProviderView['apiEndpoints'] = ['openai']
+  apiEndpoints: ProviderView['apiEndpoints'] = ['chat-completions']
 ): ProviderView => ({
   id,
   type: 'custom',
@@ -45,7 +45,7 @@ const settings = (overrides: Partial<SettingsSnapshot> = {}): SettingsSnapshot =
         id: 'opencode',
         displayName: 'OpenCode',
         supportsSkills: true,
-        supportedApiTypes: ['openai']
+        supportedApiTypes: ['chat-completions']
       }
     ],
     providers: [provider('ready', 'ready-model')],
@@ -141,7 +141,7 @@ describe('Session agent target', () => {
           lastValidationFailure: {
             at: 1,
             category: 'network',
-            target: { model: 'default-model', endpoint: 'openai' }
+            target: { model: 'default-model', endpoint: 'chat-completions' }
           }
         }
       ]
@@ -180,7 +180,7 @@ describe('Session agent target', () => {
           }
         },
         settings({
-          providers: [provider('incompatible', 'other', ['anthropic'])],
+          providers: [provider('incompatible', 'other', ['messages'])],
           activeProviderId: 'incompatible',
           activeModel: 'other'
         })

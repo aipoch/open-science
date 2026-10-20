@@ -47,6 +47,10 @@ describe('resource assignment controls', () => {
     const setMain = vi.fn()
     render(<ResourceAssignmentControls resource={resource} onSetMain={setMain} />)
     fireEvent.click(screen.getByRole('button', { name: 'Manage access for Alpha' }))
+    expect(screen.getByRole('dialog').className).toContain('overflow-x-hidden')
+    expect(screen.getByRole('dialog').querySelector('[aria-busy]')?.className).toContain(
+      'overflow-x-hidden'
+    )
     expect(screen.getAllByRole('switch')).toHaveLength(2)
     expect(screen.getByRole('switch', { name: 'Main Agent' }).getAttribute('aria-checked')).toBe(
       'false'

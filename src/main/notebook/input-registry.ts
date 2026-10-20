@@ -1,15 +1,20 @@
-import type { ArtifactProducerInputScope } from '../managed-file-versions/service'
-import type { FileReference } from '../../shared/artifacts'
-import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../../shared/artifacts'
+import type {
+  ArtifactPreviewResult,
+  FileReference,
+  ReadArtifactPreviewRequest
+} from '../../shared/artifacts'
 import {
   parseNotebookInputPreviewKey,
   type NotebookPromptInput,
   type NotebookRunInputFile
 } from '../../shared/notebook'
 import type { UploadedAttachment } from '../../shared/uploads'
-import type { ImmutableInputAuthority } from '../immutable-input-authority'
-import type { ImmutableInputContentLease } from '../immutable-input-authority'
+import type {
+  ImmutableInputAuthority,
+  ImmutableInputContentLease
+} from '../immutable-input-authority'
 import { readBoundedManagedFilePreviewLease } from '../managed-file-preview'
+import type { ArtifactProducerInputScope } from '../managed-file-versions/read-port'
 import { materializeNotebookPromptInput } from './prompt-input-materialization'
 
 type RegisterNotebookTurnInputsRequest = {
@@ -339,12 +344,12 @@ class NotebookInputRegistry {
 export { NotebookInputRegistry }
 export type {
   GetNotebookTurnInputsRequest,
-  NotebookInputRunLease,
   NotebookInputPreviewTarget,
   NotebookInputRegistryOptions,
+  NotebookInputRunLease,
   OpenNotebookInputRunRequest,
   PreparedNotebookTurnInputs,
   RegisterNotebookTurnInputsRequest,
-  ResolveNotebookInputRunRequest,
-  ResolveNotebookInputPreviewRequest
+  ResolveNotebookInputPreviewRequest,
+  ResolveNotebookInputRunRequest
 }

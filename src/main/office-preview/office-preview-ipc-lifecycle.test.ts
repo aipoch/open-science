@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -143,3 +144,5 @@ describe('Office preview installation lifetime', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

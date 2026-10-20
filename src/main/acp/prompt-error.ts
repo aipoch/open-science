@@ -239,5 +239,16 @@ export const isOpenCodeSessionServiceFailure = (error: unknown): boolean => {
   const data = (error as { data?: unknown }).data
   if (typeof data !== 'object' || data === null || Array.isArray(data)) return false
 
-  return (data as { service?: unknown }).service === 'session'
+  const detail = data as { service?: unknown; errorName?: unknown }
+  return detail.service === 'session' && detail.errorName !== 'ContextOverflowError'
+}
+
+// OpenCode's native summary can fail before producing provider error text. Use its typed tag.
+export const isOpenCodeContextOverflow = (error: unknown): boolean => {
+  const data = (error as { data?: { service?: unknown; errorName?: unknown } } | null)?.data
+  return (
+    errorCode(error) === -32603 &&
+    data?.service === 'session' &&
+    data.errorName === 'ContextOverflowError'
+  )
 }

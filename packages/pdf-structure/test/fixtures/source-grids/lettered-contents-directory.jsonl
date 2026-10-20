@@ -1,0 +1,5 @@
+[[],{}]
+[["table"],{"grid":[["A","Ablation on the Number of Perturbed Paths . . . . . . . . . 14"],["B","Ablation on Uncertainty Weighting Strength . . . . . . . . . 14"],["C","Ablation on Semantic Alignment Strength . . . . . . . . . 14"],["D","Ablation on Semantic Alignment Depth . . . . . . . . . 14"],["E","Additional Visual Comparison Results . . . . . . . . . 15"]],"issues":["text-crosses-crop-boundary","unassigned-source-text"],"unassigned":["C","ONTENTS"]}]
+[["tokens"],[]]
+[["tokens",0],{"text":"C","horizontal":true,"height":12,"rect":[280,80,286,92]}]
+[["tokens",1],{"text":"ONTENTS","horizontal":true,"height":12,"rect":[288,80,340,92]}]

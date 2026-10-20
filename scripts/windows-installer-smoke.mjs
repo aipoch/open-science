@@ -10,6 +10,7 @@ import {
   readFile,
   readdir,
   rm,
+  stat,
   writeFile
 } from 'node:fs/promises'
 import { createServer } from 'node:http'
@@ -21,7 +22,7 @@ import { isDeepStrictEqual } from 'node:util'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import {
-  parsePackagedSqliteVersion,
+  readDesktopSqliteVersion,
   readDatabaseMigrationLedger,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,
@@ -35,9 +36,14 @@ const ARTIFACT_MCP_SERVER_ARG = '--open-science-artifact-mcp'
 const NOTEBOOK_MCP_SERVER_ARG = '--open-science-notebook-mcp'
 const CONFIG_DIRECTORY = '.open-science'
 const PROCESS_TIMEOUT_MS = 120_000
+// The silent NSIS install unpacks a 650 MB+ payload; loaded CI runners exceeded the generic
+// process budget twice, so the installer gets its own ceiling (the step budget is 10 minutes).
+const INSTALLER_TIMEOUT_MS = 300_000
 const STARTUP_TIMEOUT_MS = 60_000
 const SHUTDOWN_TIMEOUT_MS = 60_000
 const HTTP_REQUEST_TIMEOUT_MS = 15_000
+// Keep the installer smoke step's 10-minute CI budget for launch, migrations, and shutdown too.
+const NOTEBOOK_ENV_PROVISION_TIMEOUT_MS = 8 * 60_000
 const TERMINATION_TIMEOUT_MS = 10_000
 const MCP_REQUEST_TIMEOUT_MS = 30_000
 const SMOKE_ROOT_PREFIX = 'open-science-installer-smoke-'
@@ -141,6 +147,40 @@ const requestPackagedAppShutdown = async (endpoint, auth, fetchImpl = fetchWithT
     throw new Error(
       `Installed app shutdown returned HTTP ${response.status}.${body ? ` ${body}` : ''}`
     )
+  }
+}
+
+const runPackagedNotebookEnvironmentSmoke = async (
+  endpoint,
+  auth,
+  fetchImpl = fetchWithTimeout
+) => {
+  const response = await fetchImpl(
+    `${endpoint}/rpc/notebook-env:provision?${auth}`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        protocolVersion: 1,
+        args: ['python', `installer-smoke-${randomUUID()}`]
+      })
+    },
+    NOTEBOOK_ENV_PROVISION_TIMEOUT_MS
+  )
+  const body = await response.text()
+  if (!response.ok) {
+    throw new Error(
+      `Packaged Notebook environment provisioning returned HTTP ${response.status}. ${body}`
+    )
+  }
+  let result
+  try {
+    result = JSON.parse(body)
+  } catch {
+    throw new Error(`Packaged Notebook environment provisioning returned invalid JSON: ${body}`)
+  }
+  if (result?.protocolVersion !== 1 || result?.ok !== true) {
+    throw new Error(`Packaged Notebook environment provisioning failed: ${body}`)
   }
 }
 
@@ -404,15 +444,31 @@ const packagedResourcePaths = (installDirectory, { includeWslPreview = true } = 
   join(
     installDirectory,
     'resources',
-    'node_modules',
-    '.prisma',
-    'client',
+    'backend',
+    'resources',
+    'prisma-client',
     'query_engine-windows.dll.node'
   )
 ]
 
-const packagedMainEntryPath = (installDirectory) =>
-  join(installDirectory, 'resources', 'app.asar', 'out', 'main', 'index.js')
+const packagedMcpRuntime = async (installDirectory, env) => {
+  const resources = join(installDirectory, 'resources')
+  // Upgrade certification also exercises released installers from before backend extraction.
+  const entries = await readdir(resources)
+  if (!entries.includes('backend')) {
+    return {
+      executable: join(installDirectory, APP_EXECUTABLE),
+      entryPath: join(resources, 'app.asar', 'out', 'main', 'index.js'),
+      env: { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    }
+  }
+  const executable = join(resources, 'node-runtime', 'node.exe')
+  const entryPath = join(resources, 'backend', 'out', 'backend', 'index.cjs')
+  await Promise.all([access(executable), access(entryPath)])
+  const nodeEnv = { ...env, OPEN_SCIENCE_HOST_PACKAGED: '1' }
+  delete nodeEnv.ELECTRON_RUN_AS_NODE
+  return { executable, entryPath, env: nodeEnv }
+}
 
 const stringEnvironment = (environment) =>
   Object.fromEntries(Object.entries(environment).filter((entry) => typeof entry[1] === 'string'))
@@ -690,9 +746,11 @@ const runPackagedLocalRpcSmoke = async ({
     )
     await listenOnPipe(server, socketPath)
 
-    const executable = join(installDirectory, APP_EXECUTABLE)
-    const entryPath = packagedMainEntryPath(installDirectory)
-    const sharedEnv = { ...env, ELECTRON_RUN_AS_NODE: '1' }
+    const {
+      executable,
+      entryPath,
+      env: sharedEnv
+    } = await packagedMcpRuntime(installDirectory, env)
     notebookMcp = await connectPackagedMcp({
       executable,
       entryPath,
@@ -817,7 +875,7 @@ const assertPackagedResources = async (installDirectory, { certifyWslPreview = t
   })) {
     if (!(await pathExists(path))) throw new Error(`Packaged Windows resource is missing: ${path}`)
   }
-  const prismaRoot = join(installDirectory, 'resources', 'node_modules', '.prisma', 'client')
+  const prismaRoot = join(installDirectory, 'resources', 'backend', 'resources', 'prisma-client')
   const engines = await readdir(prismaRoot)
   const nativeEngines = engines.filter(
     (name) => name.includes('query_engine-') && name.endsWith('.node')
@@ -928,7 +986,8 @@ const launchAndProbe = async ({
   legacyConfigRoots,
   verifyLedger = false,
   expectedMigrationCount,
-  onSqliteVersion
+  onSqliteVersion,
+  exerciseNotebookRuntime = false
 }) => {
   const executable = join(installDirectory, APP_EXECUTABLE)
 
@@ -970,11 +1029,12 @@ const launchAndProbe = async ({
       legacyConfigRoots
     })
 
+    if (exerciseNotebookRuntime) await runPackagedNotebookEnvironmentSmoke(endpoint, auth)
     await requestPackagedAppShutdown(endpoint, auth)
     const exitCode = await waitForShutdownExit(exit, child, output)
     if (exitCode !== 0) throw new Error(`Installed app exited with ${exitCode}.\n${output()}`)
     if (verifyLedger) await verifyDatabaseMigrationLedger(configRoot, expectedMigrationCount)
-    if (onSqliteVersion) onSqliteVersion(parsePackagedSqliteVersion(output()))
+    if (onSqliteVersion) onSqliteVersion(await readDesktopSqliteVersion(configRoot, child.pid))
     return configRoot
   } catch (error) {
     await terminateProcessTree(child)
@@ -1119,6 +1179,29 @@ const launchForProcessLock = async ({
   }
 }
 
+const installApplication = async (installer, installDirectory, env, run = runProcess) => {
+  const started = performance.now()
+  try {
+    await run(installer, ['/S', `/D=${installDirectory}`], {
+      env,
+      timeoutMs: INSTALLER_TIMEOUT_MS
+    })
+  } finally {
+    const entries = await readdir(installDirectory).catch(() => [])
+    const archive = await stat(join(installDirectory, 'resources', 'app.asar')).catch(
+      () => undefined
+    )
+    console.log(
+      JSON.stringify({
+        installer: basename(installer),
+        elapsedMs: Math.round(performance.now() - started),
+        installedEntries: entries,
+        archiveBytes: archive?.size ?? 0
+      })
+    )
+  }
+}
+
 const installAndProbe = async ({
   installer,
   installDirectory,
@@ -1134,7 +1217,7 @@ const installAndProbe = async ({
     `Smoke testing ${phase} ${reuseInstallation ? 'installed app' : 'installer'}: ${basename(installer)}`
   )
   if (!reuseInstallation) {
-    await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
+    await installApplication(installer, installDirectory, env)
   }
   await assertPackagedResources(installDirectory, {
     certifyWslPreview: phase === 'current' || phase === 'restart'
@@ -1149,7 +1232,8 @@ const installAndProbe = async ({
     legacyConfigRoots,
     verifyLedger: phase !== 'previous',
     expectedMigrationCount,
-    onSqliteVersion
+    onSqliteVersion,
+    exerciseNotebookRuntime: phase === 'current'
   })
 }
 
@@ -1172,7 +1256,7 @@ const installOverRunningApp = async ({
     legacyConfigRoots
   })
   try {
-    await runProcess(installer, ['/S', `/D=${installDirectory}`], { env })
+    await installApplication(installer, installDirectory, env)
     await waitForShutdownExit(running.exit, running.child, running.output)
   } catch (error) {
     await terminateProcessTree(running.child)
@@ -1193,7 +1277,8 @@ const installOverRunningApp = async ({
     legacyConfigRoots,
     verifyLedger: true,
     expectedMigrationCount,
-    onSqliteVersion
+    onSqliteVersion,
+    exerciseNotebookRuntime: phase === 'current'
   })
 }
 
@@ -1633,6 +1718,8 @@ const main = async () => {
     mkdir(env.APPDATA, { recursive: true }),
     mkdir(env.LOCALAPPDATA, { recursive: true }),
     mkdir(env.TEMP, { recursive: true }),
+    // Windows resolves the Downloads known folder against this isolated USERPROFILE.
+    mkdir(join(profileDirectory, 'Downloads'), { recursive: true }),
     ...(options.wslCertificationProfile
       ? [mkdir(certificationStorageRoot, { recursive: true })]
       : [])
@@ -1825,15 +1912,17 @@ export {
   launchUninstallerLockHolder,
   launchAndExpectDatabaseBlocked,
   installAndProbe,
+  installApplication,
   launchAndProbe,
   packagedArtifactSmokeRpcResult,
-  packagedMainEntryPath,
+  packagedMcpRuntime,
   observeChildClose,
   parseArguments,
   packagedResourcePaths,
   parsePackagedAppEndpoint,
   readPackagedAppConfigRoot,
   requestPackagedAppShutdown,
+  runPackagedNotebookEnvironmentSmoke,
   removeWslCommandTempEvidence,
   releasedMigrationCountForPhase,
   runProcess,

@@ -3,6 +3,8 @@ export const SETTINGS_WINDOW_CHANNELS = {
   open: 'window:open-settings',
   ready: 'window:settings-ready',
   opened: 'window:settings-opened',
+  closeRequested: 'window:settings-close-requested',
+  close: 'window:close-settings',
   context: 'window:settings-context',
   navigate: 'window:navigate-workspace',
   navigation: 'window:workspace-navigation',

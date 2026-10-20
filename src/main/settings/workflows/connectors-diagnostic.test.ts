@@ -1,3 +1,8 @@
+import { createRequire } from 'node:module'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { configureTestRuntimeNetwork } from '../../../../test/runtime-host'
 import { createServer } from 'node:http'
 import { randomUUID } from 'node:crypto'
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -145,15 +150,54 @@ it.each(['streamable_http', 'sse'] as const)(
   15_000
 )
 
-it('bounds a stalled stdio server by the diagnostic timeout', async () => {
-  const { workflow } = makeWorkflow(process.execPath, ['-e', 'setInterval(() => {}, 1000)'])
-  await expect(workflow.testCustomServer({ id: 'fixture' })).resolves.toEqual({
-    success: false,
-    message: 'MCP connection timed out.',
-    stage: 'handshake',
-    code: 'timeout'
-  })
-}, 15_000)
+const isProcessAlive = (pid: number): boolean => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ESRCH') return false
+    throw error
+  }
+}
+
+it.each(['timeout', 'cancelled'] as const)(
+  'waits for a stalled stdio server to exit after diagnostic %s',
+  async (reason) => {
+    const directory = await mkdtemp(join(tmpdir(), 'mcp-diagnostic-cleanup-'))
+    const pidFile = join(directory, 'server.pid')
+    const { workflow } = makeWorkflow(process.execPath, [
+      '-e',
+      `require('node:fs').writeFileSync(${JSON.stringify(pidFile)}, String(process.pid));
+       setInterval(() => {}, 1000)`
+    ])
+    const controller = new AbortController()
+    const pending = workflow.testCustomServer({ id: 'fixture' }, controller.signal)
+    let pid: number | undefined
+    try {
+      await vi.waitFor(
+        async () => {
+          pid = Number(await readFile(pidFile, 'utf8'))
+          expect(pid).toBeGreaterThan(0)
+        },
+        { timeout: 5_000 }
+      )
+      if (reason === 'cancelled') controller.abort()
+      await expect(pending).resolves.toMatchObject({
+        success: false,
+        stage: 'handshake',
+        code: reason
+      })
+      expect(isProcessAlive(pid!)).toBe(false)
+    } finally {
+      controller.abort()
+      await pending
+      // Assert before fixture cleanup: killing a leaked fixture must not turn the test green.
+      if (pid && isProcessAlive(pid)) process.kill(pid, 'SIGKILL')
+      await rm(directory, { recursive: true, force: true })
+    }
+  },
+  20_000
+)
 
 it('distinguishes a missing executable without exposing its path', async () => {
   const missing =
@@ -212,4 +256,58 @@ it('accepts an empty tool catalog without claiming tool execution', async () => 
     code: 'ok',
     message: 'MCP connection and tool discovery succeeded. Business tools were not executed.'
   })
+})
+
+configureTestRuntimeNetwork()
+
+it('retains the original OAuth write guard during a diagnostic refresh', async () => {
+  // The installed Connector package uses the SDK's CommonJS client.
+  const { Client } = createRequire(import.meta.url)(
+    '@modelcontextprotocol/sdk/client/index.js'
+  ) as typeof import('@modelcontextprotocol/sdk/client/index.js')
+  const { customServerSecurityFingerprint } = await import('../custom-server-identity')
+  const server = {
+    id: 'guarded',
+    name: 'guarded',
+    displayName: 'Guarded',
+    enabled: false,
+    transport: 'streamable_http' as const,
+    url: 'https://example.test/mcp',
+    oauth: {},
+    oauthClientSecretRef: 'enc:original',
+    oauthClientSecret: 'fixture-secret'
+  }
+  const fingerprint = customServerSecurityFingerprint(server)
+  const saveCustomServerOAuthState = vi.fn(async () => undefined)
+  const tokens = { access_token: 'refreshed', token_type: 'Bearer' }
+  const workflow = new ConnectorSettingsWorkflows(
+    {
+      getConnectors: async () => ({ customMcpServers: [server] }),
+      saveCustomServerOAuthState
+    } as unknown as ConnectorSettingsWorkflowStore,
+    {} as ConnectorSettingsWorkflowEffects
+  )
+  vi.spyOn(Client.prototype, 'connect').mockImplementation(async (transport) => {
+    // A concurrent settings change must not replace the guard captured by this diagnostic.
+    server.url = 'https://changed.example/mcp'
+    server.oauthClientSecretRef = 'enc:changed'
+    const provider = (
+      transport as unknown as {
+        _authProvider: import('@aipoch/connector-mcp-client').PersistentOAuthClientProvider
+      }
+    )._authProvider
+    await provider.saveTokens(tokens)
+  })
+  vi.spyOn(Client.prototype, 'listTools').mockResolvedValue({ tools: [] })
+  try {
+    expect(await workflow.testCustomServer({ id: server.id })).toMatchObject({ success: true })
+    expect(saveCustomServerOAuthState).toHaveBeenCalledWith(
+      server.id,
+      { tokens },
+      fingerprint,
+      'enc:original'
+    )
+  } finally {
+    vi.restoreAllMocks()
+  }
 })

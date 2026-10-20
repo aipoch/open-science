@@ -1,45 +1,17 @@
 import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
-import type { ArtifactFile } from '../../shared/artifacts'
+import type {
+  DelegatedArtifactEvidence,
+  DelegatedArtifactHandle,
+  DelegatedArtifactProjectionScope,
+  DelegatedArtifactScope,
+  SessionKey
+} from './artifact-evidence-contract'
 import {
   selectRuntimeScopeUpdates,
   stageAttemptRuntimeTranscript
 } from './attempt-runtime-transcript'
-import type { DurableMessage, DelegatedWorkDurableRecords } from './delegated-work-record-types'
+import type { DelegatedWorkDurableRecords, DurableMessage } from './delegated-work-record-types'
 import type { DelegateExecutionInput } from './execution-port'
-
-type SessionKey = Readonly<{ projectId: string; sessionId: string }>
-
-type DelegatedArtifactScope = Readonly<{
-  session: SessionKey
-  workspaceCwd?: string
-  executionId: string
-  attemptId: string
-  rootFrameId: string
-  agentFrameId: string
-  messageBranchId: string
-  runtimeSegmentId: string
-  promptMessageId: string
-  agentName: string
-}>
-
-type DelegatedArtifactProjectionScope = DelegatedArtifactScope &
-  Readonly<{
-    runtimeSegmentIds: readonly string[]
-    terminalMessageId?: string
-  }>
-
-type DelegatedArtifactHandle = Readonly<{
-  execution?: Readonly<{ currentRunFile: string }>
-  activateAt?(currentRunFile: string): Promise<void>
-  finalize(terminalMessageId: string): Promise<void>
-  dispose(): Promise<void>
-}>
-
-type DelegatedArtifactEvidence = Readonly<{
-  open(scope: DelegatedArtifactScope): Promise<DelegatedArtifactHandle>
-  revoke?(scope: DelegatedArtifactProjectionScope): Promise<void>
-  project(scope: DelegatedArtifactProjectionScope): Promise<readonly ArtifactFile[]>
-}>
 
 type TurnContext = Readonly<{
   rootFrameId: string

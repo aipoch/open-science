@@ -1,40 +1,40 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { useTranslation } from 'react-i18next'
-import { ArrowUpRight, File, LoaderCircle, MessageCircle } from 'lucide-react'
-import { formatBytes } from '../../../../shared/update'
-import { resolveLocaleFromTags } from '../../../../shared/locale'
-import { formatDateTime, formatRelativeTime } from '@/lib/format-datetime'
+import { ErrorNotice } from '@/components/error-notice'
+import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { SearchFilePreview } from './SearchFilePreview'
-import { SearchDetailHeader } from './SearchDetailHeader'
+import { formatDateTime, formatRelativeTime } from '@/lib/format-datetime'
+import { readLiteratureSelectionPage } from '../../lib/literature-queries'
 import { ArtifactPreview } from '@/pages/workspace/artifact-preview'
 import { ExtensionPreservingFileName } from '@/pages/workspace/ExtensionPreservingFileName'
+import { FilePreviewDialog } from '@/pages/workspace/FilePreviewDialog'
 import {
   createProjectFilePreviewArtifact,
   useProjectFilePreviewReader,
   useProjectFilePreviews
 } from '@/pages/workspace/project-files-preview-owner'
-import { ErrorNotice } from '@/components/error-notice'
-import { FilePreviewDialog } from '@/pages/workspace/FilePreviewDialog'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { ArrowUpRight, File, LoaderCircle, MessageCircle } from 'lucide-react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import { resolveLocaleFromTags } from '../../../../shared/locale'
 import type { ProjectFileItem } from '../../../../shared/project-files'
-import type { LiteratureItemView } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
-import { STANDALONE_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
-import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
+import { formatBytes } from '../../../../shared/update'
+import { STANDALONE_UPLOAD_SESSION_ID } from '../../../../shared/uploads'
 import {
+  fileFormatLabel,
   filePreviewItem,
   literaturePreviewItem,
   resultId,
-  fileFormatLabel,
   type SearchResult,
   type SearchSession
 } from './search-result'
-import { SearchHighlight } from './SearchHighlight'
 import { SearchContentHighlight } from './SearchContentHighlight'
-import { readLiteratureSelectionPage } from '@/pages/literature/literature-read-pages'
+import { SearchDetailHeader } from './SearchDetailHeader'
+import { SearchFilePreview } from './SearchFilePreview'
+import { SearchHighlight } from './SearchHighlight'
 
 type Props = {
   result: SearchResult
@@ -389,7 +389,7 @@ export const SearchDetails = ({
         </Button>
       )
     return (
-      <TooltipProvider delayDuration={300}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
             <Button

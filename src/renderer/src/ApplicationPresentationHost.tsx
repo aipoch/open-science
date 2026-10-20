@@ -1,6 +1,7 @@
+import { RuntimeUpdateOutcomeNotice } from '@/components/runtime-update-outcome-notice'
 import { SideChatProvider } from './pages/workspace/use-side-chat-controller'
 import { WorkspaceComposerDraftsProvider } from './pages/workspace/workspace-composer-drafts'
-import { lazy, memo, Suspense, useCallback, useRef } from 'react'
+import { lazy, memo, Suspense, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { DeferredPresentationOwner } from '@/components/DeferredPresentationOwner'
@@ -38,7 +39,7 @@ const WorkspacePage = lazy(() =>
   }))
 )
 const LiteratureLibraryPage = lazy(() =>
-  import('@/pages/literature/LiteratureLibraryPage').then(({ LiteratureLibraryPage }) => ({
+  import('@/pages/literature/public/page').then(({ LiteratureLibraryPage }) => ({
     default: LiteratureLibraryPage
   }))
 )
@@ -73,6 +74,7 @@ const SkillImportApprovalDialog = lazy(() =>
     default: SkillImportApprovalDialog
   }))
 )
+
 const GlobalSearchDialog = lazy(() =>
   import('@/components/global-search/GlobalSearchDialog').then(({ GlobalSearchDialog }) => ({
     default: GlobalSearchDialog
@@ -80,6 +82,12 @@ const GlobalSearchDialog = lazy(() =>
 )
 const UpdateDialog = lazy(() =>
   import('@/components/UpdateDialog').then(({ UpdateDialog }) => ({ default: UpdateDialog }))
+)
+
+const StartupIssueDialog = lazy(() =>
+  import('@/components/startup-issue-dialog').then(({ StartupIssueDialog }) => ({
+    default: StartupIssueDialog
+  }))
 )
 
 const ApplicationPresentationHost = (): React.JSX.Element => {
@@ -102,14 +110,20 @@ const ApplicationPresentationContent = ({
   startup: ReturnType<typeof useApplicationStartup>
 }): React.JSX.Element => {
   const { t } = useTranslation()
+  const [settingsIssueOpen, setSettingsIssueOpen] = useState(false)
   const settingsPageRef = useRef<SettingsPageHandle>(null)
   const closeActiveSettingsPane = useCallback(() => settingsPageRef.current?.closeActivePane(), [])
+  const requestSettingsLeave = useCallback((leave: () => void) => {
+    if (settingsPageRef.current) settingsPageRef.current.requestLeave(leave)
+    else leave()
+  }, [])
   const events = useApplicationEventBindings({
     startupView: startup.settings.startupView,
     sessionPersistence: startup.sessions,
     hasDataRootRecovery: startup.storageRecovery.missingDataRoot !== undefined,
     hasLegacyDataMove: startup.storageRecovery.legacyMove !== undefined,
-    closeActiveSettingsPane
+    closeActiveSettingsPane,
+    requestSettingsLeave
   })
   const { sessions } = startup
   const { presentation } = events
@@ -130,13 +144,36 @@ const ApplicationPresentationContent = ({
           <ErrorNotice
             fullPage
             title={t('Settings could not be loaded')}
-            description={startup.settings.loadError}
+            description={t('Open-Science could not load settings. Retry to continue.')}
+            errorCode={
+              startup.settings.loadFailure
+                ? `SETTINGS_${startup.settings.loadFailure.toUpperCase().replaceAll('-', '_')}`
+                : undefined
+            }
+            issueLink={{
+              label: t('Report this error'),
+              tooltip: t('Report this error'),
+              onClick: () => setSettingsIssueOpen(true)
+            }}
             primaryButton={{
               label: startup.settings.isLoading ? t('Retrying…') : t('Retry'),
               onClick: () => void startup.settings.retry(),
               loading: startup.settings.isLoading
             }}
           />
+          {settingsIssueOpen ? (
+            <Suspense fallback={null}>
+              <StartupIssueDialog
+                error={{
+                  code: `SETTINGS_${(startup.settings.loadFailure ?? 'unknown').toUpperCase().replaceAll('-', '_')}`,
+                  message: 'Open-Science could not load settings. Retry to continue.',
+                  retryable: true,
+                  diagnostics: `stage=settings-load; reason=${startup.settings.loadFailure ?? 'unknown'}; attempt=${startup.settings.loadAttempt}; revision=${startup.settings.snapshotRevision}`
+                }}
+                onClose={() => setSettingsIssueOpen(false)}
+              />
+            </Suspense>
+          ) : null}
         </main>
       )
     }
@@ -160,9 +197,16 @@ const ApplicationPresentationContent = ({
       <>
         <EnvStatusBanner
           ui={startup.environment.ui}
-          onRetry={() => void startup.environment.retry()}
+          onRetry={startup.environment.retry}
+          statusError={startup.environment.statusError}
         />
-        <Suspense fallback={<OpenScienceLogoLoader />}>
+        <Suspense
+          fallback={
+            <main className="flex min-h-svh items-center justify-center bg-background text-foreground">
+              <OpenScienceLogoLoader />
+            </main>
+          }
+        >
           <OnboardingWizard loadStorageInfo={startup.storageRecovery.loadInfo} />
         </Suspense>
       </>
@@ -349,7 +393,8 @@ const ApplicationPresentationContent = ({
               >
                 <EnvStatusBanner
                   ui={startup.environment.ui}
-                  onRetry={() => void startup.environment.retry()}
+                  onRetry={startup.environment.retry}
+                  statusError={startup.environment.statusError}
                   onOpenRuntimes={events.settings.openRuntimes}
                 />
                 {sessions.catalogRecovery.kind !== 'ready' ? (
@@ -383,6 +428,7 @@ const ApplicationPresentationContent = ({
             hasCompleteSessionCatalog={sessions.hasCompleteSessionCatalog}
             catalogRecovery={sessions.catalogRecovery}
             onRetryCatalogRecovery={sessions.retryLoad}
+            sessionLoadError={sessions.loadError}
           />
         </Suspense>
       ) : null}
@@ -391,7 +437,11 @@ const ApplicationPresentationContent = ({
           active={activePresentation === 'connectorApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}
         />
+      </Suspense>
+      <Suspense fallback={null}>
         <ConnectorCredentialDialog active={activePresentation === 'credentialRequest'} />
+      </Suspense>
+      <Suspense fallback={null}>
         <ComputeApprovalDialog
           active={activePresentation === 'computeApproval'}
           blockedSessionIds={events.blockedApprovalSessionIds}
@@ -405,6 +455,7 @@ const ApplicationPresentationContent = ({
           />
         )}
       </DeferredPresentationOwner>
+      <RuntimeUpdateOutcomeNotice />
       <DeferredPresentationOwner active={activePresentation === 'update'}>
         {(active) => <UpdateDialog active={active} />}
       </DeferredPresentationOwner>
@@ -418,6 +469,11 @@ const ApplicationPresentationContent = ({
             open
             onOpenChange={events.globalSearch.setOpen}
             isSessionPersistenceReady={sessions.isReady}
+            onOpenRecovery={
+              sessions.catalogRecovery.kind !== 'ready'
+                ? events.globalSearch.openRecovery
+                : undefined
+            }
           />
         </Suspense>
       ) : null}

@@ -1,6 +1,12 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
+import type { Stats } from 'node:fs'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 
+import { copyFiles, FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
 import { describe, expect, it } from 'vitest'
 
@@ -12,16 +18,341 @@ import {
 import {
   WINDOWS_CACHE_DANGEROUS_RIGHT_NAMES,
   WINDOWS_CACHE_TRUSTED_OWNER_SIDS
-} from '../src/main/notebook/micromamba-cache'
+} from '@aipoch/environment'
+
+describe('macOS native privacy purpose descriptions', () => {
+  it.each([
+    'NSDesktopFolderUsageDescription',
+    'NSDocumentsFolderUsageDescription',
+    'NSDownloadsFolderUsageDescription',
+    'NSNetworkVolumesUsageDescription',
+    'NSRemovableVolumesUsageDescription',
+    'NSLocalNetworkUsageDescription'
+  ])('provides a purpose for %s in the app Info.plist configuration', (key) => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      mac?: { extendInfo?: Record<string, unknown> }
+    }
+
+    expect(config.mac?.extendInfo?.[key]).toEqual(expect.stringMatching(/\S/))
+  })
+})
+
+describe('electron-builder local evidence exclusion', () => {
+  it('runs desktop staging with an explicit target after building its current checkout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-hook-'))
+    try {
+      await mkdir(join(root, 'scripts'))
+      for (const name of ['native-components', 'build-backend', 'stage-backend'])
+        await writeFile(
+          join(root, 'scripts', `${name}.mjs`),
+          `import { appendFileSync } from 'node:fs'; appendFileSync('calls.jsonl', JSON.stringify({name:${JSON.stringify(name)},args:process.argv.slice(2)})+'\\n')`
+        )
+      await writeFile(
+        join(root, 'scripts/stage-node-runtime.mjs'),
+        `export async function stageNodeRuntime() {}`
+      )
+      const require = createRequire(import.meta.url)
+      await require('../build/stage-desktop-runtime.cjs')({
+        electronPlatformName: process.platform,
+        arch: require('builder-util').Arch[process.arch],
+        packager: { projectDir: root }
+      })
+      expect(
+        (await readFile(join(root, 'calls.jsonl'), 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      ).toEqual([
+        { name: 'native-components', args: [] },
+        { name: 'build-backend', args: [] },
+        { name: 'stage-backend', args: ['--desktop'] }
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps repository tooling and prior CLI artifacts out while retaining runtime resources', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-cli-artifacts-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'packaged')
+    const applicationFiles = [
+      'out/main/index.js',
+      'out/renderer/index.html',
+      'resources/notebook/python_loop.py',
+      'resources/skills/skill-creator/scripts/utils.js',
+      'resources/specialists/template/v1/README.txt',
+      'resources/guides/wsl2.html'
+    ]
+    const cliArtifacts = [
+      'out/cli-artifacts/open-science-0.37.0-win32-x64.zip',
+      'out/cli-artifacts/win32-x64.json',
+      'out/cli-artifacts/.archive-fixture/backend/index.cjs',
+      'out/desktop-backend/out/backend/index.cjs'
+    ]
+    const developmentFiles = [
+      'scripts/stage-backend.mjs',
+      'test/fixtures/paper.pdf',
+      'e2e/fixtures/data.csv',
+      'docs/design.md',
+      'release-notes/v0.37.0.md',
+      'patches/dependency.patch',
+      'prisma/schema.prisma'
+    ]
+    try {
+      for (const file of [...applicationFiles, ...cliArtifacts, ...developmentFiles]) {
+        const target = join(source, file)
+        await mkdir(join(target, '..'), { recursive: true })
+        await writeFile(target, file)
+      }
+      await copyFiles([
+        new FileMatcher(source, destination, (value) => value, ['**/*', ...config.files])
+      ])
+      for (const file of applicationFiles)
+        expect(await readFile(join(destination, file), 'utf8')).toBe(file)
+      for (const file of [...cliArtifacts, ...developmentFiles])
+        await expect(readFile(join(destination, file))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('copies the ordinary Node backend dependency tree through the real builder filter', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as {
+      extraResources: Array<{ from: string; to: string; filter?: string[] }>
+    }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-backend-package-'))
+    const files = [
+      'out/backend/index.cjs',
+      'node_modules/zod/package.json',
+      'node_modules/onnxruntime-node/bin/napi-v6/linux/arm64/onnxruntime_binding.node',
+      'node_modules/pdfjs-dist/legacy/build/pdf.mjs',
+      'node_modules/@aipoch/pdf-translation/resources/worker.mjs',
+      'resources/prisma-client/index.js',
+      'node_modules/.prisma/client/default.js',
+      'node_modules/@aipoch/process-tree-native/build/Release/process_tree.node',
+      'node_modules/parent/node_modules/child/package.json'
+    ]
+    try {
+      for (const file of files) {
+        const path = join(root, 'out/desktop-backend', file)
+        await mkdir(join(path, '..'), { recursive: true })
+        await writeFile(path, file)
+      }
+      // A prior npm release may coexist; desktop packaging must never pick its stale payload.
+      await mkdir(join(root, 'out/standalone/out/backend'), { recursive: true })
+      await writeFile(join(root, 'out/standalone/out/backend/index.cjs'), 'stale standalone')
+      const matchers = config.extraResources
+        .filter((entry) => entry.to === 'backend' || entry.to.startsWith('backend/'))
+        .map(
+          (entry) =>
+            new FileMatcher(
+              join(root, entry.from),
+              join(root, 'resources', entry.to),
+              (value) => value,
+              entry.filter
+            )
+        )
+      await copyFiles(matchers)
+      for (const file of files)
+        expect(await readFile(join(root, 'resources/backend', file), 'utf8')).toBe(file)
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('loads the installed providers protocol through the desktop filter without host tokenizer dependencies', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-providers-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'packaged')
+    const require = createRequire(import.meta.url)
+    const collected = new Set<string>()
+    // Mirror dependency collection from package manifests, without naming provider internals.
+    const collect = async (name: string, resolveFrom: NodeJS.Require): Promise<void> => {
+      if (collected.has(name)) return
+      collected.add(name)
+      let packageRoot = dirname(resolveFrom.resolve(name))
+      while (
+        !existsSync(join(packageRoot, 'package.json')) ||
+        JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).name !== name
+      ) {
+        const parent = dirname(packageRoot)
+        if (parent === packageRoot) throw new Error(`Missing package root: ${name}`)
+        packageRoot = parent
+      }
+      await cp(packageRoot, join(source, 'node_modules', name), {
+        recursive: true,
+        filter: (path) =>
+          path === packageRoot ||
+          !path
+            .slice(packageRoot.length + 1)
+            .split(/[\\/]/)
+            .includes('node_modules')
+      })
+      const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
+      for (const dependency of Object.keys(manifest.dependencies ?? {}))
+        await collect(dependency, createRequire(join(packageRoot, 'package.json')))
+    }
+    try {
+      await collect('@aipoch/providers', require)
+      const filter = new FileMatcher(source, destination, (value) => value, [
+        '**/*',
+        ...config.files
+      ]).createFilter()
+      await mkdir(join(destination, 'node_modules'), { recursive: true })
+      for (const name of collected) {
+        await cp(join(source, 'node_modules', name), join(destination, 'node_modules', name), {
+          recursive: true,
+          filter: (path) => filter(path, statSync(path))
+        })
+      }
+      const result = execFileSync(
+        process.execPath,
+        [
+          '-e',
+          `
+        const protocol = require('@aipoch/providers/protocol')
+        if (!(protocol.countMessagesInputTokens({messages:[{role:'user',content:'hello'}]}) > 0))
+          throw new Error('Installed provider token count failed')
+        console.log('ok')
+      `
+        ],
+        { cwd: destination, env: { ...process.env, NODE_PATH: '' }, encoding: 'utf8' }
+      )
+      expect(result.trim()).toBe('ok')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
+  it('declares the native PDF worker imports as production dependencies', () => {
+    const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
+    for (const dependency of [
+      'fontkit',
+      '@embedpdf/pdfium',
+      'pdf-lib',
+      '@huggingface/transformers'
+    ])
+      expect(manifest.dependencies[dependency]).toEqual(expect.stringMatching(/\S/))
+  })
+
+  it('excludes local papers and traces while preserving application and translation resources', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      files: string[]
+      asarUnpack: string[]
+    }
+    // Match the builder's default inclusion for an exclusion-only files list.
+    const filter = new FileMatcher(process.cwd(), process.cwd(), (value) => value, [
+      '**/*',
+      ...config.files
+    ]).createFilter()
+    for (const directory of [
+      'docs/internal',
+      'docs/superpowers',
+      'test-results',
+      'playwright-report',
+      'blob-report',
+      'coverage',
+      'local',
+      '.dev-isolate',
+      '.hallmark',
+      '.scratch',
+      '.superpowers',
+      '.worktree/other-checkout'
+    ]) {
+      // Exclude the directory itself so the packager never traverses private evidence.
+      expect(filter(join(process.cwd(), directory), { isDirectory: () => true } as Stats)).toBe(
+        false
+      )
+      for (const file of ['paper.pdf', 'nested/model.onnx', 'trace.zip', 'screenshot.png'])
+        expect(
+          filter(join(process.cwd(), directory, file), { isDirectory: () => false } as Stats)
+        ).toBe(false)
+    }
+    for (const file of [
+      'out/main/index.js',
+      'out/renderer/index.html',
+      'resources/pdf-translation-local/worker.mjs',
+      'resources/notebook/python_loop.py',
+      'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
+      'node_modules/@aipoch/diagnostics/dist/node.js',
+      'node_modules/@aipoch/providers/dist/providers.js',
+      'node_modules/@aipoch/providers/dist/protocol.js',
+      'node_modules/@aipoch/providers/dist/client.js',
+      'node_modules/i18next/index.js',
+      'node_modules/electron-updater/out/main.js',
+      'package.json',
+      'LICENSE'
+    ])
+      expect(filter(join(process.cwd(), file), { isDirectory: () => false } as Stats)).toBe(true)
+    for (const directory of [
+      'out/web',
+      'packages/pdf-structure',
+      'packages/pdf-translation',
+      'packages/skills',
+      'node_modules/@prisma/client',
+      'node_modules/.prisma',
+      'node_modules/prisma',
+      'node_modules/typescript',
+      'node_modules/js-tiktoken',
+      'node_modules/tiktoken',
+      'node_modules/web-tree-sitter',
+      'node_modules/openchemlib',
+      'node_modules/citeme-engine-wasm',
+      'node_modules/@aipoch/pdf-structure',
+      'node_modules/@aipoch/pdf-translation',
+      'node_modules/@huggingface/transformers',
+      'node_modules/onnxruntime-node',
+      'node_modules/onnxruntime-web',
+      'node_modules/pdfjs-dist',
+      'node_modules/sharp',
+      'node_modules/@img/sharp-darwin-arm64',
+      'node_modules/@napi-rs/canvas',
+      'node_modules/fontkit',
+      'node_modules/pdf-lib',
+      'node_modules/@embedpdf/pdfium',
+      'node_modules/@anthropic-ai/claude-agent-sdk',
+      'node_modules/@agentclientprotocol/claude-agent-acp'
+    ]) {
+      expect(filter(join(process.cwd(), directory), { isDirectory: () => true } as Stats)).toBe(
+        false
+      )
+      expect(
+        filter(join(process.cwd(), directory, 'index.js'), { isDirectory: () => false } as Stats)
+      ).toBe(false)
+    }
+  })
+})
 
 describe('electron-builder native image processing', () => {
-  it('ships sharp and its platform binary outside the ASAR archive', () => {
+  it.each(['tmp/fixture-build/node.exe', 'tmp/fixture-trace.log', 'docs/internal/fixture-plan.md'])(
+    'keeps local-only %s out of the packaged application',
+    (relativePath) => {
+      const root = process.cwd()
+      const config = load(readFileSync(join(root, 'electron-builder.yml'), 'utf8')) as {
+        files?: string[]
+      }
+      const matcher = new FileMatcher(root, root, (pattern) => pattern, config.files)
+      if (matcher.containsOnlyIgnore()) matcher.prependPattern('**/*')
+      const filter = matcher.createFilter()
+      const file = statSync(join(root, 'package.json'))
+
+      expect(filter(join(root, relativePath), file)).toBe(false)
+      expect(filter(join(root, 'out/main/index.js'), file)).toBe(true)
+    }
+  )
+
+  it('keeps desktop native helpers while business dependencies live only in the backend', () => {
     const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
       asarUnpack?: string[]
     }
 
-    expect(config.asarUnpack).toContain('node_modules/sharp/**')
-    expect(config.asarUnpack).toContain('node_modules/@img/**')
+    expect(config.asarUnpack).not.toContain('node_modules/sharp/**')
+    expect(config.asarUnpack).toContain(
+      'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_*'
+    )
     expect(config.asarUnpack).toContain(
       'node_modules/@aipoch/process-tree-native/build/Release/*.node'
     )
@@ -36,7 +367,7 @@ describe('electron-builder native image processing', () => {
     }
 
     expect(config.files).toContain('!node_modules/@aipoch/notebook-network-sandbox{,/**/*}')
-    expect(config.files).toContain('!packages/notebook-network-sandbox{,/**/*}')
+    expect(config.files).toContain('!packages{,/**/*}')
     expect(config.win?.extraResources).toContainEqual({
       from: 'packages/notebook-network-sandbox/vendor/windows/${arch}/notebook-appcontainer-host.exe',
       to: 'notebook-network-sandbox/windows/${arch}/notebook-appcontainer-host.exe'
@@ -50,6 +381,17 @@ describe('electron-builder native image processing', () => {
       { from: 'resources/bin/linux/${arch}/micromamba', to: 'micromamba' },
       { from: 'build/deb-cli-launcher', to: 'open-science-cli' }
     ])
+  })
+
+  it('keeps Micromamba staging binaries out of the asar and unpacked duplicate tree', () => {
+    const config = load(readFileSync(join(process.cwd(), 'electron-builder.yml'), 'utf8')) as {
+      files?: string[]
+      asarUnpack?: string[]
+    }
+
+    expect(config.files).toContain('!resources/bin{,/**/*}')
+    expect(config.asarUnpack).toContain('resources/**')
+    expect(config.asarUnpack).toContain('!resources/bin{,/**/*}')
   })
 })
 

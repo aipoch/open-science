@@ -1,3 +1,4 @@
+import { SETTINGS_WINDOW_CHANNELS } from '../shared/settings-window'
 // Registered before the first settings document loads. Weak ownership disappears on destruction.
 const settingsContents = new WeakSet<object>()
 export const markSettingsWebContents = (contents: object): void => {
@@ -5,6 +6,7 @@ export const markSettingsWebContents = (contents: object): void => {
 }
 export const isSettingsWebContents = (contents: object): boolean => settingsContents.has(contents)
 const SETTINGS_EVENTS = new Set([
+  'desktop-runtime:state-changed',
   'settings:changed',
   'compute:hosts-changed',
   'locale:changed',
@@ -31,3 +33,20 @@ const SETTINGS_EVENTS = new Set([
   'notebook-env:progress'
 ])
 export const settingsReceivesEvent = (channel: string): boolean => SETTINGS_EVENTS.has(channel)
+
+export const projectSettingsEvent = (
+  channel: string,
+  payload: unknown
+): [channel: string, ...args: unknown[]] | undefined => {
+  if (channel === 'acp:state') {
+    const busy = (payload as { promptInFlight?: unknown } | null)?.promptInFlight
+    return typeof busy === 'boolean' ? ['acp:prompt-in-flight-changed', busy] : undefined
+  }
+  if (
+    channel === 'session:created' ||
+    channel === 'session:updated' ||
+    channel === 'session:deleted'
+  )
+    return [SETTINGS_WINDOW_CHANNELS.catalogChanged]
+  return settingsReceivesEvent(channel) ? [channel, payload] : undefined
+}

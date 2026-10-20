@@ -14,7 +14,8 @@ vi.mock('./claude-executable', () => ({
   resolveClaudeExecutableForSpawn: mocks.resolveExecutable
 }))
 vi.mock('../settings/shell-path', () => ({ augmentedPathEnv: mocks.augmentedPathEnv }))
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ info: mocks.info, warn: mocks.warn, error: mocks.error })
 }))
 
@@ -183,7 +184,7 @@ describe('spawnClaudeAgentAcp', () => {
         CLAUDE_CODE_EXECUTABLE: '/resolved/claude',
         CLAUDE_CONFIG_DIR: '/provider/config',
         ANTHROPIC_AUTH_TOKEN: 'secret',
-        ELECTRON_RUN_AS_NODE: '1'
+        ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined
       })
     })
     expect(child.on).toHaveBeenCalledWith('error', expect.any(Function))
@@ -223,7 +224,7 @@ it('prevents Claude physical launch when delegated ownership admission fails', (
     expect.objectContaining({
       env: expect.objectContaining({
         CLAUDE_CONFIG_DIR: '/isolated/claude',
-        ELECTRON_RUN_AS_NODE: '1'
+        ELECTRON_RUN_AS_NODE: process.versions.electron ? '1' : undefined
       }),
       stdio: 'pipe'
     })

@@ -1,8 +1,9 @@
+import { parseSkillDocument } from '@aipoch/skills/document'
 import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import { describe, expect, it } from 'vitest'
-
-import type { SpecialistPackageCatalogSnapshot } from '../../../shared/specialist-package'
-import { filterMarketplaceSpecialistZip, validateSpecialistZip } from './zip-adapter'
+import type { SpecialistPackageCatalogSnapshot } from '@aipoch/specialists'
+import { filterMarketplaceSpecialistZip } from '../marketplace/archive'
+import { validateSpecialistZip } from '@aipoch/specialists/node'
 
 const catalog: SpecialistPackageCatalogSnapshot = {
   appVersion: '0.16.0',
@@ -44,10 +45,12 @@ describe('Marketplace Specialist ZIP filtering', () => {
     }
     const fullArchive = zipSync(files)
 
-    expect(validateSpecialistZip(fullArchive, catalog).preview.installable).toBe(false)
+    expect(
+      validateSpecialistZip(fullArchive, catalog, parseSkillDocument).preview.installable
+    ).toBe(false)
 
     const filtered = filterMarketplaceSpecialistZip(fullArchive, ['selected-skill'], [])
-    const validation = validateSpecialistZip(filtered, catalog)
+    const validation = validateSpecialistZip(filtered, catalog, parseSkillDocument)
     const archive = unzipSync(filtered)
     const specialist = JSON.parse(strFromU8(archive['specialist.json']))
 

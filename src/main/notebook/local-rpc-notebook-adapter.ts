@@ -2,22 +2,26 @@ import { z } from 'zod'
 
 import {
   notebookLanguageSchema,
+  type AbortNotebookCodeCellRequest,
   type AppendNotebookCodeCellRequest,
   type BeginNotebookCodeCellRequest,
   type ExecuteNotebookCodeRequest,
   type ExecuteNotebookControlRequest,
   type ExecuteShellRequest,
-  type AbortNotebookCodeCellRequest,
   type FinishNotebookCodeCellRequest,
   type NotebookBackgroundRunLookupRequest,
-  type NotebookLanguage,
   type NotebookRestartRequest,
   type NotebookSessionRequest,
   type RequestNotebookNetworkAccessRequest,
   type RunNotebookCellRequest
 } from '../../shared/notebook'
-import type { ManageEnvironmentsRequest, ManageEnvironmentsResult } from '../../shared/notebook-env'
-import type { InstallRequest, InstallResult } from './package-manager'
+import type {
+  InstallRequest,
+  InstallResult,
+  ManageEnvironmentsRequest,
+  ManageEnvironmentsResult
+} from '../../shared/notebook-env'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { shellRuntimeBindingSchema } from './shell-runtime'
 
 const provenanceContextSchema = z
@@ -57,6 +61,7 @@ const notebookSessionRequestSchema = z
     workspaceCwd: z.string(),
     provenanceContext: provenanceContextSchema.optional(),
     executionInvocationId: z.string().optional(),
+    rootExecutionId: z.string().optional(),
     registeredInputFiles: z.array(registeredInputFileSchema).optional(),
     registeredHelperSkillIds: z.array(z.string()).optional(),
     inputRunLeaseId: z.string().optional(),
@@ -143,6 +148,7 @@ const notebookLocalRpcRequestSchemas = {
   state: notebookSessionRequestSchema,
   restart: z.union([
     notebookSessionRequestSchema,
+    notebookSessionRequestSchema.extend({ kernel: z.literal('repl') }),
     notebookSessionRequestSchema.extend({
       language: notebookLanguageSchema,
       environment: z.string().min(1)
@@ -259,8 +265,19 @@ type NotebookLocalRpcCapability = {
     signal?: AbortSignal
   ): Promise<ManageEnvironmentsResult>
   listRuntimes(request: NotebookSessionRequest): Promise<unknown>
-  bindRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
-  switchRuntime(request: NotebookRuntimeBindingRequest): Promise<unknown>
+  bindRuntime(
+    request: NotebookRuntimeBindingRequest,
+    signal?: AbortSignal,
+    admission?: Readonly<{ requireHostDecision: true }>
+  ): Promise<unknown>
+  switchRuntime(request: NotebookRuntimeBindingRequest, signal?: AbortSignal): Promise<unknown>
+}
+
+// Only the authenticated main-process bridge can mark a binding handoff. JSON fields cannot
+// acquire this capability, and it remains distinct from Notebook execution authorization.
+const runtimeBindingHostAdmissions = new WeakSet<object>()
+const markRuntimeBindingHostAdmission = (request: Record<string, unknown>): void => {
+  runtimeBindingHostAdmissions.add(request)
 }
 
 const NOTEBOOK_LOCAL_RPC_METHODS = [
@@ -412,17 +429,24 @@ const resolveNotebookLocalRpcHandler = (
       return (request) =>
         capability.listRuntimes(parseNotebookLocalRpcRequest('listRuntimes', request))
     case 'bindRuntime':
-      return (request) =>
-        capability.bindRuntime(parseNotebookLocalRpcRequest('bindRuntime', request))
+      return (request, signal) =>
+        capability.bindRuntime(
+          parseNotebookLocalRpcRequest('bindRuntime', request),
+          signal,
+          ...(runtimeBindingHostAdmissions.has(request)
+            ? [{ requireHostDecision: true } as const]
+            : [])
+        )
     case 'switchRuntime':
-      return (request) =>
-        capability.switchRuntime(parseNotebookLocalRpcRequest('switchRuntime', request))
+      return (request, signal) =>
+        capability.switchRuntime(parseNotebookLocalRpcRequest('switchRuntime', request), signal)
   }
 }
 
 export {
-  NOTEBOOK_LOCAL_RPC_METHODS,
   isNotebookLocalRpcMethod,
+  markRuntimeBindingHostAdmission,
+  NOTEBOOK_LOCAL_RPC_METHODS,
   opensNotebookInputRun,
   resolveNotebookLocalRpcHandler
 }

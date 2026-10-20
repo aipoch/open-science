@@ -1,19 +1,19 @@
+import { createLogger } from '@aipoch/diagnostics/node'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { join } from 'node:path'
-
 import type { AgentFrameworkId } from '../../shared/settings'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import { createLogger } from '../logger'
 import type {
-  ResponsesBridgeSkillCandidate,
-  ResponsesBridgeSkillInput
-} from '../settings/responses-bridge'
+  ResponsesSkillCandidate,
+  ResponsesSkillInput
+} from '../settings/responses-transport-contract'
 import {
   loadSkillDocumentContent,
   OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
 } from '../skills/runtime-mcp-server'
-import { AcpSessionPresentationPolicy } from './session-presentation-policy'
 import type { SessionCapabilityPolicy } from './session-capability-owner'
+import { AcpSessionPresentationPolicy } from './session-presentation-policy'
+
 const log = createLogger('acp-turn-skill-owner')
 const presentation = new AcpSessionPresentationPolicy()
 type AcpTurnSkillHooks = Readonly<{
@@ -23,9 +23,9 @@ type AcpTurnSkillHooks = Readonly<{
   descriptorsForIds?: (
     ids: string[],
     codexHome: string | undefined
-  ) => Promise<ResponsesBridgeSkillInput[]>
-  catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
-  catalogForCodeBuddyRoot?: (root: string | undefined) => Promise<ResponsesBridgeSkillCandidate[]>
+  ) => Promise<ResponsesSkillInput[]>
+  catalogForCodexHome?: (codexHome: string | undefined) => Promise<ResponsesSkillCandidate[]>
+  catalogForCodeBuddyRoot?: (root: string | undefined) => Promise<ResponsesSkillCandidate[]>
 }>
 type TurnSkillOutcome = 'completed' | 'failed' | 'cancelled' | 'reload-restored'
 type ProviderPreparationInput = Readonly<{
@@ -35,27 +35,27 @@ type ProviderPreparationInput = Readonly<{
   codex?: Readonly<{
     home?: string
     bridgeSkillsAvailable: boolean
-    selectSkills: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+    selectSkills: NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     signal?: AbortSignal
     observeUsage?: Parameters<
-      NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+      NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     >[3]
   }>
   codebuddy?: Readonly<{
     root?: string
     selectorAvailable: boolean
-    selectSkills: NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+    selectSkills: NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     signal?: AbortSignal
     observeUsage?: Parameters<
-      NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+      NonNullable<ResolvedAgentBackend['responsesTransportLease']>['selectSkills']
     >[3]
   }>
 }>
 type ProviderPreparation = Readonly<{
   text: string
   skillScopeGuidance?: string
-  codexSkillInputs: readonly ResponsesBridgeSkillInput[]
-  skillActivityInputs?: readonly ResponsesBridgeSkillInput[]
+  codexSkillInputs: readonly ResponsesSkillInput[]
+  skillActivityInputs?: readonly ResponsesSkillInput[]
   skillRuntimeAllowlist?: readonly string[]
 }>
 type LoadedCodeBuddySkill = Readonly<{
@@ -357,7 +357,7 @@ class AcpTurnSkillOwner {
     if (!codebuddy?.selectorAvailable || !this.options.skills?.catalogForCodeBuddyRoot) {
       return []
     }
-    let catalog: ResponsesBridgeSkillCandidate[]
+    let catalog: ResponsesSkillCandidate[]
     try {
       catalog = await this.options.skills.catalogForCodeBuddyRoot(codebuddy.root)
     } catch {
@@ -399,7 +399,7 @@ class AcpTurnSkillOwner {
   private async resolveCodexInputs(
     state: Authorization,
     input: ProviderPreparationInput
-  ): Promise<ResponsesBridgeSkillInput[]> {
+  ): Promise<ResponsesSkillInput[]> {
     if (input.frameworkId !== 'codex') return []
     if (state.selectedSkillIds.length > 0) {
       return (
@@ -409,7 +409,7 @@ class AcpTurnSkillOwner {
     }
     const codex = input.codex
     if (!codex?.bridgeSkillsAvailable || !this.options.skills?.catalogForCodexHome) return []
-    let catalog: ResponsesBridgeSkillCandidate[]
+    let catalog: ResponsesSkillCandidate[]
     try {
       catalog = await this.options.skills.catalogForCodexHome(codex.home)
     } catch {

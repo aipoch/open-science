@@ -206,6 +206,48 @@ napi_value GetDarwinProcess(napi_env env, napi_callback_info info) {
 #endif
 }
 
+// KERN_PROCARGS2 preserves argument boundaries that ps intentionally flattens.
+napi_value GetDarwinProcessArguments(napi_env env, napi_callback_info info) {
+#ifdef __APPLE__
+  size_t argc = 1;
+  napi_value argv[1];
+  int32_t pid = 0;
+  if (napi_get_cb_info(env, info, &argc, argv, nullptr, nullptr) != napi_ok || argc != 1 ||
+      napi_get_value_int32(env, argv[0], &pid) != napi_ok || pid <= 0) return Null(env);
+  int mib[] = {CTL_KERN, KERN_PROCARGS2, pid};
+  size_t size = 0;
+  if (sysctl(mib, 3, nullptr, &size, nullptr, 0) != 0 || size <= sizeof(int) ||
+      size > 16 * 1024 * 1024) return Null(env);
+  std::vector<char> buffer(size);
+  if (sysctl(mib, 3, buffer.data(), &size, nullptr, 0) != 0 || size <= sizeof(int))
+    return Null(env);
+  int count = 0;
+  std::memcpy(&count, buffer.data(), sizeof(count));
+  if (count <= 0 || static_cast<size_t>(count) > size - sizeof(int)) return Null(env);
+  size_t offset = sizeof(int);
+  const size_t executable_length = strnlen(buffer.data() + offset, size - offset);
+  if (executable_length == size - offset) return Null(env);
+  offset += executable_length + 1;
+  // The executable path is followed by alignment padding, then argv[0].
+  while (offset < size && buffer[offset] == '\0') offset++;
+  napi_value result;
+  napi_create_array_with_length(env, count, &result);
+  for (int i = 0; i < count; i++) {
+    if (offset >= size) return Null(env);
+    const size_t length = strnlen(buffer.data() + offset, size - offset);
+    if (length == size - offset) return Null(env);
+    napi_value argument;
+    napi_create_string_utf8(env, buffer.data() + offset, length, &argument);
+    napi_set_element(env, result, i, argument);
+    offset += length + 1;
+  }
+  return result;
+#else
+  (void)info;
+  return Null(env);
+#endif
+}
+
 napi_value GetDarwinEnvironmentValue(napi_env env, napi_callback_info info) {
 #ifdef __APPLE__
   size_t argc = 2;
@@ -290,6 +332,10 @@ napi_value Init(napi_env env, napi_value exports) {
   napi_create_function(
       env, "getDarwinProcess", NAPI_AUTO_LENGTH, GetDarwinProcess, nullptr, &get_process);
   napi_set_named_property(env, exports, "getDarwinProcess", get_process);
+  napi_value get_arguments;
+  napi_create_function(env, "getDarwinProcessArguments", NAPI_AUTO_LENGTH,
+                       GetDarwinProcessArguments, nullptr, &get_arguments);
+  napi_set_named_property(env, exports, "getDarwinProcessArguments", get_arguments);
   napi_value get_environment_value;
   napi_create_function(env, "getDarwinEnvironmentValue", NAPI_AUTO_LENGTH,
                        GetDarwinEnvironmentValue, nullptr, &get_environment_value);

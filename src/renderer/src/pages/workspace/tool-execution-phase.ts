@@ -2,8 +2,12 @@ import type { SessionPermissionRuntimeContext } from '../../../../shared/session
 import type { NotebookRunRecord } from '../../../../shared/notebook'
 import type { ToolActivity } from '@/stores/session-store'
 
+import { readNotebookCodeReview, notebookInput } from './notebook-tool-presentation'
 import { isNotebookExecuteToolName } from './notebook-tool-names'
-import { getNotebookRunStatusFromActivity } from './workspace-tool-activity-details'
+import {
+  getNotebookRunStatusFromActivity,
+  getNotebookRunIdFromActivity
+} from './workspace-tool-activity-details'
 
 type ToolExecutionPhase =
   | 'prepared'
@@ -19,6 +23,16 @@ type ToolExecutionPhase =
 
 const isNotebookExecutionActivity = (activity: ToolActivity): boolean =>
   isNotebookExecuteToolName(activity.providerToolName) || isNotebookExecuteToolName(activity.title)
+
+const isNotebookCodeReviewActivity = (activity: ToolActivity): boolean =>
+  activity.appOwned === true &&
+  activity.id.startsWith('app-approval:') &&
+  activity.providerToolName === 'Open-Science' &&
+  readNotebookCodeReview(activity.rawInput) !== undefined
+const isPendingNotebookCodeReview = (activity: ToolActivity): boolean =>
+  isNotebookCodeReviewActivity(activity) &&
+  !activity.toolDisposition &&
+  (activity.status === 'pending' || activity.status === 'in_progress')
 
 const getCorrelatedNotebookRun = (
   activity: ToolActivity,
@@ -36,12 +50,27 @@ const getToolExecutionPhase = (
   notebookRunsById?: ReadonlyMap<string, NotebookRunRecord>
 ): ToolExecutionPhase => {
   if (activity.toolDisposition === 'declined') return 'declined'
+  if (isPendingNotebookCodeReview(activity)) return 'awaiting-approval'
   const correlatedRun = isNotebookExecutionActivity(activity)
     ? getCorrelatedNotebookRun(activity, notebookRunsById)
     : undefined
   const notebookRunStatus =
     correlatedRun?.status ??
     (isNotebookExecutionActivity(activity) ? getNotebookRunStatusFromActivity(activity) : undefined)
+  const reviewRequest = permission?.state === 'pending' ? permission.request : undefined
+  if (
+    reviewRequest?.appOwned &&
+    readNotebookCodeReview(reviewRequest.rawInput) &&
+    permission?.originatingPromptMessageId === activity.promptMessageId &&
+    (notebookRunStatus === 'queued' || notebookRunStatus === 'running')
+  ) {
+    const runId = correlatedRun?.runId ?? getNotebookRunIdFromActivity(activity)
+    if (
+      runId &&
+      notebookInput(notebookInput(reviewRequest.rawInput).notebookCodeRisk).runId === runId
+    )
+      return 'awaiting-approval'
+  }
   // Notebook owns execution truth. An outer ACP observer failure/closure cannot stop or relabel a
   // Run that the authenticated bridge has already admitted, including multi-hour executions. A
   // compact transcript result restores the same truth when the full historical Run is not loaded.
@@ -82,5 +111,11 @@ const getToolExecutionPhase = (
   return 'executing'
 }
 
-export { getCorrelatedNotebookRun, getToolExecutionPhase, isNotebookExecutionActivity }
+export {
+  getCorrelatedNotebookRun,
+  getToolExecutionPhase,
+  isNotebookExecutionActivity,
+  isNotebookCodeReviewActivity,
+  isPendingNotebookCodeReview
+}
 export type { ToolExecutionPhase }

@@ -301,6 +301,27 @@ describe('LegacyDataMoveDialog', () => {
     expect(onDismiss).toHaveBeenCalledTimes(1)
   })
 
+  it('can continue for this launch after repeated preference-save failures without claiming a save', async () => {
+    const api = installApi({
+      dismissLegacyMovePrompt: vi.fn().mockRejectedValue(new Error('settings write failed'))
+    })
+    const onDismiss = vi.fn()
+    await renderDialog(onDismiss)
+    expect(document.body.textContent).not.toContain('Continue for now')
+
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await act(async () => clickButton(/Keep it in the current/))
+    }
+    expect(onDismiss).not.toHaveBeenCalled()
+    expect(document.body.textContent).toContain('we may ask again after restarting')
+    expect(document.body.textContent).not.toContain("We won't ask again.")
+
+    await act(async () => clickButton(/^Continue for now$/))
+    expect(onDismiss).toHaveBeenCalledOnce()
+    expect(api.dismissLegacyMovePrompt).toHaveBeenCalledTimes(3)
+    expect(api.migrate).not.toHaveBeenCalled()
+  })
+
   it('offers discard-only recovery for an interrupted chosen-folder copy', async () => {
     const api = installApi({
       pickDirectory: vi.fn().mockResolvedValue('/mnt/interrupted'),

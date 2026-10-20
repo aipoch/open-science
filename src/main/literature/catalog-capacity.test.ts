@@ -1,11 +1,12 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { Prisma } from '@prisma/client'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, it } from 'vitest'
-import { createProjectDbClient } from '../projects/prisma-client'
 import { migrateApplicationDatabase } from '../database/migration-service'
+import { createProjectDbClient } from '../projects/prisma-client'
 import { LiteratureCatalog } from './catalog'
-import { literatureItemInputSchema } from '../../shared/literature'
 
 it('allows a small catalog write while a large library search is running', async () => {
   const root = await mkdtemp(join(tmpdir(), 'literature-capacity-'))
@@ -32,18 +33,25 @@ it('allows a small catalog write while a large library search is running', async
     })
     // Clone a public-command record to seed scale without tying this regression to derived columns.
     const n = 50000
-    for (let offset = 0; offset < n; offset += 500) {
-      const ids = Array.from({ length: 500 }, (_, i) => `row-${offset + i}`)
-      await client.literatureItem.createMany({ data: ids.map((id) => ({ ...template, id })) })
-      await client.literatureItemCreator.createMany({
-        data: ids.map((itemId) => ({
-          itemId,
-          creatorId: creators[0]!.creatorId,
-          creatorType: 'author',
-          ordinal: 0
-        }))
-      })
-    }
+    // Clone inside SQLite instead of serializing the large abstract 50,000 times through Prisma.
+    // These column names come only from the Prisma scalar record, preserving derived search fields.
+    const columns = Object.keys(template).filter((column) => column !== 'id')
+    const identifiers = Prisma.join(columns.map((column) => Prisma.raw(`"${column}"`)))
+    const sourceColumns = Prisma.join(columns.map((column) => Prisma.raw(`source."${column}"`)))
+    const counts = await client.$transaction([
+      client.$executeRaw`
+        WITH RECURSIVE rows(i) AS (SELECT 0 UNION ALL SELECT i + 1 FROM rows LIMIT ${n})
+        INSERT INTO "LiteratureItem" ("id", ${identifiers})
+        SELECT 'row-' || rows.i, ${sourceColumns}
+        FROM rows CROSS JOIN "LiteratureItem" AS source WHERE source."id" = ${receipt.id}
+      `,
+      client.$executeRaw`
+        INSERT INTO "LiteratureItemCreator" ("itemId", "creatorId", "creatorType", "ordinal")
+        SELECT "id", ${creators[0]!.creatorId}, 'author', 0
+        FROM "LiteratureItem" WHERE "id" != ${receipt.id}
+      `
+    ])
+    expect(counts).toEqual([n, n])
     await client.literatureItem.delete({ where: { id: receipt.id } })
     const start = performance.now()
     const search = catalog.search({ scope: 'library', query: 'ÉTUDE', limit: 25 })

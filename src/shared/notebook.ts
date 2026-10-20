@@ -1,4 +1,16 @@
+import type {
+  NotebookEnvironmentManifest as EnvironmentManifest,
+  NotebookLiveEnvironmentOverlay as EnvironmentOverlay,
+  NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture
+} from '@aipoch/environment/contracts'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import { z } from 'zod'
+import type { NotebookLanguage } from './notebook-language-contract'
+import { NOTEBOOK_LANGUAGES } from './notebook-language-contract'
+export { NOTEBOOK_LANGUAGES, type NotebookLanguage } from './notebook-language-contract'
+export type NotebookEnvironmentManifest = EnvironmentManifest<NotebookExecutionContext>
+export type NotebookLiveEnvironmentOverlay = EnvironmentOverlay<NotebookExecutionContext>
 
 import {
   defineApplicationCommandContract,
@@ -20,7 +32,7 @@ export const NOTEBOOK_SHELL_DEFAULT_TIMEOUT_MS = 120_000
 export type ShellRuntimeBinding =
   | Readonly<{
       kind: 'powershell'
-      version: '5.1'
+      version: '5.1' | '7.6'
     }>
   | Readonly<{
       kind: 'native-posix'
@@ -119,12 +131,6 @@ export type NotebookRunProvenanceContext = {
   promptMessageId: string
   originMessageId?: string
 }
-
-// Languages a notebook kernel can run in this phase; each runs as a persistent exec-loop process
-// (no ipykernel/IRkernel involved). Renderer IPC must parse this at runtime — TypeScript unions
-// do not reject a compromised or stale client.
-export const NOTEBOOK_LANGUAGES = ['python', 'r'] as const
-export type NotebookLanguage = (typeof NOTEBOOK_LANGUAGES)[number]
 export const notebookLanguageSchema = z.enum(NOTEBOOK_LANGUAGES)
 
 export const parseNotebookLanguage = (value: unknown): NotebookLanguage => {
@@ -181,252 +187,6 @@ export const notebookEnvironmentApplicationCommandContracts = Object.freeze({
 // control-plane/shell.
 export type NotebookKernelKind = 'python' | 'r' | 'repl' | 'bash'
 export type NotebookPersistentKernelKind = Exclude<NotebookKernelKind, 'bash'>
-
-export type NotebookPackageSource =
-  | {
-      type: 'github'
-      repository: string
-      ref?: string
-      commit?: string
-      subdirectory?: string
-    }
-  | {
-      type: 'bioconductor'
-      version?: string
-    }
-
-export type NotebookEnvironmentPackage = {
-  name: string
-  version?: string
-  versionStatus: 'known' | 'unavailable'
-  ecosystem: 'python' | 'r' | 'native' | 'unknown'
-  evidenceSources: Array<
-    | 'python-importlib-metadata'
-    | 'python-kernel-modules'
-    | 'r-installed-packages'
-    | 'r-session-info'
-  >
-  loadedState?: 'attached' | 'loaded' | 'installed-only' | 'unknown'
-  libraryRank?: number
-  libraryScope?: 'environment' | 'user' | 'system' | 'unknown'
-  builtForRuntime?: string
-  priority?: 'base' | 'recommended' | 'other'
-  source?: NotebookPackageSource
-}
-
-export type NotebookPackageInstaller =
-  | 'conda'
-  | 'pip'
-  | 'uv'
-  | 'poetry'
-  | 'r-install-packages'
-  | 'renv'
-  | 'pak'
-  | 'biocmanager'
-  | 'github'
-  | 'unknown'
-
-export type NotebookPackageInstallerAttempt = {
-  groupOrdinal: number
-  installer: NotebookPackageInstaller
-  packages: string[]
-  status: 'succeeded' | 'failed' | 'skipped'
-  mutationRisk: 'none' | 'possible' | 'confirmed' | 'unknown'
-  reason?:
-    | 'package-not-found'
-    | 'solver-failed'
-    | 'installer-unavailable'
-    | 'permission'
-    | 'network'
-    | 'authentication'
-    | 'tls-policy'
-    | 'validation'
-    | 'cancelled'
-    | 'process-unconfirmed'
-    | 'recovery-blocked'
-    | 'unknown'
-}
-
-export type NotebookInventoryRefreshAttempt = {
-  attempt: number
-  trigger: 'terminal' | 'recovery'
-  timestamp: string
-  result: 'published' | 'unchanged' | 'failed'
-  error?: string
-}
-
-export type NotebookEnvironmentPackageChange = {
-  name: string
-  ecosystem: NotebookEnvironmentPackage['ecosystem']
-  relationship: 'requested' | 'dependency' | 'unattributed'
-  change: 'installed' | 'updated' | 'removed' | 'unchanged' | 'observed'
-  beforeVersion?: string
-  afterVersion?: string
-  libraryRank?: number
-  libraryScope?: NotebookEnvironmentPackage['libraryScope']
-  source?: NotebookPackageSource
-}
-
-export type NotebookEnvironmentOperation = {
-  operationId: string
-  timestamp: string
-  operation: 'create' | 'install' | 'uninstall' | 'update'
-  packages: string[]
-  result: 'success' | 'failure'
-  attempts: NotebookPackageInstallerAttempt[]
-  fallbackUsed: boolean
-  inventoryRefresh: 'published' | 'unchanged' | 'failed'
-  inventoryRefreshAttempts: NotebookInventoryRefreshAttempt[]
-  packageChanges?: NotebookEnvironmentPackageChange[]
-}
-
-export type NotebookEnvironmentOperationLogTruncation = {
-  omittedCount: number
-  earliestRetainedAt?: string
-}
-
-export const isNotebookEnvironmentOperationLogTruncation = (
-  value: unknown
-): value is NotebookEnvironmentOperationLogTruncation => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
-  const candidate = value as Record<string, unknown>
-  return (
-    Number.isInteger(candidate.omittedCount) &&
-    Number(candidate.omittedCount) > 0 &&
-    (candidate.earliestRetainedAt === undefined || typeof candidate.earliestRetainedAt === 'string')
-  )
-}
-
-export type NotebookEnvironmentManifest = {
-  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
-  schemaVersion: 1
-  captureKind: 'completed-run'
-  capturedAt: string
-  installedInventory: {
-    capturedAt: string
-    source: 'full-scan' | 'cache-reused'
-    validation: 'full-scan' | 'best-effort'
-  }
-  kernelKind: NotebookLanguage
-  environmentName: string
-  runtimeSource: 'managed' | 'external'
-  runtimeVersion?: string
-  platform?: string
-  architecture?: string
-  inventorySources: Array<'kernel-native' | 'interpreter-native' | 'operation-log'>
-  packages: NotebookEnvironmentPackage[]
-  operationLog?: NotebookEnvironmentOperation[]
-  operationLogTruncation?: NotebookEnvironmentOperationLogTruncation
-  complete: boolean
-  captureStatus: 'complete' | 'partial'
-  warnings?: string[]
-}
-
-export type NotebookRunEnvironmentCapture =
-  | {
-      state: 'available' | 'partial'
-      manifestChecksum: string
-      warnings?: string[]
-    }
-  | {
-      state: 'unavailable'
-      reason:
-        | 'environment-not-supported'
-        | 'environment-capture-failed'
-        | 'environment-manifest-publication-failed'
-        | 'legacy-environment-reference-unavailable'
-    }
-
-export type NotebookEnvironmentLockPartialReason =
-  | 'external-interpreter-required'
-  | 'environment-manifest-partial'
-  | 'non-conda-package-detected'
-  | 'non-conda-installer-detected'
-  | 'native-lock-file-best-effort'
-  | 'native-lock-file-rejected'
-
-export type NotebookEnvironmentLockDiagnostic = {
-  reason:
-    | 'package-lock-missing'
-    | 'package-version-unresolved'
-    | 'package-version-mismatch'
-    | 'package-not-captured'
-    | 'source-unpinned'
-    | 'source-mismatch'
-    | 'project-selection-unresolved'
-  packageName?: string
-  observedVersion?: string
-  lockedVersion?: string
-}
-
-export type NotebookEnvironmentLockFile = {
-  path: string
-  checksum: string
-  content: string
-}
-
-export type NotebookEnvironmentLockComponent =
-  | {
-      ecosystem: 'conda'
-      format: 'conda-explicit-md5'
-      resolution: 'locked'
-      explicitLock: string
-      packages: string[]
-    }
-  | {
-      ecosystem: 'python'
-      format: 'uv-lock' | 'poetry-lock' | 'pip-requirements'
-      resolution: 'locked' | 'best-effort'
-      files: NotebookEnvironmentLockFile[]
-    }
-  | {
-      ecosystem: 'r'
-      format: 'renv-lock' | 'pak-lock'
-      resolution: 'locked'
-      files: NotebookEnvironmentLockFile[]
-    }
-
-export type NotebookEnvironmentLock = {
-  schemaVersion: 1 | 2
-  // v2 native-only locks restore packages conditionally; they do not provision this runtime.
-  externalRuntime?: { version: string; installerVersion: string }
-  format: 'environment-lock-bundle'
-  kernelKind: NotebookLanguage
-  environmentName: string
-  platform?: string
-  architecture?: string
-  components: NotebookEnvironmentLockComponent[]
-  untrackedPackages?: string[]
-  // Native distributions observed as unused by this run; retained in the full inventory.
-  omittedPackages?: string[]
-  nonCondaInstallers?: NotebookPackageInstaller[]
-}
-
-export type NotebookRunEnvironmentLockCapture =
-  | {
-      state: 'available' | 'partial'
-      format: NotebookEnvironmentLock['format']
-      lockChecksum: string
-      partialReasons?: NotebookEnvironmentLockPartialReason[]
-      diagnostics?: NotebookEnvironmentLockDiagnostic[]
-    }
-  | {
-      state: 'unavailable'
-      reason:
-        | 'environment-not-managed'
-        | 'conda-prefix-unavailable'
-        | 'micromamba-unavailable'
-        | 'environment-lock-capture-failed'
-        | 'environment-lock-invalid'
-        | 'environment-lock-publication-failed'
-    }
-
-export type NotebookLiveEnvironmentOverlay = {
-  executionContext?: import('./notebook-execution-context').NotebookExecutionContext
-  runtimeVersion?: string
-  packages: NotebookEnvironmentPackage[]
-  warnings?: string[]
-}
 
 export type NotebookInputAssociation = 'turn-attached' | 'resolver-accessed'
 export type NotebookInputAccessEvidence = 'resolver' | 'file-evidence'
@@ -632,7 +392,7 @@ export type NotebookRunRecord = {
   frozenPermissionScope?: {
     allowedHelperSkillIds: string[]
   }
-  // Exact stateless-shell launch context captured before durable admission. Optional keeps legacy
+  // Exact shell launch context captured before durable admission. Optional keeps legacy
   // records readable; new bash Runs never re-read mutable Session paths or host environment at
   // dispatch time.
   frozenShellContext?: {
@@ -656,9 +416,14 @@ export type NotebookRunRecord = {
   // Identifies one live persistent-kernel generation. A new value is allocated after process/app
   // restart; optional keeps legacy run.json documents readable without a migration.
   kernelEpochId?: string
+  // New REPL cells publish initialized declarations. Absence preserves historical IIFE-local
+  // semantics when rebuilding provenance; this never stores or restores live variable values.
+  replPersistentBindings?: true
   // Whether this run's source was handed to the persistent data kernel. Pre-dispatch failures set
   // false so dependency projection never invents mutations; absent legacy evidence stays conservative.
   kernelDispatched?: boolean
+  // False proves no user source began execution; absent evidence remains conservative.
+  executionStarted?: boolean
   // Sticky for the kernel epoch: every later Python run retains the complete loaded-helper set,
   // even when that cell omitted helperModules.
   helperModules?: NotebookHelperModuleEvidence[]
@@ -666,7 +431,7 @@ export type NotebookRunRecord = {
   // Stable identity of the external runtime used by this run. Managed runs are reproducible from
   // their environment; external runs need this identity to rebuild a missing derived sidecar.
   runtimeId?: string
-  // Exact shell capability captured before a stateless shell Run. Optional keeps legacy run.json
+  // Exact shell capability captured before a shell Run. Optional keeps legacy run.json
   // documents readable without inventing a backend that was never recorded.
   shellRuntime?: ShellRuntimeBinding
   cellId: string
@@ -695,7 +460,7 @@ export type NotebookRunRecord = {
   // documents readable; repository normalization supplies an empty array for old records.
   inputFiles?: NotebookRunInputFile[]
   truncated?: boolean
-  // Exact stateless-shell outcome. Optional keeps non-shell and historical records compatible.
+  // Exact shell outcome. Optional keeps non-shell and historical records compatible.
   exitCode?: number | null
   shellRuntimeStatus?: 'unavailable'
   recovery?: import('./execution-recovery').NotebookExecutionRecovery
@@ -928,6 +693,8 @@ export type NotebookRunSummary = Omit<
 
 // Common routing fields required by every notebook command.
 export type NotebookSessionRequest = OptionalProjectIdScope & {
+  // Main-owned root execution captured at RPC admission; public adapters strip it.
+  rootExecutionId?: string
   sessionId: string
   workspaceCwd: string
   provenanceContext?: NotebookRunProvenanceContext
@@ -947,8 +714,9 @@ export type NotebookSessionRequest = OptionalProjectIdScope & {
 // Restarts either every kernel in the Session (target omitted, preserving the historical behavior)
 // or one exact data-kernel target. Runtime boundaries reject half-specified targets.
 export type NotebookRestartRequest =
-  | (NotebookSessionRequest & { language: NotebookLanguage; environment: string })
-  | (NotebookSessionRequest & { language?: never; environment?: never })
+  | (NotebookSessionRequest & { language: NotebookLanguage; environment: string; kernel?: never })
+  | (NotebookSessionRequest & { kernel: 'repl'; language?: never; environment?: never })
+  | (NotebookSessionRequest & { language?: never; environment?: never; kernel?: never })
 
 // A normal state read returns the latest renderer window. Transcript hydration may additionally
 // request immutable historical Runs by id without changing or widening that default window.
@@ -1122,8 +890,8 @@ export type ExecuteNotebookControlRequest = NotebookSessionRequest & {
   timeoutMs?: number
 }
 
-// Runs one shell command in a fresh, stateless process in the session workspace. It has no
-// persistent process or NotebookLanguage, but each invocation is persisted as a "bash" Run.
+// Runs a command in the live session lane's shell. State lasts until the interpreter stops;
+// each invocation is still persisted as a separate "bash" Run, without variable snapshots.
 export type ExecuteShellRequest = NotebookSessionRequest & {
   command: string
   background?: boolean

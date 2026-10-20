@@ -1,4 +1,5 @@
 // @vitest-environment jsdom
+import { useDesktopRuntimeRecoveryStore } from '../../../stores/desktop-runtime-recovery-store'
 import { act, StrictMode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -36,6 +37,7 @@ describe('usePreviewFileContent', () => {
   let root: Root
 
   beforeEach(() => {
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
     container = document.createElement('div')
     document.body.appendChild(container)
@@ -65,14 +67,39 @@ describe('usePreviewFileContent', () => {
     } as unknown as Window['api']
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue(new Response('group,count\nA,2', { status: 206 }))
+      vi.fn(async () => new Response('group,count\nA,2', { status: 206 }))
     )
   })
 
   afterEach(async () => {
     await act(async () => root?.unmount())
     container.remove()
+    useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
     vi.unstubAllGlobals()
+  })
+
+  it('releases the old resource while disconnected and reacquires only after recovery', async () => {
+    root = createRoot(container)
+    await act(async () => root.render(<Probe />))
+    expect(container.textContent).toBe('group,count\nA,2')
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    })
+    expect(container.textContent).toBe('loading')
+    expect(window.api.previewResources.release).toHaveBeenCalledTimes(1)
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconnecting', epoch: 2 })
+    })
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toBe('group,count\nA,2')
   })
 
   it('opens a search match at its byte position and leaves ordinary previews at the beginning', async () => {

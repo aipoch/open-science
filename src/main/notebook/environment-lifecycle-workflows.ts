@@ -1,24 +1,24 @@
 import { existsSync } from 'node:fs'
 
 import {
-  parseNotebookLanguage,
-  parseOptionalNotebookLanguage,
-  type NotebookLanguage
-} from '../../shared/notebook'
-import { withDataRootWrite } from '../storage/migration-state'
-import {
-  logStartupGateFailure,
-  runLoggedRuntimeOperation,
-  serializeProvisioner
-} from './environment-operation-foundation'
-import {
+  DEFAULT_ENV_VERSION,
+  DEFAULT_PY_ENV,
+  envPrefix,
   planStartupAction,
+  readReadyMarker,
+  serializeProvisioner,
   type ProvisionProgress,
   type ProvisionStatus,
   type RuntimeProvisioner
-} from './provisioner'
+} from '@aipoch/environment'
+import { parseNotebookLanguage, parseOptionalNotebookLanguage } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { withDataRootWrite } from '../storage/migration-state'
+import {
+  logStartupGateFailure,
+  runLoggedRuntimeOperation
+} from './environment-lifecycle-diagnostics'
 import { explicitRuntimeRepairTarget, type ExplicitRuntimeRepairTarget } from './runtime-repair'
-import { DEFAULT_ENV_VERSION, DEFAULT_PY_ENV, envPrefix, readReadyMarker } from './runtime-paths'
 
 type NotebookEnvironmentLifecycle = {
   status: () => Promise<ProvisionStatus>
@@ -37,7 +37,7 @@ type NotebookEnvironmentLifecycleDeps = {
   root: string
   platform?: NodeJS.Platform
   projectProgress: (progress: ProvisionProgress) => void
-  recoveryStatus?: () => import('../../shared/notebook-env').NotebookRecoveryStatus
+  recoveryStatus?: () => import('@aipoch/environment/contracts').NotebookRecoveryStatus
   waitForRecovery?: () => Promise<void>
   assertProvisionAllowed?: (language: NotebookLanguage) => void
   onRepairStarting?: (

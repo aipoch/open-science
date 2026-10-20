@@ -362,7 +362,7 @@ describe('SessionNotebookContent per-kernel tabs', () => {
     expect(html).toContain('data-testid="session-notebook-tab-python"')
     expect(html).toContain('data-testid="session-notebook-tab-repl"')
     expect(html).toContain('data-testid="session-notebook-tab-bash"')
-    expect(html.match(/focus-visible:ring-\[3px\]/g)).toHaveLength(3)
+    expect(html.match(/focus-visible:-outline-offset-2/g)).toHaveLength(3)
     expect(html).toContain('focus-visible:ring-3')
     expect(html).toContain('Agent SDK')
     expect(html).toContain('Bash')

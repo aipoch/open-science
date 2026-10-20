@@ -4,7 +4,7 @@ import { resolve } from 'node:path'
 
 import type { AcpConnectRequest, AcpRuntimeEventInput, AcpStateSnapshot } from '../../shared/acp'
 import type { AgentFramework, AgentProviderConfiguration } from '../agent-framework'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
 import type {
   AcpConnectionResourceAttempt,

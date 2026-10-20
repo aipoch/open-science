@@ -2,6 +2,18 @@
 
 import { execFileSync } from 'node:child_process'
 import {
+  verifiedExistingHostOwnerTransfers,
+  verifiedHostOwnerSplits,
+  verifiedHostSourceMoves
+} from './host-owner-split.mjs'
+import {
+  verifiedConsumerRetirements,
+  verifiedExcludedPackageTests,
+  verifiedFuzzyMatchOwnerSplit,
+  verifiedPdfTextOwnerSplit,
+  verifiedPromiseIdentityOwnerSplit
+} from './consumer-retirement.mjs'
+import {
   moduleImpactRegistrationPath,
   isModuleImpactRegistrationPath,
   loadModuleImpactManifestAtRevision
@@ -33,7 +45,16 @@ function covered(path, manifest) {
 
 // Registration is data, but it becomes trusted routing after merge. Retain existing
 // evidence so an additive registration cannot quietly weaken later selective runs.
-function registrationViolations(baseManifest, headManifest, headFiles) {
+function registrationViolations(
+  baseManifest,
+  headManifest,
+  headFiles,
+  changes = [],
+  retiredConsumers = new Set(),
+  retiredPackageTests = new Set(),
+  boundedOwnerSplits = new Set(),
+  transferredOwnerTests = new Set()
+) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
   const violations = []
@@ -71,8 +92,65 @@ function registrationViolations(baseManifest, headManifest, headFiles) {
       reject(`${id}.fullTestReason`)
     }
   }
+  // A coherent owner can move or absorb another owner without losing evidence. Infer
+  // replacements from exact paths and retained obligations, never from a candidate flag.
+  const equivalentEvidence = (base, head) =>
+    testKinds
+      .flatMap((kind) => base.testFiles[kind])
+      .every(
+        (path) =>
+          !headFiles.has(path) || testKinds.some((kind) => head.testFiles[kind].includes(path))
+      ) &&
+    base.interfacePaths.every(
+      (path) => !headFiles.has(path) || head.interfacePaths.includes(path)
+    ) &&
+    base.capabilityOverlays.every((overlay) => head.capabilityOverlays.includes(overlay)) &&
+    head.fallbackCapability === base.fallbackCapability &&
+    (base.fullTestReason === undefined || head.fullTestReason === base.fullTestReason)
+  const renamedPaths = new Map(
+    changes
+      .filter((change) => change.status === 'renamed' && change.previousPath)
+      .map((change) => [change.previousPath, change.path])
+  )
+  const replacements = new Map()
   for (const [id, base] of Object.entries(baseModules)) {
-    const head = headModules[id]
+    if (headModules[id]) continue
+    const candidates = Object.entries(headModules).filter(
+      ([next, candidate]) =>
+        !baseModules[next] &&
+        equivalentEvidence(base, candidate) &&
+        base.ownerPaths.every((path) => {
+          const current = headFiles.has(path) ? path : renamedPaths.get(path)
+          return !current || candidate.ownerPaths.includes(current)
+        })
+    )
+    // Ambiguous correspondence must be resolved in the registration, not guessed.
+    if (candidates.length === 1) replacements.set(id, candidates[0][0])
+  }
+  const translatedConsumer = (id) => replacements.get(id) ?? id
+  const preservesConsumers = (base, head, id) =>
+    base.consumerModules.every((consumer) => {
+      const target = translatedConsumer(consumer)
+      return (
+        target === id ||
+        (!headModules[target] && !replacements.has(consumer)) ||
+        head.consumerModules.includes(target)
+      )
+    })
+  const movedPathOwner = (path, base) =>
+    Object.entries(headModules).find(
+      ([id, candidate]) =>
+        candidate.ownerPaths.includes(path) &&
+        equivalentEvidence(base, candidate) &&
+        preservesConsumers(base, candidate, id)
+    )
+  for (const [id, base] of Object.entries(baseModules)) {
+    const replacement = replacements.get(id)
+    const head = headModules[id] ?? headModules[replacement]
+    if (replacement) {
+      if (!preservesConsumers(base, head, replacement)) reject(`${id}.consumerModules`)
+      continue
+    }
     if (!head) {
       if (
         [
@@ -86,15 +164,33 @@ function registrationViolations(baseManifest, headManifest, headFiles) {
       continue
     }
     for (const field of pathFields) {
-      retain(base[field], head[field], `${id}.${field}`, (path) => headFiles.has(path))
-    }
-    for (const kind of testKinds) {
-      retain(base.testFiles[kind], head.testFiles[kind], `${id}.testFiles.${kind}`, (path) =>
-        headFiles.has(path)
+      retain(
+        base[field],
+        head[field],
+        `${id}.${field}`,
+        (path) =>
+          headFiles.has(path) &&
+          !boundedOwnerSplits.has(`${id}:${path}`) &&
+          !movedPathOwner(path, base)
       )
     }
-    retain(base.consumerModules, head.consumerModules, `${id}.consumerModules`, (consumer) =>
-      Object.hasOwn(headModules, consumer)
+    for (const kind of testKinds) {
+      retain(
+        base.testFiles[kind],
+        head.testFiles[kind],
+        `${id}.testFiles.${kind}`,
+        (path) =>
+          headFiles.has(path) &&
+          !(kind === 'consumer' && retiredConsumers.has(`${id}:${path}`)) &&
+          !(kind === 'owner' && transferredOwnerTests.has(`${id}:${path}`)) &&
+          !retiredPackageTests.has(`${id}:${kind}:${path}`)
+      )
+    }
+    retain(
+      base.consumerModules.map(translatedConsumer),
+      head.consumerModules,
+      `${id}.consumerModules`,
+      (consumer) => consumer !== id && Object.hasOwn(headModules, consumer)
     )
     retain(base.capabilityOverlays, head.capabilityOverlays, `${id}.capabilityOverlays`)
     if (head.fallbackCapability !== base.fallbackCapability) reject(`${id}.fallbackCapability`)
@@ -140,7 +236,11 @@ export function checkModuleOwnership({
   headManifest,
   baseFiles,
   headFiles,
-  changes
+  changes,
+  retiredConsumers = new Set(),
+  retiredPackageTests = new Set(),
+  boundedOwnerSplits = new Set(),
+  transferredOwnerTests = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -150,7 +250,16 @@ export function checkModuleOwnership({
   const manifestChanged = changes.some(({ path, previousPath }) =>
     [path, previousPath].filter(Boolean).some(isModuleImpactRegistrationPath)
   )
-  const violations = registrationViolations(baseManifest, headManifest, after)
+  const violations = registrationViolations(
+    baseManifest,
+    headManifest,
+    after,
+    changes,
+    retiredConsumers,
+    retiredPackageTests,
+    boundedOwnerSplits,
+    transferredOwnerTests
+  )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
     if (before.has(path) && !changed.has(path) && !manifestChanged) continue
@@ -172,7 +281,14 @@ export function checkModuleOwnership({
       legacyGaps.push(path)
     }
   }
-  return { ok: violations.length === 0, violations, legacyGaps }
+  return {
+    ok: violations.length === 0,
+    violations,
+    legacyGaps,
+    retiredConsumers: [...retiredConsumers],
+    retiredPackageTests: [...retiredPackageTests],
+    boundedOwnerSplits: [...boundedOwnerSplits]
+  }
 }
 
 export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() } = {}) {
@@ -194,11 +310,34 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   const baseManifest = baseFiles.some(isModuleImpactRegistrationPath)
     ? loadModuleImpactManifestAtRevision(mergeBase, { cwd })
     : headManifest
+  // Reject malformed registration before any exception helper inspects candidate fields.
+  validateModuleImpactManifest(baseManifest)
+  const existing = new Set(headFiles)
+  validateModuleImpactManifest(headManifest, { pathExists: (path) => existing.has(path) })
+  const hostSplits = verifiedHostOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
+  const hostMoves = verifiedHostSourceMoves(mergeBase, head, baseManifest, headManifest, { cwd })
   return checkModuleOwnership({
     baseManifest,
     headManifest,
     baseFiles,
     headFiles,
+    retiredConsumers: new Set([
+      ...verifiedConsumerRetirements(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...hostSplits.consumers,
+      ...hostMoves.consumers
+    ]),
+    retiredPackageTests: verifiedExcludedPackageTests(mergeBase, head, baseManifest, headManifest, {
+      cwd
+    }),
+    boundedOwnerSplits: new Set([
+      ...verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...verifiedPromiseIdentityOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...verifiedFuzzyMatchOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...verifiedExistingHostOwnerTransfers(mergeBase, head, baseManifest, headManifest, { cwd }),
+      ...hostSplits.paths,
+      ...hostMoves.paths
+    ]),
+    transferredOwnerTests: new Set([...hostSplits.ownerTests, ...hostMoves.ownerTests]),
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))
   })
 }

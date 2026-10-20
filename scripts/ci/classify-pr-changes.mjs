@@ -4,14 +4,16 @@ import { execFileSync } from 'node:child_process'
 import { appendFileSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 
 const workflowContractTest = 'scripts/ci/pr-gate-workflow.test.ts'
+const defaultModuleManifest = loadModuleImpactManifest()
 
 const defaultManifest = JSON.parse(
   readFileSync(new URL('./change-impact.json', import.meta.url), 'utf8')
 )
 
-function matchesPath(path, pattern) {
+export function matchesPath(path, pattern) {
   const source = pattern
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
     .replaceAll('**/', '\u0000')
@@ -20,6 +22,13 @@ function matchesPath(path, pattern) {
     .replaceAll('\u0000', '(?:.*/)?')
     .replaceAll('\u0001', '.*')
   return new RegExp(`^${source}$`).test(path)
+}
+
+// Regression data belongs to test suites, not the production dependency graph.
+export function fixtureTestPatterns(path, manifest = defaultManifest) {
+  return (manifest.testFixtureSuites ?? [])
+    .filter((suite) => suite.paths.some((pattern) => matchesPath(path, pattern)))
+    .flatMap((suite) => suite.tests)
 }
 
 const statusNames = {
@@ -72,7 +81,27 @@ function visitCapability(manifest, capabilityId, path, lanes, reasonChains, visi
   }
 }
 
-export function classifyChanges(changes, manifest = defaultManifest) {
+export function classifyChanges(
+  changes,
+  manifest = defaultManifest,
+  {
+    moduleManifest = defaultModuleManifest,
+    registrationModules = [],
+    registrationOnly = false
+  } = {}
+) {
+  if (registrationOnly) {
+    return {
+      schemaVersion: manifest.schemaVersion,
+      mode: 'selective',
+      roots: ['module_registration'],
+      lanes: [...manifest.alwaysLanes, 'format', 'lint'],
+      bundles: ['policy', 'static'],
+      reasonChains: [
+        'validated registration-only Git diff -> policy and manifest contracts; application source unchanged'
+      ]
+    }
+  }
   const lanes = new Set(manifest.alwaysLanes)
   const reasonChains = new Set()
   const roots = new Set()
@@ -94,13 +123,34 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
   }
 
+  const visitModule = (id, path) => {
+    const module = moduleManifest.modules[id]
+    visitRule(
+      {
+        id: `module:${id}`,
+        capabilities: [module.fallbackCapability, ...module.capabilityOverlays]
+      },
+      path
+    )
+    // Even modules whose fallback capability is static-only must execute their evidence.
+    lanes.add('unit_macos')
+  }
+
   for (const change of changes) {
     const paths = new Set([change.path, change.previousPath].filter(Boolean))
     const destructivePath = ['deleted', 'renamed', 'type-changed', 'unmerged', 'unknown'].includes(
       change.status
     )
       ? [...paths].find(
-          (path) => !documentationRule?.paths.some((pattern) => matchesPath(path, pattern))
+          (path) =>
+            !(
+              ['deleted', 'renamed'].includes(change.status) &&
+              fixtureTestPatterns(path, manifest).length > 0
+            ) &&
+            (!documentationRule?.paths.some((pattern) => matchesPath(path, pattern)) ||
+              Object.values(moduleManifest.modules).some((module) =>
+                module.ownerPaths.includes(path)
+              ))
         )
       : undefined
     if (destructivePath) {
@@ -109,6 +159,14 @@ export function classifyChanges(changes, manifest = defaultManifest) {
     }
 
     for (const path of paths) {
+      // Only the revision reader can approve additive registration data. Unvalidated
+      // registrations, the root manifest and executable CI policy retain global routing.
+      const registration = /^scripts\/ci\/module-impact\/([a-z][a-z0-9_]*)\.json$/.exec(path)
+      if (registration && registrationModules.includes(registration[1])) {
+        roots.add('module_registration')
+        visitModule(registration[1], path)
+        continue
+      }
       // This Vitest contract verifies the workflow; it is not an executable CI input.
       if (path === workflowContractTest) {
         roots.add('ci_workflow_contract_test')
@@ -119,7 +177,30 @@ export function classifyChanges(changes, manifest = defaultManifest) {
       const rules = manifest.rules.filter((rule) =>
         rule.paths.some((pattern) => matchesPath(path, pattern))
       )
-      if (rules.length === 0) {
+      // Directory placement is not risk evidence: exact registered owners can bound
+      // resources and packages, while global rules always take precedence.
+      const owners =
+        /^(resources|test|packages)\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+          ? Object.entries(moduleManifest.modules).filter(([, module]) =>
+              module.ownerPaths.includes(path)
+            )
+          : []
+      if (
+        rules.length === 0 &&
+        owners.length === 0 &&
+        fixtureTestPatterns(path, manifest).length === 0
+      ) {
+        // Explicit consumer evidence can live outside source ownership (for example scripts).
+        // Keep every declaring module's capabilities; declarations never exempt executable inputs.
+        const evidenceModules = /\.(test|spec)\.[cm]?[jt]sx?$/.test(path)
+          ? Object.entries(moduleManifest.modules).filter(([, module]) =>
+              Object.values(module.testFiles).some((tests) => tests.includes(path))
+            )
+          : []
+        if (evidenceModules.length > 0) {
+          for (const [id] of evidenceModules) visitModule(id, path)
+          continue
+        }
         selectFullPlan('unknown', `${path} -> unknown -> full`)
         continue
       }
@@ -138,10 +219,39 @@ export function classifyChanges(changes, manifest = defaultManifest) {
         continue
       }
 
+      if (fixtureTestPatterns(path, manifest).length > 0) {
+        roots.add('test_fixture')
+        reasonChains.add(`${path} -> regression fixture -> direct test suites`)
+        for (const lane of ['format', 'lint', 'unit_macos']) lanes.add(lane)
+        continue
+      }
+
+      if (owners.length > 1) {
+        selectFullPlan('owner_ambiguity', `${path} -> multiple module owners -> full`)
+        continue
+      }
+      if (
+        owners.length === 1 &&
+        !rules.some((rule) => rule.role === 'owner' && rule !== documentationRule)
+      ) {
+        visitModule(owners[0][0], path)
+        // Keep every existing platform/domain requirement as well as the exact owner.
+        for (const rule of rules) visitRule(rule, path)
+        continue
+      }
+
       const ownerRules = rules.filter((rule) => rule.role === 'owner')
       const specificOwners = ownerRules.filter((rule) => !rule.fallbackOwner)
       const fallbackOwners = ownerRules.filter((rule) => rule.fallbackOwner)
-      const candidateOwners = specificOwners.length > 0 ? specificOwners : fallbackOwners
+      // Packaged documentation retains its domain checks as well as documentation checks.
+      // The generic documentation rule is not a competing domain owner.
+      const domainOwners = specificOwners.filter((rule) => rule !== documentationRule)
+      const candidateOwners =
+        domainOwners.length > 0
+          ? domainOwners
+          : specificOwners.length > 0
+            ? specificOwners
+            : fallbackOwners
 
       if (candidateOwners.length === 0) {
         selectFullPlan('missing_owner', `${path} -> missing owner -> full`)
@@ -157,6 +267,9 @@ export function classifyChanges(changes, manifest = defaultManifest) {
       }
 
       visitRule(candidateOwners[0], path)
+      if (rules.includes(documentationRule) && candidateOwners[0] !== documentationRule) {
+        visitRule(documentationRule, path)
+      }
       for (const overlay of rules.filter((rule) => rule.role === 'overlay')) {
         visitRule(overlay, path)
       }
@@ -247,6 +360,8 @@ export function platformExecutionPlan(plan, changes, event) {
     ) ||
     plan.roots.some((root) => /unknown|unowned|unmatched|bootstrap/.test(root))
   const lanes = new Set(plan.lanes)
+  const deferFullPortable =
+    plan.bundles.includes('unit') && (plan.mode === 'full' || !plan.lanes.includes('unit_macos'))
   const hasDesktop = plan.bundles.includes('macos_e2e')
   if (hasDesktop && event === 'pull_request') {
     lanes.add('e2e_functional_windows')
@@ -256,6 +371,7 @@ export function platformExecutionPlan(plan, changes, event) {
   for (const lane of lanes) {
     if (
       defaultManifest.laneBundles[lane] === 'macos_e2e' ||
+      (deferFullPortable && defaultManifest.laneBundles[lane] === 'unit') ||
       (event === 'merge_group' && defaultManifest.laneBundles[lane] === 'windows_e2e')
     ) {
       lanes.delete(lane)
@@ -274,8 +390,11 @@ export function platformExecutionPlan(plan, changes, event) {
     macosProfile: sensitive ? 'expanded' : 'smoke',
     reasonChains: [
       ...plan.reasonChains,
+      ...(deferFullPortable
+        ? [`${event}: full portable tests and coverage deferred to scheduled/manual acceptance`]
+        : []),
       event === 'pull_request'
-        ? 'pull_request: portable tests and Windows business E2E; Mac validation deferred to merge queue'
+        ? 'pull_request: selective portable tests and Windows business E2E; Mac validation deferred to merge queue'
         : `merge_group: one Mac core job${sensitive ? ' with native checks' : ''}; complete Mac regression scheduled twice daily`
     ]
   }
@@ -315,6 +434,7 @@ export function toGitHubOutputPlan(plan) {
     lanes: [...plan.lanes],
     macosGroups: macosGroupsForPlan(plan)
   }
+  if (plan.windowsCoreChecks) output.windowsCoreChecks = [...plan.windowsCoreChecks]
   if (plan.macosProfile) output.macosProfile = plan.macosProfile
   if (Array.isArray(plan.bundles)) output.bundles = [...plan.bundles]
   return output

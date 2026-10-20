@@ -1,3 +1,4 @@
+import { specialistDesktopCommandGroup } from './specialist/desktop-commands'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -72,7 +73,7 @@ it('exposes bootstrap only to local Task callers without widening renderer manag
     })
   ).resolves.toEqual({ ok: true })
   expect(bootstrap).toHaveBeenCalledOnce()
-  composition.dispose()
+  await composition.dispose()
 })
 const unexpectedCommand = defineApplicationCommand<'test:unexpected', readonly [], void>(
   'test:unexpected'
@@ -89,6 +90,7 @@ const project = (id: string): Project => ({
 
 const dependencies = (): ApplicationCommandCompositionDependencies =>
   ({
+    pdfTranslation: EMPTY_OWNER,
     acp: EMPTY_OWNER,
     notebook: EMPTY_OWNER,
     notebookEnvironment: EMPTY_OWNER,
@@ -100,11 +102,15 @@ const dependencies = (): ApplicationCommandCompositionDependencies =>
     permissionGrants: EMPTY_OWNER,
     tags: EMPTY_OWNER,
     specialist: {
+      desktop: Object.fromEntries(
+        specialistDesktopCommandGroup.commands.map((command) => [command.name, vi.fn()])
+      ),
       dispose: vi.fn()
     } as unknown as ApplicationCommandCompositionDependencies['specialist'],
     memory: EMPTY_OWNER,
     literature: EMPTY_OWNER,
     bookmarks: EMPTY_OWNER,
+    sessionReplay: EMPTY_OWNER,
     pdfAnnotations: EMPTY_OWNER,
     dataContent: EMPTY_OWNER,
     host: EMPTY_OWNER
@@ -245,6 +251,7 @@ describe('application command composition', () => {
       'bookmarks:resolve-pdf-source',
       'bookmarks:update-note',
       'lifecycle:claim-runtime-writer',
+      'literature:add-pdf',
       'literature:cancel-pdf-import',
       'literature:citation-styles',
       'literature:complete-metadata',
@@ -253,9 +260,11 @@ describe('application command composition', () => {
       'literature:format-references',
       'literature:full-text',
       'literature:get',
+      'literature:get-candidate-states',
       'literature:import-pdf',
       'literature:import-records',
       'literature:jobs',
+      'literature:journals',
       'literature:lookup-metadata',
       'literature:search',
       'literature:sources',
@@ -274,6 +283,7 @@ describe('application command composition', () => {
       'pdf-annotations:delete',
       'pdf-annotations:import-native',
       'pdf-annotations:list',
+      'pdf-annotations:reconcile',
       'pdf-annotations:update',
       'pdf-structure:cancel',
       'pdf-structure:clear-cache',
@@ -288,17 +298,29 @@ describe('application command composition', () => {
       'projects:retry-deletion-cleanup',
       'projects:update',
       'projects:update-archive',
+      'session-replay:get',
+      'session-replay:get-selection-snapshot',
+      'session-replay:list',
+      'session-replay:list-selection-snapshots',
+      'session-replay:save-selection-snapshot',
+      'session-replay:save-view',
+      'session-replay:unlink-session',
+      'sessions:cancel-diagnostics',
       'sessions:delete-session',
       'sessions:edit-details',
+      'sessions:export-diagnostics',
       'sessions:export-package',
       'sessions:filter-pdf-context-candidates',
       'sessions:fork',
       'sessions:import-package',
+      'sessions:inspect-diagnostics',
       'sessions:link-pdf-context',
       'sessions:package-operation',
+      'sessions:retry-runtime-terminal-commit',
       'sessions:set-delegation-policy',
       'sessions:unlink-pdf-context',
       'sessions:update-archive',
+      'settings:get-settings',
       'tags:create',
       'tags:delete',
       'tags:reorder',
@@ -474,8 +496,8 @@ describe('application command composition', () => {
     )
     expect(replacementSnapshot).not.toHaveBeenCalled()
 
-    composition.dispose()
-    composition.dispose()
+    await composition.dispose()
+    await composition.dispose()
     expect(() => composition.bindRemoteAccess(firstOwner as never)).toThrow(
       'Remote Access command owner slot is disposed.'
     )
@@ -504,7 +526,7 @@ describe('application command composition', () => {
     expect(events.at(-1)).toBe('router:dispose')
   })
 
-  it('installs every command module and stops at a partial failure', () => {
+  it('installs every command module and stops at a partial failure', async () => {
     const source = dependencies()
     const normalEvents: string[] = []
     installInstrumentedRouterFactory(normalEvents)
@@ -520,10 +542,10 @@ describe('application command composition', () => {
     expect(installEvents).toEqual(
       Array.from({ length: installationCount }, (_, index) => `install:${index}`)
     )
-    composition.dispose()
+    await composition.dispose()
     expect(normalEvents).toEqual([...installEvents, ...uninstallEvents, 'router:dispose'])
     const disposedEventCount = normalEvents.length
-    composition.dispose()
+    await composition.dispose()
     expect(normalEvents).toHaveLength(disposedEventCount)
 
     const partialEvents: string[] = []
@@ -590,7 +612,7 @@ describe('application command composition', () => {
     const disposeFailure = createApplicationCommandComposition(source)
     let disposalFailure: unknown
     try {
-      disposeFailure.dispose()
+      await disposeFailure.dispose()
     } catch (error) {
       disposalFailure = error
     }
@@ -606,7 +628,7 @@ describe('application command composition', () => {
       ...uninstallEvents,
       'router:dispose'
     ])
-    expect(() => disposeFailure.dispose()).not.toThrow()
+    await expect(disposeFailure.dispose()).rejects.toBe(disposalFailure)
     expect(() => disposedRemoteAccessHandler?.(invocation('remote'))).toThrow(
       'Remote Access command owner slot is disposed.'
     )
@@ -682,7 +704,7 @@ it('routes Task Connector reads to the existing Settings owner without adding We
   expect(listConnectors).toHaveBeenCalledOnce()
   expect(composition.localWeb.commandNames()).not.toContain('settings:test-custom-server')
   expect(composition.remoteWeb.commandNames()).not.toContain('settings:test-custom-server')
-  composition.dispose()
+  await composition.dispose()
 })
 
 it('routes Task doctor prerequisites to the existing Settings owners', async () => {
@@ -709,7 +731,7 @@ it('routes Task doctor prerequisites to the existing Settings owners', async () 
   await expect(composition.task.invoke('settings:list-skills', invocation())).resolves.toEqual(
     skills
   )
-  composition.dispose()
+  await composition.dispose()
 })
 
 it('validates bounded reference exports through the shared Web command boundary', async () => {
@@ -733,7 +755,7 @@ it('validates bounded reference exports through the shared Web command boundary'
     })
   ).resolves.toEqual(exported)
   expect(exportRecord).toHaveBeenCalledWith({ itemId: 'reference' })
-  composition.dispose()
+  await composition.dispose()
 })
 
 describe('TB-01 remote preview admission', () => {
@@ -752,6 +774,7 @@ describe('TB-01 remote preview admission', () => {
     const resolvePath = vi.fn(async (_source, request) => localFs.resolveFilePath(request))
     const trustedLease = {
       path,
+      checksum: 'a'.repeat(64),
       size: content.length,
       versionToken: 1,
       snapshot: { dev: 1n, ino: 1n, size: BigInt(content.length), mtimeNs: 1n },
@@ -798,6 +821,7 @@ describe('TB-01 remote preview admission', () => {
         expect(resolvePath, 'reject before filesystem resolution').not.toHaveBeenCalled()
       } else {
         resource = await acquired
+        expect(resource.sourceChecksum).toBe(source === 'local' ? undefined : trustedLease.checksum)
         const range = (await dispatcher.invoke('preview-resources:read-range', {
           ...caller,
           args: [{ resourceId: resource.id, begin: 0, end: content.length }]
@@ -807,8 +831,120 @@ describe('TB-01 remote preview admission', () => {
     } finally {
       if (resource) owners.release(caller.callerLease, { resourceId: resource.id })
       leases.dispose()
-      composition.dispose()
+      await composition.dispose()
       await rm(directory, { recursive: true, force: true })
     }
   })
 })
+
+it('keeps PDF translation on the desktop view and passes its document lease to the shared owner', async () => {
+  const begin = vi.fn().mockResolvedValue({ operationId: 'translation' })
+  const composition = createApplicationCommandComposition({
+    ...dependencies(),
+    pdfTranslation: {
+      begin
+    } as unknown as ApplicationCommandCompositionDependencies['pdfTranslation']
+  })
+  const request = {
+    resourceRequestKey: 'paper',
+    fingerprint: 'sha',
+    language: '中文',
+    glossary: [],
+    sources: ['cell']
+  }
+  const base = invocation()
+  const caller = {
+    ...base,
+    callerContext: createCallerContext({ ...base.callerContext, surface: 'electron' }),
+    args: [request]
+  }
+  await expect(composition.desktop.invoke('pdf-translation:begin', caller)).resolves.toEqual({
+    operationId: 'translation'
+  })
+  expect(begin).toHaveBeenCalledWith(request, caller.callerLease)
+  expect(composition.localWeb.commandNames()).not.toContain('pdf-translation:begin')
+  expect(composition.remoteWeb.commandNames()).not.toContain('pdf-translation:begin')
+  expect(composition.task.commandNames()).not.toContain('pdf-translation:begin')
+  await composition.dispose()
+})
+
+it.each([false, true])(
+  'waits for admitted Literature import cleanup before disposing the router (cleanup fails: %s)',
+  async (cleanupFails) => {
+    const events: string[] = []
+    installInstrumentedRouterFactory(events)
+    const entered = Promise.withResolvers<void>()
+    const cleaning = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    let signal: AbortSignal | undefined
+    const cleanup = async (): Promise<void> => {
+      cleaning.resolve()
+      await release.promise
+      events.push('import:cleanup')
+      if (cleanupFails) throw new Error('Import cleanup failed')
+    }
+    const importPdf = vi.fn(async (_request: unknown, currentSignal?: AbortSignal) => {
+      signal = currentSignal
+      entered.resolve()
+      try {
+        await new Promise<void>((_resolve, reject) =>
+          currentSignal!.addEventListener('abort', () => reject(currentSignal!.reason), {
+            once: true
+          })
+        )
+        throw new Error('Unexpected completed import')
+      } finally {
+        await cleanup()
+      }
+    })
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      literature: {
+        importPdf
+      } as unknown as ApplicationCommandCompositionDependencies['literature']
+    })
+    const call = {
+      ...invocation(),
+      args: [
+        {
+          itemId: 'item',
+          attachment: {
+            id: 'upload',
+            sessionId: 'session',
+            name: 'paper.pdf',
+            originalName: 'paper.pdf',
+            path: '/managed/paper.pdf',
+            size: 10
+          }
+        }
+      ]
+    }
+    const pending = composition.localWeb.invoke('literature:import-pdf', call)
+    const rejected = expect(pending).rejects.toThrow(
+      cleanupFails ? 'Import cleanup failed' : 'uninstalled'
+    )
+    await entered.promise
+    let disposed = false
+    const shutdown = composition.dispose()
+    void shutdown.then(() => {
+      disposed = true
+    })
+    expect(composition.dispose()).toBe(shutdown)
+    await cleaning.promise
+    try {
+      expect(signal?.aborted).toBe(true)
+      expect(disposed).toBe(false)
+      expect(events).not.toContain('router:dispose')
+      await expect(composition.localWeb.invoke('literature:import-pdf', call)).rejects.toThrow(
+        'Unknown application command'
+      )
+      expect(importPdf).toHaveBeenCalledOnce()
+    } finally {
+      release.resolve()
+      await shutdown
+      await rejected
+    }
+    expect(events.slice(-2)).toEqual(['import:cleanup', 'router:dispose'])
+    expect(disposed).toBe(true)
+  }
+)

@@ -13,11 +13,15 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { preferredEndpoint } from '../../shared/settings'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
-import { anthropicMessagesBase, openAiCompletionsBase } from '../settings/base-url'
+import type { ModelReasoningEffort } from '@aipoch/providers'
+import {
+  resolveMessagesBaseUrl,
+  resolveChatCompletionsBaseUrl,
+  resolveChatReasoningTransport
+} from '@aipoch/providers/protocol'
 import { augmentedPathEnv } from '../settings/shell-path'
 import type { ResolvedProvider } from '../settings/provider-env'
-import { resolveChatReasoningTransport } from '../settings/reasoning-transport'
+
 import type {
   AgentFramework,
   AgentModelCatalogEntry,
@@ -78,13 +82,14 @@ export const opencodeTransportProviderId = (providerId: string, model: string): 
     .digest('hex')
     .slice(0, 16)}`
 
-// The opencode provider block used for each endpoint. Anthropic /v1/messages maps to opencode's
-// built-in `anthropic` provider; OpenAI /v1/chat/completions maps to a custom provider backed by the
-// `@ai-sdk/openai-compatible` package. opencode drives both, so the endpoint is chosen from the
-// provider's apiType (preferring OpenAI when it offers both).
-const OPENCODE_ENDPOINT_PROVIDER: Record<'anthropic' | 'openai', { id: string; npm?: string }> = {
-  anthropic: { id: 'anthropic' },
-  openai: { id: 'openai-compatible', npm: '@ai-sdk/openai-compatible' }
+// Pin the SDK for both protocols: app-generated provider ids do not inherit OpenCode's
+// built-in Anthropic driver. The endpoint prefers OpenAI when the provider offers both.
+const OPENCODE_ENDPOINT_PROVIDER: Record<
+  'messages' | 'chat-completions',
+  { id: string; npm?: string }
+> = {
+  messages: { id: 'anthropic', npm: '@ai-sdk/anthropic' },
+  'chat-completions': { id: 'openai-compatible', npm: '@ai-sdk/openai-compatible' }
 }
 
 // The decrypted provider key is handed to opencode via this spawn-env var and referenced from the
@@ -111,8 +116,8 @@ const opencodeApiKeyEnv = (provider: ResolvedProvider): string =>
     : OPENCODE_API_KEY_ENV
 
 // The app's permission policy for opencode: every side-effecting/MCP tool must ASK the ACP client (the
-// app's broker then enforces the selected profile); safe read-only tools and OpenCode's native skill
-// loader run silently (parity with other Agent frameworks). The `*` catch-all covers unlisted tools
+// app's broker then enforces the selected profile); safe read-only tools run silently; Skill
+// loading delegates to the app's shared, revocable Skill grants. The `*` catch-all covers unlisted tools
 // (MCP artifact/notebook/connectors, etc.),
 // and the sensitive built-ins are pinned to `ask` explicitly so a lower-precedence config that sets one
 // of those keys to `allow` is overridden rather than winning. Enforced via the OPENCODE_CONFIG_CONTENT
@@ -137,7 +142,7 @@ const OPENCODE_PERMISSION_RULES: Record<string, 'ask' | 'allow' | 'deny'> = {
   task: 'deny',
   // Skill loading only reads definitions already provisioned into the isolated OpenCode config.
   // Permission for creating/editing/enabling those definitions remains app-owned elsewhere.
-  skill: 'allow',
+  skill: 'ask',
   webfetch: 'ask',
   websearch: 'ask',
   external_directory: 'deny'
@@ -187,8 +192,8 @@ const resolveOpencodeEndpoint = (
   const bareModel = provider.model
   // opencode drives both endpoints; pick the one for this provider (openai wins when it offers both).
   const endpoint =
-    preferredEndpoint(provider.apiEndpoints ?? ['anthropic'], ['anthropic', 'openai']) ??
-    'anthropic'
+    preferredEndpoint(provider.apiEndpoints ?? ['messages'], ['messages', 'chat-completions']) ??
+    'messages'
   const { id: defaultProviderId, npm } = OPENCODE_ENDPOINT_PROVIDER[endpoint]
   const providerId = provider.agentProviderId ?? defaultProviderId
   // The @ai-sdk/openai-compatible client appends `/chat/completions` to baseURL, so hand it the
@@ -197,10 +202,10 @@ const resolveOpencodeEndpoint = (
   // bridge. The Anthropic AI SDK appends `/messages` (not `/v1/messages`), so its base must carry the
   // `/v1` segment that Claude Code and the validator append themselves.
   const baseURL =
-    endpoint === 'openai'
-      ? (openAiCompletionsBase(provider) ?? provider.baseUrl)
+    endpoint === 'chat-completions'
+      ? (resolveChatCompletionsBaseUrl(provider) ?? provider.baseUrl)
       : provider.baseUrl
-        ? anthropicMessagesBase(provider.baseUrl)
+        ? resolveMessagesBaseUrl(provider.baseUrl)
         : undefined
 
   return { apiKeyEnv: opencodeApiKeyEnv(provider), bareModel, providerId, npm, baseURL }
@@ -473,7 +478,7 @@ export const createOpencodeFramework = ({
   // generated config's per-model options, so a change must respawn to take effect.
   supportsLiveEffortChange: false,
   // opencode speaks both Anthropic /v1/messages and OpenAI /v1/chat/completions.
-  supportedApiTypes: ['anthropic', 'openai'],
+  supportedApiTypes: ['messages', 'chat-completions'],
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
     // `opencode acp` starts the ACP subprocess over stdio, matching the app's existing transport. On

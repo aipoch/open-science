@@ -12,7 +12,7 @@ import type {
 import { CONNECTOR_RESOURCE_LIMITS } from './connector-resource-limits'
 import { CONNECTOR_TEMPLATE_MAX_BYTES } from '../../shared/settings'
 import { isCustomConnectorName, toCustomConnectorName } from '../../shared/custom-connector'
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
 import { isRecord } from '../value-guards'
 
 export type ConnectorTemplateSource = {

@@ -1,0 +1,4 @@
+{"name": "partial-header-plus-complete-subheader-preserves-whole-native-object", "source": "Group (score)", "valid": true}
+{"name": "mismatched-partial-table-source-still-rejected", "source": "Other (score)", "valid": false}
+{"name":"padded-last-cell-of-shared-text-object-preserves-original","source":"Group","valid":true,"subheader":false}
+{"name":"padded-last-cell-with-wrong-source-remains-rejected","source":"Other","valid":false,"subheader":false}

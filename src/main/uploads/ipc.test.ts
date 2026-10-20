@@ -924,3 +924,7 @@ describe('default upload repository', () => {
     expect(ipcHandlers.has('uploads:stage-files')).toBe(false)
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

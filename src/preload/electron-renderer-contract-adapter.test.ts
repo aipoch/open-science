@@ -68,20 +68,23 @@ describe('electron renderer contract adapter', () => {
     ).resolves.toEqual(result)
     expect(port.invoke).toHaveBeenCalledWith('bookmarks:update-note', request)
   })
-  it('resolves dropped packages through the native File boundary', async () => {
-    const port = createPort()
-    port.invoke.mockResolvedValue({ ok: true, result: null })
-    port.getPathForFile.mockReturnValue('/data/research.science')
-    const adapter = createElectronRendererContractAdapter(port)
-    const file = { name: 'research.science' }
-    await adapter.invoke('sessions.importPackage', { projectId: 'target' }, file)
-    expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
-    expect(port.invoke).toHaveBeenCalledExactlyOnceWith(
-      'sessions:import-package',
-      { projectId: 'target' },
-      '/data/research.science'
-    )
-  })
+  it.each([{}, { projectId: 'target' }])(
+    'resolves dropped packages through the native File boundary with target %j',
+    async (target) => {
+      const port = createPort()
+      port.invoke.mockResolvedValue({ ok: true, result: null })
+      port.getPathForFile.mockReturnValue('/data/research.science')
+      const adapter = createElectronRendererContractAdapter(port)
+      const file = { name: 'research.science' }
+      await adapter.invoke('sessions.importPackage', target, file)
+      expect(port.getPathForFile).toHaveBeenCalledExactlyOnceWith(file)
+      expect(port.invoke).toHaveBeenCalledExactlyOnceWith(
+        'sessions:import-package',
+        target,
+        '/data/research.science'
+      )
+    }
+  )
 
   it('rejects a dropped File without a native path instead of opening a picker', async () => {
     const port = createPort()

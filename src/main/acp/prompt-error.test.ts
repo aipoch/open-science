@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { describePromptError, isProviderPromptError } from './prompt-error'
+import {
+  describePromptError,
+  isProviderPromptError,
+  isOpenCodeSessionServiceFailure
+} from './prompt-error'
 
 // Builds an ACP RequestError-shaped value: an Error carrying the JSON-RPC code + data the agent attaches.
 const agentError = (
@@ -229,5 +233,21 @@ describe('isProviderPromptError', () => {
     // An app-layer throw with no agent tag.
     expect(isProviderPromptError(new Error('Agent session could not be created.'))).toBe(false)
     expect(isProviderPromptError('boom')).toBe(false)
+  })
+})
+
+describe('OpenCode session failure classification', () => {
+  it('keeps context overflow on the compaction recovery path', () => {
+    expect(
+      isOpenCodeSessionServiceFailure(
+        agentError('context full', {
+          service: 'session',
+          errorName: 'ContextOverflowError'
+        })
+      )
+    ).toBe(false)
+    expect(
+      isOpenCodeSessionServiceFailure(agentError('session missing', { service: 'session' }))
+    ).toBe(true)
   })
 })

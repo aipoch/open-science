@@ -10,6 +10,9 @@ import { windowsLaunch } from '../../../packages/notebook-network-sandbox/runtim
 import { NotebookKernelExecutor } from './kernel-executor'
 import { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
+
+configureTestRuntimeMetadata()
 
 it.skipIf(process.platform !== 'win32').each([
   { protectedMode: false, crashAdmission: false },
@@ -101,6 +104,8 @@ it.skipIf(process.platform !== 'win32').each([
     }
     let descendantPid: number | undefined
     try {
+      // Consume the ordinary lane's request before exiting, as in the executor exit-diagnostic
+      // fixture, so EPIPE cannot settle it ahead of the exit and teardown being tested.
       await writeFile(
         loop,
         crashAdmission
@@ -112,7 +117,7 @@ it.skipIf(process.platform !== 'win32').each([
                require('node:fs').writeFileSync('descendant.pid', String(child.pid))
                process.exit(1)
              })\n`
-            : 'process.exit(1)\n'
+            : "process.stdin.once('data', () => process.exit(1))\n"
       )
       const failed = await executor.execute(request).catch((error) => {
         expect(error).toBeInstanceOf(NotebookExecutionStopError)

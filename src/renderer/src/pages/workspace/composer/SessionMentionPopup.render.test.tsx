@@ -85,6 +85,151 @@ const options = (): HTMLElement[] =>
   Array.from(document.body.querySelectorAll<HTMLElement>('[role="option"]'))
 
 describe('SessionMentionPopup', () => {
+  it('excludes the discussion source even when current or explicitly searched', () => {
+    for (const query of ['', 'Open conversation', '1', '#1']) {
+      act(() =>
+        root.render(
+          <SessionMentionPopup
+            inline
+            writableOnly
+            excludedSessionId="session-current"
+            query={query}
+            onSelect={vi.fn()}
+            onClose={vi.fn()}
+          />
+        )
+      )
+      expect(options().some((option) => option.getAttribute('title') === 'Open conversation')).toBe(
+        false
+      )
+      expect(container.querySelector('[data-slot="session-mention-current"]')).toBeNull()
+    }
+    act(() =>
+      root.render(
+        <SessionMentionPopup
+          inline
+          writableOnly
+          excludedSessionId="session-other"
+          query=""
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    )
+    expect(options()[0].getAttribute('title')).toBe('Open conversation')
+    expect(options()[0].querySelector('[data-slot="session-mention-current"]')).not.toBeNull()
+  })
+  it('pins and labels the open conversation, follows selection changes, and respects search', () => {
+    const onSelect = vi.fn()
+    useSessionStore.setState({ selectedSessionId: 'session-local' })
+    const render = (query: string): void => {
+      act(() =>
+        root.render(
+          <SessionMentionPopup
+            inline
+            writableOnly
+            query={query}
+            onSelect={onSelect}
+            onClose={vi.fn()}
+          />
+        )
+      )
+    }
+    render('')
+    expect(options()[0].getAttribute('title')).toContain('A very long')
+    expect(options()[0].getAttribute('aria-selected')).toBe('true')
+    expect(options()[0].querySelector('[data-slot="session-mention-current"]')?.textContent).toBe(
+      'Current'
+    )
+    expect(container.querySelectorAll('[data-slot="session-mention-current"]')).toHaveLength(1)
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    act(() => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'session-local' }))
+    act(() => useSessionStore.setState({ selectedSessionId: 'session-current' }))
+    expect(options()[0].getAttribute('title')).toBe('Open conversation')
+    expect(options()[0].querySelector('[data-slot="session-mention-current"]')).not.toBeNull()
+    render('22')
+    expect(options()).toHaveLength(1)
+    expect(options()[0].getAttribute('title')).toBe('Other Project result')
+    expect(container.querySelector('[data-slot="session-mention-current"]')).toBeNull()
+  })
+  it('offers the current ordinary conversation and excludes imported history in writable mode', () => {
+    useSessionStore.setState((state) => ({
+      sessions: [
+        ...state.sessions,
+        session('imported', 'project-current', 'Read-only history', 600, {
+          packageOrigin: {
+            importId: 'import',
+            sourceProjectId: 'origin',
+            sourceSessionId: 'source',
+            importedAt: 1,
+            manifestChecksum: 'a'.repeat(64)
+          }
+        })
+      ]
+    }))
+    act(() =>
+      root.render(
+        <SessionMentionPopup inline writableOnly query="" onSelect={vi.fn()} onClose={vi.fn()} />
+      )
+    )
+    expect(
+      options()
+        .map((row) => row.textContent)
+        .join(' ')
+    ).toContain('Open conversation')
+    expect(
+      options()
+        .map((row) => row.textContent)
+        .join(' ')
+    ).toContain('Other Project result')
+    expect(
+      options()
+        .map((row) => row.textContent)
+        .join(' ')
+    ).not.toContain('Read-only history')
+    expect(options()).toHaveLength(3)
+  })
+  it('verifies unloaded summaries before offering them as writable and excludes imported history', async () => {
+    const imported = session('unopened-history', 'project-current', 'Unopened history', 800, {
+      contentLoaded: false
+    })
+    const ordinary = session(
+      'unopened-conversation',
+      'project-current',
+      'Unopened conversation',
+      700,
+      { contentLoaded: false }
+    )
+    useSessionStore.setState({ sessions: [imported, ordinary] })
+    let resolveHistory!: (value: unknown) => void
+    const history = new Promise((resolve) => {
+      resolveHistory = resolve
+    })
+    const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+      sessionId === imported.id ? await history : ordinary
+    )
+    vi.stubGlobal('api', { sessions: { loadOne } })
+    act(() =>
+      root.render(
+        <SessionMentionPopup inline writableOnly query="" onSelect={vi.fn()} onClose={vi.fn()} />
+      )
+    )
+    expect(options()).toHaveLength(0)
+    expect(container.textContent).toContain('Loading…')
+    await act(async () => {
+      resolveHistory({ ...imported, packageOrigin: { importId: 'saved-import' } })
+    })
+    expect(options()).toHaveLength(1)
+    expect(options()[0].textContent).toContain('Unopened conversation')
+    expect(container.textContent).not.toContain('Unopened history')
+    expect(useSessionStore.getState().selectedSessionId).toBe('session-current')
+    expect(useSessionStore.getState().sessions.every((row) => row.contentLoaded === false)).toBe(
+      true
+    )
+    vi.unstubAllGlobals()
+  })
   it('shows current-Project Sessions first and excludes current, pending, and archived rows', () => {
     act(() => {
       root.render(<SessionMentionPopup query="" onSelect={vi.fn()} onClose={vi.fn()} />)
@@ -108,31 +253,62 @@ describe('SessionMentionPopup', () => {
     ).toEqual([expect.stringMatching(/\S/), '·', 'Current study'])
   })
 
-  it('uses pure numeric queries for Session-number prefixes and ranks an exact number first', () => {
+  it.each([
+    [false, '11'],
+    [false, '#11'],
+    [true, '11'],
+    [true, '#11'],
+    [true, '  #11  ']
+  ])(
+    'matches number prefixes and ranks exact numbers first (writableOnly=%s, query=%s)',
+    (writableOnly, query) => {
+      useSessionStore.setState({
+        selectedSessionId: 'session-current',
+        sessions: [
+          session('session-prefix-current', 'project-current', 'Current prefix', 300, {
+            number: 110
+          }),
+          session('session-exact-other', 'project-other', 'Exact other Project', 100, {
+            number: 11
+          }),
+          session('session-text-only', 'project-current', 'Title contains 11', 500, { number: 7 })
+        ]
+      })
+
+      act(() => {
+        root.render(
+          <SessionMentionPopup
+            writableOnly={writableOnly}
+            query={query}
+            onSelect={vi.fn()}
+            onClose={vi.fn()}
+          />
+        )
+      })
+
+      expect(options().map((option) => option.textContent)).toEqual([
+        expect.stringContaining('Exact other Project'),
+        expect.stringContaining('Current prefix')
+      ])
+      expect(
+        options().map(
+          (option) => option.querySelector('[data-slot="session-mention-number"]')?.textContent
+        )
+      ).toEqual(['#11', '#110'])
+    }
+  )
+
+  it('keeps nonnumeric hash queries as title searches', () => {
     useSessionStore.setState({
-      selectedSessionId: 'session-current',
       sessions: [
-        session('session-prefix-current', 'project-current', 'Current prefix', 300, {
-          number: 110
-        }),
-        session('session-exact-other', 'project-other', 'Exact other Project', 100, { number: 11 }),
-        session('session-text-only', 'project-current', 'Title contains 11', 500, { number: 7 })
+        session('tagged', 'project-current', '#notes', 100),
+        session('untagged', 'project-current', 'notes', 200)
       ]
     })
-
     act(() => {
-      root.render(<SessionMentionPopup query="11" onSelect={vi.fn()} onClose={vi.fn()} />)
+      root.render(<SessionMentionPopup query="#notes" onSelect={vi.fn()} onClose={vi.fn()} />)
     })
-
-    expect(options().map((option) => option.textContent)).toEqual([
-      expect.stringContaining('Exact other Project'),
-      expect.stringContaining('Current prefix')
-    ])
-    expect(
-      options().map(
-        (option) => option.querySelector('[data-slot="session-mention-number"]')?.textContent
-      )
-    ).toEqual(['#11', '#110'])
+    expect(options().map((option) => option.getAttribute('title'))).toEqual(['#notes'])
   })
 
   it('returns only Session identity and the title snapshot', () => {
@@ -149,4 +325,79 @@ describe('SessionMentionPopup', () => {
       title: 'Other Project result'
     })
   })
+})
+
+it('reads only ten candidate details per page, reuses checks, and resets the page for searches', async () => {
+  const rows = Array.from({ length: 25 }, (_, index) =>
+    session(`candidate-${index}`, 'project-current', `Candidate ${index}`, 1000 - index, {
+      contentLoaded: false,
+      number: index + 1
+    })
+  )
+  useSessionStore.setState({ sessions: rows })
+  const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+    rows.find((row) => row.id === sessionId)
+  )
+  vi.stubGlobal('api', { sessions: { loadOne } })
+  const renderQuery = async (query: string): Promise<void> => {
+    await act(async () =>
+      root.render(
+        <SessionMentionPopup
+          inline
+          writableOnly
+          query={query}
+          onSelect={vi.fn()}
+          onClose={vi.fn()}
+        />
+      )
+    )
+  }
+  await renderQuery('')
+  expect(loadOne).toHaveBeenCalledTimes(10)
+  expect(options()).toHaveLength(10)
+  await act(async () => container.querySelector<HTMLButtonElement>('button')!.click())
+  expect(loadOne).toHaveBeenCalledTimes(20)
+  expect(options()).toHaveLength(20)
+  await renderQuery('#25')
+  expect(loadOne).toHaveBeenCalledTimes(21)
+  expect(options()).toHaveLength(1)
+  expect(options()[0].title).toBe('Candidate 24')
+  await renderQuery('')
+  expect(loadOne).toHaveBeenCalledTimes(21)
+  expect(options()).toHaveLength(10)
+  vi.unstubAllGlobals()
+})
+
+it('stops stale candidate reads when the search changes', async () => {
+  const rows = Array.from({ length: 25 }, (_, index) =>
+    session(`candidate-${index}`, 'project-current', `Candidate ${index}`, 1000 - index, {
+      contentLoaded: false,
+      number: index + 1
+    })
+  )
+  useSessionStore.setState({ sessions: rows })
+  let resolveFirst!: (row: ChatSession) => void
+  const first = new Promise<ChatSession>((resolve) => {
+    resolveFirst = resolve
+  })
+  const loadOne = vi.fn(async ({ sessionId }: { sessionId: string }) =>
+    sessionId === rows[0].id ? first : rows.find((row) => row.id === sessionId)
+  )
+  vi.stubGlobal('api', { sessions: { loadOne } })
+  await act(async () =>
+    root.render(
+      <SessionMentionPopup inline writableOnly query="" onSelect={vi.fn()} onClose={vi.fn()} />
+    )
+  )
+  expect(loadOne).toHaveBeenCalledTimes(1)
+  await act(async () =>
+    root.render(
+      <SessionMentionPopup inline writableOnly query="#25" onSelect={vi.fn()} onClose={vi.fn()} />
+    )
+  )
+  await act(async () => resolveFirst(rows[0]))
+  expect(loadOne).toHaveBeenCalledTimes(2)
+  expect(options()).toHaveLength(1)
+  expect(options()[0].title).toBe('Candidate 24')
+  vi.unstubAllGlobals()
 })

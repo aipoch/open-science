@@ -1,10 +1,10 @@
-import { describe, expect, it, vi } from 'vitest'
+import { createConnectorRegistry } from '@aipoch/connector-core'
+import { describe, expect, it } from 'vitest'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
 import { CallToolRequestSchema, ListToolsRequestSchema } from '@modelcontextprotocol/sdk/types.js'
-import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js'
-import { McpClientManager } from './mcp-client-manager'
+import { McpClientManager } from '@aipoch/connector-mcp-client'
 import { ConnectorService } from './service'
 
 const config = { id: 'test-mcp', name: 'test-mcp', transport: 'stdio' as const, command: 'unused' }
@@ -16,47 +16,14 @@ async function connect(server: Server): Promise<Client> {
   return client
 }
 
-describe('MCP protocol regressions', () => {
-  it.each<CallToolResult>([
-    {
-      content: [
-        { type: 'text', text: 'summary' },
-        { type: 'text', text: 'required second paragraph' },
-        { type: 'image', mimeType: 'image/png', data: 'aW1hZ2U=' }
-      ],
-      structuredContent: { rows: [{ value: 42 }] }
-    },
-    {
-      content: [{ type: 'text', text: '{"summary":true}' }],
-      structuredContent: { rows: [{ value: 42 }] }
-    }
-  ])('C01 preserves the complete successful payload %#', async (payload) => {
-    const server = new Server(
-      { name: 'payload-server', version: '1' },
-      { capabilities: { tools: {} } }
-    )
-    server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: [{ name: 'read', inputSchema: { type: 'object' as const } }]
-    }))
-    server.setRequestHandler(CallToolRequestSchema, async () => payload)
-    const manager = new McpClientManager({ createClient: () => connect(server) })
-    try {
-      await expect(manager.call(config, 'read', {})).resolves.toEqual(payload)
-    } finally {
-      await manager.closeAll()
-      await server.close()
-    }
-  })
-
+describe('ConnectorService MCP integration', () => {
   it('C02 dispatches a tool advertised on the second discovery page', async () => {
-    const cursors: Array<string | undefined> = []
     const calls: string[] = []
     const server = new Server(
       { name: 'paged-server', version: '1' },
       { capabilities: { tools: {} } }
     )
     server.setRequestHandler(ListToolsRequestSchema, async ({ params }) => {
-      cursors.push(params?.cursor)
       return params?.cursor === 'page-2'
         ? { tools: [{ name: 'second', inputSchema: { type: 'object' as const } }] }
         : {
@@ -68,8 +35,14 @@ describe('MCP protocol regressions', () => {
       calls.push(params.name)
       return { content: [{ type: 'text' as const, text: '{"ok":true}' }] }
     })
-    const manager = new McpClientManager({ createClient: () => connect(server) })
+    // The root test graph and the connector package can resolve distinct MCP SDK declaration
+    // copies. The runtime client is intentionally the same protocol object; keep this test's
+    // factory boundary explicit rather than letting duplicate private fields fail node typecheck.
+    const manager = new McpClientManager({
+      createClient: () => connect(server) as unknown as never
+    })
     const service = new ConnectorService({
+      registry: createConnectorRegistry([]),
       mcpClientManager: manager,
       getConnectors: () => ({
         enabledIds: [],
@@ -79,52 +52,11 @@ describe('MCP protocol regressions', () => {
       resolveApiKey: () => undefined
     })
     try {
-      const result = await service
-        .call(config.name, 'second', {}, { origin: 'internal' })
-        .catch((error: unknown) => error)
-      // Soft assertions retain all three pieces of evidence on the original implementation.
-      expect.soft(cursors).toEqual([undefined, 'page-2'])
-      expect.soft(calls).toEqual(['second'])
-      expect(result).toEqual({ ok: true })
+      await expect(
+        service.call(config.name, 'second', {}, { origin: 'internal' })
+      ).resolves.toEqual({ ok: true })
+      expect(calls).toEqual(['second'])
     } finally {
-      await manager.closeAll()
-      await server.close()
-    }
-  })
-  it('C02 stops a repeated cursor without returning a partial tool list', async () => {
-    const server = new Server(
-      { name: 'cyclic-server', version: '1' },
-      { capabilities: { tools: {} } }
-    )
-    const requests = vi.fn(async () => ({ tools: [], nextCursor: 'same' }))
-    server.setRequestHandler(ListToolsRequestSchema, requests)
-    const manager = new McpClientManager({ createClient: () => connect(server) })
-    try {
-      await expect(manager.listTools(config)).rejects.toThrow('repeated a cursor')
-      expect(requests).toHaveBeenCalledTimes(2)
-    } finally {
-      await manager.closeAll()
-      await server.close()
-    }
-  })
-
-  it('C02 passes cancellation to later discovery pages', async () => {
-    const controller = new AbortController()
-    const server = new Server(
-      { name: 'cancel-server', version: '1' },
-      { capabilities: { tools: {} } }
-    )
-    server.setRequestHandler(ListToolsRequestSchema, async ({ params }) => {
-      if (params?.cursor) controller.abort()
-      return { tools: [], nextCursor: 'second' }
-    })
-    const list = vi.spyOn(Client.prototype, 'listTools')
-    const manager = new McpClientManager({ createClient: () => connect(server) })
-    try {
-      await expect(manager.listTools(config, controller.signal)).rejects.toThrow('AbortError')
-      expect(list).toHaveBeenCalledWith({ cursor: 'second' }, { signal: controller.signal })
-    } finally {
-      list.mockRestore()
       await manager.closeAll()
       await server.close()
     }

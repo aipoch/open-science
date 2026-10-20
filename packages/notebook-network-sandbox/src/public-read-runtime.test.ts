@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   ca: vi.fn(),
   bundle: vi.fn(),
   launch: vi.fn(),
+  wslLaunch: vi.fn(),
   close: vi.fn(async () => {}),
   resetConnections: vi.fn(),
   updateParentProxy: vi.fn()
@@ -31,6 +32,7 @@ vi.mock('../runtime/src/platform/linux-isolation.js', () => ({
   checkLinuxTools: vi.fn(),
   linuxLaunch: mocks.launch
 }))
+vi.mock('../runtime/src/platform/wsl2-isolation.js', () => ({ wsl2Launch: mocks.wslLaunch }))
 vi.mock('../runtime/src/platform/windows-appcontainer.js', () => ({
   checkWindowsAppContainer: async () => ({ errors: ['fixture standard mode'], warnings: [] }),
   windowsStandardLaunch: mocks.launch,
@@ -105,6 +107,99 @@ afterEach(async () => {
 })
 
 describe('public-read runtime decision lifecycle', () => {
+  it.each(['darwin', 'linux', 'win32'] as const)(
+    'limits independent admission to released native macOS resources (%s)',
+    async (platform) => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+      Object.defineProperty(process, 'platform', { value: platform })
+      try {
+        await wrap()
+        const result = await runtime.cleanupAfterCommand(commandId, 'cancel', {
+          processesTerminated: false
+        })
+        expect(result.processesTerminated).toBe(false)
+        expect(result.admission ?? 'blocked').toBe(
+          platform === 'darwin' ? 'independent-command-allowed' : 'blocked'
+        )
+        await expect(
+          runtime.cleanupAfterCommand(commandId, 'exit', { processesTerminated: true })
+        ).resolves.toMatchObject({ processesTerminated: true })
+      } finally {
+        Object.defineProperty(process, 'platform', descriptor)
+      }
+    }
+  )
+
+  it('keeps released WSL2 resources blocked while their process proof is unknown', async () => {
+    const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+    Object.defineProperty(process, 'platform', { value: 'win32' })
+    const release = vi.fn().mockResolvedValue({
+      processesTerminated: false,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
+    mocks.wslLaunch.mockResolvedValue({ argv: ['fixture'], env: {}, release, beginSpawn: vi.fn() })
+    try {
+      await runtime.wrap({
+        commandId,
+        command: 'fixture',
+        cwd: '/workspace',
+        env: {},
+        target: { kind: 'wsl2', profileId: 'test', distro: 'Ubuntu', user: 'test' },
+        filesystem: {
+          readOnlyRoots: [],
+          readWriteRoots: [],
+          deniedReadRoots: [],
+          deniedWriteRoots: []
+        }
+      })
+      const result = await runtime.cleanupAfterCommand(commandId, 'cancel', {
+        processesTerminated: false
+      })
+      expect(result.processesTerminated).toBe(false)
+      expect(result.admission ?? 'blocked').toBe('blocked')
+    } finally {
+      release.mockResolvedValue({
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      })
+      await runtime.cleanupAfterCommand(commandId, 'exit', { processesTerminated: true })
+      Object.defineProperty(process, 'platform', descriptor)
+    }
+  })
+
+  it.each(['network', 'trust'] as const)(
+    'blocks independent admission until macOS %s cleanup succeeds',
+    async (stage) => {
+      const descriptor = Object.getOwnPropertyDescriptor(process, 'platform')!
+      Object.defineProperty(process, 'platform', { value: 'darwin' })
+      const cleanup = vi
+        .fn()
+        .mockRejectedValueOnce(new Error('locked trust bundle'))
+        .mockResolvedValue(undefined)
+      if (stage === 'network') mocks.close.mockRejectedValueOnce(new Error('gateway close failed'))
+      else mocks.bundle.mockResolvedValueOnce({ path: resolve('fixture-ca.pem'), cleanup })
+      try {
+        await wrap()
+        const result = await runtime.cleanupAfterCommand(commandId, 'cancel', {
+          processesTerminated: false
+        })
+        expect(result.admission ?? 'blocked').toBe('blocked')
+        expect(result.processesTerminated).toBe(false)
+        await expect(
+          runtime.cleanupAfterCommand(commandId, 'cancel', { processesTerminated: false })
+        ).resolves.toMatchObject({
+          processesTerminated: false,
+          admission: 'independent-command-allowed'
+        })
+        await runtime.cleanupAfterCommand(commandId, 'exit', { processesTerminated: true })
+      } finally {
+        Object.defineProperty(process, 'platform', descriptor)
+      }
+    }
+  )
+
   it('closes networking and retains failed preparation cleanup for retry', async () => {
     const cleanup = vi
       .fn()

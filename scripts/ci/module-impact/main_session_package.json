@@ -43,7 +43,27 @@
     "src/main/session-package/validation.ts",
     "src/main/session-package/fork-session.test.ts",
     "src/main/session-package/fork-session.ts",
-    "src/main/session-package/fork.test.ts"
+    "src/main/session-package/fork.test.ts",
+    "src/main/session-package/ro-crate.ts",
+    "src/main/session-package/ro-crate.test.ts",
+    "src/main/session-package/ro-crate.integration.test.ts",
+    "src/main/session-package/sensitive-content.ts",
+    "src/main/session-package/sensitive-content.test.ts",
+    "src/main/session-package/json-syntax.ts",
+    "src/main/session-package/json-syntax.test.ts",
+    "src/main/session-package/pdf-notes.ts",
+    "src/main/session-package/literature-contract.ts",
+    "src/main/session-package/pdf-notes-contract.ts",
+    "src/main/session-package/records-contract.ts",
+    "src/main/session-package/reproducibility-contract.ts",
+    "src/main/session-package/browser-import.ts",
+    "src/main/session-package/browser-import.test.ts",
+    "src/main/session-package/browser-import-protocol.ts",
+    "src/main/session-package/browser-import-protocol.test.ts",
+    "src/main/session-package/browser-import-sdk.integration.test.ts",
+    "src/main/session-package/test-helpers/browser-import-port.ts",
+    "src/main/session-package/literature-source.ts",
+    "src/main/session-package/literature-source.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -52,7 +72,11 @@
     "src/main/session-package/inspection-worker.ts",
     "src/main/session-package/literature-reader.ts",
     "src/main/session-package/quit-guard.ts",
-    "src/main/session-package/service.ts"
+    "src/main/session-package/service.ts",
+    "src/main/session-package/pdf-notes.ts",
+    "src/main/session-package/browser-import.ts",
+    "src/main/session-package/browser-import-protocol.ts",
+    "src/main/session-package/literature-source.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -74,19 +98,31 @@
       "src/main/session-package/service.test.ts",
       "src/main/session-package/transfer.test.ts",
       "src/main/session-package/fork-session.test.ts",
-      "src/main/session-package/fork.test.ts"
+      "src/main/session-package/fork.test.ts",
+      "src/main/session-package/ro-crate.test.ts",
+      "src/main/session-package/ro-crate.integration.test.ts",
+      "src/main/session-package/sensitive-content.test.ts",
+      "src/main/session-package/json-syntax.test.ts",
+      "src/main/session-package/browser-import.test.ts",
+      "src/main/session-package/browser-import-protocol.test.ts",
+      "src/main/session-package/browser-import-sdk.integration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/renderer-contract-catalog.test.ts",
-      "src/shared/renderer-surface-matrix.test.ts"
+      "src/shared/renderer-surface-matrix.test.ts",
+      "src/main/session-package/literature-source.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
       "src/main/index-fatal-errors.test.ts",
       "src/main/index-startup-failure.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
-      "src/main/session-package/desktop-composition.test.ts"
+      "src/main/session-package/desktop-composition.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

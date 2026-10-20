@@ -2,7 +2,7 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { flushLogs, initLogger } from '../logger'
+import { flushLogs, initLogger } from '@aipoch/diagnostics/node'
 let diagnosticLogRoot: string | undefined
 afterAll(async () => {
   await flushLogs()
@@ -11,7 +11,7 @@ afterAll(async () => {
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
-import type { DiscoveredInterpreter } from './environment-discovery'
+import type { DiscoveredInterpreter } from '@aipoch/environment'
 
 const discoveryState = vi.hoisted(() => ({
   python: [] as DiscoveredInterpreter[],
@@ -21,10 +21,8 @@ const discoveryState = vi.hoisted(() => ({
   calls: [] as NotebookLanguage[]
 }))
 
-vi.mock('./environment-discovery', async (importOriginal) => ({
-  rscriptFor: (await importOriginal<typeof import('./environment-discovery')>()).rscriptFor,
-  windowsCondaPrefixForR: (await importOriginal<typeof import('./environment-discovery')>())
-    .windowsCondaPrefixForR,
+vi.mock('@aipoch/environment', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/environment')>()),
   defaultDiscoveryDeps: (
     runtimeRoot: string,
     getManualInterpreters: (language: NotebookLanguage) => string[]

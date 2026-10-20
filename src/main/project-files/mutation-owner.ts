@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto'
 import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ProjectFileSource } from '../../shared/project-files'
 import { PENDING_UPLOAD_SESSION_ID } from '../../shared/uploads'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   buildProjectCollisionFilters,
   describeError,

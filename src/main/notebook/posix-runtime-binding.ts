@@ -1,8 +1,8 @@
 import { posix } from 'node:path'
 
-import type { NotebookLanguage } from '../../shared/notebook'
+import { envDirectoryName, logicalEnvNameFromDirectory, resolveEnvName } from '@aipoch/environment'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { NotebookRuntimeBinding } from '../../shared/notebook-runtime'
-import { envDirectoryName, logicalEnvNameFromDirectory, resolveEnvName } from './runtime-paths'
 
 export type PosixManagedRuntimeLocation = {
   environment: string

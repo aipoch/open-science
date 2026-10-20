@@ -1,0 +1,3 @@
+{"name":"aligned timing uncertainties with optional speedup preserve rows","drift":0,"rows":4,"table":true}
+{"name":"two timing rows alone cannot prove a narrow table","drift":0,"rows":2,"table":false}
+{"name":"drifting uncertainty columns cannot prove a narrow table","drift":8,"rows":4,"table":false}

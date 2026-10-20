@@ -9,7 +9,9 @@ import {
   MessageScrollerContent
 } from '@/components/ui/message-scroller'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { Button } from '@/components/ui/button'
 import { WorkspaceMessageItem } from '@/pages/workspace/WorkspaceMessageItem'
+import { WorkspaceToolActivityRowButton } from '@/pages/workspace/WorkspaceToolActivityRowButton'
 import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   docToText,
@@ -31,6 +33,7 @@ import type { Annotation } from '../../../src/shared/annotations'
 import type { SessionPdfContextSource } from '../../../src/shared/session-persistence'
 
 initI18n('en')
+document.documentElement.classList.toggle('dark', new URLSearchParams(location.search).has('dark'))
 useSettingsStore.setState({ skillsLoaded: true })
 useNavigationStore.setState({
   activeProjectId: new URLSearchParams(location.search).get('project') ?? 'project'
@@ -140,6 +143,7 @@ const initialDraft: ComposerDraft = {
 
 export function ClipboardFixture(): React.JSX.Element {
   const [doc, setDoc] = useState(emptyDoc)
+  const [toolExpanded, setToolExpanded] = useState(true)
   const preview = usePreviewWorkbenchStore((state) =>
     state.items.find((item) => item.id === state.activeItemId)
   )
@@ -221,6 +225,37 @@ export function ClipboardFixture(): React.JSX.Element {
             }
           />
         </section>
+        {new URLSearchParams(location.search).has('keyboard') && (
+          <nav aria-label="Keyboard fixture controls" className="flex items-center gap-4">
+            <Button disabled>Unavailable action</Button>
+            <Button>After composer</Button>
+            <a href="#keyboard">Reference link</a>
+          </nav>
+        )}
+        {new URLSearchParams(location.search).has('keyboard') && (
+          <section aria-label="Tool focus fixture" className="overflow-hidden rounded-xl bg-bg-200">
+            <WorkspaceToolActivityRowButton
+              activity={{
+                id: 'reading',
+                kind: 'tool',
+                title: 'Reading',
+                status: 'completed',
+                eventIds: [],
+                sortIndex: 1,
+                createdAt: 1,
+                updatedAt: 1
+              }}
+              label="Reading"
+              subtitle="Find the conclusion"
+              isExpanded={toolExpanded}
+              panelClassName="relative mx-4 rounded-xl bg-bg-000 p-4 shadow-card"
+              panelTestId="reading-details"
+              onToggle={(_, expanded) => setToolExpanded(expanded)}
+            >
+              Search linked PDFs
+            </WorkspaceToolActivityRowButton>
+          </section>
+        )}
         {preview?.type === 'file' && (
           <section
             className="h-96 overflow-hidden rounded-xl border border-border"

@@ -1,0 +1,4 @@
+{"name": "restore-unique-supplementary-appendix-qualifier", "source": "See (Suppl. Appendix) for details.", "translation": "详情见（附录）。", "expected": "详情见（补充附录）。"}
+{"name": "restore-traditional-supplementary-appendix-qualifier", "source": "See (Supplementary Appendix) for details.", "translation": "詳情見（附錄）。", "expected": "詳情見（補充附錄）。"}
+{"name": "do-not-infer-among-two-appendices", "source": "See (Suppl. Appendix) and (Appendix) for details.", "translation": "详情见（附录）和附录。", "expected": "详情见（附录）和附录。"}
+{"name": "do-not-rewrite-numbered-appendix", "source": "See (Suppl. Appendix) for details.", "translation": "详情见（附录 A）。", "expected": "详情见（附录 A）。"}

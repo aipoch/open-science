@@ -1,0 +1,4 @@
+{"name": "wrap-linked-citations-after-chinese-semicolon", "separator": "\uff1b"}
+{"name": "wrap-linked-citations-after-chinese-comma", "separator": "\uff0c"}
+{"name": "wrap-linked-citations-after-semicolon", "separator": ";"}
+{"name": "wrap-linked-citations-after-comma", "separator": ","}

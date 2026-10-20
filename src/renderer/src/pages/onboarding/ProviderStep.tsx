@@ -423,7 +423,9 @@ const ProviderStep = ({
           {t('Connect a model')}
         </h2>
         <CardDescription className="text-xs leading-5">
-          {t('Choose the provider Open-Science should use for new research sessions.')}
+          {t(
+            'Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.'
+          )}
         </CardDescription>
       </CardHeader>
       <Separator className="bg-border-200" />
@@ -441,6 +443,7 @@ const ProviderStep = ({
             />
           ) : null}
           <ProviderForm
+            key={savedProviderId ?? 'new-provider'}
             value={formValue}
             onChange={(patch) =>
               setFormValue((current) => ({ ...current, ...patch, providerFormTouched: true }))
@@ -470,7 +473,7 @@ const ProviderStep = ({
           ) : null}
         </section>
       </CardContent>
-      <CardFooter className="mt-auto justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
+      <CardFooter className="sticky bottom-0 z-10 mt-auto flex-wrap justify-end gap-2 rounded-b-lg border-border-200 bg-bg-10 px-6 py-3">
         {isSaving && formValue.type === 'codex-isolated' ? (
           <Button type="button" variant="outline" onClick={() => void cancelCodexLogin()}>
             {t('Cancel sign-in')}

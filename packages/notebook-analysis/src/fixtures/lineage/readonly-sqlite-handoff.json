@@ -1,0 +1,19 @@
+{
+  "cells": [
+    {
+      "code": "import json\nimport sqlite3\nfrom pathlib import Path\nURI = 'file:inputs/observations.sqlite?mode=ro'\nRAW = Path('outputs/rows.json')\nREPORT = Path('outputs/report.json')",
+      "reads": [],
+      "writes": []
+    },
+    {
+      "code": "connection = sqlite3.connect(URI, uri=True)\nrows = connection.execute('SELECT label, value FROM observations')\nvalues = [{'label': label, 'value': value} for label, value in rows]\nconnection.close()\nRAW.write_text(json.dumps(values), encoding='utf-8')",
+      "reads": ["inputs/observations.sqlite"],
+      "writes": ["outputs/rows.json"]
+    },
+    {
+      "code": "values = json.loads(RAW.read_text(encoding='utf-8'))\nREPORT.write_text(json.dumps(values), encoding='utf-8')",
+      "reads": ["outputs/rows.json"],
+      "writes": ["outputs/report.json"]
+    }
+  ]
+}

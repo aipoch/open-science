@@ -1,0 +1,11 @@
+{"name":"limit operator is mathematical content","source":"= lim","sourceOnly":true}
+{"name":"named trigonometric function is mathematical content","source":"y = sin(x)","sourceOnly":true}
+{"name":"ordinary prose containing a named operator stays translatable","source":"The limit is stable as x approaches zero.","sourceOnly":false}
+{"name":"isolated-norm-with-index-has-no-prose","source":"‖gz,i‖2","sourceOnly":true}
+{"name":"isolated-power-and-index-has-no-prose","source":"h2s,j","sourceOnly":true}
+{"name":"infinity-subscript-has-no-prose","source":"C2∞","sourceOnly":true}
+{"name":"raised-numeric-axis-tick-has-no-prose","source":"10⁻³","sourceOnly":true}
+{"name":"norm-with-prose-remains-translatable","source":"The bounded vector hz obeys ‖hz‖2 ≤ C.","sourceOnly":false}
+{"name":"formula-condition-contains-translatable-connective","source":"For δ < 2","sourceOnly":false}
+{"name":"punctuated-formula-condition-contains-prose","source":". For α1, α2 ∈ [0, 1)","sourceOnly":false}
+{"name":"math-operator-alone-remains-untranslated","source":"max(x, y)","sourceOnly":true}

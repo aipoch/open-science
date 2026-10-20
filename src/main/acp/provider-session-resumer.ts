@@ -1,7 +1,6 @@
 import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, SessionConfigOption } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
-
 import type {
   AcpCreateSessionResponse,
   AcpResumeSessionRequest,
@@ -11,8 +10,8 @@ import {
   DEFAULT_PERMISSION_PROFILE,
   normalizePermissionProfile
 } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '../logger'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
+import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
@@ -544,7 +543,10 @@ export class AcpProviderSessionResumer {
           sessionId: request.sessionId,
           ...errorLogFields(error)
         })
-        return await this.adopt(request, connection, cwd, projectId, identity)
+        // Adoption now owns cleanup and releases identity even on failure. Do not catch its
+        // rejection below: checking that released reservation would mask the provider error as
+        // a superseded startup. resumeDetached still awaits this promise before final release.
+        return this.adopt(request, connection, cwd, projectId, identity)
       }
 
       provisionalSession = (
@@ -614,6 +616,7 @@ export class AcpProviderSessionResumer {
         aggregate.setSpecialistPrefix(specialistProjection.identity?.prefix || undefined)
         aggregate.setSpecialistId(specialistId)
         capability.commit(request.sessionId)
+        capability.registerBridgeMcpSession?.(request.sessionId, resumedProviderSessionId)
         capability = undefined
         provisionalSession = undefined
         identity.release()

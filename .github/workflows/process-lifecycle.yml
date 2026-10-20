@@ -1,0 +1,165 @@
+name: Process Lifecycle
+
+# Source-level lifecycle checks run even when the default-branch SHA is unchanged.
+# Resource profiling and packaged/OS-reboot certification keep their own workflows.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/process-lifecycle.yml'
+      - 'scripts/ci/process-lifecycle/**'
+      # Source owners, including the dynamically launched Notebook host.
+      - 'src/main/update/verification-process.ts'
+      - 'src/main/settings/workflows/connectors*.ts'
+      - 'packages/connector-mcp-client/**'
+      - 'src/main/delegation/**'
+      - 'src/main/process-tree*'
+      - 'packages/process-tree-native/**'
+      - 'src/main/notebook/*process*'
+      - 'resources/notebook/kernel_process_host.js'
+      - 'src/main/desktop-runtime*'
+      - 'src/main/desktop-connection*'
+      - 'src/main/desktop-startup-recovery*'
+      - 'src/main/runtime-*'
+      - 'src/main/backend-startup*'
+      - 'src/main/application-events*'
+      - 'src/main/credential-identity/**'
+      - 'src/main/legacy-service-termination*'
+      - 'src/main/windows-powershell*'
+      - 'src/main/system-boot-identity*'
+      - 'src/shared/desktop-runtime*'
+      # Dependency resolution, native preparation and dedicated Vitest setup.
+      - 'package.json'
+      - 'package-lock.json'
+      - '.nvmrc'
+      - 'vitest.config.ts'
+      - 'test/setup-*.ts'
+      - 'tsconfig*.json'
+      - 'patches/**'
+      - 'scripts/ci/npm-ci.mjs'
+      - 'scripts/build-*packages*'
+      - 'scripts/install-native-components.mjs'
+      - 'scripts/check-prisma-client.mjs'
+      - 'build/native-components-lock.json'
+      - 'prisma/**'
+  schedule:
+    - cron: '23 19 * * *' # UTC; 02:23 the next day in Asia/Saigon
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Focused no-publish dry-run (core includes detector negative controls)
+        type: choice
+        default: core
+        options: [core, detector]
+      platform:
+        description: Native runner selection
+        type: choice
+        default: all
+        options: [all, macos, linux, windows]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: process-lifecycle-${{ github.event_name }}-${{ github.ref }}-${{ inputs.platform || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  lifecycle:
+    name: Lifecycle (${{ matrix.platform }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - {
+              platform: macos,
+              os: macos-latest,
+              python: python3,
+              python_path: ./.scratch/lifecycle-python/bin/python
+            }
+          - {
+              platform: linux,
+              os: ubuntu-latest,
+              python: python3,
+              python_path: ./.scratch/lifecycle-python/bin/python
+            }
+          - {
+              platform: windows,
+              os: windows-latest,
+              python: python,
+              python_path: ./.scratch/lifecycle-python/Scripts/python.exe
+            }
+    env:
+      CI: 'true'
+      LIFECYCLE_PYTHON: ${{ matrix.python_path }}
+      LIFECYCLE_OUTPUT: test-results/process-lifecycle
+      LIFECYCLE_MODE: ${{ inputs.mode || 'core' }}
+    steps:
+      - name: Checkout
+        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - name: Setup Node
+        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Prepare independent OS observer
+        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: |
+          ${{ matrix.python }} -m venv .scratch/lifecycle-python
+          ${{ matrix.python_path }} -m pip install psutil==7.1.0
+      - name: Install source dependencies
+        if: (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform) && inputs.mode != 'detector'
+        run: node scripts/ci/npm-ci.mjs
+      - name: Run lifecycle checks
+        if: github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform
+        run: node scripts/ci/process-lifecycle/run.mjs ${{ env.LIFECYCLE_MODE }}
+      - name: Upload process evidence
+        if: always() && (github.event_name != 'workflow_dispatch' || inputs.platform == 'all' || inputs.platform == matrix.platform)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: process-lifecycle-${{ matrix.platform }}-${{ github.run_attempt }}
+          path: test-results/process-lifecycle/**/*.json
+          retention-days: 14
+          if-no-files-found: error
+
+  report:
+    name: Report scheduled outcome
+    needs: lifecycle
+    if: ${{ always() && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Checkout reporter
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/ci/report-scheduled-failure.mjs
+          sparse-checkout-cone-mode: false
+      - name: Open, refresh, or close the tracking issue
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          CONCLUSION: ${{ needs.lifecycle.result == 'success' && 'success' || 'failure' }}
+        with:
+          script: |
+            const { reportScheduledOutcome } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/report-scheduled-failure.mjs`)
+            await reportScheduledOutcome({
+              github,
+              repo: context.repo,
+              workflowFile: 'process-lifecycle.yml',
+              workflowName: context.workflow,
+              runId: context.runId,
+              runUrl: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+              runAttempt: Number(process.env.GITHUB_RUN_ATTEMPT),
+              headSha: context.sha,
+              conclusion: process.env.CONCLUSION,
+              log: core.info
+            })

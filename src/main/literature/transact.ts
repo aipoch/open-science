@@ -1,6 +1,9 @@
-import type { LiteratureCatalogCommand, LiteratureCatalogReceipt } from '../../shared/literature'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type {
+  LiteratureCatalogCommand,
+  LiteratureCatalogReceipt
+} from '@aipoch/literature-library/contracts'
 import type { ContentRepository } from '../storage/content-repository'
-import { createLogger, errorLogFields } from '../logger'
 import type { LiteratureCatalog } from './catalog'
 
 const literatureContextLog = createLogger('literature-reading-context')

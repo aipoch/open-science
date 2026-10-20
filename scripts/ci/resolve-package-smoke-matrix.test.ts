@@ -11,6 +11,11 @@ import {
 const scriptPath = fileURLToPath(new URL('./resolve-package-smoke-matrix.mjs', import.meta.url))
 
 describe('package-smoke matrix resolution', () => {
+  it('selects a native ARM64 Linux runner', () => {
+    expect(JSON.parse(resolvePackageSmokeMatrix('linux-arm64'))).toEqual({
+      include: [{ name: 'linux-arm64', os: 'ubuntu-24.04-arm', platform: 'linux' }]
+    })
+  })
   it('emits a single-line GitHub Actions matrix for the unfiltered Nightly path', () => {
     const encoded = resolvePackageSmokeMatrix('')
     expect(encoded).not.toMatch(/\n|\r/)

@@ -1,0 +1,4 @@
+{"name":"tall-footnote-hit-area-keeps-native-marker-and-translates-affiliation","baseline":690,"translated":true}
+{"name":"cjk-ink-uses-owned-line-space-below-footnote-hit-area","baseline":692.8,"translated":true}
+{"name":"footnote-hit-area-needing-excessive-baseline-shift-keeps-original","baseline":695,"translated":false}
+{"name":"footnote-hit-area-outside-horizontal-owner-keeps-original","baseline":690,"outsideX":true,"translated":false}

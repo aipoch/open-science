@@ -12,11 +12,12 @@ import {
   type ReactElement
 } from 'react'
 
-import { useSessionStore } from '@/stores/session-store'
-import { useProjectStore } from '@/stores/project-store'
-import { useSpecialistStore } from '@/stores/specialist-store'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { useProjectStore } from '@/stores/project-store'
+import { useSessionStore } from '@/stores/session-store'
+import { useSpecialistStore } from '@/stores/specialist-store'
 
+import type { MessageQueuePhase } from './composer-contract'
 import { useOpenSideChatParentSessionIds } from './use-side-chat-controller'
 import {
   enqueueApplicationMessage,
@@ -26,9 +27,8 @@ import {
 import { drainQueuedSessions, sendQueuedItemNow } from './workspace-message-queue-drain'
 import {
   WorkspaceMessageQueueOwner,
-  type MessageQueueAdmission,
   type ApplicationMessageQueueAdmission,
-  type MessageQueuePhase,
+  type MessageQueueAdmission,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 import {
@@ -287,14 +287,14 @@ const useWorkspaceMessageQueueController = (
 }
 
 export {
-  useWorkspaceMessageQueueController,
   useWorkspaceApplicationMessageAdmission,
+  useWorkspaceMessageQueueController,
   WorkspaceMessageQueueProvider,
   WorkspaceMessageQueueRuntimeBridge
 }
 export type {
-  MessageQueueAdmission,
   ApplicationMessageQueueAdmission,
+  MessageQueueAdmission,
   MessageQueueItemView,
   MessageQueuePhase,
   WorkspaceMessageQueueController,

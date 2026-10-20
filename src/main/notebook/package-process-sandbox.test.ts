@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { sandboxedPackageSpawn } from './package-process-sandbox'
 import type { NotebookProcessSandbox } from './process-sandbox'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 const temporaryDirectories: string[] = []
 
@@ -16,6 +17,42 @@ afterEach(() => {
 })
 
 describe('sandboxedPackageSpawn', () => {
+  it('passes GUI-authorized roots to the package sandbox with their access mode', async () => {
+    const storageRoot = mkdtempSync(join(tmpdir(), 'open-science-package-grants-'))
+    const runtimeRoot = join(storageRoot, 'runtime')
+    const grantedRoot = join(storageRoot, 'authorized-runtime')
+    mkdirSync(runtimeRoot)
+    mkdirSync(grantedRoot)
+    temporaryDirectories.push(storageRoot)
+    const grantedRoots: GrantedLocalRoot[] = [
+      { id: 'rw-root', path: grantedRoot, name: 'authorized-runtime', access: 'rw' },
+      { id: 'ro-root', path: join(storageRoot, 'read-only'), name: 'read-only', access: 'ro' }
+    ]
+    const processSandbox: NotebookProcessSandbox = {
+      wrap: vi.fn(async (invocation) => ({
+        executable: invocation.executable,
+        args: invocation.args,
+        env: invocation.env,
+        annotateStderr: (stderr: string) => stderr,
+        cleanup: vi.fn()
+      }))
+    }
+    const spawn = sandboxedPackageSpawn({
+      processSandbox,
+      request: { language: 'python', packages: [] },
+      runtimeRoot,
+      storageRoot,
+      platform: 'win32',
+      getGrantedLocalRoots: async () => grantedRoots
+    })
+
+    await spawn(process.execPath, ['-e', ''], {})
+
+    const filesystem = vi.mocked(processSandbox.wrap).mock.calls[0]![0].filesystem
+    expect(filesystem.readWriteRoots).toContain(grantedRoot)
+    expect(filesystem.readOnlyRoots).toContain(grantedRoots[1]!.path)
+  })
+
   it.each(
     process.platform === 'win32'
       ? [

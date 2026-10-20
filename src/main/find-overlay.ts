@@ -4,7 +4,11 @@ import {
   WINDOW_FIND_SHOW_CHANNEL,
   type WindowFindAppearance
 } from '../shared/window-controls'
-import { unregisterFindOverlayOwner, type FindOverlayOwner } from './find-overlay-registry'
+import {
+  resolveFindOverlayOwner,
+  unregisterFindOverlayOwner,
+  type FindOverlayOwner
+} from './find-overlay-registry'
 
 // Preferred geometry for the find overlay, in CSS pixels. 420px ~ 26rem at the app's 16px base.
 const OVERLAY_WIDTH = 420
@@ -40,6 +44,7 @@ type OverlayView = {
   webContents: OverlayWebContents
   setBounds(bounds: { x: number; y: number; width: number; height: number }): void
   setBackgroundColor(color: string): void
+  setVisible(visible: boolean): void
 }
 
 // The main window the overlay searches and attaches to. Structural for the same testability reason.
@@ -84,10 +89,9 @@ const LIGHT_BACKGROUND = '#fafaf8'
 const DARK_BACKGROUND = '#1a1a18'
 
 // Owns the find overlay WebContentsView for one main window. The view is created lazily on first open
-// and stays attached for the life of the window: open/close toggle its bounds (real vs. zero) rather
-// than attaching/detaching, which keeps the overlay's webContents — and its remembered query — alive
-// across open/close cycles. The overlay is a separate webContents from the main window's, so its own
-// query text is never part of the main window's page search.
+// and stays attached for the life of the window: open/close toggle its visibility and bounds while
+// keeping its webContents — and remembered query — alive across cycles. The overlay is a separate
+// webContents from the main window's, so its own query text is never part of the main window's search.
 export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayManager => {
   let view: OverlayView | null = null
   let loadPromise: Promise<void> | null = null
@@ -111,6 +115,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
     if (!view) return
     const { width } = deps.mainWindow.getContentBounds()
     view.setBounds(computeOverlayBounds(width))
+    view.setVisible(true)
   }
 
   const onResize = (): void => {
@@ -121,10 +126,15 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
   const close = (): void => {
     if (!opened) return
     opened = false
+    // macOS can still draw a zero-sized WebContentsView at the window origin.
+    view?.setVisible(false)
     view?.setBounds(ZERO_BOUNDS)
-    deps.mainWindow.webContents.stopFindInPage('clearSelection')
+    const clearSearch = view && resolveFindOverlayOwner(view.webContents)?.clearSearch
+    if (clearSearch) clearSearch()
+    else deps.mainWindow.webContents.stopFindInPage('clearSelection')
     deps.mainWindow.webContents.send(WINDOW_FIND_HIDE_CHANNEL)
-    deps.mainWindow.webContents.focus()
+    const focusSource = view && resolveFindOverlayOwner(view.webContents)?.focusSource
+    if (!focusSource || !focusSource()) deps.mainWindow.webContents.focus()
   }
 
   const appearancesEqual = (left: WindowFindAppearance, right: WindowFindAppearance): boolean =>
@@ -149,6 +159,7 @@ export const createFindOverlayManager = (deps: FindOverlayDeps): FindOverlayMana
           webPreferences: { preload: deps.preloadPath, sandbox: true, contextIsolation: true }
         })
         const pendingView = view
+        pendingView.setVisible(false)
         pendingView.setBounds(ZERO_BOUNDS)
         pendingView.setBackgroundColor(backgroundFor(cachedAppearance))
         const firstLoad = view.webContents.loadFile(deps.overlayHtmlPath)

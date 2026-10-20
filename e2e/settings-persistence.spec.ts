@@ -1,10 +1,16 @@
 import { getSettingsPage } from './fixtures/settings-window'
-import { localizedSettingsCases } from './fixtures/localized-settings'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { sendPrompt } from './certification/helpers'
 import { test } from './fixtures/electron-app'
-import { openGeneralSettings, setTheme } from './fixtures/settings-preferences'
+import {
+  openSettingsPage,
+  selectLanguage,
+  openGeneralSettings,
+  setTheme
+} from './fixtures/settings-preferences'
+import { createProjectViaUi } from './fixtures/project'
+import { localizedSettingsCases } from './fixtures/localized-settings'
 
 // file:// modules do not reliably populate Resource Timing. CDP reports the scripts Chromium
 // actually parsed, including those loaded before the test attached to the restarted window.
@@ -36,15 +42,6 @@ const expectMemoryConfirmDialogChrome = async (
   )
 }
 
-const selectLanguage = async (page: Page, label: string): Promise<void> => {
-  const settings = await openGeneralSettings(page)
-  await settings.getByRole('combobox', { name: 'Interface language' }).click()
-  await (await getSettingsPage(page)).getByRole('option', { name: label, exact: true }).click()
-  // The dialog name changes with the locale; use Escape rather than the old English close label.
-  await (await getSettingsPage(page)).keyboard.press('Escape')
-  await expect((await getSettingsPage(page)).getByRole('dialog')).toBeHidden()
-}
-
 test('persists the selected theme after closing settings and relaunching', async ({ app }) => {
   let page = await app.completeOnboarding()
 
@@ -68,12 +65,7 @@ test('persists editable memory across an application restart', async ({ app }) =
   await page.reload({ waitUntil: 'domcontentloaded' })
 
   const openMemory = async (): Promise<Locator> => {
-    await page.getByRole('button', { name: 'Model settings' }).click()
-    const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-    await settings
-      .getByRole('navigation', { name: 'Settings' })
-      .getByRole('button', { name: 'Memory', exact: true })
-      .click()
+    const settings = await openSettingsPage(page, 'Memory')
     return settings
   }
 
@@ -143,10 +135,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
   await page.reload({ waitUntil: 'domcontentloaded' })
 
   const projectName = 'Memory project scope'
-  await page.getByRole('button', { name: 'New project' }).click()
-  const createProject = page.getByRole('dialog', { name: 'New project' })
-  await createProject.getByLabel('Name').fill(projectName)
-  await createProject.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, projectName)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   await page.evaluate(async () => {
@@ -170,12 +159,7 @@ test('shows project-scoped memory and opens its project from Settings', async ({
     })
   })
 
-  await page.getByRole('button', { name: 'Settings', exact: true }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Memory', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Memory')
   await settings.getByRole('button', { name: projectName, exact: false }).click()
 
   const entry = settings
@@ -212,10 +196,7 @@ test('injects recent auto-recall memory after reopen into an unrelated Agent tur
   })
   page = await app.restart()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Memory recall project')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Memory recall project')
   await sendPrompt(
     page,
     'Verify automatic memory recall.',
@@ -232,12 +213,7 @@ test('contains long memory lists and layers destructive confirmations above sett
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
 
-  await page.getByRole('button', { name: 'Model settings' }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Memory', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Memory')
 
   await settings.getByRole('button', { name: 'New category' }).click()
   const create = settings.getByRole('button', { name: 'Create', exact: true })
@@ -306,7 +282,7 @@ test('contains long memory lists and layers destructive confirmations above sett
     .locator('[data-slot="memory-entry"]')
     .filter({ hasText: 'Overflow note 24' })
   await lastNoteRow.hover()
-  await expect(settings).toHaveCSS('z-index', '50')
+  await expect(settings).toHaveCSS('z-index', '60')
   await lastNoteRow.getByRole('button', { name: 'Delete note' }).click()
   const noteDialog = (await getSettingsPage(page)).getByRole('alertdialog', {
     name: 'Delete note?'
@@ -425,12 +401,7 @@ test('preserves Memory drafts and shows externally saved values on conflict', as
     })
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
-  await page.getByRole('button', { name: 'Model settings' }).click()
-  const settings = (await getSettingsPage(page)).getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Memory', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Memory')
   await settings.getByText('Original note', { exact: true }).hover()
   await settings.getByRole('button', { name: 'Edit note' }).click()
   await settings

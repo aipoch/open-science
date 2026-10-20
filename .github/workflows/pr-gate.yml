@@ -20,7 +20,9 @@ on:
           - i18n
           - runtime-bundle
           - windows-e2e
+          - windows-e2e-mainline
           - windows-process
+          - windows-notebook-runtime
           - e2e
           - source-regressions
           - macos-smoke
@@ -46,9 +48,12 @@ jobs:
     timeout-minutes: 2
     outputs:
       base: ${{ steps.revisions.outputs.base }}
+      trusted_base: ${{ steps.revisions.outputs.trusted-base }}
       head: ${{ steps.revisions.outputs.head }}
       lanes: ${{ steps.classify.outputs.lanes }}
       plan: ${{ steps.classify.outputs.plan }}
+      windows_e2e_grep: ${{ steps.windows_mainline.outputs.grep }}
+      portable_matrix: ${{ steps.portable_matrix.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -57,9 +62,9 @@ jobs:
           persist-credentials: false
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Resolve changed revisions
         id: revisions
@@ -163,7 +168,33 @@ jobs:
           for file in "${required[@]}"; do
             git show "${BASE_SHA}:${file}" > "$trusted_dir/${file##*/}"
           done
+          # Optional on older bases; a missing selection retains every legacy check.
+          for file in windows-core-plan.mjs windows-core-checks.json; do
+            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
+              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
+            fi
+          done
+          # Newer trusted selectors validate additive registration blobs as data.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/module-impact-inputs.mjs" > "$trusted_dir/module-impact-inputs.mjs"
+          fi
+          # The ownership helper is additive; older trusted bases keep their legacy module reader.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/module-ownership-paths.mjs" > "$trusted_dir/module-ownership-paths.mjs"
+          fi
+          # Derived evidence stays JSON-only in preflight; Integrity recomputes it from Git blobs.
+          for file in module-derived-consumers.mjs module-derived-consumers.json; do
+            if git cat-file -e "${BASE_SHA}:scripts/ci/$file" 2>/dev/null; then
+              git show "${BASE_SHA}:scripts/ci/$file" > "$trusted_dir/$file"
+            fi
+          done
           # Older trusted bases predate the loader; retain their original classifier.
+          if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-impact.mjs" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/package-test-impact.mjs" > "$trusted_dir/package-test-impact.mjs"
+          fi
+          if git cat-file -e "${BASE_SHA}:scripts/ci/package-test-boundaries.json" 2>/dev/null; then
+            git show "${BASE_SHA}:scripts/ci/package-test-boundaries.json" > "$trusted_dir/package-test-boundaries.json"
+          fi
           if git cat-file -e "${BASE_SHA}:scripts/ci/load-module-impact.mjs" 2>/dev/null; then
             git show "${BASE_SHA}:scripts/ci/load-module-impact.mjs" > "$trusted_dir/load-module-impact.mjs"
             # Materialize the trusted manifest through its reader. Never execute candidate code.
@@ -267,6 +298,12 @@ jobs:
             echo "lanes=$(node -e 'console.log(JSON.stringify(JSON.parse(process.argv[1]).lanes))' "$plan")" >> "$GITHUB_OUTPUT"
             exit 0
           fi
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-notebook-runtime" ]]; then
+            plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-notebook-runtime"],"lanes":["policy","windows_runtime"],"bundles":["policy","windows_core"],"reasonChains":["workflow_dispatch windows-notebook-runtime -> pinned runtime build and Windows core checks"]}'
+            echo "plan=$plan" >> "$GITHUB_OUTPUT"
+            echo 'lanes=["policy","windows_runtime"]' >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
           if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-process" ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-process"],"lanes":["policy","windows_runtime"],"bundles":["policy","windows_core"],"reasonChains":["workflow_dispatch windows-process -> delegated native process ownership dry-run"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
@@ -274,7 +311,7 @@ jobs:
             printf '%s\n' '## PR Gate preflight' '' '- Focused dry-run: delegated Windows process ownership' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" == "windows-e2e" ]]; then
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && ( "$DRY_RUN_MODE" == "windows-e2e" || "$DRY_RUN_MODE" == "windows-e2e-mainline" ) ]]; then
             plan='{"schemaVersion":1,"mode":"selective","roots":["manual:windows-e2e"],"lanes":["policy","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"],"bundles":["policy","windows_e2e"],"reasonChains":["workflow_dispatch windows-e2e -> focused dry-run"]}'
             echo "plan=$plan" >> "$GITHUB_OUTPUT"
             echo 'lanes=["policy","e2e_functional_windows","e2e_workspace_windows","e2e_browser_windows"]' >> "$GITHUB_OUTPUT"
@@ -352,6 +389,101 @@ jobs:
           }
           NODE
 
+      - name: Select portable runners from trusted package policy
+        id: portable_matrix
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.revisions.outputs.trusted-base }}
+          TRUSTED_CLASSIFIER_DIR: ${{ steps.trusted_classifier.outputs.dir }}
+        run: |
+          node --input-type=module <<'NODE'
+          import { execFileSync } from 'node:child_process'
+          import { appendFileSync, existsSync } from 'node:fs'
+          import { join } from 'node:path'
+          import { pathToFileURL } from 'node:url'
+
+          const selector = join(process.env.TRUSTED_CLASSIFIER_DIR, 'package-test-impact.mjs')
+          let packages = true
+          let reason = 'manual validation or unavailable trusted policy: include package runners'
+          if (['pull_request', 'merge_group'].includes(process.env.EVENT_NAME) && existsSync(selector)) {
+            const { packageTestPlanFromRevisions } = await import(pathToFileURL(selector).href)
+            const { fixtureTestPatterns } = await import(pathToFileURL(
+              join(process.env.TRUSTED_CLASSIFIER_DIR, 'classify-pr-changes.mjs')
+            ).href)
+            const git = (...args) => execFileSync('git', args, { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+            const base = git('merge-base', process.env.BASE_SHA, process.env.HEAD_SHA).trim()
+            const paths = [
+              ...git('diff', '--name-only', '--no-renames', '-z', base, process.env.HEAD_SHA).split('\0'),
+              ...git('diff', '--name-only', '--no-renames', '-z', process.env.HEAD_SHA, 'HEAD').split('\0')
+            ].filter(Boolean)
+            const plan = packageTestPlanFromRevisions(
+              process.env.BASE_SHA, process.env.HEAD_SHA, process.env.TRUSTED_BASE_SHA
+            )
+            // Dedicated packages and registered fixture readers also live in the package scope.
+            packages = plan.selected.length > 0 || paths.some(path =>
+              path.startsWith('packages/') || fixtureTestPatterns(path).some(test => test.startsWith('packages/'))
+            )
+            reason = packages ? 'affected package sources, shared inputs or fixture readers' : 'no affected packages: skip package runners'
+          }
+          const include = [
+            ...[1, 2, 3, 4].map(shard => ({ scope: 'host', shard, total: 4 })),
+            ...(packages ? [1, 2].map(shard => ({ scope: 'packages', shard, total: 2 })) : [])
+          ]
+          appendFileSync(process.env.GITHUB_OUTPUT, `matrix=${JSON.stringify({ include })}\n`)
+          appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Portable runners\n\n- ${reason}\n`)
+          NODE
+
+      - name: Select Windows mainline journeys
+        id: windows_mainline
+        shell: bash
+        env:
+          BASE_SHA: ${{ steps.revisions.outputs.base }}
+          HEAD_SHA: ${{ steps.revisions.outputs.head }}
+          TRUSTED_BASE_SHA: ${{ steps.revisions.outputs.trusted-base }}
+          TRUSTED_DIR: ${{ steps.trusted_classifier.outputs.dir }}
+          EVENT_NAME: ${{ github.event_name }}
+          DRY_RUN_MODE: ${{ inputs.dry_run || 'classified' }}
+        run: |
+          set -euo pipefail
+          selector=scripts/ci/windows-e2e-mainline.mjs
+          if [[ "$EVENT_NAME" == "workflow_dispatch" && "$DRY_RUN_MODE" != "classified" ]] || ! git cat-file -e "$TRUSTED_BASE_SHA:$selector" 2>/dev/null; then
+            # The introducing PR cannot execute its own untrusted selection policy.
+            # Conservatively run every mainline group, never complete regression suites.
+            echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'Windows E2E: all mainline groups (manual run or trusted selector not yet available).' >> "$GITHUB_STEP_SUMMARY"
+          else
+            git show "$TRUSTED_BASE_SHA:$selector" > "$TRUSTED_DIR/windows-e2e-mainline.mjs"
+            node "$TRUSTED_DIR/windows-e2e-mainline.mjs"
+          fi
+          # Package documentation can retain domain checks while the focused selector skips Markdown.
+          # Preserve every mainline group if the plan still selects the Windows E2E job.
+          if ! grep -q '^grep=.' "$GITHUB_OUTPUT"; then
+            echo 'grep=@pr-mainline-(projects|conversation|files|notebook|windows)(\s|$)' >> "$GITHUB_OUTPUT"
+            echo 'Windows E2E: no focused journeys; retain all mainline groups if the job is selected.' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  registration:
+    name: Impact registration
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install registration toolchain
+        # Static source/manifest checks only; no application install or native/package builds.
+        run: npm ci --ignore-scripts --no-audit
+      - name: Check impact registration
+        run: npx vitest run --config scripts/ci/vitest.registration.config.ts
+
   policy:
     name: PR policy
     needs: preflight
@@ -365,9 +497,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Review dependency changes
         if: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
         uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
@@ -393,17 +525,43 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
           persist-credentials: false
-      - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - name: Check GitHub Actions correctness
+        id: actionlint
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/actionlint.tar.gz"
+          curl --fail --location --show-error --silent \
+            --connect-timeout 30 --max-time 120 --retry 3 --retry-delay 5 \
+            https://github.com/rhysd/actionlint/releases/download/v1.7.12/actionlint_1.7.12_linux_amd64.tar.gz \
+            --output "$archive"
+          echo "8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8  $archive" \
+            | sha256sum --check --strict
+          tar -xzf "$archive" -C "$RUNNER_TEMP" actionlint
+          # Keep this gate scoped to workflow YAML, expressions, and action schemas. Optional
+          # ShellCheck/Pyflakes integrations vary with runner images and have separate baselines.
+          "$RUNNER_TEMP/actionlint" -color -shellcheck= -pyflakes=
+      - name: Audit GitHub Actions security with zizmor
+        continue-on-error: true
+        uses: zizmorcore/zizmor-action@cc914d7f3750a2d13d75c7f184a1060aa0e9d482 # v0.6.4
         with:
-          node-version: 22
+          advanced-security: false
+          annotations: true
+          min-confidence: high
+          min-severity: medium
+          version: v1.30.1
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -441,15 +599,17 @@ jobs:
           failed=0
           node_outcome=skipped
           web_outcome=skipped
+          # Both checks read the same package declarations. Finish their only writer first.
+          npm run build:packages || exit "$?"
           node_log="$RUNNER_TEMP/typecheck-node.log"
           web_log="$RUNNER_TEMP/typecheck-web.log"
 
           if [[ "$RUN_TYPECHECK_NODE" == "true" ]]; then
-            npm run typecheck:node >"$node_log" 2>&1 &
+            npm run typecheck:node:compiled >"$node_log" 2>&1 &
             node_pid=$!
           fi
           if [[ "$RUN_TYPECHECK_WEB" == "true" ]]; then
-            npm run typecheck:web >"$web_log" 2>&1 &
+            npm run typecheck:web:compiled >"$web_log" 2>&1 &
             web_pid=$!
           fi
 
@@ -470,10 +630,12 @@ jobs:
           echo "web=$web_outcome" >> "$GITHUB_OUTPUT"
           exit "$failed"
       - name: Check complete module ownership and consumer evidence
-        # Full portable shards already run these guards. Selective source plans must also
-        # detect newly introduced imports that make their checked-in consumer evidence stale.
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' }}
+        # Registration/full plans include these guards in the contract suite below.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}
         run: npx vitest run scripts/ci/audit-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+      - name: Check module registration policy and architecture contracts
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        run: node scripts/ci/module-registration-tests.mjs
       - name: Check interface contract baseline (shadow)
         id: interface_contracts
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'interface_contracts') }}
@@ -493,40 +655,20 @@ jobs:
               src/shared/renderer-surface-matrix.test.ts \
               src/shared/web-rpc-contract.test.ts
           fi
-      - name: Test CLI and SDK
-        id: cli_sdk
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
-        continue-on-error: true
-        env:
-          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
-        run: |
-          if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
-            npx vitest run cli packages/open-science
-          fi
-          npm run check:cli-package
       - name: Check i18n catalog
         id: i18n
         if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'i18n') }}
         continue-on-error: true
         run: npx vitest run src/renderer/src/i18n/resources.test.ts
-      - name: Verify published runtime bundle
-        id: runtime_bundle
-        # Trusted-base classification cannot name a lane that does not exist on main yet, so the
-        # introducing PR's full plan would otherwise skip this check. After merge, version-file
-        # changes select the overlay lane; full plans keep fail-closed CDN coverage.
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
-        continue-on-error: true
-        run: node scripts/verify-runtime-bundle.mjs linux-64 osx-arm64 osx-64 win-64
       - name: Enforce selected static checks
         if: ${{ always() }}
         shell: bash
         env:
-          CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
+          ACTIONLINT_OUTCOME: ${{ steps.actionlint.outcome }}
           DOCS_OUTCOME: ${{ steps.docs.outcome }}
           FORMAT_OUTCOME: ${{ steps.format.outcome }}
           I18N_OUTCOME: ${{ steps.i18n.outcome }}
           INTERFACE_CONTRACTS_OUTCOME: ${{ steps.interface_contracts.outcome }}
-          RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
           LINT_OUTCOME: ${{ steps.lint.outcome }}
           TYPECHECK_NODE_OUTCOME: ${{ steps.typechecks.outputs.node }}
           TYPECHECKS_OUTCOME: ${{ steps.typechecks.outcome }}
@@ -540,6 +682,7 @@ jobs:
               failed=1
             fi
           }
+          check actionlint "$ACTIONLINT_OUTCOME"
           check docs "$DOCS_OUTCOME"
           check format "$FORMAT_OUTCOME"
           check lint "$LINT_OUTCOME"
@@ -547,24 +690,135 @@ jobs:
           check typecheck_web "$TYPECHECK_WEB_OUTCOME"
           check typechecks "$TYPECHECKS_OUTCOME"
           check interface_contracts "$INTERFACE_CONTRACTS_OUTCOME"
-          check cli_sdk "$CLI_SDK_OUTCOME"
           check i18n "$I18N_OUTCOME"
-          check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
           exit "$failed"
 
+  runtime_checks:
+    name: CLI and runtime verification
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        env:
+          # CPU-only verification uses the bundled runtime, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
+        run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
+      - name: Test CLI and SDK
+        id: cli_sdk
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        continue-on-error: true
+        env:
+          RUN_DEDICATED_TESTS: ${{ fromJSON(needs.preflight.outputs.plan).mode != 'full' || !contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
+        run: |
+          if [[ "$RUN_DEDICATED_TESTS" == "true" ]]; then
+            npx vitest run cli packages/open-science
+          fi
+          npm run check:cli-package
+      - name: Verify published runtime bundle
+        id: runtime_bundle
+        # Trusted-base classification cannot name a lane that does not exist on main yet, so the
+        # introducing PR's full plan would otherwise skip this check. After merge, version-file
+        # changes select the overlay lane; full plans keep fail-closed CDN coverage.
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+        continue-on-error: true
+        run: node scripts/verify-runtime-bundle.mjs linux-64 linux-aarch64 osx-arm64 osx-64 win-64
+      - name: Setup Node 22 for CLI compatibility
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 22
+      - name: Test Node 22 CLI compatibility
+        id: cli_node22
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+        continue-on-error: true
+        # Full portable shards use Node 24 and cannot replace this compatibility check.
+        run: |
+          npx vitest run cli packages/open-science
+          npm run check:cli-package
+      - name: Enforce selected runtime checks
+        if: ${{ always() }}
+        shell: bash
+        env:
+          CLI_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') }}
+          BUNDLE_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full' }}
+          CLI_SDK_OUTCOME: ${{ steps.cli_sdk.outcome }}
+          CLI_NODE22_OUTCOME: ${{ steps.cli_node22.outcome }}
+          RUNTIME_BUNDLE_OUTCOME: ${{ steps.runtime_bundle.outcome }}
+        run: |
+          set -euo pipefail
+          failed=0
+          check() {
+            if [[ "$2" != "success" ]]; then
+              echo "$1 ended with $2" >&2
+              failed=1
+            fi
+          }
+          if [[ "$CLI_REQUIRED" == "true" ]]; then
+            check cli_sdk "$CLI_SDK_OUTCOME"
+            check cli_node22 "$CLI_NODE22_OUTCOME"
+          fi
+          if [[ "$BUNDLE_REQUIRED" == "true" ]]; then
+            check runtime_bundle "$RUNTIME_BUNDLE_OUTCOME"
+          fi
+          exit "$failed"
+
+  package_verification:
+    name: Affected installed packages (merge queue)
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && github.event_name == 'merge_group' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Select independent package verification from trusted policy
+        uses: ./.github/actions/select-package-tests
+        with:
+          verification: 'true'
+          base: ${{ needs.preflight.outputs.base }}
+          head: ${{ needs.preflight.outputs.head }}
+          trusted-base: ${{ needs.preflight.outputs.trusted_base }}
+      - name: Verify affected installed consumers
+        if: ${{ env.OPEN_SCIENCE_CI_SELECTED_PACKAGE_ROOTS != '[]' }}
+        uses: ./.github/actions/verify-packages
+        with:
+          selection: ci
+
   unit_shard:
-    name: Portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Portable ${{ matrix.scope }} tests (Ubuntu, shard ${{ matrix.shard }}/${{ matrix.total }})
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos')) }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    timeout-minutes: 25
+      OPEN_SCIENCE_CI_PORTABLE_SCOPE: ${{ matrix.scope }}
+    # Match source-regression's complete portable shards, including setup and report upload.
+    timeout-minutes: 40
     strategy:
       fail-fast: false
-      matrix:
-        shard: [1, 2, 3, 4]
+      matrix: ${{ fromJSON(needs.preflight.outputs.portable_matrix) }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -572,12 +826,19 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Select independent package tests from trusted policy
+        uses: ./.github/actions/select-package-tests
+        with:
+          enabled: ${{ github.event_name == 'pull_request' || github.event_name == 'merge_group' }}
+          base: ${{ needs.preflight.outputs.base }}
+          head: ${{ needs.preflight.outputs.head }}
+          trusted-base: ${{ needs.preflight.outputs.trusted_base }}
       - name: Test complete suite shard
         id: unit_macos_shard
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'full' || !contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -589,11 +850,11 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/${{ matrix.total }}
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Test affected Module shard
         id: unit_macos_related_shard
         if: ${{ fromJSON(needs.preflight.outputs.plan).mode == 'selective' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'unit_macos') }}
@@ -601,20 +862,21 @@ jobs:
         env:
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         run: >-
-          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --
+          npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective --
           --coverage.reporter=text-summary
           --testTimeout=30000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/${{ matrix.total }}
           --reporter=dot
           --reporter=blob
           --reporter=github-actions
-          --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
+          --outputFile=vitest-reports/blob-${{ matrix.scope }}-${{ matrix.shard }}.json
       - name: Upload full-suite blob report
         if: ${{ always() }}
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: unit-portable-blob-${{ matrix.shard }}
+          name: unit-portable-blob-${{ matrix.scope }}-${{ matrix.shard }}
           path: vitest-reports/
           retention-days: 1
           if-no-files-found: error
@@ -640,7 +902,7 @@ jobs:
     if: ${{ always() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') }}
     # PR and queue module coverage is portable. Darwin-only checks run inside the queue core job.
     # Manual plans retain their explicitly selected native runner.
-    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-14' }}
+    runs-on: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || needs.unit_shard.result != 'skipped' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && 'ubuntu-latest' || 'macos-15' }}
     timeout-minutes: 15
     steps:
       - name: Checkout
@@ -649,9 +911,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         if: ${{ needs.unit_shard.result == 'skipped' }}
@@ -667,12 +929,13 @@ jobs:
           VITEST_PORTABLE_CI: ${{ (github.event_name == 'pull_request' || github.event_name == 'merge_group' || fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke') && '1' || '0' }}
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # The module graph selects owner, contract, and consumer tests. Coverage remains scoped to
         # changed sources without handing test discovery back to Vitest's static --changed graph.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA"
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective
       - name: Download full-suite blob reports
         if: ${{ needs.unit_shard.result != 'skipped' }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           pattern: unit-portable-blob-*
           path: vitest-reports
@@ -694,12 +957,13 @@ jobs:
           VITEST_PORTABLE_CI: '1'
           BASE_SHA: ${{ needs.preflight.outputs.base }}
           HEAD_SHA: ${{ needs.preflight.outputs.head }}
+          TEST_TIER: ${{ github.event_name == 'pull_request' && 'pr' || 'queue' }}
         # Enforce changed-source thresholds only after all partial coverage maps are combined.
-        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" -- --merge-reports=vitest-reports --passWithNoTests
+        run: npm run test:affected -- --base "$BASE_SHA" --head "$HEAD_SHA" --coverage-changed "$BASE_SHA" --tier "$TEST_TIER" --require-selective -- --merge-reports=vitest-reports --passWithNoTests
       - name: Upload Module coverage report
         if: ${{ always() && (steps.unit_macos_related.outcome != 'skipped' || steps.unit_macos_full.outcome != 'skipped' || steps.unit_macos_related_merge.outcome != 'skipped') }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: coverage-report
           path: coverage/
@@ -737,25 +1001,32 @@ jobs:
     needs: preflight
     if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'linux_runtime') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install application dependencies
+        env:
+          # Notebook isolation uses bundled CPU binaries, not optional NuGet GPU providers.
+          ONNXRUNTIME_NODE_INSTALL: skip
         run: node scripts/ci/npm-ci.mjs
+      - name: Verify ONNX native loading
+        run: node -e "require('onnxruntime-node')"
       - name: Install Linux sandbox dependency
         shell: bash
+        env:
+          DEBIAN_FRONTEND: noninteractive
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap
+          sudo apt-get update -qq
+          sudo apt-get install --yes --no-install-recommends apparmor-profiles apparmor-utils bubblewrap
 
           apparmor_userns_restriction="$(
             sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
@@ -774,27 +1045,45 @@ jobs:
           packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
           packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
           src/main/session-plan/plan-context-file.shell.integration.test.ts
+          src/main/notebook/shell-cell-session.integration.test.ts
+
+  windows_notebook_runtime:
+    needs: preflight
+    if: ${{ needs.preflight.result == 'success' && ((contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process') || contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e')) }}
+    uses: ./.github/workflows/windows-notebook-runtime.yml
 
   windows_core:
     name: Windows core
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') }}
+    needs: [preflight, windows_notebook_runtime]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_core') && (needs.windows_notebook_runtime.result == 'success' || needs.windows_notebook_runtime.result == 'skipped') }}
     runs-on: windows-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
+      - name: Typecheck sandbox on Windows
+        if: ${{ inputs.dry_run != 'windows-process' }}
+        run: npm run typecheck:sandbox
+      - name: Download Windows Notebook runtime
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
       - name: Test delegated Windows process ownership
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+        id: windows_process
+        continue-on-error: true
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_process')) }}
         run: >-
           npx vitest run
           src/main/process-tree.windows.integration.test.ts
@@ -805,43 +1094,87 @@ jobs:
           --hookTimeout=30000
       - name: Test Windows sandbox native source
         id: windows_sandbox_source
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox_source')) }}
         continue-on-error: true
         run: cargo test --locked --manifest-path packages/notebook-network-sandbox/vendor/windows-src/Cargo.toml
       - name: Build Windows sandbox native host
         id: windows_sandbox_build
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox_build')) }}
         continue-on-error: true
         run: node packages/notebook-network-sandbox/vendor/windows/build.mjs x64
       - name: Upload rebuilt Windows sandbox native host
         if: ${{ steps.windows_sandbox_build.outcome == 'success' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: windows-sandbox-host-x64
           path: packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
           retention-days: 5
           if-no-files-found: error
+      - name: Prepare Windows update receipt compiler
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
+        run: >-
+          node -e "require('app-builder-lib/out/toolsets/windows').getMakeNsisPath().then(x => require('node:fs').appendFileSync(process.env.GITHUB_ENV, Object.entries({ ...x.env, NSIS_TEST_COMPILER: x.path }).map(([k, v]) => k + '=' + v).join('\n') + '\n'))"
       - name: Test Windows-specific behavior
         id: windows_runtime
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_runtime')) }}
         continue-on-error: true
         run: >-
           npx vitest run
           scripts/ci/run-windows-browser-diagnostics.test.ts
           scripts/windows-updater-certification.test.ts
+          build/packaging.test.ts
+          scripts/windows-update-handoff-uninstall.test.ts
+          src/main/update/windows-update-handoff.test.ts
+          src/main/update/electron-updater-provider-regressions.test.ts
+          src/main/update/electron-updater-strategy.test.ts
+          src/main/index-startup-failure.test.ts
           src/main/windows.test.ts
           src/main/windows-icon-assets.test.ts
           src/main/windows-powershell.test.ts
+          src/main/system-boot-identity.test.ts
+          src/main/system-boot-identity.windows.test.ts
+          src/main/update/deb-gate-recovery.test.ts
+          src/main/update/installation-executor.test.ts
+          src/main/update/installation-preparation.test.ts
+          src/main/update/installation-reboot-recovery.test.ts
           src/main/delegation/acp-execution.test.ts
           src/main/delegation/production-framework-runtime.test.ts
+          src/main/acp/specialist-switch-recovery.integration.test.ts
           src/main/file-save.test.ts
-          src/main/specialist/repository.test.ts
-          src/main/notebook/micromamba-cache-powershell.test.ts
-          src/main/notebook/micromamba-cache-acl.integration.test.ts
+          src/main/notebook/file-evidence-publication.integration.test.ts
+          src/main/compute/compute-submission-evidence-recovery.integration.test.ts
+          packages/specialists/src/repository.test.ts
+          packages/environment/src/micromamba-cache-powershell.test.ts
+          packages/environment/src/micromamba-cache-acl.integration.test.ts
+      - name: Test scheduled Windows validation regressions
+        id: windows_regressions
+        continue-on-error: true
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_regressions')) }}
+        env:
+          # Inline Vitest projects inherit worker/hook limits before root CLI overrides.
+          VITEST_WINDOWS_FULL_TEST: '1'
+        # Exercise the reported failures on a real Windows runner without expanding to its full suite.
+        run: >-
+          npm test --
+          src/main/database/migration-service.test.ts
+          scripts/ci/package-boundaries.test.ts
+          src/main/desktop-startup-recovery.test.ts
+          src/main/update/installation-protection.test.ts
+          src/main/update/deb-systemd-gate.test.ts
+          src/main/session-diagnostics/collector.test.ts
+          src/main/literature/smart-collections.test.ts
+          src/main/literature/pdf-structure/owner.test.ts
+          src/main/notebook/kernel-startup-retry.integration.test.ts
+          packages/notebook-code-risk/src/code-risk-analysis.test.ts
+          src/main/notebook/code-risk-admission.test.ts
+          src/main/local-models/owner.test.ts
+          --testNamePattern
+          "cannot be written|table output fails|all content writes fail|reads bounded run outcomes|drains paid requests|recovers retained cleanup|retries only a proven reaped R lane|Python visible dictionary unions|Python fixed text concatenation|Python subprocess literal shell flags|Python visible sequence concatenation|checks forwarded ordinary special signatures|does not reuse a shell verdict|native symlink-parent|reviews escaped process executable|resets uncertain cwd|runs real nested process forwarding|batch preserves one-shot admission|isolates flat translation|retains installation protection|offers startup Recover|startup Recover settles|installation state root|persisted path spelling|parses actual systemctl|waiting gate process|written installed state|selects durable file consumers|routes download package changes|queued automatic inference|fills derived literature text"
+          --maxWorkers=1 --testTimeout=60000 --hookTimeout=60000
       - name: Test Windows wheel evidence recovery
         id: windows_wheel_evidence
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_wheel_evidence')) }}
         continue-on-error: true
         shell: pwsh
         env:
@@ -849,20 +1182,20 @@ jobs:
         run: |
           $env:OPEN_SCIENCE_TEST_PYTHON = python -c "import sys, pip, ensurepip; print(sys.executable)"
           if ($LASTEXITCODE -ne 0 -or -not $env:OPEN_SCIENCE_TEST_PYTHON) { throw 'Python with pip and ensurepip is required for wheel evidence tests.' }
-          npm test -- src/main/notebook/pip-wheel-evidence.test.ts src/main/notebook/pip-install-evidence.test.ts
+          npm test -- packages/environment/src/pip-wheel-evidence.test.ts packages/environment/src/pip-install-evidence.test.ts
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Test Windows notebook shell behavior
         id: windows_shell
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_shell')) }}
         continue-on-error: true
         run: >-
           npx vitest run
           src/main/notebook/windows-shell.integration.test.ts
-          src/main/notebook/powershell-search-parser.windows.test.ts
+          src/main/notebook/powershell-search-parser.windows.integration.test.ts
           src/main/notebook/shell-search-scope.test.ts
       - name: Test Windows notebook shell service timeout
         id: windows_service_timeout
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_service_timeout')) }}
         continue-on-error: true
         run: >-
           npx vitest run
@@ -871,28 +1204,37 @@ jobs:
           "kills a command that outlasts the timeout and returns a non-normal result"
       - name: Test Windows AppContainer ownership and removal lifecycle
         id: windows_sandbox
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') && inputs.dry_run != 'windows-process' && steps.windows_sandbox_source.outcome == 'success' && steps.windows_sandbox_build.outcome == 'success' && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_sandbox')) }}
         continue-on-error: true
         shell: powershell
-        run: >-
-          packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1
-          -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe
+        run: |
+          & packages/notebook-network-sandbox/vendor/windows-src/ci/smoke.ps1 -Exe packages/notebook-network-sandbox/vendor/windows/x64/notebook-appcontainer-host.exe -AfterSetup {
+            param($port, $installationId, $ownershipRoot)
+            $env:RUN_WINDOWS_NOTEBOOK_RUNTIME = '1'
+            $env:OPEN_SCIENCE_TEST_SANDBOX_INSTALLATION_ID = $installationId
+            $env:OPEN_SCIENCE_TEST_SANDBOX_OWNERSHIP_ROOT = $ownershipRoot
+            # Keep PR validation focused on AppContainer package resolution and lifecycle probes.
+            # The native smoke below still owns setup, ACL, network, process-tree, and removal
+            # coverage; the shared npm-tool matrix is reserved for full validation.
+            npx vitest run packages/notebook-network-sandbox/src/windows-notebook-runtime.integration.test.ts --testNamePattern "imports from Node|rejects a .* package config|retains readable .* workspace package|executes .* at the requested workspace"
+            if ($LASTEXITCODE -ne 0) { throw 'Protected Windows Notebook runtime regression failed.' }
+          }
       - name: Test Windows path portability
         id: windows_path
-        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
+        if: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') && (!fromJSON(needs.preflight.outputs.plan).windowsCoreChecks || contains(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks, 'windows_path')) }}
         continue-on-error: true
         run: >-
           npx vitest run
           src/main/acp/workspace-path.test.ts
           src/main/file-save.test.ts
           src/main/notebook/run-document-data-paths.test.ts
-          src/main/notebook/runtime-paths.test.ts
+          packages/environment/src/runtime-paths.test.ts
           src/main/session-persistence/conversation-export.test.ts
           src/main/session-persistence/data-path-roundtrip.test.ts
           src/main/settings/notebook-runtime-settings.test.ts
           src/main/settings/preferences.test.ts
           src/main/settings/shell-path.test.ts
-          src/main/specialist/repository.test.ts
+          packages/specialists/src/repository.test.ts
           src/main/storage/data-path.test.ts
           src/main/storage/normalize-legacy-paths.test.ts
           src/main/storage/path-presence.test.ts
@@ -903,6 +1245,12 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
+          WINDOWS_CORE_CHECKS: ${{ toJSON(fromJSON(needs.preflight.outputs.plan).windowsCoreChecks) }}
+          WINDOWS_RUNTIME_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_runtime') }}
+          WINDOWS_PATH_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'windows_path') }}
+          WINDOWS_PROCESS_ONLY: ${{ inputs.dry_run == 'windows-process' }}
+          WINDOWS_PROCESS_OUTCOME: ${{ steps.windows_process.outcome }}
+          WINDOWS_REGRESSIONS_OUTCOME: ${{ steps.windows_regressions.outcome }}
           WINDOWS_PATH_OUTCOME: ${{ steps.windows_path.outcome }}
           WINDOWS_RUNTIME_OUTCOME: ${{ steps.windows_runtime.outcome }}
           WINDOWS_SANDBOX_BUILD_OUTCOME: ${{ steps.windows_sandbox_build.outcome }}
@@ -915,11 +1263,23 @@ jobs:
           set -euo pipefail
           failed=0
           check() {
-            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
+            selected=false
+            if [[ "$WINDOWS_PROCESS_ONLY" == "true" ]]; then
+              [[ "$1" == "windows_process" ]] && selected=true
+            elif [[ -n "$WINDOWS_CORE_CHECKS" && "$WINDOWS_CORE_CHECKS" != "null" ]]; then
+              if [[ "$WINDOWS_CORE_CHECKS" == *\"$1\"* ]]; then selected=true; fi
+            elif [[ "$1" == "windows_path" ]]; then
+              selected="$WINDOWS_PATH_SELECTED"
+            else
+              selected="$WINDOWS_RUNTIME_SELECTED"
+            fi
+            if [[ "$2" == "failure" || "$2" == "cancelled" || ( "$selected" == "true" && "$2" != "success" ) ]]; then
               echo "$1 ended with $2" >&2
               failed=1
             fi
           }
+          check windows_process "$WINDOWS_PROCESS_OUTCOME"
+          check windows_regressions "$WINDOWS_REGRESSIONS_OUTCOME"
           check windows_runtime "$WINDOWS_RUNTIME_OUTCOME"
           check windows_sandbox_source "$WINDOWS_SANDBOX_SOURCE_OUTCOME"
           check windows_sandbox_build "$WINDOWS_SANDBOX_BUILD_OUTCOME"
@@ -934,7 +1294,7 @@ jobs:
     name: Prepare macOS E2E
     needs: preflight
     if: ${{ !(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 15
     outputs:
       artifact_id: ${{ steps.upload.outputs.artifact-id }}
@@ -946,9 +1306,9 @@ jobs:
           persist-credentials: false
       - name: Setup Node
         id: node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install dependencies
         run: node scripts/ci/npm-ci.mjs
@@ -962,48 +1322,9 @@ jobs:
         run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
       - name: Upload E2E setup
         id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-setup-macos-${{ github.run_id }}-${{ github.run_attempt }}
-          path: ${{ runner.temp }}/e2e-setup/
-          retention-days: 1
-          compression-level: 0
-          if-no-files-found: error
-
-  windows_e2e_setup:
-    name: Prepare Windows E2E
-    needs: preflight
-    if: ${{ needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') }}
-    runs-on: windows-latest
-    timeout-minutes: 15
-    outputs:
-      artifact_id: ${{ steps.upload.outputs.artifact-id }}
-      node_version: ${{ steps.node.outputs.node-version }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - name: Setup Node
-        id: node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
-        with:
-          node-version: 22
-          cache: npm
-      - name: Install dependencies
-        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
-      - name: Build Electron application
-        run: npm run build:e2e
-      - name: Test snapshot transport
-        run: npx vitest run scripts/ci/e2e-setup-snapshot.test.ts
-      - name: Pack E2E setup
-        shell: bash
-        run: node scripts/ci/e2e-setup-snapshot.mjs pack "$RUNNER_TEMP/e2e-setup"
-      - name: Upload E2E setup
-        id: upload
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: e2e-setup-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/e2e-setup/
           retention-days: 1
           compression-level: 0
@@ -1013,7 +1334,7 @@ jobs:
     name: macOS build and E2E (${{ matrix.group }})
     needs: [preflight, macos_e2e_setup]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'macos_e2e') && ((fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) || needs.macos_e2e_setup.result == 'success') }}
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1026,9 +1347,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '22' }}
+          node-version: ${{ needs.macos_e2e_setup.outputs.node_version || '24' }}
           cache: ${{ (fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) && 'npm' || '' }}
           package-manager-cache: false
       - name: Install short Mac dependencies
@@ -1041,7 +1362,7 @@ jobs:
       # Artifact IDs survive failed-job reruns without selecting another producer attempt.
       - name: Download E2E setup
         if: ${{ !(fromJSON(needs.preflight.outputs.plan).macosProfile == 'smoke' || (fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos'))) }}
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           artifact-ids: ${{ needs.macos_e2e_setup.outputs.artifact_id }}
           path: ${{ runner.temp }}/e2e-setup/
@@ -1055,6 +1376,10 @@ jobs:
         if: ${{ matrix.group == 'journeys' && ((fromJSON(needs.preflight.outputs.plan).macosProfile != 'smoke' && fromJSON(needs.preflight.outputs.plan).mode == 'full') || (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') && fromJSON(needs.preflight.outputs.plan).macosProfile == 'expanded')) }}
         continue-on-error: true
         run: |
+          set -euo pipefail
+          OPEN_SCIENCE_TEST_PY_ENV="$(python3 -c 'import sys; print(sys.executable)')"
+          test -x "$OPEN_SCIENCE_TEST_PY_ENV"
+          export OPEN_SCIENCE_TEST_PY_ENV
           npx vitest run \
             packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts \
             packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts \
@@ -1063,9 +1388,13 @@ jobs:
             src/main/second-instance-router.test.ts \
             src/main/windows.test.ts \
             src/main/net/network-info.test.ts \
-            src/main/notebook/managed-runtime-guard.test.ts
+            src/main/notebook/managed-runtime-guard.test.ts \
+            src/main/process-tree-darwin-recovery.test.ts \
+            src/main/process-tree-evidence.macos.integration.test.ts \
+            src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts \
+            src/main/notebook/runtime-service.macos-isolation.integration.test.ts
           npx vitest run src/main/notebook/kernel-executor.test.ts \
-            -t 'executes the repl loop through the production network sandbox'
+            -t 'executes the repl loop through the production network sandbox|recovers cross-session REPL'
       - name: Test short macOS platform checks
         id: unit_macos_smoke
         if: ${{ matrix.group == 'journeys' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_smoke_macos') }}
@@ -1092,7 +1421,7 @@ jobs:
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: functional-e2e-macos-${{ matrix.group }}-failure
           path: |
@@ -1111,7 +1440,7 @@ jobs:
       - name: Upload workspace failure artifacts
         if: ${{ steps.e2e_workspace_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: workspace-e2e-macos-${{ matrix.group }}-failure
           path: |
@@ -1156,7 +1485,7 @@ jobs:
       - name: Upload accessibility diagnostics
         if: ${{ steps.e2e_accessibility_macos.outcome != 'skipped' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: accessibility-macos-${{ matrix.group }}-diagnostics
           path: |
@@ -1175,7 +1504,7 @@ jobs:
       - name: Upload visual failure artifacts
         if: ${{ steps.e2e_visual_macos.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: visual-regression-macos-${{ matrix.group }}-failure
           path: |
@@ -1186,7 +1515,7 @@ jobs:
       - name: Upload E2E timing and blob reports
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: e2e-reports-macos-${{ matrix.group }}
           overwrite: true
@@ -1239,84 +1568,51 @@ jobs:
           exit "$failed"
 
   windows_e2e:
-    name: Windows E2E (shard ${{ matrix.shard }}/3)
-    needs: [preflight, windows_e2e_setup]
-    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_e2e_setup.result == 'success' }}
+    name: Windows mainline E2E
+    needs: [preflight, windows_notebook_runtime]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && contains(fromJSON(needs.preflight.outputs.plan).bundles, 'windows_e2e') && needs.windows_notebook_runtime.result == 'success' }}
     runs-on: windows-latest
     timeout-minutes: 35
-    strategy:
-      fail-fast: false
-      matrix:
-        shard: [1, 2, 3]
+    env:
+      E2E_GREP: ${{ needs.preflight.outputs.windows_e2e_grep }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: ${{ needs.windows_e2e_setup.outputs.node_version }}
-          package-manager-cache: false
-      - name: Download E2E setup
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
-        with:
-          artifact-ids: ${{ needs.windows_e2e_setup.outputs.artifact_id }}
-          path: ${{ runner.temp }}/e2e-setup/
-          merge-multiple: true
-      - name: Restore E2E setup
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs --prefer-offline --no-audit --fund=false
+      - name: Build Electron application
+        run: npm run build:e2e
+      - name: Download Windows Notebook runtime
         id: setup
-        shell: bash
-        run: node scripts/ci/e2e-setup-snapshot.mjs restore "$RUNNER_TEMP/e2e-setup"
-      - name: Install headless Chromium
-        run: npx playwright install chromium --only-shell
-      # PR/queue business E2E relies on Playwright retries to absorb single-attempt flakes;
-      # strict --fail-on-flaky-tests stays in the scheduled Source Regression paths.
-      - name: Run renderer layout pilot
-        id: renderer_layout
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}
-        continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/renderer-layout-windows
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/renderer-layout-windows.json
-        # NetLog traced blank fixtures to Windows WSAENOBUFS after hundreds of asset reloads.
-        # Keep each browser process serialized and cap its loopback socket churn with runner shards.
-        shell: node scripts/ci/run-windows-browser-diagnostics.mjs {0}
-        run: npm run test:e2e:browser -- --workers=1 --global-timeout=420000 --shard=${{ matrix.shard }}/3
-      - name: Run functional journeys
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          artifact-ids: ${{ needs.windows_notebook_runtime.outputs.artifact_id }}
+          path: packages/notebook-network-sandbox/vendor/windows-runtime/x64
+          merge-multiple: true
+      - name: Run mainline journeys
         id: e2e_functional_windows
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_functional_windows') }}
+        if: ${{ steps.setup.outcome == 'success' }}
         continue-on-error: true
         env:
           PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/functional_windows
           PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/functional_windows.json
-        # Isolate Electron desktops: parallelize across runners, never within one runner.
-        run: npm run test:e2e:journey -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=600000
+        # Mainline-only on every PR Gate entry point. Complete suites live in regression.
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:E2E_GREP)) { throw 'Windows mainline selection is empty' }
+          npm run test:e2e -- --workers=1 --global-timeout=600000 --grep "$env:E2E_GREP"
       - name: Upload functional failure artifacts
         if: ${{ steps.e2e_functional_windows.outcome == 'failure' }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: functional-e2e-windows-failure-${{ matrix.shard }}
-          path: |
-            playwright-report/
-            test-results/
-          retention-days: 5
-          if-no-files-found: warn
-      - name: Run workspace journeys
-        id: e2e_workspace_windows
-        if: ${{ steps.setup.outcome == 'success' && contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_workspace_windows') }}
-        continue-on-error: true
-        env:
-          PLAYWRIGHT_BLOB_OUTPUT_DIR: blob-report/workspace_windows
-          PLAYWRIGHT_JSON_OUTPUT_NAME: test-results/workspace_windows.json
-        run: npm run test:e2e:workspace -- --workers=1 --fully-parallel --shard=${{ matrix.shard }}/3 --global-timeout=900000
-      - name: Upload workspace failure artifacts
-        if: ${{ steps.e2e_workspace_windows.outcome == 'failure' }}
-        continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: workspace-e2e-windows-failure-${{ matrix.shard }}
+          name: functional-e2e-windows-failure
           path: |
             playwright-report/
             test-results/
@@ -1325,9 +1621,9 @@ jobs:
       - name: Upload E2E timing and blob reports
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
-          name: e2e-reports-windows-${{ matrix.shard }}
+          name: e2e-reports-windows
           overwrite: true
           path: |
             blob-report/
@@ -1338,30 +1634,14 @@ jobs:
         if: ${{ always() }}
         shell: bash
         env:
-          E2E_BROWSER_SELECTED: ${{ contains(fromJSON(needs.preflight.outputs.plan).lanes, 'e2e_browser_windows') }}
-          RENDERER_LAYOUT_OUTCOME: ${{ steps.renderer_layout.outcome }}
           SETUP_OUTCOME: ${{ steps.setup.outcome }}
-          E2E_FUNCTIONAL_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
-          E2E_WORKSPACE_OUTCOME: ${{ steps.e2e_workspace_windows.outcome }}
+          MAINLINE_OUTCOME: ${{ steps.e2e_functional_windows.outcome }}
         run: |
           set -euo pipefail
-          failed=0
-          check() {
-            if [[ "$2" == "failure" || "$2" == "cancelled" ]]; then
-              echo "$1 ended with $2" >&2
-              failed=1
-            fi
-          }
-          # The browser suite is selected per plan; when selected, skipped is not success.
-          if [[ "${E2E_BROWSER_SELECTED:-}" == "true" && "$RENDERER_LAYOUT_OUTCOME" != "success" ]]; then
-            echo "Required Windows browser suite ended with ${RENDERER_LAYOUT_OUTCOME:-no outcome}" >&2
-            failed=1
+          if [[ -z "$E2E_GREP" || "$SETUP_OUTCOME" != "success" || "$MAINLINE_OUTCOME" != "success" ]]; then
+            echo "Required Windows mainline E2E did not succeed" >&2
+            exit 1
           fi
-          check renderer_layout "$RENDERER_LAYOUT_OUTCOME"
-          check setup "$SETUP_OUTCOME"
-          check e2e_functional_windows "$E2E_FUNCTIONAL_OUTCOME"
-          check e2e_workspace_windows "$E2E_WORKSPACE_OUTCOME"
-          exit "$failed"
 
   e2e_reports:
     name: E2E timing and merged report
@@ -1373,19 +1653,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
       - name: Install report tools
         run: npm ci --ignore-scripts --no-audit --fund=false
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333
         with:
           pattern: e2e-reports-*
           path: test-results/downloaded-e2e
       - name: Summarize timing and merge reports
         run: node scripts/ci/merge-e2e-reports.mjs
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         if: ${{ always() }}
         with:
           name: e2e-combined-report
@@ -1400,8 +1680,11 @@ jobs:
     if: ${{ always() }}
     needs:
       - preflight
+      - registration
       - policy
       - static
+      - runtime_checks
+      - package_verification
       - unit
       - linux_runtime
       - windows_core
@@ -1422,9 +1705,9 @@ jobs:
           ref: ${{ github.event_name == 'workflow_dispatch' && github.sha || github.event.pull_request.base.sha || needs.preflight.outputs.base }}
       - name: Setup Node
         if: ${{ needs.preflight.result == 'success' }}
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
       - name: Evaluate deterministic gate from trusted base
         shell: bash
         # Keep process environment bounded. Embedding the complete needs payload in job env includes
@@ -1434,12 +1717,28 @@ jobs:
           PR_GATE_PLATFORM_POLICY: risk-v1
           PR_GATE_EXECUTION_MODE: bundles
           PR_GATE_PLAN: ${{ needs.preflight.outputs.plan }}
+          RUNTIME_REQUIRED: ${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'static') && (contains(fromJSON(needs.preflight.outputs.plan).lanes, 'cli_sdk') || contains(fromJSON(needs.preflight.outputs.plan).lanes, 'runtime_bundle') || fromJSON(needs.preflight.outputs.plan).mode == 'full') }}
+          RUNTIME_RESULT: ${{ needs.runtime_checks.result }}
+          PACKAGE_RESULT: ${{ needs.package_verification.result }}
           PREFLIGHT_RESULT: ${{ needs.preflight.result }}
-          PR_GATE_NEEDS: '{"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
+          REGISTRATION_RESULT: ${{ needs.registration.result }}
+          PR_GATE_NEEDS: '{"registration":{"result":"${{ needs.registration.result }}"},"preflight":{"result":"${{ needs.preflight.result }}"},"policy":{"result":"${{ needs.policy.result }}"},"static":{"result":"${{ needs.static.result }}"},"runtime_checks":{"result":"${{ needs.runtime_checks.result }}"},"package_verification":{"result":"${{ needs.package_verification.result }}"},"unit":{"result":"${{ needs.unit.result }}"},"linux_runtime":{"result":"${{ needs.linux_runtime.result }}"},"windows_core":{"result":"${{ needs.windows_core.result }}"},"macos_e2e":{"result":"${{ needs.macos_e2e.result }}"},"windows_e2e":{"result":"${{ needs.windows_e2e.result }}"}}'
         run: |
           set -euo pipefail
           if [[ "$PREFLIGHT_RESULT" != "success" ]]; then
             echo "Preflight did not succeed" >&2
+            exit 1
+          fi
+          if [[ "$REGISTRATION_RESULT" != "success" ]]; then
+            echo "Impact registration ended with $REGISTRATION_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$RUNTIME_REQUIRED" == "true" && "$RUNTIME_RESULT" != "success" ]]; then
+            echo "Selected runtime checks ended with $RUNTIME_RESULT" >&2
+            exit 1
+          fi
+          if [[ "$EVENT_NAME" == "merge_group" && "$PACKAGE_RESULT" != "success" ]]; then
+            echo "Queue package verification ended with $PACKAGE_RESULT" >&2
             exit 1
           fi
           if [[ -f scripts/ci/evaluate-pr-gate.mjs ]]; then

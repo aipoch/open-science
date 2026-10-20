@@ -1,12 +1,76 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { useState } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
-
-import type { LiteratureCitationStyleView } from '../../../../shared/literature'
+import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
 import { CitationStylesView } from './CitationStylesView'
 
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
 afterEach(cleanup)
+
+it('animates only cold hover openings while preserving the shared warm window', async () => {
+  vi.useFakeTimers()
+  const previousApi = window.api
+  window.api = { literature: { citationStyles: vi.fn() } } as unknown as Window['api']
+  try {
+    render(
+      <CitationStylesView
+        styles={['APA', 'MLA'].map((title) => ({
+          id: title,
+          title,
+          source: 'built-in',
+          preview: { styleId: title, inText: `${title} citation`, reference: `${title} reference` }
+        }))}
+        onBack={vi.fn()}
+        onStylesChange={vi.fn()}
+      />
+    )
+    const first = screen.getByRole('button', { name: 'Preview: APA' })
+    const second = screen.getByRole('button', { name: 'Preview: MLA' })
+    const skipsEntry = (): string | null =>
+      screen.getByRole('dialog').getAttribute('data-skip-entry-animation')
+    fireEvent.pointerEnter(first, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(199))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(skipsEntry()).toBe('false')
+    for (const label of ['In-text citation', 'Reference']) {
+      expect(within(screen.getByRole('dialog')).getByText(label).className).toContain(
+        'text-muted-foreground'
+      )
+    }
+    fireEvent.pointerLeave(first, { pointerType: 'mouse' })
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' })
+    expect(skipsEntry()).toBe('true')
+    expect(within(screen.getByRole('dialog')).getByText('MLA reference')).not.toBeNull()
+    fireEvent.pointerLeave(second, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(151))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    fireEvent.pointerEnter(first, { pointerType: 'mouse' })
+    expect(skipsEntry()).toBe('true')
+    fireEvent.pointerLeave(first, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(451))
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' })
+    await act(() => vi.advanceTimersByTimeAsync(199))
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await act(() => vi.advanceTimersByTimeAsync(1))
+    expect(skipsEntry()).toBe('false')
+    // Re-entering the open trigger must not interrupt its cold entry animation.
+    fireEvent.pointerEnter(second, { pointerType: 'mouse' })
+    expect(skipsEntry()).toBe('false')
+  } finally {
+    cleanup()
+    window.api = previousApi
+    vi.useRealTimers()
+  }
+})
 
 it('pins a clicked example, retries in place, and ignores hover over another style', async () => {
   vi.useFakeTimers()

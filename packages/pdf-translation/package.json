@@ -1,0 +1,65 @@
+{
+  "name": "@aipoch/pdf-translation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "resources",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/public-contracts.d.ts",
+      "default": "./dist/public-contracts.js"
+    },
+    "./text": {
+      "types": "./dist/text.d.ts",
+      "default": "./dist/text.js"
+    },
+    "./reader": {
+      "types": "./dist/reader.d.ts",
+      "default": "./dist/reader.js"
+    },
+    "./writer": {
+      "types": "./dist/writer.d.ts",
+      "default": "./dist/writer.js"
+    },
+    "./storage": {
+      "types": "./dist/public-storage.d.ts",
+      "default": "./dist/public-storage.js"
+    },
+    "./resources": {
+      "types": "./dist/resources.d.ts",
+      "default": "./dist/resources.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "zod": "^4.6.5",
+    "pdf-lib": "1.17.1",
+    "fontkit": "2.0.4",
+    "@embedpdf/pdfium": "2.15.1",
+    "pdfjs-dist": "5.4.624",
+    "@aipoch/pdf-structure": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "@napi-rs/canvas": "0.1.100"
+  }
+}

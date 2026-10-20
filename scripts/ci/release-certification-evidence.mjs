@@ -5,7 +5,7 @@ import { readFile, readdir, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const PLATFORMS = ['linux-x64', 'macos-arm64', 'macos-x64', 'windows-x64']
+const PLATFORMS = ['linux-x64', 'linux-arm64', 'macos-arm64', 'macos-x64', 'windows-x64']
 const DISTRIBUTABLE = /\.(?:AppImage|deb|dmg|exe|zip)$/
 const CHECK_STATES = ['passed', 'not-applicable']
 const DATABASE_BASELINE_ID = '0001_runtime_schema_baseline'
@@ -214,10 +214,11 @@ const aggregateEvidence = async ({ argv }) => {
   const outputArgument = argumentValue(argv, '--output')
   const expectedSha = argumentValue(argv, '--expected-sha')
   const requireWindowsUpdate = argv.includes('--require-windows-update')
+  const requireSignedWindows = argv.includes('--require-signed-windows')
   if (!directoryArgument || !outputArgument || !expectedSha) {
     throw new Error(
       'Usage: --directory <path> --output <path> --expected-sha <sha> ' +
-        '[--require-windows-update]'
+        '[--require-windows-update] [--require-signed-windows]'
     )
   }
   const directory = resolve(directoryArgument)
@@ -225,7 +226,7 @@ const aggregateEvidence = async ({ argv }) => {
 
   const names = (await readdir(directory))
     .filter((name) =>
-      /^certification-(?:linux-x64|macos-arm64|macos-x64|windows-x64)\.json$/.test(name)
+      /^certification-(?:linux-x64|linux-arm64|macos-arm64|macos-x64|windows-x64)\.json$/.test(name)
     )
     .sort()
   const records = await Promise.all(
@@ -264,6 +265,13 @@ const aggregateEvidence = async ({ argv }) => {
     }
     if (record.checks.packageSmoke !== 'passed') {
       throw new Error(`Package smoke did not pass for ${platform}.`)
+    }
+    if (
+      platform === 'windows-x64' &&
+      requireSignedWindows &&
+      record.checks.authenticode !== 'passed'
+    ) {
+      throw new Error('Signed Windows release requires passed Authenticode certification.')
     }
   }
   let windowsUpdate

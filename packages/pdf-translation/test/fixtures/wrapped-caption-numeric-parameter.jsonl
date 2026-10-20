@@ -1,0 +1,8 @@
+{"name":"caption-numeric-parameter-stays-with-sentence","first":"Table 2: Runtime measurements for the benchmark with sequence length","next":"128. Values are reported in microseconds per token.","gap":12,"joined":true}
+{"name":"numbered-list-after-complete-caption-remains-separate","first":"Table 2: Runtime measurements for the benchmark.","next":"128. Values are reported in microseconds per token.","gap":12,"joined":false}
+{"name":"separated-numbered-paragraph-does-not-extend-caption","first":"Table 2: Runtime measurements for the benchmark with sequence length","next":"128. Values are reported in microseconds per token.","gap":30,"joined":false}
+{"name": "caption-terminal-numeric-wrap-retains-parameter", "first": "Table 2: Inference time with a batch size of", "next": "8.", "gap": 12, "nextWidth": 15, "nextX": 40, "joined": true}
+{"name": "caption-terminal-decimal-wrap-retains-parameter", "first": "Table 2: Measurements at a probability of", "next": "0.5.", "gap": 12, "nextWidth": 15, "nextX": 40, "joined": true}
+{"name": "complete-caption-does-not-absorb-small-numeric-row", "first": "Table 2: Runtime measurements.", "next": "8.", "gap": 12, "nextWidth": 15, "nextX": 40, "joined": false}
+{"name": "distant-caption-number-remains-separate", "first": "Table 2: Inference time with a batch size of", "next": "8.", "gap": 30, "nextWidth": 15, "nextX": 40, "joined": false}
+{"name": "different-column-number-remains-separate", "first": "Table 2: Inference time with a batch size of", "next": "8.", "gap": 12, "nextWidth": 15, "nextX": 300, "joined": false}

@@ -1,0 +1,18 @@
+{"name":"noise-strength-axis-is-not-a-proper-name","source":"Noise Strength","text":"噪声强度","language":"Chinese","accepted":true}
+{"name":"noise-strength-axis-must-not-remain-english","source":"Noise Strength","text":"Noise Strength","corrected":"噪声强度","language":"Chinese","accepted":false}
+{"name":"layer-type-table-heading-is-translatable","source":"Layer Type","text":"层类型","language":"Chinese","accepted":true}
+{"name":"test-accuracy-axis-is-translatable","source":"Test Accuracy","text":"测试准确率","language":"Chinese","accepted":true}
+{"name":"training-log-loss-axis-is-translatable","source":"Training Log Loss","text":"训练对数损失","language":"Chinese","accepted":true}
+{"name":"unknown-project-with-noise-in-name-keeps-identity","source":"Example Noise","text":"Example Noise","language":"Chinese","accepted":true}
+{"name":"standalone-log-function-keeps-mathematical-spelling","source":"log","text":"log","language":"Chinese","accepted":true}
+{"name":"dimension-prefixed-convolution-label-must-not-remain-english","source":"3 × 3 conv with activation","text":"3 × 3 conv with activation","corrected":"3 × 3 卷积，带激活函数","language":"Chinese","accepted":false}
+{"name":"partially-copied-convolution-label-needs-complete-translation","source":"3 × 3 conv with activation","text":"3 × 3 卷积 with activation","corrected":"3 × 3 卷积，带激活函数","language":"Chinese","accepted":false}
+{"name":"dimension-prefixed-convolution-label-preserves-kernel-size","source":"3 × 3 conv with activation","text":"3 × 3 卷积，带激活函数","language":"Chinese","accepted":true}
+{"name":"abbreviated-parameter-count-heading-must-be-translated","source":"# param.","text":"# param.","corrected":"参数量","language":"Chinese","accepted":false}
+{"name":"parameter-count-heading-needs-no-literal-hash","source":"# param.","text":"参数量","language":"Chinese","accepted":true}
+{"name":"unknown-hash-prefixed-identifier-keeps-spelling","source":"# SampleNet","text":"# SampleNet","language":"Chinese","accepted":true}
+{"name":"covariate-shift-heading-is-not-a-proper-name","source":"Covariate Shift","text":"协变量偏移","language":"Chinese","accepted":true}
+{"name":"covariate-shift-heading-must-not-remain-english","source":"Covariate Shift","text":"Covariate Shift","corrected":"协变量偏移","language":"Chinese","accepted":false}
+{"name":"unknown-project-with-shift-in-name-keeps-identity","source":"Example Shift","text":"Example Shift","language":"Chinese","accepted":true}
+{"name":"ablation-label-without-acronym-is-not-a-proper-name","source":"Without AB","text":"不使用 AB","language":"Chinese","accepted":true}
+{"name":"ablation-label-without-acronym-must-not-remain-english","source":"Without AB","text":"Without AB","corrected":"不使用 AB","language":"Chinese","accepted":false}

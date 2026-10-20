@@ -55,7 +55,7 @@ export const registerSettingsWindowIpcHandlers = (): (() => void) => {
       // application teardown still destroy it, so a hidden auxiliary window cannot strand the app.
       window.on('close', (close) => {
         close.preventDefault()
-        hide()
+        window.webContents.send(C.closeRequested)
       })
       window.on('closed', () => {
         if (settings === window) settings = undefined
@@ -69,6 +69,10 @@ export const registerSettingsWindowIpcHandlers = (): (() => void) => {
       settings.show()
       settings.focus()
     }
+  })
+  ipcMainHandle(C.close, (event) => {
+    requireSettings(event)
+    hide()
   })
   ipcMainHandle(C.ready, (event) => {
     requireSettings(event)

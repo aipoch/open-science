@@ -6,7 +6,9 @@ import { resolveActionMenuEntries } from '@/components/action-menu'
 
 import {
   LOCAL_PREVIEW_MENU_RECIPE,
+  SOURCE_PREVIEW_MENU_RECIPE,
   MANAGED_PREVIEW_MENU_RECIPE,
+  MANAGED_PDF_PREVIEW_MENU_RECIPE,
   PREVIEW_CAPABILITY_CATALOG,
   shouldHandlePreviewContextMenu,
   type PreviewActionBindings,
@@ -25,6 +27,26 @@ describe('preview action model', () => {
     'open-fullscreen': { execute },
     close: { execute }
   }
+
+  it('resolves source actions without exposing file-only capabilities', () => {
+    const actions = resolveActionMenuEntries(
+      {
+        identityKey: 'source:paper',
+        catalog: PREVIEW_CAPABILITY_CATALOG,
+        recipe: SOURCE_PREVIEW_MENU_RECIPE,
+        bindings: {
+          'open-source': { execute },
+          'copy-source-url': { execute },
+          close: { execute, hidden: true }
+        }
+      },
+      undefined
+    )
+    expect(actions.map((action) => action.kind === 'action' && action.action)).toEqual([
+      'open-source',
+      'copy-source-url'
+    ])
+  })
 
   it('puts local-only capabilities above the shared preview actions', () => {
     const entries = resolveActionMenuEntries(
@@ -67,6 +89,23 @@ describe('preview action model', () => {
       'download',
       'close'
     ])
+  })
+
+  it('offers Add to Literature only through a bound managed PDF action', () => {
+    const resolve = (bound: boolean): string[] =>
+      resolveActionMenuEntries(
+        {
+          identityKey: 'pdf:immutable-version',
+          catalog: PREVIEW_CAPABILITY_CATALOG,
+          recipe: MANAGED_PDF_PREVIEW_MENU_RECIPE,
+          bindings: { ...allBindings, ...(bound ? { 'pdf-add-to-literature': { execute } } : {}) }
+        },
+        undefined
+      )
+        .filter((entry) => entry.kind === 'action')
+        .map((entry) => entry.action)
+    expect(resolve(true).slice(0, 2)).toEqual(['pdf-context', 'pdf-add-to-literature'])
+    expect(resolve(false)).not.toContain('pdf-add-to-literature')
   })
 
   it('removes separators left empty by hidden or unbound capabilities', () => {

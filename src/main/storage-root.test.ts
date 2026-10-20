@@ -15,7 +15,16 @@ const { appMock } = vi.hoisted(() => ({
   }
 }))
 
-vi.mock('electron', () => ({ app: appMock }))
+vi.mock('./runtime-metadata', () => ({
+  runtimeMetadata: () => ({
+    get packaged() {
+      return appMock.isPackaged
+    },
+    get homePath() {
+      return appMock.getPath()
+    }
+  })
+}))
 
 const {
   computeDefaultDataRoot,

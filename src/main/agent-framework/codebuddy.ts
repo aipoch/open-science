@@ -13,7 +13,10 @@ import {
   resolvePermissionProfileApplication,
   type PermissionProfileApplication
 } from '../acp/permission-profile-controller'
-import { openAiChatCompletionsUrl, openAiCompletionsBase } from '../settings/base-url'
+import {
+  resolveChatCompletionsUrl,
+  resolveChatCompletionsBaseUrl
+} from '@aipoch/providers/protocol'
 import type { ResolvedProvider } from '../settings/provider-env'
 import { augmentedPathEnv } from '../settings/shell-path'
 import {
@@ -109,7 +112,7 @@ export const createCodeBuddyFramework = ({
   supportsLiveEffortChange: true,
   adaptSessionEffort: (effort) =>
     effort === 'none' ? 'disabled' : effort === 'default' ? 'enabled' : effort,
-  supportedApiTypes: ['openai'],
+  supportedApiTypes: ['chat-completions'],
   serializesProviderPrompts: true,
 
   spawn(input: AgentSpawnInput): ChildProcessWithoutNullStreams {
@@ -154,8 +157,8 @@ export const createCodeBuddyFramework = ({
   },
 
   prepareModelConfig(provider: ResolvedProvider, ctx: ModelConfigContext): AgentModelConfig {
-    const baseUrl = openAiCompletionsBase(provider)
-    const chatCompletionsUrl = openAiChatCompletionsUrl(provider)
+    const baseUrl = resolveChatCompletionsBaseUrl(provider)
+    const chatCompletionsUrl = resolveChatCompletionsUrl(provider)
     if (!baseUrl || !chatCompletionsUrl || !provider.key || !provider.model) {
       throw new Error('CodeBuddy requires an OpenAI-compatible base URL, API key, and model.')
     }

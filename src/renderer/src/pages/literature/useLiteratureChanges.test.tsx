@@ -1,9 +1,27 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLiteratureChanges } from './useLiteratureChanges'
 
-afterEach(cleanup)
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { renderHook } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: (listener) => {
+    recoveryListeners.add(listener)
+    return () => {
+      recoveryListeners.delete(listener)
+    }
+  }
+})
+
+afterEach(() => {
+  cleanup()
+  recoveryListeners.clear()
+})
 it('coalesces mutation bursts and restores missed changes on visibility and replay without leaking subscriptions', async () => {
   let notify!: () => void
   const unsubscribe = vi.fn()
@@ -62,3 +80,96 @@ it.each(['onDeleted', 'onDeletionCleanupChanged'] as const)(
     expect(invalidate).toHaveBeenCalledOnce()
   }
 )
+
+it('coalesces collection progress across ticks and lets a full invalidation supersede it', async () => {
+  vi.useFakeTimers()
+  try {
+    let notify!: (event: { revision: number; collectionIds?: string[]; itemIds?: string[] }) => void
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          onChanged: (listener: typeof notify) => {
+            notify = listener
+            return () => {}
+          }
+        }
+      }
+    })
+    const invalidate = vi.fn()
+    const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+    await act(async () => {
+      notify({ revision: 1, collectionIds: ['a'] })
+      await vi.advanceTimersByTimeAsync(50)
+    })
+    await act(async () => {
+      notify({ revision: 2, collectionIds: ['b'] })
+      await vi.advanceTimersByTimeAsync(50)
+    })
+    expect(invalidate).toHaveBeenCalledExactlyOnceWith({ revision: 2, collectionIds: ['a', 'b'] })
+    await act(async () => {
+      notify({ revision: 3, collectionIds: ['a'] })
+      notify({ revision: 4, itemIds: ['paper'] })
+    })
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    expect(invalidate).toHaveBeenLastCalledWith()
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(100)
+    })
+    expect(invalidate).toHaveBeenCalledTimes(2)
+    notify({ revision: 5, collectionIds: ['a'] })
+    unmount()
+    await vi.advanceTimersByTimeAsync(100)
+    expect(invalidate).toHaveBeenCalledTimes(2)
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('consumes only queued changes covered by a command refresh, preserving other and later changes', async () => {
+  vi.useFakeTimers()
+  try {
+    let notify!: (event: { revision: number; collectionIds: string[] }) => void
+    Object.defineProperty(window, 'api', {
+      configurable: true,
+      value: {
+        literature: {
+          onChanged: (listener: typeof notify) => {
+            notify = listener
+            return () => {}
+          }
+        }
+      }
+    })
+    const invalidate = vi.fn()
+    const { result } = renderHook(() => useLiteratureChanges(invalidate))
+    notify({ revision: 1, collectionIds: ['a'] })
+    result.current('a')
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).not.toHaveBeenCalled()
+    notify({ revision: 2, collectionIds: ['a', 'b'] })
+    result.current('a')
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).toHaveBeenLastCalledWith({ revision: 2, collectionIds: ['b'] })
+    notify({ revision: 3, collectionIds: ['a'] })
+    await act(() => vi.advanceTimersByTimeAsync(100))
+    expect(invalidate).toHaveBeenLastCalledWith({ revision: 3, collectionIds: ['a'] })
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('refreshes missed changes on host recovery and unsubscribes on unmount', async () => {
+  const invalidate = vi.fn()
+  const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+  expect(invalidate).not.toHaveBeenCalled()
+  expect(recoveryListeners.size).toBe(1)
+  await act(async () => recover())
+  expect(invalidate).toHaveBeenCalledExactlyOnceWith()
+  unmount()
+  await act(async () => {
+    expect(recoveryListeners.size).toBe(0)
+    recover()
+  })
+  expect(invalidate).toHaveBeenCalledOnce()
+})

@@ -1,8 +1,6 @@
 import { createHash, createPublicKey, verify } from 'node:crypto'
-
 import { z } from 'zod'
-
-import { validateSpecialistPackageVersion } from '../../../shared/specialist'
+import { validateSpecialistPackageVersion } from '@aipoch/specialists'
 
 const id = z.string().regex(/^[a-z0-9][a-z0-9-]{0,127}$/)
 const digest = z.string().regex(/^[a-f0-9]{64}$/)

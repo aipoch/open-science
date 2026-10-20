@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ChatMessage } from '@/stores/session-store'
@@ -57,6 +57,15 @@ const appendMessageTarget = (viewport: HTMLDivElement, messageId: string, top: n
   target.dataset.messageId = messageId
   target.getBoundingClientRect = () => createRect(top)
   viewport.append(target)
+}
+
+const queryPreview = (): HTMLButtonElement | null =>
+  document.querySelector('button[data-slot="run-mark-preview"][data-open]')
+
+const getPreview = (): HTMLButtonElement => {
+  const preview = queryPreview()
+  expect(preview).not.toBeNull()
+  return preview!
 }
 
 describe('WorkspaceRunMarks projection', () => {
@@ -339,9 +348,46 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(indicators[4]?.classList.contains('scale-x-[0.55]')).toBe(true)
 
     fireEvent.pointerLeave(buttons[2]!)
+    fireEvent.pointerLeave(screen.getByRole('list'))
     expect(indicators.every((indicator) => indicator?.classList.contains('scale-x-[0.4]'))).toBe(
       true
     )
+  })
+
+  it('coalesces fractional pointer positions and cancels a pending wave on dismissal', async () => {
+    vi.stubGlobal('PointerEvent', MouseEvent)
+    const items = Array.from({ length: 9 }, (_, index) => {
+      appendMessageTarget(viewport, `prompt-${index}`, 120 + index * 100)
+      return createMessageItem({ id: `prompt-${index}` }, index)
+    })
+    render(<WorkspaceRunMarks items={items} viewport={viewport} />)
+    const rail = screen.getByRole('list')
+    rail.getBoundingClientRect = () => createRect(100, 72, 20, 24)
+    const buttons = screen.getAllByRole('button', { name: /Go to run/u })
+    const scale = (index: number): number =>
+      parseFloat(buttons[index]!.querySelector('span')!.style.scale)
+    fireEvent.pointerEnter(buttons[4]!)
+    expect(scale(4)).toBe(1)
+    expect(scale(3)).toBeGreaterThan(scale(2))
+    expect(scale(0)).toBeCloseTo(0.4)
+    const frames = vi.spyOn(window, 'requestAnimationFrame')
+    fireEvent.pointerMove(rail, { clientY: 137 })
+    fireEvent.pointerMove(rail, { clientY: 138 })
+    expect(frames).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(scale(4)).toBeLessThan(1)
+    expect(scale(4)).toBeGreaterThan(scale(5))
+    expect(scale(5)).toBeGreaterThan(scale(3))
+    fireEvent.pointerMove(rail, { clientY: 140 })
+    fireEvent.keyDown(document, { key: 'Escape' })
+    await act(async () => {
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+    })
+    expect(scale(4)).toBe(0.4)
+    expect(queryPreview()).toBeNull()
+    frames.mockRestore()
   })
 
   it('highlights all visible segments and follows replies even when their prompt is unmounted', async () => {
@@ -377,6 +423,7 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(buttons[0]?.querySelector('span')?.className).toContain('bg-text-300/60')
     fireEvent.pointerEnter(buttons[2]!)
     fireEvent.pointerLeave(buttons[2]!)
+    fireEvent.pointerLeave(screen.getByRole('list'))
     expect(buttons[2]?.querySelector('span')?.className).toContain('bg-text-000')
     expect(buttons[3]?.querySelector('span')?.className).toContain('bg-text-000')
   })
@@ -422,11 +469,11 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(rail.className).toContain('fixed')
     expect(rail.style.left).toBe('208px')
     expect(rail.style.top).toBe('440px')
-    expect(list?.style.height).toBe('100px')
+    expect(list?.style.height).toBe('40px')
     expect(list?.style.maxHeight).toBe('calc(100vh - 6rem)')
 
     fireEvent.focus(screen.getAllByRole('button', { name: /Go to run/u })[0]!)
-    expect(screen.getByRole('tooltip')).toBeTruthy()
+    expect(getPreview()).toBeTruthy()
     viewportHeight = 240
     await act(async () => {
       notifyResize?.()
@@ -434,18 +481,18 @@ describe('WorkspaceRunMarks interaction', () => {
     })
 
     expect(rail.style.top).toBe('440px')
-    expect(screen.getByRole('tooltip')).toBeTruthy()
+    expect(getPreview()).toBeTruthy()
     panel.getBoundingClientRect = () => createRect(80, 800, 200, 1_000)
     await act(async () => {
       notifyResize?.()
       await new Promise<void>((resolve) => window.requestAnimationFrame(() => resolve()))
     })
     expect(rail.style.top).toBe('480px')
-    expect(screen.queryByRole('tooltip')).toBeNull()
+    expect(queryPreview()).toBeNull()
   })
 
   it('bounds dense spacing and follows transcript progress only beyond the visible rail edges', async () => {
-    const items = Array.from({ length: 60 }, (_, index) => {
+    const items = Array.from({ length: 100 }, (_, index) => {
       const id = `prompt-${index}`
       appendMessageTarget(viewport, id, 100 + index * 100)
       const target = viewport.lastElementChild as HTMLElement
@@ -456,9 +503,9 @@ describe('WorkspaceRunMarks interaction', () => {
     const rail = screen.getByRole('list')
     Object.defineProperties(rail, {
       clientHeight: { value: 480 },
-      scrollHeight: { value: 720 }
+      scrollHeight: { value: 800 }
     })
-    expect(screen.getAllByRole('button').length).toBeLessThan(60)
+    expect(screen.getAllByRole('button').length).toBeLessThan(100)
     expect(rail.style.height).toBe('480px')
     expect(rail.className).toContain('overflow-hidden')
 
@@ -471,18 +518,18 @@ describe('WorkspaceRunMarks interaction', () => {
     }
     await scrollTranscript(1_000)
     expect(rail.scrollTop).toBe(0)
-    await scrollTranscript(3_900)
-    expect(rail.scrollTop).toBeCloseTo(15.84)
-    await scrollTranscript(3_950)
-    expect(rail.scrollTop).toBeCloseTo(21.84)
-    await scrollTranscript(3_900)
-    expect(rail.scrollTop).toBeCloseTo(21.84)
+    await scrollTranscript(5_900)
+    expect(rail.scrollTop).toBeCloseTo(10.56)
+    await scrollTranscript(5_950)
+    expect(rail.scrollTop).toBeCloseTo(14.56)
+    await scrollTranscript(5_900)
+    expect(rail.scrollTop).toBeCloseTo(14.56)
     await scrollTranscript(100)
-    expect(rail.scrollTop).toBeCloseTo(3.84)
+    expect(rail.scrollTop).toBeCloseTo(2.56)
     await scrollTranscript(0)
     expect(rail.scrollTop).toBe(0)
-    await scrollTranscript(5_900)
-    expect(rail.scrollTop).toBe(240)
+    await scrollTranscript(9_900)
+    expect(rail.scrollTop).toBe(320)
   })
 
   it('shows the user message and first explicitly linked Agent message on keyboard focus', async () => {
@@ -510,10 +557,10 @@ describe('WorkspaceRunMarks interaction', () => {
     )
 
     fireEvent.focus(screen.getByRole('button', { name: /Go to run 2/u }))
-    const tooltip = await screen.findByRole('tooltip')
+    const tooltip = await waitFor(getPreview)
     expect(tooltip.textContent).toContain('Question with response')
     expect(tooltip.textContent).toContain('First visible Agent response')
-    const previewLines = tooltip.querySelectorAll('p')
+    const previewLines = tooltip.querySelectorAll('span')
     expect(previewLines[0]?.classList.contains('truncate')).toBe(true)
     expect(previewLines[0]?.classList.contains('font-semibold')).toBe(true)
     expect(previewLines[0]?.classList.contains('text-text-000')).toBe(true)
@@ -521,27 +568,36 @@ describe('WorkspaceRunMarks interaction', () => {
     expect(previewLines[1]?.classList.contains('text-text-200')).toBe(true)
   })
 
-  it('scrolls to the selected run with a clamped offset', () => {
-    appendMessageTarget(viewport, 'prompt-1', 120)
-    appendMessageTarget(viewport, 'prompt-2', 1_100)
-    const scrollTo = vi.fn()
-    viewport.scrollTo = scrollTo
+  it.each(['mark', 'preview'])(
+    'scrolls from the %s to the selected run with a clamped offset',
+    (source) => {
+      appendMessageTarget(viewport, 'prompt-1', 120)
+      appendMessageTarget(viewport, 'prompt-2', 1_100)
+      const scrollTo = vi.fn()
+      viewport.scrollTo = scrollTo
 
-    render(
-      <WorkspaceRunMarks
-        viewport={viewport}
-        items={[
-          createMessageItem({ id: 'prompt-1', content: 'First prompt' }, 0),
-          createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1),
-          createMessageItem({ id: 'prompt-3' }, 2),
-          createMessageItem({ id: 'prompt-4' }, 3)
-        ]}
-      />
-    )
+      render(
+        <WorkspaceRunMarks
+          viewport={viewport}
+          items={[
+            createMessageItem({ id: 'prompt-1', content: 'First prompt' }, 0),
+            createMessageItem({ id: 'prompt-2', content: 'Second prompt' }, 1),
+            createMessageItem({ id: 'prompt-3' }, 2),
+            createMessageItem({ id: 'prompt-4' }, 3)
+          ]}
+        />
+      )
 
-    fireEvent.click(screen.getByRole('button', { name: /Go to run 2/u }))
-    expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
-  })
+      const mark = screen.getByRole('button', { name: /Go to run 2/u })
+      fireEvent.pointerEnter(mark)
+      const preview = getPreview()
+      if (source === 'preview') act(() => preview.focus())
+      fireEvent.click(source === 'preview' ? preview : mark)
+      expect(queryPreview()).toBeNull()
+      if (source === 'preview') expect(document.activeElement).toBe(mark)
+      expect(scrollTo).toHaveBeenCalledWith({ top: 800, behavior: 'smooth' })
+    }
+  )
 
   it('moves the same preview between marks, clamps it and dismisses it with Escape', () => {
     const items = Array.from({ length: 4 }, (_, index) =>
@@ -552,12 +608,12 @@ describe('WorkspaceRunMarks interaction', () => {
     buttons[0]!.getBoundingClientRect = () => createRect(200, 20, 200, 24)
     buttons[1]!.getBoundingClientRect = () => createRect(300, 20, 200, 24)
     fireEvent.pointerEnter(buttons[0]!)
-    const preview = screen.getByRole('tooltip')
+    const preview = getPreview()
     expect(preview.textContent).toBe('Question 0')
     expect(preview.style.transform).toBe('translate3d(232px, 166px, 0)')
     fireEvent.pointerLeave(buttons[0]!)
     fireEvent.pointerEnter(buttons[1]!)
-    expect(screen.getByRole('tooltip')).toBe(preview)
+    expect(getPreview()).toBe(preview)
     expect(preview.textContent).toBe('Question 1')
     expect(preview.style.transform).toBe('translate3d(232px, 266px, 0)')
     expect(buttons[1]!.getAttribute('aria-describedby')).toBe(preview.id)
@@ -569,7 +625,7 @@ describe('WorkspaceRunMarks interaction', () => {
     fireEvent.focus(buttons[3]!)
     expect(preview.style.transform).toBe('translate3d(536px, 266px, 0)')
     fireEvent.keyDown(document, { key: 'Escape' })
-    expect(screen.queryByRole('tooltip')).toBeNull()
+    expect(queryPreview()).toBeNull()
     expect(buttons[2]!.hasAttribute('aria-describedby')).toBe(false)
   })
 
@@ -582,66 +638,70 @@ describe('WorkspaceRunMarks interaction', () => {
       render(<WorkspaceRunMarks items={items} viewport={viewport} onRevealMessage={vi.fn()} />)
       const button = screen.getAllByRole('button')[0]!
       fireEvent.pointerEnter(button)
-      const preview = screen.getByRole('tooltip')
+      const preview = getPreview()
       fireEvent.pointerLeave(button)
       fireEvent.pointerEnter(preview)
       act(() => vi.advanceTimersByTime(200))
-      expect(screen.getByRole('tooltip')).toBe(preview)
+      expect(getPreview()).toBe(preview)
       fireEvent.pointerLeave(preview)
       act(() => vi.advanceTimersByTime(120))
-      expect(screen.queryByRole('tooltip')).toBeNull()
+      expect(queryPreview()).toBeNull()
       fireEvent.focus(button)
       fireEvent.blur(button)
       fireEvent.focus(button)
       act(() => vi.advanceTimersByTime(200))
-      expect(screen.getByRole('tooltip')).toBe(preview)
+      expect(getPreview()).toBe(preview)
       fireEvent.blur(button)
       act(() => vi.advanceTimersByTime(120))
-      expect(screen.queryByRole('tooltip')).toBeNull()
+      expect(queryPreview()).toBeNull()
     } finally {
       vi.useRealTimers()
     }
   })
 
-  it('reveals unmounted targets, honors reduced motion and resets preview across scopes', () => {
-    const items = Array.from({ length: 4 }, (_, index) =>
-      createMessageItem({ id: `prompt-${index}` }, index)
-    )
-    const reveal = vi.fn()
-    const { rerender } = render(
-      <WorkspaceRunMarks
-        key="branch-a"
-        items={items}
-        viewport={viewport}
-        onRevealMessage={reveal}
-      />
-    )
-    fireEvent.focus(screen.getAllByRole('button')[0]!)
-    fireEvent.click(screen.getAllByRole('button')[0]!)
-    expect(reveal).toHaveBeenCalledWith('prompt-0')
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    appendMessageTarget(viewport, 'prompt-1', 300)
-    viewport.scrollTo = vi.fn()
-    vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
-    fireEvent.click(screen.getAllByRole('button')[1]!)
-    expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: 'auto' })
-    fireEvent.focus(screen.getAllByRole('button')[0]!)
-    rerender(
-      <WorkspaceRunMarks
-        key="branch-b"
-        items={items}
-        viewport={viewport}
-        onRevealMessage={reveal}
-      />
-    )
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    fireEvent.focus(screen.getAllByRole('button')[0]!)
-    fireEvent.scroll(viewport)
-    expect(screen.queryByRole('tooltip')).toBeNull()
-    fireEvent.focus(screen.getAllByRole('button')[0]!)
-    fireEvent(window, new Event('resize'))
-    expect(screen.queryByRole('tooltip')).toBeNull()
-  })
+  it.each(['mark', 'preview'])(
+    'reveals unmounted targets from the %s, honors reduced motion and resets preview across scopes',
+    (source) => {
+      const items = Array.from({ length: 4 }, (_, index) =>
+        createMessageItem({ id: `prompt-${index}` }, index)
+      )
+      const reveal = vi.fn()
+      const { rerender } = render(
+        <WorkspaceRunMarks
+          key="branch-a"
+          items={items}
+          viewport={viewport}
+          onRevealMessage={reveal}
+        />
+      )
+      fireEvent.focus(screen.getAllByRole('button')[0]!)
+      fireEvent.click(source === 'preview' ? getPreview() : screen.getAllByRole('button')[0]!)
+      expect(reveal).toHaveBeenCalledWith('prompt-0')
+      expect(queryPreview()).toBeNull()
+      appendMessageTarget(viewport, 'prompt-1', 300)
+      viewport.scrollTo = vi.fn()
+      vi.mocked(window.matchMedia).mockReturnValue({ matches: true } as MediaQueryList)
+      fireEvent.focus(screen.getAllByRole('button')[1]!)
+      fireEvent.click(source === 'preview' ? getPreview() : screen.getAllByRole('button')[1]!)
+      expect(viewport.scrollTo).toHaveBeenCalledWith({ top: 192, behavior: 'auto' })
+      fireEvent.focus(screen.getAllByRole('button')[0]!)
+      rerender(
+        <WorkspaceRunMarks
+          key="branch-b"
+          items={items}
+          viewport={viewport}
+          onRevealMessage={reveal}
+        />
+      )
+      expect(queryPreview()).toBeNull()
+      fireEvent.focus(screen.getAllByRole('button')[0]!)
+      fireEvent.scroll(viewport)
+      expect(queryPreview()).toBeNull()
+      fireEvent.focus(screen.getAllByRole('button')[0]!)
+      fireEvent(window, new Event('resize'))
+      expect(queryPreview()).toBeNull()
+    }
+  )
 
   it('tracks the last mark above the viewport reading boundary', () => {
     appendMessageTarget(viewport, 'prompt-1', 80)

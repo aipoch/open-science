@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 // Pins the ACP IPC bridge: the channel string and that it forwards verbatim to the runtime method.
 // The runtime behavior is covered in runtime.test.ts; this guards the wiring itself so a channel typo
 // (mismatched against the preload) can't slip through green. resetSessionContext is the overflow-recovery
@@ -173,8 +174,8 @@ vi.mock('../settings/codex-transport-fallback-log', () => ({
     end = fallbackEnd
   }
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: (scope: string) => ({
@@ -221,7 +222,10 @@ const registerWithFakes = (overrides?: {
   provisionedConnectorSkillNames?: string[]
   customMcpServers?: Array<{ id: string; name: string }>
   memory?: AcpTestOptions['memory']
+  sessionPersistenceCoordinator?: AcpTestOptions['sessionPersistenceCoordinator']
   delegatedNotebookConnection?: AcpTestOptions['delegatedNotebookConnection']
+  delegatedRuntimeHome?: AcpTestOptions['delegatedRuntimeHome']
+  fixedBackend?: AcpTestOptions['fixedBackend']
   archiveAvailability?: Parameters<typeof createAcpHandlerWorkflows>[3]
   interruptedTurnSessions?: Parameters<typeof createAcpHandlerWorkflows>[4]
   resolveMemoryEnabled?: Parameters<typeof installAcpIpcHandlers>[3]
@@ -234,6 +238,7 @@ const registerWithFakes = (overrides?: {
     })
 
   const options = {
+    appVersion: '0.0.0-test',
     mcpEntryPath: '/app/out/main/index.js',
     repository: {} as never,
     runRegistry: {} as never,
@@ -263,7 +268,10 @@ const registerWithFakes = (overrides?: {
     initializationBarrier: overrides?.initializationBarrier,
     specialistService: overrides?.specialistService as never,
     memory: overrides?.memory,
-    delegatedNotebookConnection: overrides?.delegatedNotebookConnection
+    sessionPersistenceCoordinator: overrides?.sessionPersistenceCoordinator,
+    delegatedNotebookConnection: overrides?.delegatedNotebookConnection,
+    delegatedRuntimeHome: overrides?.delegatedRuntimeHome,
+    fixedBackend: overrides?.fixedBackend
   }
 
   const runtime = createAcpRuntime(options)
@@ -307,6 +315,18 @@ afterEach(() => {
   fallbackBegin.mockClear()
   fallbackEnd.mockClear()
   AcpRuntimeMock.mockClear()
+})
+
+it('protects each delegated attempt runtime home from native file reads', () => {
+  const delegatedRuntimeHome = '/tmp/data/delegation/project-1/session-1/runtime/attempt-1'
+  registerWithFakes({
+    delegatedNotebookConnection: {} as never,
+    delegatedRuntimeHome,
+    fixedBackend: { framework: { id: 'codex' } } as never
+  })
+
+  const options = AcpRuntimeMock.mock.calls.at(-1)?.[0] as AcpRuntimeOptions
+  expect(options.additionalProtectedReadRoots).toContain(delegatedRuntimeHome)
 })
 
 it('rejects direct ACP policy mutations before runtime work when Session admission is closed', async () => {
@@ -523,6 +543,33 @@ describe('ACP runtime composition — memory eligibility', () => {
       delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
     })
     expect(AcpRuntimeMock.mock.calls.at(-1)?.[0]).not.toHaveProperty('memory')
+  })
+})
+
+describe('ACP runtime composition — Session reading eligibility', () => {
+  it('prepares reading for the persisted root Session and withholds it from child runtimes', async () => {
+    const readSessionRuntimeContext = vi.fn(async () => ({ version: 1, revision: 0 }))
+    const sessionPersistenceCoordinator = {
+      readSessionRuntimeContext
+    } as unknown as AcpTestOptions['sessionPersistenceCoordinator']
+    registerWithFakes({ sessionPersistenceCoordinator })
+    const rootOptions = AcpRuntimeMock.mock.calls.at(-1)![0]
+    await expect(
+      rootOptions.prepareSessionReading?.({
+        projectId: 'project-1',
+        sessionId: 'persisted-root',
+        promptMessageId: 'root-prompt',
+        sources: []
+      })
+    ).resolves.toBeUndefined()
+    expect(readSessionRuntimeContext).toHaveBeenCalledExactlyOnceWith('project-1', 'persisted-root')
+
+    registerWithFakes({
+      sessionPersistenceCoordinator,
+      delegatedNotebookConnection: {} as AcpTestOptions['delegatedNotebookConnection']
+    })
+    expect(AcpRuntimeMock.mock.calls.at(-1)![0].prepareSessionReading).toBeUndefined()
+    expect(readSessionRuntimeContext).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -1227,7 +1274,7 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     expect(admissionActive).toBe(false)
   })
 
-  it('logs a privacy-safe correlated lifecycle on success', async () => {
+  it('logs a correlated lifecycle with session identity for diagnostics export', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
       sessionId: 'private-session-id',
@@ -1252,23 +1299,25 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     )
     expect(started?.[1]).toMatchObject({
       operationId: expect.any(String),
-      sessionHash: expect.stringMatching(/^[a-f0-9]{12}$/)
+      sessionHash: expect.stringMatching(/^[a-f0-9]{12}$/),
+      sessionId: request.sessionId,
+      projectId: request.projectId
     })
     expect(completed?.[1]).toMatchObject({
       operationId: started?.[1]?.operationId,
       sessionHash: started?.[1]?.sessionHash,
+      sessionId: request.sessionId,
+      projectId: request.projectId,
       frameworkId: 'codex',
       contextReset: true,
       durationMs: expect.any(Number)
     })
     const serialized = JSON.stringify(infoLogSpy.mock.calls)
-    expect(serialized).not.toContain(request.sessionId)
     expect(serialized).not.toContain(request.cwd)
-    expect(serialized).not.toContain(request.projectId)
     expect(serialized).not.toContain('private-backend-id')
   })
 
-  it('classifies a failure without logging private error details', async () => {
+  it('classifies a failure and retains its evidence for the redacted diagnostic sink', async () => {
     registerWithFakes()
     const request: AcpResumeSessionRequest = {
       sessionId: 'private-session-id',
@@ -1299,20 +1348,25 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     expect(failed?.[1]).toMatchObject({
       operationId: started?.[1]?.operationId,
       sessionHash: started?.[1]?.sessionHash,
+      sessionId: request.sessionId,
       errorCategory: 'request',
       rpcCode: -32603,
       errorKind: 'session_not_found',
       service: 'session',
-      durationMs: expect.any(Number)
+      durationMs: expect.any(Number),
+      error: failure.message,
+      stack: failure.stack,
+      name: failure.name,
+      code: failure.code,
+      data: failure.data
     })
     const serialized = JSON.stringify([infoLogSpy.mock.calls, errorLogSpy.mock.calls])
-    expect(serialized).not.toContain(request.sessionId)
     expect(serialized).not.toContain(request.cwd)
-    expect(serialized).not.toContain('secret.example.test')
-    expect(serialized).not.toContain('private upstream details')
+    // This spy observes input to the logger. Credential and export-path redaction are exercised
+    // with real sinks in logger.test.ts and session-diagnostics/export-evidence.integration.test.ts.
   })
 
-  it('buckets an unknown numeric RPC code instead of copying it into the log', async () => {
+  it('buckets an unknown RPC classification while retaining its original diagnostic code', async () => {
     registerWithFakes()
     const privateCode = 987_654_321
     resumeSession.mockRejectedValueOnce(
@@ -1329,8 +1383,11 @@ describe('installAcpIpcHandlers — resume-session diagnostics', () => {
     const failed = errorLogSpy.mock.calls.find(
       ([message]) => message === 'acp:resume-session failed'
     )
-    expect(failed?.[1]).toMatchObject({ errorCategory: 'request', rpcCode: 'other' })
-    expect(JSON.stringify(failed)).not.toContain(String(privateCode))
+    expect(failed?.[1]).toMatchObject({
+      errorCategory: 'request',
+      rpcCode: 'other',
+      code: privateCode
+    })
   })
 
   it('keeps resume results and failures authoritative when diagnostics throw', async () => {
@@ -1576,3 +1633,5 @@ describe('installAcpIpcHandlers — acp:send-prompt notification tracking', () =
     expect(untrackPrompt).not.toHaveBeenCalled()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

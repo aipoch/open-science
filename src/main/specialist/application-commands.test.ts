@@ -1,4 +1,8 @@
-import { mkdtemp, readdir, rm } from 'node:fs/promises'
+import { SpecialistStorageFixture } from '../../../test/specialist-fixtures'
+import { createHostSpecialistPackages } from './package/environment'
+import { specialistDesktopCommandGroup } from './desktop-commands'
+import { englishNativeTranslator } from '../locale/main-process-messages'
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { zipSync, strToU8 } from 'fflate'
@@ -14,22 +18,26 @@ import {
   type ApplicationInvocation
 } from '../application-command-router'
 import { ApplicationCallerLeaseRegistry } from '../caller-lifecycle'
-import { createWebCallerContext } from '../caller-context'
+import { createCallerContext, createWebCallerContext } from '../caller-context'
 import { createUploadCommandOwner } from '../uploads/command-owner'
 import { UploadRepository } from '../uploads/repository'
-import { SpecialistRepository } from './repository'
 import { SpecialistService } from './service'
-import { SpecialistPackageService } from './package/service'
+import { SpecialistPackageService } from '@aipoch/specialists/node'
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
   type SpecialistPackageCandidatePreview,
   type SpecialistPackageInstallResult
-} from '../../shared/specialist-package'
+} from '@aipoch/specialists'
 import type { SpecialistCatalogSnapshot } from '../../shared/specialist'
+
+const native = vi.hoisted(() => ({ chooseFiles: vi.fn(), chooseSavePath: vi.fn() }))
+vi.mock('../desktop-interaction', () => ({ desktopFileInteraction: () => native }))
 
 const cleanup: (() => Promise<unknown> | void)[] = []
 afterEach(async () => {
   vi.useRealTimers()
+  native.chooseFiles.mockReset()
+  native.chooseSavePath.mockReset()
   for (const clean of cleanup.splice(0).reverse()) await clean()
 })
 const zip = zipSync({
@@ -70,17 +78,31 @@ type Fixture = {
   packages: SpecialistPackageService
   root: string
   service: SpecialistService
+  marketplace: {
+    list: ReturnType<typeof vi.fn>
+    getRelease: ReturnType<typeof vi.fn>
+    dispose: ReturnType<typeof vi.fn>
+    inspectGitHubSource: ReturnType<typeof vi.fn>
+    prepareInstall: ReturnType<typeof vi.fn>
+    addSource: ReturnType<typeof vi.fn>
+    install: ReturnType<typeof vi.fn>
+    cancel: ReturnType<typeof vi.fn>
+  }
+  requestSwitch: ReturnType<typeof vi.fn>
   onProfilesChanged: ReturnType<typeof vi.fn>
 }
-const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Promise<Fixture> => {
+const fixture = async (
+  beforeCatalog: () => Promise<void> = async () => {},
+  desktop = false
+): Promise<Fixture> => {
   const root = await mkdtemp(join(tmpdir(), 'specialist-web-'))
   cleanup.push(() => rm(root, { recursive: true, force: true }))
   const uploads = createUploadCommandOwner(new UploadRepository(root))
-  const repository = new SpecialistRepository(root)
-  const service = new SpecialistService(repository)
-  const packages = new SpecialistPackageService({
+  const repository = new SpecialistStorageFixture(root)
+  const service = repository.domain.catalog
+  const packages = createHostSpecialistPackages({
     storageDir: root,
-    repository,
+    domain: repository.domain,
     catalog: async () => {
       await beforeCatalog()
       return {
@@ -93,13 +115,53 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
     }
   })
   const onProfilesChanged = vi.fn()
-  const owner = createSpecialistApplicationOwner({ service, packages, uploads, onProfilesChanged })
+  const marketplace = {
+    dispose: vi.fn(),
+    inspectGitHubSource: vi.fn(),
+    addSource: vi.fn(),
+    removeSource: vi.fn(),
+    prepareInstall: vi.fn(),
+    install: vi.fn(),
+    cancel: vi.fn(),
+    list: vi.fn(async () => ({ sources: [], specialists: [], failures: [] })),
+    getRelease: vi.fn(async () => {
+      throw new Error('Marketplace release detail is not preconfigured.')
+    })
+  }
+  const requestSwitch = vi.fn(async () => ({ status: 'applied' as const, contextReset: false }))
+  const owner = createSpecialistApplicationOwner({
+    service,
+    packages,
+    uploads,
+    marketplace,
+    sessionReconfiguration: { requestSwitch },
+    onProfilesChanged,
+    disposeMarketplace: marketplace.dispose,
+    desktop: {
+      service,
+      packages,
+      marketplace,
+      translate: englishNativeTranslator,
+      bindings: { resolve: vi.fn() },
+      reportProgress: vi.fn()
+    }
+  })
   const router = createApplicationCommandRouter()
   registerSpecialistApplicationCommands(router.registrar, owner)
   cleanup.push(() => router.dispose())
   const leases = new ApplicationCallerLeaseRegistry()
   const caller = (id: string): TestCaller => {
-    const context = createWebCallerContext(id, { location: 'remote' })
+    const context = desktop
+      ? createCallerContext({
+          clientId: id,
+          lifecycleClientId: `electron:attachment:${id}`,
+          leaseId: `attachment:${id}`,
+          surface: 'electron',
+          location: 'local',
+          principalKind: 'human',
+          actionOrigin: 'human'
+        })
+      : createWebCallerContext(id, { location: 'remote' })
     const lease = leases.acquire(context)
     cleanup.push(() => lease.release())
     const invocation = <const Args extends readonly unknown[]>(
@@ -114,9 +176,14 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
       invocation,
       invoke: <Result = unknown>(name: string, ...args: unknown[]): Promise<Result> =>
         router.dispatcher.invoke(
-          specialistApplicationCommandGroup.commands.find(
-            (command) => command.name === name
-          )! as ApplicationCommand<string, readonly unknown[], Result>,
+          [
+            ...specialistApplicationCommandGroup.commands,
+            ...specialistDesktopCommandGroup.commands
+          ].find((command) => command.name === name)! as ApplicationCommand<
+            string,
+            readonly unknown[],
+            Result
+          >,
           invocation(args)
         )
     }
@@ -137,10 +204,129 @@ const fixture = async (beforeCatalog: () => Promise<void> = async () => {}): Pro
     await uploads.appendTransfer(uploader.invocation([{ transferId, offset: 0, chunk: bytes }]))
     return { transferId }
   }
-  return { first, second, third, upload, uploads, packages, root, service, onProfilesChanged }
+  return {
+    first,
+    second,
+    third,
+    upload,
+    uploads,
+    packages,
+    root,
+    service,
+    marketplace,
+    requestSwitch,
+    onProfilesChanged
+  }
 }
 
 describe('Specialist Remote Web application commands', () => {
+  it('isolates desktop documents whose transport identities are not WebContents numbers', async () => {
+    const f = await fixture(undefined, true)
+    const previewCall = vi.spyOn(f.packages, 'preview')
+    const first = await f.upload()
+    const firstPreview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      first
+    )
+    const second = await f.upload(zip, 'second-package', f.second)
+    await f.second.invoke('specialist:package-upload-preview', second)
+    const ownerIds = previewCall.mock.calls.map((call) => call[1])
+    expect(ownerIds).toHaveLength(2)
+    expect(ownerIds.every((id) => Number.isSafeInteger(id) && id! < 0)).toBe(true)
+    expect(new Set(ownerIds).size).toBe(2)
+    expect(f.packages.report(firstPreview.candidateToken, ownerIds[0])).toBeDefined()
+    expect(f.packages.report(firstPreview.candidateToken, ownerIds[1])).toBeUndefined()
+    f.first.release()
+    expect(f.packages.report(firstPreview.candidateToken, ownerIds[0])).toBeUndefined()
+  })
+  it('loads Marketplace snapshots on automatic refresh, forced refresh and retry through JSON RPC', async () => {
+    const { installWebRendererContracts } = await import('../../renderer/web/api-installer')
+    const { useMarketplaceStore, resetMarketplaceStoreForTests } =
+      await import('../../renderer/src/stores/marketplace-store')
+    const { first, marketplace } = await fixture()
+    const api: Record<string, unknown> = {}
+    installWebRendererContracts(api, {
+      availableRpcChannels: new Set(['specialist:marketplace-list']),
+      restrictedRpcChannels: new Set(),
+      invoke: (channel, args) => {
+        const body = JSON.parse(JSON.stringify({ args })) as { args: unknown[] }
+        return first.invoke(channel, ...body.args)
+      },
+      subscribe: () => () => {},
+      nativeAdapters: {}
+    })
+    resetMarketplaceStoreForTests()
+    vi.stubGlobal('window', { api })
+    cleanup.push(() => {
+      resetMarketplaceStoreForTests()
+      vi.unstubAllGlobals()
+    })
+
+    for (const options of [undefined, { forceRefresh: true }, undefined]) {
+      marketplace.list.mockRejectedValueOnce(new Error('offline'))
+      await useMarketplaceStore.getState().refresh(options)
+      expect(useMarketplaceStore.getState().lastRefreshFailed).toBe(true)
+
+      await useMarketplaceStore.getState().refresh(options)
+      expect(useMarketplaceStore.getState()).toMatchObject({
+        snapshot: { sources: [], specialists: [], failures: [] },
+        lastRefreshFailed: false,
+        isRefreshing: false
+      })
+    }
+    expect(marketplace.list).toHaveBeenCalledTimes(6)
+  })
+
+  it('serves Marketplace browsing through the public commands and validates the list request', async () => {
+    const { first, marketplace } = await fixture()
+    const snapshot = { sources: [], specialists: [], failures: [] }
+    marketplace.list.mockResolvedValue(snapshot)
+    expect(await first.invoke('specialist:marketplace-list')).toEqual(snapshot)
+    expect(marketplace.list).toHaveBeenLastCalledWith(undefined)
+    await first.invoke('specialist:marketplace-list', { forceRefresh: true })
+    expect(marketplace.list).toHaveBeenLastCalledWith({ forceRefresh: true })
+    await expect(
+      first.invoke('specialist:marketplace-list', { forceRefresh: 'yes' })
+    ).rejects.toThrow('Marketplace list does not accept renderer data.')
+    await expect(first.invoke('specialist:marketplace-list', {})).rejects.toThrow(
+      'Marketplace list does not accept renderer data.'
+    )
+    expect(marketplace.list).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes Marketplace release detail through the public command', async () => {
+    const { first, marketplace } = await fixture()
+    const release = { specialistId: 'web-research' }
+    marketplace.getRelease.mockResolvedValue(release)
+    const request = { sourceId: 'official', specialistId: 'web-research', version: '1.0.0' }
+    expect(await first.invoke('specialist:marketplace-release-get', request)).toEqual(release)
+    expect(marketplace.getRelease).toHaveBeenCalledWith(request)
+  })
+
+  it('switches a session Specialist through the public command with Electron IPC parity validation', async () => {
+    const { first, requestSwitch } = await fixture()
+    requestSwitch.mockResolvedValue({ status: 'applied', contextReset: false })
+    expect(
+      await first.invoke('specialist:set-session-specialist', {
+        sessionId: 'session-1',
+        specialistId: 'reviewer'
+      })
+    ).toEqual({ status: 'applied', contextReset: false })
+    expect(requestSwitch).toHaveBeenLastCalledWith('session-1', 'reviewer')
+    await first.invoke('specialist:set-session-specialist', { sessionId: 'session-1' })
+    expect(requestSwitch).toHaveBeenLastCalledWith('session-1', undefined)
+    await expect(
+      first.invoke('specialist:set-session-specialist', { specialistId: 'reviewer' })
+    ).rejects.toThrow('SET_SESSION_SPECIALIST: sessionId must be a string.')
+    await expect(
+      first.invoke('specialist:set-session-specialist', {
+        sessionId: 'session-1',
+        specialistId: 42
+      })
+    ).rejects.toThrow('SET_SESSION_SPECIALIST: specialistId must be a string or undefined.')
+    expect(requestSwitch).toHaveBeenCalledTimes(2)
+  })
+
   it.each(['abort', 'disconnect', 'expiry'] as const)(
     'releases an idle upload slot on %s',
     async (action) => {
@@ -430,5 +616,126 @@ describe('Specialist Remote Web application commands', () => {
     expect(await files()).toHaveLength(1)
     f.first.release()
     await vi.waitFor(async () => expect(await files()).toEqual([]))
+  })
+})
+
+describe('Specialist desktop document ownership', () => {
+  it('rejects Web authority for every native workflow before invoking an owner', async () => {
+    const f = await fixture()
+    for (const command of specialistDesktopCommandGroup.commands) {
+      await expect(f.first.invoke(command.name, {})).rejects.toThrow('desktop app')
+    }
+    expect(f.marketplace.inspectGitHubSource).not.toHaveBeenCalled()
+    expect(f.marketplace.prepareInstall).not.toHaveBeenCalled()
+  })
+
+  it('shares candidate identity across inspection, addition, preparation and installation', async () => {
+    const f = await fixture(undefined, true)
+    await f.first.invoke('specialist:marketplace-source-inspect-github', {})
+    await f.first.invoke('specialist:marketplace-source-add', { candidateToken: 'source' })
+    await f.first.invoke('specialist:marketplace-install-prepare', {})
+    await f.first.invoke('specialist:marketplace-install', { candidateToken: 'install' })
+    const id = f.marketplace.inspectGitHubSource.mock.calls[0][1]
+    expect(id).toBeLessThan(0)
+    expect(f.marketplace.addSource.mock.calls[0][1]).toBe(id)
+    expect(f.marketplace.prepareInstall.mock.calls[0][1]).toBe(id)
+    expect(f.marketplace.install.mock.calls[0][1]).toBe(id)
+    await f.second.invoke('specialist:marketplace-source-inspect-github', {})
+    expect(f.marketplace.inspectGitHubSource.mock.calls[1][1]).not.toBe(id)
+    f.first.release()
+    expect(f.marketplace.dispose).toHaveBeenCalledWith(id)
+  })
+
+  it.each([
+    'specialist:marketplace-source-inspect-github',
+    'specialist:marketplace-install-prepare'
+  ])('disposes late candidates returned after release during %s', async (channel) => {
+    const f = await fixture(undefined, true)
+    let complete!: (value: unknown) => void
+    const pending = new Promise((resolve) => {
+      complete = resolve
+    })
+    const work = channel.endsWith('github')
+      ? f.marketplace.inspectGitHubSource
+      : f.marketplace.prepareInstall
+    work.mockReturnValue(pending)
+    const result = f.first.invoke(channel, {})
+    const rejected = expect(result).rejects.toThrow()
+    await vi.waitFor(() => expect(work).toHaveBeenCalledOnce())
+    const id = work.mock.calls[0][1]
+    f.first.release()
+    const before = f.marketplace.dispose.mock.calls.length
+    complete({ candidateToken: 'late' })
+    await rejected
+    expect(f.marketplace.dispose.mock.calls.length).toBeGreaterThan(before)
+    expect(f.marketplace.dispose).toHaveBeenLastCalledWith(id)
+  })
+})
+
+describe('Specialist native files through the shared owner', () => {
+  it('selects and installs real ZIP bytes using the same document candidate identity', async () => {
+    const f = await fixture(undefined, true)
+    const path = join(f.root, 'research.zip')
+    await writeFile(path, zip)
+    native.chooseFiles.mockResolvedValue({ canceled: false, filePaths: [path] })
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-select'
+    )
+    expect(native.chooseFiles).toHaveBeenCalledWith(expect.any(Object), 'first')
+    await expect(
+      f.second.invoke('specialist:package-install', { candidateToken: preview.candidateToken })
+    ).resolves.toMatchObject({ status: 'failed', code: 'stale-candidate' })
+    await expect(
+      f.first.invoke('specialist:package-install', { candidateToken: preview.candidateToken })
+    ).resolves.toMatchObject({ status: 'installed' })
+  })
+
+  it('does not read a selected ZIP after its document is released', async () => {
+    const f = await fixture(undefined, true)
+    const preview = vi.spyOn(f.packages, 'preview')
+    native.chooseFiles.mockImplementation(async () => {
+      f.first.release()
+      return { canceled: false, filePaths: [join(f.root, 'does-not-exist.zip')] }
+    })
+    await expect(f.first.invoke('specialist:package-select')).rejects.toThrow()
+    expect(preview).not.toHaveBeenCalled()
+  })
+
+  it('keeps the destination intact when a document is revoked while choosing a report path', async () => {
+    const f = await fixture(undefined, true)
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    const path = join(f.root, 'report.json')
+    await writeFile(path, 'original')
+    native.chooseSavePath.mockImplementation(async () => {
+      f.first.release()
+      return { canceled: false, filePath: path }
+    })
+    await expect(
+      f.first.invoke('specialist:package-report-save', { candidateToken: preview.candidateToken })
+    ).rejects.toThrow()
+    expect(await readFile(path, 'utf8')).toBe('original')
+  })
+
+  it('publishes a selected report atomically and rejects another document report token', async () => {
+    const f = await fixture(undefined, true)
+    const preview = await f.first.invoke<SpecialistPackageCandidatePreview>(
+      'specialist:package-upload-preview',
+      await f.upload()
+    )
+    const path = join(f.root, 'report.json')
+    native.chooseSavePath.mockResolvedValue({ canceled: false, filePath: path })
+    await expect(
+      f.second.invoke('specialist:package-report-save', { candidateToken: preview.candidateToken })
+    ).resolves.toEqual({ saved: false })
+    expect(native.chooseSavePath).not.toHaveBeenCalled()
+    await expect(
+      f.first.invoke('specialist:package-report-save', { candidateToken: preview.candidateToken })
+    ).resolves.toEqual({ saved: true })
+    expect(JSON.parse(await readFile(path, 'utf8'))).toMatchObject({
+      summary: { id: 'web-research' }
+    })
   })
 })

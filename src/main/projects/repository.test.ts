@@ -28,7 +28,15 @@ const createMockClient = (
   project: Record<string, ReturnType<typeof vi.fn>>
   projectDeletionIntent: Record<string, ReturnType<typeof vi.fn>>
   projectPreviewState: { deleteMany: ReturnType<typeof vi.fn> }
+  sessionReplayProgress: { deleteMany: ReturnType<typeof vi.fn> }
+  sessionDiscussionSnapshot: { deleteMany: ReturnType<typeof vi.fn> }
   projectLiterature: { deleteMany: ReturnType<typeof vi.fn> }
+  pdfAnnotationSourceBinding: {
+    findMany: ReturnType<typeof vi.fn>
+    findFirst: ReturnType<typeof vi.fn>
+    deleteMany: ReturnType<typeof vi.fn>
+  }
+  pdfAnnotationDocument: { delete: ReturnType<typeof vi.fn> }
   pdfAnnotation: { deleteMany: ReturnType<typeof vi.fn>; findMany: ReturnType<typeof vi.fn> }
   bookmark: { deleteMany: ReturnType<typeof vi.fn> }
   visionEvidence: { deleteMany: ReturnType<typeof vi.fn> }
@@ -52,9 +60,20 @@ const createMockClient = (
   const executeRaw = vi.fn().mockResolvedValue(1)
   const projectLiterature = { deleteMany: vi.fn(() => Promise.resolve({ count: 1 })) }
   const projectPreviewState = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const sessionReplayProgress = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
+  const sessionDiscussionSnapshot = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const pdfAnnotation = {
     findMany: vi.fn().mockResolvedValue([{ id: 'annotation-1' }]),
     deleteMany: vi.fn().mockResolvedValue({ count: 1 })
+  }
+  const pdfAnnotationSourceBinding = {
+    findMany: vi.fn().mockResolvedValue([{ documentId: 'document-1' }]),
+    findFirst: vi.fn().mockResolvedValue(null),
+    deleteMany: vi.fn().mockResolvedValue({ count: 1 })
+  }
+  const pdfAnnotationDocument = {
+    findUnique: vi.fn().mockResolvedValue({ id: 'document-1', pdfDocumentId: null }),
+    delete: vi.fn().mockResolvedValue({})
   }
   const bookmark = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
   const visionEvidence = { deleteMany: vi.fn().mockResolvedValue({ count: 1 }) }
@@ -69,8 +88,12 @@ const createMockClient = (
     project,
     projectDeletionIntent,
     projectPreviewState,
+    sessionReplayProgress,
+    sessionDiscussionSnapshot,
     bookmark,
     pdfAnnotation,
+    pdfAnnotationSourceBinding,
+    pdfAnnotationDocument,
     pdfAnnotationImport: { deleteMany: vi.fn().mockResolvedValue({ count: 0 }) },
     tagAssignment: { deleteMany: vi.fn() },
     projectLiterature,
@@ -80,6 +103,8 @@ const createMockClient = (
   } as unknown as ProjectClient
 
   return {
+    sessionReplayProgress,
+    sessionDiscussionSnapshot,
     client,
     executeRaw,
     project,
@@ -87,6 +112,8 @@ const createMockClient = (
     projectPreviewState,
     bookmark,
     pdfAnnotation,
+    pdfAnnotationSourceBinding,
+    pdfAnnotationDocument,
     projectLiterature,
     visionEvidence,
     memoryEntry,
@@ -344,8 +371,12 @@ describe('project repository', () => {
       client,
       project,
       projectPreviewState,
+      sessionReplayProgress,
+      sessionDiscussionSnapshot,
       bookmark,
       pdfAnnotation,
+      pdfAnnotationSourceBinding,
+      pdfAnnotationDocument,
       visionEvidence,
       memoryEntry,
       memorySettings
@@ -361,13 +392,25 @@ describe('project repository', () => {
       where: { projectId: 'project-1' }
     })
     expect(bookmark.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
+    expect(sessionReplayProgress.deleteMany).toHaveBeenCalledWith({
+      where: { projectId: 'project-1' }
+    })
+    expect(sessionDiscussionSnapshot.deleteMany).toHaveBeenCalledWith({
+      where: { sourceProjectId: 'project-1' }
+    })
+    expect(pdfAnnotationSourceBinding.deleteMany).toHaveBeenCalledWith({
+      where: {
+        projectId: 'project-1',
+        sourceKind: undefined,
+        sourceFileId: undefined,
+        versionId: undefined
+      }
+    })
     expect(pdfAnnotation.findMany).toHaveBeenCalledWith({
-      where: { projectId: 'project-1' },
+      where: { documentId: 'document-1' },
       select: { id: true }
     })
-    expect(pdfAnnotation.deleteMany).toHaveBeenCalledWith({
-      where: { id: { in: ['annotation-1'] } }
-    })
+    expect(pdfAnnotationDocument.delete).toHaveBeenCalledWith({ where: { id: 'document-1' } })
     expect(visionEvidence.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(memoryEntry.deleteMany).toHaveBeenCalledWith({ where: { projectId: 'project-1' } })
     expect(memorySettings.update).toHaveBeenCalledWith({

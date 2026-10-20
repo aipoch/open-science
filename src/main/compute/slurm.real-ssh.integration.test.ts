@@ -1,23 +1,24 @@
+import { createComputeExecution, createScpRunner, createSshRunner } from '@aipoch/compute/node'
 // RUN_COMPUTE_SLURM=1 COMPUTE_TEST_SSH_ALIAS=hpc-dev npx vitest run src/main/compute/slurm.real-ssh.integration.test.ts
+import {
+  JobPoller,
+  parseSbatchJobId,
+  quoteRemotePath,
+  recoverSlurmJob,
+  shellSingleQuote,
+  SshRunner
+} from '@aipoch/compute/node'
 import { randomUUID } from 'node:crypto'
 import { readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import type { ComputeJob } from '../../shared/compute'
-import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeApprovalBroker } from './compute-approval-broker'
-import { ComputeJobCancellationReaper } from './compute-job-cancellation-owner'
-import { ComputeJobLifecycle } from './compute-job-lifecycle'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
 import { ComputeService } from './compute-service'
 import { SshConfigComputeConnectionBroker } from './connection-broker'
 import { harvestJob } from './harvest-engine'
-import { JobPoller } from './job-poller'
-import { ComputeJobDeletionOwner } from './job-deletion-owner'
 import { ComputeHostRepository } from './repository'
-import { quoteRemotePath, shellSingleQuote } from './remote-path-security'
-import { SystemScpRunner } from './scp-runner'
-import { SystemSshRunner } from './ssh-runner'
-import { parseSbatchJobId, recoverSlurmJob } from './slurm-driver'
 import { getJobHarvestDir } from './workspace-path'
 
 const alias = process.env['COMPUTE_TEST_SSH_ALIAS'] ?? ''
@@ -32,15 +33,20 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   let hosts: ComputeHostRepository
   let connectionBroker: SshConfigComputeConnectionBroker
   let service: ComputeService
+  const execution = createComputeExecution()
   const jobs: string[] = []
   const envName = `os-cert-${randomUUID()}`
   const envPath = `~/.openscience/environments/${envName}.sh`
   const envRoot = `~/.openscience/environments/${envName}`
   const schedulerHeader = `#SBATCH --partition=${partition}\n#SBATCH --cpus-per-task=1\n#SBATCH --mem=128M\n`
 
-  const makePoller = (): JobPoller =>
-    new JobPoller({ connectionBroker, hostRepository: hosts, jobRepository: db.repositories.jobs })
-  const remote = async (command: string): ReturnType<SystemSshRunner['run']> => {
+  const makePoller = (owner = execution): JobPoller =>
+    owner.createPoller({
+      connectionBroker,
+      hostRepository: hosts,
+      jobRepository: db.repositories.jobs
+    })
+  const remote = async (command: string): ReturnType<SshRunner['run']> => {
     const lease = await connectionBroker.acquire(scope.providerId, { intent: 'direct_command' })
     return lease.run(command, { timeoutMs: 30000, loginShell: true, maxOutputBytes: 8192 })
   }
@@ -79,8 +85,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     db = await createMigratedComputeTestDatabase('os-slurm-real-')
     hosts = new ComputeHostRepository(async () => db.client)
     await hosts.create({ sshAlias: alias, executionMode: 'slurm' })
-    const runner = new SystemSshRunner()
-    const scpRunner = new SystemScpRunner()
+    const runner = createSshRunner()
+    const scpRunner = createScpRunner()
     connectionBroker = new SshConfigComputeConnectionBroker({
       getHost: (id) => hosts.get(id),
       runner,
@@ -105,7 +111,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       jobRepository: db.repositories.jobs,
       operationRepository: db.repositories.operations,
       approvalBroker: approval,
-      storageRoot: db.storageRoot
+      storageRoot: db.storageRoot,
+      execution
     })
     expect((await service.probe(scope.providerId)).detectedScheduler).toBe('slurm')
     const setup = await remote(
@@ -115,6 +122,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   })
 
   afterAll(async () => {
+    await execution.waitForDispatch(jobs)
     if (connectionBroker && db) {
       for (const id of jobs) {
         const job = await db.repositories.jobs.get(id)
@@ -140,7 +148,10 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
         workspaceCwd: db.storageRoot
       }
     )
-    const completed = await wait(submitted.job_id, terminal, makePoller())
+    // Simulate a new runtime only after dispatch has published its durable handle.
+    await execution.waitForDispatch([submitted.job_id])
+    expect((await db.repositories.jobs.get(submitted.job_id))?.remote_handle).toBeTruthy()
+    const completed = await wait(submitted.job_id, terminal, makePoller(createComputeExecution()))
     expect(completed.status).toBe('success')
     expect(completed.exit_code).toBe(0)
     expect(JSON.parse(completed.remote_handle!).driver).toBe('slurm')
@@ -168,6 +179,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   it('adopts a lost local handle without resubmitting after the host mode changes', async () => {
     const submitted = await submit('sleep 8\necho recovered')
     const launched = await wait(submitted.job_id, (job) => Boolean(job.remote_handle))
+    await execution.waitForDispatch([submitted.job_id])
     const schedulerId = JSON.parse(launched.remote_handle!).scheduler_job_id
     expect(
       (await remote(`rm -f -- ${quoteRemotePath(`${submitted.remote_workdir}/scheduler_job_id`)}`))
@@ -179,7 +191,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
     })
     await hosts.updateExecutionMode(scope.providerId, 'direct_ssh')
     try {
-      const recovered = await wait(submitted.job_id, terminal, makePoller())
+      const recovered = await wait(submitted.job_id, terminal, makePoller(createComputeExecution()))
       expect(recovered.status).toBe('success')
       expect(JSON.parse(recovered.remote_handle!).scheduler_job_id).toBe(schedulerId)
       expect(recovered.stdout_tail).toContain('recovered')
@@ -241,7 +253,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       data: { remoteHandle: null }
     })
     await service.cancelJob(submitted.job_id, scope)
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = execution.createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
       connectionBroker
@@ -288,6 +300,23 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
   }, 180000)
 
   it('preserves direct SSH execution with the same named environment', async () => {
+    let entered!: () => void
+    let release!: () => void
+    const dispatchEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const dispatchGate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const acquire = connectionBroker.acquire.bind(connectionBroker)
+    connectionBroker.acquire = async (id, request) => {
+      if (request.intent === 'job_dispatch') {
+        entered()
+        await dispatchGate
+      }
+      return acquire(id, request)
+    }
+
     await hosts.updateExecutionMode(scope.providerId, 'direct_ssh')
     try {
       const submitted = await service.submitJob(
@@ -298,11 +327,25 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
         scope
       )
       jobs.push(submitted.job_id)
+      try {
+        await dispatchEntered
+        // Poll during dispatch to prove this runtime shares the dispatch ownership scope.
+        await makePoller().tick()
+        expect(await db.repositories.jobs.get(submitted.job_id)).toMatchObject({
+          status: 'submitted',
+          error_code: undefined
+        })
+      } finally {
+        release()
+        await execution.waitForDispatch([submitted.job_id])
+      }
       const completed = await wait(submitted.job_id)
       expect(completed.status).toBe('success')
       expect(completed.stdout_tail).toContain('direct-ready')
       expect(JSON.parse(completed.remote_handle!).pid).toBeGreaterThan(1)
     } finally {
+      release()
+      connectionBroker.acquire = acquire
       await hosts.updateExecutionMode(scope.providerId, 'slurm')
     }
   }, 180000)
@@ -317,7 +360,7 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       'slurm_pending'
     )
     await service.cancelJob(submitted.job_id, scope)
-    const reaper = new ComputeJobCancellationReaper(
+    const reaper = execution.createCancellationReaper(
       db.repositories.operations,
       db.repositories.jobs,
       connectionBroker
@@ -353,9 +396,8 @@ describe.skipIf(!run)('Slurm lifecycle on real SSH + scheduler', () => {
       where: { id: submitted.job_id },
       data: { remoteHandle: null }
     })
-    const owner = new ComputeJobDeletionOwner({
+    const owner = execution.createDeletionOwner({
       jobRepository: db.repositories.jobs,
-      lifecycle: new ComputeJobLifecycle(db.repositories.jobs),
       hostRepository: hosts,
       connectionBroker
     })

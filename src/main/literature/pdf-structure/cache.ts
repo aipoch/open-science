@@ -3,13 +3,13 @@ import { createReadStream } from 'node:fs'
 import { lstat, mkdir, readdir, rename, rmdir, unlink, utimes, writeFile } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 
-import { readFileWithinLimit } from '../../storage/durable-json-file'
-import { defaultFileDurability } from '../../storage/file-durability'
+import { readFileWithinLimit } from '@aipoch/durable-files'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import {
   parsePdfStructureResult,
   type PdfStructureIdentity,
   type PdfStructureResult
-} from './result'
+} from '@aipoch/pdf-structure/result'
 
 const MAX_MANIFEST_BYTES = 8 * 1024 * 1024
 const MAX_THUMBNAIL_BYTES = 4 * 1024 * 1024
@@ -105,7 +105,7 @@ export class PdfStructureCache {
   }
 
   // ponytail: serialize bounded cache I/O; use per-entry read leases only if measured contention
-  // warrants it. The structure owner already limits expensive extraction to one worker.
+  // warrants it. The structure owner bounds extraction separately; publishing stays serialized.
   private operation<T>(run: () => Promise<T>): Promise<T> {
     const result = this.tail.then(run)
     this.tail = result.then(

@@ -3,10 +3,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { flushSessionPersistence } from '@/lib/session-persistence/session-persistence'
 import type { ChatSession } from '@/stores/session-store'
 import { MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS } from '../../../../shared/artifacts'
-import {
-  createArtifactVersionLocator,
-  type ArtifactVersionDescriptor
-} from '../../../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../../../shared/artifact-version-locator'
+import { type ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
 import { projectRootArtifactVisibility } from '../../../../shared/artifact-visibility'
 import { resolveProjectId } from '../../../../shared/project-scope'
 import { resolveTurnTerminalAgentMessageIds } from './workspace-conversation-items'
@@ -243,7 +241,11 @@ const useWorkspaceArtifactVisibility = (
     [messages]
   )
   const historicalArtifacts = useHistoricalArtifactDescriptors(
-    sessionId,
+    // New branches bind before their first save; an acknowledged revision proves durable ownership.
+    activeSession?.isPending ||
+      (activeSession?.delegationPolicyAuthorityPending && activeSession.revision === undefined)
+      ? undefined
+      : sessionId,
     projectId,
     messages,
     scopedArtifacts,

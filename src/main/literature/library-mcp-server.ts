@@ -1,22 +1,23 @@
-import { withDataRootWrite } from '../storage/migration-state'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { z } from 'zod'
+import { withDataRootWrite } from '../storage/migration-state'
+import type { LiteratureLibraryDiscovery } from './discovery-contract'
+import { literatureDiscoverySchema } from './discovery-contract'
+export { literatureDiscoverySchema } from './discovery-contract'
 
 import {
   LITERATURE_CITATION_LOCALES,
   LITERATURE_CITATION_STYLES,
-  literatureItemInputSchema,
-  literatureSourceInputSchema,
   type LiteratureCitationLocale,
-  type LiteratureCitationStyle,
-  type LiteratureItemView
-} from '../../shared/literature'
+  type LiteratureCitationStyle
+} from '@aipoch/literature-citations/contracts'
+import { type LiteratureItemView } from '@aipoch/literature-library/contracts'
 import {
   summarizeLiteratureSaveReceipts,
   type LiteratureLibrarySaveResult
 } from '../../shared/literature-save'
-import { literatureReadPresentation } from './mcp-server'
 import type { AgentPdfAcquisitionResult } from './agent-pdf-acquisition'
+import { literatureReadPresentation } from './mcp-server'
 
 const LITERATURE_LIBRARY_MCP_SERVER_NAME = 'open-science-library'
 const LITERATURE_LIBRARY_SEARCH_TOOL_NAME = 'search_library'
@@ -32,16 +33,9 @@ const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MAX_CHARACTERS = 1_200
 const LITERATURE_LIBRARY_SEARCH_ABSTRACT_MIN_CHARACTERS = 200
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_LIMIT = 5
 const LITERATURE_LIBRARY_BATCH_ABSTRACT_MAX_CHARACTERS = 5_000
-const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
+export const LITERATURE_LIBRARY_SCOPES = ['library', 'project', 'collection', 'items'] as const
 
 type LiteratureLibraryScope = (typeof LITERATURE_LIBRARY_SCOPES)[number]
-
-const literatureDiscoverySchema = z
-  .object({
-    item: literatureItemInputSchema,
-    source: literatureSourceInputSchema
-  })
-  .strict()
 
 const literatureDiscoveryBatchSchema = z
   .object({ candidates: z.array(literatureDiscoverySchema).min(1).max(10) })
@@ -55,8 +49,6 @@ type LiteratureLibrarySearchRequest = Readonly<{
   offset?: number
   limit?: number
 }>
-
-type LiteratureLibraryDiscovery = z.infer<typeof literatureDiscoverySchema>
 
 type LiteratureLibrarySaveRequest = Readonly<{
   candidates: readonly LiteratureLibraryDiscovery[]
@@ -796,16 +788,16 @@ const createLiteratureLibraryMcpServer = (
 }
 
 export {
+  createLiteratureLibraryMcpServer,
+  LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME,
+  LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME,
   LITERATURE_LIBRARY_MCP_SERVER_NAME,
+  LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME,
   LITERATURE_LIBRARY_READ_ABSTRACT_TOOL_NAME,
   LITERATURE_LIBRARY_READ_PDF_TOOL_NAME,
-  LITERATURE_LIBRARY_FORMAT_REFERENCES_TOOL_NAME,
-  LITERATURE_LIBRARY_FORMAT_DOCUMENT_TOOL_NAME,
-  LITERATURE_LIBRARY_PREPARE_LATEX_TOOL_NAME,
-  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
   LITERATURE_LIBRARY_SAVE_TOOL_NAME,
-  LITERATURE_LIBRARY_SEARCH_TOOL_NAME,
-  createLiteratureLibraryMcpServer
+  LITERATURE_LIBRARY_SEARCH_DEFAULT_LIMIT,
+  LITERATURE_LIBRARY_SEARCH_TOOL_NAME
 }
 export type {
   LiteratureLibraryDiscovery,
@@ -813,9 +805,9 @@ export type {
   LiteratureLibraryFormatDocumentResult,
   LiteratureLibraryFormatReferencesRequest,
   LiteratureLibraryFormatReferencesResult,
+  LiteratureLibraryMcpHandler,
   LiteratureLibraryPrepareLatexRequest,
   LiteratureLibraryPrepareLatexResult,
-  LiteratureLibraryMcpHandler,
   LiteratureLibraryReadAbstractRequest,
   LiteratureLibraryReadAbstractResult,
   LiteratureLibraryReadPdfRequest,

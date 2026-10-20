@@ -1,8 +1,3 @@
-import type {
-  SessionPlanApproval,
-  SessionPlanRuntimeContext,
-  SessionPlanStepStatus
-} from '../session-persistence'
 import { z } from 'zod'
 
 function planSchemaInputType(input: unknown): string {
@@ -131,6 +126,8 @@ export type ActivePlanProjection = Readonly<{
   originatingPromptMessageId?: string
   materializedAt?: number
   revision: number
+  /** Live review identity; receipt revisions do not create a new user interaction. */
+  reviewRequestId?: string
   approval: SessionPlanApproval
   lifecycle: PlanLifecycle
   document: PlanDocumentV1
@@ -352,6 +349,7 @@ export const parsePlanDocumentV1 = (input: unknown): PlanDocumentV1 => {
 
 // Keep the former document-size envelope; reserve independent space for every step's status/notes.
 const MAX_PLAN_DOCUMENT_NODES = 2_000
+
 export const MAX_PLAN_RUNTIME_CONTEXT_NODES = MAX_PLAN_DOCUMENT_NODES * 3
 
 export const assertPlanDocumentCapacity = (document: PlanDocumentV1): void => {
@@ -463,3 +461,47 @@ export const derivePlanLifecycle = (
   if (values.includes('blocked')) return 'in_progress'
   return 'approved'
 }
+
+export type SessionPlanApproval = 'pending' | 'approved' | 'rejected'
+
+export type SessionPlanStepStatus = 'in_progress' | 'completed' | 'blocked' | 'skipped'
+
+export type SessionPlanDelivery = Readonly<{
+  commandId: string
+  kind: 'approved-plan' | 'rejected-plan' | 'review-feedback'
+  // `delivering` is a durable claim before provider acceptance has been observed. `accepted`
+  // records that boundary so restart recovery can settle instead of replaying the wakeup.
+  state: 'queued' | 'delivering' | 'accepted' | 'interrupted'
+  originatingPromptMessageId: string
+  createdAt: number
+}>
+
+export type SessionPlanRuntimeContext = Readonly<{
+  artifactId: string
+  artifactVersionId: string
+  artifactChecksum: string
+  // Verified immutable copy used to reconstruct Plan review/context while the originating Agent
+  // turn is parked and its provenance Artifact Version is still awaiting publication.
+  document?: PlanDocumentV1
+  // The user Message whose Conversation Turn generated this Plan. Older persisted Plans may omit it.
+  originatingPromptMessageId?: string
+  // Durable causal boundary recorded after the Plan Artifact is verified and before approval begins.
+  materializedAt?: number
+  approval: SessionPlanApproval
+  // A persisted user Message that asks the Agent to revise or interpret this still-pending Plan.
+  // It is neutral review input, not an approval decision.
+  reviewFeedbackMessageId?: string
+  // One-shot approval or review-feedback handoff receipt. This is delivery state, not an execution
+  // capability, and never determines whether the Plan is active or updateable.
+  delivery?: SessionPlanDelivery
+  stepStatuses: Readonly<
+    Record<
+      string,
+      Readonly<{
+        status: SessionPlanStepStatus
+        updatedAt: number
+        notes?: string
+      }>
+    >
+  >
+}>

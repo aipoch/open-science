@@ -1,7 +1,8 @@
 import { create } from 'zustand'
 
-import type { NotebookLanguage } from '../../../shared/notebook'
-import type { DiscoveredInterpreter, RuntimeEnablement } from '../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from '../../../shared/notebook-language-contract'
+import type { RuntimeEnablement } from '../../../shared/notebook-runtime'
 
 type RuntimeEnvironmentLists = {
   python: DiscoveredInterpreter[]
@@ -235,4 +236,4 @@ const useRuntimeSettingsStore = create<RuntimeSettingsState>((set, get) => {
 })
 
 export { useRuntimeSettingsStore }
-export type { RuntimeEnvironmentLists, RuntimeEnablements, RuntimeRegistrySnapshot }
+export type { RuntimeEnablements, RuntimeEnvironmentLists, RuntimeRegistrySnapshot }

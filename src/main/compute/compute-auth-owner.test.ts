@@ -5,16 +5,16 @@ vi.mock('electron', () => ({
   safeStorage: {}
 }))
 
-import type { ChangeComputeHostAuthenticationRequest, ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ChangeComputeHostAuthenticationRequest } from '../../shared/compute'
+
+import { ComputeConnectionError, type ComputeConnectionLease } from '@aipoch/compute/node'
 import { ComputeAuthOwner, type ComputeAuthRepository } from './compute-auth-owner'
 import { PasswordSshAdapter } from './connection-adapters'
-import {
-  ComputeConnectionError,
-  SshConfigComputeConnectionBroker,
-  type ComputeConnectionLease
-} from './connection-broker'
+import { SshConfigComputeConnectionBroker } from './connection-broker'
+
+import type { SshRunner } from '@aipoch/compute/node'
 import { CredentialVault } from './credential-vault'
-import type { SshRunner } from './ssh-runner'
 
 const publicHost = (): ComputeHost =>
   ({

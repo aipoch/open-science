@@ -1,0 +1,5 @@
+{"name":"unicode-raised-footnote-retains-native-digit","translation":"¹参见补充说明。","rise":4,"valid":true}
+{"name":"ascii-footnote-retains-native-digit","translation":"1参见补充说明。","rise":4,"valid":true}
+{"name":"changed-raised-footnote-is-rejected","translation":"²参见补充说明。","rise":4,"valid":false}
+{"name":"duplicate-raised-footnote-is-ambiguous","translation":"¹参见补充说明¹。","rise":4,"valid":false}
+{"name":"lowered-digit-cannot-become-raised-footnote","translation":"¹参见补充说明。","rise":-3,"valid":false}

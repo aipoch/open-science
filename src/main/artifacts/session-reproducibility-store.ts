@@ -4,7 +4,7 @@ import type { SessionReproducibilityBatch } from '../../shared/session-reproduci
 import { sessionReproducibilityBatchSchema } from '../../shared/session-reproducibility'
 import { assertSafePathSegment } from './storage-access'
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 type Scope = Pick<SessionReproducibilityBatch, 'projectId' | 'appSessionId'>
 export class SessionReproducibilityStore {

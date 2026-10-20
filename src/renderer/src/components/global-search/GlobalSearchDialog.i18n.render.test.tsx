@@ -26,8 +26,8 @@ it.each([
     'File information',
     '15 messages'
   ],
-  ['zh-Hans', '全局搜索', '搜索消息、项目、文件和 Library…', '文件信息', '15 条消息'],
-  ['zh-Hant', '全域搜尋', '搜尋訊息、專案、檔案和 Library…', '檔案資訊', '15 則訊息']
+  ['zh-Hans', '全局搜索', '搜索消息、项目、文件和 文献库…', '文件信息', '15 条消息'],
+  ['zh-Hant', '全域搜尋', '搜尋訊息、專案、檔案和 文獻庫…', '檔案資訊', '15 則訊息']
 ])(
   'renders search chrome, tabs and plural counts in %s',
   async (locale, title, placeholder, fileInfo, messages) => {

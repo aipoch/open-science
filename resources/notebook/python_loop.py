@@ -166,6 +166,59 @@ class _OutputBudget:
         return suffix
 
 
+def _safe_format_exception():
+    """Diagnostics must not terminate the protocol, even for unusual exception frames/objects."""
+    _, error, tb = sys.exc_info()
+    try:
+        return traceback.format_exc()
+    except BaseException:
+        # Python's rich traceback formatter may execute exception __str__, inspect frame locals
+        # for NameError suggestions, or itself be modified by a library. This fallback uses only
+        # interpreter-owned traceback fields and exact string arguments, never user formatting.
+        try:
+            chain = []
+            seen = set()
+            while error is not None and id(error) not in seen and len(chain) < 8:
+                seen.add(id(error))
+                frames = []
+                while tb is not None:
+                    code = tb.tb_frame.f_code
+                    frames.append('  File "%s", line %s, in %s\n' %
+                                  (code.co_filename, tb.tb_lineno, code.co_name))
+                    tb = tb.tb_next
+                name = type.__getattribute__(type(error), "__name__")
+                args = BaseException.__getattribute__(error, "args")
+                message = args[0] if args and type(args[0]) is str else "<message unavailable>"
+                chain.append("".join(frames) + name + ": " + message + "\n")
+                cause = BaseException.__getattribute__(error, "__cause__")
+                if cause is None and not BaseException.__getattribute__(error, "__suppress_context__"):
+                    cause = BaseException.__getattribute__(error, "__context__")
+                error = cause
+                tb = BaseException.__getattribute__(error, "__traceback__") if error is not None else None
+            return ("Traceback (fallback; rich formatting failed):\n" +
+                    "\nChained exception:\n".join(reversed(chain)))
+        except BaseException:
+            return "Python execution failed; exception diagnostics are unavailable.\n"
+
+
+def _fallback_response(req_id):
+    budget = _OutputBudget(_diagnostic_limit)
+    error = budget.take_tail(_safe_format_exception())
+    # A failure in post-execution metadata collection may have brought us here. Do not call those
+    # same collectors unguarded while constructing the final protocol response.
+    try:
+        cwd = os.getcwd()
+    except BaseException:
+        cwd = ""
+    try:
+        environment = _capture_environment()
+    except BaseException:
+        environment = {}
+    return {"stdout": "", "stderr": "", "error": error,
+            "result": None, "cwd": cwd, "figures": [],
+            "output_truncated": budget.truncated, "environment": environment, "req_id": req_id}
+
+
 class _BudgetTextIO(io.TextIOBase):
     def __init__(self, budget):
         self._budget = budget
@@ -736,6 +789,20 @@ def _capture_execution_context():
         return None
 
 
+def _python_versions_match(left, right):
+    if left == right:
+        return True
+    import re
+    if not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", left or "") or not re.fullmatch(r"[0-9]+(?:\.[0-9]+)*", right or ""):
+        return False
+    def release(value):
+        parts = [part.lstrip("0") or "0" for part in value.split(".")]
+        while len(parts) > 1 and parts[-1] == "0":
+            parts.pop()
+        return parts
+    return release(left) == release(right)
+
+
 def _capture_environment(execution_context=None):
     packages = []
     seen = set()
@@ -785,9 +852,14 @@ def _capture_environment(execution_context=None):
                 metadata_paths.append(os.path.dirname(directory) if hasattr(module, "__path__") else directory)
         metadata_paths = list(dict.fromkeys(os.path.realpath(path) for path in metadata_paths if isinstance(path, str)))
         distributions = list(metadata.distributions(path=metadata_paths))
+        versions_by_location = {}
         for dist in distributions:
             name = dist.metadata.get("Name")
             if name:
+                location = (normalize(name), os.path.normcase(os.path.realpath(dist.locate_file(""))))
+                versions = versions_by_location.setdefault(location, [])
+                if not any(_python_versions_match(dist.version, version) for version in versions):
+                    versions.append(dist.version)
                 for root in (dist.read_text("top_level.txt") or "").split():
                     owners_by_root.setdefault(root, []).append(name)
         for root, names in owners_by_root.items():
@@ -819,8 +891,22 @@ def _capture_environment(execution_context=None):
                         for path in (root + ".py", root + "/__init__.py")
                     )
                     ownership_known = loaded
+            location = (key, os.path.normcase(os.path.realpath(dist.locate_file(""))))
+            if loaded and len(versions_by_location.get(location, [])) > 1:
+                # Stale dist-info records can claim the same files. A path hit alone cannot
+                # establish which version is loaded; unresolved claims must not become unused.
+                root_versions = [
+                    str(version)
+                    for root in (roots or ())
+                    if (module := sys.modules.get(root)) is not None
+                    and isinstance(path := getattr(module, "__file__", None), str)
+                    and any(os.path.realpath(dist.locate_file(file)) == os.path.realpath(path) for file in (dist.files or ()))
+                    and (version := getattr(module, "__version__", None)) is not None
+                ]
+                loaded = bool(root_versions) and all(_python_versions_match(version, dist.version) for version in root_versions)
+                ownership_known = loaded
             existing = by_name.get(key)
-            if existing and loaded and (not existing["version"] or existing["version"] == dist.version):
+            if existing and loaded and (not existing["version"] or _python_versions_match(existing["version"], dist.version)):
                 existing["version"] = dist.version
                 existing["version_status"] = "known" if dist.version else "unavailable"
                 existing["evidence_sources"] = ["python-kernel-modules", "python-importlib-metadata"]
@@ -859,6 +945,7 @@ def _run(code, replay_random_state=None):
     sys.stdout, sys.stderr = out, err
     error = None
     result = None
+    execution_started = False
     try:
         parsed = ast.parse(code, mode="exec")
         body = parsed.body
@@ -866,23 +953,28 @@ def _run(code, replay_random_state=None):
         if body and isinstance(body[-1], ast.Expr):
             tail = ast.Expression(body.pop().value)
         if body:
-            exec(compile(ast.Module(body, type_ignores=[]), "<cell>", "exec"), _globals)
+            compiled_body = compile(ast.Module(body, type_ignores=[]), "<cell>", "exec")
+            execution_started = True
+            exec(compiled_body, _globals)
         if tail is not None:
-            value = eval(compile(tail, "<cell>", "eval"), _globals)
+            compiled_tail = compile(tail, "<cell>", "eval")
+            execution_started = True
+            value = eval(compiled_tail, _globals)
             if value is not None:
                 result = output_budget.take(repr(value))
     except KeyboardInterrupt:
-        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + traceback.format_exc())
+        error = diagnostic_budget.take_tail("KeyboardInterrupt\n" + _safe_format_exception())
     except SystemExit:
         # A cell calling sys.exit()/exit() raises SystemExit (a BaseException, not Exception). Report
         # it as a normal cell error so the kernel survives instead of the process exiting.
-        error = diagnostic_budget.take_tail(traceback.format_exc())
+        error = diagnostic_budget.take_tail(_safe_format_exception())
     except Exception:
-        error = diagnostic_budget.take_tail(traceback.format_exc())
+        error = diagnostic_budget.take_tail(_safe_format_exception())
     finally:
         sys.stdout, sys.stderr = old_out, old_err
     figures, figures_truncated = _capture_figures()
     return {"stdout": out.getvalue(), "stderr": err.getvalue(), "error": error,
+            "execution_started": execution_started,
             "result": result, "cwd": os.getcwd(), "figures": figures,
             "output_truncated": output_budget.truncated or diagnostic_budget.truncated or figures_truncated,
             "environment": _capture_environment({"schemaVersion": 1, "before": context_before,
@@ -927,10 +1019,7 @@ def main():
             # A soft-timeout SIGINT (KeyboardInterrupt) can land during figure capture or the response
             # write; catching it here keeps the loop alive. SystemExit from user code is already turned
             # into an error inside _run, so it doesn't reach this guard.
-            fallback = {"stdout": "", "stderr": "", "error": traceback.format_exc(),
-                        "result": None, "cwd": os.getcwd(), "figures": [],
-                        "output_truncated": False,
-                        "environment": _capture_environment(), "req_id": req_id}
+            fallback = _fallback_response(req_id)
             try:
                 _protocol_out.write(json.dumps(fallback, separators=(",", ":")) + "\n")
                 _protocol_out.flush()

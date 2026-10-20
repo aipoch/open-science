@@ -1,11 +1,3 @@
-import { BrowserWindow } from 'electron'
-import { isSettingsWebContents, settingsReceivesEvent } from './settings-window-policy'
-import { SETTINGS_WINDOW_CHANNELS } from '../shared/settings-window'
-
-import { createLogger, errorLogFields } from './logger'
-
-const log = createLogger('renderer-broadcast')
-
 import type {
   ApplicationEventChannel,
   ApplicationEventMap,
@@ -18,45 +10,8 @@ export type RendererBroadcastSink = <Channel extends ApplicationEventChannel>(
 ) => void
 
 let installedEvents: ApplicationEvents | undefined
-let removeElectronProjection: (() => void) | undefined
 const sinks = new Set<RendererBroadcastSink>()
 const sinkSubscriptions = new Map<RendererBroadcastSink, () => void>()
-
-const projectToElectron = <Channel extends ApplicationEventChannel>(
-  channel: Channel,
-  payload: ApplicationEventMap[Channel]
-): void => {
-  for (const window of BrowserWindow.getAllWindows()) {
-    try {
-      if (window.isDestroyed()) continue
-      if (isSettingsWebContents(window.webContents)) {
-        if (channel === 'acp:state') {
-          window.webContents.send(
-            'acp:prompt-in-flight-changed',
-            (payload as ApplicationEventMap['acp:state']).promptInFlight
-          )
-          continue
-        }
-        if (
-          channel === 'session:created' ||
-          channel === 'session:updated' ||
-          channel === 'session:deleted'
-        ) {
-          window.webContents.send(SETTINGS_WINDOW_CHANNELS.catalogChanged)
-          continue
-        }
-        if (!settingsReceivesEvent(channel)) continue
-      }
-      window.webContents.send(channel, payload)
-    } catch (error) {
-      // Destruction can race the liveness check. One failed window must not starve its peers.
-      log.warn('Could not deliver application event to renderer', {
-        channel,
-        ...errorLogFields(error)
-      })
-    }
-  }
-}
 
 // Compatibility facade for existing publishers. Production installs the application-owned hub
 // before exposing IPC surfaces, so one publication fans out through ordered projections. The direct
@@ -70,7 +25,6 @@ const broadcastToRenderers = <Channel extends ApplicationEventChannel>(
     return
   }
 
-  projectToElectron(channel, payload)
   for (const sink of sinks) sink(channel, payload)
 }
 
@@ -95,15 +49,10 @@ const addRendererBroadcastSink = (sink: RendererBroadcastSink): (() => void) => 
 const installRendererBroadcastEventHub = (events: ApplicationEvents): (() => void) => {
   if (installedEvents) throw new Error('Renderer broadcast event hub is already installed.')
   installedEvents = events
-  removeElectronProjection = events.subscribe((event) =>
-    projectToElectron(event.channel, event.payload)
-  )
   for (const sink of sinks) sinkSubscriptions.set(sink, subscribeSink(events, sink))
 
   return () => {
     if (installedEvents !== events) return
-    removeElectronProjection?.()
-    removeElectronProjection = undefined
     for (const unsubscribe of sinkSubscriptions.values()) unsubscribe()
     sinkSubscriptions.clear()
     installedEvents = undefined

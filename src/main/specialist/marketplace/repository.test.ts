@@ -1,8 +1,10 @@
-import { mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
+import { strToU8 } from 'fflate'
+import type { MarketplaceInstallProvenance } from './repository'
+import { rm, mkdtemp, readFile, readdir, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 
 import {
   MarketplaceRepository,
@@ -585,3 +587,84 @@ describe('MarketplaceRepository', () => {
     })
   })
 })
+
+const regressionRoots: string[] = []
+afterEach(async () => {
+  await Promise.all(
+    regressionRoots.splice(0).map((root) => rm(root, { recursive: true, force: true }))
+  )
+})
+async function marketplaceRegressionFixture(): Promise<{ storageDir: string }> {
+  const storageDir = await mkdtemp(join(tmpdir(), 'marketplace-receipt-'))
+  regressionRoots.push(storageDir)
+  return { storageDir }
+}
+const regressionProvenance = (digest = 'c'.repeat(64)): MarketplaceInstallProvenance => ({
+  sourceId: 'official',
+  specialistId: 'first-specialist',
+  publisher: 'Example',
+  version: '1.0.0',
+  releasePath: 'releases/first-specialist/1.0.0.json',
+  releaseDigest: 'a'.repeat(64),
+  artifactDigest: 'b'.repeat(64),
+  installedArchiveDigest: digest,
+  upstreamCommit: 'd'.repeat(40),
+  selectedSkillIds: ['analysis-tools'],
+  selectedConnectorIds: [],
+  installedAt: '2026-09-05T00:00:00.000Z'
+})
+
+it('K06 preserves corrupt recovery obligations during an unrelated cache write', async () => {
+  const { storageDir } = await marketplaceRegressionFixture()
+  const repository = new MarketplaceRepository(storageDir)
+  await repository.beginInstallation({
+    provenance: regressionProvenance(),
+    newlyDisabledSkillIds: ['personal-analysis-tools']
+  })
+  const file = join(storageDir, 'specialist-marketplace.json')
+  const document = JSON.parse(await readFile(file, 'utf8'))
+  expect(document.pendingInstallations).toHaveLength(1)
+  document.pendingInstallations[0].newlyDisabledSkillIds = 'corrupted-array'
+  await writeFile(file, JSON.stringify(document))
+  const restarted = new MarketplaceRepository(storageDir)
+  // A fail-closed repository may reject; either way no cache update may erase the obligation.
+  await restarted.getAll().catch(() => undefined)
+  await restarted
+    .cacheRoot('unrelated-source', strToU8('{}'), strToU8('{}'), '2026-09-05T00:00:00.000Z')
+    .catch(() => undefined)
+  const after = JSON.parse(await readFile(file, 'utf8'))
+  expect(after.pendingInstallations).toEqual(document.pendingInstallations)
+})
+
+it.each(['unknown-version', 'pending', 'nested-provenance', 'invalid-json'] as const)(
+  'K06 write-protects %s and resumes after explicit repair',
+  async (damage) => {
+    const { storageDir } = await marketplaceRegressionFixture()
+    const repository = new MarketplaceRepository(storageDir)
+    await repository.beginInstallation({
+      provenance: regressionProvenance(),
+      newlyDisabledSkillIds: ['personal-analysis-tools']
+    })
+    const file = join(storageDir, 'specialist-marketplace.json')
+    const healthy = await readFile(file, 'utf8')
+    const document = JSON.parse(healthy)
+    if (damage === 'unknown-version') document.version = 99
+    if (damage === 'pending') document.pendingInstallations[0].newlyDisabledSkillIds = 'broken'
+    if (damage === 'nested-provenance')
+      document.pendingInstallations[0].provenance.futureField = 'must survive'
+    const corrupt = damage === 'invalid-json' ? '{incomplete' : JSON.stringify(document)
+    await writeFile(file, corrupt)
+    await expect.soft(repository.getAll()).rejects.toThrow()
+    await expect
+      .soft(
+        repository.cacheRoot('unrelated', strToU8('{}'), strToU8('{}'), '2026-09-05T00:00:00.000Z')
+      )
+      .rejects.toThrow()
+    expect.soft(await readFile(file, 'utf8')).toBe(corrupt)
+    await writeFile(file, healthy)
+    await repository.completeInstallation(regressionProvenance())
+    const recovered = await repository.getAll()
+    expect(recovered.pendingInstallations).toEqual([])
+    expect(recovered.installations).toHaveLength(1)
+  }
+)

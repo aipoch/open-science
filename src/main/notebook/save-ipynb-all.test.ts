@@ -13,7 +13,7 @@ import {
   resolveTargets,
   saveIpynbAll,
   writeNotebooksWithCleanup,
-  type ElectronSurface,
+  type SaveIpynbAllDeps,
   type FsDeps,
   type SaveIpynbAllTarget
 } from './save-ipynb-all'
@@ -23,19 +23,17 @@ const FILES = [
   { kernel: 'r' as const, name: 'session-abc-r.ipynb', data: '{"kernelspec":"ir"}' }
 ]
 
-const fakeElectron = (options: {
+const fakeDialogs = (options: {
   canceled?: boolean
   filePaths?: string[]
   overwriteResponse?: number
-}): ElectronSurface => ({
-  app: { getPath: () => '/downloads' },
-  dialog: {
-    showOpenDialog: vi.fn().mockResolvedValue({
-      canceled: options.canceled ?? false,
-      filePaths: options.filePaths ?? []
-    }),
-    showMessageBox: vi.fn().mockResolvedValue({ response: options.overwriteResponse ?? 0 })
-  }
+}): Pick<SaveIpynbAllDeps, 'downloadsPath' | 'chooseDirectory' | 'confirmOverwrite'> => ({
+  downloadsPath: '/downloads',
+  chooseDirectory: vi.fn().mockResolvedValue({
+    canceled: options.canceled ?? false,
+    filePaths: options.filePaths ?? []
+  }),
+  confirmOverwrite: vi.fn().mockResolvedValue({ response: options.overwriteResponse ?? 0 })
 })
 
 const realFsOps: FsDeps = {
@@ -196,14 +194,14 @@ describe('writeNotebooksWithCleanup', () => {
 
 describe('saveIpynbAll', () => {
   it('returns { saved: false } when cancelled', async () => {
-    const electron = fakeElectron({ canceled: true })
-    const result = await saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: realFsOps })
+    const dialogs = fakeDialogs({ canceled: true })
+    const result = await saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps })
     expect(result).toEqual({ saved: false })
   })
 
   it('writes all files when nothing conflicts', async () => {
-    const electron = fakeElectron({ filePaths: [directory] })
-    const result = await saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: realFsOps })
+    const dialogs = fakeDialogs({ filePaths: [directory] })
+    const result = await saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps })
     expect(result.saved).toBe(true)
     if (!result.saved) return
     expect(result.files).toHaveLength(2)
@@ -215,8 +213,8 @@ describe('saveIpynbAll', () => {
     const secondPath = join(directory, FILES[1]!.name)
     await writeFile(firstPath, '"old python"', 'utf8')
     await writeFile(secondPath, '"old r"', 'utf8')
-    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
-    const result = await saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: realFsOps })
+    const dialogs = fakeDialogs({ filePaths: [directory], overwriteResponse: 1 })
+    const result = await saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps })
     expect(result).toEqual({ saved: false })
     expect(readFileSync(firstPath, 'utf8')).toBe('"old python"')
   })
@@ -224,12 +222,16 @@ describe('saveIpynbAll', () => {
   it('delegates conflict grammar to the native translator', async () => {
     const firstPath = join(directory, FILES[0]!.name)
     await writeFile(firstPath, '"old python"', 'utf8')
-    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
+    const dialogs = fakeDialogs({ filePaths: [directory], overwriteResponse: 1 })
     const translate = vi.fn(
       (key: string, values?: NativeTranslateOptions) => `${key}:${values?.count ?? ''}`
     )
 
-    await saveIpynbAll([FILES[0]!], { electron, fsCheck: realFsCheck, fsOps: realFsOps }, translate)
+    await saveIpynbAll(
+      [FILES[0]!],
+      { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps },
+      translate
+    )
 
     expect(translate).toHaveBeenCalledWith(
       '{{count}} notebooks already exist in the chosen directory.',
@@ -243,15 +245,15 @@ describe('saveIpynbAll', () => {
   it('passes the final singular English conflict message to the native dialog', async () => {
     const firstPath = join(directory, FILES[0]!.name)
     await writeFile(firstPath, '"old python"', 'utf8')
-    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 1 })
+    const dialogs = fakeDialogs({ filePaths: [directory], overwriteResponse: 1 })
 
     await saveIpynbAll(
       [FILES[0]!],
-      { electron, fsCheck: realFsCheck, fsOps: realFsOps },
+      { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps },
       (key, values) => translateNativeMessage('en', key, values)
     )
 
-    expect(electron.dialog.showMessageBox).toHaveBeenCalledWith(
+    expect(dialogs.confirmOverwrite).toHaveBeenCalledWith(
       expect.objectContaining({
         message: '1 notebook already exists in the chosen directory.'
       })
@@ -263,8 +265,8 @@ describe('saveIpynbAll', () => {
     const secondPath = join(directory, FILES[1]!.name)
     await writeFile(firstPath, '"old python"', 'utf8')
     await writeFile(secondPath, '"old r"', 'utf8')
-    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 0 })
-    const result = await saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: realFsOps })
+    const dialogs = fakeDialogs({ filePaths: [directory], overwriteResponse: 0 })
+    const result = await saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps })
     expect(result.saved).toBe(true)
     if (!result.saved) return
     expect(readFileSync(firstPath, 'utf8')).toBe('{"kernelspec":"python3"}')
@@ -285,9 +287,9 @@ describe('saveIpynbAll', () => {
         await link(src, dest)
       }
     }
-    const electron = fakeElectron({ filePaths: [directory] })
+    const dialogs = fakeDialogs({ filePaths: [directory] })
     await expect(
-      saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: failFs })
+      saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: failFs })
     ).rejects.toThrow(/Export incomplete: 1 of 2/)
     expect(readFileSync(firstPath, 'utf8')).toBe('{"kernelspec":"python3"}')
   })
@@ -295,7 +297,7 @@ describe('saveIpynbAll', () => {
   it('preserves pre-existing files when staging write fails', async () => {
     const firstPath = join(directory, FILES[0]!.name)
     await writeFile(firstPath, '"old python"', 'utf8')
-    const electron = fakeElectron({ filePaths: [directory], overwriteResponse: 0 })
+    const dialogs = fakeDialogs({ filePaths: [directory], overwriteResponse: 0 })
     let writeCall = 0
     const failFs: FsDeps = {
       ...realFsOps,
@@ -306,14 +308,14 @@ describe('saveIpynbAll', () => {
       }
     }
     await expect(
-      saveIpynbAll(FILES, { electron, fsCheck: realFsCheck, fsOps: failFs })
+      saveIpynbAll(FILES, { ...dialogs, fsCheck: realFsCheck, fsOps: failFs })
     ).rejects.toThrow(/Export incomplete/)
     expect(readFileSync(firstPath, 'utf8')).toBe('"old python"')
   })
 
   it('returns { saved: false } for empty input', async () => {
-    const electron = fakeElectron({})
-    const result = await saveIpynbAll([], { electron, fsCheck: realFsCheck, fsOps: realFsOps })
+    const dialogs = fakeDialogs({})
+    const result = await saveIpynbAll([], { ...dialogs, fsCheck: realFsCheck, fsOps: realFsOps })
     expect(result).toEqual({ saved: false })
   })
 })

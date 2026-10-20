@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 
 import {
   NOTEBOOK_LOCAL_RPC_METHODS,
+  markRuntimeBindingHostAdmission,
   isNotebookLocalRpcMethod,
   opensNotebookInputRun,
   resolveNotebookLocalRpcHandler,
@@ -200,6 +201,26 @@ describe('notebook local RPC adapter', () => {
       })
     }
   )
+
+  it('passes only the host-owned binding admission marker as the third binding argument', async () => {
+    const capability = createCapability()
+    const request = { ...requestByMethod.bindRuntime }
+    const handler = resolveNotebookLocalRpcHandler(capability, 'bindRuntime', request)
+    await handler(request)
+    expect(capability.bindRuntime).toHaveBeenLastCalledWith(request, undefined)
+    markRuntimeBindingHostAdmission(request)
+    await handler(request)
+    expect(capability.bindRuntime).toHaveBeenLastCalledWith(request, undefined, {
+      requireHostDecision: true
+    })
+    expect(Object.keys(request)).not.toContain('requireHostDecision')
+    expect(() =>
+      resolveNotebookLocalRpcHandler(capability, 'bindRuntime', {
+        ...request,
+        requireHostDecision: true
+      })
+    ).toThrow()
+  })
 
   it('routes background REPL requests through durable background admission', async () => {
     const capability = createCapability()

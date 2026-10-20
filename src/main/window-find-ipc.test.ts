@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { ipcMain } from 'electron'
 import { afterEach, describe, expect, it, type Mock, vi } from 'vitest'
@@ -6,7 +7,7 @@ import { createElectronSurfaceAdapter } from './ipc-surfaces/adapter'
 import type { NamedElectronSurfaceAdapter } from './runtime-electron-wiring'
 import { disposeIpcHandlerRegistry } from './ipc-handler-registry'
 
-import { registerFindOverlayOwner } from './find-overlay-registry'
+import { registerFindOverlayOwner, resolveFindOverlayOwner } from './find-overlay-registry'
 import {
   WINDOW_FIND_CLEAR_CHANNEL,
   WINDOW_FIND_CLOSE_CHANNEL,
@@ -30,6 +31,7 @@ type TargetWindow = {
   webContents: EventEmitter & {
     findInPage: Mock<(text: string, options: FindInPageOptions) => number>
     stopFindInPage: Mock<(action: 'clearSelection') => void>
+    focus: Mock<() => void>
   }
   emitFoundInPage: (result: FoundInPageResult) => void
 }
@@ -43,7 +45,8 @@ type OverlaySender = {
 const createTargetWindow = (): TargetWindow => {
   const webContents = Object.assign(new EventEmitter(), {
     findInPage: vi.fn<(text: string, options: FindInPageOptions) => number>(() => 17),
-    stopFindInPage: vi.fn<(action: 'clearSelection') => void>()
+    stopFindInPage: vi.fn<(action: 'clearSelection') => void>(),
+    focus: vi.fn()
   })
   return {
     webContents,
@@ -89,6 +92,34 @@ describe('window find IPC', () => {
       matches: 4,
       finalUpdate: true
     })
+  })
+
+  it('clears the previous native source target and ignores its late search result', () => {
+    const host = createTargetWindow()
+    const source = createTargetWindow()
+    const overlay = createOverlay()
+    let active = source.webContents
+    registerWindowFindIpcHandlers({
+      resolveMainWindow: () => host,
+      resolveSearchTarget: () => active
+    })
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    expect(source.webContents.findInPage).toHaveBeenCalledOnce()
+    active = host.webContents
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 2, text: 'new', findNext: true, forward: true }
+    )
+    expect(source.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
+    source.emitFoundInPage({ requestId: 17, activeMatchOrdinal: 1, matches: 2, finalUpdate: true })
+    expect(overlay.send).not.toHaveBeenCalled()
+    ipcMain.emit(WINDOW_FIND_CLEAR_CHANNEL, { sender: overlay })
+    expect(host.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
   })
 
   it('does not return an asynchronous result from a superseded query to the overlay', () => {
@@ -141,6 +172,46 @@ describe('window find IPC', () => {
     ipcMain.emit(WINDOW_FIND_CLOSE_CHANNEL, { sender: overlay }, undefined)
 
     expect(closeOverlay).toHaveBeenCalledTimes(1)
+  })
+
+  it('records the searched source guest so closing find restores its focus', () => {
+    const target = createTargetWindow()
+    const overlay = createOverlay()
+    const closeOverlay = vi.fn()
+    registerFindOverlayOwner(overlay, { mainWindow: target, closeOverlay })
+    registerWindowFindIpcHandlers({ resolveMainWindow: () => target })
+
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    const owner = resolveFindOverlayOwner(overlay)
+    expect(owner?.focusSource?.()).toBe(true)
+    ipcMain.emit(WINDOW_FIND_CLOSE_CHANNEL, { sender: overlay }, undefined)
+
+    expect(target.webContents.focus).toHaveBeenCalledOnce()
+    expect(closeOverlay).toHaveBeenCalledOnce()
+  })
+
+  it('does not restore focus to a source after the search target changes', () => {
+    const host = createTargetWindow()
+    const source = createTargetWindow()
+    const overlay = createOverlay()
+    let active = source.webContents
+    registerFindOverlayOwner(overlay, { mainWindow: host, closeOverlay: vi.fn() })
+    registerWindowFindIpcHandlers({
+      resolveMainWindow: () => host,
+      resolveSearchTarget: () => active
+    })
+    ipcMain.emit(
+      WINDOW_FIND_REQUEST_CHANNEL,
+      { sender: overlay },
+      { requestId: 1, text: 'protein', findNext: true, forward: true }
+    )
+    active = host.webContents
+    expect(resolveFindOverlayOwner(overlay)?.focusSource?.()).toBe(false)
+    expect(source.webContents.focus).not.toHaveBeenCalled()
   })
 
   it('ignores a request when no main window can be resolved for the overlay', () => {
@@ -251,3 +322,5 @@ describe('window find installation lifecycle', () => {
     for (const channel of channels) expect(ipcMain.listenerCount(channel)).toBe(0)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

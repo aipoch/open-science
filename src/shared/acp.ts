@@ -1,26 +1,64 @@
+import type { ToolCallContent, ToolCallLocation, ToolKind, Usage } from '@agentclientprotocol/sdk'
+import type { AcpMessageImage, AcpReplayMessageImage } from './acp-image-contract'
+import { ACP_MESSAGE_IMAGE_EVENT_TEXT, sanitizeAcpMessageImage } from './acp-image-contract'
+import type { AcpPermissionGrant, AcpPermissionRequest } from './acp-permission-contract'
 import type {
-  PromptResponse,
-  ToolCallContent,
-  ToolCallLocation,
-  ToolKind,
-  Usage
-} from '@agentclientprotocol/sdk'
+  AcpContextUsage,
+  AcpContextUsageBreakdown,
+  AcpContextUsageCategory,
+  AcpContextUsageCategoryKey,
+  AcpContextWindowSample,
+  AcpContextWindowSampleSource,
+  AcpModelCallUsage,
+  AcpPromptStopReason,
+  AcpPromptTermination,
+  AcpTerminalContextWindow,
+  AcpTurnTokenUsage
+} from './acp-usage-contract'
 import type { ArtifactFile, FileReference } from './artifacts'
-import type { PersistedUploadedAttachment, UploadedAttachment } from './uploads'
-import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
-import type { AgentFrameworkId, SessionAgentConfiguration } from './settings'
-import type {
-  DelegatedQuestionAnswer,
-  MessageAttribution,
-  MessagePart,
-  SessionReference
-} from './session-persistence'
+import type { DelegatedQuestionAnswer } from './delegated-work-contract'
 import type {
   AgentTurnProvenanceContext,
-  ElicitationProjection,
   ElicitationResponse as BaseElicitationResponse,
+  ElicitationProjection,
   PendingElicitationRequest
 } from './elicitation'
+import type { PermissionProfileId, SessionPermissionProfileState } from './permission-profiles'
+import type { MessageAttribution, MessagePart, SessionReference } from './session-message-contract'
+import type { AgentFrameworkId, SessionAgentConfiguration } from './settings'
+import type { PersistedUploadedAttachment, UploadedAttachment } from './uploads'
+export {
+  ACP_MESSAGE_IMAGE_EVENT_TEXT,
+  MAX_ACP_MESSAGE_IMAGE_BYTES,
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
+  MAX_ACP_SESSION_IMAGE_BYTES,
+  sanitizeAcpMessageImage,
+  type AcpMessageImage,
+  type AcpMessageImageMimeType,
+  type AcpReplayMessageImage
+} from './acp-image-contract'
+export {
+  type AcpPermissionGrant,
+  type AcpPermissionGrantScope,
+  type AcpPermissionOption,
+  type AcpPermissionRequest,
+  type AcpPermissionScope
+} from './acp-permission-contract'
+export {
+  type AcpContextUsage,
+  type AcpContextUsageBreakdown,
+  type AcpContextUsageCategory,
+  type AcpContextUsageCategoryKey,
+  type AcpContextWindowSample,
+  type AcpContextWindowSampleSource,
+  type AcpModelCallUsage,
+  type AcpModelStepTokenUsage,
+  type AcpPromptStopReason,
+  type AcpPromptTermination,
+  type AcpTerminalContextWindow,
+  type AcpTurnTokenUsage
+} from './acp-usage-contract'
 
 export {
   isDurableAgentUserChoiceRequest,
@@ -29,37 +67,14 @@ export {
   resolveAgentUserChoiceQuestions
 } from './elicitation'
 export type {
-  AgentUserChoiceQuestion,
   AgentTurnProvenanceContext,
+  AgentUserChoiceQuestion,
   ElicitationAnswer,
   ElicitationField,
   ElicitationProjection,
   ElicitationValue,
   PendingElicitationRequest
 } from './elicitation'
-
-const ACP_MESSAGE_IMAGE_MIME_TYPES = [
-  'image/avif',
-  'image/gif',
-  'image/jpeg',
-  'image/png',
-  'image/webp'
-] as const
-
-export type AcpMessageImageMimeType = (typeof ACP_MESSAGE_IMAGE_MIME_TYPES)[number]
-
-export type AcpMessageImage = {
-  mimeType: AcpMessageImageMimeType
-  data: string
-  byteLength: number
-}
-
-// Replay-only identity. These optional locators are derived from persisted Session messages and
-// never become part of provider image content or the durable Session JSON shape.
-export type AcpReplayMessageImage = AcpMessageImage & {
-  sourceMessageId?: string
-  sourceImageId?: string
-}
 
 export type ElicitationResponse = BaseElicitationResponse & {
   delegatedQuestion?: Readonly<{
@@ -77,56 +92,7 @@ export type ElicitationResponse = BaseElicitationResponse & {
     historyImages?: AcpReplayMessageImage[]
   }
 }
-
-// Message images are embedded in runtime IPC and session JSON, so keep each block small enough to
-// render without turning an agent event into an unbounded binary transport. SVG is deliberately not
-// accepted because active image content does not belong in the transcript renderer.
-export const MAX_ACP_MESSAGE_IMAGE_BYTES = 4 * 1024 * 1024
-export const MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE = 4
-export const MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE = 8 * 1024 * 1024
-export const MAX_ACP_SESSION_IMAGE_BYTES = 24 * 1024 * 1024
 export const MAX_ACP_RUNTIME_EVENTS = 500
-// Existing runtime projection keeps only text-bearing message events. This sentinel carries a valid
-// image through that projection and is removed before transcript storage or rendering.
-export const ACP_MESSAGE_IMAGE_EVENT_TEXT = '[open-science:acp-message-image]'
-
-const ACP_MESSAGE_IMAGE_MIME_TYPE_SET = new Set<string>(ACP_MESSAGE_IMAGE_MIME_TYPES)
-const BASE64_BODY_PATTERN = /^[A-Za-z0-9+/]+={0,2}$/
-
-// Computes decoded bytes without allocating a second binary copy. Both padded and unpadded base64
-// are accepted, while whitespace and malformed padding are rejected.
-const getBase64ByteLength = (data: string): number | undefined => {
-  if (!data || !BASE64_BODY_PATTERN.test(data)) return undefined
-
-  const firstPaddingIndex = data.indexOf('=')
-  const paddingLength = firstPaddingIndex === -1 ? 0 : data.length - firstPaddingIndex
-
-  if (paddingLength > 0 && data.length % 4 !== 0) return undefined
-  if (paddingLength === 0 && data.length % 4 === 1) return undefined
-
-  return Math.floor((data.length * 3) / 4) - paddingLength
-}
-
-// Validates an untrusted ACP image at both runtime and persistence boundaries.
-export const sanitizeAcpMessageImage = (value: unknown): AcpMessageImage | undefined => {
-  if (typeof value !== 'object' || value === null || Array.isArray(value)) return undefined
-
-  const image = value as Record<string, unknown>
-  const mimeType = typeof image.mimeType === 'string' ? image.mimeType.toLowerCase() : undefined
-  const data = typeof image.data === 'string' ? image.data : undefined
-
-  if (!mimeType || !ACP_MESSAGE_IMAGE_MIME_TYPE_SET.has(mimeType) || !data) return undefined
-
-  const byteLength = getBase64ByteLength(data)
-
-  if (byteLength === undefined || byteLength > MAX_ACP_MESSAGE_IMAGE_BYTES) return undefined
-
-  return {
-    mimeType: mimeType as AcpMessageImageMimeType,
-    data,
-    byteLength
-  }
-}
 
 export type AcpConnectionStatus = 'idle' | 'connecting' | 'connected' | 'error' | 'closed'
 
@@ -163,6 +129,10 @@ export type AcpHandoffFailure = {
 // both sides at once.
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 
+// Live, non-terminal notice that Artifact cleanup failed after the turn settled. It never rewrites
+// the Turn Outcome and is not an Artifact publication failure.
+export const ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE = 'Artifact cleanup failed'
+
 // Main owns restored permission authority. These lifecycle events let renderer projections follow
 // durable settlement without making the renderer part of the persistence protocol.
 export const ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE =
@@ -180,45 +150,6 @@ export const ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE =
 // provider session disappeared; the renderer creates a fresh provider session and replays the text.
 // Absent on ordinary events.
 export type AcpRecoverableFailure = 'context-overflow' | 'session-lost'
-
-export type AcpContextUsageCategoryKey =
-  'system' | 'tools' | 'messages' | 'mcp' | 'skills' | 'other'
-
-export type AcpContextUsageCategory = {
-  key: AcpContextUsageCategoryKey
-  tokens: number
-  // `estimated` distinguishes locally tokenized content from the residual needed to reconcile the
-  // category sum with the authoritative Agent total.
-  estimated: boolean
-}
-
-export type AcpContextUsageBreakdown = {
-  source: 'estimated' | 'native'
-  // Stable tokenizer/profile id for diagnostics. Native framework reports have no local tokenizer.
-  tokenizer?: 'anthropic' | 'o200k_base' | 'cl100k_base'
-  model?: string
-  // Sum of locally attributable categories before the Agent total is applied.
-  estimatedTokens: number
-  // Zero while preflight has no Agent comparison. Once reconciled, signed Agent total minus local
-  // estimate: positive values become `other`; negative drift stays visible rather than being scaled.
-  difference: number
-  status: 'preflight' | 'reconciled'
-  categories: AcpContextUsageCategory[]
-}
-
-// Current agent-context usage projected onto its logical app session. `used` remains the latest Agent
-// model-input total once one exists; before the first Agent report it is the local preflight estimate.
-// During later preflight updates, `agentUsed` preserves that latest authoritative reading while the
-// independent breakdown keeps changing. Output/completion and cache-write tokens are excluded. `size`
-// is omitted until the selected model window is known, then remains bound to that same agent-context
-// generation. Both expire when that context disconnects or is replaced. Monetary cost is deliberately
-// excluded.
-export type AcpContextUsage = {
-  used: number
-  agentUsed?: number
-  size?: number
-  breakdown?: AcpContextUsageBreakdown
-}
 
 const asTokenCount = (value: unknown): number | undefined =>
   typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
@@ -299,56 +230,6 @@ export const sanitizeAcpContextUsage = (value: unknown): AcpContextUsage | undef
     categories
   }
   return sanitized
-}
-
-// Provider-reported totals for one completed prompt turn. `cacheTokens` stays as the comparable
-// provider-neutral total. Read/write details are present as a pair only when the adapter reports both
-// categories separately.
-export type AcpTurnTokenUsage = {
-  inputTokens: number
-  cacheTokens: number
-  cachedReadTokens?: number
-  cachedWriteTokens?: number
-  outputTokens: number
-  // Number of model inference turns performed during this completed agent run. Optional because
-  // ACP adapters do not all expose a reliable request count.
-  turnCount?: number
-}
-
-export type AcpModelStepTokenUsage = Omit<AcpTurnTokenUsage, 'turnCount'>
-
-export type AcpModelCallUsage = AcpModelStepTokenUsage & {
-  id: string
-  index: number
-  sourceInvocationId?: string
-  contextUsedTokens?: number
-  contextWindowSize?: number
-}
-
-export type AcpPromptStopReason = PromptResponse['stopReason']
-
-export type AcpPromptTermination =
-  { kind: 'stop'; stopReason: AcpPromptStopReason } | { kind: 'error' }
-
-export type AcpContextWindowSampleSource =
-  'provider-response' | 'provider-update' | 'local-estimate'
-
-// Frozen context facts for one visible prompt execution. Main publishes this with the terminal
-// runtime event before context cleanup can restore a checkpoint; Renderer later supplies durable
-// event/runtime identity when binding it to the owning user Message.
-export type AcpTerminalContextWindow = {
-  termination: AcpPromptTermination
-  contextWindow: AcpContextUsage
-  modelStepUsage?: AcpModelStepTokenUsage
-  source: AcpContextWindowSampleSource
-}
-
-// Branch-bound terminal sample persisted on the user Message. This is a last-model-step context
-// snapshot, never a sum across model steps; whole-turn totals remain in `AcpTurnTokenUsage`.
-export type AcpContextWindowSample = AcpTerminalContextWindow & {
-  id: string
-  timestamp: number
-  runtimeSegmentId?: string
 }
 
 // Private PromptResponse metadata used by the managed Codex adapter to keep whole-turn totals
@@ -539,6 +420,23 @@ type AcpRuntimeEventBase = {
   // from the ACP layer itself (our runtime) and stays reportable unless it is one of our own crafted,
   // actionable reminder messages.
   providerError?: boolean
+  // Main-owned terminal classification, independent of provider error wording.
+  interruptionCause?: 'app-restart' | 'connection-lost' | 'terminal-commit-failed'
+  // Live-only release after bounded terminal persistence retries. Never written to Session JSON.
+  terminalCommitFailure?: 'missing-record' | 'storage'
+  terminalCommitError?: string
+  promptExecutionId?: string
+  terminalScope?: {
+    projectId: string
+    executionId: string
+    startedAt: number
+    agentFrameId: string
+    messageBranchId: string
+    runtimeSegmentId: string
+  }
+  errorReportable?: boolean
+  // A post-terminal Artifact failure still belongs to the original prompt.
+  artifactFailure?: true
   // Main has durably committed this event's Message/Artifact projection before publication.
   publicationOwner?: 'main'
   sessionId?: string
@@ -556,6 +454,8 @@ type AcpRuntimeEventBase = {
   // App-owned one-shot identity for exact Notebook activity/Run correlation. Provider payloads
   // cannot supply it; the permission and authenticated RPC owners issue and consume it.
   executionInvocationId?: string
+  // Set only by the main-process permission owner, never by provider metadata.
+  appOwned?: true
   providerToolName?: string
   toolKind?: ToolKind
   toolContent?: ToolCallContent[]
@@ -682,61 +582,6 @@ export const normalizeClaudeCodeRefusalText = (text: string): string =>
   text.startsWith(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX)
     ? `${PROVIDER_NEUTRAL_REFUSAL_PREFIX}${text.slice(CLAUDE_CODE_USAGE_POLICY_REFUSAL_PREFIX.length)}`
     : text
-
-export type AcpPermissionScope = 'once' | 'session' | 'project' | 'global'
-export type AcpPermissionGrantScope = Exclude<AcpPermissionScope, 'once'>
-
-export type AcpPermissionOption = {
-  optionId: string
-  name: string
-  kind: string
-  scope?: AcpPermissionScope
-}
-
-export type AcpPermissionRequest = {
-  requestId: string
-  sessionId: string
-  toolCallId: string
-  title: string
-  // Main-process provenance for application-owned approvals. Provider payloads are rebuilt by the
-  // permission broker and cannot set this projection. It is transient and never persisted.
-  appOwned?: true
-  // Renderer lifecycle hint only. Main sets this after the request authority reaches Session
-  // storage; restored authority is still reloaded and validated independently before use.
-  durable?: true
-  status?: string
-  providerToolName?: string
-  // Set by the permission broker after framework-aware classification so the renderer never has to
-  // infer MCP origin from provider-specific titles or tool kinds.
-  isMcp?: boolean
-  // Broker-resolved MCP server/tool identity (`server/tool`), projected only for display. This
-  // keeps presentation stable across provider-specific titles without exposing the protocol name.
-  mcpIdentity?: string
-  toolKind?: ToolKind
-  toolLocations?: ToolCallLocation[]
-  // Structured argv prefix whose remembered scopes authorize a command group. This is transient
-  // approval context only; permission grants persist an opaque digest instead of these tokens.
-  commandPrefix?: string[]
-  rawInput?: unknown
-  options: AcpPermissionOption[]
-  // App-owned delegated execution attribution. Provider payloads cannot set this projection;
-  // the delegated-work owner binds it from the trusted Frame/Attempt execution handle.
-  delegated?: Readonly<{
-    frameId: string
-    attemptId: string
-    childTitle: string
-    riskScope: string
-  }>
-}
-
-// An Open-Science-owned tool grant. `categoryKey` is the broker's opaque matcher key;
-// `label`/`kind` are the display projection and `scope` reserves future project/global ownership.
-export type AcpPermissionGrant = {
-  categoryKey: string
-  label: string
-  kind: 'shell' | 'mcp' | 'tool'
-  scope: AcpPermissionGrantScope
-}
 
 // Why Subagents are unavailable for a Session that has none yet: the user's own Delegation policy,
 // recoverable from the composer agent controls menu, or a configuration problem whose recovery
@@ -884,7 +729,7 @@ export type AcpContinueInterruptedTurnRequest = {
   // Segment against the persisted active Conversation Branch before using the replay policy.
   contextReset?: {
     runtimeSegmentId: string
-    historyReplayTarget: import('./history-preamble').HistoryReplayTarget
+    historyReplayTarget: import('./history-replay-contract').HistoryReplayTarget
     contextWindow?: number
     supportsImageInput?: boolean
   }

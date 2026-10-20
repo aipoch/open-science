@@ -6,6 +6,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { AcpNativeFollowUpWorkflow } from '../../../../main/acp/native-follow-up-workflow'
 
 import type { ChatSession } from '@/stores/session-store'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 
 import { type ComposerDoc } from './composer/composer-doc'
@@ -193,6 +197,7 @@ const mounted: Hook[] = []
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
   useProjectStore.setState(createInitialProjectState())
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   setWorkspaceSpecialistBarrier('session-a', false)
   setWorkspacePresentationRevealing('session-a', false)
   vi.restoreAllMocks()
@@ -622,6 +627,18 @@ describe('workspace message queue controller', () => {
     mounted.push(hook)
     const queued = admission('queued with annotation')
     queued.snapshot.annotations = [annotation]
+    queued.snapshot.discussionFocus = {
+      projectId: 'project',
+      sourceSessionId: 'source',
+      sourceTitle: 'Study',
+      fingerprint: 'fp',
+      branchId: 'main',
+      stepId: 'queued-step',
+      stepNumber: 2,
+      stepOffsetMs: 42,
+      excerpt: '',
+      evidence: []
+    }
 
     act(() => hook.result.current.lifecycle.enqueue(queued))
     currentSession = session('idle')
@@ -635,7 +652,8 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
         text: 'queued with annotation',
-        annotations: [annotation]
+        annotations: [annotation],
+        discussionFocus: queued.snapshot.discussionFocus
       })
     )
   })
@@ -1382,6 +1400,37 @@ describe('workspace message queue controller', () => {
     expect(input.runtime.cancelRun).not.toHaveBeenCalled()
   })
 
+  it.each(['idle', 'error'] as const)(
+    'steers Send now into the owned prompt despite a durable %s projection',
+    async (status) => {
+      const activeSession = { ...session(status), agentPromptInFlight: true }
+      const steerFollowUp = vi.fn(async () => ({
+        injected: true as const,
+        transport: 'acp-steering' as const,
+        messageId: 'steered-follow-up'
+      }))
+      const input = options(activeSession, {
+        promptInFlightSessionIds: [],
+        runtime: { sendMessage: vi.fn(), cancelRun: vi.fn(), steerFollowUp }
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      await act(async () => {
+        hook.result.current.lifecycle.enqueue({ ...admission('follow up'), session: activeSession })
+      })
+      expect(hook.result.current.items).toHaveLength(1)
+      await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+
+      expect(steerFollowUp).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: activeSession.id, text: 'follow up' })
+      )
+      expect(hook.result.current.items).toEqual([])
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.runtime.cancelRun).not.toHaveBeenCalled()
+    }
+  )
+
   it('pauses dispatch while a permission request is pending', async () => {
     const idle = session('idle')
     let permissionPending = true
@@ -1960,7 +2009,21 @@ describe('workspace message queue controller', () => {
         sourceVersionId: 'version-1'
       }
     ]
+    queued.snapshot.pdfProseReadingSelections = [
+      {
+        source: { attachmentId: 'upload-1' },
+        proseRegions: [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
+      }
+    ]
     act(() => hook.result.current.lifecycle.enqueue(queued))
+    // A later preview edit cannot replace the queued send's captured reading policy.
+    act(() =>
+      usePreviewWorkbenchStore
+        .getState()
+        .setPdfProseRegions('staged:upload-1', [
+          { ...queued.snapshot.pdfProseReadingSelections![0].proseRegions[0], split: 0.6 }
+        ])
+    )
 
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
 
@@ -1982,6 +2045,7 @@ describe('workspace message queue controller', () => {
     await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
     expect(input.runtime.sendMessage).toHaveBeenCalledWith(
       expect.objectContaining({
+        pdfProseReadingSelections: queued.snapshot.pdfProseReadingSelections,
         pendingPdfContextAttachmentIds: ['upload-1'],
         pendingPdfContextVersions: [
           {

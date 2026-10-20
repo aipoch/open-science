@@ -1,0 +1,3 @@
+{"name": "short-cjk-table-header-condenses-within-cell", "source": "Cls err. (%, shuffled)", "translation": "分类错误率（%，通道打乱）", "width": 91, "fits": true}
+{"name": "cjk-table-header-never-condenses-beyond-readability-limit", "source": "Cls err. (%, shuffled)", "translation": "分类错误率（%，通道打乱）", "width": 84, "fits": false}
+{"name": "long-cjk-label-keeps-overflow-protection", "source": "Cls err. (%, shuffled)", "translation": "这是一个过长的完整表头说明文字，不能挤压到很小的区域里影响用户阅读。", "width": 91, "fits": false}

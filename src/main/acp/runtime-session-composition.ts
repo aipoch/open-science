@@ -1,7 +1,7 @@
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import { SESSION_PLAN_SYSTEM_PROMPT_APPEND } from '../session-plan/guidance'
 import { SESSION_PLAN_FILE_SYSTEM_PROMPT_APPEND } from '../session-plan/plan-context-guidance'
-import { createLogger } from '../logger'
 import { AcpAppContinuationOwner } from './app-continuation-owner'
 import { AcpClientInteractionOwner } from './client-interaction-owner'
 import { AcpContextUsagePolicy } from './context-usage-policy'
@@ -10,8 +10,8 @@ import { AcpElicitationOwner } from './elicitation-owner'
 import { AcpPermissionContext } from './permission-context'
 import { AcpPermissionWaitOwner } from './permission-wait-owner'
 import { ReviewerSessionOwner } from './reviewer-session-owner'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import { AcpRuntimePublicationOwner } from './runtime-publication-owner'
 import type { RuntimeSnapshotProjection } from './runtime-snapshot-owner'
 import { AcpSessionEnvironmentPolicy } from './session-environment-policy'
@@ -177,6 +177,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         const snapshot = sessionRegistry.lookup(sessionId)?.aggregate.snapshot()
         return snapshot
           ? {
+              modelRoute: base.backendGeneration.current.modelRoute,
               ...(snapshot.cwd === undefined ? {} : { cwd: snapshot.cwd }),
               ...(snapshot.frameworkId === undefined ? {} : { frameworkId: snapshot.frameworkId }),
               ...(snapshot.permissionProfile === undefined
@@ -208,6 +209,8 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       currentInteractionSequence: (sessionId) =>
         base.sessionInteractions.current(sessionId)?.sequence,
       mcpServerNamesFor: (sessionId) => base.sessionCapabilities.mcpServerNamesFor(sessionId),
+      authorizeRuntimeBindingAdmission: options.notebook?.authorizeRuntimeBindingAdmission,
+      canOwnRuntimeBindingDecision: options.notebook?.canOwnRuntimeBindingDecision,
       shellRuntimeBindingFor: (sessionId) =>
         base.sessionCapabilities.shellRuntimeBindingFor(sessionId),
       reviewerContextFor: (sessionId) => reviewerSessions.contextFor(sessionId),
@@ -237,7 +240,13 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
       const frameworkId = sessionRegistry
         .lookup(request.sessionId)
         ?.aggregate.snapshot().frameworkId
-      if (state === 'resolved' && frameworkId !== 'codebuddy') return
+      const codeRiskReview =
+        request.appOwned === true &&
+        request.rawInput !== null &&
+        typeof request.rawInput === 'object' &&
+        'notebookCodeRisk' in request.rawInput
+      // The host is the only publisher for these approvals; providers cannot emit their receipt.
+      if (state === 'resolved' && frameworkId !== 'codebuddy' && !codeRiskReview) return
       const interaction = base.sessionInteractions.current(request.sessionId)
       const unattended = interaction?.kind === 'prompt' && interaction.permissionPrompts === 'none'
       publication.pushEvent({
@@ -248,6 +257,7 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
         promptMessageId: context?.promptMessageId,
         title: request.title,
         providerToolName: request.providerToolName ?? request.mcpIdentity,
+        appOwned: request.appOwned,
         rawInput: request.rawInput,
         ...(state === 'rejected' && unattended
           ? {
@@ -258,7 +268,9 @@ const composeAcpRuntimeSessionOwners = (options: AcpRuntimeOptions, base: AcpRun
           state === 'rejected'
             ? 'completed'
             : state === 'resolved'
-              ? (request.status ?? 'in_progress')
+              ? codeRiskReview
+                ? 'completed'
+                : (request.status ?? 'in_progress')
               : 'in_progress',
         ...(state === 'resolved'
           ? {}

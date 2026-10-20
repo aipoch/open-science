@@ -1,5 +1,6 @@
-import { AcpRuntime as ProductionAcpRuntime, type AcpRuntimeOptions } from './runtime'
+import { AcpRuntime as ProductionAcpRuntime } from './runtime'
 import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 class AcpRuntime extends ProductionAcpRuntime {

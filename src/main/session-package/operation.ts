@@ -1,23 +1,28 @@
+import type { PackageFileSelection } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   startDiagnosticOperation,
   type DiagnosticOperation,
   type DiagnosticFields
-} from '../diagnostics/operation'
+} from '@aipoch/diagnostics/node'
 import {
   PACKAGE_DEFAULT_IO_BYTES_PER_SECOND,
+  PACKAGE_MAX_IO_BYTES_PER_SECOND,
+  PACKAGE_MIN_IO_BYTES_PER_SECOND,
   PACKAGE_MAX_FILE_BYTES,
   formatPackageBytes
 } from '../../shared/session-package'
 import type {
+  BrowserPackageTransfer,
   PackageOperationRequest,
   PackageOperationSnapshot,
   PackageProgress,
   PackageSelectableFile,
   PackageSelectionSummary,
   SessionPackageRequest,
-  SessionPackageImportRequest
+  SessionPackageImportRequest,
+  SensitiveContentEvidence
 } from '../../shared/session-package'
 
 // One native package operation owns cancellation and presentation, independently of renderer lifetime.
@@ -32,8 +37,11 @@ export class SessionPackageOperation {
   private importResponse?: (target?: SessionPackageImportRequest) => void
   private pendingImports: NonNullable<PackageOperationSnapshot['pendingImports']> = []
   private importQueueFull = false
-  private selection?: (keys: readonly string[]) => void
+  private browserTransfers: BrowserPackageTransfer[] = []
+  private selection?: (selection: PackageFileSelection) => void
   private lastProgressAt = 0
+  private autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+  private autoAdjustedAt = 0
   private completion: Promise<unknown> = Promise.resolve()
   async close(): Promise<void> {
     this.cancel()
@@ -47,6 +55,7 @@ export class SessionPackageOperation {
     return this.current
       ? structuredClone({
           ...this.current,
+          browserTransfers: this.browserTransfers,
           pendingImports: this.pendingImports,
           importQueueFull: this.importQueueFull
         })
@@ -57,11 +66,21 @@ export class SessionPackageOperation {
   }
 
   get transferBytesPerSecond(): number {
-    return this.current?.transferBytesPerSecond ?? PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+    return this.current?.transferBytesPerSecond ?? this.autoRate
   }
 
   reportIo = (ioBytesPerSecond: number): void => {
     if (!this.current || !this.controller) return
+    if (this.current.transferBytesPerSecond === undefined && ioBytesPerSecond > 0) {
+      const now = Date.now()
+      if (now - this.autoAdjustedAt >= 2_000) {
+        if (ioBytesPerSecond >= this.autoRate * 0.85)
+          this.autoRate = Math.min(PACKAGE_MAX_IO_BYTES_PER_SECOND, this.autoRate * 2)
+        else if (ioBytesPerSecond < this.autoRate * 0.6)
+          this.autoRate = Math.max(PACKAGE_DEFAULT_IO_BYTES_PER_SECOND, this.autoRate / 2)
+        this.autoAdjustedAt = now
+      }
+    }
     this.current = { ...this.current, ioBytesPerSecond }
     if (Date.now() - this.lastProgressAt >= 150) {
       this.lastProgressAt = Date.now()
@@ -131,6 +150,45 @@ export class SessionPackageOperation {
       presentationRevision: (this.current.presentationRevision ?? 0) + 1
     }
     this.publish()
+  }
+
+  setBrowserTransfers(transfers: BrowserPackageTransfer[]): void {
+    const added = transfers.some((t) => !this.browserTransfers.some((old) => old.id === t.id))
+    const boundary =
+      transfers.length !== this.browserTransfers.length ||
+      transfers.some((t, i) => {
+        const previous = this.browserTransfers[i]
+        return (
+          t.id !== previous?.id ||
+          t.state !== previous.state ||
+          t.cleanupPending !== previous.cleanupPending ||
+          (t.completedBytes === t.totalBytes && previous.completedBytes !== t.completedBytes)
+        )
+      })
+    this.browserTransfers = transfers
+    // Receipt presentation does not acquire the single import/export operation owner.
+    if (!this.current || this.current.browserReceiptOnly) {
+      if (!this.current && !transfers.length) return
+      this.current = {
+        id: this.current?.id ?? randomUUID(),
+        kind: 'import',
+        browserReceiptOnly: true,
+        state: transfers.some(
+          (t) => (t.state !== 'cancelled' && t.state !== 'failed') || t.cleanupPending
+        )
+          ? 'running'
+          : transfers.some((t) => t.state === 'failed')
+            ? 'failed'
+            : 'cancelled',
+        progress: { phase: 'preparing' },
+        presentationRevision: this.current?.presentationRevision ?? 0
+      }
+    }
+    if (added || boundary || Date.now() - this.lastProgressAt >= 150) {
+      this.lastProgressAt = Date.now()
+      if (added) this.present()
+      else this.publish()
+    }
   }
 
   setPendingImports(
@@ -210,13 +268,13 @@ export class SessionPackageOperation {
     files: PackageSelectableFile[],
     budgetSignal?: AbortSignal,
     summary?: PackageSelectionSummary
-  ): Promise<readonly string[]> => {
+  ): Promise<PackageFileSelection> => {
     const signal =
       this.controller &&
       AbortSignal.any([this.controller.signal, ...(budgetSignal ? [budgetSignal] : [])])
     if (!signal || !this.current) throw new Error('No active package operation.')
     signal.throwIfAborted()
-    const selected = new Promise<readonly string[]>((resolve, reject) => {
+    const selected = new Promise<PackageFileSelection>((resolve, reject) => {
       const abort = (): void => {
         this.selection = undefined
         reject(signal.reason)
@@ -248,6 +306,7 @@ export class SessionPackageOperation {
         'discard-import',
         'next-import',
         'retry-import',
+        'export-with-sensitive-content',
         'dismiss-queue-warning'
       ].includes(request.action)
     )
@@ -256,12 +315,22 @@ export class SessionPackageOperation {
       throw new Error('The package operation is no longer active.')
     if (request.action === 'set-speed') {
       if (
-        !Number.isInteger(request.bytesPerSecond) ||
-        request.bytesPerSecond < 1024 ** 2 ||
-        request.bytesPerSecond > 64 * 1024 ** 2
+        request.bytesPerSecond !== null &&
+        (!Number.isInteger(request.bytesPerSecond) ||
+          request.bytesPerSecond < PACKAGE_MIN_IO_BYTES_PER_SECOND ||
+          request.bytesPerSecond > PACKAGE_MAX_IO_BYTES_PER_SECOND)
       )
         throw new Error('Invalid package transfer rate.')
-      this.current = { ...this.current, transferBytesPerSecond: request.bytesPerSecond }
+      if (request.bytesPerSecond === null) {
+        this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+        this.autoAdjustedAt = Date.now()
+      }
+      this.current = {
+        ...this.current,
+        ...(request.bytesPerSecond === null
+          ? { transferBytesPerSecond: undefined }
+          : { transferBytesPerSecond: request.bytesPerSecond })
+      }
       this.publish()
     } else if (request.action === 'cancel') {
       this.current = { ...this.current, state: 'cancelling' }
@@ -303,7 +372,10 @@ export class SessionPackageOperation {
       if (files.some((file) => file.requiredForEvidence && keys.has(file.storageKey)))
         throw new Error('Invalid package selection.')
       this.current = { ...this.current, state: 'running', files: undefined, summary: undefined }
-      this.selection([...keys])
+      this.selection({
+        excludedStorageKeys: [...keys],
+        includePdfNotes: request.includePdfNotes === true
+      })
       this.publish()
     }
     return this.snapshot
@@ -312,6 +384,12 @@ export class SessionPackageOperation {
   setCleanupPending(pending: boolean): void {
     if (!this.current) return
     this.current = { ...this.current, cleanupPending: pending }
+    this.publish()
+  }
+
+  setSensitiveContent(evidence: SensitiveContentEvidence[]): void {
+    if (!this.current) return
+    this.current = { ...this.current, sensitiveContent: evidence.slice(0, 20) }
     this.publish()
   }
 
@@ -370,6 +448,8 @@ export class SessionPackageOperation {
     if (this.controller) throw new Error('A Session package operation is already in progress.')
     const controller = new AbortController()
     this.controller = controller
+    this.autoRate = PACKAGE_DEFAULT_IO_BYTES_PER_SECOND
+    this.autoAdjustedAt = Date.now()
     this.current = {
       id: randomUUID(),
       kind,
@@ -399,6 +479,7 @@ export class SessionPackageOperation {
       this.diagnostic.complete(this.diagnosticFields())
       return result
     } catch (error) {
+      const sensitiveContent = this.current?.sensitiveContent
       this.current = {
         ...this.current!,
         state:
@@ -411,7 +492,8 @@ export class SessionPackageOperation {
             ? undefined
             : error instanceof Error
               ? error.message
-              : String(error)
+              : String(error),
+        ...(sensitiveContent ? { sensitiveContent } : {})
       }
       if (controller.signal.aborted) this.diagnostic.cancel(this.diagnosticFields())
       else this.diagnostic.fail(error, this.diagnosticFields())

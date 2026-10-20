@@ -1,11 +1,9 @@
 // Wire protocol shared between the Node kernel driver and the Python/R exec-loop scripts.
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 
-import type {
-  NotebookEnvironmentPackage,
-  NotebookLiveEnvironmentOverlay,
-  NotebookNamespaceVariable
-} from '../../shared/notebook'
+import type { NotebookEnvironmentPackage } from '@aipoch/environment/contracts'
+import type { NotebookLiveEnvironmentOverlay } from '../../shared/notebook'
+import type { NotebookNamespaceVariable } from '../../shared/notebook'
 
 export type KernelLoopFigure = { mime: string; path: string }
 
@@ -17,6 +15,7 @@ export type KernelLoopResponse = {
   // True only when this request consumed a process-level interrupt. R uses this acknowledgement to
   // distinguish a cancelled request from a normal response that raced ahead of SIGINT delivery.
   interruptAck?: boolean
+  executionStarted?: boolean
   // 1-based source line of the failing statement when the loop can attribute one (R); null otherwise.
   errorLine: number | null
   result: string | null
@@ -188,6 +187,9 @@ export function parseLoopResponse(line: string): KernelLoopResponse | null {
     stdout: typeof obj.stdout === 'string' ? obj.stdout : '',
     stderr: typeof obj.stderr === 'string' ? obj.stderr : '',
     error: typeof obj.error === 'string' ? obj.error : null,
+    ...(typeof obj.execution_started === 'boolean'
+      ? { executionStarted: obj.execution_started }
+      : {}),
     ...(typeof obj.interrupt_ack === 'boolean' ? { interruptAck: obj.interrupt_ack } : {}),
     errorLine:
       typeof obj.error_line === 'number' && Number.isFinite(obj.error_line) ? obj.error_line : null,
@@ -207,14 +209,16 @@ export function framePythonRequest(
   code: string,
   controlInvocationId?: string,
   protectedDirs?: readonly string[],
-  pythonRandomState?: import('../../shared/notebook-execution-context').NotebookExecutionContext['before']['pythonRandomState']
+  pythonRandomState?: import('@aipoch/reproducibility/execution-context').NotebookExecutionContext['before']['pythonRandomState'],
+  replPublisher?: string
 ): string {
   return `${JSON.stringify({
     req_id: reqId,
     code,
     ...(controlInvocationId ? { control_invocation_id: controlInvocationId } : {}),
     ...(protectedDirs?.length ? { protected_dirs: protectedDirs } : {}),
-    ...(pythonRandomState ? { python_random_state: pythonRandomState } : {})
+    ...(pythonRandomState ? { python_random_state: pythonRandomState } : {}),
+    ...(replPublisher ? { repl_publisher: replPublisher } : {})
   })}\n`
 }
 

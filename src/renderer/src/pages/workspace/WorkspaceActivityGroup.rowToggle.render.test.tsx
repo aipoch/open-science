@@ -132,6 +132,63 @@ describe('WorkspaceActivityGroup row toggling', () => {
     }
   )
 
+  it('hides review rows and empty groups while retaining approval wait accounting', async () => {
+    const run: ToolActivity = {
+      id: 'notebook-run',
+      kind: 'tool',
+      title: 'Notebook run',
+      providerToolName: 'mcp__open-science-notebook__notebook_execute',
+      status: 'completed',
+      eventIds: [],
+      sortIndex: 1,
+      promptMessageId: 'prompt',
+      createdAt: 100,
+      updatedAt: 1400,
+      rawInput: { language: 'python', code: 'print(1)' },
+      rawOutput: { status: 'completed', runId: 'run-1' }
+    }
+    const review: ToolActivity = {
+      ...run,
+      id: 'app-approval:risk',
+      appOwned: true,
+      title: 'Review risky code',
+      providerToolName: 'Open-Science',
+      createdAt: 200,
+      updatedAt: 1200,
+      rawOutput: undefined,
+      rawInput: {
+        code: 'os.unlink(path)',
+        notebookCodeRisk: {
+          runId: 'run-1',
+          language: 'python',
+          risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+        }
+      }
+    }
+    const render = async (activities: ToolActivity[]): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceActivityGroup
+            group={{ id: 'runs', type: 'activity-group', createdAt: 100, sortIndex: 1, activities }}
+            isExpanded
+            onToggleGroup={vi.fn()}
+            onToggleRow={vi.fn()}
+            expansionOverrides={{ [review.id]: true }}
+          />
+        )
+      )
+    }
+    await render([run, review])
+    expect(container.querySelectorAll('[data-testid="tool-chip"]')).toHaveLength(1)
+    expect(container.querySelector('[data-testid="notebook-code-review-receipt"]')).toBeNull()
+    expect(container.textContent).not.toContain('Code risk review')
+    expect(container.textContent).toContain('1 step')
+    expect(container.textContent).toContain('300ms')
+    expect(container.textContent).not.toContain('ran a tool')
+    await render([review])
+    expect(container.innerHTML).toBe('')
+  })
+
   it('leaves bottom-follow mode before a row expansion changes the group height', async () => {
     const onToggleRow = vi.fn()
 

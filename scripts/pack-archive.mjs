@@ -15,7 +15,7 @@ const ensureZstd = () => {
 /** @param {string} sourceDir @param {string} archivePath @returns {Promise<void>} */
 export const createPackArchive = async (sourceDir, archivePath) => {
   await ensureZstd()
-  const stream = createTar({ cwd: sourceDir, portable: true }, ['.'])
+  const stream = createTar({ cwd: sourceDir, mtime: new Date(0), portable: true }, ['.'])
   const chunks = []
   for await (const chunk of stream) chunks.push(Buffer.from(chunk))
   await writeFile(archivePath, Buffer.from(compress(Buffer.concat(chunks), 10)))

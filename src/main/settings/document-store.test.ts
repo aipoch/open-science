@@ -1,6 +1,5 @@
 import {
   mkdtemp,
-  open as openFile,
   readFile,
   readdir,
   rename as renameFile,
@@ -22,14 +21,6 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   const actual = await importOriginal<typeof import('node:fs/promises')>()
   return {
     ...actual,
-    open: vi.fn(async (...args: Parameters<typeof actual.open>) => {
-      if (faults.failOpenOnceWith) {
-        const error = faults.failOpenOnceWith
-        faults.failOpenOnceWith = undefined
-        throw error
-      }
-      return actual.open(...args)
-    }),
     readFile: vi.fn((...args: Parameters<typeof actual.readFile>) => actual.readFile(...args)),
     rename: vi.fn(async (source: string, destination: string) => {
       if (faults.renameFailuresRemaining > 0) {
@@ -47,6 +38,36 @@ vi.mock('node:fs/promises', async (importOriginal) => {
   }
 })
 
+vi.mock('@aipoch/durable-files', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/durable-files')>()
+  const boundedRead = vi.fn(async (path: string, maxBytes: number) => {
+    if (faults.failOpenOnceWith) {
+      const failure = faults.failOpenOnceWith
+      faults.failOpenOnceWith = undefined
+      throw failure
+    }
+    return actual.readFileWithinLimit(path, maxBytes)
+  })
+  return {
+    ...actual,
+    readFileWithinLimit: boundedRead,
+    readDurableJsonFile: (path, decode, dependencies, options) =>
+      actual.readDurableJsonFile(
+        path,
+        decode,
+        {
+          stat: statFile,
+          readFileWithinLimit: boundedRead,
+          ...dependencies
+        },
+        options
+      ),
+    writeDurableJsonFile: (path, contents, dependencies) =>
+      actual.writeDurableJsonFile(path, contents, { rename: renameFile, ...dependencies })
+  } satisfies typeof actual
+})
+
+import { readFileWithinLimit } from '@aipoch/durable-files'
 import { SettingsDocumentStore } from './document-store'
 
 let storageRoot: string | undefined
@@ -61,6 +82,66 @@ afterEach(async () => {
 })
 
 describe('settings document store', () => {
+  it('uses neutral runtime protocols while preserving historical settings and validation encodings', async () => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'protocol-settings-store-'))
+    const path = join(storageRoot, 'settings.json')
+    const storedProvider = {
+      id: 'p',
+      type: 'custom',
+      name: 'Gateway',
+      vendorId: 'anthropic',
+      apiEndpoints: ['anthropic', 'openai', 'responses'],
+      lastValidatedAt: 1,
+      lastValidatedTarget: { model: 'm', endpoint: 'anthropic' },
+      lastValidationFailure: {
+        at: 2,
+        category: 'model-not-found',
+        target: { model: 'm', endpoint: 'openai' },
+        targets: [
+          { model: 'm', endpoint: 'openai' },
+          { model: 'm', endpoint: 'responses' }
+        ]
+      }
+    }
+    await writeFile(path, JSON.stringify({ version: 2, providers: [storedProvider] }))
+    const store = new SettingsDocumentStore(storageRoot)
+    const decoded = await store.read()
+    expect(decoded.providers[0]).toMatchObject({
+      vendorId: 'anthropic',
+      apiEndpoints: ['messages', 'chat-completions', 'responses'],
+      lastValidatedTarget: { endpoint: 'messages' },
+      lastValidationFailure: {
+        target: { endpoint: 'chat-completions' },
+        targets: [
+          { model: 'm', endpoint: 'chat-completions' },
+          { model: 'm', endpoint: 'responses' }
+        ]
+      }
+    })
+    const updated = await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }))
+    expect(updated.providers).toEqual(decoded.providers)
+    expect(JSON.parse(await readFile(path, 'utf8')).providers).toEqual([storedProvider])
+    expect((await store.read()).providers).toEqual(decoded.providers)
+  })
+
+  it.each([{}, { providers: [{ opaque: true, apiEndpoints: ['messages', 'future-protocol'] }] }])(
+    'preserves untouched provider fields during a scoped startup backfill: %j',
+    async (fields) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'protocol-settings-backfill-'))
+      const path = join(storageRoot, 'settings.json')
+      const original = { version: 2, opaque: { keep: true }, ...fields }
+      await writeFile(path, JSON.stringify(original))
+      const store = new SettingsDocumentStore(storageRoot)
+      await store.mutate((settings) => ({ ...settings, notificationsEnabled: false }), undefined, [
+        'notificationsEnabled'
+      ])
+      expect(JSON.parse(await readFile(path, 'utf8'))).toEqual({
+        ...original,
+        notificationsEnabled: false
+      })
+    }
+  )
+
   it('checks the target after staging and keeps the original document on a failed publication guard', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'guarded-settings-store-'))
     const store = new SettingsDocumentStore(storageRoot)
@@ -249,7 +330,7 @@ describe('settings document store', () => {
       path: settingsPath,
       cause: readFailure
     })
-    expect(openFile).toHaveBeenCalledWith(settingsPath, 'r')
+    expect(readFileWithinLimit).toHaveBeenCalledWith(settingsPath, 128 * 1024 * 1024)
     expect(update).not.toHaveBeenCalled()
     await expect(readFile(settingsPath, 'utf8')).resolves.toBe(originalContents)
 

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -83,3 +84,5 @@ describe('upload caller cancellation through native IPC', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

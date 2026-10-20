@@ -1,0 +1,7 @@
+{"name": "native-unchanged-neighbor-margin-does-not-hide-translation", "change": "none", "translated": true}
+{"name": "true-native-ink-overlap-remains-rejected", "change": "ink", "rejected": true}
+{"name": "partial-native-neighbor-keeps-conservative-region", "change": "partial", "translated": false}
+{"name": "rotated-native-regions-keep-conservative-overlap", "change": "rotated", "translated": false}
+{"name": "bounded-native-italic-shear-uses-proven-ink-margins", "change": "italic", "translated": true}
+{"name": "excessive-native-shear-keeps-conservative-regions", "change": "excessive-shear", "translated": false}
+{"name": "complete-unchanged-multiple-fragments-prove-native-ink-margins", "change": "multi-fragment", "translated": true}

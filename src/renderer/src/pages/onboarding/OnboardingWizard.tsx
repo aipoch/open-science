@@ -5,7 +5,10 @@ import { useTranslation } from 'react-i18next'
 import { Card } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 import { APP } from '../../../../shared/app-config'
-import { isSupportedCodexAcpVersion } from '../../../../shared/codex-runtime'
+import {
+  isSupportedCodexAcpVersion,
+  isSupportedCodexCliVersion
+} from '../../../../shared/codex-runtime'
 import type { AgentFrameworkId } from '../../../../shared/settings'
 import type { StorageInfo } from '../../../../shared/storage'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
@@ -182,6 +185,7 @@ const OnboardingWizard = ({
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const preflight = useSettingsStore((state) => state.preflight)
   const codexVersion = useSettingsStore((state) => state.codex.version)
+  const codexNativeVersion = useSettingsStore((state) => state.codex.nativeVersion)
   const setAgentFramework = useSettingsStore((state) => state.setAgentFramework)
 
   // First-time setup always starts on the visible environment summary, even when every check has
@@ -289,11 +293,14 @@ const OnboardingWizard = ({
     ) {
       return
     }
-    // Match AgentPanel's installed-runtime ordering and Codex adapter compatibility guard.
+    // Match AgentPanel's installed-runtime ordering and Codex native/adapter compatibility guards.
     const ready: Record<AgentFrameworkId, boolean> = {
       'claude-code': preflight.claudeReady,
       opencode: preflight.opencodeReady,
-      codex: preflight.codexReady && (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
+      codex:
+        preflight.codexReady &&
+        isSupportedCodexCliVersion(codexNativeVersion) &&
+        (!codexVersion || isSupportedCodexAcpVersion(codexVersion)),
       codebuddy: preflight.codebuddyReady
     }
     if (ready[agentFrameworkId]) return
@@ -328,6 +335,7 @@ const OnboardingWizard = ({
     agentFrameworks,
     preflight,
     codexVersion,
+    codexNativeVersion,
     setAgentFramework,
     checkEnvironment,
     t

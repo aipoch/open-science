@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 
-import type { DiscoveredInterpreter } from '../../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 
 // Describers for the runtime cards. They live outside RuntimesPanel.tsx so they can be unit-tested
 // directly — a .tsx module may only export components (react-refresh/only-export-components), the

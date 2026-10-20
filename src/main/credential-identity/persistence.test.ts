@@ -54,6 +54,15 @@ it.each(['decrypt', 'unavailable', 'availability-error'] as const)(
         }
       }
     })
+    const { configureSecureStorageCipher } = await import('../secure-storage')
+    const unexpected = (): never => {
+      throw new Error('Selected identity must own cipher access')
+    }
+    configureSecureStorageCipher({
+      isEncryptionAvailable: unexpected,
+      encryptString: unexpected,
+      decryptString: unexpected
+    })
     const { tryDecryptKey } = await import('../settings/crypto')
     expect(() => tryDecryptKey('enc:b2xk')).toThrow(/recovery/i)
     const { SettingsDocumentStore } = await import('../settings/document-store')

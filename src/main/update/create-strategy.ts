@@ -3,14 +3,14 @@ import { dirname, resolve } from 'node:path'
 
 import { app } from 'electron'
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { createMacInstallationGuard } from '../mac-installation'
-import { ElectronUpdaterStrategy } from './electron-updater-strategy'
+import { ElectronUpdaterStrategy, type UpdateInstallationHooks } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import type { InstallGate, UpdateStrategy } from './strategy'
 import type { NativeTranslator } from '../locale/main-process-messages'
 
-export type CreateStrategyOptions = {
+export type CreateStrategyOptions = UpdateInstallationHooks & {
   // Whether this is a packaged (installed) build. Defaults to app.isPackaged; injectable for tests.
   isPackaged?: boolean
   // Running app version. Defaults to app.getVersion(); injectable for tests.
@@ -25,10 +25,9 @@ export type CreateStrategyOptions = {
 const OFFICIAL_MAC_BUNDLE_ID = 'com.aipoch.open-science'
 const OFFICIAL_MAC_TEAM_ID = '87G9WFU9H3'
 
-// Read the installed bundle's signing metadata without performing a trust evaluation. The latter can
-// depend on machine policy/keychain state, while Squirrel.Mac only needs the current and replacement
-// bundles to carry compatible designated requirements. Stable CI releases are signed by this bundle
-// ID + Team ID; local packages are ad-hoc signed and report no TeamIdentifier.
+// Read signing metadata as an initial compatibility filter for official macOS update discovery.
+// This is not artifact trust verification or channel acceptance: protected installation preflight
+// performs those checks separately. Local ad-hoc packages have no official TeamIdentifier.
 const hasOfficialMacSignature = (): boolean => {
   const bundlePath = resolve(dirname(app.getPath('exe')), '../..')
   const result = spawnSync('/usr/bin/codesign', ['-d', '--verbose=4', bundlePath], {
@@ -43,17 +42,16 @@ const hasOfficialMacSignature = (): boolean => {
   )
 }
 
-// macOS in-place auto-update (electron-updater / Squirrel.Mac) only works on a packaged build that is
-// signed with the same Developer ID as the replacement. CI signs stable mac builds; local packages
-// and nightlies are ad-hoc, so ShipIt rejects an official replacement at apply time. Check the actual
-// installed signature rather than inferring it from the version, and fail closed to the manual
-// installer flow whenever compatibility cannot be established.
+// Only packaged official stable macOS builds select electron-updater discovery/downloads.
+// Applying a downloaded update still requires the channel certification gate and the protected
+// external executor; selecting this strategy does not authorize installation or invoke ShipIt.
 const macCanAutoUpdate = (isPackaged: boolean, version: string): boolean =>
   isPackaged && !version.includes('-') && hasOfficialMacSignature()
 
-// Picks the update strategy for the host platform. Windows/Linux always get true in-place auto-update
-// via electron-updater. macOS gets it too on signed stable builds (see macCanAutoUpdate); otherwise
-// (dev, nightly, or any other platform) it falls back to the manifest installer flow (UpdateService).
+// Selects discovery/download machinery, not permission to replace an installation. Windows/Linux
+// and compatible macOS builds use electron-updater; other builds use the manifest download flow.
+// Applying is routed by the Desktop integration: certified channels use the supervised replacement,
+// the rest keep the legacy quitAndInstall behind the same runtime stop and occupancy checks.
 export const createUpdateStrategy = (
   platform: NodeJS.Platform = process.platform,
   opts: CreateStrategyOptions = {}
@@ -61,6 +59,7 @@ export const createUpdateStrategy = (
   const log = createLogger('update')
   const createInPlaceStrategy = (): ElectronUpdaterStrategy =>
     new ElectronUpdaterStrategy({
+      ...opts,
       installationGuard: createMacInstallationGuard(),
       ...(opts.installGate ? { installGate: opts.installGate } : {}),
       ...(opts.releaseInstallHandoff ? { releaseInstallHandoff: opts.releaseInstallHandoff } : {}),

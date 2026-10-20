@@ -1,3 +1,5 @@
+import { LiteratureCatalog } from '../literature/catalog'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createArtifactHandlers } from './ipc'
 import { ArtifactRunRegistry } from './run-registry'
 import { createLinearConversationGraph } from '../../shared/conversation-graph'
@@ -5,7 +7,7 @@ import type { PersistedChatSession } from '../../shared/session-persistence'
 import { strToU8, zipSync } from 'fflate'
 import { ARTIFACT_LITERATURE_SIDECAR_SUFFIX } from '../../shared/artifact-literature'
 import * as boundedIo from '../bounded-file-io'
-import { defaultArtifactDurability } from './durability'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import { createHash } from 'node:crypto'
 import { mkdir, readFile, rm, truncate, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -17,7 +19,8 @@ import { ArtifactWriteBudgetOwner } from './write-budget-owner'
 
 const fixtures: Awaited<ReturnType<typeof createArtifactSaveFixture>>[] = []
 const setup = async (): Promise<Awaited<ReturnType<typeof createArtifactSaveFixture>>> => {
-  const f = await createArtifactSaveFixture()
+  const f = await createArtifactSaveFixture((ids) => catalog.getMany(ids))
+  const catalog = new LiteratureCatalog(async () => f.client)
   fixtures.push(f)
   return f
 }
@@ -232,9 +235,9 @@ describe('complete Artifact save over the production local RPC', () => {
       'artifacts/project-1/artifact-session-1/.pending/artifact-run-1/same.txt'
     )
     const before = await readFile(pending)
-    const sync = defaultArtifactDurability.syncFile
+    const sync = defaultFileDurability.syncFile
     let fail = true
-    vi.spyOn(defaultArtifactDurability, 'syncFile').mockImplementation(async (path) => {
+    vi.spyOn(defaultFileDurability, 'syncFile').mockImplementation(async (path) => {
       if (fail && path.includes('.staging') && path.endsWith('content')) {
         fail = false
         throw new Error('injected pre-commit failure')
@@ -321,9 +324,9 @@ describe('complete Artifact save over the production local RPC', () => {
     vi.spyOn(f.repository, 'saveVersion').mockImplementationOnce((request, scope, signal) =>
       save(request, scope, AbortSignal.any([controller.signal, ...(signal ? [signal] : [])]))
     )
-    const sync = defaultArtifactDurability.syncFile
+    const sync = defaultFileDurability.syncFile
     let fail = true
-    vi.spyOn(defaultArtifactDurability, 'syncFile').mockImplementation(async (path) => {
+    vi.spyOn(defaultFileDurability, 'syncFile').mockImplementation(async (path) => {
       await sync(path)
       if (fail && path.includes('.staging') && path.endsWith('evidence.json')) {
         fail = false
@@ -415,13 +418,22 @@ describe('complete Artifact save over the production local RPC', () => {
     await f.client.literatureItem.create({
       data: { id: 'paper', title: 'A cited paper', itemType: 'journalArticle' }
     })
+    await f.client.literatureItem.create({
+      data: {
+        id: 'paper-alias',
+        title: 'Merged paper',
+        itemType: 'journalArticle',
+        mergedIntoItemId: 'paper',
+        deletedAt: new Date('2026-01-01T00:00:00.000Z')
+      }
+    })
     const bytes = Buffer.from(zipSync({ 'main.tex': strToU8('Scientific report') }))
     const path = join(workspace, 'report.zip')
     await writeFile(path, bytes)
     const literature = {
       styleId: 'apa',
       locale: 'en-US',
-      citations: [{ citationId: 'cite-1', itemId: 'paper' }]
+      citations: [{ citationId: 'cite-1', itemId: 'paper-alias' }]
     }
     const sidecar = {
       schemaVersion: 1,
@@ -436,6 +448,9 @@ describe('complete Artifact save over the production local RPC', () => {
       include: { literatureManifest: true }
     })
     expect(row.literatureManifest?.manifestJson).toContain('A cited paper')
+    expect(JSON.parse(row.literatureManifest!.manifestJson).references[0].itemId).toBe(
+      'paper-alias'
+    )
     await writeFile(
       path + ARTIFACT_LITERATURE_SIDECAR_SUFFIX,
       JSON.stringify({ ...sidecar, contentChecksum: '0'.repeat(64) })
@@ -812,3 +827,5 @@ describe('complete Artifact save over the production local RPC', () => {
     expect(await f.client.artifactVersion.count()).toBe(2)
   })
 })
+
+configureTestRuntimeMetadata()

@@ -1,0 +1,9 @@
+{"name": "marked-multiple-authors-keep-spelling", "source": "Alex Reed∗ Morgan Stone∗ Taylor Brook Jamie Vale", "translation": "Alex Reed∗ Morgan Stone∗ Taylor Brook Jamie Vale", "reject": false}
+{"name": "marked-multiple-authors-reject-invented-transliterations", "source": "Alex Reed∗ Morgan Stone∗ Taylor Brook Jamie Vale", "translation": "艾立德 摩根石 泰勒溪 杰米谷", "reject": true}
+{"name": "marked-multiple-authors-reject-missing-name", "source": "Alex Reed† Morgan Stone‡ Taylor Brook Jamie Vale", "translation": "Alex Reed† Morgan Stone‡ Taylor Brook", "reject": true}
+{"name": "marked-method-heading-still-translates", "source": "Deep Neural Network Model∗", "translation": "深度神经网络模型∗", "reject": false}
+{"name": "marked-single-author-retains-latin-name", "source": "Alex Reed∗", "translation": "艾利德∗", "reject": true}
+{"name": "marked-author-initial-preserved", "source": "Morgan N. Stone†", "translation": "Morgan N. Stone†", "reject": false}
+{"name": "marked-author-initial-must-not-disappear", "source": "Morgan N. Stone†", "translation": "Morgan Stone†", "reject": true}
+{"name": "parallel-camelcase-methods-allow-individual-explanations", "source": "ExampleNorm SampleNorm", "translation": "ExampleNorm 示例归一化 SampleNorm 样本归一化", "reject": false}
+{"name": "parallel-camelcase-methods-cannot-drop-an-identifier", "source": "ExampleNorm SampleNorm", "translation": "ExampleNorm 示例归一化", "reject": true}

@@ -5,7 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { NotebookRunRepository, getNotebookRunJsonPath, getRuntimeRoot } from './repository'
 import { NotebookSessionReadModel, type NotebookSessionReadSource } from './session-read-model'
-import type { NotebookDependencyProjection } from './dependency-analysis'
+import type { NotebookDependencyProjection } from '@aipoch/notebook-analysis'
 import type { NotebookSessionSnapshot } from './session-aggregate'
 import { createFrameNotebookLane } from './lane-identity'
 import type { NotebookRunRecord } from '../../shared/notebook'
@@ -511,3 +511,62 @@ describe('NotebookSessionReadModel', () => {
     })
   })
 })
+
+it.each(['live', 'imported'])(
+  'pages large %s Notebook history without losing complete run outputs',
+  async (mode) => {
+    const storageRoot = await createRoot()
+    const repository = new NotebookRunRepository(storageRoot)
+    const session = makeSession(storageRoot)
+    await repository.loadOrCreate({
+      projectId: session.projectId,
+      sessionId: session.sessionId,
+      lane: session.lane,
+      workspaceCwd: session.cwd
+    })
+    const stdout = '\u0000'.repeat(2 * 1024 * 1024)
+    for (let index = 0; index < 3; index++)
+      await repository.appendRun({
+        projectId: session.projectId,
+        sessionId: session.sessionId,
+        lane: session.lane,
+        run: makeRun({
+          runId: `large-${index}`,
+          cellId: `large-cell-${index}`,
+          startedAt: index + 1,
+          text: { stdout, stderr: '', traceback: '', plain: [] },
+          outputs: [{ type: 'stream', name: 'stdout', text: stdout }]
+        })
+      })
+    const model = makeReadModel(storageRoot, session, repository)
+    const ids: string[] = []
+    let before: import('../../shared/notebook').NotebookRunCursor | undefined
+    for (let page = 0; page < 3; page++) {
+      const state =
+        mode === 'live'
+          ? await model.state(session, [], undefined, before)
+          : await model.importedState(
+              {
+                projectId: session.projectId,
+                sessionId: session.sessionId,
+                workspaceCwd: session.cwd
+              },
+              [],
+              undefined,
+              before,
+              100
+            )
+      expect(Buffer.byteLength(JSON.stringify(state))).toBeLessThan(64 * 1024 * 1024)
+      if (page === 0) expect(state.runs).toHaveLength(1)
+      for (const run of state.runs) {
+        ids.push(run.runId)
+        expect(run.text.stdout === stdout).toBe(true)
+        expect(run.outputs[0]).toEqual({ type: 'stream', name: 'stdout', text: stdout })
+      }
+      if (!state.historyPage?.hasEarlierRuns) break
+      expect(state.historyPage.oldestCursor).toBeDefined()
+      before = state.historyPage.oldestCursor
+    }
+    expect(ids.sort()).toEqual(['large-0', 'large-1', 'large-2'])
+  }
+)

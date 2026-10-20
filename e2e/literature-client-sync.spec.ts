@@ -1,12 +1,10 @@
+import {
+  literatureCandidateInputSchema,
+  literatureItemInputSchema
+} from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
-import { literatureCandidateInputSchema, literatureItemInputSchema } from '../src/shared/literature'
-
-const library = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
-}
+import { openAllReferences } from './fixtures/library'
 
 test('synchronizes ordinary writes across two Electron renderers and a Web client', async ({
   app,
@@ -19,7 +17,7 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
   const web = await browser.newPage()
   try {
     await web.goto(await app.authenticatedWebUrl())
-    for (const page of [first, second, web]) await library(page)
+    for (const page of [first, second, web]) await openAllReferences(page)
     const item = literatureItemInputSchema.parse({
       itemType: 'journalArticle',
       title: 'Created in desktop'
@@ -99,6 +97,120 @@ test('synchronizes ordinary writes across two Electron renderers and a Web clien
     expect(missed.id).toBeTruthy()
     await web.context().setOffline(false)
     await expect(web.getByText('Committed while Web was offline', { exact: true })).toBeVisible()
+  } finally {
+    await web.close()
+  }
+})
+
+test('protects unsaved reference edits and keeps save actions visible', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await openAllReferences(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
+  const title = page.getByLabel('Title', { exact: true })
+  await title.fill('Unsaved reference')
+  await title.press('Escape')
+  const confirmation = page.getByRole('alertdialog')
+  await expect(confirmation).toContainText('Discard unsaved changes?')
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(confirmation).toHaveCount(0)
+  await expect(title).toBeFocused()
+  await expect(title).toHaveValue('Unsaved reference')
+  await title.press('Escape')
+  await confirmation.getByRole('button', { name: 'Discard changes' }).click()
+  await expect(title).toHaveCount(0)
+  const item = literatureItemInputSchema.parse({
+    itemType: 'journalArticle',
+    title: 'Saved reference'
+  })
+  const created = await page.evaluate(
+    (item) => window.api.literature.transact({ kind: 'create-item', item }),
+    item
+  )
+  await page.getByText(item.title, { exact: true }).click()
+  const detail = page.getByRole('dialog')
+  await detail.getByRole('button', { name: 'More actions', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Edit metadata', exact: true }).click()
+  await title.fill('Draft reference')
+  await page.setViewportSize({ width: 1000, height: 650 })
+  const save = page.getByRole('button', { name: 'Save', exact: true })
+  const box = await save.boundingBox()
+  expect(box).not.toBeNull()
+  expect(box!.y).toBeGreaterThanOrEqual(0)
+  expect(box!.y + box!.height).toBeLessThanOrEqual(650)
+  await detail.getByRole('button', { name: 'Back', exact: true }).click()
+  await confirmation.getByRole('button', { name: 'Keep editing' }).click()
+  await expect(title).toHaveValue('Draft reference')
+  await save.click()
+  await expect(title).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(async (id) => (await window.api.literature.get(id))?.item.title, created.id)
+    )
+    .toBe('Draft reference')
+})
+
+test('finishes manual reference creation before opening its saved detail', async ({ app }) => {
+  const page = await app.completeOnboarding()
+  await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await openAllReferences(page)
+  await page.getByRole('button', { name: 'Add', exact: true }).click()
+  await page.getByRole('menuitem', { name: 'Add reference', exact: true }).click()
+  const editor = page.getByRole('dialog', { name: 'Add reference', exact: true })
+  await editor.getByLabel('Title', { exact: true }).fill('Manual creation regression')
+  await editor.getByRole('button', { name: 'Save', exact: true }).click()
+  await expect(editor).toHaveCount(0)
+  await expect(page.getByRole('alertdialog')).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'Manual creation regression' })).toBeVisible()
+})
+
+test('formats citations from packaged styles and preserves style errors through desktop and Web', async ({
+  app,
+  browser
+}) => {
+  const page = await app.completeOnboarding()
+  const web = await browser.newPage()
+  try {
+    await web.goto(await app.authenticatedWebUrl())
+    const item = literatureItemInputSchema.parse({
+      itemType: 'journalArticle',
+      title: 'Packaged citation acceptance',
+      issuedYear: 2025,
+      creators: [
+        { nameMode: 'person', givenName: 'Ada', familyName: 'Lovelace', creatorType: 'author' }
+      ]
+    })
+    const created = await page.evaluate(
+      (item) => window.api.literature.transact({ kind: 'create-item', item }),
+      item
+    )
+    for (const client of [page, web]) {
+      const styles = await client.evaluate(() =>
+        window.api.literature.citationStyles({ kind: 'list' })
+      )
+      expect(styles.styles.some((style) => style.id === 'apa')).toBe(true)
+      const formatted = await client.evaluate(
+        (id) =>
+          window.api.literature.formatReferences({
+            itemIds: [id],
+            styleId: 'apa',
+            locale: 'en-US'
+          }),
+        created.id
+      )
+      expect(formatted.references[0].reference).toContain(item.title)
+      expect(formatted.exports.bibtex).toContain(item.title)
+      const failure = await client.evaluate(async () => {
+        try {
+          await window.api.literature.citationStyles({ kind: 'import', content: '<not-a-style/>' })
+          return null
+        } catch (error) {
+          return (error as { code?: string }).code
+        }
+      })
+      expect(failure).toBe('csl-unsupported-style')
+    }
   } finally {
     await web.close()
   }

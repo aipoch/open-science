@@ -1,3 +1,5 @@
+import { PdfReconciliationDialog } from '../../pdf-annotations/PdfReconciliationDialog'
+import { pdfAnnotationSourceKey } from '../../pdf-annotations/pdf-annotation-index'
 import type { PdfAnnotation, PdfAnnotationSource } from '../../../../../../shared/pdf-annotations'
 import type { TagView } from '../../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
@@ -13,6 +15,7 @@ import {
   FileText,
   Plus,
   Highlighter,
+  Info,
   NotebookPen,
   Loader2,
   MessageSquareText,
@@ -397,7 +400,11 @@ const PdfNotebookView = ({
 
   const scopedPage = editingId || newNoteKind ? editingPage : currentPage
   const effectiveSort = sidebar ? 'page' : sort
-  const globalTags = useTagStore((state) => state.tags)
+  const localTags = useTagStore((state) => state.tags)
+  const globalTags = useMemo(
+    () => [...localTags, ...(annotationPort.snapshotTags ?? [])],
+    [localTags, annotationPort.snapshotTags]
+  )
   const tagsById = useMemo(() => new Map(globalTags.map((tag) => [tag.id, tag])), [globalTags])
   const tagNames = useCallback(
     (ids: readonly string[]) =>
@@ -757,7 +764,14 @@ const PdfNotebookView = ({
         )
       }
     >
-      <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-2.5">
+      <header className="shrink-0 border-b border-border bg-bg-000 px-3 py-1">
+        {annotationPort.available && annotationPort.needsReconciliation?.(source) ? (
+          <PdfReconciliationDialog
+            key={pdfAnnotationSourceKey(source)}
+            source={source}
+            onChanged={annotationPort.retryLoad}
+          />
+        ) : null}
         {sidebar ? (
           <TooltipProvider>
             <div className="mb-2 flex min-w-0 items-center gap-1">
@@ -857,7 +871,7 @@ const PdfNotebookView = ({
                       type="button"
                       size="sm"
                       variant="outline"
-                      className="h-8 shrink-0 px-2 @min-[36rem]/pdf-notebook:px-2.5"
+                      className="h-8 shrink-0 px-2 text-xs @min-[36rem]/pdf-notebook:px-2.5"
                       aria-label={
                         filtered.length < all.length
                           ? t('Export filtered notes')
@@ -880,6 +894,26 @@ const PdfNotebookView = ({
                 </Tooltip>
               </>
             )}
+            {annotationPort.shared?.(source) ? (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="icon-sm"
+                    className="shrink-0 text-muted-foreground"
+                    aria-label={t(
+                      'Notes are shared with linked sources. Edits and deletions apply everywhere.'
+                    )}
+                  >
+                    <Info className="size-3.5" aria-hidden="true" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent className="z-[120]">
+                  {t('Notes are shared with linked sources. Edits and deletions apply everywhere.')}
+                </TooltipContent>
+              </Tooltip>
+            ) : null}
             <DropdownMenu modal={false}>
               <Tooltip>
                 <TooltipTrigger
@@ -893,7 +927,7 @@ const PdfNotebookView = ({
                       type="button"
                       size="sm"
                       variant="ghost"
-                      className="h-8 shrink-0 px-2"
+                      className="h-8 shrink-0 px-2 text-xs"
                       aria-label={t('Add note')}
                       disabled={!available}
                     >
@@ -973,7 +1007,7 @@ const PdfNotebookView = ({
                 />
                 <Button
                   type="button"
-                  size="icon-sm"
+                  size="icon"
                   variant="ghost"
                   aria-label={t('Refresh')}
                   disabled={loading || pendingId !== undefined || editingId !== undefined}
@@ -1254,7 +1288,7 @@ const PdfNotebookView = ({
                     className={cn(
                       '@container/annotation-card group bg-bg-000',
                       sidebar
-                        ? 'border-b border-border/70 py-3'
+                        ? '-mx-2 rounded-md border-b border-border/70 px-2 py-3'
                         : 'rounded-xl border border-border/80 p-3 shadow-sm transition-shadow hover:shadow-md',
                       sidebar &&
                         selectedId === bookmark.id &&
@@ -1294,12 +1328,20 @@ const PdfNotebookView = ({
                             )}
                             title={bookmark.externalSubtype ?? undefined}
                           >
-                            {bookmark.origin === 'imported' ? t('Imported') : t('Created')}
+                            {annotationPort.isSnapshot?.(bookmark.id)
+                              ? t('Read-only snapshot')
+                              : bookmark.origin === 'imported'
+                                ? t('Imported')
+                                : t('Created')}
                           </span>
                           <PdfAnnotationTagControls
                             annotation={bookmark}
                             tags={globalTags}
-                            disabled={!available || pendingId === bookmark.id}
+                            disabled={
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id
+                            }
                             onChange={(tagIds) => void updateTags(bookmark.id, tagIds)}
                           />
                         </div>
@@ -1319,7 +1361,10 @@ const PdfNotebookView = ({
                             type="button"
                             aria-label={t('Edit annotation note')}
                             disabled={
-                              !available || pendingId === bookmark.id || editingId !== undefined
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id ||
+                              editingId !== undefined
                             }
                             onClick={() => {
                               setEditingPage(currentPage)
@@ -1333,7 +1378,11 @@ const PdfNotebookView = ({
                           <button
                             type="button"
                             aria-label={t('Delete annotation')}
-                            disabled={!available || pendingId === bookmark.id}
+                            disabled={
+                              !available ||
+                              annotationPort.canEdit?.(bookmark.id) === false ||
+                              pendingId === bookmark.id
+                            }
                             onClick={() => void deleteAnnotation(bookmark.id)}
                             className="grid size-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                           >

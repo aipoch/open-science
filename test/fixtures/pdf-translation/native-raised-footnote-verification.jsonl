@@ -1,0 +1,9 @@
+{"name":"equivalent-raised-native-footnote-is-verified","change":"none","accepted":true}
+{"name":"lowered-source-digit-is-not-footnote-proof","change":"source-lowered","accepted":false}
+{"name":"baseline-target-digit-cannot-match-superscript","change":"target-baseline","accepted":false}
+{"name":"changed-native-footnote-width-is-rejected","change":"width","accepted":false}
+{"name":"scaled-native-footnote-is-rejected","change":"scale","accepted":false}
+{"name":"changed-native-footnote-rise-is-rejected","change":"rise","accepted":false}
+{"name":"duplicated-native-footnote-is-rejected","change":"duplicate","accepted":false}
+{"name":"changed-native-footnote-digit-is-rejected","change":"digit","accepted":false}
+{"name":"missing-native-footnote-is-rejected","change":"missing","accepted":false}

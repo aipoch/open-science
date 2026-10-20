@@ -1,29 +1,24 @@
-import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
+import { normalizeClaudeCodeRefusalText } from '../../../shared/acp'
+import type { AcpMessageImage } from '../../../shared/acp-image-contract'
 import {
   MAX_ACP_SESSION_IMAGE_BYTES,
-  normalizeClaudeCodeRefusalText,
-  sanitizeAcpMessageImage,
-  type AcpMessageImage,
-  type AcpModelCallUsage,
-  type AcpTurnTokenUsage
-} from '../../../shared/acp'
+  sanitizeAcpMessageImage
+} from '../../../shared/acp-image-contract'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../../shared/acp-usage-contract'
+import { artifactCreatedAtMs, type ArtifactFile } from '../../../shared/artifacts'
 import {
   sanitizeMessageImages,
   type MessagePdfContextSnapshot,
   type PersistedUploadedAttachment
 } from '../../../shared/session-persistence'
+import type { ChatArtifact, ChatMessage, ChatSession } from './session-store-contract'
+import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import {
   createPersistedUpload,
   synchronizeSessionGraph
 } from './session-store-message-graph-helpers'
-import type { AppendMessageResult } from './session-store-message-graph-helpers'
 import { createSortIndex } from './session-store-message-graph-owner'
-import type {
-  ChatArtifact,
-  ChatMessage,
-  ChatSession,
-  StreamingMessageContentByMessageId
-} from './session-store-persistence-owner'
+import type { StreamingMessageContentByMessageId } from './session-store-persistence-owner'
 
 // A Session can be projected by more than one renderer. Derive Agent identity from runtime-owned
 // stream identity so both projections choose the same Artifact owner instead of local sequence ids.
@@ -46,6 +41,7 @@ export type AppendAgentMessageChunkInput = {
   sessionId: string
   streamId: string
   eventId: string
+  timestamp?: number
   promptMessageId?: string
   content?: string
   image?: AcpMessageImage
@@ -344,7 +340,12 @@ export const projectAgentMessageChunks = (
         now
       )
       if (hasVisibleOutput) awaitingFirstAgentOutput = undefined
-      if (status !== 'waiting-for-user' && status !== 'waiting-permission') status = 'running'
+      if (
+        session.runtimeTranscriptOwner !== 'main' &&
+        status !== 'waiting-for-user' &&
+        status !== 'waiting-permission'
+      )
+        status = 'running'
       shouldCommit = true
       continue
     }
@@ -375,7 +376,8 @@ export const projectAgentMessageChunks = (
           eventIds: [...baseEventIds, input.eventId],
           images: sanitizedImage ? [{ id: input.eventId, ...sanitizedImage }] : undefined,
           sortIndex: createSortIndex(),
-          createdAt: now,
+          // Presentation may lag behind tools; preserve the runtime timeline on first materialization.
+          createdAt: input.timestamp ?? now,
           updatedAt: now
         }
     clearStreamingEntry(messageId)
@@ -404,7 +406,14 @@ export const projectAgentMessageChunks = (
     shouldCommit = true
   }
 
-  if (status !== 'waiting-for-user' && status !== 'waiting-permission' && changed) {
+  // Presentation can drain after Main's terminal transcript and ownership release. A text
+  // delta has no lifecycle authority in a Main-owned Session, even when it creates a Message.
+  if (
+    session.runtimeTranscriptOwner !== 'main' &&
+    status !== 'waiting-for-user' &&
+    status !== 'waiting-permission' &&
+    changed
+  ) {
     status = 'running'
   }
   const sessionChanged =
@@ -714,10 +723,20 @@ export const projectMessagePdfContext = (
       ? { ...message, pdfContext: input.pdfContext, updatedAt: now }
       : message
   )
+  const synchronizedGraph = synchronizeSessionGraph(session, messages, now)
   return {
     ...session,
     messages,
-    conversationGraph: synchronizeSessionGraph(session, messages, now),
+    // This explicit update owns the payload even when upload finalization occurred in the
+    // same millisecond. Generic projection synchronization deliberately lets the graph win ties.
+    conversationGraph: {
+      ...synchronizedGraph,
+      messages: synchronizedGraph.messages.map((message) =>
+        message.id === input.messageId
+          ? { ...message, pdfContext: input.pdfContext, updatedAt: now }
+          : message
+      )
+    },
     updatedAt: now
   }
 }

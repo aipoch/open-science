@@ -1,27 +1,33 @@
+import { ScopeDropdown, type PermissionScope } from './PermissionScopeButton'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
 
 import type { TFunction } from 'i18next'
-import { Check, ChevronDown, ChevronRight, Info } from 'lucide-react'
+import { ChevronDown, ChevronRight, Info, TriangleAlert } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import type { AcpPermissionRequest } from '../../../../shared/acp'
-import type { NotebookSessionRequest } from '../../../../shared/notebook'
-import { resolveProjectId } from '../../../../shared/project-scope'
-import { isEnvEnabled } from '../../../../shared/notebook-runtime'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
+import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
+import { Popover, PopoverAnchor } from '@/components/ui/popover'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { cn } from '@/lib/utils'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
+import type { NotebookSessionRequest } from '../../../../shared/notebook'
+import { isEnvEnabled } from '../../../../shared/notebook-runtime'
+import { resolveProjectId } from '../../../../shared/project-scope'
+import {
+  buildLiteratureLibraryToolSummary,
+  buildLiteratureToolSummary
+} from './literature-tool-presentation'
+import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   buildNotebookToolSummary,
   notebookInput,
+  readNotebookCodeReview,
+  type NotebookCodeReview,
   type ToolSummary
 } from './notebook-tool-presentation'
-import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
-import { Button } from '@/components/ui/button'
-import { dialogTitleClassName } from '@/components/ui/dialog-chrome'
-import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import { cn } from '@/lib/utils'
-import { resolveNotebookLanguage, resolveNotebookRunToolName } from './notebook-tool-names'
 import {
   describePermissionRequest,
   getLiteratureLibraryRequestAction,
@@ -32,8 +38,8 @@ import {
   isNotebookNetworkApprovalRequest,
   isSpecialistDeleteRequest,
   isSpecialistSwitchRequest,
-  type PermissionPresentation,
-  type NotebookRuntime
+  type NotebookRuntime,
+  type PermissionPresentation
 } from './permission-request-presentation'
 import {
   PermissionScopeConfirmationDialog,
@@ -42,15 +48,12 @@ import {
 } from './PermissionScopeConfirmationDialog'
 import { SpecialistDeleteDetail } from './SpecialistDeleteDetail'
 import { SpecialistSwitchDetail } from './SpecialistSwitchDetail'
-import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
+import { useSkillDocument } from './use-skill-document'
+import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { SkillDocumentSheet } from './WorkspaceSkillLoadRow'
-import {
-  buildLiteratureLibraryToolSummary,
-  buildLiteratureToolSummary
-} from './literature-tool-presentation'
-import { getSkillLoadPermissionSkillName } from './workspace-skill-load'
-import { useSkillDocument } from './use-skill-document'
+import { WorkspaceToolCodeBlock } from './WorkspaceToolCodeBlock'
+import { WorkspaceToolSummaryCard } from './WorkspaceToolSummaryCard'
 
 type PermissionApprovalControlsProps = {
   requests: AcpPermissionRequest[]
@@ -68,23 +71,12 @@ type PermissionApprovalCardProps = Omit<PermissionApprovalControlsProps, 'reques
 }
 
 type PermissionOption = AcpPermissionRequest['options'][number]
-type PermissionScope = 'once' | 'session' | 'project' | 'global'
 type PendingScopeConfirmation = PermissionScopeConfirmation & {
   requestId: string
   optionId: string
 }
 
-type ScopeOption = { scope: PermissionScope; label: string; subtitle: string }
-
-// English source text for the scope menu. It stays here as literals so it reads in the diff, but it
-// travels to the menu as *data* rather than as JSX, so the read sites below call t() on it.
-const SCOPE_OPTIONS: ScopeOption[] = [
-  { scope: 'once', label: 'Once', subtitle: 'This call only' },
-  { scope: 'session', label: 'This conversation', subtitle: 'Remembered for this conversation' },
-  { scope: 'project', label: 'This project', subtitle: 'Remembered for this project' },
-  { scope: 'global', label: 'Global', subtitle: 'Remembered across all projects' }
-]
-const PERMISSION_SCOPES = SCOPE_OPTIONS.map(({ scope }) => scope)
+const PERMISSION_SCOPES: PermissionScope[] = ['once', 'session', 'project', 'global']
 
 // The ACP option kind that backs each scope. A scope is only offered when the request
 // actually carries that exact kind — we never substitute one for the other, since that
@@ -339,6 +331,68 @@ const PermissionCodeSection = ({
   )
 }
 
+const NotebookCodeReviewDetail = ({
+  review
+}: {
+  review: NotebookCodeReview
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const [revealLine, setRevealLine] = useState<{ line: number }>()
+  return (
+    <div data-testid="notebook-code-review" className="min-w-0 space-y-3">
+      <div className="space-y-2 rounded-md bg-status-warning-surface/60 px-3 py-2.5 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
+        <p className="text-sm">
+          {review.uncertain
+            ? t('This code could not be fully checked. Review it before execution.')
+            : t('This code may make irreversible changes.')}
+        </p>
+        <ul className="space-y-2 text-xs">
+          {review.risks.map((risk, index) => (
+            <li key={index} className="min-w-0 space-y-1">
+              <div className="flex items-baseline justify-between gap-3">
+                <code className="min-w-0 whitespace-pre-wrap break-all font-medium">
+                  {risk.source || risk.operation}
+                </code>
+                <button
+                  type="button"
+                  className="shrink-0 rounded-sm underline decoration-dotted underline-offset-4 hover:decoration-solid focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                  onClick={() => setRevealLine({ line: risk.line })}
+                >
+                  {t('Line {{line}}', { line: risk.line })}
+                </button>
+              </div>
+              {risk.source && !risk.source.includes(risk.operation) ? (
+                <p>{risk.operation}</p>
+              ) : null}
+            </li>
+          ))}
+        </ul>
+      </div>
+      {(review.riskCount ?? 0) > review.risks.length ? (
+        <p className="text-xs text-muted-foreground">
+          {t('Showing {{shown}} of {{total}} findings. Review the full code below.', {
+            shown: review.risks.length,
+            total: review.riskCount
+          })}
+        </p>
+      ) : null}
+      <div className="min-w-0 space-y-2">
+        <div className="flex items-center justify-between text-xs text-muted-foreground">
+          <span>{t('Code')}</span>
+          <span>{review.language}</span>
+        </div>
+        <WorkspaceToolCodeBlock
+          code={review.code}
+          language={review.language}
+          copyable
+          highlightedLines={review.risks.map((risk) => risk.line)}
+          revealLine={revealLine}
+        />
+      </div>
+    </div>
+  )
+}
+
 // Activity-style collapsible card for a skills/load_skill approval. The request carries only the
 // skill's invocation name, so — like the transcript's load_skill rows — the SKILL.md body is
 // resolved through useSkillDocument: the managed catalog when listed, the main-process
@@ -446,7 +500,7 @@ const NotebookNetworkApprovalDetail = ({
       {expanded ? (
         <p>
           {t(
-            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Allowed domains.',
+            'This lets Notebook code read from and send data to {{domain}}. Only allow domains you trust. You can revoke saved access anytime in Settings > Network > Notebook network access.',
             { domain: approval.hostname }
           )}
         </p>
@@ -603,138 +657,6 @@ const PermissionHeaderBadges = ({
   )
 }
 
-// Popover listing the two available scope choices.
-const ScopeDropdown = ({
-  selected,
-  available,
-  onSelect,
-  onClose,
-  portaled,
-  onceDescription
-}: {
-  selected: PermissionScope
-  available: Set<PermissionScope>
-  onSelect: (scope: PermissionScope) => void
-  onClose: (restoreTriggerFocus?: boolean) => void
-  portaled: boolean
-  onceDescription?: string
-}): React.JSX.Element => {
-  const { t } = useTranslation()
-  const ref = useRef<HTMLDivElement>(null)
-  const itemRefs = useRef<Array<HTMLButtonElement | null>>([])
-  const options = SCOPE_OPTIONS.filter(({ scope }) => available.has(scope))
-  const selectedIndex = options.findIndex(({ scope }) => scope === selected)
-
-  useEffect(() => {
-    itemRefs.current[selectedIndex]?.focus()
-  }, [selectedIndex])
-
-  useEffect(() => {
-    if (portaled) return
-
-    // Listen on `click` (not `mousedown`) so it pairs with the chevron's onClick toggle: the
-    // chevron stops propagation, so its own click never reaches here and re-opens the menu.
-    const onDocClick = (e: MouseEvent): void => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose()
-    }
-    // Escape dismisses the menu, matching the keyboard affordance implied by aria-haspopup.
-    const onKeyDown = (e: KeyboardEvent): void => {
-      if (e.key === 'Escape') {
-        e.preventDefault()
-        onClose(true)
-      }
-    }
-    document.addEventListener('click', onDocClick)
-    document.addEventListener('keydown', onKeyDown)
-    return () => {
-      document.removeEventListener('click', onDocClick)
-      document.removeEventListener('keydown', onKeyDown)
-    }
-  }, [onClose, portaled])
-
-  const items = (
-    <>
-      {options.map(({ scope, label, subtitle }, index) => (
-        <button
-          key={scope}
-          ref={(item) => {
-            itemRefs.current[index] = item
-          }}
-          type="button"
-          role="menuitemradio"
-          aria-checked={selected === scope}
-          className={cn(
-            'flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left transition-colors hover:bg-muted',
-            selected === scope && 'bg-muted'
-          )}
-          onClick={() => {
-            onSelect(scope)
-            onClose(true)
-          }}
-          onKeyDown={(event) => {
-            const lastIndex = options.length - 1
-            let nextIndex: number | undefined
-
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault()
-              onSelect(scope)
-              onClose(true)
-              return
-            }
-            if (event.key === 'ArrowDown') nextIndex = index === lastIndex ? 0 : index + 1
-            if (event.key === 'ArrowUp') nextIndex = index === 0 ? lastIndex : index - 1
-            if (event.key === 'Home') nextIndex = 0
-            if (event.key === 'End') nextIndex = lastIndex
-
-            if (nextIndex !== undefined) {
-              event.preventDefault()
-              itemRefs.current[nextIndex]?.focus()
-            }
-          }}
-        >
-          {/* Label column: left-aligned flush to padding so both rows line up */}
-          <div className="flex min-w-0 flex-1 flex-col">
-            <span className="text-xs font-medium text-foreground">{t(label)}</span>
-            <span className="text-[11px] leading-tight text-muted-foreground">
-              {scope === 'once' && onceDescription ? onceDescription : t(subtitle)}
-            </span>
-          </div>
-          {/* Check column: right side, fixed slot so selection never shifts the label */}
-          <span className="flex w-3.5 shrink-0 justify-center text-primary">
-            {selected === scope ? <Check className="size-3.5" strokeWidth={2.5} /> : null}
-          </span>
-        </button>
-      ))}
-    </>
-  )
-
-  return portaled ? (
-    <PopoverContent
-      ref={ref}
-      role="menu"
-      aria-label={t('Authorization scope')}
-      side="top"
-      align="end"
-      sideOffset={6}
-      onOpenAutoFocus={(event) => event.preventDefault()}
-      onCloseAutoFocus={(event) => event.preventDefault()}
-      onEscapeKeyDown={() => onClose(true)}
-      className="min-w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
-    >
-      {items}
-    </PopoverContent>
-  ) : (
-    <div
-      ref={ref}
-      role="menu"
-      aria-label={t('Authorization scope')}
-      className="absolute bottom-full right-0 z-10 mb-1.5 min-w-44 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu outline-none"
-    >
-      {items}
-    </div>
-  )
-}
-
 const PermissionApprovalCard = ({
   request,
   onRespond,
@@ -776,7 +698,22 @@ const PermissionApprovalCard = ({
 
   // Guard against a stale scope no longer offered by the current request.
   const effectiveScope = availableScopes.has(scope) ? scope : defaultScope
-  const permCode = extractPermissionCode(request)
+  const codeReview = request.appOwned ? readNotebookCodeReview(request.rawInput) : undefined
+  const appInput = request.appOwned ? notebookInput(request.rawInput) : {}
+  const selection = appInput.notebookRuntimeSelection
+  const runtimeSelection =
+    selection && typeof selection === 'object' && !Array.isArray(selection)
+      ? (selection as Record<string, unknown>)
+      : undefined
+  const selectedLabel =
+    runtimeSelection && typeof runtimeSelection.label === 'string'
+      ? runtimeSelection.label
+      : undefined
+  const previousLabel =
+    runtimeSelection && typeof runtimeSelection.previousRuntimeId === 'string'
+      ? String(runtimeSelection.previousLabel || runtimeSelection.previousRuntimeId)
+      : undefined
+  const permCode = codeReview || selectedLabel ? undefined : extractPermissionCode(request)
   // A skills/load_skill approval names the skill being loaded; the section resolves the SKILL.md
   // document (managed catalog first, then the connector-aware main resolver) and falls back to the
   // raw JSON input when no source provides the name.
@@ -863,6 +800,7 @@ const PermissionApprovalCard = ({
               )
             : t('Approval remains attached to this conversation across restarts.')
   const hasScopePicker = availableScopes.size > 1
+  const isFixedOnce = availableScopes.size === 1 && availableScopes.has('once')
   const isSubmitting = submittingRequestId === request.requestId
   const respondOnce = (optionId?: string, broadScopeConfirmed = false): void => {
     if (submittingRequestIdRef.current === request.requestId) return
@@ -907,8 +845,7 @@ const PermissionApprovalCard = ({
 
   const isMcp = isMcpPermissionRequest(request)
   const isShell = !isMcp && (request.toolKind === 'execute' || request.providerToolName === 'Bash')
-  // Specialist deletes render the primary action as a destructive Delete (prototype scene 8) — the
-  // only request kind that re-words and recolors the Allow control.
+  // Keep the destructive treatment even when a fixed one-time approval reads as Allow.
   const isDeleteRequest = isSpecialistDeleteRequest(request)
 
   // Most identity details stay in the impact tip. When no path or preview exists, retain the only
@@ -992,22 +929,49 @@ const PermissionApprovalCard = ({
         data-testid="permission-header"
         className={cn(
           'flex min-w-0 items-center gap-2',
+          codeReview && 'flex-wrap',
           embedded &&
             'sticky top-0 z-10 -mx-4 -mt-4 -mb-3 bg-card px-4 pb-3 pt-4 sm:-mx-5 sm:-mt-5 sm:px-5 sm:pt-5'
         )}
       >
-        <div className="flex min-w-0 items-center gap-1.5">
-          <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
-            {presentation.actionTitle}
-          </span>
-          <PermissionImpactTip description={presentation.description} detail={titleDetail} />
-        </div>
-        <PermissionHeaderBadges
-          lookup={notebookLookup}
-          runtime={presentation.notebookRuntime}
-          categoryLabel={presentation.categoryLabel}
-          scopeDescription={scopeDescription}
-        />
+        {codeReview ? (
+          <>
+            <div className="flex min-w-0 items-start gap-2">
+              <TriangleAlert
+                className="mt-0.5 size-5 shrink-0 text-status-warning-foreground dark:text-status-warning-dark-foreground"
+                aria-hidden="true"
+              />
+              <span className={cn(dialogTitleClassName, 'min-w-0 break-words')}>
+                {t('Review risky code')}
+              </span>
+            </div>
+            {codeReview.environment ? (
+              <Badge
+                variant="secondary"
+                data-testid="permission-env-badge"
+                className="ml-auto min-w-0 max-w-full whitespace-normal break-all"
+                title={t('Environment')}
+              >
+                {codeReview.environment}
+              </Badge>
+            ) : null}
+          </>
+        ) : (
+          <>
+            <div className="flex min-w-0 items-center gap-1.5">
+              <span className={cn(dialogTitleClassName, 'min-w-0 truncate')}>
+                {presentation.actionTitle}
+              </span>
+              <PermissionImpactTip description={presentation.description} detail={titleDetail} />
+            </div>
+            <PermissionHeaderBadges
+              lookup={notebookLookup}
+              runtime={presentation.notebookRuntime}
+              categoryLabel={presentation.categoryLabel}
+              scopeDescription={scopeDescription}
+            />
+          </>
+        )}
       </div>
 
       {['Read web pages', 'Search the web'].includes(sourcePresentation.categoryLabel) ? (
@@ -1040,7 +1004,30 @@ const PermissionApprovalCard = ({
       {/* Specialist switch/delete requests show a friendly detail block instead of the raw
           redacted payload; all other requests keep the activity-style code preview. Skill loads
           show the SKILL.md document itself — it is the payload being approved. */}
-      {notebookSummary || fileSummary ? (
+      {codeReview ? (
+        <NotebookCodeReviewDetail key={requestId} review={codeReview} />
+      ) : selectedLabel ? (
+        <div data-testid="notebook-runtime-selection" className="space-y-3 text-sm">
+          <p className="text-muted-foreground">{presentation.description}</p>
+          <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-2">
+            {previousLabel ? (
+              <>
+                <dt className="text-muted-foreground">{t('Current environment')}</dt>
+                <dd className="break-all">{previousLabel}</dd>
+              </>
+            ) : null}
+            <dt className="text-muted-foreground">{t('Selected environment')}</dt>
+            <dd className="break-all">{selectedLabel}</dd>
+            <dt className="text-muted-foreground">{t('Language')}</dt>
+            <dd>{String(runtimeSelection?.language || '')}</dd>
+          </dl>
+          {previousLabel ? (
+            <p className="rounded-md bg-status-warning-surface/60 p-3 text-status-warning-foreground dark:bg-status-warning-dark-surface/60 dark:text-status-warning-dark-foreground">
+              {t("Switching environments clears the current kernel's variables.")}
+            </p>
+          ) : null}
+        </div>
+      ) : notebookSummary || fileSummary ? (
         <div key={requestId} className="space-y-2">
           <WorkspaceToolSummaryCard
             summary={(notebookSummary ?? fileSummary)!}
@@ -1132,7 +1119,9 @@ const PermissionApprovalCard = ({
                     respondOnce(allowOptionId)
                   }}
                 >
-                  {isDeleteRequest ? (
+                  {isFixedOnce ? (
+                    <span className="font-semibold">{t('Allow')}</span>
+                  ) : isDeleteRequest ? (
                     <span className="font-semibold">{t('Delete')}</span>
                   ) : (
                     <span className="font-semibold">{allowLabel[effectiveScope]}</span>

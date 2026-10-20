@@ -1,3 +1,9 @@
+import { spawnSync } from 'node:child_process'
+import { existsSync } from 'node:fs'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 
 import { isProcessAlive, parseCliArgs } from './index.mjs'
@@ -54,6 +60,46 @@ describe('CLI argument parsing', () => {
     expect(() => parseCliArgs(['start', '--app-path'])).toThrow('requires a value')
     expect(() => parseCliArgs(['start', '--config-root'])).toThrow('requires a value')
   })
+})
+
+describe('removed application update command', () => {
+  it.each(
+    ['./index.mjs', '../packages/open-science/cli.mjs'].flatMap((entry) =>
+      [[], ['--json'], ['--help']].map((flags) => ({ entry, flags }))
+    )
+  )(
+    'rejects update through $entry with $flags without creating a profile',
+    async ({ entry, flags }) => {
+      const directory = await mkdtemp(join(tmpdir(), 'open-science-removed-update-'))
+      const profile = join(directory, 'profile')
+      try {
+        const result = spawnSync(
+          process.execPath,
+          [
+            fileURLToPath(new URL(entry, import.meta.url)),
+            'update',
+            '--config-root',
+            profile,
+            ...flags
+          ],
+          { encoding: 'utf8', timeout: 10_000 }
+        )
+        expect(result.error).toBeUndefined()
+        expect(result.status).toBe(2)
+        expect(result.stdout).toBe('')
+        expect(result.stderr).toContain('Unknown command: update')
+        if (flags.includes('--json')) {
+          expect(JSON.parse(result.stderr)).toMatchObject({
+            error: { code: 'invalid_cli_usage' },
+            exitCode: 2
+          })
+        }
+        expect(existsSync(profile)).toBe(false)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    }
+  )
 })
 
 describe('isProcessAlive', () => {

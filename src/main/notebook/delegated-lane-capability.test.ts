@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -542,3 +543,5 @@ describe('delegated Notebook lane capability', () => {
     }
   })
 })
+
+configureTestRuntimeMetadata()

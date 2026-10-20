@@ -1,85 +1,53 @@
+import type {
+  CreateReproductionRuntime,
+  NotebookReproductionEnvironmentOutput,
+  NotebookReproductionEnvironmentProgress,
+  NotebookReproductionStep,
+  NotebookReproductionRuntime as ReproductionRuntime
+} from '@aipoch/reproducibility'
+import { restoreRRandomState, validatePythonRandomState } from '@aipoch/reproducibility'
+import type { ArtifactReproducibilityEnvironmentRequirement } from '@aipoch/reproducibility/contracts'
 import { createHash } from 'node:crypto'
-import { restoreRRandomState } from './r-random-replay'
-import { validatePythonRandomState } from './python-random-replay'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { resolveNotebookMicromamba as resolveMicromamba } from './environment-resources'
+import type { NotebookSessionExecutionResult } from './session-aggregate'
 
-import type {
-  ArtifactReproducibilityEnvironmentRequirement,
-  ArtifactReproducibilityRecipeStep
-} from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock, NotebookHelperModuleEvidence } from '../../shared/notebook'
-import { parseNotebookEnvironmentLock } from './environment-lock'
-import { NotebookHelperModuleHost } from './helper-module-host'
-import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
-import { createFromLockArgv, micromambaSpawnEnv, resolveMicromamba } from './micromamba'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
-import { nativeLockRestoreState, restoreNativeEnvironmentLock } from './native-lock-restoration'
-import { prepareNotebookWorkloadCache } from './notebook-workload-cache-paths'
-import { sandboxedPackageSpawn } from './package-process-sandbox'
-import { withSharedCacheLocks } from './pkgs-cache-lock'
-import type { NotebookProcessSandbox } from './process-sandbox'
-import { runMicromamba, verifyExecutable } from './provisioner-runtime'
-import { verifyRestoredEnvironment } from './restored-environment-verification'
-import { buildManagedRuntimeProcessEnvironment } from './process-environment'
-import { resolveLoopScriptPaths } from './runtime-service'
 import {
+  buildManagedRuntimeProcessEnvironment,
+  createFromLockArgv,
+  micromambaCacheLockKey,
+  micromambaSpawnEnv,
+  nativeLockRestoreState,
   normalizeRuntimeArchitecture,
+  parseNotebookEnvironmentLock,
   pkgsCache,
+  prepareNotebookWorkloadCache,
   pythonBin,
+  restoreNativeEnvironmentLock,
   rScriptBin,
-  runtimeRoot
-} from './runtime-paths'
-import type {
-  NotebookKernelEpochOwnership,
-  NotebookSessionExecutionResult,
-  NotebookSessionExecutor
-} from './session-aggregate'
+  runtimeRoot,
+  selectMicromambaCache,
+  verifyRestoredEnvironment,
+  withSharedCacheLocks
+} from '@aipoch/environment'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
 import { resolveStorageKey, storageKey } from '../artifacts/provenance-storage'
+import { runMicromamba, verifyExecutable } from './environment-process'
+import { NotebookHelperModuleHost } from './helper-module-host'
+import type { NotebookKernelEpochOwnership } from './kernel-epoch-contract'
+import { NotebookKernelExecutor, type NotebookKernelExecutorOptions } from './kernel-executor'
+import { sandboxedPackageSpawn } from './package-process-sandbox'
+import type { NotebookProcessSandbox } from './process-sandbox'
+import { resolveLoopScriptPaths } from './runtime-service'
+import type { NotebookSessionExecutor } from './session-aggregate'
 
-type NotebookReproductionStep = Extract<ArtifactReproducibilityRecipeStep, { kind: 'notebook-run' }>
-
-type NotebookReproductionRuntime = {
-  execute(input: {
-    step: NotebookReproductionStep
-    source: string
-    executionContext?: NotebookExecutionContext
-    sessionRoot: string
-    kernelEpochId?: string
-    helperModules?: NotebookHelperModuleEvidence[]
-    signal?: AbortSignal
-  }): Promise<NotebookSessionExecutionResult>
-  shutdown(): Promise<{ reaped: boolean }>
-}
-
-type CreateNotebookReproductionRuntimeInput = {
-  requirements: ArtifactReproducibilityEnvironmentRequirement[]
+type CreateNotebookReproductionRuntimeInput = Parameters<CreateReproductionRuntime>[0] & {
   storageRoot: string
-  attemptRoot: string
   processSandbox: NotebookProcessSandbox
-  signal?: AbortSignal
   projectId: string
   sessionId: string
-  onEnvironmentProgress?: (event: NotebookReproductionEnvironmentProgress) => void
-  onEnvironmentOutput?: (event: NotebookReproductionEnvironmentOutput) => void
-}
-
-type NotebookReproductionEnvironmentProgress = {
-  requirementId: string
-  kernelKind: 'python' | 'r'
-  index: number
-  total: number
-  stage: 'validating-lock' | 'restoring-packages' | 'verifying-runtime' | 'completed'
-}
-
-type NotebookReproductionEnvironmentOutput = {
-  requirementId: string
-  kernelKind: 'python' | 'r'
-  index: number
-  total: number
-  stream: 'stdout' | 'stderr'
-  text: string
 }
 
 type CreateNotebookReproductionRuntimeDependencies = {
@@ -241,7 +209,8 @@ const restoreEnvironment = async (
   const platform = dependencies.platform ?? process.platform
   const conda = lock.components.find((component) => component.ecosystem === 'conda')!
 
-  const mm = dependencies.micromamba ?? resolveMicromamba()
+  const mm =
+    dependencies.micromamba ?? resolveMicromamba({ runtimeRoot: runtimeRoot(input.storageRoot) })
   if (!mm) throw new Error('Micromamba is unavailable for reproducibility execution.')
 
   const locksRoot = join(input.attemptRoot, 'locks')
@@ -552,8 +521,58 @@ export { createNotebookReproductionRuntime }
 export type {
   CreateNotebookReproductionRuntimeDependencies,
   CreateNotebookReproductionRuntimeInput,
-  NotebookReproductionEnvironmentProgress,
   NotebookReproductionEnvironmentOutput,
+  NotebookReproductionEnvironmentProgress,
   NotebookReproductionRuntime,
   NotebookReproductionStep
+}
+
+import {
+  createReproductionExecutor,
+  type ExecuteArtifactReproducibilityDependencies,
+  type ExecuteArtifactReproducibilityInput
+} from '@aipoch/reproducibility'
+import { reproductionEvidence, reproductionRecipes } from '../artifacts/reproducibility-host'
+import { copyFileWithinBudget, digestFileWithinBudget } from '../bounded-file-io'
+const executeReproduction = createReproductionExecutor({
+  recipes: reproductionRecipes,
+  fileIO: { copyFile: copyFileWithinBudget, digestFile: digestFileWithinBudget }
+})
+export type HostReproductionInput = Omit<ExecuteArtifactReproducibilityInput, 'evidence'> & {
+  storageRoot: string
+  processSandbox: NotebookProcessSandbox
+}
+export type HostReproductionDependencies = Omit<
+  ExecuteArtifactReproducibilityDependencies,
+  'createRuntime'
+> & { createRuntime?: typeof createNotebookReproductionRuntime }
+
+// This adapter composes existing Notebook ownership, product identity and sandbox policy.
+// The caller retains authorization, storage leases and receipt publication/SQL transactions.
+export const executeArtifactReproducibility = (
+  input: HostReproductionInput,
+  dependencies: HostReproductionDependencies = {}
+): ReturnType<typeof executeReproduction> => {
+  const { storageRoot, processSandbox, ...attempt } = input
+  return executeReproduction(
+    { ...attempt, evidence: reproductionEvidence(storageRoot) },
+    {
+      createAttemptRoot: dependencies.createAttemptRoot,
+      createRuntime: (runtime) =>
+        (dependencies.createRuntime ?? createNotebookReproductionRuntime)({
+          ...runtime,
+          storageRoot,
+          processSandbox,
+          projectId: 'artifact-reproducibility',
+          sessionId: 'reproduction-' + input.execution.reproducibilityRecipe!.recipeId.slice(0, 16)
+        })
+    }
+  )
+}
+
+// Host callers may inspect kernel outputs; replay needs only the base execution result.
+type NotebookReproductionRuntime = Omit<ReproductionRuntime, 'execute'> & {
+  execute(
+    input: Parameters<ReproductionRuntime['execute']>[0]
+  ): Promise<NotebookSessionExecutionResult>
 }

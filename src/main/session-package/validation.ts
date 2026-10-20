@@ -1,25 +1,26 @@
-import { validatePackageLiterature } from './literature'
-import { installPackageReproducibility, validatePackageReproducibility } from './reproducibility'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { dirname, join } from 'node:path'
 import type { SessionPackageManifest } from '../../shared/session-package'
-import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { sha256 } from '../artifacts/provenance-canonical'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { decodeReviewScopeSnapshot } from '../artifacts/provenance-snapshot-decoder'
-import { executionEvidenceKeys } from './execution-evidence'
-import { validateExcludedFiles, assertNoExcludedContentCopies } from './selection'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { copyFileWithinBudget } from '../bounded-file-io'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { assertPackageCapacity } from './capacity'
+import { executionEvidenceKeys } from './execution-evidence'
+import { validatePackageLiterature } from './literature'
 import {
   nativeStorageKeys,
-  projectIncludedHeads,
   prepareNativePublication,
-  readPackageNotebooks,
-  type PackageRecords
+  projectIncludedHeads,
+  readPackageNotebooks
 } from './native-snapshot'
+import type { PackageRecords } from './records-contract'
+import { installPackageReproducibility, validatePackageReproducibility } from './reproducibility'
+import { validatePackageRoCrateMetadata } from './ro-crate'
+import { assertNoExcludedContentCopies, validateExcludedFiles } from './selection'
 
 export const assertPortablePackageStorageKey = (key: string): void => {
   const segments = key.split('/')
@@ -128,6 +129,7 @@ export const validatePackageRecords = async (
     await validatePackageReproducibility(root, records, manifest, sourceIdentity)
     const notebooks = await readPackageNotebooks(root, [...files.keys()])
     await executionEvidenceKeys(root, records, notebooks, signal)
+    await validatePackageRoCrateMetadata(directory, manifest, records, signal)
     // File and reproducibility checks still apply to conversation-only packages. With no
     // native rows, there are no database relationships or provenance records to validate.
     if (Object.values(records.tables).every((rows) => rows.length === 0)) return

@@ -4,14 +4,20 @@ Open-Science is a local-first research workbench that runs AI agents, executes c
 connects to external services, and stores research data and credentials on the user's
 computer. We appreciate coordinated reports that help us protect those trust boundaries.
 
+For operating precautions, see [intended use](docs/usage-scope.md), the
+[security model](docs/security.md), and [known limitations](docs/known-limitations.md).
+The limitations register does not exclude reports of implemented-control failures.
+
 ## Supported versions
 
-Open-Science is pre-1.0 and changes quickly. Security fixes are provided for the latest
-tagged `0.x` release and the `main` branch only.
+Security fixes are provided for the latest stable release and the `main` branch only.
+Older releases do not receive security backports. Please upgrade to the latest stable
+release to receive security fixes.
 
 | Version               | Supported |
 | --------------------- | --------- |
-| latest `0.x` / `main` | ✅        |
+| latest stable release | ✅        |
+| `main` (development)  | ✅        |
 | older releases        | ❌        |
 
 Nightly builds contain newer, less-reviewed code and do not have the same release
@@ -90,7 +96,7 @@ and compare the entry for your installer:
 shasum -a 256 aipoch-open-science-<version>-mac-arm64.dmg
 
 # Linux
-sha256sum aipoch-open-science-<version>-linux-x64.AppImage
+sha256sum aipoch-open-science-<version>-linux-x86_64.AppImage
 ```
 
 ```powershell

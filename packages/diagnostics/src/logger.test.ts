@@ -1,0 +1,1887 @@
+import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { Console } from 'node:console'
+import { Writable } from 'node:stream'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+const { renameFile, appendLogFile, openLogFile } = vi.hoisted(() => ({
+  renameFile: vi.fn(),
+  appendLogFile: vi.fn(),
+  openLogFile: vi.fn()
+}))
+
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const original = await importOriginal<typeof import('node:fs/promises')>()
+  renameFile.mockImplementation(original.rename)
+  appendLogFile.mockImplementation(original.appendFile)
+  openLogFile.mockImplementation(original.open)
+  return { ...original, rename: renameFile, appendFile: appendLogFile, open: openLogFile }
+})
+
+import {
+  createLogger,
+  diagnosticErrorFields,
+  errorLogFields,
+  flushLogs,
+  formatLine,
+  getLogFileStatus,
+  initLogger,
+  runWithDiagnosticCorrelation,
+  writeFatalLogSync
+} from './logger'
+import { flushDiagnosticsWithTimeout } from './flush'
+
+let logDir: string | undefined
+
+afterEach(async () => {
+  vi.restoreAllMocks()
+  const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+  appendLogFile.mockImplementation(fs.appendFile)
+  openLogFile.mockImplementation(fs.open)
+  if (logDir) {
+    await rm(logDir, { recursive: true, force: true })
+    logDir = undefined
+  }
+})
+
+describe('logger: main-process boundary', () => {
+  it.each(['debug', 'info', 'warn', 'error'] as const)(
+    'mirrors %s as one redacted JSON line with the file record and original stream',
+    async (level) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-json-'))
+      initLogger({ logDir, runId: 'console-run', mirrorToConsole: true, consoleFormat: 'json' })
+      const output = { stdout: '', stderr: '' }
+      const capture = (stream: keyof typeof output): Writable =>
+        new Writable({
+          write(chunk, _encoding, callback) {
+            output[stream] += chunk.toString()
+            callback()
+          }
+        })
+      const terminal = new Console({ stdout: capture('stdout'), stderr: capture('stderr') })
+      const method = level === 'debug' ? 'log' : level
+      vi.spyOn(console, method).mockImplementation(terminal[method])
+      runWithDiagnosticCorrelation(() =>
+        createLogger('backend')[level]('first line\nsecond line %s', {
+          apiKey: 'fictional-console-secret',
+          nested: { phase: 'startup', attempts: [1, 2, 3] },
+          error: new Error('multiline\nerror')
+        })
+      )
+      await flushLogs()
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      const stream = level === 'warn' || level === 'error' ? 'stderr' : 'stdout'
+      expect(output[stream]).toBe(file)
+      expect(output[stream === 'stdout' ? 'stderr' : 'stdout']).toBe('')
+      expect(file.trimEnd().split('\n')).toHaveLength(1)
+      expect(file).not.toContain('fictional-console-secret')
+      expect(JSON.parse(file)).toMatchObject({
+        t: expect.any(String),
+        level,
+        scope: 'backend',
+        msg: 'first line\nsecond line %s',
+        runId: 'console-run',
+        correlationId: expect.any(String),
+        data: { nested: { phase: 'startup', attempts: [1, 2, 3] } }
+      })
+    }
+  )
+
+  it('keeps JSON mirroring disabled when requested and text as the default', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-console-mode-'))
+    const mirror = vi.spyOn(console, 'info').mockImplementation(() => undefined)
+    initLogger({ logDir, mirrorToConsole: false, consoleFormat: 'json' })
+    createLogger('backend').info('quiet')
+    await flushLogs()
+    expect(mirror).not.toHaveBeenCalled()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('quiet')
+    initLogger({ logDir, mirrorToConsole: true })
+    createLogger('backend').info('readable', { attempt: 1 })
+    await flushLogs()
+    expect(mirror).toHaveBeenCalledWith('[backend] readable', { attempt: 1 })
+  })
+
+  it.each(['object', 'JSON', 'Error.message', 'escaped JSON key'] as const)(
+    'D01 redacts compound credentials in %s at both output boundaries',
+    async (representation) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d01-'))
+      initLogger({ logDir, mirrorToConsole: true })
+      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const credentials = {
+        OPENAI_API_KEY: 'fictional-d01-environment-7319',
+        providerApiKey: 'fictional-d01-left-7319"\\\nfictional-d01-right-7319',
+        provider: 'example-provider',
+        inputTokens: 21,
+        outputTokens: 8
+      }
+      const json = JSON.stringify(credentials)
+      const data =
+        representation === 'object'
+          ? credentials
+          : representation === 'JSON'
+            ? json
+            : representation === 'Error.message'
+              ? new Error(json)
+              : new Error(json.replace('providerApiKey', 'providerApi\\u004bey'))
+      createLogger('diagnostics').error('provider failed', data)
+      await flushLogs()
+
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      const consoleOutput = JSON.stringify(mirror.mock.calls)
+      for (const output of [file, consoleOutput]) {
+        for (const secret of [
+          'fictional-d01-environment-7319',
+          'fictional-d01-left-7319',
+          'fictional-d01-right-7319'
+        ]) {
+          expect.soft(output.includes(secret), `${representation} leaks ${secret}`).toBe(false)
+        }
+        expect(output).toContain('example-provider')
+        expect(output).toContain('inputTokens')
+        expect(output).toContain('21')
+        expect(output).toContain('outputTokens')
+      }
+      expect(JSON.parse(file)).toMatchObject({ level: 'error', scope: 'diagnostics' })
+    }
+  )
+
+  it('D02 stops expanding a shared DAG while retaining correlation fields', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, runId: 'bounded-run', mirrorToConsole: false })
+    const read = vi.fn(() => 'kept')
+    const leaf = Object.defineProperty({}, 'detail', { enumerable: true, get: read })
+    const data = Array(30).fill(Array(30).fill(Array(30).fill(leaf)))
+    runWithDiagnosticCorrelation(() => createLogger('diagnostics').error('shared DAG', data))
+    await flushLogs()
+    expect.soft(read.mock.calls.length).toBeLessThanOrEqual(10000)
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect(JSON.parse(file)).toMatchObject({
+      scope: 'diagnostics',
+      msg: 'shared DAG',
+      runId: 'bounded-run',
+      correlationId: expect.any(String)
+    })
+    expect(file).toContain('truncated')
+  })
+
+  it('D02 budgets JSON escaping and UTF-8 bytes in the complete record', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('diagnostics').error('escaped content', Array(100).fill('\u0000中'.repeat(4000)))
+    await flushLogs()
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect(Buffer.byteLength(file)).toBeLessThanOrEqual(2 * 1024 * 1024)
+    expect(JSON.parse(file)).toMatchObject({ msg: 'escaped content' })
+  })
+
+  it('D02 rejects a record exceeding a custom file cap and recovers on the next small record', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+    initLogger({ logDir, maxBytes: 512, mirrorToConsole: false })
+    const log = createLogger('diagnostics')
+    log.error('too large', { detail: 'x'.repeat(1000) })
+    await flushLogs()
+    expect
+      .soft(await getLogFileStatus())
+      .toMatchObject({ lastWriteSucceeded: false, lastFailureCategory: 'append' })
+    log.error('recovered', { code: 'EIO' })
+    await flushLogs()
+    const file = await readFile(join(logDir, 'main.log'), 'utf8')
+    expect.soft(Buffer.byteLength(file)).toBeLessThanOrEqual(512)
+    expect(JSON.parse(file)).toMatchObject({ msg: 'recovered' })
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })
+  })
+
+  it.each(['array', 'object', 'shared references'] as const)(
+    'D02 bounds ordinary %s data before output and accepts the next error',
+    async (shape) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d02-'))
+      initLogger({ logDir, mirrorToConsole: true })
+      const mirror = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+      const value = 'x'.repeat(8000)
+      const shared = { detail: value }
+      const data =
+        shape === 'object'
+          ? Object.fromEntries(Array.from({ length: 800 }, (_, index) => [`field${index}`, value]))
+          : Array.from({ length: 800 }, () => (shape === 'array' ? value : shared))
+      const log = createLogger('diagnostics')
+      log.error('wide payload', data)
+      await flushLogs()
+      const file = await readFile(join(logDir, 'main.log'), 'utf8')
+      // A single normal record must fit the existing default file budget, including JSON framing.
+      expect.soft(Buffer.byteLength(file)).toBeLessThanOrEqual(5 * 1024 * 1024)
+      expect
+        .soft(Buffer.byteLength(JSON.stringify(mirror.mock.calls)))
+        .toBeLessThanOrEqual(5 * 1024 * 1024)
+      expect.soft(/truncat|omitted|more (?:items|keys)/i.test(file)).toBe(true)
+      expect(JSON.parse(file)).toMatchObject({
+        level: 'error',
+        scope: 'diagnostics',
+        msg: 'wide payload'
+      })
+
+      log.error('subsequent failure', { code: 'EIO' })
+      await flushLogs()
+      const current = await readFile(join(logDir, 'main.log'), 'utf8')
+      const records = current
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.at(-1)).toMatchObject({ msg: 'subsequent failure', data: { code: 'EIO' } })
+      await expect(getLogFileStatus()).resolves.toMatchObject({
+        lastWriteSucceeded: true,
+        lastFailureCategory: null
+      })
+      for (const name of await readdir(logDir)) {
+        expect
+          .soft((await readFile(join(logDir, name))).byteLength)
+          .toBeLessThanOrEqual(5 * 1024 * 1024)
+      }
+    }
+  )
+
+  it.each([false, true])(
+    'D03 preserves retained backups and reports rotation failure (injected=%s)',
+    async (injectFailure) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-d03-'))
+      const original = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      const active = `${JSON.stringify({ msg: 'active diagnostic', detail: 'a'.repeat(350) })}\n`
+      const retained = `${JSON.stringify({ msg: 'retained diagnostic' })}\n`
+      await writeFile(join(logDir, 'main.log'), active)
+      await writeFile(join(logDir, 'main.1.log'), retained)
+      await writeFile(
+        join(logDir, 'main.2.log'),
+        `${JSON.stringify({ msg: 'expired diagnostic' })}\n`
+      )
+      initLogger({ logDir, maxBytes: 512, maxFiles: 3, mirrorToConsole: false })
+      renameFile.mockImplementation(async (source, destination) => {
+        if (injectFailure && source === join(logDir!, 'main.1.log')) {
+          throw Object.assign(new Error('injected retained-backup move failure'), {
+            code: 'EACCES'
+          })
+        }
+        return original.rename(source, destination)
+      })
+      try {
+        createLogger('diagnostics').error('rotation trigger', { detail: 'x'.repeat(150) })
+        await flushLogs()
+        if (injectFailure) {
+          expect.soft(await readFile(join(logDir, 'main.1.log'), 'utf8')).toBe(retained)
+          expect.soft(await readFile(join(logDir, 'main.log'), 'utf8')).toBe(active)
+          expect
+            .soft(await getLogFileStatus())
+            .toMatchObject({ lastWriteSucceeded: false, lastFailureCategory: 'rotation' })
+          renameFile.mockImplementation(original.rename)
+          appendLogFile.mockImplementation(original.appendFile)
+          await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+          createLogger('diagnostics').error('rotation recovered', { detail: 'x'.repeat(150) })
+          await flushLogs()
+        }
+        expect
+          .soft(await readFile(join(logDir, 'main.2.log'), 'utf8').catch(() => null))
+          .toBe(retained)
+        await expect(getLogFileStatus()).resolves.toMatchObject({
+          lastWriteSucceeded: true,
+          lastFailureCategory: null
+        })
+      } finally {
+        renameFile.mockImplementation(original.rename)
+        appendLogFile.mockImplementation(original.appendFile)
+      }
+    }
+  )
+})
+
+describe('logger: formatLine', () => {
+  it('produces a single-line JSON record with level, scope, and message', () => {
+    const line = formatLine('info', 'acp', 'connected')
+    const parsed = JSON.parse(line) as Record<string, unknown>
+
+    expect(line).not.toContain('\n')
+    expect(parsed.level).toBe('info')
+    expect(parsed.scope).toBe('acp')
+    expect(parsed.msg).toBe('connected')
+    expect(typeof parsed.t).toBe('string')
+  })
+
+  it('attaches structured data', () => {
+    const parsed = JSON.parse(formatLine('debug', 'agent', 'spawn', { pid: 42 })) as {
+      data: { pid: number }
+    }
+
+    expect(parsed.data.pid).toBe(42)
+  })
+
+  it('unwraps Error payloads so the stack is preserved', () => {
+    const parsed = JSON.parse(formatLine('error', 'agent', 'failed', new Error('boom'))) as {
+      data: { name: string; message: string; stack?: string }
+    }
+
+    expect(parsed.data.name).toBe('Error')
+    expect(parsed.data.message).toBe('boom')
+    expect(typeof parsed.data.stack).toBe('string')
+  })
+
+  it('does not throw on circular data', () => {
+    const circular: Record<string, unknown> = {}
+    circular.self = circular
+
+    const line = formatLine('warn', 'x', 'circular', circular)
+
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect((JSON.parse(line) as { data: unknown }).data).toEqual({ self: '[circular]' })
+  })
+
+  it('recursively redacts sensitive field variants while retaining token metrics', () => {
+    const sentinel = 'opaque-field-value-7319'
+    const sensitiveKeys = [
+      'authorization',
+      'proxy-authorization',
+      'providerApiKey',
+      'providerApiKeys',
+      'access_token',
+      'refreshToken',
+      'x-amz-security-token',
+      'clientSecret',
+      'secrets',
+      'privateKey',
+      'cookieValue',
+      'cookies',
+      'password',
+      'credentials'
+    ]
+    const nestings = [
+      (key: string): unknown => ({ [key]: sentinel }),
+      (key: string): unknown => ({ nested: { [key]: sentinel } }),
+      (key: string): unknown => ({ items: [{ [key]: sentinel }] }),
+      (key: string): unknown => ({ data: { cause: { [key]: sentinel } } })
+    ]
+
+    for (const key of sensitiveKeys) {
+      for (const nest of nestings) {
+        const line = formatLine('error', 'redaction', 'failed', nest(key))
+        expect(line).not.toContain(sentinel)
+        expect(line).toContain('[redacted]')
+      }
+    }
+
+    const preserved = JSON.parse(
+      formatLine('info', 'usage', 'counted', {
+        tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+        tokenCount: 29,
+        maxOutputTokens: 100
+      })
+    ) as {
+      data: {
+        tokenUsage: { inputTokens: number; outputTokens: number; cachedInputTokens: number }
+        tokenCount: number
+        maxOutputTokens: number
+      }
+    }
+
+    expect(preserved.data).toEqual({
+      tokenUsage: { inputTokens: 21, outputTokens: 8, cachedInputTokens: 5 },
+      tokenCount: 29,
+      maxOutputTokens: 100
+    })
+  })
+
+  it('redacts credential-shaped strings in messages and nested error context', () => {
+    const jwt = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJsb2ctcmVkYWN0aW9uIn0.signaturevalue123'
+    const examples = [
+      { text: 'Bearer bearer-opaque-7319', secrets: ['bearer-opaque-7319'] },
+      { text: `jwt=${jwt}`, secrets: [jwt] },
+      { text: 'Authorization: Basic dXNlcjpwYXNz', secrets: ['dXNlcjpwYXNz'] },
+      {
+        text: 'Authorization: Digest comma-opaque-7319,remaining-opaque-7319',
+        secrets: ['comma-opaque-7319', 'remaining-opaque-7319']
+      },
+      { text: 'Cookie: session=cookie-opaque-7319; Path=/', secrets: ['cookie-opaque-7319'] },
+      { text: 'apiKey="json-opaque-7319"', secrets: ['json-opaque-7319'] },
+      {
+        text: 'apiKey="quoted-left-opaque-7319 quoted-right-opaque-7319"',
+        secrets: ['quoted-left-opaque-7319', 'quoted-right-opaque-7319']
+      },
+      {
+        text: 'password=unquoted-left-opaque-7319 unquoted-right-opaque-7319; status=denied',
+        secrets: ['unquoted-left-opaque-7319', 'unquoted-right-opaque-7319']
+      },
+      {
+        text: 'token=comma-token-opaque-7319,remaining-token-opaque-7319',
+        secrets: ['comma-token-opaque-7319', 'remaining-token-opaque-7319']
+      },
+      {
+        text: 'Authorization=Bearer assignment-scheme-opaque-7319',
+        secrets: ['assignment-scheme-opaque-7319']
+      },
+      {
+        text: 'providerApiKey=compound-camel-opaque-7319',
+        secrets: ['compound-camel-opaque-7319']
+      },
+      {
+        text: "providerApiKey='compound-left-opaque-7319 compound-right-opaque-7319'",
+        secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
+      },
+      {
+        text: 'providerApiKey=compound-left-opaque-7319 compound-right-opaque-7319; status=denied',
+        secrets: ['compound-left-opaque-7319', 'compound-right-opaque-7319']
+      },
+      {
+        text: 'openai_api_key=compound-lower-opaque-7319',
+        secrets: ['compound-lower-opaque-7319']
+      },
+      { text: 'OPENAI_API_KEY=env-opaque-7319', secrets: ['env-opaque-7319'] },
+      { text: '--api-key cli-opaque-7319', secrets: ['cli-opaque-7319'] },
+      {
+        text: '--api-key "cli-left-opaque-7319 cli-right-opaque-7319"',
+        secrets: ['cli-left-opaque-7319', 'cli-right-opaque-7319']
+      },
+      {
+        text: '--authorization Bearer cli-scheme-opaque-7319',
+        secrets: ['cli-scheme-opaque-7319']
+      },
+      {
+        text: 'https://alice:password-opaque-7319@example.test/v1?token=query-opaque-7319&key=generic-key-opaque-7319&ok=1#access_token=fragment-opaque-7319',
+        secrets: [
+          'alice',
+          'password-opaque-7319',
+          'query-opaque-7319',
+          'generic-key-opaque-7319',
+          'fragment-opaque-7319'
+        ]
+      },
+      {
+        text: 'https://alice:malformed-url-opaque-7319@example.test:99999/path',
+        secrets: ['alice', 'malformed-url-opaque-7319']
+      },
+      {
+        text: 'https://bucket.example.test/private?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Signature=aws-signature-opaque-7319&version=7',
+        secrets: ['aws-signature-opaque-7319']
+      },
+      {
+        text: 'https://storage.example.test/private?sv=2024-11-04&sig=azure-signature-opaque-7319&version=7',
+        secrets: ['azure-signature-opaque-7319']
+      },
+      { text: 'sk-1234567890abcdef', secrets: ['sk-1234567890abcdef'] },
+      { text: 'github_pat_1234567890abcdef', secrets: ['github_pat_1234567890abcdef'] },
+      { text: 'AKIA1234567890ABCDEF', secrets: ['AKIA1234567890ABCDEF'] }
+    ]
+
+    for (const { text, secrets } of examples) {
+      const line = formatLine('error', 'redaction', text, {
+        data: { cause: { message: text, stack: `Error: ${text}` } }
+      })
+      for (const secret of secrets) expect(line).not.toContain(secret)
+      expect(line).toContain('[redacted]')
+    }
+  })
+
+  it('drops content-bearing fields and unlabeled oversized text', () => {
+    const sentinel = 'opaque-body-value-7319'
+    for (const key of [
+      'body',
+      'rawBody',
+      'requestBody',
+      'response_body',
+      'payload',
+      'requestPayload',
+      'responsePayload'
+    ]) {
+      const line = formatLine('error', 'redaction', 'request failed', {
+        nested: { [key]: { research: sentinel } }
+      })
+      expect(line).not.toContain(sentinel)
+      expect(line).toContain('[redacted]')
+    }
+
+    const oversized = `${sentinel}${'x'.repeat(8192)}`
+    const line = formatLine('error', 'redaction', oversized, { detail: oversized })
+    expect(line).not.toContain(sentinel)
+    expect(line).toContain('[redacted: oversized text]')
+  })
+
+  it('preserves error classification, status, and correlation identifiers', () => {
+    const parsed = JSON.parse(
+      formatLine(
+        'error',
+        'provider',
+        'request failed',
+        {
+          errorCategory: 'request',
+          name: 'RequestError',
+          code: -32603,
+          status: 502,
+          statusCode: 503,
+          errno: -2,
+          syscall: 'connect',
+          requestId: 'req-1',
+          sessionId: 'session-1',
+          operationId: 'operation-1',
+          correlationId: 'correlation-1',
+          traceId: 'trace-1'
+        },
+        'run-1'
+      )
+    ) as Record<string, unknown>
+
+    expect(parsed).toMatchObject({
+      runId: 'run-1',
+      data: {
+        errorCategory: 'request',
+        name: 'RequestError',
+        code: -32603,
+        status: 502,
+        statusCode: 503,
+        errno: -2,
+        syscall: 'connect',
+        requestId: 'req-1',
+        sessionId: 'session-1',
+        operationId: 'operation-1',
+        correlationId: 'correlation-1',
+        traceId: 'trace-1'
+      }
+    })
+  })
+
+  it('redacts a rich provider RequestError at the persisted boundary', () => {
+    const sentinel = 'provider-opaque-value-7319'
+    const requestError = Object.assign(new Error(`request rejected: Bearer ${sentinel}`), {
+      name: 'RequestError',
+      code: -32603,
+      data: {
+        authorization: sentinel,
+        responseBody: { research: sentinel },
+        statusCode: 429,
+        requestId: 'request-7319'
+      },
+      cause: new Error(`upstream https://user:${sentinel}@example.test/v1`)
+    })
+
+    const line = formatLine('error', 'acp', 'prompt failed', {
+      sessionId: 'session-7319',
+      ...errorLogFields(requestError)
+    })
+    const parsed = JSON.parse(line) as {
+      data: { code: number; data: { statusCode: number; requestId: string }; sessionId: string }
+    }
+
+    expect(line).not.toContain(sentinel)
+    expect(parsed.data).toMatchObject({
+      code: -32603,
+      data: { statusCode: 429, requestId: 'request-7319' },
+      sessionId: 'session-7319'
+    })
+  })
+})
+
+describe('logger: redacted sinks', () => {
+  it('keeps the console mirror quiet by default in tests', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-quiet-'))
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    initLogger({ logDir, fileName: 'main.log' })
+
+    createLogger('quiet').warn('captured in the log file')
+    await flushLogs()
+
+    expect(consoleWarn).not.toHaveBeenCalled()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('captured in the log file')
+  })
+
+  it('keeps secrets out of the console mirror and every rotated JSONL file', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-redaction-'))
+    const sentinel = 'sink-opaque-value-7319'
+    const consoleWarn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      maxBytes: 240,
+      maxFiles: 3,
+      mirrorToConsole: true,
+      runId: 'redaction-run'
+    })
+    const log = createLogger('redaction')
+
+    log.warn('nested error', { error: new Error(`Bearer ${sentinel}`) })
+    for (let index = 0; index < 12; index += 1) {
+      log.warn(`Bearer ${sentinel}`, { authorization: sentinel, index })
+    }
+    await flushLogs()
+
+    const consoleOutput = JSON.stringify(consoleWarn.mock.calls)
+    expect(consoleOutput).not.toContain(sentinel)
+    expect(consoleOutput).toContain('Bearer [redacted]')
+    expect(consoleOutput).toContain('Error')
+    const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
+    expect(files.length).toBeGreaterThan(1)
+    const jsonl = (
+      await Promise.all(files.map((file) => readFile(join(logDir!, file), 'utf8')))
+    ).join('\n')
+    expect(jsonl).not.toContain(sentinel)
+    expect(jsonl).toContain('[redacted]')
+  })
+})
+
+describe('logger: process run context', () => {
+  it('adds the configured run ID to every emitted JSONL record without changing existing keys', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-run-'))
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      mirrorToConsole: false,
+      runId: 'test-run-id'
+    })
+
+    createLogger('startup').info('ready', { phase: 'ready' })
+    await flushLogs()
+
+    const record = JSON.parse(await readFile(join(logDir, 'main.log'), 'utf8')) as Record<
+      string,
+      unknown
+    >
+    expect(record).toMatchObject({
+      level: 'info',
+      runId: 'test-run-id',
+      scope: 'startup',
+      msg: 'ready',
+      data: { phase: 'ready' }
+    })
+    expect(typeof record.t).toBe('string')
+  })
+
+  it('adds one request correlation ID across an async diagnostic context', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-correlation-'))
+    initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
+    const log = createLogger('request')
+
+    await runWithDiagnosticCorrelation(async () => {
+      log.info('started')
+      await Promise.resolve()
+      log.warn('failed', { sessionId: 'session-1', runId: 'run-1' })
+    })
+    log.info('outside request')
+    await flushLogs()
+
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(records[0]?.correlationId).toEqual(expect.any(String))
+    expect(records[1]?.correlationId).toBe(records[0]?.correlationId)
+    expect(records[2]).not.toHaveProperty('correlationId')
+    expect(records[1]?.data).toMatchObject({ sessionId: 'session-1', runId: 'run-1' })
+  })
+})
+
+describe('logger: diagnosticErrorFields', () => {
+  it('classifies a provider request error without retaining its payload', () => {
+    const secret = 'provider-secret-value'
+    const fields = diagnosticErrorFields(
+      Object.assign(new Error(`provider rejected ${secret}`), {
+        name: 'RequestError',
+        code: -32603,
+        data: { credential: secret },
+        path: `/private/${secret}`
+      })
+    )
+
+    expect(fields).toEqual({ errorCategory: 'request' })
+    expect(JSON.stringify(fields)).not.toContain(secret)
+  })
+
+  it('does not copy arbitrary error names or codes into the category', () => {
+    const secret = 'custom-secret-category'
+    for (const name of [secret, 'toString', 'constructor', '__proto__']) {
+      const fields = diagnosticErrorFields({
+        name,
+        code: secret,
+        message: secret,
+        data: { credential: secret }
+      })
+
+      expect(fields).toEqual({ errorCategory: 'object' })
+      expect(typeof fields.errorCategory).toBe('string')
+      expect(JSON.stringify(fields)).not.toContain(secret)
+    }
+  })
+})
+
+describe('logger: errorLogFields', () => {
+  it('expands an Error into message + stack', () => {
+    const fields = errorLogFields(new Error('boom'))
+
+    expect(fields.error).toBe('boom')
+    expect(typeof fields.stack).toBe('string')
+  })
+
+  it('keeps JSON-RPC RequestError code + data (the real provider/agent reason)', () => {
+    // Shape of the ACP RequestError the renderer saw as a bare "Internal error".
+    const requestError = Object.assign(new Error('Internal error'), {
+      name: 'RequestError',
+      code: -32603,
+      data: { details: 'agent exited with code 1' }
+    })
+
+    const fields = errorLogFields(requestError)
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.name).toBe('RequestError')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ details: 'agent exited with code 1' })
+  })
+
+  it('keeps Node system-error fields (errno/syscall/path)', () => {
+    const spawnError = Object.assign(new Error('spawn claude ENOENT'), {
+      code: 'ENOENT',
+      errno: -2,
+      syscall: 'spawn claude',
+      path: 'claude'
+    })
+
+    const fields = errorLogFields(spawnError)
+
+    expect(fields.code).toBe('ENOENT')
+    expect(fields.errno).toBe(-2)
+    expect(fields.syscall).toBe('spawn claude')
+    expect(fields.path).toBe('claude')
+  })
+
+  it('follows a nested cause (bounded), not collapsing it to {}', () => {
+    const cause = new Error('underlying socket hang up')
+    const wrapper = Object.assign(new Error('request failed'), { cause })
+
+    const fields = errorLogFields(wrapper) as { cause: { error: string } }
+
+    expect(fields.cause.error).toBe('underlying socket hang up')
+  })
+
+  it('breaks a self-referential cause so the record still serializes (not [unserializable])', () => {
+    const selfReferential = new Error('loop') as Error & { cause?: unknown }
+    selfReferential.cause = selfReferential
+
+    const fields = errorLogFields(selfReferential)
+    expect(fields.cause).toBe('[circular]')
+
+    // The whole point: the final log line must survive JSON.stringify with the error + context intact,
+    // rather than collapsing to the circular fallback and dropping everything.
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'claude-code' })
+    ) as { data: { error: string; cause: string; framework: string } }
+    expect(parsed.data.error).toBe('loop')
+    expect(parsed.data.cause).toBe('[circular]')
+    expect(parsed.data.framework).toBe('claude-code')
+  })
+
+  it('breaks a mutually-referential cause cycle (a → b → a)', () => {
+    const a = new Error('a') as Error & { cause?: unknown }
+    const b = new Error('b') as Error & { cause?: unknown }
+    a.cause = b
+    b.cause = a
+
+    const fields = errorLogFields(a) as { cause: { error: string; cause: string } }
+    expect(fields.cause.error).toBe('b')
+    expect(fields.cause.cause).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('breaks a cycle in a non-Error (plain object) cause', () => {
+    const cyclic: Record<string, unknown> = { detail: 'provider blew up' }
+    cyclic.self = cyclic
+    const wrapper = Object.assign(new Error('request failed'), { cause: cyclic })
+
+    const fields = errorLogFields(wrapper) as { cause: { detail: string; self: string } }
+    expect(fields.cause.detail).toBe('provider blew up')
+    expect(fields.cause.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', { ...fields, ctx: 1 }))).not.toThrow()
+  })
+
+  it('unwraps an Error nested inside a non-Error cause instead of dropping it to {}', () => {
+    const inner = new Error('inner boom')
+    const wrapper = Object.assign(new Error('outer'), { cause: { nested: inner } })
+
+    const fields = errorLogFields(wrapper) as {
+      cause: { nested: { error: string; stack?: string } }
+    }
+    expect(fields.cause.nested.error).toBe('inner boom')
+    expect(typeof fields.cause.nested.stack).toBe('string')
+  })
+
+  it('breaks a cycle inside RequestError.data so the whole record still serializes', () => {
+    const data: Record<string, unknown> = { details: 'rate limited' }
+    data.loop = data
+    const requestError = Object.assign(new Error('Internal error'), { code: -32603, data })
+
+    const fields = errorLogFields(requestError) as {
+      data: { details: string; loop: string }
+    }
+    expect(fields.data.details).toBe('rate limited')
+    expect(fields.data.loop).toBe('[circular]')
+
+    const parsed = JSON.parse(
+      formatLine('error', 'acp', 'failed', { ...fields, framework: 'opencode' })
+    ) as { data: { error: string; framework: string } }
+    expect(parsed.data.error).toBe('Internal error')
+    expect(parsed.data.framework).toBe('opencode')
+  })
+
+  it('breaks a cycle in a directly-thrown plain object', () => {
+    const thrown: Record<string, unknown> = { message: 'weird throw', code: 7 }
+    thrown.self = thrown
+
+    const fields = errorLogFields(thrown) as { error: string; code: number; self: string }
+    expect(fields.error).toBe('weird throw')
+    expect(fields.code).toBe(7)
+    expect(fields.self).toBe('[circular]')
+    expect(() => JSON.parse(formatLine('warn', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('keeps sibling (non-cyclic) shared references, flagging only true back-references', () => {
+    const shared = { id: 1 }
+    const thrown = { a: shared, b: shared }
+
+    const fields = errorLogFields(thrown) as { a: { id: number }; b: { id: number } }
+    // A diamond is not a cycle: both positions keep the value.
+    expect(fields.a).toEqual({ id: 1 })
+    expect(fields.b).toEqual({ id: 1 })
+  })
+
+  it('stringifies bigint / function / symbol values that JSON.stringify cannot represent', () => {
+    const fields = errorLogFields(
+      Object.assign(new Error('boom'), {
+        data: {
+          big: 10n,
+          fn: function handler() {
+            return 1
+          },
+          sym: Symbol('s')
+        }
+      })
+    ) as { data: { big: string; fn: string; sym: string } }
+
+    expect(fields.data.big).toBe('10n')
+    expect(fields.data.fn).toBe('[function handler]')
+    expect(fields.data.sym).toBe('Symbol(s)')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('serializes a valid Date to ISO and never throws on an invalid Date', () => {
+    const valid = errorLogFields(Object.assign(new Error('e'), { data: new Date(0) })) as {
+      data: string
+    }
+    expect(valid.data).toBe('1970-01-01T00:00:00.000Z')
+
+    const invalid = errorLogFields(
+      Object.assign(new Error('e'), { data: new Date('not-a-date') })
+    ) as { data: string }
+    expect(invalid.data).toBe('[invalid date]')
+  })
+
+  it('charges a Date ISO string against the global character budget', () => {
+    // Use an ARRAY: unlike the object branch it doesn't stop on key-affordability, so the trailing Date
+    // is still visited after earlier string elements have exhausted the global char budget. Its ISO can
+    // only be emitted through chargeString, which returns the truncated marker once the budget is spent —
+    // if the Date bypassed chargeString it would emit the raw "1970-…" ISO here and fail the assertion.
+    const arr: unknown[] = []
+    for (let i = 0; i < 40; i += 1) arr.push('x'.repeat(8000))
+    arr.push(new Date(0))
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: arr })) as {
+      data: unknown[]
+    }
+    const dateSlot = fields.data[fields.data.length - 1]
+    expect(dateSlot).toBe('…[truncated]')
+    expect(dateSlot).not.toContain('1970') // definitely not the raw ISO
+  })
+
+  it('degrades a throwing getter to a marker while keeping sibling fields', () => {
+    const data = { ok: 'kept' }
+    Object.defineProperty(data, 'boom', {
+      enumerable: true,
+      get() {
+        throw new Error('getter blew up')
+      }
+    })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: { ok: string; boom: string }
+    }
+
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.boom).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('never throws on a Proxy whose ownKeys/get traps throw', () => {
+    const hostile = new Proxy(
+      {},
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        },
+        get() {
+          throw new Error('get trap')
+        }
+      }
+    )
+
+    // Directly thrown hostile object, and nested inside a normal error's data — neither may throw.
+    expect(() => errorLogFields(hostile)).not.toThrow()
+    const nested = errorLogFields(Object.assign(new Error('e'), { data: hostile }))
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', nested))).not.toThrow()
+  })
+
+  it('bounds recursion depth on a deeply nested (non-cyclic) structure', () => {
+    let deep: Record<string, unknown> = { leaf: true }
+    for (let i = 0; i < 50; i += 1) deep = { next: deep }
+
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: deep }))
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // The depth marker appears somewhere in the truncated chain rather than the whole thing being dropped.
+    expect(line).toContain('[max depth]')
+  })
+
+  it('degrades a throwing message getter to a field marker while keeping the other Error fields', () => {
+    // An Error whose message accessor throws must NOT send the whole record to the outer fallback: the
+    // still-readable code/data survive, only the message degrades.
+    const hostile = new Error() as Error & { code?: string }
+    hostile.code = 'EHOSTILE'
+    ;(hostile as unknown as { data?: unknown }).data = { detail: 'kept' }
+    Object.defineProperty(hostile, 'message', {
+      configurable: true,
+      get() {
+        throw new Error('message trap')
+      }
+    })
+
+    const fields = errorLogFields(hostile) as {
+      error: string
+      code: string
+      data: { detail: string }
+      serializationFailed?: boolean
+    }
+    expect(fields.serializationFailed).toBeUndefined()
+    // A read that *throws* is surfaced as the marker (distinct from a genuinely empty/absent message).
+    expect(fields.error).toBe('[unreadable]')
+    expect(fields.code).toBe('EHOSTILE')
+    expect(fields.data).toEqual({ detail: 'kept' })
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('distinguishes a genuinely absent message ("") from an unreadable one ("[unreadable]")', () => {
+    // Absent message: empty string, not the marker.
+    const noMessage = new Error()
+    Object.defineProperty(noMessage, 'message', { value: undefined, configurable: true })
+    expect((errorLogFields(noMessage) as { error: string }).error).toBe('')
+  })
+
+  it('degrades a throwing detail (data) getter to the marker while keeping other fields', () => {
+    const err = new Error('outer') as Error & { code?: string }
+    err.code = 'EKEEP'
+    Object.defineProperty(err, 'data', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('data trap')
+      }
+    })
+
+    const fields = errorLogFields(err) as { error: string; code: string; data: string }
+    // The whole Error must not collapse to the outer fallback: message + code survive, only data degrades.
+    expect(fields.error).toBe('outer')
+    expect(fields.code).toBe('EKEEP')
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a hostile nested value without dropping its readable siblings', () => {
+    // data.bad is a Proxy whose getPrototypeOf trap throws (so sanitizing it throws internally); data.ok
+    // must still survive as a normal field.
+    const bad = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('nested proto trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'survives', bad } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; bad: string } }
+    expect(fields.data.ok).toBe('survives')
+    expect(fields.data.bad).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('hits the outer fallback (serializationFailed) when even type inspection throws', () => {
+    // A Proxy whose getPrototypeOf trap throws makes `value instanceof Error` throw — the very first
+    // thing errorLogFields does — so only the outermost guard can catch it.
+    const hostile = new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw new Error('proto trap')
+        }
+      }
+    )
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(typeof fields.error).toBe('string')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks a nested value whose ownKeys trap throws as "[unreadable]" (not {})', () => {
+    const badKeys = new Proxy(
+      { visible: 1 },
+      {
+        ownKeys() {
+          throw new Error('ownKeys trap')
+        }
+      }
+    )
+    const err = Object.assign(new Error('e'), { data: { ok: 'kept', badKeys } })
+
+    const fields = errorLogFields(err) as { data: { ok: string; badKeys: string } }
+    expect(fields.data.ok).toBe('kept')
+    expect(fields.data.badKeys).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('degrades a throwing array index getter to a marker while keeping other elements', () => {
+    const arr: unknown[] = ['a', 'b', 'c']
+    Object.defineProperty(arr, '1', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        throw new Error('index trap')
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown[] }
+    expect(fields.data[0]).toBe('a')
+    expect(fields.data[1]).toBe('[unreadable]')
+    expect(fields.data[2]).toBe('c')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks an array whose length read throws as "[unreadable]" (not an empty array)', () => {
+    // Array `length` is non-configurable, so a throwing read is modelled with a Proxy get trap. The
+    // node is still Array.isArray, so the array branch runs and must degrade to the marker.
+    const arr = new Proxy(['x'], {
+      get(target, prop, receiver) {
+        if (prop === 'length') throw new Error('length trap')
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: string }
+    expect(fields.data).toBe('[unreadable]')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('is not derailed by a hostile Array subclass (Symbol.species + throwing toJSON)', () => {
+    // A subclass that hijacks Symbol.species AND defines a throwing toJSON. Building a fresh plain array
+    // by index (rather than value.map / JSON of the original) must keep the record serializable.
+    class Hostile extends Array {
+      static get [Symbol.species](): ArrayConstructor {
+        throw new Error('species trap')
+      }
+      toJSON(): never {
+        throw new Error('toJSON trap')
+      }
+    }
+    const arr = Hostile.from(['a', 'b']) as unknown[]
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const fields = errorLogFields(err) as { data: unknown }
+    // The elements are preserved via index reads; the hostile species/toJSON never run.
+    expect(fields.data).toEqual(['a', 'b'])
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).not.toContain('[unserializable]')
+  })
+
+  it('caps a hostile huge array length without hanging, appending a truncation marker', () => {
+    // A Proxy reporting a giant length must NOT be iterated in full — that would block/OOM the process.
+    const huge = 2 ** 31
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return huge
+        if (typeof prop === 'string' && /^\d+$/.test(prop)) return `item-${prop}`
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    const start = Date.now()
+    const fields = errorLogFields(err) as { data: unknown[] }
+    // Bounded work: returns near-instantly, capped element count plus one truncation marker.
+    expect(Date.now() - start).toBeLessThan(1000)
+    expect(fields.data.length).toBe(1001)
+    expect(fields.data[0]).toBe('item-0')
+    expect(fields.data[1000]).toBe(`[+${huge - 1000} more]`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds total work on a shared DAG (fan-out) so it cannot expand combinatorially', () => {
+    // A diamond: each level references the SAME child 1000 times. Only ~3000 input references, but a
+    // naive per-node cap would still re-expand the shared subtree on every reference — ~1e9 output
+    // nodes. The global node budget must keep this fast and finite.
+    const leaf = { v: 1 }
+    const level1 = new Array(1000).fill(leaf)
+    const level2 = new Array(1000).fill(level1)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+
+    // Returns quickly and produces a bounded, serializable record with a truncation marker somewhere.
+    expect(elapsed).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('truncated')
+    // Sanity bound: the serialized size is bounded (well under what ~1e9 nodes would be).
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('bounds a shared DAG of throwing getters (marker slots must also spend budget)', () => {
+    // Every element read throws, so each slot takes the "[unreadable]" marker path (never entering the
+    // node recursion). If markers were free, this shared array would re-expand across the DAG without
+    // limit; charging per slot keeps it bounded.
+    const throwingChild: unknown[] = new Array(1000)
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, i, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`index ${i} trap`)
+        }
+      })
+    }
+    const level2 = new Array(1000).fill(throwingChild)
+    const level3 = new Array(1000).fill(level2)
+    const err = Object.assign(new Error('throwing-dag'), { data: level3 })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    const elapsed = Date.now() - start
+    expect(elapsed).toBeLessThan(1000)
+
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    // Both the degraded-field marker and the budget-truncation marker appear, and the output is bounded.
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('truncated')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('bounds an object whose every key getter throws (marker slots spend budget) and caps key count', () => {
+    // A single object with far more throwing-getter keys than the budget: it must not spin unbounded,
+    // and the produced field count is capped.
+    const hostile: Record<string, unknown> = {}
+    for (let i = 0; i < 5000; i += 1) {
+      Object.defineProperty(hostile, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: hostile })) as {
+      data: Record<string, unknown>
+    }
+
+    // Key processing is capped at MAX_OBJECT_KEYS (1000), so the record has at most that many fields
+    // plus the truncation marker — never all 5000.
+    const producedKeys = Object.keys(fields.data)
+    expect(producedKeys.length).toBeLessThanOrEqual(1001)
+    expect(fields.data['[truncated]']).toBeDefined()
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds a shared DAG of throwing-getter OBJECTS (the object-branch per-slot charge)', () => {
+    // Objects (not arrays) whose every key read throws. Each shared child, if re-expanded on every
+    // reference, would emit 1000 markers per visit → ~1e6 fields. Only the object loop's per-slot budget
+    // charge (which the marker path would otherwise skip) keeps this bounded — removing it regresses here.
+    const throwingChild: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) {
+      Object.defineProperty(throwingChild, `k${i}`, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          throw new Error(`key ${i} trap`)
+        }
+      })
+    }
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) parent[`p${i}`] = throwingChild
+    const err = Object.assign(new Error('obj-dag'), { data: parent })
+
+    const start = Date.now()
+    const fields = errorLogFields(err)
+    expect(Date.now() - start).toBeLessThan(1000)
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(() => JSON.parse(line)).not.toThrow()
+    expect(line).toContain('[unreadable]')
+    expect(line).toContain('truncated')
+    expect(line.length).toBeLessThan(2_000_000)
+  })
+
+  it('caps a directly-thrown object with more keys than MAX_OBJECT_KEYS', () => {
+    // The top-level plain-object branch (not nested) must also cap keys + append one accurate marker.
+    const thrown: Record<string, unknown> = { message: 'top-level' }
+    for (let i = 0; i < 6000; i += 1) thrown[`k${i}`] = i
+    const fields = errorLogFields(thrown) as Record<string, unknown>
+
+    expect(fields.error).toBe('top-level')
+    expect(Object.keys(fields).length).toBeLessThanOrEqual(1002) // error + <=1000 keys + 1 marker
+    expect(typeof fields['[truncated]']).toBe('string')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('caps the Error message, stack, and a nested string value', () => {
+    const huge = 'x'.repeat(100_000)
+    const err = new Error(huge)
+    err.stack = huge
+    const fields = errorLogFields(Object.assign(err, { data: { blob: huge } })) as {
+      error: string
+      stack: string
+      data: { blob: string }
+    }
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+    expect(fields.stack.length).toBeLessThan(9000)
+    expect(fields.stack).toContain('chars]')
+    expect(fields.data.blob.length).toBeLessThan(9000)
+    expect(fields.data.blob).toContain('chars]')
+  })
+
+  it('caps a coerced (non-string) Error message and the top-level plain-object message', () => {
+    const huge = 'y'.repeat(100_000)
+    // Coercion path: an Error whose `message` is a non-string that stringifies to a huge value —
+    // formatError runs it through safeToString, which must cap.
+    const err = new Error()
+    Object.defineProperty(err, 'message', { value: { toString: () => huge }, configurable: true })
+    const coerced = errorLogFields(err) as { error: string }
+    expect(coerced.error.length).toBeLessThan(9000)
+
+    // Top-level directly-thrown object whose own `message` is huge → goes into `error`, must be capped.
+    const topLevel = errorLogFields({ message: huge, code: 1 }) as { error: string }
+    expect(topLevel.error.length).toBeLessThan(9000)
+    expect(topLevel.error).toContain('chars]')
+  })
+
+  it('truncates the bestEffortMessage fallback text (exercises the fallback cap, not a fixed string)', () => {
+    // A STATEFUL proxy: getPrototypeOf throws only the first time, so the main try's `instanceof` fails
+    // (→ outer catch), but by the time bestEffortMessage runs the proxy behaves and String(it) returns a
+    // huge value via the target's toString. This drives bestEffortMessage's truncate() path — deleting
+    // the truncate() would make this field ~100k chars and fail the bound below.
+    const huge = 'z'.repeat(100_000)
+    let protoCalls = 0
+    const target = { toString: () => huge }
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Object.getPrototypeOf(t)
+      }
+    })
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    // The huge text was reached and truncated (per-field cap suffix present), not collapsed to a fixed
+    // "unserializable error".
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
+  it('truncates the bestEffortMessage Error-message branch (real Error under a stateful proxy)', () => {
+    // Wrap a REAL Error so bestEffortMessage's `error instanceof Error` is true on the second (fallback)
+    // getPrototypeOf call, driving `truncate(error.message)` specifically — the String(error) branch of
+    // the previous test wouldn't cover this path.
+    const huge = 'z'.repeat(100_000)
+    let protoCalls = 0
+    const target = new Error(huge)
+    const hostile = new Proxy(target, {
+      getPrototypeOf(t) {
+        protoCalls += 1
+        if (protoCalls === 1) throw new Error('proto trap (first call only)')
+        return Reflect.getPrototypeOf(t)
+      }
+    })
+
+    const fields = errorLogFields(hostile) as { error: string; serializationFailed?: boolean }
+    expect(fields.serializationFailed).toBe(true)
+    expect(fields.error.length).toBeLessThan(9000)
+    expect(fields.error).toContain('chars]')
+  })
+
+  it('truncates an over-long function name', () => {
+    const hugeName = 'f'.repeat(100_000)
+    const fn = (): void => undefined
+    Object.defineProperty(fn, 'name', { value: hugeName, configurable: true })
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: fn })) as { data: string }
+
+    expect(fields.data.startsWith('[function')).toBe(true)
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('never collides keys when the character budget runs out mid-object (stops + counts remainder)', () => {
+    // Values large enough that the global char budget is exhausted partway through. Once a unique key
+    // can no longer be afforded, the loop must STOP (counting the rest as omitted) rather than collapse
+    // later keys to a shared "…[truncated]" that overwrites earlier fields and loses them silently.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 200; i += 1) data[`key${i}`] = 'v'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Every emitted key is distinct — no silent overwrite.
+    expect(new Set(outKeys).size).toBe(outKeys.length)
+    // No key collapsed to a shared truncation marker.
+    expect(outKeys).not.toContain('…[truncated]')
+    // An aggregate marker is present and its count is exact: total inputs minus emitted data keys.
+    const marker = fields.data['[truncated]'] as string | undefined
+    expect(typeof marker).toBe('string')
+    const emittedDataKeys = outKeys.filter((k) => k !== '[truncated]').length
+    expect(marker).toContain(`+${200 - emittedDataKeys} `)
+    expect(emittedDataKeys).toBeLessThan(200) // budget genuinely stopped it early
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('preserves an input own "[truncated]" key instead of overwriting it with the aggregate marker', () => {
+    // A nested object that has its OWN "[truncated]" field AND enough keys to trigger the cap so an
+    // aggregate marker is emitted. The input value must survive (disambiguated), the aggregate marker
+    // must be present and distinct, and the omitted count must not be off by one.
+    const nested: Record<string, unknown> = { '[truncated]': 'REAL_INPUT_VALUE' }
+    for (let i = 0; i < 1500; i += 1) nested[`k${i}`] = i // exceeds MAX_OBJECT_KEYS (1000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: nested })) as {
+      data: Record<string, unknown>
+    }
+    const out = fields.data
+
+    // The input's own "[truncated]" value is retained under a disambiguated key, not lost.
+    const preserved = Object.entries(out).filter(([, v]) => v === 'REAL_INPUT_VALUE')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('[truncated]') // it was disambiguated
+    // The aggregate marker occupies the reserved name and reads as an omission summary, not the input.
+    expect(out['[truncated]']).toMatch(/more keys|omitted/)
+    // Exact count: total input keys (1501) minus the input keys actually emitted (everything except the
+    // aggregate marker itself).
+    const emitted = Object.keys(out).filter((k) => k !== '[truncated]').length
+    const marker = out['[truncated]'] as string
+    expect(marker).toContain(`${1501 - emitted}`)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('does not let a top-level input "error" key clobber the message summary', () => {
+    // A directly-thrown object with both a `message` (→ the `error` summary) and its own `error` field.
+    const fields = errorLogFields({
+      message: 'the summary',
+      error: 'INPUT_ERROR_FIELD',
+      code: 7
+    }) as {
+      error: string
+    } & Record<string, unknown>
+
+    // The reserved `error` holds the message summary; the input `error` is preserved under another key.
+    expect(fields.error).toBe('the summary')
+    const preserved = Object.entries(fields).filter(([, v]) => v === 'INPUT_ERROR_FIELD')
+    expect(preserved.length).toBe(1)
+    expect(preserved[0][0]).not.toBe('error')
+    expect(fields.code).toBe(7)
+  })
+
+  it('caps an astronomically large bigint', () => {
+    const bigintValue = 10n ** 100000n
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: bigintValue })) as {
+      data: string
+    }
+    expect(fields.data.length).toBeLessThan(9000)
+    expect(fields.data).toContain('chars]')
+  })
+
+  it('caps an over-long property NAME (and keeps distinct long keys from colliding)', () => {
+    const longA = `${'a'.repeat(100_000)}_A`
+    const longB = `${'a'.repeat(100_000)}_B` // shares the truncation prefix with longA
+    const data: Record<string, unknown> = {}
+    data[longA] = 1
+    data[longB] = 2
+    const fields = errorLogFields(Object.assign(new Error('e'), { data })) as {
+      data: Record<string, unknown>
+    }
+
+    const outKeys = Object.keys(fields.data)
+    // Two inputs → two distinct output keys (no collision from truncation), each bounded in length.
+    expect(outKeys.length).toBe(2)
+    expect(new Set(outKeys).size).toBe(2)
+    for (const k of outKeys) expect(k.length).toBeLessThan(400)
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('bounds TOTAL output size via the global character budget, not just per field', () => {
+    // Many distinct medium strings: each is under the per-field cap, so only the GLOBAL char budget
+    // bounds the whole line. Without it, ~1000 × 8KB ≈ 8MB would be emitted.
+    const data: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) data[`k${i}`] = 'm'.repeat(5000)
+    const fields = errorLogFields(Object.assign(new Error('e'), { data }))
+    const line = formatLine('error', 'x', 'y', fields)
+    // Comfortably bounded by MAX_TOTAL_CHARS (256KB) plus fixed overhead — nowhere near 8MB.
+    expect(line.length).toBeLessThan(400_000)
+  })
+
+  it('uses one accurate truncation marker when budget AND key-cap both trigger (no overwrite)', () => {
+    // An object with >1000 keys, each an object that consumes budget, so the loop stops on budget before
+    // reaching the key cap. The single marker must report ALL omitted keys (budget-skipped + beyond-cap).
+    const child: Record<string, unknown> = {}
+    for (let i = 0; i < 1000; i += 1) child[`c${i}`] = i
+    const parent: Record<string, unknown> = {}
+    for (let i = 0; i < 2000; i += 1) parent[`p${i}`] = child
+    const fields = errorLogFields(Object.assign(new Error('e'), { data: parent })) as {
+      data: Record<string, unknown>
+    }
+
+    const marker = fields.data['[truncated]']
+    expect(typeof marker).toBe('string')
+    // Exactly one truncation marker key.
+    const truncatedKeys = Object.keys(fields.data).filter((k) => k === '[truncated]')
+    expect(truncatedKeys.length).toBe(1)
+    // The count must be EXACT, not just "some number": total input keys minus the keys actually emitted
+    // (everything except the marker itself). A hardcoded "1 keys omitted" would fail this.
+    const emittedKeyCount = Object.keys(fields.data).filter((k) => k !== '[truncated]').length
+    const expectedOmitted = 2000 - emittedKeyCount
+    expect(marker).toBe(`+${expectedOmitted} keys omitted, output truncated`)
+    expect(expectedOmitted).toBeGreaterThan(1000) // budget stopped it well before the 1000-key cap
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('marks an array with a non-integer reported length as "[unreadable]"', () => {
+    const arr = new Proxy([] as unknown[], {
+      get(target, prop, receiver) {
+        if (prop === 'length') return 3.5
+        return Reflect.get(target, prop, receiver)
+      }
+    })
+    const err = Object.assign(new Error('e'), { data: arr })
+
+    expect((errorLogFields(err) as { data: string }).data).toBe('[unreadable]')
+  })
+
+  it('preserves an own "__proto__" data field instead of mutating the prototype', () => {
+    // Nested object with an own __proto__ key, plus a directly-thrown object with one.
+    const nested = JSON.parse('{"__proto__": {"polluted": true}, "keep": 1}') as Record<
+      string,
+      unknown
+    >
+    const err = Object.assign(new Error('e'), { data: nested })
+    const fields = errorLogFields(err) as { data: Record<string, unknown> }
+    expect(fields.data.keep).toBe(1)
+    // The __proto__ value is kept as an own field, and the record's prototype is untouched.
+    expect(Object.prototype.hasOwnProperty.call(fields.data, '__proto__')).toBe(true)
+    expect((fields.data as { polluted?: unknown }).polluted).toBeUndefined()
+    const line = formatLine('error', 'x', 'y', fields)
+    expect(line).toContain('__proto__')
+    expect(() => JSON.parse(line)).not.toThrow()
+
+    const thrown = JSON.parse('{"__proto__": {"x": 1}, "message": "boom"}') as Record<
+      string,
+      unknown
+    >
+    const topFields = errorLogFields(thrown)
+    expect(Object.prototype.hasOwnProperty.call(topFields, '__proto__')).toBe(true)
+  })
+
+  it('does not trust an overridden Date.toISOString that returns a non-string', () => {
+    const date = new Date(0)
+    // A hostile override that would otherwise put a bigint into the record and break JSON.stringify.
+    ;(date as unknown as { toISOString: () => unknown }).toISOString = () => 1n
+    const err = Object.assign(new Error('e'), { data: date })
+
+    const fields = errorLogFields(err) as { data: string }
+    // The real prototype method is used, so a valid epoch still serializes to ISO.
+    expect(fields.data).toBe('1970-01-01T00:00:00.000Z')
+    expect(() => JSON.parse(formatLine('error', 'x', 'y', fields))).not.toThrow()
+  })
+
+  it('keeps a thrown plain object’s own fields instead of "[object Object]"', () => {
+    const fields = errorLogFields({ code: -32603, message: 'Internal error', data: { x: 1 } })
+
+    expect(fields.error).toBe('Internal error')
+    expect(fields.code).toBe(-32603)
+    expect(fields.data).toEqual({ x: 1 })
+  })
+
+  it('stringifies primitive throws', () => {
+    expect(errorLogFields('plain string').error).toBe('plain string')
+    expect(errorLogFields(42).error).toBe('42')
+  })
+
+  it('preserves nested and explicitly expanded error diagnostics', () => {
+    const raw = JSON.parse(
+      formatLine('error', 'acp', 'failed', { error: new Error('x'), framework: 'claude-code' })
+    ) as { data: { error: { message: string; name: string; stack?: string } } }
+    expect(raw.data.error).toMatchObject({ message: 'x', name: 'Error' })
+    expect(typeof raw.data.error.stack).toBe('string')
+
+    // Spreading errorLogFields additionally keeps richer error details at the context root.
+    const fixed = JSON.parse(
+      formatLine('error', 'acp', 'failed', {
+        ...errorLogFields(new Error('x')),
+        framework: 'claude-code'
+      })
+    ) as { data: { error: string; stack?: string; framework: string } }
+
+    expect(fixed.data.error).toBe('x')
+    expect(typeof fixed.data.stack).toBe('string')
+    expect(fixed.data.framework).toBe('claude-code')
+  })
+})
+
+describe('logger: fatal process diagnostics', () => {
+  it('persists the fatal record before returning without awaiting the write queue', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-fatal-'))
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      mirrorToConsole: false,
+      runId: 'fatal-test-run'
+    })
+
+    writeFatalLogSync('main', 'unhandledRejection', { errorCategory: 'type' })
+
+    const record = JSON.parse(await readFile(join(logDir, 'main.log'), 'utf8')) as {
+      level: string
+      scope: string
+      msg: string
+      runId: string
+      data: { errorCategory: string }
+    }
+    expect(record).toMatchObject({
+      level: 'error',
+      scope: 'main',
+      msg: 'unhandledRejection',
+      runId: 'fatal-test-run',
+      data: { errorCategory: 'type' }
+    })
+  })
+})
+
+describe('logger: rotation (auto-cleanup)', () => {
+  it('reports file existence and the most recent successful write', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+    initLogger({ logDir, fileName: 'main.log', mirrorToConsole: false })
+
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      configured: true,
+      path: join(logDir, 'main.log'),
+      existing: false,
+      lastWriteSucceeded: null,
+      lastFailureCategory: null
+    })
+
+    createLogger('test').info('created')
+    await flushLogs()
+
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      existing: true,
+      lastWriteSucceeded: true,
+      lastFailureCategory: null
+    })
+  })
+
+  it('caps total files, rotating oldest out so logs never grow unbounded', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+
+    // Tiny cap so a handful of lines forces several rotations; keep the live file + 2 backups.
+    initLogger({ logDir, fileName: 'main.log', maxBytes: 512, maxFiles: 3, mirrorToConsole: false })
+    const log = createLogger('test')
+
+    for (let i = 0; i < 50; i += 1) {
+      log.info('a reasonably long message to exceed the tiny cap quickly', { i })
+    }
+    await flushLogs()
+
+    const files = (await readdir(logDir)).filter((name) => name.startsWith('main')).sort()
+
+    // Never more than maxFiles total, and the 3rd backup was dropped rather than kept forever.
+    expect(files).toEqual(['main.1.log', 'main.2.log', 'main.log'])
+    expect(files).not.toContain('main.3.log')
+  })
+
+  it('keeps the live file when maxFiles is 1 (drop-and-restart)', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+
+    initLogger({ logDir, fileName: 'main.log', maxBytes: 512, maxFiles: 1, mirrorToConsole: false })
+    const log = createLogger('test')
+
+    for (let i = 0; i < 30; i += 1) {
+      log.info('message that overflows the single-file cap', { i })
+    }
+    await flushLogs()
+
+    const files = (await readdir(logDir)).filter((name) => name.startsWith('main'))
+
+    expect(files).toEqual(['main.log'])
+  })
+
+  it('does not append past the cap while replacing the live file keeps failing', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-'))
+    const runId = 'rotation-failure-run'
+    const firstLineBytes =
+      Buffer.byteLength(formatLine('info', 'test', 'blocked-1', undefined, runId)) + 1
+
+    initLogger({
+      logDir,
+      fileName: 'main.log',
+      maxBytes: firstLineBytes + 1,
+      maxFiles: 2,
+      mirrorToConsole: false,
+      runId
+    })
+    const log = createLogger('test')
+    log.info('seed')
+    await flushLogs()
+
+    renameFile.mockClear()
+    renameFile.mockRejectedValue(new Error('simulated Windows file lock'))
+
+    log.info('blocked-1')
+    log.info('blocked-2')
+    log.info('blocked-3')
+    await flushLogs()
+
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8')).trim().split('\n')
+    expect(renameFile).toHaveBeenCalledTimes(3)
+    expect(records).toHaveLength(1)
+    expect(JSON.parse(records[0]!) as { msg: string }).toMatchObject({ msg: 'seed' })
+    await expect(getLogFileStatus()).resolves.toMatchObject({
+      existing: true,
+      lastWriteSucceeded: false,
+      lastFailureCategory: 'rotation'
+    })
+  })
+})
+
+describe('logger: stalled and interrupted writes', () => {
+  it('bounds pending records while reserving capacity for errors and reports discarded logs', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-queue-'))
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    appendLogFile.mockClear()
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    appendLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.appendFile>) => {
+      await blocked
+      await fs.appendFile(...args)
+    })
+    initLogger({ logDir, mirrorToConsole: false, maxPendingBytes: 4096, maxPendingRecords: 8 })
+    const log = createLogger('queue')
+    log.info('first')
+    await vi.waitFor(() => expect(appendLogFile).toHaveBeenCalled())
+    for (let index = 0; index < 100; index++) log.info('burst', { index })
+    log.error('important error')
+    // Logging remains synchronous even while the disk cannot make progress.
+    release()
+    await flushLogs()
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(records.filter((record) => record.msg === 'burst').length).toBeLessThan(8)
+    expect(records.some((record) => record.msg === 'important error')).toBe(true)
+    expect(
+      records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
+    ).toBeGreaterThan(0)
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    log.info('after recovery')
+    await flushLogs()
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('after recovery')
+  })
+
+  it('does not report a lossless flush after a failed write followed by a successful write', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-flush-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    appendLogFile.mockRejectedValueOnce(Object.assign(new Error('disk full'), { code: 'ENOSPC' }))
+    const log = createLogger('flush')
+    log.error('lost record')
+    await flushLogs()
+    log.info('recovery record')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastWriteSucceeded: true })
+  })
+
+  it.each(['zero bytes', 'partial JSON', 'missing newline', 'split UTF-8'])(
+    'keeps the next successful JSONL record readable after an append fails at %s',
+    async (boundary) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-tail-'))
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      initLogger({ logDir, mirrorToConsole: false })
+      const log = createLogger('tail')
+      log.info('preserved')
+      await flushLogs()
+      appendLogFile.mockImplementationOnce(async (path, line) => {
+        const bytes = Buffer.from(line)
+        const length =
+          boundary === 'zero bytes'
+            ? 0
+            : boundary === 'partial JSON'
+              ? 25
+              : boundary === 'missing newline'
+                ? bytes.length - 1
+                : bytes.indexOf(Buffer.from('测')) + 1
+        await fs.appendFile(path, bytes.subarray(0, length))
+        throw Object.assign(new Error('partial append'), { code: 'ENOSPC' })
+      })
+      log.error('interrupted 测')
+      await flushLogs()
+      log.info('recovered')
+      await flushLogs()
+      const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.map((record) => record.msg)).toEqual(
+        expect.arrayContaining(['preserved', 'recovered'])
+      )
+    }
+  )
+
+  it('repairs a pre-existing incomplete tail without deleting complete historical lines', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-existing-tail-'))
+    await writeFile(join(logDir, 'main.log'), '{"msg":"historical"}\n{"msg":"incomplete')
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('tail').info('new run')
+    await flushLogs()
+    const records = (await readFile(join(logDir, 'main.log'), 'utf8'))
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+    expect(records.map((record) => record.msg)).toEqual(
+      expect.arrayContaining(['historical', 'new run'])
+    )
+  })
+})
+
+describe('logger: loss and recovery contracts', () => {
+  it('bounds pending UTF-8 bytes even when the record count remains below its limit', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-byte-budget-'))
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    appendLogFile.mockClear()
+    appendLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.appendFile>) => {
+      await blocked
+      await fs.appendFile(...args)
+    })
+    initLogger({ logDir, mirrorToConsole: false, maxPendingBytes: 4096, maxPendingRecords: 1000 })
+    const log = createLogger('bytes')
+    log.info('first')
+    await vi.waitFor(() => expect(appendLogFile).toHaveBeenCalledOnce())
+    for (let index = 0; index < 30; index++) log.info('payload', { text: '测'.repeat(200) })
+    for (let index = 0; index < 30; index++) log.error('error payload', { text: '测'.repeat(200) })
+    // Fatal logging stays synchronous and bypasses the bounded ordinary queue.
+    writeFatalLogSync('bytes', 'fatal marker')
+    expect(await readFile(join(logDir, 'main.log'), 'utf8')).toContain('fatal marker')
+    release()
+    await flushLogs()
+    const lines = (await readFile(join(logDir, 'main.log'), 'utf8')).trim().split('\n')
+    const records = lines.map((line) => JSON.parse(line))
+    const admittedBytes = lines
+      .filter((line) => !line.includes('log records dropped') && !line.includes('fatal marker'))
+      .reduce((sum, line) => sum + Buffer.byteLength(line) + 1, 0)
+    expect(admittedBytes).toBeLessThanOrEqual(4096)
+    expect(records.filter((record) => record.msg === 'error payload')).not.toHaveLength(0)
+    expect(
+      records.find((record) => record.msg === 'log records dropped')?.data.droppedRecords
+    ).toBeGreaterThan(0)
+  })
+
+  it('reports directory and inspection failures without rejecting ordinary log calls', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-io-failures-'))
+    const blocker = join(logDir, 'blocker')
+    await writeFile(blocker, 'not a directory')
+    initLogger({ logDir: join(blocker, 'logs'), mirrorToConsole: false })
+    expect(() => createLogger('io').error('cannot create directory')).not.toThrow()
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastWriteSucceeded: false })
+    const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+    await fs.mkdir(join(logDir, 'as-directory'))
+    initLogger({ logDir, fileName: 'as-directory', mirrorToConsole: false })
+    createLogger('io').error('cannot inspect directory as log')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+    await expect(getLogFileStatus()).resolves.toMatchObject({ lastFailureCategory: 'inspect' })
+  })
+
+  it('keeps overlapping flushes loss-aware and resets loss only with a new sink initialization', async () => {
+    logDir = await mkdtemp(join(tmpdir(), 'os-logger-overlapping-flush-'))
+    initLogger({ logDir, mirrorToConsole: false })
+    appendLogFile.mockRejectedValueOnce(new Error('disk unavailable'))
+    createLogger('io').info('lost')
+    const first = flushDiagnosticsWithTimeout(flushLogs, 1000)
+    const second = flushDiagnosticsWithTimeout(flushLogs, 1000)
+    await expect(Promise.all([first, second])).resolves.toEqual(['failed', 'failed'])
+    initLogger({ logDir, mirrorToConsole: false })
+    createLogger('io').info('new initialization')
+    await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('flushed')
+  })
+})
+
+describe('logger: interrupted tail repair', () => {
+  it.each(['read', 'truncate'] as const)(
+    'does not append when tail %s fails, and retries after recovery',
+    async (operation) => {
+      logDir = await mkdtemp(join(tmpdir(), 'os-logger-tail-retry-'))
+      const path = join(logDir, 'main.log')
+      const original = '{"msg":"preserved"}\n{"partial":'
+      await writeFile(path, original)
+      const fs = await vi.importActual<typeof import('node:fs/promises')>('node:fs/promises')
+      openLogFile.mockImplementationOnce(async (...args: Parameters<typeof fs.open>) => {
+        const handle = await fs.open(...args)
+        return {
+          stat: handle.stat.bind(handle),
+          read:
+            operation === 'read'
+              ? async () => {
+                  throw new Error('read unavailable')
+                }
+              : handle.read.bind(handle),
+          truncate:
+            operation === 'truncate'
+              ? async () => {
+                  throw new Error('truncate unavailable')
+                }
+              : handle.truncate.bind(handle),
+          close: handle.close.bind(handle)
+        }
+      })
+      initLogger({ logDir, mirrorToConsole: false })
+      createLogger('tail').info('blocked write')
+      await expect(flushDiagnosticsWithTimeout(flushLogs, 1000)).resolves.toBe('failed')
+      expect(await readFile(path, 'utf8')).toBe(original)
+      createLogger('tail').info('recovered write')
+      await flushLogs()
+      const records = (await readFile(path, 'utf8'))
+        .trim()
+        .split('\n')
+        .map((line) => JSON.parse(line))
+      expect(records.map((record) => record.msg)).toEqual(
+        expect.arrayContaining(['preserved', 'recovered write'])
+      )
+      expect(
+        records.find((record) => record.msg === 'log records dropped')?.data.repairedTailBytes
+      ).toBe(11)
+    }
+  )
+})

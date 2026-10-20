@@ -1,3 +1,4 @@
+import { encodeProviderProtocolsForStorage } from './record-codec'
 import { validateSettingsDocumentShape } from './document-shape'
 import { settingsDocumentReadError } from './document-read-error'
 import {
@@ -8,7 +9,11 @@ import { renameSync } from 'node:fs'
 import { join } from 'node:path'
 
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import {
+  readDurableJsonFile,
+  readFileWithinLimit,
+  writeDurableJsonFile
+} from '@aipoch/durable-files'
 import { sanitizeSettings } from './document-codec'
 import { createEmptySettings, type StoredSettings } from './types'
 import { isRecord } from '../value-guards'
@@ -67,11 +72,27 @@ class SettingsDocumentStore {
 
   mutate(
     update: (settings: StoredSettings) => StoredSettings,
-    beforePublish?: () => void
+    beforePublish?: () => void,
+    preserveDocumentExcept?: readonly (keyof StoredSettings)[]
   ): Promise<StoredSettings> {
     const result = this.mutationTail.then(async () => {
-      const next = update(await this.read())
-      await this.write(next, beforePublish)
+      const current = await this.read()
+      // Startup backfills may change only named fields. Read after durable recovery and validate
+      // the original document, retaining opaque fields that a newer or older client may own.
+      const original = preserveDocumentExcept
+        ? JSON.parse(await readFileWithinLimit(this.path, SETTINGS_RESOURCE_LIMITS.documentBytes))
+        : undefined
+      const next = update(
+        original === undefined ? current : decodeSettingsDocument(JSON.stringify(original))
+      )
+      const document = original === undefined ? { ...next } : { ...original }
+      if (preserveDocumentExcept) {
+        for (const key of preserveDocumentExcept) document[key] = next[key]
+      }
+      if (original === undefined || preserveDocumentExcept?.includes('providers')) {
+        document.providers = next.providers.map(encodeProviderProtocolsForStorage)
+      }
+      await this.write(document, beforePublish)
       return next
     })
     this.mutationTail = result.then(

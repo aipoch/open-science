@@ -2,14 +2,16 @@ import { expect, test } from '@playwright/test'
 
 for (const kind of ['skills', 'connectors']) {
   const suffix = kind === 'connectors' ? '?connectors' : ''
+  const name = kind === 'skills' ? 'AlphaFold2' : 'Chemistry'
   test(`${kind}: independent access, conditional bulk warnings and Specialist search`, async ({
     page
   }) => {
     const errors: string[] = []
     page.on('pageerror', (error) => errors.push(error.message))
     await page.goto(`/resource-controls.html${suffix}`)
-    const row = page.locator('[data-slot="settings-list-row"]').first()
-    const name = kind === 'skills' ? 'AlphaFold2' : 'Chemistry'
+    const row = page.locator('[data-slot="settings-list-row"]').filter({
+      has: page.getByRole('button', { name: `Manage access for ${name}`, exact: true })
+    })
     const trigger = row.getByRole('button', { name: `Manage access for ${name}` })
     await trigger.hover()
     await expect(page.getByRole('tooltip')).toContainText(
@@ -74,7 +76,9 @@ for (const kind of ['skills', 'connectors']) {
       window.api.settings[command] = async () => new Promise<never>(() => {})
     }, kind)
     await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
-    const row = page.locator('[data-slot="settings-list-row"]').first()
+    const row = page.locator('[data-slot="settings-list-row"]').filter({
+      has: page.getByRole('button', { name: `Manage access for ${name}`, exact: true })
+    })
     await row.getByRole('checkbox').check()
     await page.getByRole('button', { name: /Stop Main Agent loading/ }).click()
     const trigger = row.locator('[data-slot="resource-assignment-trigger"]')
@@ -88,7 +92,9 @@ for (const kind of ['skills', 'connectors']) {
     page
   }) => {
     await page.goto(`/resource-controls.html${suffix}`)
-    const row = page.locator('[data-slot="settings-list-row"]').first()
+    const row = page.locator('[data-slot="settings-list-row"]').filter({
+      has: page.getByRole('button', { name: `Manage access for ${name}`, exact: true })
+    })
     const usage = row.locator('[data-slot="skill-usage-agents-trigger"]')
     await usage.click()
     await expect(page.locator('[data-slot="skill-usage-agents-popover"]')).toBeVisible()
@@ -107,7 +113,7 @@ for (const kind of ['skills', 'connectors']) {
   }) => {
     await page.goto(`/resource-controls.html${suffix}`)
     await page.getByRole('button', { name: 'Select multiple in Featured' }).click()
-    await page.locator('[data-slot="settings-list-row"] input[type="checkbox"]').first().check()
+    await page.getByRole('checkbox', { name: `Select ${name}`, exact: true }).check()
     const search = page.getByRole('searchbox', {
       name: kind === 'skills' ? 'Search skills' : 'Search connectors',
       exact: true

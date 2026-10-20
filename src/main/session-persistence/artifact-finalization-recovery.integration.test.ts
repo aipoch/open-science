@@ -21,7 +21,11 @@ import {
   ARTIFACT_FINALIZATION_INVALID_PROOF,
   type ReconcilePendingArtifactsRequest
 } from '../../shared/artifacts'
-import type { PersistedChatMessage, PersistedChatSession } from '../../shared/session-persistence'
+import {
+  setTurnOutcome,
+  type PersistedChatMessage,
+  type PersistedChatSession
+} from '../../shared/session-persistence'
 import { createPngBytes, createPngInlineSource } from '../artifacts/artifact-test-fixtures'
 import {
   FinalizedArtifactBindingConflictError,
@@ -73,9 +77,86 @@ describe('artifact finalization startup recovery', () => {
     await rm(storageRoot, { recursive: true, force: true })
   })
 
+  it('settles a legacy-only error after real compatibility Retry publication', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const pending = await compatibility.writePendingFile({
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      runId: RUN_ID,
+      filename: 'legacy.png',
+      source: createPngInlineSource('legacy result')
+    })
+    await sessions.saveSession({
+      id: SESSION_ID,
+      projectId: PROJECT_ID,
+      title: 'Legacy result',
+      cwd: '/workspace',
+      status: 'error',
+      error: 'Generated file finalization failed: storage unavailable',
+      createdAt: 1,
+      updatedAt: 3,
+      messages: [
+        {
+          id: 'prompt',
+          role: 'user',
+          content: 'Research',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        },
+        {
+          id: 'response',
+          role: 'agent',
+          content: 'Result',
+          status: 'complete',
+          artifactIds: [pending.id],
+          eventIds: [],
+          createdAt: 2,
+          updatedAt: 2
+        }
+      ],
+      artifacts: [{ id: pending.id, kind: 'managed-file', path: pending.path, name: pending.name }]
+    })
+    const coordinator = new SessionPersistenceCoordinator(sessions, files)
+    const handlers = createArtifactHandlers(compatibility, new ArtifactRunRegistry(), {
+      recoverPendingArtifacts: (request) => coordinator.retryArtifactFinalization(request),
+      commitRecoveredArtifacts: (request, artifacts) =>
+        coordinator.commitRecoveredArtifactReferences(request, artifacts)
+    })
+    const recovered = await handlers.reconcilePendingArtifacts({
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'response',
+      pendingPaths: [pending.path]
+    })
+    expect(Array.isArray(recovered)).toBe(true)
+    const saved = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    expect(saved.status).toBe('idle')
+    expect(saved.error).toBeUndefined()
+    expect(saved.messages[0].turnOutcome?.kind).toBe('completed')
+    expect(saved.messages[1].artifactIds).not.toContain(pending.id)
+    expect(saved.artifacts?.some(({ id }) => id === pending.id)).toBe(true)
+  })
+
   it('retries durable finalization in the current Session and remains idempotent', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
     const { provenance, version } = await prepareRecovery(compatibility)
+    const failed = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    failed.messages[1].responseToMessageId = 'prompt-1'
+    failed.conversationGraph!.messages[1].responseToMessageId = 'prompt-1'
+    await sessions.saveSession({
+      ...setTurnOutcome(failed, 'prompt-1', {
+        kind: 'failed',
+        settledAt: 3,
+        error: 'Artifact publication failed',
+        errorReportable: false,
+        recovery: 'retry-artifact-publication'
+      }),
+      status: 'error',
+      error: 'Artifact publication failed',
+      errorReportable: false
+    })
     const coordinator = new SessionPersistenceCoordinator(
       sessions,
       files,
@@ -109,10 +190,117 @@ describe('artifact finalization startup recovery', () => {
       client.artifactVersion.findUniqueOrThrow({ where: { id: version.versionId } })
     ).resolves.toMatchObject({ state: 'finalized', messageId: 'message-1' })
     const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
-    expect(durableSession?.messages[1].artifactIds).toBeUndefined()
-    expect(durableSession?.artifacts).toBeUndefined()
+    expect(durableSession?.messages[1].artifactIds).toEqual([version.versionId])
+    expect(durableSession?.artifacts).toContainEqual(
+      expect.objectContaining({ id: version.versionId, versionId: version.versionId })
+    )
 
+    expect(durableSession?.messages[0].turnOutcome).toMatchObject({ kind: 'completed' })
+    expect(durableSession?.conversationGraph?.messages[0].turnOutcome).toEqual(
+      durableSession?.messages[0].turnOutcome
+    )
+    expect(durableSession?.status).toBe('idle')
+    expect(durableSession?.error).toBeUndefined()
     await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
+  })
+
+  it('completes a resumed turn when its earlier published Version is outside the current retry batch', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, version: pendingVersion, context } = await prepareRecovery(compatibility)
+    const earlierRun = 'earlier-published-run'
+    await compatibility.writePendingFile({
+      projectId: PROJECT_ID,
+      sessionId: STORAGE_SESSION_ID,
+      runId: earlierRun,
+      filename: 'earlier.png',
+      source: createPngInlineSource('earlier bytes')
+    })
+    const earlier = await provenance.createVersion({
+      projectId: PROJECT_ID,
+      appSessionId: SESSION_ID,
+      artifactStorageSessionId: STORAGE_SESSION_ID,
+      artifactRunId: earlierRun,
+      writeOperationId: 'earlier-write',
+      writeRequestChecksum: 'b'.repeat(64),
+      ...context,
+      filename: 'earlier.png'
+    })
+    await compatibility.prepareRunFinalization({
+      projectId: PROJECT_ID,
+      sourceSessionId: STORAGE_SESSION_ID,
+      sessionId: SESSION_ID,
+      runId: earlierRun,
+      artifactVersionIds: [earlier.versionId],
+      provenanceContext: context
+    })
+    const previous = await provenance.reconcileSession(
+      PROJECT_ID,
+      SESSION_ID,
+      (await sessions.loadSession(PROJECT_ID, SESSION_ID))!,
+      { artifactRunIds: [earlierRun] }
+    )
+    const published = previous.recoveredMessageArtifacts
+      .flatMap(({ artifacts }) => artifacts)
+      .find(({ versionId }) => versionId === earlier.versionId)!
+    expect(published.isPublished).toBe(true)
+    const current = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    current.messages[1] = {
+      ...current.messages[1],
+      responseToMessageId: 'prompt-1',
+      artifactIds: [earlier.versionId]
+    }
+    current.conversationGraph!.messages[1] = {
+      ...current.conversationGraph!.messages[1],
+      responseToMessageId: 'prompt-1',
+      artifactIds: [earlier.versionId]
+    }
+    current.artifacts = [
+      {
+        id: published.versionId,
+        artifactId: published.artifactId,
+        versionId: published.versionId,
+        versionNumber: published.versionNumber,
+        kind: 'managed-file',
+        path: published.path,
+        fileUrl: published.fileUrl,
+        name: published.name
+      }
+    ]
+    await sessions.saveSession({
+      ...setTurnOutcome(current, 'prompt-1', {
+        kind: 'failed',
+        settledAt: 4,
+        error: 'Artifact publication failed',
+        recovery: 'retry-artifact-publication'
+      }),
+      status: 'error',
+      error: 'Artifact publication failed'
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const recovered = await coordinator.retryArtifactFinalization({
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: [pendingVersion.versionId]
+    })
+    expect(recovered?.artifacts.map(({ versionId }) => versionId)).toEqual([
+      pendingVersion.versionId
+    ])
+    const settled = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    expect(settled.messages[1].artifactIds).toEqual([earlier.versionId, pendingVersion.versionId])
+    expect(settled.messages[0].turnOutcome?.kind).toBe('completed')
+    expect(settled.artifacts?.map(({ id }) => id)).toEqual([
+      earlier.versionId,
+      pendingVersion.versionId
+    ])
   })
 
   it('retains all legacy cross-Segment files when no durable admission proves ownership', async () => {

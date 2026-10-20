@@ -1,3 +1,5 @@
+import { applyInterfaceScale, resolveInterfaceScale } from '@/lib/interface-scale'
+import { useInterfaceScaleStore } from '@/stores/interface-scale-store'
 import './assets/main.css'
 
 import { StrictMode } from 'react'
@@ -29,6 +31,8 @@ installRendererFailureDiagnostics({
 
 // Apply the saved theme to <html> before the first paint so dark mode doesn't flash light on startup.
 applyTheme(resolveInitialTheme())
+const preparingInterfaceScale = applyInterfaceScale(resolveInterfaceScale()).catch(() => undefined)
+useInterfaceScaleStore.getState()
 
 // Swallow file drops that miss an explicit dropzone: without this, Electron navigates the whole window
 // to the dropped file (file://…), tearing down the app. Dropzones call stopPropagation/preventDefault
@@ -69,7 +73,7 @@ const startRenderer = (): void => {
   )
   performance.mark('open-science:renderer-render-scheduled')
 }
-const preparing = prepareI18nLocale(initialLocale)
+const preparing = Promise.all([prepareI18nLocale(initialLocale), preparingInterfaceScale])
 if (preparing) {
   void preparing.then(startRenderer).catch((error: unknown) => {
     initI18n('en')

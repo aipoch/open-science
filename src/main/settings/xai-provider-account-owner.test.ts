@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -49,3 +50,5 @@ describe('XaiProviderAccountOwner', () => {
     expect(provider).not.toHaveProperty('lastValidationFailure')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

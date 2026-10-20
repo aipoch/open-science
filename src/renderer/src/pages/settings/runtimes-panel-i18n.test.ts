@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import { i18next } from '@/i18n'
 import { envReadyLine, managedLine, providerType } from './runtimes-panel-view'
-import type { DiscoveredInterpreter } from '../../../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 
 // The runtimes panel renders its badge and status lines through these describers. A literal left behind
 // in one of them would look correct in English and stay English in every other language, which catalog

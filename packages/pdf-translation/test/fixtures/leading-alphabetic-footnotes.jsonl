@@ -1,0 +1,3 @@
+{"name": "raised-letter-belongs-to-following-footnote-prose", "gap": 1, "raised": 6.4, "joined": true}
+{"name": "raised-letter-cannot-cross-column-gutter", "gap": 35, "raised": 6.4, "joined": false}
+{"name": "leading-footnote-before-segmented-prose", "gap": 1, "raised": 6.4, "joined": true, "segmented": true}

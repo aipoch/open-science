@@ -2,9 +2,9 @@ import { describe, expect, it } from 'vitest'
 
 import { createWebCallerContext } from '../caller-context'
 import { createRendererFailureReporter } from '../renderer-diagnostics'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { invokeWithIpcRejectionDiagnostics } from './ipc-rejection'
-import { startDiagnosticOperation } from './operation'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
 
 const PRIVACY_CANARIES = [
   'sk-diagnostic-secret',

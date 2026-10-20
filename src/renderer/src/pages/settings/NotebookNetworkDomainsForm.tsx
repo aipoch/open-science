@@ -1,16 +1,24 @@
+import { TrustedPrivateServices } from './TrustedPrivateServices'
+import { SettingsSection } from './SettingsLayout'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { Plus, Trash2, LoaderCircle, ChevronRight } from 'lucide-react'
+import { useEffect, useState, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import {
+  type NotebookNetworkSettings,
+  type OpenScienceDomainGroupId
+} from '../../../../shared/notebook-network-settings'
+import {
   OPEN_SCIENCE_DOMAIN_GROUPS,
   validateCustomAllowedDomain,
-  type NotebookNetworkSettings,
   type NotebookNetworkStatus,
-  type NotebookNetworkStatusReason,
-  type OpenScienceDomainGroupId
+  type NotebookNetworkStatusReason
 } from '../../../../shared/notebook-network'
+import { DownloadProgressLine } from '@/components/DownloadProgressLine'
+import { ErrorNotice } from '@/components/error-notice'
+import { Notice } from '@/components/notice'
+import { formatBytes } from '../../../../shared/update'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
@@ -25,6 +33,8 @@ const GROUP_LABELS: Record<OpenScienceDomainGroupId, string> = {
   clinical: 'Clinical and translational research'
 }
 const DOMAIN_EXAMPLE = 'data.example.org'
+// Product/runtime names are technical identifiers, shared unchanged across locales.
+const RUNTIME_COMPONENT_NAMES = { node: 'Node.js', powershell: 'PowerShell' } as const
 type FormMessage = Readonly<{ kind: 'success' | 'error'; text: string }>
 
 const statusReasonLabel = (
@@ -52,18 +62,78 @@ const statusReasonLabel = (
   }
 }
 
-const NotebookNetworkDomainsForm = (): React.JSX.Element => {
+export type NetworkEditorLeaveState = Readonly<{ dirty: boolean; busy: boolean }>
+const NotebookNetworkDomainsForm = ({
+  onLeaveStateChange
+}: {
+  onLeaveStateChange?: (state: NetworkEditorLeaveState | null) => void
+}): React.JSX.Element => {
   const { t } = useTranslation()
   const saved = useSettingsStore((state) => state.notebookNetwork)
   const setNotebookNetwork = useSettingsStore((state) => state.setNotebookNetwork)
   const [draft, setDraft] = useState<NotebookNetworkSettings>(saved)
   const [baseAllowedDomains, setBaseAllowedDomains] = useState(saved.allowedDomains)
+  const [baseline, setBaseline] = useState(saved)
+  const [privateEditing, setPrivateEditing] = useState(false)
+  const [domainError, setDomainError] = useState('')
+  const mounted = useRef(true)
   const [newDomain, setNewDomain] = useState('')
+  const dirty =
+    JSON.stringify(draft) !== JSON.stringify(baseline) || Boolean(newDomain) || privateEditing
   const [message, setMessage] = useState<FormMessage | undefined>()
   const [isSaving, setIsSaving] = useState(false)
   const [status, setStatus] = useState<NotebookNetworkStatus>({ kind: 'checking' })
   const [isInstalling, setIsInstalling] = useState(false)
   const [isRemoving, setIsRemoving] = useState(false)
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState(false)
+  useEffect(() => {
+    onLeaveStateChange?.({ dirty, busy: isSaving })
+  }, [dirty, isSaving, onLeaveStateChange])
+  useEffect(() => {
+    mounted.current = true
+    return () => {
+      mounted.current = false
+      onLeaveStateChange?.(null)
+    }
+  }, [onLeaveStateChange])
+  const preparing = isInstalling || status.kind === 'checking'
+  const busy = preparing || isRemoving
+  const preparation = status.kind === 'checking' ? status.runtimePreparation : undefined
+  const failure = status.windowsRuntimeSetup?.failure
+  const failureDescription = status.windowsRuntimeSetup?.cancelled
+    ? t(
+        'Preparation cancelled. Verified downloads are kept. Retry setup or remove protection to return to standard execution.'
+      )
+    : failure
+      ? failure.phase === 'downloading'
+        ? t('Could not download {{component}}. Check your connection and try again.', {
+            component: RUNTIME_COMPONENT_NAMES[failure.component]
+          })
+        : t(
+            'Could not prepare {{component}}. Retry setup or remove protection to return to standard execution.',
+            { component: RUNTIME_COMPONENT_NAMES[failure.component] }
+          )
+      : status.kind === 'error'
+        ? statusReasonLabel(status.reason, t)
+        : ''
+
+  useEffect(() => {
+    if (!preparing) return
+    let active = true
+    const timer = setInterval(() => {
+      void window.api.settings.getNotebookNetworkStatus().then(
+        (next) => {
+          if (active && (!isInstalling || next.kind === 'checking')) setStatus(next)
+        },
+        () => undefined
+      )
+    }, 1000)
+    return () => {
+      active = false
+      clearInterval(timer)
+    }
+  }, [preparing, isInstalling])
 
   useEffect(() => {
     void window.api.settings
@@ -81,17 +151,28 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   }
 
   const installWindowsSandbox = async (): Promise<void> => {
+    if (busy) return
     setIsInstalling(true)
+    setIsCancelling(false)
+    setCancelError(false)
+    setStatus({ kind: 'checking', windowsRuntimeSetup: status.windowsRuntimeSetup })
     try {
       setStatus(await window.api.settings.installNotebookNetwork())
     } catch {
-      setStatus({ kind: 'error', reason: 'runtimeFailure' })
+      const latest = await window.api.settings.getNotebookNetworkStatus().catch(() => undefined)
+      setStatus({
+        kind: 'error',
+        reason: 'runtimeFailure',
+        windowsRuntimeSetup: latest?.windowsRuntimeSetup
+      })
     } finally {
       setIsInstalling(false)
+      setIsCancelling(false)
     }
   }
 
   const removeWindowsSandbox = async (): Promise<void> => {
+    if (busy) return
     setIsRemoving(true)
     try {
       setStatus(await window.api.settings.removeNotebookNetwork())
@@ -99,6 +180,17 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
       setStatus({ kind: 'error', reason: 'runtimeFailure' })
     } finally {
       setIsRemoving(false)
+    }
+  }
+
+  const cancelPreparation = async (): Promise<void> => {
+    setIsCancelling(true)
+    setCancelError(false)
+    try {
+      if (!(await window.api.settings.cancelNotebookNetworkSetup())) setIsCancelling(false)
+    } catch {
+      setIsCancelling(false)
+      setCancelError(true)
     }
   }
 
@@ -122,15 +214,16 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
     setMessage(undefined)
     const result = validateCustomAllowedDomain(newDomain)
     if (!result.ok) {
-      setMessage({
-        kind: 'error',
-        text:
-          result.reason === 'reserved'
-            ? t('Localhost, private addresses, and IP addresses cannot be allowed.')
-            : t('Enter a hostname only, without a scheme, path, port, or wildcard.')
-      })
+      setDomainError(
+        t('Enter an exact hostname without a scheme, path, port, wildcard, or IP address.')
+      )
       return
     }
+    if (draft.allowedDomains.includes(result.hostname)) {
+      setDomainError(t('This hostname is already in the list.'))
+      return
+    }
+    setDomainError('')
     setDraft({
       ...draft,
       allowedDomains: [...new Set([...draft.allowedDomains, result.hostname])].sort()
@@ -139,17 +232,30 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
   }
 
   const save = async (): Promise<void> => {
+    if (isSaving || privateEditing || newDomain) return
     setIsSaving(true)
     setMessage(undefined)
     try {
-      const next = await setNotebookNetwork(draft, baseAllowedDomains)
+      const next = await setNotebookNetwork(
+        draft,
+        baseAllowedDomains,
+        baseline.trustedPrivateDestinations ?? []
+      )
+      if (!mounted.current) return
+      setBaseline(next)
       setDraft(next)
       setBaseAllowedDomains(next.allowedDomains)
-      setMessage({ kind: 'success', text: t('Notebook network access saved.') })
+      setMessage({ kind: 'success', text: t('Network rules saved.') })
     } catch {
-      setMessage({ kind: 'error', text: t('Could not save Notebook network access.') })
+      if (!mounted.current) return
+      setMessage({
+        kind: 'error',
+        text: t(
+          'Could not save network rules. Reopen this page if another window changed them, or review changed private addresses again.'
+        )
+      })
     } finally {
-      setIsSaving(false)
+      if (mounted.current) setIsSaving(false)
     }
   }
 
@@ -157,12 +263,45 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
     <div className="space-y-6 p-5">
       <section aria-label={t('Notebook network protection')}>
         <div className="rounded-xl border border-border bg-bg-10 p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div>
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div className="min-w-0 flex-1 basis-60">
               <p className="text-sm font-medium text-foreground">
                 {t('Notebook network protection')}
               </p>
-              <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+              {preparing ? (
+                <div className="mt-2" aria-live="polite">
+                  <Notice
+                    inline
+                    role="status"
+                    icon={LoaderCircle}
+                    iconClassName="animate-spin motion-reduce:animate-none"
+                    title={
+                      isCancelling
+                        ? t('Cancelling…')
+                        : preparation
+                          ? preparation.phase === 'verifying'
+                            ? t('Verifying {{component}}…', {
+                                component: RUNTIME_COMPONENT_NAMES[preparation.component]
+                              })
+                            : preparation.phase === 'checking'
+                              ? t('Checking {{component}}…', {
+                                  component: RUNTIME_COMPONENT_NAMES[preparation.component]
+                                })
+                              : RUNTIME_COMPONENT_NAMES[preparation.component]
+                          : isInstalling
+                            ? t('Setting up…')
+                            : t('Checking…')
+                    }
+                  />
+                  {preparation?.download ? (
+                    <DownloadProgressLine progress={preparation.download} />
+                  ) : null}
+                </div>
+              ) : null}
+              <p
+                className="mt-1 text-xs leading-relaxed text-muted-foreground"
+                hidden={preparing || (window.api.platform === 'win32' && status.kind === 'error')}
+              >
                 {status.kind === 'checking'
                   ? t('Checking…')
                   : status.kind === 'ready'
@@ -181,7 +320,7 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               </p>
               {window.api.platform === 'win32' && status.kind === 'ready' ? (
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                  {t('Protected using Windows sandboxing. New Notebook sessions are protected.')}
+                  {t('Existing conversations use the selected mode on their next turn.')}
                 </p>
               ) : null}
               {status.kind === 'setupRequired' && status.platform === 'win32' ? (
@@ -192,14 +331,41 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                 </p>
               ) : null}
               {window.api.platform === 'win32' && status.kind === 'error' ? (
-                <>
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
-                    {t('Notebook continues using standard execution. No protected mode is active.')}
-                  </p>
-                  <p className="mt-1 text-xs text-muted-foreground">
-                    {statusReasonLabel(status.reason, t)}
-                  </p>
-                </>
+                <ErrorNotice
+                  inline
+                  className="mt-2"
+                  role="alert"
+                  title={
+                    status.windowsRuntimeSetup?.cancelled
+                      ? t('Cancelled')
+                      : t('Status: Setup failed')
+                  }
+                  description={failureDescription}
+                />
+              ) : null}
+              {preparing && isInstalling && !preparation ? (
+                <p className="mt-2 text-xs text-muted-foreground">
+                  {t('The Windows sandbox needs administrator setup.')}
+                </p>
+              ) : null}
+              {cancelError ? (
+                <ErrorNotice
+                  inline
+                  className="mt-2"
+                  role="alert"
+                  description={t('Could not cancel the setup.')}
+                />
+              ) : null}
+              {window.api.platform === 'win32' &&
+              !preparing &&
+              status.kind !== 'ready' &&
+              Boolean(status.windowsRuntimeSetup?.downloadBytes) ? (
+                <p className="mt-2 text-xs leading-relaxed text-muted-foreground">
+                  {t(
+                    'Missing components may download up to {{size}}. Verified components are reused across conversations and app updates.',
+                    { size: formatBytes(status.windowsRuntimeSetup!.downloadBytes) }
+                  )}
+                </p>
               ) : null}
               {status.kind === 'setupRequired' && status.reasons.length > 0 ? (
                 <p className="mt-1 text-xs text-muted-foreground">
@@ -209,33 +375,48 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                 </p>
               ) : null}
             </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {status.kind === 'setupRequired' && status.platform === 'win32' ? (
+            <div className="flex shrink-0 flex-wrap items-center gap-2">
+              {preparing && window.api.platform === 'win32' ? (
                 <Button
                   type="button"
                   variant="outline"
-                  disabled={isInstalling}
+                  disabled={!status.windowsRuntimeSetup?.canCancel || isCancelling}
+                  onClick={() => void cancelPreparation()}
+                >
+                  {isCancelling ? t('Cancelling…') : t('Cancel')}
+                </Button>
+              ) : null}
+              {!preparing && status.kind === 'setupRequired' && status.platform === 'win32' ? (
+                <Button
+                  type="button"
+                  variant="outline"
+                  disabled={busy}
                   onClick={() => void installWindowsSandbox()}
                 >
                   {isInstalling ? t('Setting up…') : t('Set up')}
                 </Button>
               ) : null}
-              {window.api.platform === 'win32' && status.kind === 'ready' ? (
+              {!preparing && window.api.platform === 'win32' && status.kind === 'ready' ? (
                 <>
-                  <Button type="button" variant="outline" onClick={() => void refreshStatus()}>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    disabled={busy}
+                    onClick={() => void refreshStatus()}
+                  >
                     {t('Check again')}
                   </Button>
                   <Button
                     type="button"
                     variant="outline"
-                    disabled={isRemoving}
+                    disabled={busy}
                     onClick={() => void removeWindowsSandbox()}
                   >
                     {isRemoving ? t('Removing…') : t('Remove…')}
                   </Button>
                 </>
               ) : null}
-              {window.api.platform === 'win32' && status.kind === 'error' ? (
+              {!preparing && window.api.platform === 'win32' && status.kind === 'error' ? (
                 <Button
                   type="button"
                   variant="outline"
@@ -253,6 +434,16 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
                       : t('Try again')}
                 </Button>
               ) : null}
+              {!preparing && window.api.platform === 'win32' && status.kind === 'error' ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  disabled={busy}
+                  onClick={() => void removeWindowsSandbox()}
+                >
+                  {isRemoving ? t('Removing…') : t('Remove…')}
+                </Button>
+              ) : null}
             </div>
           </div>
           {window.api.platform === 'win32' &&
@@ -265,78 +456,47 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
         </div>
       </section>
 
-      <section aria-label={t('Open-Science domains')}>
-        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Open-Science domains')}</h3>
-        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+      <SettingsSection
+        title={t('Public internet access')}
+        description={t(
+          'Some public HTTPS reads work without approval. Other requests need approval unless covered by a built-in or custom domain rule.'
+        )}
+      >
+        <p className="mt-2 text-xs leading-5 text-muted-foreground">
           {t(
-            'Turning off a built-in domain removes automatic access. Exact hostnames in Allowed domains remain allowed.'
+            'Domain grants permit sending data, not just downloads. Even restricted reads send the requested URL.'
           )}
         </p>
-        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
-          {t(
-            'Notebook Python, R, REPL, Bash, and package downloads use enabled scientific services and domains you add below. Protected execution blocks other outbound domains.'
-          )}
-        </p>
-        <div className="divide-y divide-border rounded-xl border border-border">
-          {OPEN_SCIENCE_DOMAIN_GROUPS.map((group) => {
-            const groupEnabled = !draft.disabledOpenScienceDomainGroups.includes(group.id)
-            return (
-              <details key={group.id} className="group px-4 py-3">
-                <summary className="flex cursor-pointer list-none items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-medium text-foreground">
-                      {t(GROUP_LABELS[group.id])}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {t('{{count}} domains', {
-                        count: group.domains.length,
-                        defaultValue_one: '{{count}} domain'
-                      })}
-                    </p>
-                  </div>
-                  <Switch
-                    checked={groupEnabled}
-                    disabled={isSaving || group.locked}
-                    aria-label={t('Allow {{name}}', { name: t(GROUP_LABELS[group.id]) })}
-                    onClick={(event) => event.stopPropagation()}
-                    onCheckedChange={(checked) => toggleGroup(group.id, checked)}
-                  />
-                </summary>
-                <div className="mt-3 grid gap-2 border-t border-border pt-3">
-                  {group.domains.map((domain) => (
-                    <label key={domain} className="flex items-center justify-between gap-3 text-xs">
-                      <code className="break-all text-foreground">{domain}</code>
-                      <Switch
-                        size="sm"
-                        disabled={isSaving || !groupEnabled || group.locked}
-                        checked={groupEnabled && !draft.disabledOpenScienceDomains.includes(domain)}
-                        aria-label={t('Allow {{domain}}', { domain })}
-                        onCheckedChange={(checked) => toggleBuiltInDomain(domain, checked)}
-                      />
-                    </label>
-                  ))}
-                </div>
-              </details>
-            )
-          })}
-        </div>
-      </section>
+        {status.kind !== 'checking' && status.kind !== 'ready' ? (
+          <InlineNotice className="mt-3" level="warning">
+            {t('Protection is not active. These rules apply only to protected execution.')}
+          </InlineNotice>
+        ) : null}
+      </SettingsSection>
 
-      <section aria-label={t('Allowed domains')}>
-        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Allowed domains')}</h3>
+      <section aria-label={t('Custom public domains')}>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Custom public domains')}</h3>
         <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
           {t(
-            'Add exact hostnames required by your research. Wildcards and IP addresses are blocked.'
+            'Exact hostnames only; subdomains are not included. Private addresses stay blocked. These rules also allow supported conversation-link previews and icons.'
           )}
         </p>
         <div className="rounded-xl border border-border p-4">
-          <div className="flex gap-2">
+          <label htmlFor="public-hostname" className="mb-1.5 block text-sm font-medium">
+            {t('Domain hostname')}
+          </label>
+          <div className="flex flex-wrap gap-2">
             <Input
+              id="public-hostname"
+              className="min-w-0 flex-1 basis-48"
+              aria-invalid={Boolean(domainError)}
+              aria-describedby={domainError ? 'public-domain-error' : undefined}
               value={newDomain}
               disabled={isSaving}
               aria-label={t('Domain hostname')}
               placeholder={DOMAIN_EXAMPLE}
               onChange={(event) => {
+                setDomainError('')
                 setNewDomain(event.target.value)
                 setMessage(undefined)
               }}
@@ -354,9 +514,14 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
               disabled={isSaving || !newDomain}
             >
               <Plus aria-hidden="true" />
-              {t('Add')}
+              {t('Add to list')}
             </Button>
           </div>
+          {domainError ? (
+            <p id="public-domain-error" className="mt-2 text-xs text-status-failure" role="alert">
+              {domainError}
+            </p>
+          ) : null}
           {draft.allowedDomains.length > 0 ? (
             <ul className="mt-3 divide-y divide-border">
               {draft.allowedDomains.map((domain) => (
@@ -387,12 +552,79 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
         </div>
       </section>
 
-      {message?.kind === 'error' ? (
-        <InlineNotice
-          level="error"
+      <section aria-label={t('Built-in services')}>
+        <h3 className="mb-1 text-sm font-semibold text-foreground">{t('Built-in services')}</h3>
+        <p className="mb-3 text-xs leading-relaxed text-muted-foreground">
+          {t(
+            'Turning off automatic access requires approval. It does not block the service. Custom public rules still apply.'
+          )}
+        </p>
+        <div className="divide-y divide-border rounded-xl border border-border">
+          {OPEN_SCIENCE_DOMAIN_GROUPS.map((group) => {
+            const groupEnabled = !draft.disabledOpenScienceDomainGroups.includes(group.id)
+            return (
+              <details key={group.id} className="group px-4 py-3">
+                <summary className="flex cursor-pointer list-none items-center gap-3 rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring">
+                  <ChevronRight
+                    className="size-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90"
+                    aria-hidden="true"
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-foreground">
+                      {t(GROUP_LABELS[group.id])}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t('{{count}} domains', {
+                        count: new Set(group.domains).size,
+                        defaultValue_one: '{{count}} domain'
+                      })}
+                    </p>
+                  </div>
+                  {group.locked ? (
+                    <span className="text-xs text-muted-foreground">{t('Required')}</span>
+                  ) : null}
+                  <Switch
+                    checked={groupEnabled}
+                    disabled={isSaving || group.locked}
+                    aria-label={t('Automatic access for {{name}}', {
+                      name: t(GROUP_LABELS[group.id])
+                    })}
+                    onClick={(event) => event.stopPropagation()}
+                    onCheckedChange={(checked) => toggleGroup(group.id, checked)}
+                  />
+                </summary>
+                <div className="mt-3 grid gap-2 border-t border-border pt-3">
+                  {[...new Set(group.domains)].map((domain) => (
+                    <label key={domain} className="flex items-center justify-between gap-3 text-xs">
+                      <code className="break-all text-foreground">{domain}</code>
+                      <Switch
+                        size="sm"
+                        disabled={isSaving || !groupEnabled || group.locked}
+                        checked={groupEnabled && !draft.disabledOpenScienceDomains.includes(domain)}
+                        aria-label={t('Automatic access for {{domain}}', { domain })}
+                        onCheckedChange={(checked) => toggleBuiltInDomain(domain, checked)}
+                      />
+                    </label>
+                  ))}
+                </div>
+              </details>
+            )
+          })}
+        </div>
+      </section>
 
-          role="alert"
-        >
+      <TrustedPrivateServices
+        rules={draft.trustedPrivateDestinations ?? []}
+        disabled={isSaving}
+        onEditingChange={setPrivateEditing}
+        onChange={(rules) => {
+          setMessage(undefined)
+          setDraft({ ...draft, trustedPrivateDestinations: rules })
+        }}
+      />
+
+      {message?.kind === 'error' ? (
+        <InlineNotice level="error" role="alert">
           {message.text}
         </InlineNotice>
       ) : message ? (
@@ -400,10 +632,38 @@ const NotebookNetworkDomainsForm = (): React.JSX.Element => {
           {message.text}
         </p>
       ) : null}
-      <div className="flex justify-end">
-        <Button type="button" onClick={() => void save()} disabled={isSaving}>
-          {isSaving ? t('Saving…') : t('Save changes')}
-        </Button>
+      <div className="sticky bottom-0 -mx-5 border-t border-border bg-card px-5 py-3">
+        <p className="mb-3 text-xs leading-5 text-muted-foreground">
+          {t('Saving rules resets protected connections and may interrupt transfers.')}
+        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs text-muted-foreground" role="status">
+            {dirty ? t('Unsaved changes') : t('No unsaved changes')}
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              disabled={isSaving || privateEditing}
+              onClick={() => {
+                setDraft(saved)
+                setBaseline(saved)
+                setBaseAllowedDomains(saved.allowedDomains)
+                setNewDomain('')
+                setDomainError('')
+                setMessage(undefined)
+              }}
+            >
+              {t('Cancel')}
+            </Button>
+            <Button
+              type="button"
+              onClick={() => void save()}
+              disabled={isSaving || privateEditing || Boolean(newDomain)}
+            >
+              {isSaving ? t('Saving…') : t('Save changes')}
+            </Button>
+          </div>
+        </div>
       </div>
     </div>
   )

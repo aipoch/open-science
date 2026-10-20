@@ -1,4 +1,3 @@
-import { registerSettingsWindowIpcHandlers } from '../settings-window-ipc'
 import { registerCliInstallIpcHandlers, type CliCommandOwner } from '../cli-install/ipc'
 import { registerFileSaveHandlers, type RegisterFileSaveHandlersOptions } from '../file-save'
 import { registerGithubIpcHandlers, type GithubCommandOwner } from '../github-ipc'
@@ -8,10 +7,11 @@ import type { ManagedFileVersionService } from '../managed-file-versions/service
 import type { NotebookInputRegistry } from '../notebook/input-registry'
 import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
 import { registerWindowFindIpcHandlers } from '../window-find-ipc'
-import { registerWindowIpcHandlers } from '../window-ipc'
+import { registerWindowCloseIpcHandler } from '../window-ipc'
 import { createElectronSurfaceAdapter } from './adapter'
 
 type DesktopUtilitiesOwners = {
+  fileSaveCommands?: import('../file-save').FileSaveCommands
   resolveManagedFilePath: NonNullable<RegisterFileSaveHandlersOptions['resolveManagedFilePath']>
   managedFileVersions: Pick<ManagedFileVersionService, 'openLatest' | 'openVersion'>
   notebookInputs: Pick<NotebookInputRegistry, 'openPreviewKey'>
@@ -22,6 +22,7 @@ type DesktopUtilitiesOwners = {
 }
 
 export const createDesktopUtilitiesElectronSurface = ({
+  fileSaveCommands,
   resolveManagedFilePath,
   managedFileVersions,
   notebookInputs,
@@ -31,26 +32,24 @@ export const createDesktopUtilitiesElectronSurface = ({
   cli
 }: DesktopUtilitiesOwners): NamedElectronSurfaceAdapter =>
   createElectronSurfaceAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({
-      resolveManagedFilePath,
-      openLatestManagedFile: (source, request) =>
-        managedFileVersions.openLatest({ source, ...request }),
-      openManagedFileVersion: (source, request) =>
-        managedFileVersions.openVersion(
-          { source, projectId: request.projectId, fileId: request.fileId },
-          request.versionId
-        ),
-      openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
-      translate
-    })
+    registerFileSaveHandlers(
+      {
+        resolveManagedFilePath,
+        openLatestManagedFile: (source, request) =>
+          managedFileVersions.openLatest({ source, ...request }),
+        openManagedFileVersion: (source, request) =>
+          managedFileVersions.openVersion(
+            { source, projectId: request.projectId, fileId: request.fileId },
+            request.versionId
+          ),
+        openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
+        translate
+      },
+      fileSaveCommands
+    )
     registerLogsIpcHandlers(logs)
     registerGithubIpcHandlers({}, github)
     registerCliInstallIpcHandlers(cli)
-    registerWindowIpcHandlers()
-    const removeSettingsWindow = registerSettingsWindowIpcHandlers()
-    const removeFind = registerWindowFindIpcHandlers()
-    return () => {
-      removeSettingsWindow()
-      removeFind()
-    }
+    registerWindowCloseIpcHandler()
+    return registerWindowFindIpcHandlers()
   })

@@ -5,7 +5,7 @@ test('Settings covers the persistent recovery alert until the modal closes', asy
   await page.goto('/?catalog')
   const alert = page.getByTestId('session-persistence-alert')
   await expect(alert).toBeVisible()
-  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
 
@@ -41,7 +41,7 @@ test('quit recovery stays actionable above Settings without raising background n
   page
 }) => {
   await page.goto('/?quit&catalog')
-  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
   const quit = page

@@ -222,7 +222,8 @@ describe('PermissionsPanel', () => {
     expect(restore).not.toBeNull()
     await act(async () => restore!.click())
     expect(
-      container.querySelector<HTMLButtonElement>('[aria-label="Defaults restored"]')?.disabled
+      container.querySelector<HTMLButtonElement>('[aria-label="Default permissions present"]')
+        ?.disabled
     ).toBe(true)
     const revoke = container.querySelector<HTMLButtonElement>(
       `[aria-label^="Revoke ${complete.grants[0].capabilityLabel}"]`
@@ -231,7 +232,7 @@ describe('PermissionsPanel', () => {
     await act(async () => revoke!.click())
 
     expect(usePermissionGrantsStore.getState().missingDefaultGlobalGrantCount).toBe(1)
-    expect.soft(container.querySelector('[aria-label="Defaults restored"]')).toBeNull()
+    expect.soft(container.querySelector('[aria-label="Default permissions present"]')).toBeNull()
     const restoreAgain = container.querySelector<HTMLButtonElement>(
       '[aria-label="Restore defaults"]'
     )
@@ -255,7 +256,7 @@ describe('PermissionsPanel', () => {
     await act(async () => root.render(<PermissionsPanel />))
     const row = container.querySelector('[data-slot="permission-row"]')!
     expect(row.textContent).toContain('Command details unavailable for this permission')
-    expect(row.textContent).toContain('Approved ')
+    expect(row.textContent).toContain('Added ')
     expect(row.textContent).not.toContain('Git: working tree status')
     expect(row.textContent).not.toContain('historical')
   })
@@ -438,7 +439,8 @@ describe('PermissionsPanel', () => {
     await vi.waitFor(() => {
       expect(restoreDefaults).toHaveBeenCalledOnce()
       expect(
-        document.body.querySelector<HTMLButtonElement>('[aria-label="Defaults restored"]')?.disabled
+        document.body.querySelector<HTMLButtonElement>('[aria-label="Default permissions present"]')
+          ?.disabled
       ).toBe(true)
       expect(document.body.textContent).toContain('Shell')
       expect(document.body.textContent).toContain('Use Skills')
@@ -455,7 +457,7 @@ describe('PermissionsPanel', () => {
     await act(async () => root.render(<PermissionsPanel />))
 
     const restore = document.body.querySelector<HTMLButtonElement>(
-      '[aria-label="Defaults restored"]'
+      '[aria-label="Default permissions present"]'
     )
     expect(restore?.disabled).toBe(true)
     restore?.click()
@@ -528,8 +530,8 @@ describe('PermissionsPanel', () => {
     })
     await act(async () => root.render(<PermissionsPanel />))
     const rows = container.querySelectorAll('[data-slot="permission-row"]')
-    expect(rows[0].textContent).toContain('Approved ')
-    expect(rows[1].textContent).toContain('Approval time unknown')
+    expect(rows[0].textContent).toContain('Added ')
+    expect(rows[1].textContent).toContain('Added time unknown')
   })
 
   it('renders grouped grants with a scope filter and per-row revoke control', async () => {

@@ -1,14 +1,18 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ArtifactReproducibilityCheckRequest } from '../../shared/artifact-reproducibility'
 import { registerArtifactReproducibilityIpcHandlers } from './artifact-reproducibility-ipc'
 
 const handlers = new Map<string, (event: never, request: never) => unknown>()
 
-vi.mock('../ipc-handler-registry', () => ({
-  ipcMainHandle: (channel: string, handler: (event: never, request: never) => unknown) =>
-    handlers.set(channel, handler)
-}))
+import { configureIpcHandlerRegistry, disposeIpcHandlerRegistry } from '../ipc-handler-registry'
+configureIpcHandlerRegistry({
+  handle: (channel, handler) => handlers.set(channel, handler),
+  removeHandler: (channel) => {
+    handlers.delete(channel)
+  }
+})
+afterEach(() => disposeIpcHandlerRegistry())
 
 const request: ArtifactReproducibilityCheckRequest = {
   projectId: 'project-1',
@@ -47,7 +51,7 @@ describe('artifact reproducibility IPC', () => {
     const sender = {
       id: 17,
       once: vi.fn((_event, listener) => {
-        destroyed = listener
+        if (_event === 'destroyed') destroyed = listener
       }),
       isDestroyed: vi.fn(() => false),
       send: vi.fn()
@@ -128,7 +132,6 @@ describe('artifact reproducibility IPC', () => {
       { sender } as never,
       { attemptId: 'attempt-1' } as never
     )
-    destroyed()
 
     expect(owner.start).toHaveBeenCalledWith(request, 17, expect.any(Function))
     expect(
@@ -139,7 +142,6 @@ describe('artifact reproducibility IPC', () => {
       attemptId: 'attempt-1'
     })
     expect(owner.cancel).toHaveBeenCalledWith({ attemptId: 'attempt-1' }, 17)
-    expect(owner.cancelOwner).toHaveBeenCalledWith(17)
     await expect(
       handlers.get('artifacts:list-reproducibility-receipts')?.(
         { sender } as never,
@@ -152,7 +154,7 @@ describe('artifact reproducibility IPC', () => {
         { ...request, receiptChecksum: 'a'.repeat(64), suggestedName: 'result.csv' } as never
       )
     ).resolves.toEqual({ saved: true })
-    expect(exportReceipt).toHaveBeenCalledWith(sender, {
+    expect(exportReceipt).toHaveBeenCalledWith('17', {
       ...request,
       receiptChecksum: 'a'.repeat(64),
       suggestedName: 'result.csv'
@@ -163,7 +165,7 @@ describe('artifact reproducibility IPC', () => {
         environmentLockRequest as never
       )
     ).resolves.toEqual({ saved: true })
-    expect(exportEnvironmentLock).toHaveBeenCalledWith(sender, environmentLockRequest)
+    expect(exportEnvironmentLock).toHaveBeenCalledWith('17', environmentLockRequest)
     await handlers.get('artifacts:describe-environment-lock')?.(
       { sender } as never,
       environmentLockRequest as never
@@ -178,13 +180,15 @@ describe('artifact reproducibility IPC', () => {
       { sender } as never,
       { projectId: 'project-1' } as never
     )
-    expect(importEnvironmentLock).toHaveBeenCalledWith(sender, { projectId: 'project-1' })
+    expect(importEnvironmentLock).toHaveBeenCalledWith('17', { projectId: 'project-1' })
     await expect(
       handlers.get('artifacts:get-reproducibility-check-log')?.(
         { sender } as never,
         { ...request, receiptChecksum: 'a'.repeat(64) } as never
       )
     ).resolves.toEqual({ attemptId: 'attempt-1' })
+    destroyed()
+    expect(owner.cancelOwner).toHaveBeenCalledWith(17)
   })
 
   it('does not publish after the renderer has been destroyed', async () => {
@@ -226,6 +230,7 @@ describe('artifact reproducibility IPC', () => {
       request as never
     )
     sender.isDestroyed.mockReturnValue(true)
+    sender.once.mock.calls.find(([event]) => event === 'destroyed')?.[1]()
     publish({ attemptId: 'attempt-1' })
 
     expect(sender.send).not.toHaveBeenCalled()
@@ -262,6 +267,7 @@ describe('artifact reproducibility IPC', () => {
       )
       expect(owner.start).not.toHaveBeenCalled()
       sender.isDestroyed.mockReturnValue(true)
+      sender.once.mock.calls.find(([event]) => event === 'destroyed')?.[1]()
       const rejected = expect(pending).rejects.toThrow()
       admit()
       await rejected

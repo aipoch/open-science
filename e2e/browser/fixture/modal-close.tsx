@@ -1,32 +1,34 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
-import { useRef, useState } from 'react'
-import { createRoot } from 'react-dom/client'
-import { SpecialistMarketplace } from '@/pages/settings/SpecialistMarketplace'
-import { useMarketplaceStore } from '@/stores/marketplace-store'
-import { LiteratureAttachments } from '@/pages/literature/LiteratureAttachments'
-import { SkillEditLoader } from '@/pages/settings/SkillEditor'
-import { MemoryPanel } from '@/pages/settings/MemoryPanel'
-import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
-import { initI18n } from '@/i18n'
+import { SessionPackageImportError } from '@/components/SessionPackageImportError'
 import { TooltipProvider } from '@/components/ui/tooltip'
-import { RepairFrameworkDialog } from '@/pages/settings/RepairFrameworkDialog'
-import { SkillMarketplaceUpdateDialog } from '@/pages/settings/SkillMarketplaceUpdateDialog'
-import { XaiOAuthSignInDialog } from '@/pages/settings/XaiOAuthSignInDialog'
+import { initI18n } from '@/i18n'
 import {
   CollectionEditorDialog,
   type CollectionEditorDialogHandle
-} from '@/pages/literature/CollectionEditorDialog'
-import { ArtifactLiteratureDetailDialog } from '@/pages/workspace/ArtifactLiteratureDetailDialog'
-import { SessionPackageImportError } from '@/components/SessionPackageImportError'
-import { usePackageOperationStore } from '@/stores/package-operation-store'
-import { ProvidersPanel } from '@/pages/settings/ProvidersPanel'
+} from '@/pages/literature/collections/CollectionEditorDialog'
+import { LiteratureAttachments } from '@/pages/literature/detail/LiteratureAttachments'
 import { ConnectorsPanel } from '@/pages/settings/ConnectorsPanel'
-import { TagsPanel } from '@/pages/settings/TagsPanel'
+import { MemoryPanel } from '@/pages/settings/MemoryPanel'
+import { ProvidersPanel } from '@/pages/settings/ProvidersPanel'
+import { RepairFrameworkDialog } from '@/pages/settings/RepairFrameworkDialog'
+import { SkillEditLoader } from '@/pages/settings/SkillEditor'
+import { SkillMarketplaceUpdateDialog } from '@/pages/settings/SkillMarketplaceUpdateDialog'
+import { SpecialistMarketplace } from '@/pages/settings/SpecialistMarketplace'
 import { SpecialistsPanel } from '@/pages/settings/SpecialistsPanel'
+import { TagsPanel } from '@/pages/settings/TagsPanel'
+import { XaiOAuthSignInDialog } from '@/pages/settings/XaiOAuthSignInDialog'
+import { ArtifactLiteratureDetailDialog } from '@/pages/workspace/ArtifactLiteratureDetailDialog'
+import { useMarketplaceStore } from '@/stores/marketplace-store'
+import { createInitialMemoryState, useMemoryStore } from '@/stores/memory-store'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
-import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
-import { literatureItemInputSchema } from '../../../src/shared/literature'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
+import { useRef, useState } from 'react'
+import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const noop = (): void => {}
@@ -55,6 +57,7 @@ window.api = {
     })
   },
   literature: { onChanged: () => noop, search: async () => ({ entries: [] }) },
+  specialist: { inspectGitHubMarketplaceSource: done, removeMarketplaceSource: done },
   tags: { onChanged: () => noop },
   specialists: { list: async () => useSpecialistStore.getState().items }
 } as unknown as Window['api']
@@ -377,4 +380,8 @@ export function Fixture(): React.JSX.Element {
     </TooltipProvider>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+createRoot(document.getElementById('root')!).render(
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {<Fixture />}
+  </LiteratureRendererProvider>
+)

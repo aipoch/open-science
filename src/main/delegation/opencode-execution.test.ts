@@ -36,7 +36,7 @@ const provider = {
   baseUrl: 'https://provider.example/v1',
   model: 'certification-model',
   key: 'certification-key',
-  apiEndpoints: ['openai' as const]
+  apiEndpoints: ['chat-completions' as const]
 }
 
 const modelConfig = (
@@ -292,7 +292,10 @@ describe('OpenCode delegated-work production adapter', () => {
     }
     const reservation = await harness.execution.reserve(1)
     const running = harness.execution.run(input, reservation.slotIds[0])
-    const failed = expect(running.completion).rejects.toBeInstanceOf(DelegateExecutionCleanupError)
+    const failed = expect(running.completion).resolves.toMatchObject({
+      status: 'completed',
+      cleanupError: expect.any(DelegateExecutionCleanupError)
+    })
     await vi.waitFor(() => expect(harness.controls.get(input.attemptId)?.requests).toHaveLength(1))
     const firstControl = harness.controls.get(input.attemptId)!
     firstControl.complete()

@@ -468,6 +468,38 @@ describe('PlanService', () => {
     })
   })
 
+  it('keeps content approval pending across elapsed time and provider wait cancellation', async () => {
+    vi.useFakeTimers()
+    const { service, interactions, context, status } = setup()
+    try {
+      await service.generate({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        executionId: 'execution-1',
+        interactionId: 'interaction-1',
+        content
+      })
+      const wait = interactions.parkApproval('session-1', 'interaction-1')
+      const settled = vi.fn()
+      const observed = wait.then(settled, settled)
+      await vi.advanceTimersByTimeAsync(24 * 60 * 60 * 1000)
+      expect(settled).not.toHaveBeenCalled()
+      expect(context().plan?.approval).toBe('pending')
+      expect(status()).toBe('waiting-plan-approval')
+      interactions.rejectApproval('session-1', 'Provider request timed out')
+      await observed
+      expect(settled).toHaveBeenCalledOnce()
+      expect(context().plan?.approval).toBe('pending')
+      await expect(service.getProjection('project-1', 'session-1')).resolves.toMatchObject({
+        approval: 'pending',
+        lifecycle: 'awaiting_approval'
+      })
+    } finally {
+      interactions.clearAll('test complete')
+      vi.useRealTimers()
+    }
+  })
+
   it('reconstructs a pending Plan after the unpublished Artifact reader is lost on restart', async () => {
     const { service, dependencies } = setup()
     const generated = await service.generate({
@@ -1065,6 +1097,7 @@ describe('PlanService', () => {
       sessionId: 'session-1',
       feedback: '批准执行'
     })
+    expect(context().plan?.approval).toBe('pending')
     const queuedFeedback = await service.queueReviewFeedbackDelivery({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -1139,6 +1172,17 @@ describe('PlanService', () => {
       approval: 'pending',
       document: { task_summary: 'Analyze by cohort' }
     })
+    await expect(
+      service.respond({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionId: generated.projection.artifactVersionId,
+        expectedRevision: generated.projection.revision,
+        decision: 'approved',
+        interactionIsLive: true
+      })
+    ).rejects.toMatchObject({ code: 'revision-conflict' })
+    expect(context().plan?.approval).toBe('pending')
     expect(context().plan).not.toHaveProperty('reviewFeedbackMessageId')
     expect(context().plan).not.toHaveProperty('delivery')
   })

@@ -1,0 +1,10 @@
+{"name":"sparse right numeric table keeps row identity", "proseX":40,"numericX":330,"graphic":"none","translated":false}
+{"name":"sparse left numeric table keeps row identity", "proseX":310,"numericX":210,"graphic":"none","translated":false}
+{"name":"distant numeric column without graphic proof remains protected", "proseX":310,"numericX":80,"graphic":"none","translated":false}
+{"name":"intervening straight rule does not prove an independent plot", "proseX":310,"numericX":80,"graphic":"line","translated":false}
+{"name":"intervening rectangular cell border does not prove an independent plot", "proseX":310,"numericX":80,"graphic":"rectangle","translated":false}
+{"name":"invisible plot cannot release numeric row protection", "proseX":310,"numericX":80,"graphic":"transparent-curve","translated":false}
+{"name":"visible plotted curve separates left chart ticks from prose", "proseX":310,"numericX":80,"graphic":"curve","translated":true}
+{"name":"visible plotted curve separates right chart ticks from prose", "proseX":40,"numericX":430,"graphic":"curve","translated":true}
+{"name": "plotted Form owns numeric ticks beside prose", "proseX": 40, "numericX": 430, "graphic": "form-curve", "translated": true}
+{"name": "rectangular Form table does not release row protection", "proseX": 40, "numericX": 430, "graphic": "form-table", "translated": false}

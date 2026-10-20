@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { removeComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 import { useCallback, useLayoutEffect, useRef, useState } from 'react'
 
@@ -53,6 +54,9 @@ type QueueLifecycleOptions = {
 const useLifecycleSync = ({
   isSessionPersistenceHydrated
 }: LifecycleSyncOptions): LifecycleSyncResult => {
+  const recoveryEpoch = useDesktopRuntimeRecoveryStore((state) =>
+    state.phase === 'connected' || state.phase === 'reconciling' ? state.epoch : -state.epoch - 1
+  )
   const [notice, setNotice] = useState<ExternalSessionNotice | undefined>()
   const isProjectPersistenceReady = useProjectStore((state) => state.isLoaded)
   const isHydrated = isSessionPersistenceHydrated && isProjectPersistenceReady
@@ -76,6 +80,8 @@ const useLifecycleSync = ({
   }, [flushPendingActions, isHydrated])
 
   useLayoutEffect(() => {
+    if (recoveryEpoch < 0) return
+    lifecycleClientIdRef.current = undefined
     let isSubscribed = true
     const pendingActions = pendingActionsRef.current
     const applyOrQueue = (
@@ -323,7 +329,7 @@ const useLifecycleSync = ({
       removeSessionDeleted()
       pendingActions.clear()
     }
-  }, [flushPendingActions])
+  }, [flushPendingActions, recoveryEpoch])
 
   const dismissNotice = useCallback(() => setNotice(undefined), [])
   const viewNotice = useCallback(() => {

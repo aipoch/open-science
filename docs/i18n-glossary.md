@@ -29,8 +29,8 @@ are off, so the periods and colons inside an English sentence stay part of the k
   `many`, and `other` categories, so `_one`, `_many`, and `_other` entries are required. The `_many`
   category is selected for values such as 1,000,000 and can usually reuse the `_other` translation.
   Russian requires the complete `_one`, `_few`, `_many`, and `_other` set for every counted key.
-- **Context** disambiguates two different meanings that share one English string — `t('Compute', {
-context: 'noun' })` keys `Compute_noun`. Only translated catalogs carry the suffixed entry;
+- **Context** disambiguates two different meanings that share one English string — `t('Archive', {
+context: 'verb' })` keys `Archive_verb`. Only translated catalogs carry the suffixed entry;
   English ignores context and renders the base key.
 - **Placeholders and `<tag>` markers must survive translation.** A dropped `{{name}}` renders a
   blank where a value belongs, and a dropped tag makes `Trans` discard the wrapped element. Never

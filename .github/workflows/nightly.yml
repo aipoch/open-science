@@ -20,6 +20,8 @@ on:
           - runtime-source
           - macos-x64
           - linux-cli
+          - linux-arm64
+          - windows-package
 
 # Build and publication preparation run without write access. Only the separate workflow_run
 # publisher receives contents:write, and it never checks out or executes the triggering revision.
@@ -28,7 +30,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-cli' && '-linux-cli' || '' }}
+  group: nightly-build-${{ github.event_name }}${{ inputs.dry_run == 'linux-arm64' && '-linux-arm64' || inputs.dry_run == 'linux-cli' && '-linux-cli' || inputs.dry_run == 'windows-package' && '-windows-package' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -59,14 +61,19 @@ jobs:
     needs: plan
     if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'runtime-source'
     uses: ./.github/workflows/build.yml
+    # Reusable Build declares OIDC for conditional Windows signing; callers must allow it
+    # even when this run selects an unsigned or macOS-only build. Keep this job-scoped.
+    permissions:
+      contents: read
+      id-token: write
     secrets: inherit
     with:
       nightly: true
       # A manual `macos-x64` dispatch runs only the Intel packaging job (the heap-sensitive Vite
-      # renderer build) and skips verify. The linux-cli dry-run builds and smoke-tests Linux only;
-      # unrelated certification and publication preparation stay skipped.
-      skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' }}
-      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
+      # renderer build) and skips verify. Linux/Windows package dry-runs build and smoke-test
+      # only their selected platform; certification and publication preparation stay skipped.
+      skip_verify: ${{ inputs.dry_run == 'macos-x64' || inputs.dry_run == 'linux-cli' || inputs.dry_run == 'linux-arm64' || inputs.dry_run == 'windows-package' }}
+      platform_name: ${{ inputs.dry_run == 'macos-x64' && 'macos-x64' || inputs.dry_run == 'linux-arm64' && 'linux-arm64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}
 
   # Scheduled coverage is advisory for the build only: it stays absent from prepare.needs so artifacts
   # and evidence remain diagnosable, but nightly-publish.yml refuses to roll the tag unless every
@@ -74,7 +81,7 @@ jobs:
   # job as a blocking focused dry-run while build/package/publish preparation stay skipped.
   runtime-certification:
     needs: plan
-    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli'
+    if: needs.plan.outputs.should_build == 'true' && inputs.dry_run != 'macos-x64' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'
     uses: ./.github/workflows/runtime-certification.yml
     with:
       # Scheduled failures keep the build green so prepare still runs; publication gates on them.
@@ -85,14 +92,24 @@ jobs:
     if: inputs.dry_run != 'macos-x64'
     uses: ./.github/workflows/package-smoke.yml
     with:
-      platform_name: ${{ inputs.dry_run == 'linux-cli' && 'linux-x64' || '' }}
+      platform_name: ${{ inputs.dry_run == 'linux-arm64' && 'linux-arm64' || inputs.dry_run == 'linux-cli' && 'linux-x64' || inputs.dry_run == 'windows-package' && 'windows-x64' || '' }}
+
+  # Repack the same-run payload and verify native CLI installation before publication.
+  cli-artifacts:
+    needs: [build, package-smoke]
+    if: inputs.dry_run != 'macos-x64'
+    uses: ./.github/workflows/runtime-packages.yml
+    with:
+      desktop_run_id: ${{ format('{0}', github.run_id) }}
+      nightly: true
+      target: ${{ inputs.dry_run == 'linux-arm64' && 'linux-arm64-gnu' || inputs.dry_run == 'linux-cli' && 'linux-x64-gnu' || inputs.dry_run == 'windows-package' && 'win32-x64' || 'all' }}
 
   # Run desktop behavior checks inside the same read-only Nightly run. Failures keep the build green
   # and independently rerunnable so artifacts stay diagnosable, but nightly-publish.yml refuses to
   # roll the tag unless every regression job succeeded.
   regression:
     needs: [build, package-smoke]
-    if: inputs.dry_run != 'linux-cli'
+    if: inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'
     uses: ./.github/workflows/desktop-regression.yml
     with:
       # Advisory for the build only; publication gates on the real job conclusions.
@@ -103,18 +120,28 @@ jobs:
   # separate publisher as artifacts, never as executable code.
   prepare:
     name: Prepare nightly publish artifact
-    needs: [plan, build, package-smoke]
-    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && inputs.dry_run != 'linux-cli'
+    needs: [plan, build, package-smoke, cli-artifacts]
+    if: needs.build.result == 'success' && needs.package-smoke.result == 'success' && needs.cli-artifacts.result == 'success' && inputs.dry_run != 'linux-cli' && inputs.dry_run != 'linux-arm64' && inputs.dry_run != 'windows-package'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download all build artifacts
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         with:
           path: artifacts
           merge-multiple: true
+
+      - name: Setup Node
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+
+      - name: Verify all five nightly CLI archives
+        env:
+          OPEN_SCIENCE_RUNTIME_NIGHTLY: 'true'
+        run: node scripts/runtime-archives.mjs verify artifacts
 
       - name: Aggregate release certification evidence
         run: >-
@@ -127,26 +154,27 @@ jobs:
         working-directory: artifacts
         run: |
           shopt -s nullglob
-          files=(*.dmg *.zip *.exe *.AppImage *.deb)
+          files=(*.dmg *.zip *.exe *.AppImage *.deb open-science-cli-*.tar.gz)
           if [ ${#files[@]} -gt 0 ]; then
             sha256sum "${files[@]}" > SHA256SUMS.txt
             cat SHA256SUMS.txt
           fi
 
       - name: Upload prepared nightly metadata
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: nightly-ready
-          retention-days: 1
+          retention-days: 5
           path: |
             artifacts/SHA256SUMS.txt
+            artifacts/CLI-SHA256SUMS.txt
             artifacts/RELEASE-CERTIFICATION.json
           if-no-files-found: error
 
   # Scheduled failures open or refresh one tracking issue; a later scheduled success closes it.
   report:
     name: Report scheduled outcome
-    needs: [plan, build, runtime-certification, package-smoke, regression, prepare]
+    needs: [plan, build, runtime-certification, package-smoke, cli-artifacts, regression, prepare]
     if: ${{ always() && github.event_name == 'schedule' }}
     # Reporting must never turn a publishable Nightly into a failed workflow_run for the publisher.
     continue-on-error: true

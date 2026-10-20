@@ -2,7 +2,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { InlineNotice } from '@/components/ui/inline-notice'
 /* Hallmark · component: device authorization · genre: modern-minimal · theme: project Settings tokens */
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 · contrast: pass (40–41) · slop: pass */
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { Copy, ExternalLink, LoaderCircle, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 

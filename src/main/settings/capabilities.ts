@@ -1,11 +1,11 @@
 import type { PackageMirror } from '../../shared/mirror'
-import type { NotebookLanguage } from '../../shared/notebook'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   AppIconVariant,
   ProjectFilesFilterPreference,
-  ReasoningEffort,
   SetPackageMirrorRequest
 } from '../../shared/settings'
 import type { CloseActionPreference } from '../../shared/window-controls'

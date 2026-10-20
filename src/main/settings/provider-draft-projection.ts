@@ -1,12 +1,15 @@
 import type { ProviderDraft } from '../../shared/settings'
 import {
-  defaultVendorModel,
   isOfficialVendorId,
-  resolveCustomModelContextWindow,
   resolveVendorBaseUrl,
   resolveVendorModelApiEndpoints,
-  resolveVendorOpenAiBaseUrl
-} from '../../shared/provider-registry'
+  resolveVendorChatCompletionsBaseUrl,
+  resolveVendorResponsesBaseUrl
+} from '@aipoch/providers'
+import {
+  defaultVendorModel,
+  resolveCustomModelContextWindow
+} from '../../shared/provider-model-policy'
 import type { ResolvedProvider } from './provider-env'
 import { resolveCustomTokenLimits } from './provider-token-limits'
 
@@ -17,7 +20,8 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
       type: 'custom',
       vendorId: draft.vendorId,
       baseUrl: resolveVendorBaseUrl(draft.vendorId, draft.region),
-      openaiBaseUrl: resolveVendorOpenAiBaseUrl(draft.vendorId, draft.region),
+      chatCompletionsBaseUrl: resolveVendorChatCompletionsBaseUrl(draft.vendorId, draft.region),
+      responsesBaseUrl: resolveVendorResponsesBaseUrl(draft.vendorId, draft.region),
       model: draftModel,
       key: draft.key,
       apiEndpoints: resolveVendorModelApiEndpoints(draft.vendorId, draftModel)
@@ -41,7 +45,7 @@ export const resolveProviderDraft = (draft: ProviderDraft): ResolvedProvider => 
         }
       : {}),
     key: draft.key,
-    apiEndpoints: draft.apiEndpoints ?? ['anthropic'],
+    apiEndpoints: draft.apiEndpoints ?? ['messages'],
     ...(draft.type === 'custom' ? { reasoningEffortTransport: draft.reasoningEffortTransport } : {})
   }
 }

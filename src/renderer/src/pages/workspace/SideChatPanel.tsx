@@ -1,15 +1,16 @@
-import { AnnotationDragSource } from './annotations/AnnotationDragSource'
-import { annotationTransfers } from './annotations/annotation-transfer'
-import { SideChatAnnotationDrop } from './annotations/SideChatAnnotationDrop'
 import { AnnotationDraftCards } from './annotations/AnnotationCards'
-import { annotationValidationMessage } from './annotations/annotation-validation-message'
+import { AnnotationDragSource } from './annotations/AnnotationDragSource'
+import { SideChatAnnotationDrop } from './annotations/SideChatAnnotationDrop'
 import { requestAnnotationReveal } from './annotations/annotation-reveal'
+import { annotationTransfers } from './annotations/annotation-transfer'
+import { annotationValidationMessage } from './annotations/annotation-validation-message'
 /*
  * Hallmark · modern-minimal · quiet utility · palette: existing semantic theme
  * Macrostructure: integrated in-flow side panel · pre-emit critique: P5 H5 E4 S5 R5 V4
  */
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { useSmoothStreamingContent } from '@/components/streamdown/use-smooth-streaming-content'
+import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Textarea } from '@/components/ui/textarea'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
@@ -25,11 +26,11 @@ import {
   type SetStateAction
 } from 'react'
 import { useTranslation } from 'react-i18next'
+import type { Annotation } from '../../../../shared/annotation-contract'
 import {
   parseSideChatAnnotationText,
   sideChatAnnotationText,
   validateAnnotations,
-  type Annotation,
   type SideChatAnnotationItem
 } from '../../../../shared/annotations'
 
@@ -46,6 +47,7 @@ type SideChatPanelProps = Readonly<{
   onCancel: () => void
   onClose: () => void
   controls?: ReactNode
+  headerTitle?: ReactNode
   headerAction?: ReactNode
   sendDisabledReason?: string
   onRetryRestore?: () => void
@@ -164,6 +166,7 @@ const SideChatPanel = ({
   onCancel,
   onClose,
   controls,
+  headerTitle,
   headerAction,
   sendDisabledReason,
   onRetryRestore
@@ -257,28 +260,35 @@ const SideChatPanel = ({
   return (
     <section data-testid="side-chat-panel" className="h-full min-h-0">
       <div className="flex h-full min-h-0 flex-col">
-        <div
-          data-testid="side-chat-header"
-          className="relative z-20 flex h-12 shrink-0 items-center gap-2 border-b border-border-200 bg-bg-000 px-4 pt-1"
-        >
-          <div className="flex-1" />
-          {headerAction}
-          <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
+          <div
+            data-testid="side-chat-header"
+            className="relative z-20 flex shrink-0 items-center gap-1 border-b border-border-200 bg-bg-000 px-2 py-1"
+          >
+            <div className="min-w-0 flex-1">
+              {headerTitle ?? (
+                <span className="px-2 text-[13px] font-semibold">{t('Side chat')}</span>
+              )}
+            </div>
+            {headerAction}
             <Tooltip>
               <TooltipTrigger asChild>
-                <button
+                <Button
                   type="button"
-                  className="grid size-7 place-items-center rounded-md text-text-300 transition-colors duration-150 hover:bg-bg-200 hover:text-text-000 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:bg-bg-300 motion-reduce:transition-none"
+                  variant="ghost"
+                  size="icon"
                   aria-label={t('Close Side chat')}
                   onClick={onClose}
                 >
                   <X className="size-4" aria-hidden="true" />
-                </button>
+                </Button>
               </TooltipTrigger>
-              <TooltipContent side="top">{t('Close Side chat')}</TooltipContent>
+              <TooltipContent side="bottom" align="end">
+                {t('Close Side chat')}
+              </TooltipContent>
             </Tooltip>
-          </TooltipProvider>
-        </div>
+          </div>
+        </TooltipProvider>
         <div
           data-testid="side-chat-message-viewport"
           className="relative min-h-0 flex-1 overflow-hidden"
@@ -394,7 +404,7 @@ const SideChatPanel = ({
         </div>
         <div
           data-testid="side-chat-composer"
-          className="relative z-20 flex shrink-0 flex-col gap-2 border-t border-border-200 bg-bg-000 px-4 py-3"
+          className="relative z-20 mx-4 mb-2 flex shrink-0 flex-col gap-2 rounded-2xl border border-border-200 bg-bg-000 px-3 py-2"
         >
           <SideChatAnnotationDrop
             chatId={view.id ?? view.sideSessionId ?? ''}
@@ -440,7 +450,7 @@ const SideChatPanel = ({
               value={view.draft}
               placeholder={t('Follow up…')}
               aria-label={t('Side chat follow up')}
-              className="max-h-28 min-h-8 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1 text-[15px] leading-6 text-text-000 shadow-none placeholder:text-text-300 focus-visible:border-transparent"
+              className="max-h-[200px] min-h-[36px] flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-relaxed text-text-000 shadow-none outline-none placeholder:text-text-300 focus-visible:border-transparent focus-visible:outline-none focus-visible:ring-0 md:text-[15px] dark:bg-transparent"
               onChange={(event) => onDraftChange(event.target.value)}
               onKeyDown={handleKeyDown}
             />
@@ -453,7 +463,7 @@ const SideChatPanel = ({
                 <TooltipTrigger asChild>
                   <button
                     type="button"
-                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
+                    className="grid size-8 shrink-0 place-items-center rounded-md bg-primary text-primary-foreground transition-colors duration-150 hover:bg-primary/80 focus-visible:keyboard-focus active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-primary motion-reduce:transition-none motion-reduce:active:translate-y-0"
                     disabled={
                       view.running
                         ? !view.sideSessionId

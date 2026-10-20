@@ -1,0 +1,5 @@
+{"name":"native-subscript-variable-is-not-millilitres","indexSize":7,"indexY":102,"sourceOnly":true}
+{"name":"native-superscript-variable-is-kept-as-math","indexSize":7,"indexY":97,"sourceOnly":true}
+{"name":"ordinary-unit-letters-remain-translatable","indexSize":10,"indexY":100,"sourceOnly":false}
+{"name":"smaller-letter-on-same-baseline-is-not-an-index","indexSize":7,"indexY":100,"sourceOnly":false}
+{"name":"indexed-variable-does-not-hide-neighboring-prose","indexSize":7,"indexY":102,"prose":"denotes the hidden layer width.","sourceOnly":false}

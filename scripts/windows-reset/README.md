@@ -91,9 +91,13 @@ needed to release OS resources. Small shared cache-parent markers also remain.
   target/ancestor junctions are refused. Do not rename folders or rewrite cache
   ownership markers to bypass a refusal; ask for manual support.
 - **Access denied, path too long, or locked file:** cleanup stops and returns exit
-  code 1. Some earlier files may already be removed. Configuration is processed
-  last to retain custom-path discovery when data deletion fails. Resolve the
-  reported failure and rerun the tool; it accepts already-missing folders.
+  code 1. Read-only attributes on application-managed Skill trees are cleared as
+  part of deleting the owned tree; an access-denied failure after that usually
+  means a file is locked or its ACL is not usable by the Windows account running
+  the reset. Some earlier files may already be removed. Configuration is
+  processed last to retain custom-path discovery when data deletion fails.
+  Resolve the reported failure and rerun the tool; it accepts already-missing
+  folders.
 
 Exit code 0 means completion, preview, or cancellation; read the final message.
 Process checks run before confirmation and again before each target is removed.

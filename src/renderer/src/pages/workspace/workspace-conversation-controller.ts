@@ -1,26 +1,27 @@
 import { i18next } from '@/i18n'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 
+import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import {
+  projectSessionActionability,
+  type ChatMessage,
+  type ChatSession,
+  type SessionActionabilityProjection
+} from '@/stores/session-store'
+import type { Annotation } from '../../../../shared/annotation-contract'
+import {
+  annotationRequiresImageInput,
+  sideChatAnnotationText
+} from '../../../../shared/annotations'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
-import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
 import {
   normalizeDelegationPolicy,
   type DelegationPolicy
 } from '../../../../shared/session-persistence'
-import {
-  annotationRequiresImageInput,
-  sideChatAnnotationText,
-  type Annotation
-} from '../../../../shared/annotations'
-import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
-import { imageAttachmentMimeType } from '../../../../shared/uploads'
-import type {
-  ChatMessage,
-  ChatSession,
-  SessionActionabilityProjection
-} from '@/stores/session-store'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import type { SessionAgentConfiguration } from '../../../../shared/settings'
+import { imageAttachmentMimeType } from '../../../../shared/uploads'
 
 import {
   docIsEmpty,
@@ -32,6 +33,7 @@ import {
 } from './composer/composer-doc'
 import { selectActiveBranchPlan } from './session-plan/active-branch-plan'
 import { respondToSessionPlan } from './session-plan/respond-to-session-plan'
+import { sideChatBlock } from './side-chat-availability'
 import type { WorkspaceComposerController } from './workspace-composer-controller'
 import type { EditedMessageSendResult } from './workspace-edited-message'
 import {
@@ -40,7 +42,6 @@ import {
 } from './workspace-message-queue-controller'
 import { isWorkspacePresentationRevealing } from './workspace-presentation-revealing'
 import type { WorkspaceSessionController } from './workspace-session-controller'
-import { sideChatBlock } from './side-chat-availability'
 
 type WorkspaceConversationRuntime = Pick<
   WorkspaceAgentRuntime,
@@ -73,7 +74,14 @@ type ConversationComposer = {
   actions: Pick<WorkspaceComposerController['actions'], 'setError'>
   lifecycle: Pick<
     WorkspaceComposerController['lifecycle'],
-    'captureSend' | 'clearDraft' | 'restoreFailedSend' | 'discardSnapshot' | 'captureRevision'
+    | 'captureSend'
+    | 'consumePdfProseReading'
+    | 'preserveAdmissionContext'
+    | 'bindAdmissionContext'
+    | 'clearDraft'
+    | 'restoreFailedSend'
+    | 'discardSnapshot'
+    | 'captureRevision'
   >
 }
 
@@ -123,6 +131,7 @@ type WorkspaceConversationControllerOptions = {
   sideChat?: Readonly<{ start: (text: string) => Promise<boolean> }>
   sideChatOpen: boolean
   resetNewConversationSettings: () => void
+  onNewSessionAppended?: (message: { sessionId: string; messageId: string }) => void
   abortFixLoop: (request: { projectId: string; appSessionId: string }) => Promise<unknown>
   getSession: (sessionId: string) => ChatSession | undefined
   subscribeSessionChanges: (listener: () => void) => () => void
@@ -189,11 +198,14 @@ const usePlanProjectionRecovery = (
   const status = activeSession?.status
   const projection = activeSession?.activePlanProjection
   const hasRuntimePlan = Boolean(activeSession?.runtimeContext?.plan)
+  // Imported Plans are historical evidence, not recoverable execution authority.
+  const isImported = Boolean(activeSession?.packageOrigin)
 
   useEffect(() => {
     if (
       !sessionId ||
       !projectId ||
+      isImported ||
       projection ||
       !ports ||
       (status !== 'waiting-plan-approval' && !hasRuntimePlan)
@@ -233,11 +245,12 @@ const usePlanProjectionRecovery = (
       cancelled = true
       if (retryTimer !== undefined) window.clearTimeout(retryTimer)
     }
-  }, [hasRuntimePlan, ports, projectId, projection, sessionId, status])
+  }, [hasRuntimePlan, isImported, ports, projectId, projection, sessionId, status])
 
   return Boolean(
     ports &&
     sessionId &&
+    !isImported &&
     !projection &&
     (status === 'waiting-plan-approval' || hasRuntimePlan) &&
     errorSessionId === sessionId
@@ -274,12 +287,28 @@ const canSubmitImmediately = (options: WorkspaceConversationControllerOptions): 
   )
 }
 
+const canResume = (options: WorkspaceConversationControllerOptions): boolean =>
+  Boolean(
+    options.activeSession &&
+    options.isPersistenceReady &&
+    options.agentConfigurationReady &&
+    (options.actionability?.actions.startTurn.allowed ?? true) &&
+    !hasRuntimeInteraction(options) &&
+    !options.isTurnAdmissionBlocked &&
+    !options.activeSession.fixLoopActive &&
+    !options.activeSession.conversationGraphSyncBlocked &&
+    !options.activeSession.compacting &&
+    !options.session.view.specialist.barrierInFlight
+  )
+
 const canQueueDraft = (options: WorkspaceConversationControllerOptions): boolean => {
   const { activeSession, composer, session } = options
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    activeSession?.status === 'running' &&
+    activeSession &&
+    // Queue admission must share the composer's live ownership view across durable idle echoes.
+    projectSessionActionability(activeSession).activity === 'running' &&
     composer.view.transfers.length === 0 &&
     !composer.view.readingContext.isPending &&
     (!docIsEmpty(composer.view.doc) ||
@@ -317,7 +346,8 @@ const canQueueRevision = (options: WorkspaceConversationControllerOptions): bool
   return Boolean(
     options.isPersistenceReady &&
     options.agentConfigurationReady &&
-    activeSession?.status === 'running' &&
+    activeSession &&
+    projectSessionActionability(activeSession).activity === 'running' &&
     composer.view.transfers.length === 0 &&
     !options.isReviewing &&
     !options.sendPreparationInFlightSessionIds.includes(activeSession.id) &&
@@ -458,14 +488,46 @@ const useWorkspaceConversationController = (
             specialistId: activeSession.specialistId
           })
         ) {
+          composer.lifecycle.consumePdfProseReading(snapshot)
           composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
         }
         return
       }
 
       const snapshot = composer.lifecycle.captureSend(!branchInNewSession)
-      if (inFlightDraftKeysRef.current.has(snapshot.draftKey)) return
-      inFlightDraftKeysRef.current.add(snapshot.draftKey)
+      const retryOwner = snapshot.retrySessionOwner
+        ? current.getSession(snapshot.retrySessionOwner.sessionId)
+        : undefined
+      if (snapshot.retrySessionOwner) {
+        if (
+          !retryOwner ||
+          retryOwner.id !== snapshot.retrySessionOwner.sessionId ||
+          retryOwner.projectId !== snapshot.retrySessionOwner.projectId ||
+          (current.projectId && retryOwner.projectId !== current.projectId) ||
+          retryOwner.archivedAt ||
+          retryOwner.isPending
+        ) {
+          composer.actions.setError(i18next.t('This session was deleted or is unavailable.'))
+          return
+        }
+        if (
+          !projectSessionActionability(retryOwner).actions.startTurn.allowed ||
+          retryOwner.conversationGraphSyncBlocked ||
+          retryOwner.compacting ||
+          retryOwner.fixLoopActive ||
+          current.persistenceBlockedSessionIds.includes(retryOwner.id) ||
+          current.promptInFlightSessionIds.includes(retryOwner.id) ||
+          current.sendPreparationInFlightSessionIds.includes(retryOwner.id) ||
+          current.session.lifecycle.isBarrierInFlight(retryOwner.id)
+        )
+          return
+      }
+      // A distinct new draft can start while an earlier conversation is still preparing.
+      const submissionKey = activeSession
+        ? snapshot.draftKey
+        : `${snapshot.draftKey}:${snapshot.version}`
+      if (inFlightDraftKeysRef.current.has(submissionKey)) return
+      inFlightDraftKeysRef.current.add(submissionKey)
 
       const wasNewConversation = !activeSession
       const autoReviewEnabled = current.newConversationAutoReviewEnabled
@@ -478,6 +540,13 @@ const useWorkspaceConversationController = (
         session.lifecycle.captureSendIntent(branchInNewSession)
 
       const dispatch = (sessionId: string | undefined): void => {
+        let preparationRejected = false
+        let proseReadingConsumed = false
+        const consumePdfProseReading = (): void => {
+          if (proseReadingConsumed || preparationRejected) return
+          proseReadingConsumed = true
+          optionsRef.current.composer.lifecycle.consumePdfProseReading(snapshot)
+        }
         const optimisticMessage = sessionId
           ? {
               id: `optimistic-${snapshot.draftKey}-${snapshot.version}`,
@@ -508,18 +577,63 @@ const useWorkspaceConversationController = (
         void runtime
           .sendMessage({
             sessionId,
-            onMessageAppended: clearOptimisticMessage,
+            onMessageAppended: (message) => {
+              consumePdfProseReading()
+              clearOptimisticMessage()
+              if (wasNewConversation && !sessionId && !branchInNewSession) {
+                optionsRef.current.composer.lifecycle.bindAdmissionContext(snapshot, message)
+                current.onNewSessionAppended?.(message)
+              }
+            },
+            onPreparationRejected: (message, rejectedSessionId, finalizedAttachments) => {
+              preparationRejected = true
+              clearOptimisticMessage()
+              // Rejection is asynchronous: act on the composer as it is now, not as it was at submit.
+              const latest = optionsRef.current
+              const targetDraftKey =
+                wasNewConversation || branchInNewSession
+                  ? (rejectedSessionId ?? snapshot.draftKey)
+                  : snapshot.draftKey
+              if (latest.currentDraftKey === targetDraftKey)
+                latest.composer.actions.setError(message)
+              const rejectedOwner = rejectedSessionId
+                ? latest.getSession(rejectedSessionId)
+                : undefined
+              const retrySessionOwner =
+                rejectedOwner && !rejectedOwner.isPending
+                  ? { sessionId: rejectedOwner.id, projectId: rejectedOwner.projectId }
+                  : snapshot.retrySessionOwner
+              const byId = new Map(
+                finalizedAttachments?.map((attachment) => [attachment.id, attachment])
+              )
+              latest.composer.lifecycle.restoreFailedSend(
+                {
+                  ...snapshot,
+                  retrySessionOwner,
+                  // Native setup authority has already been bound to the retry Session.
+                  ...(retrySessionOwner ? { setupSessionToken: undefined } : {}),
+                  attachments: snapshot.attachments.map(
+                    (attachment) => byId.get(attachment.id) ?? attachment
+                  )
+                },
+                true,
+                wasNewConversation || branchInNewSession ? rejectedSessionId : undefined,
+                true
+              )
+            },
             ...(branchInNewSession && activeSession
               ? { branchSourceSessionId: activeSession.id }
               : {}),
             text: docToText(snapshot.doc),
             attachments: snapshot.attachments,
             annotations: snapshot.annotations,
+            discussionFocus: snapshot.discussionFocus,
             referencedArtifacts: docToArtifactRefs(snapshot.doc),
             parts: docToMessageParts(snapshot.doc),
             pdfContext: snapshot.pdfContext,
             pdfReadingPosition: snapshot.pdfReadingPosition,
             pdfReadingPositionSource: snapshot.pdfReadingPositionSource,
+            pdfProseReadingSelections: snapshot.pdfProseReadingSelections,
             pendingPdfContextAttachmentIds: snapshot.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: snapshot.pendingPdfContextVersions,
             cwd: activeSession?.cwd,
@@ -552,9 +666,10 @@ const useWorkspaceConversationController = (
           })
           .then((result) => {
             if (!result) {
-              composer.lifecycle.restoreFailedSend(snapshot)
+              if (!preparationRejected) composer.lifecycle.restoreFailedSend(snapshot)
               return
             }
+            consumePdfProseReading()
             if (snapshot.annotations.length > 0) {
               composer.lifecycle.clearDraft(snapshot.draftKey, snapshot.version)
             }
@@ -562,7 +677,7 @@ const useWorkspaceConversationController = (
             session.actions.resetNewConversationSpecialist()
           })
           .finally(() => {
-            inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+            inFlightDraftKeysRef.current.delete(submissionKey)
             clearOptimisticMessage()
           })
       }
@@ -572,7 +687,7 @@ const useWorkspaceConversationController = (
           .prepareSpecialistSend(activeSession.id, pendingSpecialistId)
           .then((ready) => {
             if (!ready) {
-              inFlightDraftKeysRef.current.delete(snapshot.draftKey)
+              inFlightDraftKeysRef.current.delete(submissionKey)
               return
             }
             if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(activeSession.id)
@@ -581,8 +696,10 @@ const useWorkspaceConversationController = (
         return
       }
 
+      if (wasNewConversation && !branchInNewSession && !retryOwner)
+        composer.lifecycle.preserveAdmissionContext(snapshot)
       if (snapshot.annotations.length === 0) composer.lifecycle.clearDraft(current.currentDraftKey)
-      dispatch(branchInNewSession ? undefined : activeSession?.id)
+      dispatch(branchInNewSession ? undefined : (retryOwner?.id ?? activeSession?.id))
     }
 
     const submitRestoredPlan = async (response: RestoredPlanResponse): Promise<void> => {
@@ -591,7 +708,7 @@ const useWorkspaceConversationController = (
       if (!isPersistenceReady) throw new Error('Session persistence is unavailable.')
       const session = activeSession ? optionsRef.current.getSession(activeSession.id) : undefined
       const plan = selectActiveBranchPlan(session)
-      if (!session || session.activeRun || plan?.approval !== 'pending') {
+      if (!session || session.packageOrigin || session.activeRun || plan?.approval !== 'pending') {
         throw new Error('The pending Plan is no longer available for a response.')
       }
       if (!agentConfigurationReady) {
@@ -698,7 +815,7 @@ const useWorkspaceConversationController = (
       reportSessionSizeLimit: (sessionId): void => optionsRef.current.onSessionSizeLimit(sessionId),
       resume: async (): Promise<void> => {
         const current = optionsRef.current
-        if (!current.isPersistenceReady || !current.activeSession) return
+        if (!canResume(current) || !current.activeSession) return
         await current.runtime.resumeInterruptedSession(current.activeSession.id)
       },
       cancel: async (): Promise<void> => {
@@ -732,9 +849,9 @@ const useWorkspaceConversationController = (
       submit: submitImmediately || queueDraft,
       submitMode: submitImmediately ? 'send' : queueDraft ? 'queue' : undefined,
       revise: canRevise(options) || canQueueRevision(options),
-      resume: options.isPersistenceReady,
+      resume: canResume(options),
       branch: !queueBlocksActiveSession && canBranch(options),
-      planResponse: options.isPersistenceReady
+      planResponse: options.isPersistenceReady && !options.activeSession?.packageOrigin
     },
     actions,
     queue: {

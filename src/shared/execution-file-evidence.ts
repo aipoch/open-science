@@ -26,6 +26,7 @@ export type ExecutionFileEvidenceReason =
   | 'dynamic-path-unresolved'
   | 'absolute-path-not-frozen'
   | 'source-analysis-unsupported-call'
+  | 'execution-incomplete'
 
 export type ScientificOutputStorageShape = 'single-file' | 'file-set' | 'directory-tree'
 
@@ -106,7 +107,8 @@ const REASON_CODES = new Set<ExecutionFileEvidenceReason>([
   'compute-activity-lineage-missing',
   'dynamic-path-unresolved',
   'absolute-path-not-frozen',
-  'source-analysis-unsupported-call'
+  'source-analysis-unsupported-call',
+  'execution-incomplete'
 ])
 const LEGACY_NOTEBOOK_REASON_CODES = new Set([
   'file-reads-not-observed',

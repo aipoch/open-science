@@ -3,13 +3,16 @@
 // once an Agent total exists it remains the numerator until a fresher usage_update arrives. The
 // denominator is bound to the selected model and agent-context generation when that window is known.
 
-import { useTranslation } from 'react-i18next'
 import { Gauge, Minimize2 } from 'lucide-react'
 import { useEffect, useId, useRef, useState, type FocusEvent } from 'react'
+import { useTranslation } from 'react-i18next'
 
 import { Popover, PopoverAnchor, PopoverContent } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { AcpContextUsage, AcpContextUsageCategoryKey } from '../../../../shared/acp'
+import type {
+  AcpContextUsage,
+  AcpContextUsageCategoryKey
+} from '../../../../shared/acp-usage-contract'
 
 type ComposerContextUsageProps = {
   // Latest usage for the active session, or undefined when the framework never reported any.
@@ -184,7 +187,7 @@ const ComposerContextUsage = ({
         side="top"
         align="center"
         sideOffset={8}
-        className="w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu"
+        className="hover-bubble w-72 max-w-[calc(100vw-2rem)] overflow-hidden rounded-lg border border-border bg-popover p-3 text-popover-foreground shadow-menu"
         onPointerEnter={keepOpen}
         onPointerLeave={scheduleClose}
         onFocusCapture={keepOpen}

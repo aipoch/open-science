@@ -71,6 +71,11 @@ it('hides and reopens without losing the renderer, and destroys it with its work
   const event = { preventDefault: vi.fn() }
   h.settings.listeners.get('close')!(event)
   expect(event.preventDefault).toHaveBeenCalledOnce()
+  expect(invoke(C.ready, h.settings.webContents).visible).toBe(true)
+  expect(h.settings.hide).not.toHaveBeenCalled()
+  expect(h.settings.webContents.send).toHaveBeenLastCalledWith(C.closeRequested)
+  expect(() => invoke(C.close, h.owner.webContents)).toThrow('Settings window')
+  invoke(C.close, h.settings.webContents)
   expect(invoke(C.ready, h.settings.webContents).visible).toBe(false)
   expect(h.settings.destroy).not.toHaveBeenCalled()
   expect(h.owner.focus).toHaveBeenCalledOnce()

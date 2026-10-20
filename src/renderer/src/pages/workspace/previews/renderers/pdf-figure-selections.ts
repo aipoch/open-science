@@ -1,4 +1,4 @@
-import type { PdfStructureResult } from '../../../../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 export type Selection = {
   result: PdfStructureResult

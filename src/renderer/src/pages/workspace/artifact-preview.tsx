@@ -1,5 +1,4 @@
 import type { ChatSession } from '@/stores/session-store'
-import { File, FileArchive, FileCode2, FileImage, FileSpreadsheet, FileText } from 'lucide-react'
 import { parse } from 'papaparse'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -10,16 +9,15 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import {
   getArtifactExtension,
   getArtifactPreviewFormat,
-  getArtifactName,
-  isImageArtifact
+  getArtifactName
 } from './artifact-preview-utils'
+import { FileTypeIcon } from './file-type-icon'
 import { PdfThumbnail } from './previews/renderers/PdfThumbnail'
 import { TiffThumbnail } from './previews/renderers/TiffThumbnail'
 import { usePreviewResourceKey } from './previews/usePreviewResourceGeneration'
 import { useCachedPreviewImage } from './previews/useCachedPreviewImage'
 
 type MessageArtifact = NonNullable<ChatSession['artifacts']>[number]
-type ArtifactIconKind = 'archive' | 'code' | 'file' | 'image' | 'spreadsheet' | 'text'
 
 const FASTA_COLORS: Record<string, string> = {
   A: '#2166AC',
@@ -52,43 +50,6 @@ const getArtifactExtensionLabel = (artifact: MessageArtifact): string =>
 
 const isTextSkeletonArtifact = (artifact: MessageArtifact): boolean =>
   TEXT_SKELETON_EXTENSIONS.has(getArtifactExtension(artifact))
-
-const getArtifactIconKind = (artifact: MessageArtifact): ArtifactIconKind => {
-  const mimeType = artifact.mimeType ?? ''
-  const extension = getArtifactExtension(artifact)
-
-  if (isImageArtifact(artifact)) return 'image'
-  if (mimeType.includes('spreadsheet') || ['csv', 'tsv', 'xls', 'xlsx'].includes(extension)) {
-    return 'spreadsheet'
-  }
-  if (
-    mimeType.includes('html') ||
-    mimeType.includes('json') ||
-    ['css', 'html', 'js', 'json', 'md', 'pdb', 'svg', 'ts', 'tsx', 'xml'].includes(extension)
-  ) {
-    return 'code'
-  }
-  if (['7z', 'gz', 'rar', 'tar', 'zip'].includes(extension)) return 'archive'
-  if (mimeType.startsWith('text/') || ['pdf', 'txt'].includes(extension)) return 'text'
-
-  return 'file'
-}
-
-const ArtifactFileIcon = ({
-  className,
-  kind
-}: {
-  className: string
-  kind: ArtifactIconKind
-}): React.JSX.Element => {
-  if (kind === 'archive') return <FileArchive className={className} aria-hidden />
-  if (kind === 'code') return <FileCode2 className={className} aria-hidden />
-  if (kind === 'image') return <FileImage className={className} aria-hidden />
-  if (kind === 'spreadsheet') return <FileSpreadsheet className={className} aria-hidden />
-  if (kind === 'text') return <FileText className={className} aria-hidden />
-
-  return <File className={className} aria-hidden />
-}
 
 const getPreviewLines = (content: string, maxLines: number): string[] =>
   content
@@ -255,11 +216,11 @@ const TextSkeletonPreview = ({
 )
 
 const FileTypePreview = ({ artifact }: { artifact: MessageArtifact }): React.JSX.Element => {
-  const iconClassName = 'size-5 text-text-300'
+  const artifactName = getArtifactName(artifact)
 
   return (
     <div className="flex size-full flex-col items-center justify-center gap-1.5 bg-bg-200 text-text-300">
-      <ArtifactFileIcon className={iconClassName} kind={getArtifactIconKind(artifact)} />
+      <FileTypeIcon name={artifactName} mimeType={artifact.mimeType} className="size-5" />
       <span className="text-[10px] font-semibold text-text-000">
         {getArtifactExtensionLabel(artifact)}
       </span>

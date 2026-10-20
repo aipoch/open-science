@@ -80,6 +80,19 @@ describe('StreamingBlock with real Streamdown', () => {
   it('does not re-highlight completed code while the trailing open fence grows', async () => {
     await renderStreamdown(STREAMING_CONTENT, true)
     const first = container.querySelector('[data-streamdown="code-block"]')
+    // Streamdown lazily mounts its highlighted body after rendering a Suspense fallback.
+    // Wait for the initial Shiki result so that mount is not counted as re-highlighting.
+    await act(async () => {
+      await vi.dynamicImportSettled()
+      await new Promise<void>((resolve) => {
+        const cached = code.highlight(
+          { code: 'const done = 1', language: 'js', themes: code.getThemes() },
+          () => resolve()
+        )
+        if (cached) resolve()
+      })
+    })
+    expect(first?.querySelector('span[style*="--shiki-dark"]')).not.toBeNull()
     const highlight = vi.spyOn(code, 'highlight')
     try {
       for (let index = 1; index <= 20; index++) {

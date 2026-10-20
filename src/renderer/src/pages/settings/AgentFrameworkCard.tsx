@@ -21,7 +21,7 @@ import { RuntimeUninstallControl } from './RuntimeUninstallControl'
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V5 · contrast: pass · slop: pass */
 
 type AgentFrameworkCardProps = {
-  // Brand mark in the vendor's standard color (lobehub icon component, e.g. <Claude.Color />).
+  // Brand mark in the vendor's standard color (internal brand icon, e.g. <Claude.Color />).
   icon: React.ReactNode
   // Display name ("Claude Agent", "OpenCode", "Codex").
   name: string

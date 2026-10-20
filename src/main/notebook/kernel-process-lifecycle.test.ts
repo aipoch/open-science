@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process'
-import { mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -9,7 +9,7 @@ import {
   defaultController,
   KernelProcessLifecycleOwner
 } from './kernel-process-lifecycle.windows-posix'
-import { readProcessStartToken } from './operation-recovery'
+import { readProcessStartToken } from '@aipoch/environment'
 
 const processIsAlive = (pid: number): boolean => {
   try {
@@ -79,6 +79,47 @@ describe('KernelProcessLifecycleOwner', () => {
     expect(output).toBe('42')
     const record = JSON.parse(await readFile(intent.activePath(host.pid!), 'utf8'))
     expect(record.pid).toBe(host.pid)
+  })
+
+  it('forwards the contained kernel executable and arguments through the process host', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-host-forwarding-'))
+    const owner = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intent = owner.beginSpawn({
+      laneKey: 'lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch'
+    })
+    const marker = join(root, 'forwarded.json')
+    const script = [
+      "const fs = require('node:fs');",
+      `fs.writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ argv: process.argv.slice(1), electron: process.env.ELECTRON_RUN_AS_NODE }))`
+    ].join('')
+    const host = spawn(
+      process.execPath,
+      [
+        join(__dirname, '../../../resources/notebook/kernel_process_host.js'),
+        intent.path,
+        intent.record.receiptId,
+        process.execPath,
+        '-e',
+        script,
+        'kernel-forwarded-a',
+        'kernel-forwarded-b'
+      ],
+      { env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' }, windowsHide: true }
+    )
+    const exitCode = await new Promise<number | null>((resolve, reject) => {
+      host.once('error', reject)
+      host.once('close', resolve)
+    })
+
+    expect(exitCode).toBe(0)
+    expect(JSON.parse(await readFile(marker, 'utf8'))).toEqual({
+      argv: ['kernel-forwarded-a', 'kernel-forwarded-b'],
+      electron: '1'
+    })
+    const record = JSON.parse(await readFile(intent.activePath(host.pid!), 'utf8'))
+    expect(record.commandIdentityMarker).toBe(intent.record.receiptId)
   })
 
   it('reaps a verified stale owner before opening process admission', async () => {
@@ -214,6 +255,131 @@ describe('KernelProcessLifecycleOwner', () => {
       processKey: 'repl',
       pid: 5252
     })
+  })
+
+  it('keeps an exact process fence while tolerant recovery admits unrelated kernels', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-scoped-recovery-'))
+    const scope = {
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    }
+    const first = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a',
+      controller: {
+        probe: vi.fn(async () => 'unknown' as const),
+        terminate: vi.fn(async () => ({ reaped: false }))
+      }
+    })
+    await first.ensureReady()
+    const intent = first.beginSpawn(scope)
+    first.recordSpawned(intent, { pid: 5252 })
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b',
+      controller: {
+        probe: vi.fn(async () => 'unknown' as const),
+        terminate: vi.fn(async () => ({ reaped: false }))
+      }
+    })
+
+    await expect(restarted.recover({ allowUnverifiedReceipts: true })).resolves.toBeUndefined()
+    const unrelated = restarted.beginSpawn({
+      ...scope,
+      processKey: 'repl',
+      kernelEpochId: 'epoch-repl'
+    })
+    restarted.abandonSpawn(unrelated)
+    expect(() => restarted.beginSpawn(scope)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('does not cancel a pending startup while tolerant recovery scans another lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-pending-recovery-'))
+    const owner = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    const intent = owner.beginSpawn({
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    })
+    await owner.ensureReadyForLane('["project-2","session-2","root",null,null]')
+    expect(await readdir(join(root, 'runtime', 'kernel-processes'))).toContain(
+      intent.path.split(/[\\/]/).pop()!
+    )
+
+    const receipt = owner.recordSpawned(intent, { pid: 5252 })
+    owner.complete(receipt, true)
+  })
+
+  it('cleans a pending startup left by a crashed owner before admitting that lane', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-stale-pending-'))
+    const scope = {
+      laneKey: '["project-1","session-1","root",null,null]',
+      processKey: 'r:default-r',
+      kernelEpochId: 'epoch-r'
+    }
+    const crashed = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-a'
+    })
+    crashed.beginSpawn(scope)
+
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      ownerInstanceId: 'owner-b'
+    })
+    await restarted.ensureReadyForLane(scope.laneKey)
+
+    const retry = restarted.beginSpawn(scope)
+    restarted.abandonSpawn(retry)
+  })
+
+  it('admits another lane when a pending host promotes its receipt during recovery', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-promoted-pending-'))
+    const previous = new KernelProcessLifecycleOwner({ storageRoot: root })
+    const intents = ['lane-a', 'lane-b']
+      .map((laneKey) =>
+        previous.beginSpawn({ laneKey, processKey: 'r:default-r', kernelEpochId: 'epoch-r' })
+      )
+      .sort((left, right) => left.path.localeCompare(right.path))
+    const [active, pending] = intents
+    previous.recordSpawned(active!, { pid: 4242 })
+    const probe = vi.fn(async () => {
+      // Recovery already captured both filenames. A host publishes the pending receipt while
+      // recovery awaits the preceding active process probe, before it reads the pending path.
+      previous.recordSpawned(pending!, { pid: 5252 })
+      return 'unknown' as const
+    })
+    const restarted = new KernelProcessLifecycleOwner({
+      storageRoot: root,
+      controller: { probe, terminate: vi.fn(async () => ({ reaped: false })) }
+    })
+
+    await expect(restarted.ensureReadyForLane('unrelated-lane')).resolves.toBeUndefined()
+    expect(probe).toHaveBeenCalledOnce()
+    const unrelated = restarted.beginSpawn({
+      laneKey: 'unrelated-lane',
+      processKey: 'repl',
+      kernelEpochId: 'epoch-repl'
+    })
+    restarted.abandonSpawn(unrelated)
+    expect(() => restarted.beginSpawn(pending!.record)).toThrow('KERNEL_STARTUP_FENCE')
+  })
+
+  it('keeps tolerant recovery fail-closed for a receipt whose scope cannot be trusted', async () => {
+    root = await mkdtemp(join(tmpdir(), 'kernel-process-invalid-receipt-'))
+    const directory = join(root, 'runtime', 'kernel-processes')
+    await mkdir(directory, { recursive: true })
+    await writeFile(join(directory, 'unparseable.json'), '{"processKey":"r:default-r"}')
+    const restarted = new KernelProcessLifecycleOwner({ storageRoot: root })
+
+    await expect(restarted.recover({ allowUnverifiedReceipts: true })).rejects.toThrow(
+      'KERNEL_STARTUP_FENCE'
+    )
   })
 
   it('drops a reboot-stale POSIX group receipt without terminating its recycled numeric id', async () => {

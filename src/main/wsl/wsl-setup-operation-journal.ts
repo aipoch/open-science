@@ -1,7 +1,7 @@
 import { join } from 'node:path'
 
 import type { WslSelection, WslSetupOperationKind } from '../../shared/wsl-setup'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 const JOURNAL_VERSION = 1 as const
 const JOURNAL_FILE = 'wsl-setup-operation.json'

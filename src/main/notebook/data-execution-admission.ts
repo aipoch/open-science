@@ -1,20 +1,22 @@
 import { realpathSync } from 'node:fs'
 
-import type { NotebookCell, NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement } from '../../shared/notebook-runtime'
-import { NotebookEnvironmentOperations } from './environment-operations'
-import { resolveExternalRLibrary } from './external-r-library'
-import { detectManagedRuntimeMutation } from './managed-runtime-guard'
-import { NotebookRecoveryCoordinator } from './recovery-coordinator'
+import type { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import {
   DEFAULT_PY_ENV,
   DEFAULT_R_ENV,
   envPrefix,
+  NotebookRecoveryCoordinator,
   pythonBin,
   rBin,
-  resolveEnvName
-} from './runtime-paths'
-import type { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+  resolveEnvName,
+  resolveExternalRLibrary
+} from '@aipoch/environment'
+import type { NotebookCell } from '../../shared/notebook'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import { NotebookEnvironmentOperations } from './environment-operations'
+import { notebookLaneKey } from './lane-identity'
+import { detectManagedRuntimeMutation } from './managed-runtime-guard'
 import type {
   NotebookSessionAggregate,
   NotebookSessionResolvedInterpreter,
@@ -44,7 +46,7 @@ type NotebookDataExecutionAdmissionOwnerOptions = {
     NotebookRecoveryCoordinator,
     'isGloballyBlocked' | 'isPrefixBlocked' | 'isRuntimeIdBlocked'
   >
-  ensureRecovered: () => Promise<void>
+  ensureRecovered: (laneKey?: string) => Promise<void>
   resolveRuntimeEnablement: (language: NotebookLanguage) => Promise<RuntimeEnablement | undefined>
   isAgentEnvironmentCreationEnabled: () => Promise<boolean>
   repairPolicy: Pick<NotebookRuntimeRepairPolicy, 'blockKey' | 'requirement'>
@@ -127,7 +129,7 @@ class NotebookDataExecutionAdmissionOwner {
   ): Promise<NotebookDataExecutionAdmission> {
     const route = this.route(session, cell.language)
     const runtimeRoot = this.options.runtimeRoot
-    await this.options.ensureRecovered()
+    await this.options.ensureRecovered(notebookLaneKey(session.lane))
     const binding = session.runtimeBinding(cell.language)
     const repair = this.options.repairPolicy.requirement(cell.language, route.environment, binding)
     let resolvedInterpreter: NotebookSessionResolvedInterpreter | undefined

@@ -1,5 +1,6 @@
+import type { TagView } from '../../../../../shared/tags'
 import { useTagStore } from '@/stores/tag-store'
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { createRef, useCallback, useEffect, useMemo, useState } from 'react'
 
 import { PDF_ANNOTATION_LIMITS } from '../../../../../shared/pdf-annotations'
 import {
@@ -16,6 +17,9 @@ import {
 
 type Change = Readonly<{ before?: PdfAnnotation; after?: PdfAnnotation }>
 type Runtime = {
+  scopeKey: string
+  sourceGroups: PdfAnnotationSource[][]
+  readonlyIds: Set<string>
   active: boolean
   items: Map<string, PdfAnnotation>
   overlays: Map<string, PdfAnnotation | null>
@@ -25,6 +29,13 @@ type Runtime = {
   pending: number
 }
 const HISTORY_LIMIT = 100
+const historyKey = (runtime: Runtime, source: PdfAnnotationSource): string => {
+  const key = sourceKey(source)
+  const group = runtime.sourceGroups.find((sources) =>
+    sources.some((entry) => sourceKey(entry) === key)
+  )
+  return group?.length ? sourceKey(group[0]) : key
+}
 const changeSource = (change: Change): PdfAnnotationSource =>
   (change.after ?? change.before)!.target.source
 const sortAnnotations = (annotations: readonly PdfAnnotation[]): PdfAnnotation[] =>
@@ -44,6 +55,11 @@ type ScopeState = Readonly<{
   key: string
   annotations: readonly PdfAnnotation[]
   source?: PdfAnnotationSource
+  snapshotTags?: TagView[]
+  readonlyIds?: string[]
+  readOnly?: boolean
+  reconciliationSources?: PdfAnnotationSource[]
+  sourceGroups?: PdfAnnotationSource[][]
   loading: boolean
   loadError?: string
   pending: number
@@ -51,7 +67,7 @@ type ScopeState = Readonly<{
   redoSources: readonly string[]
 }>
 
-const PdfAnnotationsStateProvider = ({
+const PdfAnnotationsProvider = ({
   projectId,
   sessionId,
   literatureVersionId,
@@ -78,15 +94,25 @@ const PdfAnnotationsStateProvider = ({
     () => (literatureVersionId ? { literatureVersionId } : { projectId, sessionId }),
     [literatureVersionId, projectId, sessionId]
   )
-  const runtime = useRef<Runtime>({
-    active: false,
-    items: new Map(),
-    overlays: new Map(),
-    undo: [],
-    redo: [],
-    queue: Promise.resolve(),
-    pending: 0
-  })
+  // Reset the scoped owner without remounting the workspace below it. Async callbacks
+  // keep their original runtime, which cleanup deactivates when the scope changes.
+  const runtime = useMemo(() => {
+    const ref = createRef<Runtime>()
+    if (ref.current === null)
+      ref.current = {
+        scopeKey,
+        sourceGroups: [],
+        readonlyIds: new Set(),
+        active: false,
+        items: new Map(),
+        overlays: new Map(),
+        undo: [],
+        redo: [],
+        queue: Promise.resolve(),
+        pending: 0
+      }
+    return ref as React.RefObject<Runtime>
+  }, [scopeKey])
   const [state, setState] = useState<ScopeState>({
     key: scopeKey,
     annotations: [],
@@ -125,8 +151,12 @@ const PdfAnnotationsStateProvider = ({
                 ? sortAnnotations([...runtime.current.items.values()])
                 : current.annotations,
               pending: runtime.current.pending,
-              undoSources: runtime.current.undo.map((change) => sourceKey(changeSource(change))),
-              redoSources: runtime.current.redo.map((change) => sourceKey(changeSource(change)))
+              undoSources: runtime.current.undo.map((change) =>
+                historyKey(runtime.current, changeSource(change))
+              ),
+              redoSources: runtime.current.redo.map((change) =>
+                historyKey(runtime.current, changeSource(change))
+              )
             }
       )
     },
@@ -140,6 +170,11 @@ const PdfAnnotationsStateProvider = ({
     const load = async (): Promise<void> => {
       let cursor: { createdAt: string; id: string } | undefined
       const loaded = new Map<string, PdfAnnotation>()
+      let snapshotTags: TagView[] | undefined
+      const readonlyIds: string[] = []
+      let readOnly = false
+      let sourceGroups: PdfAnnotationSource[][] | undefined
+      let reconciliationSources: PdfAnnotationSource[] | undefined
       let source: PdfAnnotationSource | undefined
       do {
         const result = await window.api.pdfAnnotations.list({
@@ -150,6 +185,11 @@ const PdfAnnotationsStateProvider = ({
           limit: PDF_ANNOTATION_LIMITS.pageSize
         })
         if (!active) return
+        readonlyIds.push(...(result.readonlyIds ?? []))
+        readOnly ||= result.readOnly === true
+        snapshotTags ??= result.snapshotTags
+        sourceGroups ??= result.sourceGroups
+        reconciliationSources ??= result.reconciliationSources
         source ??=
           result.source ?? (sourceFileId && versionId ? result.items[0]?.target.source : undefined)
         for (const item of result.items) loaded.set(item.id, item)
@@ -159,14 +199,28 @@ const PdfAnnotationsStateProvider = ({
         if (overlay) loaded.set(id, overlay)
         else loaded.delete(id)
       }
+      const previousGroups = runtime.current.sourceGroups
+      runtime.current.sourceGroups = sourceGroups ?? []
+      runtime.current.readonlyIds = new Set(readonlyIds)
       // A refreshed external edit invalidates this document's local inverse commands.
       const changedSources = new Set<string>()
+      const groupKey = (group: readonly PdfAnnotationSource[]): string =>
+        JSON.stringify(group.map(sourceKey))
+      // Topology changes invalidate deletion undo too, even when both notebooks are empty.
+      for (const group of [...previousGroups, ...(sourceGroups ?? [])]) {
+        if (
+          previousGroups.some((old) => groupKey(old) === groupKey(group)) &&
+          (sourceGroups ?? []).some((next) => groupKey(next) === groupKey(group))
+        )
+          continue
+        for (const source of group) changedSources.add(historyKey(runtime.current, source))
+      }
       let annotationsChanged = false
       for (const id of new Set([...runtime.current.items.keys(), ...loaded.keys()])) {
         const previous = runtime.current.items.get(id)
         const current = loaded.get(id)
         if (previous?.updatedAt !== current?.updatedAt)
-          changedSources.add(sourceKey((current ?? previous)!.target.source))
+          changedSources.add(historyKey(runtime.current, (current ?? previous)!.target.source))
         // Global tag deletion can change associations without changing the note's
         // update token; repaint it without discarding compatible undo history.
         if (
@@ -176,10 +230,10 @@ const PdfAnnotationsStateProvider = ({
           annotationsChanged = true
       }
       runtime.current.undo = runtime.current.undo.filter(
-        (change) => !changedSources.has(sourceKey(changeSource(change)))
+        (change) => !changedSources.has(historyKey(runtime.current, changeSource(change)))
       )
       runtime.current.redo = runtime.current.redo.filter(
-        (change) => !changedSources.has(sourceKey(changeSource(change)))
+        (change) => !changedSources.has(historyKey(runtime.current, changeSource(change)))
       )
       runtime.current.items = loaded
       setState((previous) => ({
@@ -191,10 +245,19 @@ const PdfAnnotationsStateProvider = ({
           source === undefined || JSON.stringify(source) === JSON.stringify(previous.source)
             ? previous.source
             : source,
+        sourceGroups,
+        reconciliationSources,
+        readonlyIds,
+        snapshotTags,
+        readOnly,
         loading: false,
         pending: runtime.current.pending,
-        undoSources: runtime.current.undo.map((change) => sourceKey(changeSource(change))),
-        redoSources: runtime.current.redo.map((change) => sourceKey(changeSource(change)))
+        undoSources: runtime.current.undo.map((change) =>
+          historyKey(runtime.current, changeSource(change))
+        ),
+        redoSources: runtime.current.redo.map((change) =>
+          historyKey(runtime.current, changeSource(change))
+        )
       }))
     }
     void load().catch((error: unknown) => {
@@ -211,13 +274,14 @@ const PdfAnnotationsStateProvider = ({
   }, [loadAttempt, scope, runtime, scopeKey, loadAnnotations, sourceFileId, versionId])
 
   const retryLoad = useCallback(() => {
+    if (!runtime.current.active) return
     setState((current) => ({
       ...current,
       loading: Boolean(scopeKey) && loadAnnotations,
       loadError: undefined
     }))
     setLoadAttempt((attempt) => attempt + 1)
-  }, [scopeKey, loadAnnotations])
+  }, [scopeKey, loadAnnotations, runtime])
 
   useEffect(() => {
     if (!loadAnnotations || !scopeKey) return
@@ -289,12 +353,12 @@ const PdfAnnotationsStateProvider = ({
         )
           return
         if (previous?.updatedAt !== next?.updatedAt) {
-          const key = sourceKey((next ?? previous)!.target.source)
+          const key = historyKey(runtime.current, (next ?? previous)!.target.source)
           runtime.current.undo = runtime.current.undo.filter(
-            (change) => sourceKey(changeSource(change)) !== key
+            (change) => historyKey(runtime.current, changeSource(change)) !== key
           )
           runtime.current.redo = runtime.current.redo.filter(
-            (change) => sourceKey(changeSource(change)) !== key
+            (change) => historyKey(runtime.current, changeSource(change)) !== key
           )
         }
         if (next) runtime.current.items.set(event.id, next)
@@ -319,7 +383,16 @@ const PdfAnnotationsStateProvider = ({
       stopAnnotations?.()
       stopLiterature?.()
     }
-  }, [scope, scopeKey, loadAnnotations, sourceFileId, versionId, literatureVersionId, publish])
+  }, [
+    scope,
+    scopeKey,
+    loadAnnotations,
+    sourceFileId,
+    versionId,
+    literatureVersionId,
+    publish,
+    runtime
+  ])
 
   // Serialize local writes, including history replay, so each command captures the committed prior value.
   const enqueue = useCallback(
@@ -362,7 +435,9 @@ const PdfAnnotationsStateProvider = ({
       const change = { before, after }
       runtime.current.undo = [...runtime.current.undo, change].slice(-HISTORY_LIMIT)
       runtime.current.redo = runtime.current.redo.filter(
-        (entry) => sourceKey(changeSource(entry)) !== sourceKey(changeSource(change))
+        (entry) =>
+          historyKey(runtime.current, changeSource(entry)) !==
+          historyKey(runtime.current, changeSource(change))
       )
     },
     [runtime]
@@ -371,6 +446,7 @@ const PdfAnnotationsStateProvider = ({
   const create = useCallback<PdfAnnotationPort['create']>(
     (id, target, kind, color, tagIds, note) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         const created = await window.api.pdfAnnotations.create({
           id,
@@ -391,6 +467,7 @@ const PdfAnnotationsStateProvider = ({
   const update = useCallback<PdfAnnotationPort['update']>(
     (id, input) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         if (!before) throw new Error('PDF annotation not found. Reload annotations and try again.')
         const next = {
@@ -416,6 +493,7 @@ const PdfAnnotationsStateProvider = ({
   const remove = useCallback<PdfAnnotationPort['remove']>(
     (id) =>
       enqueue(async () => {
+        if (runtime.current.readonlyIds.has(id)) throw unavailableError()
         const before = runtime.current.items.get(id)
         if (!before) throw new Error('PDF annotation not found. Reload annotations and try again.')
         const result = await window.api.pdfAnnotations.delete({
@@ -437,7 +515,9 @@ const PdfAnnotationsStateProvider = ({
       enqueue(async () => {
         const stack = runtime.current[direction]
         const index = stack.findLastIndex(
-          (change) => sourceKey(changeSource(change)) === sourceKey(source)
+          (change) =>
+            historyKey(runtime.current, changeSource(change)) ===
+            historyKey(runtime.current, source)
         )
         const change = stack[index]
         if (!change) return
@@ -512,7 +592,10 @@ const PdfAnnotationsStateProvider = ({
     [enqueue, runtime, scope, commit]
   )
 
-  const index = useMemo(() => indexPdfAnnotations(state.annotations), [state.annotations])
+  const index = useMemo(
+    () => indexPdfAnnotations(state.annotations, state.sourceGroups),
+    [state.annotations, state.sourceGroups]
+  )
   const value = useMemo<PdfAnnotationPort>(
     () => ({
       document:
@@ -522,7 +605,17 @@ const PdfAnnotationsStateProvider = ({
       scoped: Boolean(scopeKey),
       sessionId,
       source: state.key === scopeKey ? state.source : undefined,
-      available: Boolean(scopeKey) && writable,
+      available: Boolean(scopeKey) && writable && !state.readOnly,
+      snapshotTags: state.snapshotTags,
+      isSnapshot: (id) => !!state.readonlyIds?.includes(id),
+      canEdit: (id) =>
+        Boolean(scopeKey) && writable && !state.readOnly && !state.readonlyIds?.includes(id),
+      needsReconciliation: (source) =>
+        !!state.reconciliationSources?.some((entry) => sourceKey(entry) === sourceKey(source)),
+      shared: (source) =>
+        !!state.sourceGroups?.some((group) =>
+          group.some((entry) => sourceKey(entry) === sourceKey(source))
+        ),
       annotations: state.key === scopeKey ? state.annotations : [],
       forSource: (source) =>
         source
@@ -536,8 +629,8 @@ const PdfAnnotationsStateProvider = ({
       loading: state.key === scopeKey ? state.loading : Boolean(scopeKey) && loadAnnotations,
       loadError: state.key === scopeKey ? state.loadError : undefined,
       history: (source) => ({
-        canUndo: state.undoSources.includes(sourceKey(source)),
-        canRedo: state.redoSources.includes(sourceKey(source)),
+        canUndo: state.undoSources.includes(historyKey(runtime.current, source)),
+        canRedo: state.redoSources.includes(historyKey(runtime.current, source)),
         busy: state.pending > 0
       }),
       undo: (source) => replay(source, 'undo'),
@@ -552,6 +645,7 @@ const PdfAnnotationsStateProvider = ({
       sessionId,
       writable,
       state,
+      runtime,
       index,
       replay,
       retryLoad,
@@ -566,26 +660,4 @@ const PdfAnnotationsStateProvider = ({
   )
   return <PdfAnnotationsContext.Provider value={value}>{children}</PdfAnnotationsContext.Provider>
 }
-const PdfAnnotationsProvider = ({
-  projectId,
-  sessionId,
-  literatureVersionId,
-  sourceFileId,
-  versionId,
-  ...props
-}: React.ComponentProps<typeof PdfAnnotationsStateProvider>): React.JSX.Element => (
-  <PdfAnnotationsStateProvider
-    key={
-      literatureVersionId
-        ? `literature:${literatureVersionId}`
-        : `${projectId ?? ''}\u0000${sessionId ?? ''}\u0000${sourceFileId ?? ''}\u0000${versionId ?? ''}`
-    }
-    sourceFileId={sourceFileId}
-    versionId={versionId}
-    literatureVersionId={literatureVersionId}
-    projectId={projectId}
-    sessionId={sessionId}
-    {...props}
-  />
-)
 export { PdfAnnotationsProvider }

@@ -1,9 +1,10 @@
+import { type SetComputeJobRemoteCleanupRequest } from '@aipoch/compute'
 import {
   normalizeComputeApprovalDecision,
   type ComputeApprovalDecisionInput,
-  type DeleteComputeHostRequest,
-  type SetComputeJobRemoteCleanupRequest
+  type DeleteComputeHostRequest
 } from '../../shared/compute'
+
 import {
   LIFECYCLE_CHANNELS,
   MAIN_ENABLED_COMPUTE_HOSTS_LIFECYCLE_CLIENT_ID
@@ -18,7 +19,7 @@ import {
 } from '../application-command-router'
 import type { ApplicationEventPublisher } from '../application-events'
 import { canSatisfyHumanApproval, type CallerContext } from '../caller-context'
-import type { ComputeHandlers } from './ipc'
+import type { ComputeHandlers } from './handler-contract'
 
 type ComputeCommandOwner = Pick<
   ComputeHandlers,

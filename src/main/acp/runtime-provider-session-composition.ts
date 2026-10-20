@@ -1,18 +1,18 @@
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
-import type { AgentFramework } from '../agent-framework'
+import type { AgentFramework } from '../agent-framework/types'
 import { AcpProviderSessionAdopter } from './provider-session-adopter'
 import { AcpProviderSessionCreator } from './provider-session-creator'
 import { AcpProviderSessionResumer } from './provider-session-resumer'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeLifecycleOwners } from './runtime-lifecycle-composition'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
-import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
-import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
-import type { AcpPrimarySessionIdentityReservation } from './session-registry'
 import { CURRENT_PRIMARY_SESSION_CAPABILITY_POLICY } from './session-capability-owner'
+import { AcpSessionDeletionWorkflow } from './session-deletion-workflow'
+import type { AcpPrimarySessionIdentityReservation } from './session-registry'
+import { AcpSessionReplacementWorkflow } from './session-replacement-workflow'
 
 // Composes the five workflows that create, adopt, replace, delete, and resume Provider Sessions.
 // Stable app identity remains Registry-owned; operation admission and timeout teardown derive from
@@ -104,7 +104,6 @@ const composeAcpRuntimeProviderSessionOwners = (
     resolveSpecialistSkills: options.resolveSpecialistSkills,
     resolveProjectAgentContext: options.resolveProjectAgentContext,
     peekClaudeReplay: (sessionId) => base.handoffContinuity.peekClaudeReplay(sessionId),
-    commitClaudeReplay: (sessionId) => base.handoffContinuity.commitClaudeReplay(sessionId),
     updateCwd,
     emitState,
     diagnosticContext

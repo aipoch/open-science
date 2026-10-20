@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { describe, expect, it, vi } from 'vitest'
 
 import type { SpecialistView } from '../../shared/specialist'
@@ -755,3 +756,5 @@ describe('specialist session IPC', () => {
     expect(onProfilesChanged).not.toHaveBeenCalled()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

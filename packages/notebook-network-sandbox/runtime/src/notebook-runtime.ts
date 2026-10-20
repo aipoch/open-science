@@ -11,7 +11,7 @@ import {
   type LocalCertificateAuthority
 } from './gateway/local-ca.js'
 
-import { DestinationPolicy } from './gateway/address-policy.js'
+import { DestinationPolicy, type TrustedPrivateDestination } from './gateway/address-policy.js'
 import {
   CommandGateway,
   type GatewayDecision,
@@ -45,6 +45,7 @@ import {
 type SandboxDependencyCheck = Readonly<{ warnings: string[]; errors: string[] }>
 
 type NetworkRuntimeConfig = Readonly<{
+  trustedPrivateDestinations?: readonly TrustedPrivateDestination[]
   allowedDomains: readonly string[]
   askDomains?: readonly string[]
   deniedDomains: readonly string[]
@@ -74,13 +75,23 @@ type NotebookSandboxTarget =
 
 type SandboxCleanupResult = Readonly<{
   processesTerminated: boolean
+  processState?: SandboxProcessState
   networkClosed: boolean
   temporaryResourcesRemoved: boolean
+  /** Omitted means blocked; never substitutes for complete process cleanup. */
+  admission?: 'blocked' | 'independent-command-allowed'
 }>
 
 type SandboxProcessOutcome = Readonly<{
   processesTerminated: boolean
+  processState?: SandboxProcessState
 }>
+
+type SandboxProcessState = 'never-started' | 'started-and-reaped' | 'termination-unknown'
+
+const processStateForOutcome = (outcome: SandboxProcessOutcome): SandboxProcessState =>
+  outcome.processState ??
+  (outcome.processesTerminated ? 'started-and-reaped' : 'termination-unknown')
 
 type SandboxCleanupReason = 'exit' | 'cancel' | 'timeout' | 'spawn-failed'
 
@@ -92,6 +103,7 @@ type NetworkWrapRequest = Readonly<{
   command: string
   executable?: string
   args?: readonly string[]
+  electronAsNode?: boolean
   commandId: string
   shell?: string | WindowsShell
   cwd: string
@@ -100,6 +112,7 @@ type NetworkWrapRequest = Readonly<{
   localRpcSocketPath?: string
   inheritedFileDescriptorCount?: number
   superviseProcessTree?: boolean
+  windowsShellControlPipe?: string
   windowsProtectionRequired?: boolean
   /** A durable grant used for admission must still be authorized at launch. */
   windowsRuntimeAccessRequired?: boolean
@@ -112,6 +125,7 @@ type RuntimeContext = {
   gateway?: CommandGateway
   releasePlatform?: (reason: SandboxCleanupReason) => Promise<boolean | void | SandboxCleanupResult>
   platformOwnsProcesses?: boolean
+  independentCommandAdmission?: boolean
   executionActive: boolean
   epoch: number
   certificateAuthority?: LocalCertificateAuthority
@@ -156,6 +170,7 @@ const parentSettings = (config: NetworkRuntimeConfig): ParentProxySettings | und
 
 const buildPolicy = (config: NetworkRuntimeConfig): DestinationPolicy =>
   new DestinationPolicy({
+    trustedPrivateDestinations: config.trustedPrivateDestinations,
     allowedDomains: config.allowedDomains,
     askDomains: config.askDomains,
     deniedDomains: config.deniedDomains,
@@ -255,6 +270,8 @@ const wrap = async (
   argv: string[]
   env: NodeJS.ProcessEnv
   confirmProcessTreeTermination?: () => Promise<boolean>
+  requestProcessTreeTermination?: () => Promise<boolean>
+  confirmProcessState?: () => Promise<SandboxProcessState>
   beginSpawn?: () => Readonly<{ started: () => void; notStarted: () => void }>
 }> => {
   if (finishing.size > 0) await Promise.allSettled([...finishing])
@@ -316,7 +333,8 @@ const wrap = async (
     } catch (error) {
       if (commandContexts.has(request.commandId)) {
         const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
-          processesTerminated: true
+          processesTerminated: true,
+          processState: 'never-started'
         })
         if (!cleanupComplete(cleanup)) {
           throw new Error(
@@ -436,7 +454,7 @@ const wrap = async (
     context.filesystem = filesystem
     context.gateway = gateway
     if (process.platform === 'darwin') {
-      return macosLaunch({
+      const launch = macosLaunch({
         command: request.command,
         shell: typeof request.shell === 'string' ? request.shell : '/bin/bash',
         gatewayPort: gateway.port,
@@ -448,6 +466,8 @@ const wrap = async (
           : {}),
         filesystem
       })
+      context.independentCommandAdmission = true
+      return launch
     }
     if (process.platform === 'linux') {
       if (typeof request.shell === 'object') {
@@ -481,6 +501,10 @@ const wrap = async (
         : {}
       const launchRequest = {
         command: request.command,
+        ...(request.electronAsNode ? { electronAsNode: true } : {}),
+        ...(request.windowsShellControlPipe
+          ? { windowsShellControlPipe: request.windowsShellControlPipe }
+          : {}),
         ...(request.executable ? { executable: request.executable, args: request.args ?? [] } : {}),
         ...(request.shell ? { shell: request.shell } : {}),
         gatewayPort: gateway.port,
@@ -516,7 +540,8 @@ const wrap = async (
     throw new Error(`Notebook process sandbox does not support ${process.platform}.`)
   } catch (error) {
     const cleanup = await cleanupAfterCommand(request.commandId, 'spawn-failed', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'never-started'
     })
     if (!cleanupComplete(cleanup)) {
       throw new Error(
@@ -553,13 +578,28 @@ const closeContext = async (
           networkClosed: platformResult !== false,
           temporaryResourcesRemoved: platformResult !== false
         }
+  const processState =
+    platformCleanup.processState ??
+    (context.platformOwnsProcesses && platformCleanup.processesTerminated
+      ? (processOutcome.processState ?? 'started-and-reaped')
+      : processOutcome.processState)
+  const callerProcessesTerminated = processStateForOutcome(processOutcome) !== 'termination-unknown'
+  const processesTerminated = context.platformOwnsProcesses
+    ? platformCleanup.processesTerminated
+    : platformCleanup.processesTerminated && callerProcessesTerminated
   return {
-    processesTerminated: context.platformOwnsProcesses
-      ? platformCleanup.processesTerminated
-      : platformCleanup.processesTerminated && processOutcome.processesTerminated,
+    processesTerminated,
+    ...(processState !== undefined ? { processState } : {}),
     networkClosed: network.status === 'fulfilled' && platformCleanup.networkClosed,
     temporaryResourcesRemoved:
-      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled'
+      platformCleanup.temporaryResourcesRemoved && trustBundle.status === 'fulfilled',
+    ...(context.independentCommandAdmission &&
+    network.status === 'fulfilled' &&
+    platformCleanup.networkClosed &&
+    platformCleanup.temporaryResourcesRemoved &&
+    trustBundle.status === 'fulfilled'
+      ? { admission: 'independent-command-allowed' as const }
+      : {})
   }
 }
 
@@ -571,9 +611,10 @@ const cleanupAfterCommand = async (
   const context = commandContexts.get(commandId)
   if (!context) {
     return {
-      processesTerminated: processOutcome.processesTerminated,
+      processesTerminated: processStateForOutcome(processOutcome) !== 'termination-unknown',
       networkClosed: true,
-      temporaryResourcesRemoved: true
+      temporaryResourcesRemoved: true,
+      ...(processOutcome.processState ? { processState: processOutcome.processState } : {})
     }
   }
   const task = closeContext(context, reason, processOutcome)
@@ -713,11 +754,16 @@ const NotebookNetworkRuntime = {
   initialize,
   wrap,
   updateConfig,
-  annotateStderr: (commandId: string, stderr: string): string =>
-    violations.attach(commandId, stderr, (path) => {
-      const filesystem = commandContexts.get(commandId)?.filesystem
-      return filesystem ? hiddenByFilesystemLayout(filesystem, path) : false
-    }),
+  annotateStderr: (commandId: string, stderr: string, stdout?: string): string =>
+    violations.attach(
+      commandId,
+      stderr,
+      (path) => {
+        const filesystem = commandContexts.get(commandId)?.filesystem
+        return filesystem ? hiddenByFilesystemLayout(filesystem, path) : false
+      },
+      stdout
+    ),
   setCommandExecutionActive: (commandId: string, active: boolean): void => {
     const context = commandContexts.get(commandId)
     if (!context) return

@@ -1,6 +1,6 @@
 import { isAbsolute } from 'node:path'
 import { SETTINGS_FILE_VERSION } from '../../shared/settings'
-import { DurableJsonRecoveryBarrierError } from '../storage/durable-json-file'
+import { DurableJsonRecoveryBarrierError } from '@aipoch/durable-files'
 import { isRecord } from '../value-guards'
 
 class UnsupportedSettingsDocumentVersionError extends DurableJsonRecoveryBarrierError {

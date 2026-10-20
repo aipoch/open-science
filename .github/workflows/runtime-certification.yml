@@ -23,18 +23,26 @@ concurrency:
 
 jobs:
   source:
-    name: Source runtime chain (Linux)
+    name: Source runtime chain (${{ matrix.subdir }})
     continue-on-error: ${{ inputs.allow_failure == true }}
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - subdir: linux-64
+            os: ubuntu-latest
+          - subdir: linux-aarch64
+            os: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Setup Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
           cache: npm
 
       # Several control-plane suites import modules that cross the Electron boundary. Use the normal
@@ -44,6 +52,31 @@ jobs:
       - name: Install test dependencies
         run: node scripts/ci/npm-ci.mjs
 
+      - name: Install Linux sandbox dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install --yes apparmor-profiles apparmor-utils bubblewrap
+
+          apparmor_userns_restriction="$(
+            sysctl -n kernel.apparmor_restrict_unprivileged_userns 2>/dev/null || true
+          )"
+          if [[ "$apparmor_userns_restriction" == "1" ]]; then
+            profile_source=/usr/share/apparmor/extra-profiles/bwrap-userns-restrict
+            test -r "$profile_source"
+            sudo install -m 0644 "$profile_source" /etc/apparmor.d/bwrap-userns-restrict
+            sudo apparmor_parser -r /etc/apparmor.d/bwrap-userns-restrict
+          fi
+
+          bwrap --unshare-all --ro-bind / / -- /bin/true
+      - name: Test real Linux filesystem and network isolation
+        run: >-
+          npx vitest run --project process
+          packages/notebook-network-sandbox/src/filesystem-enforcement.integration.test.ts
+          packages/notebook-network-sandbox/src/network-enforcement.integration.test.ts
+          src/main/session-plan/plan-context-file.shell.integration.test.ts
+
       # Use the same pinned, digest-verified micromamba downloader as the packaged runtime. These are
       # ephemeral source-certification environments, not the immutable CDN packs certified later at
       # the packaged boundary.
@@ -52,7 +85,7 @@ jobs:
         run: |
           set -euo pipefail
           bin="$RUNNER_TEMP/micromamba"
-          node scripts/fetch-micromamba.mjs linux-64 "$bin"
+          node scripts/fetch-micromamba.mjs "${{ matrix.subdir }}" "$bin"
           echo "MICROMAMBA_BIN=$bin" >> "$GITHUB_ENV"
 
       - name: Create real Python and R environments
@@ -64,9 +97,9 @@ jobs:
           r_prefix="$RUNNER_TEMP/runtime-r"
 
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$python_prefix" \
-            --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl openpyxl pycirclize
+            --channel conda-forge python=3.12 matplotlib-base numpy pandas nomkl openpyxl pycirclize patsy
           "$MICROMAMBA_BIN" create --yes --root-prefix "$root" --prefix "$r_prefix" \
-            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass \
+            --channel conda-forge r-base=4.4 r-jsonlite r-ggplot2 r-renv r-mass r-purrr \
             r-circlize r-dplyr r-ggrepel r-ggvenndiagram r-magrittr r-openxlsx \
             r-patchwork r-ragg r-rcolorbrewer r-readxl r-scales r-showtext \
             r-sysfonts r-systemfonts r-tidyr r-venn r-venndiagram
@@ -74,6 +107,7 @@ jobs:
           echo "OPEN_SCIENCE_TEST_PY_ENV=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_PYTHON=$python_prefix/bin/python" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_RESTORE_PY_ENV=$python_prefix" >> "$GITHUB_ENV"
+          echo "OPEN_SCIENCE_TEST_R_COMMAND=$r_prefix/bin/Rscript" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_R_ENV=$r_prefix" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_RENV_LIBRARY=$r_prefix/lib/R/library" >> "$GITHUB_ENV"
           echo "OPEN_SCIENCE_TEST_MICROMAMBA=$MICROMAMBA_BIN" >> "$GITHUB_ENV"
@@ -107,9 +141,15 @@ jobs:
         run: |
           set -euo pipefail
           "$OPEN_SCIENCE_TEST_PY_ENV" -c \
-            'import matplotlib, numpy, pandas, openpyxl, pycirclize; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
+            'import matplotlib, numpy, pandas, openpyxl, pycirclize, patsy; print("python=" + __import__("sys").version.split()[0] + " matplotlib=" + matplotlib.__version__ + " numpy=" + numpy.__version__ + " pandas=" + pandas.__version__)'
           "$OPEN_SCIENCE_TEST_R_ENV/bin/Rscript" -e \
-            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
+            'packages <- c("jsonlite", "ggplot2", "renv", "MASS", "purrr", "circlize", "dplyr", "ggrepel", "ggVennDiagram", "magrittr", "openxlsx", "patchwork", "ragg", "RColorBrewer", "readxl", "scales", "showtext", "sysfonts", "systemfonts", "tidyr", "venn", "VennDiagram"); for (package in packages) { loadNamespace(package); cat(package, "=", as.character(packageVersion(package)), "\n", sep="") }'
+
+      - name: Test package native analysis regressions
+        env:
+          RUN_KERNEL: '1'
+        run: >-
+          npm run test:notebook-analysis-native
 
       - name: Test real source runtime chain
         env:
@@ -122,13 +162,14 @@ jobs:
           src/main/notebook/host-mcp.integration.test.ts
           src/main/notebook/python-loop.integration.test.ts
           src/main/notebook/r-loop.integration.test.ts
+          src/main/notebook/kernel-file-evidence.integration.test.ts
           src/main/notebook/reproduction-runtime.integration.test.ts
-          src/main/notebook/native-lock-restoration.test.ts
-          src/main/notebook/environment-lock.test.ts
-          src/main/notebook/restored-environment-verification.test.ts
+          packages/environment/src/native-lock-restoration.test.ts
+          packages/environment/src/environment-lock.test.ts
+          packages/environment/src/restored-environment-verification.test.ts
           src/main/artifacts/artifact-reproducibility-execution.test.ts
-          src/main/notebook/environment-state-tracker.test.ts
-          src/main/notebook/package-manager.test.ts
+          packages/environment/src/environment-state-tracker.test.ts
+          packages/environment/src/package-manager.test.ts
           src/main/notebook/cross-turn-input-repro.integration.test.ts
           src/main/notebook/input-resource-repro.integration.test.ts
           src/main/notebook/e2e.certification.test.ts
@@ -139,3 +180,11 @@ jobs:
           --maxWorkers=1
           --testTimeout=60000
           --hookTimeout=60000
+
+      - name: Upload native analysis evidence
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: notebook-analysis-native
+          path: packages/notebook-analysis/test-results/notebook-analysis-native.json
+          if-no-files-found: error

@@ -1,26 +1,29 @@
-import { RuntimeWriterOwner } from './runtime-writer'
+import { createComputeExecution } from '@aipoch/compute/node'
 import { afterEach, beforeEach, describe, expect, expectTypeOf, it, vi } from 'vitest'
+import { configureTestElectronHost } from '../../../test/runtime-host'
+import { ELECTRON_APPLICATION_COMMAND_CHANNELS } from '../../shared/renderer-contract-catalog'
+import { registerApplicationCommandElectronAdapter } from '../application-command-electron-adapter'
+import { RuntimeWriterOwner } from './runtime-writer'
 
+import type { Logger } from '@aipoch/diagnostics/node'
+import type { ComputeJob } from '../../shared/compute'
 import {
   createEmptySessionManifest,
   materializeSessionConversationGraph,
+  SessionDeletionCommittedError,
   SessionRevisionConflictError,
   SessionSizeLimitError,
-  SessionDeletionCommittedError,
-  type PersistedChatSession,
-  type LoadAllSessionsResult
+  type LoadAllSessionsResult,
+  type PersistedChatSession
 } from '../../shared/session-persistence'
-import type { Logger } from '../logger'
+import type { ComputeJobRepository } from '../compute/job-repository'
+import type { ComputeHostRepository } from '../compute/repository'
 import {
   ProjectDeletionCoordinator,
   type ProjectDeletionRepository,
   type ProjectSessionDeletion
 } from '../projects/deletion-coordinator'
 import type { ReviewRepository } from '../reviewer/repository'
-import { ConcurrencyManager } from '../compute/concurrency-manager'
-import type { ComputeJobRepository } from '../compute/job-repository'
-import type { ComputeHostRepository } from '../compute/repository'
-import type { ComputeJob } from '../../shared/compute'
 
 const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registrationFailure } =
   vi.hoisted(() => ({
@@ -31,7 +34,8 @@ const { broadcastLifecycleEvent, getLifecycleClientId, ipcHandlers, registration
     ipcHandlers: new Map<string, (...args: unknown[]) => unknown>(),
     registrationFailure: {
       channel: undefined as string | undefined,
-      error: undefined as Error | undefined
+      error: undefined as Error | undefined,
+      rejectDuplicates: false
     }
   }))
 
@@ -39,6 +43,8 @@ vi.mock('electron', () => ({
   ipcMain: {
     handle: (channel: string, handler: (...args: unknown[]) => unknown) => {
       if (registrationFailure.channel === channel) throw registrationFailure.error
+      if (registrationFailure.rejectDuplicates && ipcHandlers.has(channel))
+        throw new Error(`Attempted to register a second handler for '${channel}'`)
       ipcHandlers.set(channel, handler)
     }
   }
@@ -48,6 +54,8 @@ vi.mock('../lifecycle-broadcast', () => ({
   getLifecycleClientId
 }))
 
+import { SessionDeletionOwner } from '../session-deletion/owner'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import {
   canReconcileSessionAbsences,
   coordinateSessionPersistenceWithProjectDeletions,
@@ -60,9 +68,7 @@ import {
   type SessionPersistenceBackend,
   type SessionPersistenceHandlers
 } from './ipc'
-import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import { MainMessageAttributionAuthority } from './message-attribution-authority'
-import { SessionDeletionOwner } from '../session-deletion/owner'
 
 beforeEach(() => {
   ipcHandlers.clear()
@@ -70,6 +76,7 @@ beforeEach(() => {
   getLifecycleClientId.mockClear()
   registrationFailure.channel = undefined
   registrationFailure.error = undefined
+  registrationFailure.rejectDuplicates = false
 })
 afterEach(() => clearMigrationPending())
 
@@ -191,6 +198,61 @@ describe('session deletion finalizers', () => {
 })
 
 describe('session persistence IPC handlers', () => {
+  it('lists live terminal failures and validates the exact execution before retry', async () => {
+    const request = {
+      projectId: 'project-a',
+      sessionId: 'session-1',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    const retry = vi.fn(async () => undefined)
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn(),
+      listRuntimeTerminalFailures: vi.fn(() => []),
+      retryRuntimeTerminalCommit: retry
+    }
+    const handlers = createSessionPersistenceHandlers(repository, createMockReviewRepository())
+    await expect(handlers.listRuntimeTerminalFailures()).resolves.toEqual([])
+    await handlers.retryRuntimeTerminalCommit(request)
+    expect(retry).toHaveBeenCalledExactlyOnceWith(request)
+    await expect(
+      handlers.retryRuntimeTerminalCommit({ ...request, executionId: '' })
+    ).rejects.toThrow()
+    expect(retry).toHaveBeenCalledOnce()
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository(), handlers)
+    await expect(ipcHandlers.get('sessions:list-runtime-terminal-failures')?.()).resolves.toEqual(
+      []
+    )
+    expect(ipcHandlers.has('sessions:retry-runtime-terminal-commit')).toBe(false)
+    expect(retry).toHaveBeenCalledOnce()
+  })
+  it('installs persistence reads alongside the standard command adapter without duplicate terminal retry registration', () => {
+    registrationFailure.rejectDuplicates = true
+    const repository: SessionPersistenceBackend = {
+      loadAll: vi.fn(),
+      loadOne: vi.fn(),
+      saveSession: vi.fn(),
+      deleteSession: vi.fn(),
+      saveManifest: vi.fn()
+    }
+    registerSessionPersistenceIpcHandlers(repository, createMockReviewRepository())
+    const persistenceChannels = [...ipcHandlers.keys()]
+    expect(() =>
+      registerApplicationCommandElectronAdapter({
+        commandNames: () => ELECTRON_APPLICATION_COMMAND_CHANNELS,
+        invoke: vi.fn(async () => undefined)
+      })
+    ).not.toThrow()
+    expect(persistenceChannels).not.toContain('sessions:retry-runtime-terminal-commit')
+    expect(typeof ipcHandlers.get('sessions:retry-runtime-terminal-commit')).toBe('function')
+    expect(ipcHandlers.size).toBe(
+      persistenceChannels.length + ELECTRON_APPLICATION_COMMAND_CHANNELS.length
+    )
+  })
   it('saves a Session for Project B while Project A cleanup remains failed', async () => {
     const projects: ProjectDeletionRepository = {
       exists: vi.fn().mockResolvedValue(false),
@@ -458,8 +520,8 @@ describe('session persistence IPC handlers', () => {
         status: 'queued'
       } as ComputeJob
       const dispatch = vi.fn(async () => undefined)
-      const manager = new ConcurrencyManager(
-        {
+      const manager = createComputeExecution().createQueue({
+        jobs: {
           findQueuedJobs: async () => (job.status === 'queued' ? [job] : []),
           countActiveBySession: async () => activeCount,
           findSessionConcurrencyJobs: async () => [job],
@@ -469,19 +531,16 @@ describe('session persistence IPC handlers', () => {
             return job
           }
         } as unknown as ComputeJobRepository,
-        { get: async () => ({ concurrencyLimit: 20 }) } as unknown as ComputeHostRepository,
-        dispatch,
-        undefined,
-        undefined,
-        undefined,
-        {
+        hosts: { get: async () => ({ concurrencyLimit: 20 }) } as unknown as ComputeHostRepository,
+        dispatch: dispatch,
+        sessionPolicy: {
           resolve: async () =>
             corrupt
               ? { status: 'blocked', reason: 'unavailable' }
               : { status: 'ready', limit: 1, revision: 0 },
           save: async () => undefined
         }
-      )
+      })
       const handlers = createSessionPersistenceHandlersWithAttributionAuthority(
         {
           loadAll: async () => catalog(),
@@ -571,6 +630,8 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -619,6 +680,8 @@ describe('session persistence IPC handlers', () => {
     }
     const saveSession = vi.fn(async () => ({ created: false, session }))
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -647,6 +710,24 @@ describe('session persistence IPC handlers', () => {
 
     expect(saveSession).toHaveBeenCalledWith(session, {
       conversationCommands: [{ ...command, message }]
+    })
+
+    saveSession.mockClear()
+    await ipcHandlers.get('sessions:save-session')?.({ sender: { id: 7 } }, session, {
+      conversationCommands: [
+        {
+          kind: 'prepare-prompt',
+          id: 'prepare-1',
+          promptMessageId: message.id,
+          mode: 'rearm',
+          timestamp: 1710000000002
+        }
+      ]
+    })
+    // Only a prepare-prompt save hands Main the caller lease its receipt must follow.
+    expect(saveSession).toHaveBeenCalledWith(session, expect.anything(), {
+      taskRunCommit: false,
+      callerSignal: expect.any(AbortSignal)
     })
 
     saveSession.mockClear()
@@ -990,6 +1071,7 @@ describe('session persistence IPC handlers', () => {
       'sessions:load-usage',
       'sessions:search-messages',
       'sessions:load-one',
+      'sessions:list-runtime-terminal-failures',
       'sessions:save-session',
       'sessions:save-manifest',
       'sessions:open-recovery-folder'
@@ -1038,6 +1120,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue(loadResult),
       list: vi.fn(),
@@ -1068,6 +1152,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -1103,6 +1189,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const injected: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn().mockResolvedValue({ sessions: [], manifest: { version: 1 as const } }),
       list: vi.fn(),
@@ -1172,6 +1260,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -1207,6 +1297,8 @@ describe('session persistence IPC handlers', () => {
       saveManifest: vi.fn()
     }
     const handlers: SessionPersistenceHandlers = {
+      listRuntimeTerminalFailures: vi.fn(async () => []),
+      retryRuntimeTerminalCommit: vi.fn(async () => undefined),
       searchMessages: vi.fn(),
       loadAll: vi.fn(),
       list: vi.fn(),
@@ -1316,3 +1408,5 @@ describe('session persistence IPC handlers', () => {
     expect(broadcastLifecycleEvent).toHaveBeenCalledOnce()
   })
 })
+
+await configureTestElectronHost(await import('electron'))

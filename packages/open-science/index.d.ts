@@ -15,7 +15,7 @@ export type BootstrapResult =
     }
 
 // Keep these standalone published types aligned with the safe Settings contracts.
-// connector-types.test.ts verifies complete request and response equivalence.
+// cli/connector-contract.test.ts verifies complete request and response equivalence.
 export type ToolPermission = 'allow' | 'ask' | 'block'
 
 export type ConnectorToolView = {

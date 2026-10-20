@@ -30,11 +30,32 @@ describe('registerUpdateIpcHandlers', () => {
     handlers.clear()
   })
 
+  it('validates the application frame before all native update actions including recovery', () => {
+    const strategy = createStrategy()
+    const validate = vi.fn(() => {
+      throw new Error('foreign frame')
+    })
+    registerUpdateIpcHandlers(strategy, undefined, validate)
+    for (const channel of [
+      'update:apply',
+      'update:cancel',
+      'update:recover',
+      'update:recheck',
+      'update:get-status'
+    ])
+      expect(() => handlers.get(channel)!({ sender: 'preview' })).toThrow('foreign frame')
+    expect(strategy.apply).not.toHaveBeenCalled()
+    expect(strategy.cancel).not.toHaveBeenCalled()
+    expect(strategy.getStatus).not.toHaveBeenCalled()
+  })
+
   it('delegates IPC to an injected owner while returning the scheduler strategy', async () => {
     const strategy = createStrategy()
     const owner: UpdateCommandOwner = {
       getAppInfo: vi.fn(() => ({ name: 'Injected', version: '1.0.0', copyright: 'test' })),
       getStatus: vi.fn(() => status),
+      recheck: vi.fn(),
+      recover: vi.fn(),
       check: vi.fn().mockResolvedValue(status),
       download: vi.fn().mockResolvedValue(status),
       cancel: vi.fn().mockResolvedValue(status),
@@ -58,6 +79,8 @@ describe('registerUpdateIpcHandlers', () => {
 
     expect(registerUpdateIpcHandlers(strategy)).toBe(strategy)
     expect([...handlers.keys()]).toEqual([
+      'update:recheck',
+      'update:recover',
       'update:get-app-info',
       'update:get-status',
       'update:check',
@@ -83,3 +106,7 @@ describe('registerUpdateIpcHandlers', () => {
     expect(strategy.apply).toHaveBeenCalledTimes(1)
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

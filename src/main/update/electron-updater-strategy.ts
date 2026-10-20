@@ -1,18 +1,20 @@
 import { app } from 'electron'
 import { spawnSync } from 'node:child_process'
+import type { RuntimeStartupOptions } from '../runtime-startup-options'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
 import { APP } from '../../shared/app-config'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import {
   isNewer,
+  UpdateLifecycleError,
   UPDATE_INSTALLATION_REQUIRED,
   type UpdateApplyOptions,
   type UpdateDownloadOptions,
   type UpdateStatus
 } from '../../shared/update'
-import { startDiagnosticOperation, type DiagnosticOperation } from '../diagnostics/operation'
-import type { Logger } from '../logger'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { createMacInstallationGuard, isMacReadOnlyUpdaterError } from '../mac-installation'
 import { fetchManifest } from './manifest'
 import {
@@ -24,6 +26,8 @@ import {
 import type { ApplicationEventMap } from '../application-events'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import { markApplicationShutdownTrigger } from '../application-shutdown-trigger'
+import { type NativeTranslator } from '../locale/main-process-messages'
+import { prepareWindowsUpdateHandoff, type WindowsUpdateHandoff } from './windows-update-handoff'
 
 type UpdateBroadcast = <Channel extends 'update:status' | 'update:progress'>(
   channel: Channel,
@@ -48,6 +52,9 @@ export interface MinimalCancellationToken {
 // Structural subset of electron-updater's autoUpdater we depend on, so tests can inject a fake without
 // pulling a real Electron runtime.
 export interface MinimalAutoUpdater {
+  // Consumed by the repository's NSIS patch; never a path or command string.
+  openScienceUpdateOperation?: string
+  readonly installerPath?: string | null
   autoDownload: boolean
   autoInstallOnAppQuit: boolean
   on(event: string, listener: (...args: unknown[]) => void): unknown
@@ -56,7 +63,22 @@ export interface MinimalAutoUpdater {
   quitAndInstall(isSilent?: boolean, isForceRunAfter?: boolean): void
 }
 
-export type ElectronUpdaterDeps = {
+export type UpdateInstallationHooks = {
+  getStartupOptions?: () => RuntimeStartupOptions
+  // Resolving 'legacy' defers to electron-updater's own quitAndInstall for uncertified channels.
+  executeInstall?: (status: UpdateStatus, options: UpdateApplyOptions) => Promise<void | 'legacy'>
+  prepareInstall?: (
+    status: UpdateStatus,
+    options: UpdateApplyOptions
+  ) => Promise<Partial<UpdateStatus> | void>
+  beforeInstallHandoff?: (status: UpdateStatus) => Promise<void>
+  cancelInstall?: () => Promise<Partial<UpdateStatus>>
+  recoverInstall?: () => Promise<Partial<UpdateStatus>>
+  recheckInstall?: () => Promise<Partial<UpdateStatus>>
+}
+export type ElectronUpdaterDeps = UpdateInstallationHooks & {
+  translate?: NativeTranslator
+  prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
   installationGuard?: (interactive: boolean, knownReadOnly?: boolean) => boolean
   updater?: MinimalAutoUpdater
   currentVersion?: string
@@ -230,6 +252,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   private readonly installGate?: InstallGate
   private readonly releaseInstallHandoff: () => void
   private readonly markUpdateShutdown: () => () => void
+  private readonly prepareInstallHandoff?: () => Promise<WindowsUpdateHandoff>
+  private updateHandoff?: WindowsUpdateHandoff
 
   constructor(deps: ElectronUpdaterDeps = {}) {
     this.updater = deps.updater ?? (autoUpdater as unknown as MinimalAutoUpdater)
@@ -256,16 +280,36 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     this.log = deps.log ?? NOOP_LOGGER
     this.createCancellationToken = deps.createCancellationToken ?? (() => new CancellationToken())
     this.installationGuard = deps.installationGuard ?? createMacInstallationGuard()
+    this.installationHooks = deps
     this.installGate = deps.installGate
     this.releaseInstallHandoff = deps.releaseInstallHandoff ?? (() => undefined)
     this.markUpdateShutdown =
       deps.markUpdateShutdown ?? (() => markApplicationShutdownTrigger('update'))
+    this.prepareInstallHandoff =
+      deps.prepareInstallHandoff ??
+      (this.platform === 'win32' && !deps.updater && app.isPackaged
+        ? async () => {
+            const installerPath = this.updater.installerPath
+            if (!installerPath) throw new Error('Downloaded installer path is unavailable')
+            const startupOptions = deps.getStartupOptions?.()
+            if (!startupOptions) throw new Error('Update startup configuration is unavailable')
+            return prepareWindowsUpdateHandoff(app.getPath('appData'), {
+              installerPath,
+              applicationPath: process.execPath,
+              profilePath: app.getPath('userData'),
+              targetVersion: this.status.latest ?? '',
+              startupOptions
+            })
+          }
+        : undefined)
     this.status = { state: 'idle', current: this.currentVersion, applyKind: 'restart' }
 
     this.updater.autoDownload = false
     this.updater.autoInstallOnAppQuit = false
     this.subscribe()
   }
+
+  private readonly installationHooks: UpdateInstallationHooks
 
   private subscribe(): void {
     this.updater.on('checking-for-update', () => {
@@ -335,14 +379,27 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         totalBytes: total
       })
     })
-    this.updater.on('update-downloaded', () => {
+    this.updater.on('update-downloaded', (info) => {
       if (
         !this.transferToken ||
         this.transferToken.cancelled ||
         this.status.state !== 'downloading'
       )
         return
-      this.setStatus({ ...this.status, state: 'ready', progress: 100 })
+      const downloaded = info as
+        { downloadedFile?: string; files?: Array<{ url?: string; sha512?: string }> } | undefined
+      const extension = downloaded?.downloadedFile?.split('.').pop()?.toLowerCase()
+      const candidates =
+        downloaded?.files?.filter((file) =>
+          file.url?.split('?')[0].toLowerCase().endsWith(`.${extension}`)
+        ) ?? []
+      this.setStatus({
+        ...this.status,
+        state: 'ready',
+        progress: 100,
+        artifactSha512: candidates.length === 1 ? candidates[0].sha512 : undefined,
+        localPath: (info as { downloadedFile?: string } | undefined)?.downloadedFile
+      })
     })
     this.updater.on('error', (err) => {
       if (this.applying && !this.installerStarted) return
@@ -384,6 +441,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   }
 
   private releaseAbortedInstallHandoff(): void {
+    const progress = this.updateHandoff
+    this.updateHandoff = undefined
+    this.updater.openScienceUpdateOperation = undefined
+    try {
+      progress?.cancel()
+    } catch (error) {
+      this.log.warn('update handoff cancellation failed', error)
+    }
     try {
       this.releaseInstallHandoff()
     } catch (error) {
@@ -393,6 +458,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
 
   // Always re-stamps current + applyKind so every broadcast status is self-consistent regardless of
   // which event produced it.
+  publishLifecycleStatus(status: Partial<UpdateStatus>): void {
+    this.setStatus({ ...this.status, ...status, state: this.status.state })
+  }
+
   private setStatus(partial: Partial<UpdateStatus>): void {
     if (this.applying && partial.state !== 'applying') return
     this.status = {
@@ -587,6 +656,35 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
   // download() awaits it so it never reuses the still-settling (cancelled) downloadPromise. No-op when
   // nothing is downloading.
   async cancel(): Promise<UpdateStatus> {
+    if (this.installerStarted || this.status.recovery?.canCancel === false) return this.status
+    if (
+      this.installationHooks.cancelInstall &&
+      (this.applying || this.recoveryAction || this.status.recovery || this.status.cliConfirmation)
+    ) {
+      if (this.cancellationAction) return this.cancellationAction
+      // Invoke cancellation now so it can abort a read-only recheck; publishing its result waits
+      // for the older status writer to settle, preventing late checks from reviving stale state.
+      const previous = this.recoveryAction
+      const cancellation = this.installationHooks.cancelInstall()
+      const settled = cancellation.then(
+        (result) => ({ result }),
+        (error) => ({ error })
+      )
+      const action = (async () => {
+        await previous
+        const outcome = await settled
+        this.applying = false
+        if ('error' in outcome) this.setLifecycleFailure(outcome.error)
+        else this.setStatus({ ...this.status, state: 'ready', ...outcome.result })
+        return this.status
+      })()
+      this.cancellationAction = action
+      try {
+        return await action
+      } finally {
+        if (this.cancellationAction === action) this.cancellationAction = undefined
+      }
+    }
     if (this.applying) return this.status
     this.downloadToken?.cancel()
     this.downloadToken = undefined
@@ -597,9 +695,58 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     return this.status
   }
 
+  private recoveryAction: Promise<UpdateStatus> | undefined
+  private cancellationAction: Promise<UpdateStatus> | undefined
+
+  private setLifecycleFailure(error: unknown): void {
+    this.setStatus({
+      ...this.status,
+      state: 'ready',
+      error: error instanceof Error ? error.message : 'Installation recovery failed.',
+      reason: error instanceof UpdateLifecycleError ? error.reason : 'install-failed',
+      ...(error instanceof UpdateLifecycleError && error.recovery
+        ? { recovery: error.recovery }
+        : {})
+    })
+  }
+
+  private async runRecoveryAction(
+    action: () => Promise<Partial<UpdateStatus>>
+  ): Promise<UpdateStatus> {
+    if (this.recoveryAction) return this.recoveryAction
+    const pending = (async () => {
+      try {
+        const result = await action()
+        this.applying = false
+        this.setStatus({ ...this.status, state: 'ready', ...result })
+      } catch (error) {
+        this.applying = false
+        this.setLifecycleFailure(error)
+      }
+      return this.status
+    })()
+    this.recoveryAction = pending
+    try {
+      return await pending
+    } finally {
+      this.recoveryAction = undefined
+    }
+  }
+
+  async recheck(): Promise<UpdateStatus> {
+    if (this.applying || this.installerStarted || !this.installationHooks.recheckInstall)
+      return this.status
+    return this.runRecoveryAction(this.installationHooks.recheckInstall)
+  }
+
+  async recover(): Promise<UpdateStatus> {
+    if (this.applying || !this.installationHooks.recoverInstall) return this.status
+    return this.runRecoveryAction(this.installationHooks.recoverInstall)
+  }
+
   // Triggered by the user's "Restart to update" click once the download is ready. On Windows,
-  // isSilent=true bypasses the assisted NSIS wizard and isForceRunAfter=true relaunches into the new
-  // version. Other updaters ignore isSilent.
+  // NSIS owns the visible installation progress after Electron releases its files. Updated installs
+  // skip setup/finish pages and relaunch automatically; headless callers can still install silently.
   async apply(options: UpdateApplyOptions = {}): Promise<UpdateStatus> {
     // Ignore stale/out-of-order renderer calls until electron-updater reports a completed download,
     // then claim the update synchronously so repeat clicks or concurrent renderers cannot start a
@@ -614,6 +761,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       state: 'applying',
       error: undefined,
       blockedBy: undefined,
+      blockedTasks: undefined,
       legacyShellRecovery: undefined
     })
 
@@ -621,6 +769,45 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       operation: 'update-apply',
       fields: { strategy: 'in-place' }
     })
+
+    try {
+      const preparation = this.installationHooks.prepareInstall
+        ? await this.installationHooks.prepareInstall(this.status, options)
+        : undefined
+      if (preparation) {
+        this.applying = false
+        this.setStatus({ ...this.status, state: 'ready', ...preparation })
+        return this.status
+      }
+    } catch (error) {
+      this.applying = false
+      this.setLifecycleFailure(error)
+      return this.status
+    }
+    if (!this.applying) return this.status
+
+    // Persist the next profile before stopping the backend. A failed write must leave the current
+    // application usable; NSIS alone owns the subsequent installation UI.
+    if (options.relaunch !== false && this.prepareInstallHandoff) {
+      try {
+        this.updateHandoff = await this.prepareInstallHandoff()
+        if (!this.applying) {
+          this.releaseAbortedInstallHandoff()
+          return this.status
+        }
+      } catch (error) {
+        this.releaseAbortedInstallHandoff()
+        this.applying = false
+        this.setStatus({
+          ...this.status,
+          state: 'error',
+          reason: 'install-failed',
+          error: error instanceof Error ? error.message : 'Could not prepare update handoff.'
+        })
+        operation.fail(error, { result: 'error' })
+        return this.status
+      }
+    }
 
     // Stop the agent, Reviewer, and notebook process trees BEFORE handing off to the installer. Its
     // uninstall step deletes the running app's files, and on Windows an executable/DLL still mapped by
@@ -645,7 +832,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.setStatus({
           ...this.status,
           state: 'ready',
-          error: 'Could not stop background processes before updating. Please try again.'
+          error:
+            error instanceof Error
+              ? error.message
+              : 'Could not stop background processes before updating.',
+          reason: error instanceof UpdateLifecycleError ? error.reason : 'runtime-stop-timeout',
+          ...(error instanceof UpdateLifecycleError && error.recovery
+            ? { recovery: error.recovery }
+            : {})
         })
         operation.fail(error, { result: 'error' })
         return this.status
@@ -662,6 +856,10 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         this.setStatus({
           ...this.status,
           state: 'ready',
+          reason:
+            readiness.reason ??
+            (readiness.blockedBy?.length ? 'active-work' : 'runtime-stop-unclean'),
+          recovery: readiness.recovery,
           error:
             readiness.blockedBy?.length === 1 && readiness.blockedBy[0] === 'delegated'
               ? 'Subagents are still running. Return to their tasks and stop them before restarting to update.'
@@ -671,6 +869,8 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
                   ? 'Research work is still running. Stop it before restarting to update.'
                   : 'Could not fully stop background processes before updating. Please try again.',
           ...(readiness.blockedBy ? { blockedBy: readiness.blockedBy } : {}),
+          blockedTasks: readiness.blockedTasks,
+          canForce: readiness.canForce === true,
           ...(readiness.legacyShellRecovery
             ? { legacyShellRecovery: readiness.legacyShellRecovery }
             : {})
@@ -686,12 +886,30 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.log.info('update install gate cleared; proceeding to quitAndInstall')
     }
 
+    try {
+      await this.installationHooks.beforeInstallHandoff?.(this.status)
+    } catch (error) {
+      this.releaseAbortedInstallHandoff()
+      this.applying = false
+      this.setLifecycleFailure(error)
+      return this.status
+    }
+    if (!this.applying) return this.status
     operation.phase('install')
     const rollbackTrigger = this.markUpdateShutdown()
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
     try {
-      this.updater.quitAndInstall(true, options.relaunch ?? true)
+      // A supervised installer can exit the application before this hook returns.
+      this.updateHandoff?.handoff()
+      const executed = await this.installationHooks.executeInstall?.(this.status, options)
+      if (!this.installationHooks.executeInstall || executed === 'legacy') {
+        this.updater.openScienceUpdateOperation = this.updateHandoff?.operationId
+        this.updater.quitAndInstall(
+          this.platform !== 'win32' || options.relaunch === false,
+          options.relaunch ?? true
+        )
+      }
     } catch (error) {
       rollbackTrigger()
       this.pendingInstallRollback = undefined
@@ -701,6 +919,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.setStatus({
         ...this.status,
         state: 'error',
+        reason: 'install-failed',
         error: error instanceof Error ? error.message : 'Could not start the update installer.'
       })
       operation.fail(error, { result: 'error' })

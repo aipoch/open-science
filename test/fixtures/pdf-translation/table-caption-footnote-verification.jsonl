@@ -1,0 +1,5 @@
+{"name": "attached-caption-footnote-keeps-owner", "change": "none", "accepted": true}
+{"name": "caption-footnote-cannot-change-destination", "change": "destination", "accepted": false}
+{"name": "caption-footnote-cannot-leave-paragraph", "change": "position", "accepted": false}
+{"name": "caption-footnote-cannot-change-table-number", "change": "table", "accepted": false}
+{"name": "caption-footnote-cannot-change-marker-order", "change": "order", "accepted": false}

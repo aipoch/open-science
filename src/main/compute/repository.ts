@@ -1,15 +1,17 @@
-import type { ComputeHost as PrismaComputeHost, PrismaClient } from '@prisma/client'
+import type { PrismaClient, ComputeHost as PrismaComputeHost } from '@prisma/client'
 
 import type {
-  ComputeHost,
   ComputeAuthenticationMode,
   ComputeExecutionMode,
+  ComputeHost,
   ComputeHostShape,
-  CreateComputeHostRequest,
   DetailsAuthor,
   ProbeResult,
   SshOverrides
-} from '../../shared/compute'
+} from '@aipoch/compute'
+import type { CreateComputeHostRequest } from '../../shared/compute'
+
+import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '@aipoch/compute'
 import type {
   ChangeComputeHostAuthenticationPersistence,
   CreatePasswordHostPersistence,
@@ -19,14 +21,12 @@ import type {
   PreparePasswordResetRequest,
   ResetPasswordHostPersistence
 } from './compute-auth-owner'
-import { computeProviderId, DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
-import {
-  parseHostConnectionPort,
-  validateHostConnectionProfile
-} from '../../shared/compute-host-connection-profile'
+
+import { parseHostConnectionPort, validateHostConnectionProfile } from '@aipoch/compute'
+import { ComputeConnectionError } from '@aipoch/compute/node'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
-import { ComputeConnectionError } from './connection-broker'
-import { assertSafeScratchRoot, assertSafeSshAlias } from './remote-path-security'
+
+import { assertSafeScratchRoot, assertSafeSshAlias } from '@aipoch/compute/node'
 
 // Only the computeHost delegate is needed; typing to this subset keeps the repository unit-testable
 // with a lightweight mock instead of a real (engine-backed) PrismaClient (aligns with the reviewer and

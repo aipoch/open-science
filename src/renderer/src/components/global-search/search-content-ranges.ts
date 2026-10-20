@@ -6,7 +6,9 @@ export const searchContentRanges = (root: HTMLElement, query: string): Range[] =
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
   let text = ''
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.parentElement?.closest('button, script, style, [aria-hidden="true"]')) continue
+    const excluded = node.parentElement?.closest('button, script, style, [aria-hidden="true"]')
+    // Retained details may be collapsed while the query changes. Only filter content inside this root.
+    if (excluded && root.contains(excluded)) continue
     const value = node.textContent ?? ''
     nodes.push({ node: node as Text, start: text.length, end: text.length + value.length })
     text += value

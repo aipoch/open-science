@@ -1,19 +1,14 @@
 import { randomUUID } from 'node:crypto'
 import { SessionReproducibilityBatches } from './session-reproducibility'
 import { SessionReproducibilityStore } from './session-reproducibility-store'
-import {
-  validateReproductionContext,
-  validateReproductionDiskSpace
-} from './reproduction-preflight'
-import {
-  artifactReproducibilityRecipeMatchesSnapshot,
-  prepareArtifactReproducibilityExecutionPlan
-} from './artifact-reproducibility-recipe'
+import { validateReproductionContext, validateReproductionDiskSpace } from '@aipoch/reproducibility'
+import { reproductionRecipes, reproductionEvidence } from './reproducibility-host'
+
 import type {
   SessionReproducibilityCommand,
   SessionReproducibilityBatch
 } from '../../shared/session-reproducibility'
-import { outputComparisonPolicySchema } from '../../shared/output-comparison'
+import { outputComparisonPolicySchema } from '@aipoch/reproducibility/comparison'
 
 import type { PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import type {
@@ -31,15 +26,15 @@ import type {
   ListArtifactReproducibilityReceiptsRequest
 } from '../../shared/artifact-reproducibility'
 import type { NotebookProcessSandbox } from '../notebook/process-sandbox'
-import { isChildUnconfirmedError } from '../notebook/provisioner-runtime'
-import { createLogger, errorLogFields } from '../logger'
-import { startDiagnosticOperation } from '../diagnostics/operation'
+import { isChildUnconfirmedError } from '@aipoch/environment'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { executeArtifactReproducibility } from '../notebook/reproduction-runtime'
 import {
-  executeArtifactReproducibility,
   ReproducibilityCleanupError,
   type ArtifactReproducibilityExecutionEvent,
   type ArtifactReproducibilityExecutionResult
-} from './artifact-reproducibility-execution'
+} from '@aipoch/reproducibility'
 import type {
   ArtifactReproducibilityCheckLogDraft,
   ArtifactReproducibilityFailedAttemptDraft,
@@ -194,7 +189,7 @@ class ArtifactReproducibilityAttemptOwner {
           if (
             !recipe ||
             !execution.provenanceGraph ||
-            !artifactReproducibilityRecipeMatchesSnapshot(recipe, {
+            !reproductionRecipes.artifactReproducibilityRecipeMatchesSnapshot(recipe, {
               ...execution,
               provenanceGraph: execution.provenanceGraph
             })
@@ -202,10 +197,10 @@ class ArtifactReproducibilityAttemptOwner {
             throw new Error('Execution evidence is unavailable.')
           validateReproductionContext(execution, request.frontierId)
           await validateReproductionDiskSpace(recipe, request.frontierId)
-          await prepareArtifactReproducibilityExecutionPlan(
+          await reproductionRecipes.prepareArtifactReproducibilityExecutionPlan(
             recipe,
             request.frontierId,
-            dependencies.storageRoot,
+            reproductionEvidence(dependencies.storageRoot),
             signal
           )
           const frontier = recipe.frontiers.find((f) => f.frontierId === request.frontierId)!

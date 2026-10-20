@@ -98,7 +98,7 @@ describe('PermissionApprovalControls specialist delete card', () => {
     expect(container.textContent).toContain('Main Agent')
   })
 
-  it('renders the primary action as a destructive Delete', () => {
+  it('renders fixed one-time approval as Allow with the deletion target, consequences and danger styling', () => {
     useSpecialistStore.setState({
       items: [{ kind: 'custom', ...sqlProfile }],
       isLoaded: true
@@ -110,9 +110,13 @@ describe('PermissionApprovalControls specialist delete card', () => {
 
     const primary = container.querySelector<HTMLElement>('[data-testid="allow-primary"]')
     expect(primary).not.toBeNull()
-    expect(primary!.textContent).toContain('Delete')
-    expect(primary!.textContent).not.toContain('Allow')
+    expect(primary!.textContent).toBe('Allow')
     expect(primary!.className).toContain('bg-destructive')
+    expect(container.querySelector('[data-testid="permission-header"]')?.textContent).toContain(
+      'Delete SQL_WRANGLER?'
+    )
+    expect(container.textContent).toContain('will be permanently removed')
+    expect(container.querySelector('[data-testid="scope-chevron"]')).toBeNull()
   })
 
   it('denies through the same onRespond path as any other request', () => {
@@ -130,6 +134,69 @@ describe('PermissionApprovalControls specialist delete card', () => {
       container.querySelector<HTMLElement>('[data-testid="deny-button"]')!.click()
     })
     expect(onRespond).toHaveBeenCalledWith('delete-1', 'reject-once')
+  })
+
+  it('keeps multi-scope deletion presentation and option payloads unchanged', () => {
+    const onRespond = vi.fn()
+    act(() => {
+      root.render(
+        <PermissionApprovalControls
+          requests={[
+            {
+              ...deleteRequest,
+              options: [
+                ...deleteRequest.options,
+                {
+                  optionId: 'session-delete',
+                  name: 'Always',
+                  kind: 'allow_always',
+                  scope: 'session'
+                }
+              ]
+            }
+          ]}
+          onRespond={onRespond}
+        />
+      )
+    })
+    const primary = container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')!
+    expect(primary.textContent).toBe('Delete')
+    expect(primary.className).toContain('bg-destructive')
+    expect(container.querySelector('[data-testid="scope-chevron"]')).not.toBeNull()
+    act(() => primary.click())
+    expect(onRespond).toHaveBeenCalledWith('delete-1', 'session-delete')
+  })
+
+  it('keeps embedded one-time deletion cancellation and repeat-submission protection', () => {
+    const onRespond = vi.fn(() => new Promise<void>(() => undefined))
+    act(() => {
+      root.render(
+        <PermissionApprovalControls
+          requests={[{ ...deleteRequest, options: [deleteRequest.options[0]] }]}
+          onRespond={onRespond}
+          embedded
+        />
+      )
+    })
+    const primary = container.querySelector<HTMLButtonElement>('[data-testid="allow-primary"]')!
+    const deny = container.querySelector<HTMLButtonElement>('[data-testid="deny-button"]')!
+    expect(primary.textContent).toBe('Allow')
+    expect(primary.className).toContain('bg-destructive')
+    expect(container.querySelector('[data-testid="permission-header"]')?.textContent).toContain(
+      'Delete SQL_WRANGLER?'
+    )
+    expect(container.textContent).toContain('can no longer be resolved by name')
+    deny.focus()
+    expect(document.activeElement).toBe(deny)
+    act(() => {
+      deny.click()
+      deny.click()
+      primary.click()
+    })
+    expect(onRespond).toHaveBeenCalledTimes(1)
+    expect(onRespond).toHaveBeenCalledWith('delete-1', undefined)
+    expect(primary.disabled).toBe(true)
+    expect(deny.disabled).toBe(true)
   })
 
   it('degrades to a stale warning when the target cannot be resolved by name (renamed or removed)', () => {

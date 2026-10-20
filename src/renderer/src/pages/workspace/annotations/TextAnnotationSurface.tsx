@@ -3,35 +3,37 @@ import { useTranslation } from 'react-i18next'
 import { BookmarkMarker } from '../bookmarks/BookmarkMarker'
 
 import type {
-  AnnotationValidationError,
-  SessionTextAnnotationSource,
   TextAnnotation,
   TextAnnotationSource
+} from '../../../../../shared/annotation-contract'
+import type {
+  AnnotationValidationError,
+  SessionTextAnnotationSource
 } from '../../../../../shared/annotations'
 import type { Bookmark, TextBookmarkTarget } from '../../../../../shared/bookmarks'
 import { useBookmarks } from '../bookmarks/bookmark-context'
-import { isBackwardSelection } from './annotation-trigger-anchor'
 import { createAnnotationId } from './annotation-id'
 import {
+  retryPendingAnnotationReveal,
   revealTextAnnotationRange,
-  subscribeBookmarkReveal,
-  subscribeBookmarkRevealPreparation,
   subscribeAnnotationReveal,
   subscribeAnnotationRevealPreparation,
-  retryPendingAnnotationReveal
+  subscribeBookmarkReveal,
+  subscribeBookmarkRevealPreparation
 } from './annotation-reveal'
+import { isBackwardSelection } from './annotation-trigger-anchor'
+import {
+  quoteOccurrenceForRange,
+  reconcileTextAnnotationRanges,
+  retargetTextAnnotationRange,
+  textAnnotationAnchorForRange
+} from './text-annotation-range'
 import {
   AnnotationDraftEditor,
   AnnotationMarkers,
   type AnnotationControl,
   type BookmarkSaveInput
 } from './TextAnnotationEditors'
-import {
-  textAnnotationAnchorForRange,
-  quoteOccurrenceForRange,
-  reconcileTextAnnotationRanges,
-  retargetTextAnnotationRange
-} from './text-annotation-range'
 
 type SelectionDraft = { quote: string; backward: boolean; range: Range; occurrence: number }
 

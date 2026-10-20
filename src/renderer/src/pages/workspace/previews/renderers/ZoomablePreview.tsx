@@ -28,7 +28,7 @@ const PreviewZoomControls = ({
   ]
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <div className="absolute bottom-3 right-3 z-10 flex gap-1 rounded-md border border-border-300/50 bg-bg-000/90 p-1 shadow-sm backdrop-blur">
         {actions.map(({ label, icon: Icon, onClick }) => (
           <Tooltip key={label}>

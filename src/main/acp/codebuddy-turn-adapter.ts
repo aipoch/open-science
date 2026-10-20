@@ -1,10 +1,10 @@
-import type { AcpTurnTokenUsage } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import { normalizeChatCompletionsUsage } from '@aipoch/providers/protocol'
 import type {
   AcpProviderModelCallUsage,
   AcpProviderTurnAdapter,
   AcpProviderTurnResult
 } from './provider-turn-adapter'
-import { normalizeOpenAiChatModelStepUsage } from '../settings/openai-chat-usage'
 
 const record = (value: unknown): Record<string, unknown> | undefined =>
   typeof value === 'object' && value !== null && !Array.isArray(value)
@@ -38,8 +38,7 @@ const sumModelSteps = (
   const cacheTokens = cachedReadTokens + cachedWriteTokens
   if (!Number.isSafeInteger(cacheTokens)) return undefined
   const lastModelStepUsage = steps.at(-1)!
-  const contextUsedTokens =
-    lastModelStepUsage.inputTokens + (lastModelStepUsage.cachedReadTokens ?? 0)
+  const contextUsedTokens = lastModelStepUsage.inputTokens + lastModelStepUsage.cacheTokens
   if (!Number.isSafeInteger(contextUsedTokens)) return undefined
 
   const turnUsage: Omit<AcpTurnTokenUsage, 'turnCount'> = {
@@ -85,7 +84,7 @@ export const codeBuddyTurnAdapter: AcpProviderTurnAdapter = {
         const meta = record(update._meta)
         const messageId = meta?.['codebuddy.ai/messageId']
         if (typeof messageId !== 'string' || !messageId) return
-        const usage = normalizeOpenAiChatModelStepUsage(meta?.usage)
+        const usage = normalizeChatCompletionsUsage(meta?.usage)
         if (usage) usageByMessageId.set(messageId, { ...usage, sourceInvocationId: messageId })
       },
       finalize: () => {

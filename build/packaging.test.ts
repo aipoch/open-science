@@ -5,22 +5,271 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
+  realpathSync,
   rmSync,
   writeFileSync
 } from 'node:fs'
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
+import { finished } from 'node:stream/promises'
+import { runInNewContext } from 'node:vm'
 
-import { createPackageWithOptions } from '@electron/asar'
 import { describe, expect, it } from 'vitest'
+import { load } from 'js-yaml'
 
 const repoRoot = join(__dirname, '..')
-const appBuilderLibRoot = dirname(
-  createRequire(import.meta.url).resolve('app-builder-lib/package.json')
+// Exercise the same packaging dependencies as the installed electron-builder.
+const require = createRequire(import.meta.url)
+
+describe('desktop packaging preparation', () => {
+  function preparation(platform: string): {
+    run: (context: unknown) => Promise<void>
+    calls: string[]
+  } {
+    const config = load(readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')) as {
+      beforePack: string
+    }
+    expect(config.beforePack).toBe('build/prepare-desktop.cjs')
+    const calls: string[] = []
+    const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
+    const dependencies = Object.assign(
+      (name: string): unknown => {
+        if (name === './stage-desktop-runtime.cjs')
+          return async () => {
+            calls.push('stage')
+          }
+        return require(name)
+      },
+      { resolve: require.resolve }
+    )
+    runInNewContext(readFileSync(join(repoRoot, config.beforePack), 'utf8'), {
+      module,
+      require: dependencies,
+      process: { platform, arch: 'x64', execPath: process.execPath }
+    })
+    return { run: module.exports, calls }
+  }
+
+  it.each(['win32', 'darwin', 'linux'])(
+    'prepares application resources before staging on %s',
+    async (platform) => {
+      const { run, calls } = preparation(platform)
+      await run({
+        electronPlatformName: platform,
+        arch: require('builder-util').Arch.x64,
+        packager: { projectDir: repoRoot }
+      })
+      expect(calls).toEqual(['stage'])
+    }
+  )
+
+  it('rejects cross packaging before starting a compiler or staging', async () => {
+    const { run, calls } = preparation('win32')
+    await expect(
+      run({
+        electronPlatformName: 'win32',
+        arch: require('builder-util').Arch.arm64,
+        packager: { projectDir: repoRoot }
+      })
+    ).rejects.toThrow('target platform/architecture')
+    expect(calls).toEqual([])
+  })
+})
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const appBuilderLibPath = builderRequire.resolve('app-builder-lib/package.json')
+const appBuilderLibRoot = dirname(appBuilderLibPath)
+const appBuilderRequire = createRequire(appBuilderLibPath)
+const { createPackageWithOptions, listPackage } = appBuilderRequire('@electron/asar')
+
+// Use an existing electron-builder NSIS cache; tests must not download a compiler.
+function findNsisCompiler(): string | undefined {
+  if (process.platform !== 'win32') return undefined
+  if (process.env.NSIS_TEST_COMPILER) return process.env.NSIS_TEST_COMPILER
+  const cache =
+    process.env.ELECTRON_BUILDER_CACHE ??
+    join(process.env.LOCALAPPDATA ?? '', 'electron-builder', 'Cache')
+  if (!existsSync(cache)) return undefined
+  for (const entry of readdirSync(cache, { withFileTypes: true })) {
+    if (!entry.isDirectory() || !entry.name.startsWith('nsis')) continue
+    const directory = join(cache, entry.name)
+    const direct = join(directory, 'makensis.exe')
+    if (existsSync(direct)) return direct
+    for (const child of readdirSync(directory, { withFileTypes: true })) {
+      const compiler = join(directory, child.name, 'makensis.exe')
+      if (child.isDirectory() && existsSync(compiler)) return compiler
+    }
+  }
+  return undefined
+}
+
+const nsisCompiler = findNsisCompiler()
+
+describe.skipIf(!nsisCompiler).each(['OpenScience', 'Open-Science'])(
+  'NSIS data preservation native behavior (%s)',
+  (folder) => {
+    it.each([
+      'missing-parent',
+      'missing-install',
+      'existing-data',
+      'interrupted-backup',
+      'backup-conflict',
+      'backup-file',
+      'invalid-parent'
+    ])('protects data during reinstall with %s', (scenario) => {
+      const root = mkdtempSync(join(tmpdir(), 'nsis-preservation-'))
+      const parent = join(
+        root,
+        scenario === 'invalid-parent' ? 'invalid?parent' : 'Open Science 科学'
+      )
+      try {
+        const install = join(parent, 'open-science')
+        const data = join(install, folder)
+        const slot = folder === 'OpenScience' ? 'per-user' : 'per-user-branded'
+        const backup = join(parent, `.open-science-update-data-${slot}`)
+        const conflict = scenario === 'backup-conflict' || scenario === 'backup-file'
+        if (scenario !== 'missing-parent' && scenario !== 'invalid-parent') mkdirSync(parent)
+        if (scenario === 'existing-data' || conflict) {
+          mkdirSync(data, { recursive: true })
+          writeFileSync(join(data, 'sentinel.txt'), 'existing user data')
+        }
+        if (scenario === 'interrupted-backup' || scenario === 'backup-conflict') {
+          mkdirSync(backup)
+          writeFileSync(join(backup, 'sentinel.txt'), 'preserved user data')
+        }
+        if (scenario === 'backup-file') writeFileSync(backup, 'unrelated file')
+        const include = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8')
+        const macro = include.match(
+          /!macro preserveNamedDataRoot DIR BACKUP SLOT FOLDER[\s\S]*?!macroend/
+        )?.[0]
+        expect(macro).toBeDefined()
+        const restore = include.match(
+          /!macro restoreNamedDataRoot DIR BACKUP FOLDER[\s\S]*?!macroend/
+        )?.[0]
+        expect(restore).toBeDefined()
+        // Execute the production macro with real NSIS filesystem operations. Redirect only
+        // UI output to a file so an error dialog cannot block unattended regression runs.
+        const observed = `${macro}\n${restore}`
+          .replace(/^\s*DetailPrint (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+          .replace(/^\s*MessageBox MB_OK\|MB_ICONSTOP (.+)$/gm, 'FileWriteUTF16LE $9 $1')
+        const output = join(root, 'result.txt')
+        const executable = join(root, 'probe.exe')
+        const source = join(root, 'probe.nsi')
+        writeFileSync(
+          source,
+          `\uFEFFUnicode true
+!include "LogicLib.nsh"
+Name "Isolated data preservation regression"
+OutFile "${executable}"
+RequestExecutionLevel user
+SilentInstall silent
+Var backup
+Var dataProtectionFailed
+Var dataRestoreFailed
+${observed}
+Section
+FileOpen $9 "${output}" w
+StrCpy $dataProtectionFailed "0"
+StrCpy $dataRestoreFailed "0"
+!insertmacro preserveNamedDataRoot "${install}" $backup ${slot} ${folder}
+FileWriteUTF16LE $9 "|failed=$dataProtectionFailed|backup=$backup"
+!insertmacro restoreNamedDataRoot "${install}" $backup ${folder}
+FileWriteUTF16LE $9 "|restoreFailed=$dataRestoreFailed"
+FileClose $9
+SetErrorLevel 0
+SectionEnd
+`
+        )
+        const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+          encoding: 'utf8',
+          timeout: 15_000
+        })
+        expect(compile.error).toBeUndefined()
+        expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+        const run = spawnSync(executable, [], { encoding: 'utf8', timeout: 15_000 })
+        expect(run.error).toBeUndefined()
+        expect(run.status, run.stderr).toBe(0)
+        const result = readFileSync(output, 'utf16le')
+        expect(result, result).toContain(
+          `|failed=${conflict || scenario === 'invalid-parent' ? '1' : '0'}`
+        )
+        expect(result, result).toContain('|restoreFailed=0')
+        if (scenario === 'existing-data' || scenario === 'interrupted-backup') {
+          expect(result).toContain(`|backup=${backup}`)
+          expect(readFileSync(join(data, 'sentinel.txt'), 'utf8')).toBe(
+            scenario === 'existing-data' ? 'existing user data' : 'preserved user data'
+          )
+          expect(existsSync(backup)).toBe(false)
+        } else if (scenario === 'invalid-parent') {
+          expect(result).toContain('code=parent-path-unresolved')
+        } else if (conflict) {
+          expect(readFileSync(join(data, 'sentinel.txt'), 'utf8')).toBe('existing user data')
+          expect(
+            readFileSync(scenario === 'backup-file' ? backup : join(backup, 'sentinel.txt'), 'utf8')
+          ).toBe(scenario === 'backup-file' ? 'unrelated file' : 'preserved user data')
+        } else {
+          expect(existsSync(parent)).toBe(scenario !== 'missing-parent')
+          expect(existsSync(data)).toBe(false)
+        }
+      } finally {
+        rmSync(root, { recursive: true, force: true })
+      }
+    })
+  }
 )
 
 describe('packaging config', () => {
+  it('loads both tiktoken WASM encodings from a packed ASAR in Electron', async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'tiktoken-asar-')))
+    try {
+      const source = join(root, 'source')
+      const archive = join(root, 'app.asar')
+      mkdirSync(source)
+      cpSync(dirname(require.resolve('tiktoken')), join(source, 'node_modules', 'tiktoken'), {
+        recursive: true
+      })
+      writeFileSync(
+        join(source, 'probe.cjs'),
+        `const { get_encoding } = require('tiktoken')
+const counts = {}
+for (const profile of ['cl100k_base', 'o200k_base']) {
+  const encoding = get_encoding(profile)
+  try {
+    counts[profile] = encoding.encode('x'.repeat(1024)).length
+  } finally {
+    encoding.free()
+  }
+}
+process.stdout.write(JSON.stringify({ counts, modulePath: require.resolve('tiktoken') }))
+`
+      )
+      // ASAR resolves with a writable stream before its queued writes finish.
+      const archiveStream = await createPackageWithOptions(source, archive, {})
+      await finished(archiveStream)
+      expect(listPackage(archive).map((entry: string) => entry.replaceAll('\\', '/'))).toContain(
+        '/node_modules/tiktoken/tiktoken_bg.wasm'
+      )
+      // Remove the source tree so the child can only load the archived JavaScript and WASM.
+      rmSync(source, { recursive: true, force: true })
+      const result = spawnSync(require('electron') as string, [join(archive, 'probe.cjs')], {
+        cwd: root,
+        encoding: 'utf8',
+        timeout: 10_000,
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: '1', NODE_PATH: '' }
+      })
+      expect(result.error).toBeUndefined()
+      expect(result.status, result.stderr).toBe(0)
+      expect(JSON.parse(result.stdout)).toEqual({
+        // A byte-length fallback would return 256; both real encodings return 128.
+        counts: { cl100k_base: 128, o200k_base: 128 },
+        modulePath: join(archive, 'node_modules', 'tiktoken', 'tiktoken.cjs')
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['module', 'commonjs', undefined])(
     'runs unpacked notebook scripts beneath an ancestor package with type %s',
     async (type) => {
@@ -105,13 +354,16 @@ describe('packaging config', () => {
     expect(existsSync(join(repoRoot, 'resources/notebook/kernel_process_host.js'))).toBe(true)
     expect(existsSync(join(repoRoot, 'resources/notebook/file_evidence_worker.js'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/(\*\*|notebook\/\*\*)/)
+    const { asarUnpack } = load(yml) as { asarUnpack: string[] }
+    expect(
+      asarUnpack.some((pattern) => ['resources/**', 'resources/notebook/**'].includes(pattern))
+    ).toBe(true)
   })
 
   it('ships the versioned Specialist contribution template guidance unpacked from the asar', () => {
     expect(existsSync(join(repoRoot, 'resources/specialists/template/v1/README.txt'))).toBe(true)
     const yml = readFileSync(join(repoRoot, 'electron-builder.yml'), 'utf8')
-    expect(yml).toMatch(/asarUnpack:\s*\n\s*-\s*resources\/\*\*/)
+    expect((load(yml) as { asarUnpack: string[] }).asarUnpack).toContain('resources/**')
   })
 
   it('ships micromamba as a per-platform extraResource to Contents/Resources', () => {
@@ -274,9 +526,9 @@ describe('NSIS installer include (build/installer.nsh)', () => {
     const retryAt = recovery.indexOf('ExecWait')
     const restoreAt = recovery.indexOf('Rename "$R7" "${DIR}\\OpenScience"')
     const preserveErrorAt = recovery.indexOf('Could not safely preserve')
-    const preserveQuitAt = recovery.indexOf('Quit', preserveErrorAt)
+    const preserveQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', preserveErrorAt)
     const restoreErrorAt = recovery.indexOf('The preserved data remains at: $R7')
-    const restoreQuitAt = recovery.indexOf('Quit', restoreErrorAt)
+    const restoreQuitAt = recovery.indexOf('!insertmacro quitFailedUpdate', restoreErrorAt)
     const retryResultAt = recovery.indexOf('${if} $R0 != 0', retryAt)
     const clearPreservedPathAt = recovery.indexOf('StrCpy $R7 ""', restoreAt)
 
@@ -545,6 +797,19 @@ describe('NSIS installer include (build/installer.nsh)', () => {
       installerNsi.indexOf('Section "install"')
     )
   })
+
+  it('records actionable cleanup failure reasons in the NSIS detail log', () => {
+    expect(include).toContain('Open-Science Notebook cleanup failure code=$0')
+    for (const code of [
+      'parent-path-unresolved',
+      'backup-already-exists',
+      'preserve-rename-failed',
+      'restore-destination-exists',
+      'restore-rename-failed'
+    ]) {
+      expect(include).toContain(`Open-Science data protection failure code=${code}`)
+    }
+  })
 })
 
 it('protects both re-created branded data folders before retrying the old uninstaller', () => {
@@ -565,4 +830,112 @@ it('protects both re-created branded data folders before retrying the old uninst
   expect(recovery.indexOf('!insertmacro restoreRetryDataRoot')).toBeGreaterThan(
     recovery.indexOf('ExecWait')
   )
+})
+
+describe.skipIf(!nsisCompiler)('NSIS update receipt protocol', () => {
+  it.each([
+    'valid',
+    'fallback',
+    'ambiguous-roots',
+    'surrounded',
+    'duplicate',
+    'missing',
+    'invalid'
+  ])('publishes correlated receipts for %s operation arguments', (scenario) => {
+    const root = mkdtempSync(join(tmpdir(), 'nsis-receipt-'))
+    try {
+      const operation = '00000000-0000-4000-8000-000000000001'
+      const primary = join(root, 'primary')
+      const fallback = join(root, 'fallback')
+      const directory = join(scenario === 'fallback' ? fallback : primary, operation)
+      mkdirSync(directory, { recursive: true })
+      writeFileSync(join(directory, 'request.json'), '{}')
+      if (scenario === 'ambiguous-roots') {
+        mkdirSync(join(fallback, operation), { recursive: true })
+        writeFileSync(join(fallback, operation, 'request.json'), '{}')
+      }
+      const include = readFileSync(join(repoRoot, 'build/windows-update-handoff.nsh'), 'utf8')
+      const redirected = include
+        .replace(
+          '"$APPDATA\\Open-Science\\UpdateHandoffs\\$updateOperation"',
+          `"${primary}\\$updateOperation"`
+        )
+        .replace(
+          '"$APPDATA\\Open-Science-UpdateHandoffs\\$updateOperation"',
+          `"${fallback}\\$updateOperation"`
+        )
+      expect(redirected).not.toBe(include)
+      const includeDirective = readFileSync(join(repoRoot, 'build/installer.nsh'), 'utf8').match(
+        /^!include .*windows-update-handoff\.nsh"\r?$/m
+      )?.[0]
+      expect(includeDirective).toBeDefined()
+      writeFileSync(join(root, 'windows-update-handoff.nsh'), redirected)
+      const executable = join(root, 'probe.exe')
+      const source = join(root, 'probe.nsi')
+      writeFileSync(
+        source,
+        `\uFEFFUnicode true
+!define BUILD_RESOURCES_DIR "${root}"
+${includeDirective}
+!include "LogicLib.nsh"
+!include "FileFunc.nsh"
+Name "Isolated update receipt regression"
+OutFile "${executable}"
+RequestExecutionLevel user
+SilentInstall silent
+Var installMode
+!insertmacro defineUpdateReceiptFunctions
+Section
+StrCpy $installMode "current"
+Call initializeUpdateReceipts
+Push "installing"
+Call writeUpdateReceipt
+Push "installed"
+Call writeUpdateReceipt
+Push "failed"
+Call writeUpdateReceipt
+SectionEnd
+`
+      )
+      const compile = spawnSync(nsisCompiler!, ['/V2', source], {
+        encoding: 'utf8',
+        timeout: 30_000
+      })
+      expect(compile.status, compile.stderr || compile.stdout).toBe(0)
+      // Exercise the actual patched updater's argument transport, including its surrounding flags.
+      const { NsisUpdater } = require('electron-updater/out/NsisUpdater')
+      let args: string[] = []
+      expect(
+        NsisUpdater.prototype.doInstall.call(
+          {
+            installerPath: executable,
+            openScienceUpdateOperation: operation,
+            spawnLog: async (_file: string, values: string[]) => {
+              args = values
+            },
+            dispatchError: (error: Error) => {
+              throw error
+            }
+          },
+          { isSilent: false, isForceRunAfter: true }
+        )
+      ).toBe(true)
+      if (scenario === 'surrounded') args.push('/S', '--unused=value with spaces')
+      if (scenario === 'duplicate') args.push(`--open-science-update-operation=${operation}`)
+      if (scenario === 'missing') args = []
+      if (scenario === 'invalid') args = ['--open-science-update-operation=../outside']
+      const execution = spawnSync(executable, args, { encoding: 'utf8', timeout: 30_000 })
+      expect(execution.status, execution.stderr || execution.stdout).toBe(0)
+      for (const stage of ['accepted', 'installing', 'installed', 'failed']) {
+        const receipt = join(directory, `${stage}.receipt`)
+        const valid = scenario === 'valid' || scenario === 'surrounded' || scenario === 'fallback'
+        expect(existsSync(receipt)).toBe(valid)
+        if (valid) expect(readFileSync(receipt, 'utf8')).toBe(`${operation}\r\n${stage}\r\n`)
+        if (scenario === 'ambiguous-roots')
+          expect(existsSync(join(fallback, operation, `${stage}.receipt`))).toBe(false)
+      }
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
 })

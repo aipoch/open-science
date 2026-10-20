@@ -1,3 +1,14 @@
+vi.mock('./runtime-ownership', async (original) => ({
+  ...(await original<typeof import('./runtime-ownership')>()),
+  acquireCredentialBootstrapLease: () => ({ release: vi.fn() }),
+  RuntimeDirectoryOwnership: class {
+    acquireSync = vi.fn()
+  },
+  configureRuntimeDirectoryOwnership: vi.fn()
+}))
+vi.mock('./runtime-control', () => ({ startRuntimeControl: async () => ({ close: vi.fn() }) }))
+vi.mock('./desktop-interaction-electron', () => ({ installElectronInteraction: vi.fn() }))
+vi.mock('./runtime-network-electron', () => ({ installElectronNetwork: vi.fn() }))
 vi.mock('./credential-identity/bootstrap', () => ({
   selectStartupCredentialIdentity: () => ({
     backend: 'mac-keychain',
@@ -30,6 +41,8 @@ const mocks = vi.hoisted(() => {
   }
   const app = {
     isPackaged: false,
+    isReady: () => true,
+    commandLine: { getSwitchValue: () => '' },
     whenReady: async () => {},
     setName: vi.fn(),
     setPath: vi.fn(),
@@ -37,6 +50,9 @@ const mocks = vi.hoisted(() => {
     requestSingleInstanceLock: vi.fn(() => true),
     getPath: vi.fn(() => 'test-logs'),
     getVersion: vi.fn(() => '0.0.0-test'),
+    getAppPath: () => '/isolated-test/application',
+    getLocale: () => 'en',
+    once: vi.fn(),
     on: vi.fn(),
     quit: vi.fn(),
     exit: vi.fn()
@@ -53,18 +69,25 @@ const mocks = vi.hoisted(() => {
   }
 })
 
-vi.mock('node:module', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('node:module')>()),
-  createRequire: () => () => ({
-    app: mocks.app,
-    BrowserWindow: {},
-    crashReporter: {},
-    ipcMain: {},
-    nativeImage: {},
-    nativeTheme: {},
-    protocol: { registerSchemesAsPrivileged: vi.fn() }
-  })
+vi.mock('electron', () => ({
+  app: mocks.app,
+  dialog: { showErrorBox: vi.fn() },
+  BrowserWindow: {},
+  crashReporter: {},
+  ipcMain: {},
+  nativeImage: {},
+  nativeTheme: {},
+  protocol: { registerSchemesAsPrivileged: vi.fn() }
 }))
+vi.mock('./desktop-native-electron', () => ({ createDesktopNativeHandler: vi.fn() }))
+vi.mock('./desktop-runtime-launcher', () => ({
+  startOrAttachDesktopBackend: vi.fn(),
+  desktopBackendPaths: vi.fn(() => ({
+    command: '/isolated-test/node',
+    entry: '/isolated-test/application/backend.cjs'
+  }))
+}))
+vi.mock('./credential-identity/node-cipher', () => ({ initializeNodeWindowsProfileKey: vi.fn() }))
 
 vi.mock('./app-startup', () => ({
   createSecondInstanceRelay: vi.fn(() => ({
@@ -92,17 +115,16 @@ vi.mock('./diagnostics/startup', () => ({
   reportApplicationStartupFailure: mocks.reportApplicationStartupFailure
 }))
 
-vi.mock('./diagnostics/startup-storage-probe', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   timedStartupStorageProbe: vi.fn(async () => ({
     sequentialMs: 0,
     syncWriteMs: 0,
     kind: 'unknown'
-  }))
-}))
-
-vi.mock('./logger', async (importOriginal) => ({
-  errorLogFields: (await importOriginal<typeof import('./logger')>()).errorLogFields,
+  })),
+  errorLogFields: (await importOriginal<typeof import('@aipoch/diagnostics/node')>())
+    .errorLogFields,
   createLogger: vi.fn(() => mocks.log),
+  initLogger: vi.fn(),
   diagnosticErrorFields: vi.fn((error: unknown) => ({ error })),
   flushLogs: vi.fn(async () => undefined),
   writeFatalLogSync: mocks.writeFatalLogSync
@@ -243,3 +265,8 @@ describe('main-process fatal errors', () => {
     }
   )
 })
+
+vi.mock('./ipc-handler-registry', () => ({
+  configureIpcHandlerRegistry: vi.fn(),
+  disposeIpcHandlerRegistry: vi.fn()
+}))

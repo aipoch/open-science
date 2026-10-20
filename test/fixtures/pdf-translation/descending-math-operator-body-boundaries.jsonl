@@ -1,0 +1,14 @@
+{"name":"descending-summation-does-not-join-previous-prose","operator":"∑","fontDescent":-2.3}
+{"name":"descending-integral-does-not-join-previous-prose","operator":"∫","fontDescent":-1.8}
+{"name":"descending-radical-does-not-join-previous-prose","operator":"√","fontDescent":-0.96}
+{"name":"top-origin-summation-with-moderate-descent-is-preserved","operator":"∑","fontAscent":0.04,"fontDescent":-0.6}
+{"name":"top-origin-radical-mapped-to-latin-p-is-preserved","operator":"p","fontAscent":0.04,"fontDescent":-0.6}
+{"name":"ordinary-latin-p-is-not-a-detached-radical","operator":"p","fontAscent":0.68,"fontDescent":-0.22,"preserved":false}
+{"name":"native-sum-upper-limit-is-preserved","operator":"∑","fontDescent":-2.3,"limit":{"x":243,"y":147,"size":7,"preserved":true}}
+{"name":"full-size-letter-is-not-an-upper-limit","operator":"∑","fontDescent":-2.3,"limit":{"x":243,"y":147,"size":10,"preserved":false}}
+{"name":"off-axis-small-letter-is-not-an-upper-limit","operator":"∑","fontDescent":-2.3,"limit":{"x":255,"y":147,"size":7,"preserved":false}}
+{"name":"distant-small-letter-is-not-an-upper-limit","operator":"∑","fontDescent":-2.3,"limit":{"x":243,"y":130,"size":7,"preserved":false}}
+{"name": "opening-top-origin-delimiter-does-not-enter-previous-prose", "operator": "(", "width": 5.95, "fontAscent": 0.04, "fontDescent": -0.6}
+{"name": "closing-top-origin-delimiter-does-not-enter-previous-prose", "operator": ")", "width": 5.95, "fontAscent": 0.04, "fontDescent": -0.6}
+{"name": "top-origin-norm-bar-does-not-enter-prose", "operator": "∥", "width": 5.5, "fontAscent": 0.04, "fontDescent": -0.6}
+{"name": "extensible-bracket-piece-does-not-enter-prose", "operator": "", "width": 5.5, "fontAscent": 0.04, "fontDescent": -0.6}

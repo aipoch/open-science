@@ -1,3 +1,10 @@
+import { createLogger } from '@aipoch/diagnostics/node'
+import {
+  createSpecialistDesktopCommands,
+  specialistDesktopCommandGroup,
+  type SpecialistDesktopDependencies,
+  type SpecialistDesktopCommands
+} from './desktop-commands'
 import { readFile, stat } from 'node:fs/promises'
 import { z } from 'zod'
 import { ApplicationCommandError } from '../../shared/application-command-contract'
@@ -6,13 +13,24 @@ import {
   type SpecialistPackageInstallRequest,
   type SpecialistPackageCandidatePreview,
   type SpecialistPackageInstallResult
-} from '../../shared/specialist-package'
+} from '@aipoch/specialists'
 import {
   type BeginUploadTransferRequest,
   type UploadTransferRequest,
   type UploadTransferStatus
 } from '../../shared/uploads'
-import type { UpdateSpecialistRequest, SetSpecialistEnabledRequest } from '../../shared/specialist'
+import type {
+  UpdateSpecialistRequest,
+  SetSpecialistEnabledRequest,
+  SetSessionSpecialistRequest,
+  SetSessionSpecialistResponse
+} from '../../shared/specialist'
+import type {
+  GetMarketplaceReleaseRequest,
+  ListMarketplaceRequest,
+  MarketplaceSnapshot,
+  MarketplaceSpecialistRelease
+} from '../../shared/specialist-marketplace'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -24,13 +42,20 @@ import {
 } from '../application-command-router'
 import type { UploadCommandOwner } from '../uploads/command-owner'
 import type { SpecialistService } from './service'
-import type { SpecialistPackageService } from './package/service'
+import type { SpecialistPackageService } from '@aipoch/specialists/node'
+import type { MarketplaceService } from './marketplace/service'
+import type { SessionSpecialistReconfiguration } from './session-reconfiguration'
 
 type Dependencies = {
   service: Pick<SpecialistService, 'listForSettingsSnapshot' | 'update' | 'setEnabled'>
   packages: Pick<SpecialistPackageService, 'preview' | 'install' | 'cancel' | 'dispose' | 'report'>
   uploads: UploadCommandOwner
+  marketplace: Pick<MarketplaceService, 'list' | 'getRelease'> &
+    Partial<Pick<MarketplaceService, 'installedSpecialistProvenance'>>
+  sessionReconfiguration: Pick<SessionSpecialistReconfiguration, 'requestSwitch'>
   onProfilesChanged: () => void
+  desktop: SpecialistDesktopDependencies
+  disposeMarketplace: (ownerId: number) => void
 }
 
 const beginRequest = z
@@ -44,8 +69,22 @@ const beginRequest = z
 const transferRequest = z.object({ transferId: z.string().min(1) }).strict()
 const candidateRequest = z.object({ candidateToken: z.string().min(1) }).strict()
 const enabledRequest = z.object({ id: z.string().min(1), enabled: z.boolean() }).strict()
+// Parity with the Electron IPC parseListMarketplaceRequest: undefined passes through, otherwise
+// exactly { forceRefresh: boolean } — anything else is rejected as renderer data.
+const parseListMarketplaceRequest = (request: unknown): { forceRefresh?: boolean } | undefined => {
+  if (request === undefined) return undefined
+  if (
+    typeof request !== 'object' ||
+    request === null ||
+    Object.keys(request).length !== 1 ||
+    typeof (request as { forceRefresh?: unknown }).forceRefresh !== 'boolean'
+  ) {
+    throw new Error('Marketplace list does not accept renderer data.')
+  }
+  return { forceRefresh: (request as { forceRefresh: boolean }).forceRefresh }
+}
 
-// Web callers receive negative, process-local IDs, disjoint from Electron WebContents IDs.
+// Transport callers receive negative, process-local IDs, disjoint from legacy WebContents IDs.
 // Candidate identity stays in the existing package service, never in browser-supplied data.
 let nextOwnerId = -1
 const LIFETIME_MS = 10 * 60 * 1000
@@ -56,6 +95,13 @@ export type SpecialistApplicationOwner = {
   setEnabled: (
     request: SetSpecialistEnabledRequest
   ) => ReturnType<Dependencies['service']['setEnabled']>
+  setSessionSpecialist: (
+    request: SetSessionSpecialistRequest
+  ) => Promise<SetSessionSpecialistResponse>
+  listMarketplace: (request?: ListMarketplaceRequest) => Promise<MarketplaceSnapshot>
+  getMarketplaceRelease: (
+    request: GetMarketplaceReleaseRequest
+  ) => Promise<MarketplaceSpecialistRelease>
   beginUpload: (
     invocation: ApplicationInvocation<readonly [BeginUploadTransferRequest]>
   ) => Promise<UploadTransferStatus>
@@ -69,6 +115,7 @@ export type SpecialistApplicationOwner = {
     invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>
   ) => Promise<SpecialistPackageInstallResult>
   cancel: (invocation: ApplicationInvocation<readonly [SpecialistPackageInstallRequest]>) => void
+  desktop: SpecialistDesktopCommands
   dispose: () => void
 }
 
@@ -76,7 +123,11 @@ export const createSpecialistApplicationOwner = ({
   service,
   packages,
   uploads,
-  onProfilesChanged
+  marketplace,
+  sessionReconfiguration,
+  onProfilesChanged,
+  desktop,
+  disposeMarketplace
 }: Dependencies): SpecialistApplicationOwner => {
   type Caller = {
     ownerId: number
@@ -101,10 +152,13 @@ export const createSpecialistApplicationOwner = ({
       throw new Error('Specialist import caller expired.')
     let caller = callers.get(callerLease)
     if (!caller) {
+      const nativeId = Number(invocation.callerContext.clientId)
       const current: Caller = {
         ownerId:
-          invocation.callerContext.surface === 'electron'
-            ? Number(invocation.callerContext.clientId)
+          invocation.callerContext.surface === 'electron' &&
+          Number.isSafeInteger(nativeId) &&
+          nativeId > 0
+            ? nativeId
             : nextOwnerId--,
         busy: false,
         disposed: false,
@@ -114,6 +168,7 @@ export const createSpecialistApplicationOwner = ({
           callers.delete(callerLease)
           callerLease.signal.removeEventListener('abort', current.release)
           packages.dispose(current.ownerId)
+          disposeMarketplace(current.ownerId)
           if (!current.busy) webImports.delete(current)
           if (current.transferId && !current.busy) {
             void uploads
@@ -138,7 +193,43 @@ export const createSpecialistApplicationOwner = ({
   }
 
   return {
-    list: () => service.listForSettingsSnapshot(),
+    desktop: createSpecialistDesktopCommands(desktop, (invocation) => {
+      const caller = callerFor(invocation)
+      refreshExpiry(caller)
+      return caller.ownerId
+    }),
+    list: async () => {
+      const snapshot = await service.listForSettingsSnapshot()
+      if (!marketplace.installedSpecialistProvenance) return snapshot
+      try {
+        const installed = snapshot.items.flatMap((item) =>
+          item.kind === 'custom'
+            ? [
+                {
+                  id: item.id,
+                  revision: item.revision,
+                  ...(item.origin ? { origin: item.origin } : {}),
+                  ...(item.importBaseline?.archiveDigest
+                    ? { archiveDigest: item.importBaseline.archiveDigest }
+                    : {})
+                }
+              ]
+            : []
+        )
+        const provenance = await marketplace.installedSpecialistProvenance(installed)
+        return {
+          ...snapshot,
+          items: snapshot.items.map((item) =>
+            item.kind === 'custom' && provenance.has(item.id)
+              ? { ...item, marketplaceProvenance: provenance.get(item.id) }
+              : item
+          )
+        }
+      } catch (error) {
+        createLogger('specialist').error('Marketplace provenance failed', { error })
+        return snapshot
+      }
+    },
     update: async (request: UpdateSpecialistRequest) => {
       const result = await service.update(request)
       if (
@@ -153,6 +244,21 @@ export const createSpecialistApplicationOwner = ({
       onProfilesChanged()
       return result
     },
+    // Parity with the Electron IPC parse in ipc.ts: sessionId must be a string, specialistId
+    // must be a string or undefined — anything else is rejected as renderer data.
+    setSessionSpecialist: async (request: SetSessionSpecialistRequest) => {
+      if (!request || typeof request.sessionId !== 'string') {
+        throw new Error('SET_SESSION_SPECIALIST: sessionId must be a string.')
+      }
+      if (request.specialistId !== undefined && typeof request.specialistId !== 'string') {
+        throw new Error('SET_SESSION_SPECIALIST: specialistId must be a string or undefined.')
+      }
+      return sessionReconfiguration.requestSwitch(request.sessionId, request.specialistId)
+    },
+    listMarketplace: async (request?: ListMarketplaceRequest) =>
+      marketplace.list(parseListMarketplaceRequest(request)),
+    getMarketplaceRelease: (request: GetMarketplaceReleaseRequest) =>
+      marketplace.getRelease(request),
     beginUpload: async (
       invocation: ApplicationInvocation<readonly [BeginUploadTransferRequest]>
     ) => {
@@ -282,6 +388,11 @@ const commands = [
     Awaited<ReturnType<SpecialistApplicationOwner['setEnabled']>>
   >('specialist:set-enabled'),
   command<
+    'specialist:set-session-specialist',
+    readonly [SetSessionSpecialistRequest],
+    Awaited<ReturnType<SpecialistApplicationOwner['setSessionSpecialist']>>
+  >('specialist:set-session-specialist'),
+  command<
     'specialist:package-upload-begin',
     readonly [BeginUploadTransferRequest],
     Awaited<ReturnType<SpecialistApplicationOwner['beginUpload']>>
@@ -301,7 +412,17 @@ const commands = [
   >('specialist:package-install'),
   command<'specialist:package-cancel', readonly [SpecialistPackageInstallRequest], void>(
     'specialist:package-cancel'
-  )
+  ),
+  command<
+    'specialist:marketplace-list',
+    readonly [request?: ListMarketplaceRequest],
+    MarketplaceSnapshot
+  >('specialist:marketplace-list'),
+  command<
+    'specialist:marketplace-release-get',
+    readonly [GetMarketplaceReleaseRequest],
+    MarketplaceSpecialistRelease
+  >('specialist:marketplace-release-get')
 ] as const
 
 export const specialistApplicationCommandGroup = defineApplicationCommandGroup(
@@ -318,12 +439,16 @@ export const registerSpecialistApplicationCommands = (
       'specialist:list': () => owner.list(),
       'specialist:update': ({ args }) => owner.update(args[0]),
       'specialist:set-enabled': ({ args }) => owner.setEnabled(args[0]),
+      'specialist:set-session-specialist': ({ args }) => owner.setSessionSpecialist(args[0]),
       'specialist:package-upload-begin': (invocation) => owner.beginUpload(invocation),
       'specialist:package-upload-preview': (invocation) => owner.previewUpload(invocation),
       'specialist:package-upload-abort': (invocation) => owner.abortUpload(invocation),
       'specialist:package-install': (invocation) => owner.install(invocation),
-      'specialist:package-cancel': (invocation) => owner.cancel(invocation)
+      'specialist:package-cancel': (invocation) => owner.cancel(invocation),
+      'specialist:marketplace-list': ({ args }) => owner.listMarketplace(args[0]),
+      'specialist:marketplace-release-get': ({ args }) => owner.getMarketplaceRelease(args[0])
     })
+    scope.registerGroup(specialistDesktopCommandGroup, owner.desktop)
     return scope.complete(() => owner.dispose())
   } catch (error) {
     scope.rollback()

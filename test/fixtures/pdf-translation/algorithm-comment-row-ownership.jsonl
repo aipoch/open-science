@@ -1,0 +1,2 @@
+{"name":"complete comments stay beside their own update equations","first":"(Initialize moment estimate)","second":"(Update moment estimate)","separate":true}
+{"name":"a wrapped explanation still joins across prose lines","first":"(Initialize moment estimate","second":"using the previous state)","separate":false}

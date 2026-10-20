@@ -37,10 +37,21 @@ const upsertReview = (
   updated: ReviewWithChecks
 ): ReviewWithChecks[] => {
   const current = reviews.find((r) => r.id === updated.id)
-  if (current && updated.updatedAt < current.updatedAt) return reviews
+  if (current && updated.updatedAt < current.updatedAt) {
+    // A delayed push may still be the only copy carrying the captured log after a newer list load
+    // (which intentionally omits it). Keep the newer review data without discarding that log.
+    if (current.reviewerLog.length === 0 && updated.reviewerLog.length > 0) {
+      return reviews.map((review) =>
+        review.id === current.id ? { ...current, reviewerLog: updated.reviewerLog } : review
+      )
+    }
+    return reviews
+  }
   const merged = current
     ? {
         ...updated,
+        // List loads omit the log; never let an empty copy erase one already received from a push.
+        reviewerLog: updated.reviewerLog.length === 0 ? current.reviewerLog : updated.reviewerLog,
         stale: updated.stale ?? current.stale,
         verificationUnavailable: updated.verificationUnavailable ?? current.verificationUnavailable
       }
@@ -76,13 +87,21 @@ const mergeLoadedReviews = (
     // recompute keeps the existing stale rather than replacing it with undefined.
     const stale = review.stale ?? current.stale
     const base = review.updatedAt > current.updatedAt ? review : current
+    // The list projection omits the log. A newer summary must still inherit the log already held
+    // for this Review (from a push or an earlier full load) instead of replacing it with [].
+    const reviewerLog =
+      review.reviewerLog.length === 0 && current.reviewerLog.length > 0
+        ? current.reviewerLog
+        : review.reviewerLog
     const verificationUnavailable =
       review.verificationUnavailable ?? current.verificationUnavailable
     byId.set(
       review.id,
-      base.stale === stale && base.verificationUnavailable === verificationUnavailable
+      base.stale === stale &&
+        base.verificationUnavailable === verificationUnavailable &&
+        base.reviewerLog === reviewerLog
         ? base
-        : { ...base, stale, verificationUnavailable }
+        : { ...base, reviewerLog, stale, verificationUnavailable }
     )
   }
   return [...byId.values()].sort((a, b) => b.createdAt - a.createdAt)

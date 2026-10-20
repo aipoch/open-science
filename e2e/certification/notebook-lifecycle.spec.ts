@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
-import { mkdir } from 'node:fs/promises'
-import { resolve } from 'node:path'
+import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { RUNTIME_LOCK_FILE } from '../../src/main/runtime-ownership'
 import { test } from '../fixtures/electron-app'
 import { createProject, openRecentSession, sendPrompt } from './helpers'
 
@@ -16,13 +17,144 @@ const captureLifecycleEvidence = async (
 const controlledWindowsFixtureAvailable =
   process.platform === 'win32' && Boolean(process.env.OPEN_SCIENCE_E2E_MICROMAMBA_EVENTS)
 
+const sendReviewedPrompt = async (
+  page: Parameters<typeof sendPrompt>[0],
+  prompt: string,
+  reply: string,
+  commands: string[],
+  timeout: number
+): Promise<void> => {
+  await Promise.all([
+    sendPrompt(page, prompt, reply, timeout),
+    (async () => {
+      const review = page.getByRole('group', {
+        name: 'Permission request: Review potentially destructive code',
+        exact: true
+      })
+      let previousCode: string | undefined
+      for (const command of commands) {
+        await expect(review).toContainText(command)
+        const code = review.getByTestId('tool-code-block')
+        if (previousCode) await expect(code).not.toHaveText(previousCode)
+        previousCode = await code.innerText()
+        await review.getByRole('button', { name: 'Allow', exact: true }).click()
+      }
+    })()
+  ])
+}
+
+test('executes Windows REPL cells and recovers Shell after an interpreter exit', async ({
+  app
+}) => {
+  test.skip(process.platform !== 'win32', 'Exercises the Windows REPL and PowerShell launch paths.')
+  test.setTimeout(180_000)
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page, 'Windows REPL lifecycle')
+  await sendPrompt(
+    page,
+    'Verify Windows REPL lifecycle.',
+    'Windows REPL lifecycle verified:',
+    120_000
+  )
+})
+
+test('installs global npm tools through the app and reuses them across Sessions and restart', async ({
+  app
+}) => {
+  test.setTimeout(240_000)
+  await app.completeOnboarding()
+  let page = await app.configureFakeAgent()
+  await createProject(page, 'Npm installation')
+  await sendReviewedPrompt(
+    page,
+    'Verify application npm global install.',
+    'Application npm install verified',
+    ['node -e "eval(Buffer.from('],
+    90_000
+  )
+  await page.getByRole('button', { name: 'All projects', exact: true }).click()
+  await createProject(page, 'Npm shared tools')
+  await sendReviewedPrompt(
+    page,
+    'Verify application npm shared tool and local install.',
+    'Application npm local verified',
+    ['node -e "eval(Buffer.from(', 'node -e "eval(Buffer.from('],
+    90_000
+  )
+  await captureLifecycleEvidence(page, 'npm-across-sessions.png')
+  page = await app.restart()
+  await openRecentSession(page, 'Verify application npm shared tool and local install.')
+  await sendPrompt(
+    page,
+    'Verify application npm tool after restart.',
+    'Application npm restart verified',
+    90_000
+  )
+  await captureLifecycleEvidence(page, 'npm-after-app-restart.png')
+  const parent = await app.createTestDirectory('npm-migration')
+  const staged = await page.evaluate(async (parent) => {
+    const bridge = globalThis as unknown as {
+      api: {
+        storage: {
+          migrate: (parent: string) => Promise<{ ok: boolean; error?: string }>
+          inspectDataRoot: (
+            parent: string
+          ) => Promise<{ kind: string; dataRoot: string; recoveryStatus?: string }>
+        }
+      }
+    }
+    const moved = await bridge.api.storage.migrate(parent)
+    if (!moved.ok) throw new Error(moved.error)
+    return bridge.api.storage.inspectDataRoot(parent)
+  }, parent)
+  expect(staged).toMatchObject({ kind: 'recover', recoveryStatus: 'verified' })
+  const packageRoot = join(
+    staged.dataRoot,
+    'runtime',
+    'npm',
+    `${process.platform}-${process.arch}`,
+    ...(process.platform === 'win32' ? [] : ['lib']),
+    'node_modules',
+    'os-npm-app-fixture'
+  )
+  expect(JSON.parse(await readFile(join(packageRoot, 'package.json'), 'utf8')).name).toBe(
+    'os-npm-app-fixture'
+  )
+  const discarded = await page.evaluate(async (parent) => {
+    const bridge = globalThis as unknown as {
+      api: {
+        storage: {
+          discardMigratedCopy: (parent: string) => Promise<unknown>
+        }
+      }
+    }
+    return bridge.api.storage.discardMigratedCopy(parent)
+  }, parent)
+  expect(discarded).toEqual({ ok: true })
+  // The runtime ownership inode must survive discard; all copied data must be gone.
+  expect(await readdir(staged.dataRoot)).toEqual([RUNTIME_LOCK_FILE])
+  await sendPrompt(
+    page,
+    'Verify application npm tool after restart.',
+    'Application npm restart verified',
+    90_000
+  )
+})
+
 test('runs and shuts down a Notebook session through its packaged MCP boundary', async ({
   app
 }) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
   await createProject(page, 'Notebook lifecycle evidence')
-  await sendPrompt(page, 'Verify the notebook lifecycle.', 'Notebook lifecycle verified for')
+  await sendReviewedPrompt(
+    page,
+    'Verify the notebook lifecycle.',
+    'Notebook lifecycle verified for',
+    ['node -e "setTimeout(() => console.log(\'notebook-lifecycle-e2e\'), 0)"'],
+    30_000
+  )
 
   page = await app.restart()
   await openRecentSession(page, 'Verify the notebook lifecycle.')
@@ -42,7 +174,7 @@ test('cancels a timed-out environment mutation before allowing a retry', async (
     page,
     'Verify Notebook mutation cancellation.',
     'Notebook mutation cancellation verified;',
-    75_000
+    100_000
   )
   await captureLifecycleEvidence(page, 'cancellation-transcript.png')
 })

@@ -1,31 +1,33 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   getAcpRuntimeEventText,
   type AcpAgentRuntimeUpdate,
-  type AcpModelCallUsage,
-  type AcpPermissionRequest,
   type AcpPermissionResponse,
-  type AcpRuntimeEvent,
-  type AcpTurnTokenUsage
+  type AcpRuntimeEvent
 } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { nativeDelegationAuditFailureMessage } from './certification'
 import {
-  DelegateExecutionError,
   DelegateExecutionCleanupError,
+  DelegateExecutionError,
   DelegateMessagePreAcceptanceError,
   type DelegateCapacityReservation,
   type DelegateChildTurnIdentity,
   type DelegateExecution,
   type DelegateExecutionEvent,
   type DelegateExecutionInput,
-  type DelegateMessageAcceptanceEvidence,
   type DelegateExecutionOutcome,
+  type DelegateMessageAcceptanceEvidence,
   type DelegatePermissionResponse,
   type RunningDelegateExecution
 } from './execution-port'
-import { nativeDelegationAuditFailureMessage } from './certification'
+
+const log = createLogger('delegation:execution')
 
 type DelegateExecutionProvenance = Readonly<{
   projectId: string
@@ -53,7 +55,9 @@ type PreparedDelegateExecution = Readonly<{
   artifactCurrentRunFile?: string
   runtimeConstructionIsProcessFree?: boolean
   releaseResources?(): Promise<void> | void
-  confirmProcessCleanup?(): Promise<void>
+  // Return true only when recovery positively reaped recorded process ownership.
+  // A void result asserts no pending receipts but cannot override a failed runtime shutdown.
+  confirmProcessCleanup?(): Promise<void | true>
   disposeResources?(): Promise<void> | void
 }>
 
@@ -498,7 +502,10 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
           slot.unreaped = true
         if (scope?.confirmProcessCleanup) {
           try {
-            await scope.confirmProcessCleanup()
+            const recovered = await scope.confirmProcessCleanup()
+            // The ownership authority has now confirmed every process for this Attempt.
+            // A failed first shutdown is provisional, not a permanent quarantine latch.
+            if (recovered === true) delete slot.unreaped
           } catch (error) {
             slot.unreaped = true
             firstError ??= error
@@ -557,6 +564,23 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         if (firstError !== undefined) throw firstError
       })())
 
+    const settleOutcome = async (outcome: DelegateExecutionOutcome): Promise<void> => {
+      let cleanupError: Error | undefined
+      try {
+        await cleanup()
+      } catch (error) {
+        cleanupError = error instanceof Error ? error : new Error(String(error))
+        log.warn('delegated result preserved after cleanup failure', {
+          ...input.session,
+          attemptId: input.attemptId,
+          status: outcome.status,
+          error: cleanupError
+        })
+      }
+      terminalSettled = true
+      terminal.resolve({ ...outcome, ...(cleanupError ? { cleanupError } : {}) })
+    }
+
     const promptRequest = (
       text: string
     ): Parameters<AcpDelegateRuntime['sendAppContinuation']>[0] => ({
@@ -604,9 +628,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         activeWorkspaces.add(scope.workspace.cwd)
         ownsWorkspace = true
         if (cancelRequested) {
-          await cleanup()
-          terminalSettled = true
-          terminal.resolve({ status: 'cancelled' })
+          await settleOutcome({ status: 'cancelled' })
           settleAccepted(
             'provider_prompt_completed',
             new DelegateMessagePreAcceptanceError(
@@ -626,9 +648,7 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
         })
         providerSessionId = created.sessionId
         if (cancelRequested) {
-          await cleanup()
-          terminalSettled = true
-          terminal.resolve({ status: 'cancelled' })
+          await settleOutcome({ status: 'cancelled' })
           settleAccepted(
             'provider_prompt_completed',
             new DelegateMessagePreAcceptanceError(
@@ -690,11 +710,9 @@ const createAcpDelegateExecution = (options: AcpDelegateExecutionOptions): Deleg
             }
           })
         }
-        await cleanup()
-        terminalSettled = true
-        if (cancelRequested) terminal.resolve({ status: 'cancelled' })
+        if (cancelRequested) await settleOutcome({ status: 'cancelled' })
         else {
-          terminal.resolve({
+          await settleOutcome({
             status: 'completed',
             response,
             ...(turnUsageAvailable && turnUsage

@@ -5,7 +5,14 @@ import { delimiter, dirname, join } from 'node:path'
 import { load } from 'js-yaml'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-const feeds = ['latest.yml', 'latest-linux.yml', 'latest-mac.yml', 'arm64-mac.yml', 'x64-mac.yml']
+const feeds = [
+  'latest.yml',
+  'latest-linux.yml',
+  'latest-linux-arm64.yml',
+  'latest-mac.yml',
+  'arm64-mac.yml',
+  'x64-mac.yml'
+]
 const roots: string[] = []
 afterEach(() => {
   vi.unstubAllEnvs()
@@ -20,7 +27,7 @@ function fixture(): {
   current: (version: string) => void
   stage: (version: string) => void
   snapshot: () => Record<string, string>
-  run: (version: string, mode?: string, failKey?: string) => void
+  run: (version: string, mode?: string, failKey?: string, bootstrap?: boolean) => void
 } {
   const root = mkdtempSync(join(tmpdir(), 'mirror-channel-test-'))
   roots.push(root)
@@ -41,6 +48,7 @@ const path = require('node:path');
 const [service, operation, source, destination] = process.argv.slice(2);
 if (service === 's3api' && operation === 'head-object') {
  const args = process.argv.slice(2);
+ if (process.env.FAIL_KEY.startsWith('head:')) { process.stderr.write(process.env.FAIL_KEY.slice(5)); process.exit(1); }
  const file = path.join(process.env.FIXTURE_STORAGE, args[args.indexOf('--bucket') + 1], args[args.indexOf('--key') + 1]);
  if (!fs.existsSync(file)) { process.stderr.write('An error occurred (404): Not Found'); process.exit(1); }
  process.exit(0);
@@ -77,7 +85,7 @@ else {
     Object.fromEntries(
       ['version.json', ...feeds].map((name) => [name, readFileSync(join(channel, name), 'utf8')])
     )
-  const run = (version: string, mode = 'backfill', failKey = ''): void => {
+  const run = (version: string, mode = 'backfill', failKey = '', bootstrap = false): void => {
     const workflow = load(readFileSync('.github/workflows/mirror-to-website.yml', 'utf8')) as {
       jobs: { mirror: { steps: Array<{ name: string; run?: string }> } }
     }
@@ -97,6 +105,7 @@ else {
           S3_PREFIX: 'stable',
           VERSION: version,
           MODE: mode,
+          BOOTSTRAP_LINUX_ARM64: String(bootstrap),
           FAIL_KEY: failKey
         },
         // macOS Bash treats a piped stdin as a remote shell and can source .bashrc.
@@ -184,6 +193,83 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     f.run('2.1.0', 'promote')
     expect(f.snapshot()).toEqual(before)
   })
+  it('does not downgrade a newer ARM64 feed before the version manifest catches up', () => {
+    const f = fixture()
+    writeFileSync(join(f.channel, 'latest-linux-arm64.yml'), 'version: 3.0.0\n')
+    const before = f.snapshot()
+    f.stage('2.1.0')
+    f.run('2.1.0', 'promote')
+    expect(f.snapshot()).toEqual(before)
+  })
+  it('requires the new ARM64 channel to be initialized before first promotion', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    rmSync(join(f.channel, 'latest-linux-arm64.yml'))
+    const previousManifest = readFileSync(join(f.channel, 'version.json'), 'utf8')
+    expect(() => f.run('2.1.0', 'promote')).toThrow()
+    expect(readFileSync(join(f.channel, 'version.json'), 'utf8')).toBe(previousManifest)
+  })
+  it('explicitly bootstraps an absent ARM64 feed and can retry the same promotion', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    rmSync(join(f.channel, 'latest-linux-arm64.yml'))
+    f.run('2.1.0', 'promote', '', true)
+    const promoted = f.snapshot()
+    for (const name of feeds)
+      expect((load(promoted[name]) as { version: string }).version).toBe('2.1.0')
+    expect(JSON.parse(promoted['version.json']).version).toBe('2.1.0')
+    f.run('2.1.0', 'promote', '', true)
+    expect(f.snapshot()).toEqual(promoted)
+  })
+  it.each(['head:An error occurred (403): Forbidden', 'head:Connection timed out'])(
+    'does not interpret %s as permission to bootstrap',
+    (failure) => {
+      const f = fixture(),
+        before = f.snapshot()
+      f.stage('2.1.0')
+      expect(() => f.run('2.1.0', 'promote', failure, true)).toThrow()
+      expect(f.snapshot()).toEqual(before)
+    }
+  )
+  it('rejects malformed existing ARM64 metadata even with bootstrap enabled', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    writeFileSync(join(f.channel, 'latest-linux-arm64.yml'), 'version: invalid\n')
+    const before = f.snapshot()
+    expect(() => f.run('2.1.0', 'promote', '', true)).toThrow()
+    expect(f.snapshot()).toEqual(before)
+  })
+  it('does not bootstrap when another channel pointer is missing', () => {
+    const f = fixture()
+    f.stage('2.1.0')
+    rmSync(join(f.channel, 'latest-linux-arm64.yml'))
+    rmSync(join(f.channel, 'latest-linux.yml'))
+    const before = readFileSync(join(f.channel, 'version.json'), 'utf8')
+    expect(() => f.run('2.1.0', 'promote', '', true)).toThrow()
+    expect(readFileSync(join(f.channel, 'version.json'), 'utf8')).toBe(before)
+    expect(() => readFileSync(join(f.channel, 'latest-linux-arm64.yml'))).toThrow()
+  })
+  it('keeps bootstrap behind explicit promotion intent', () => {
+    const f = fixture(),
+      before = f.snapshot()
+    f.stage('2.1.0')
+    expect(() => f.run('2.1.0', 'backfill', '', true)).toThrow()
+    expect(f.snapshot()).toEqual(before)
+  })
+  it('repairs an interrupted first ARM64 promotion without allowing a downgrade', () => {
+    const f = fixture()
+    f.stage('3.0.0')
+    rmSync(join(f.channel, 'latest-linux-arm64.yml'))
+    expect(() => f.run('3.0.0', 'promote', 'version.json', true)).toThrow()
+    const partial = f.snapshot()
+    expect((load(partial['latest-linux-arm64.yml']) as { version: string }).version).toBe('3.0.0')
+    f.stage('2.1.0')
+    f.run('2.1.0', 'promote', '', true)
+    expect(f.snapshot()).toEqual(partial)
+    f.stage('3.0.0')
+    f.run('3.0.0', 'promote', '', true)
+    expect(JSON.parse(f.snapshot()['version.json']).version).toBe('3.0.0')
+  })
   it('rejects successful uploads whose channel readback differs', () => {
     const f = fixture()
     f.stage('2.1.0')
@@ -191,11 +277,11 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
       f.run('2.1.0', 'promote', 'corrupt:s3://fixture-bucket/stable/latest.yml')
     ).toThrow(/Publication readback failed/)
   })
-  it('rejects a promotion with a missing platform before channel writes', () => {
+  it.each(feeds)('rejects a promotion missing %s before channel writes', (feed) => {
     const f = fixture(),
       before = f.snapshot()
     f.stage('2.1.0')
-    rmSync(join(f.root, 'dist-assets', 'latest-mac.yml'))
+    rmSync(join(f.root, 'dist-assets', feed))
     expect(() => f.run('2.1.0', 'promote')).toThrow()
     expect(f.snapshot()).toEqual(before)
   })
@@ -209,18 +295,21 @@ describe.skipIf(process.platform === 'win32')('website channel publication', () 
     expect(() => f.run('2.1.0', 'promote')).toThrow()
     expect(readFileSync(join(f.channel, 'latest.yml'), 'utf8')).toBe(previousFeed)
   })
-  it('repairs a partial upload by retrying the same version and prevents an intervening downgrade', () => {
-    const f = fixture()
-    f.stage('3.0.0')
-    expect(() => f.run('3.0.0', 'promote', 'latest-linux.yml')).toThrow()
-    const partial = f.snapshot()
-    expect(JSON.parse(partial['version.json']).version).toBe('2.0.0')
-    expect((load(partial['arm64-mac.yml']) as { version: string }).version).toBe('3.0.0')
-    f.stage('2.1.0')
-    f.run('2.1.0', 'promote')
-    expect(f.snapshot()).toEqual(partial)
-    f.stage('3.0.0')
-    f.run('3.0.0', 'promote')
-    expect(JSON.parse(f.snapshot()['version.json']).version).toBe('3.0.0')
-  })
+  it.each(['latest-linux.yml', 'latest-linux-arm64.yml'])(
+    'repairs an interrupted %s upload and prevents an intervening downgrade',
+    (feed) => {
+      const f = fixture()
+      f.stage('3.0.0')
+      expect(() => f.run('3.0.0', 'promote', feed)).toThrow()
+      const partial = f.snapshot()
+      expect(JSON.parse(partial['version.json']).version).toBe('2.0.0')
+      expect((load(partial['arm64-mac.yml']) as { version: string }).version).toBe('3.0.0')
+      f.stage('2.1.0')
+      f.run('2.1.0', 'promote')
+      expect(f.snapshot()).toEqual(partial)
+      f.stage('3.0.0')
+      f.run('3.0.0', 'promote')
+      expect(JSON.parse(f.snapshot()['version.json']).version).toBe('3.0.0')
+    }
+  )
 })

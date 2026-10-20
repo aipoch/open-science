@@ -7,6 +7,7 @@ export const PACKAGE_SMOKE_PLATFORMS = [
   { name: 'macos-arm64', os: 'macos-26', platform: 'mac' },
   { name: 'macos-x64', os: 'macos-26-intel', platform: 'mac' },
   { name: 'linux-x64', os: 'ubuntu-latest', platform: 'linux' },
+  { name: 'linux-arm64', os: 'ubuntu-24.04-arm', platform: 'linux' },
   { name: 'windows-x64', os: 'windows-latest', platform: 'win' }
 ]
 

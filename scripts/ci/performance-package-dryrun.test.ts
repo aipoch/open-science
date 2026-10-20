@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
 
-it('tests the immutable package with read-only reusable release jobs and no source rebuild', () => {
+it('tests the immutable package without repository writes or source rebuild', () => {
   const source = readFileSync('.github/workflows/performance-package-dryrun.yml', 'utf8')
   const workflow = load(source) as {
     on: Record<string, unknown>
@@ -20,6 +20,7 @@ it('tests the immutable package with read-only reusable release jobs and no sour
   expect(workflow.permissions).toEqual({ actions: 'read', contents: 'read' })
   expect(workflow.jobs.build).toEqual({
     uses: './.github/workflows/build.yml',
+    permissions: { contents: 'read', 'id-token': 'write' },
     with: { nightly: true, skip_verify: true, platform_name: 'macos-arm64' }
   })
   expect(workflow.jobs.smoke.uses).toBe('./.github/workflows/package-smoke.yml')
@@ -40,7 +41,8 @@ it('dispatches the package plan through the existing runtime workflow without ru
   }
   expect(workflow.jobs.packaged_performance).toEqual({
     if: "github.event_name == 'workflow_dispatch' && inputs.mode == 'package-macos-arm64'",
-    uses: './.github/workflows/performance-package-dryrun.yml'
+    uses: './.github/workflows/performance-package-dryrun.yml',
+    permissions: { contents: 'read', 'id-token': 'write' }
   })
   expect(workflow.jobs.runtime_resource_soak.if).toContain("inputs.mode != 'package-macos-arm64'")
 })

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import { deriveProvisionUi, notebookGated } from './provisioning-view'
 
 const status = (o: Partial<ProvisionStatus> = {}): ProvisionStatus => ({

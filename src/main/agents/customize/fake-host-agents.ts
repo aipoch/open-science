@@ -11,12 +11,24 @@
 // own minimal profile records and catalogs. Behavior mirrors the rules in design.md §5 (capability
 // semantics), §8 (revision + read-back), §10 (delete leaves bindings unavailable).
 
+// A faithful fake `host.agents` SDK for the customize Skill contract tests.
+//
+// The real SDK lives in the control-plane REPL and is wired by issue 08. This fake implements the
+// FULL public surface from design.md §4 / PRD §2 against in-memory state, so the customize Skill's
+// workflow tests can exercise create/read/update/capability-update/delete/switch with the camelCase
+// JavaScript contract, the monotonic revision, the
+// structured decline result, and the sanitized `host.agents.<method>:` errors — without depending on
+// the not-yet-built mutation modules (issues 03/04/05).
+//
+// The fake is intentionally faithful to the CONTRACT, not to SpecialistService internals: it owns its
+// own minimal profile records and catalogs. Behavior mirrors the rules in design.md §5 (capability
+// semantics), §8 (revision + read-back), §10 (delete leaves bindings unavailable).
 import type {
-  SpecialistDetailReadModel,
-  SpecialistSummaryReadModel,
   ConnectorReadModel,
-  SkillCatalogReadModel
+  SpecialistDetailReadModel,
+  SpecialistSummaryReadModel
 } from '../agents-service'
+import type { SkillCatalogReadModel } from '../catalog-contract'
 
 // ---------------------------------------------------------------------------
 // Internal fake state

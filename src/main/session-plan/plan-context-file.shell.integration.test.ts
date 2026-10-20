@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -221,3 +222,5 @@ describe.runIf(process.platform !== 'win32')('Plan context Shell reference', () 
     }
   }, 20_000)
 })
+
+configureTestRuntimeMetadata()

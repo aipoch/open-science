@@ -1,0 +1,33 @@
+// Verbatim method from @agentclientprotocol/codex-acp 1.6.2 (Apache-2.0).
+// Tarball SHA-512 verified against CODEX_ACP_INTEGRITY in managed-codex.ts.
+  async getAuthenticationStatus() {
+    const modelProvider = await this.getCurrentModelProvider();
+    if (modelProvider) {
+      return {
+        type: "gateway",
+        name: modelProvider
+      };
+    }
+    const account = (await this.getAccount()).account;
+    if (account === null) {
+      return {
+        type: "unauthenticated"
+      };
+    }
+    switch (account.type) {
+      case "apiKey":
+        return {
+          type: "api-key"
+        };
+      case "chatgpt":
+        return {
+          type: "chat-gpt",
+          email: account.email ?? ""
+        };
+      case "amazonBedrock":
+        return {
+          type: "gateway",
+          name: "amazonBedrock"
+        };
+    }
+  }

@@ -1,0 +1,171 @@
+{"name": "table-number-localized", "label": "Table 2", "target": "表2", "accepted": true}
+{"name": "supplementary-appendix-localized", "label": "Suppl. Appendix", "target": "补充附录", "accepted": true}
+{"name": "changed-number", "label": "Table 2", "target": "表3", "accepted": false}
+{"name": "longer-number", "label": "Table 2", "target": "表20", "accepted": false}
+{"name": "subfigure-suffix", "label": "Table 2", "target": "表2a", "accepted": false}
+{"name": "section-suffix", "label": "Table 2", "target": "表2.1", "accepted": false}
+{"name": "reference-range", "label": "Table 2", "target": "表2–3", "accepted": false}
+{"name": "changed-kind", "label": "Table 2", "target": "图2", "accepted": false}
+{"name": "repeated-identical-reference-keeps-original-link-on-first-mention", "label": "Table 2", "target": "表2", "accepted": true, "translation": "参见表2和表2。"}
+{"name": "missing-appendix", "label": "Suppl. Appendix", "target": "正文", "accepted": false}
+{"name": "author-collective-marker", "label": "Alpha et al.", "target": "Alpha 等", "accepted": true}
+{"name": "author-collective-long-marker", "label": "Alpha et al.", "target": "Alpha 等人", "accepted": true}
+{"name": "author-collective-comma", "label": "Alpha et al.,", "target": "Alpha 等，", "accepted": true}
+{"name": "two-author-conjunction", "label": "Alpha & Beta", "target": "Alpha 和 Beta", "accepted": true}
+{"name": "two-author-traditional-conjunction", "label": "Alpha & Beta", "target": "Alpha 與 Beta", "accepted": true}
+{"name": "second-author-conjunction", "label": "& Beta", "target": "与 Beta", "accepted": true}
+{"name": "different-author-rejected", "label": "Alpha et al.", "target": "Gamma 等", "accepted": false}
+{"name": "longer-author-name-rejected", "label": "Alpha et al.", "target": "NotAlpha 等", "accepted": false}
+{"name": "changed-second-author-rejected", "label": "Alpha & Beta", "target": "Alpha 和 Gamma", "accepted": false}
+{"name": "unidentified-author-collective-rejected", "label": "et al.", "target": "等人", "accepted": false}
+{"name": "translated-organization-rejected", "label": "Example Reports", "target": "示例报告", "accepted": false}
+{"name": "changed-citation-year-rejected", "label": "Alpha et al., 2014", "target": "Alpha 等，2015", "accepted": false}
+{"name": "repeated-author-link-preserves-second-occurrence", "label": "Alpha et al.", "target": "Alpha 等", "accepted": true, "source": "Alpha et al. compared this with Alpha et al.", "translation": "Alpha 等人将其与 Alpha 等的结果比较。", "offset": 32, "expectedStart": 12}
+{"name": "missing-repeated-author-link-rejected", "label": "Alpha et al.", "target": "Alpha 等", "accepted": false, "source": "Alpha et al. compared this with Alpha et al.", "translation": "Alpha 等人进行了比较。", "offset": 32, "expectedStart": 0}
+{"name": "panel-parentheses-localization", "label": "3(b)", "target": "3（b）", "accepted": true}
+{"name": "different-panel-letter-rejected", "label": "3(b)", "target": "3（c）", "accepted": false}
+{"name": "panel-letter-case-remains-significant", "label": "3(b)", "target": "3（B）", "accepted": false}
+{"name": "different-panel-number-rejected", "label": "3(b)", "target": "4（b）", "accepted": false}
+{"name": "joined-author-prefix-link-fragment", "source": "See Alphabeta et al.", "translation": "参见Alphabeta 等人。", "label": "Alpha", "offset": 4, "target": "Alpha", "expectedStart": 2, "accepted": true}
+{"name": "joined-author-suffix-link-fragment", "source": "See Alphabeta et al.", "translation": "参见Alphabeta 等人。", "label": "beta et al.", "offset": 9, "target": "beta 等人", "expectedStart": 7, "accepted": true}
+{"name": "changed-complete-author-rejects-prefix-fragment", "source": "See Alphabeta et al.", "translation": "参见Alphagamma 等人。", "label": "Alpha", "offset": 4, "target": "Alpha", "accepted": false}
+{"name": "split-unit-author-has-no-complete-identity", "source": "See Alpha-", "translation": "参见Alpha-", "label": "Alpha", "offset": 4, "target": "Alpha", "accepted": false}
+{"name": "native-hyphen-marker-needs-native-proof", "source": "See Alphabeta et al.", "translation": "参见Alphabeta 等人。", "label": "Alpha\u0002", "offset": 4, "target": "Alpha", "accepted": false}
+{"name": "suffix-conjunction-uses-full-author-pair", "source": "Alfa and Beta wrote. See Alpha & Beta.", "translation": "Alfa 和 Beta撰文。参见Alpha 和 Beta。", "label": "& Beta", "offset": 31, "target": "和 Beta", "expectedStart": 22, "accepted": true}
+{"name": "collective-marker-uses-full-author-identity", "source": "See Alpha et al.", "translation": "参见Alpha 等人。", "label": "et al.", "offset": 10, "target": "等人", "expectedStart": 8, "accepted": true}
+{"name": "collective-marker-cannot-change-author", "source": "See Alpha et al.", "translation": "参见Gamma 等人。", "label": "et al.", "offset": 10, "target": "等人", "accepted": false}
+{"name": "unique-cited-year-disambiguates-translated-prose-author", "source": "Alpha et al. wrote. See (Alpha et al., 2024).", "translation": "甲等人撰文。参见（Alpha 等，2024）。", "label": "Alpha et al.", "offset": 25, "target": "Alpha 等", "accepted": true, "expectedStart": 9}
+{"name": "changed-cited-year-does-not-disambiguate-author", "source": "Alpha et al. wrote. See (Alpha et al., 2024).", "translation": "甲等人撰文。参见（Alpha 等，2025）。", "label": "Alpha et al.", "offset": 25, "target": "Alpha 等", "accepted": false}
+{"name": "same-year-repeated-source-author-remains-ambiguous", "source": "See (Alpha et al., 2024) and (Alpha et al., 2024).", "translation": "参见（Alpha 等，2024）。", "label": "Alpha et al.", "offset": 30, "target": "Alpha 等", "accepted": false}
+{"name": "same-year-different-author-remains-rejected", "source": "Alpha et al. wrote. See (Alpha et al., 2024).", "translation": "甲等人撰文。参见（Gamma 等，2024）。", "label": "Alpha et al.", "offset": 25, "target": "Gamma 等", "accepted": false}
+{"name": "first-name-fragment-uses-complete-author-pair", "source": "See Alpha & Beta.", "translation": "参见Alpha 和 Beta。", "label": "Alpha", "offset": 4, "target": "Alpha", "accepted": true, "expectedStart": 2}
+{"name": "first-name-fragment-rejects-changed-second-author", "source": "See Alpha & Beta.", "translation": "参见Alpha 和 Gamma。", "label": "Alpha", "offset": 4, "target": "Alpha", "accepted": false}
+{"name": "number-only-link-uses-repeated-typed-reference", "source": "See Table 7.", "translation": "参见表7，另外仍参见表7。", "label": "7", "offset": 10, "target": "7", "accepted": true, "expectedStart": 3}
+{"name": "number-only-link-does-not-use-wrong-reference-kind", "source": "See Table 7.", "translation": "参见图7，另外仍参见图7。", "label": "7", "offset": 10, "target": "7", "accepted": false}
+{"name": "number-only-link-does-not-use-untyped-number", "source": "See Table 7.", "translation": "一共7个，共7个。", "label": "7", "offset": 10, "target": "7", "accepted": false}
+{"name": "untyped-number-does-not-become-a-table-reference", "source": "There are 7.", "translation": "参见表7，另外仍参见表7。", "label": "7", "offset": 10, "target": "7", "accepted": false}
+{"name": "multiple-source-references-cannot-collapse", "source": "See Table 7 and Table 7.", "translation": "参见表7。", "label": "Table 7", "offset": 16, "target": "表7", "accepted": false}
+{"name": "literal-organization-citation-survives-translated-prose-name", "source": "Alpha Bulletin reported. See (Alpha Bulletin, 2031).", "translation": "甲刊报道。参见（Alpha Bulletin，2031）。", "label": "Alpha Bulletin", "offset": 30, "target": "Alpha Bulletin", "accepted": true, "expectedStart": 8}
+{"name": "literal-organization-citation-rejects-changed-year", "source": "Alpha Bulletin reported. See (Alpha Bulletin, 2031).", "translation": "甲刊报道。参见（Alpha Bulletin，2032）。", "label": "Alpha Bulletin", "offset": 30, "target": "Alpha Bulletin", "accepted": false}
+{"name": "literal-organization-citation-rejects-changed-name", "source": "Alpha Bulletin reported. See (Alpha Bulletin, 2031).", "translation": "甲刊报道。参见（Beta Bulletin，2031）。", "label": "Alpha Bulletin", "offset": 30, "target": "Alpha Bulletin", "accepted": false}
+{"name": "literal-organization-citation-rejects-ambiguous-target", "source": "Alpha Bulletin reported. See (Alpha Bulletin, 2031).", "translation": "参见（Alpha Bulletin，2031）以及（Alpha Bulletin，2031）。", "label": "Alpha Bulletin", "offset": 30, "target": "Alpha Bulletin", "accepted": false}
+{"name": "literal-organization-citation-rejects-ambiguous-source", "source": "See (Alpha Bulletin, 2031) and (Alpha Bulletin, 2031).", "translation": "参见（Alpha Bulletin，2031）。", "label": "Alpha Bulletin", "offset": 32, "target": "Alpha Bulletin", "accepted": false}
+{"name": "literal-organization-prose-cannot-borrow-citation-anchor", "source": "Alpha Bulletin reported.", "translation": "参见（Alpha Bulletin，2031）。", "label": "Alpha Bulletin", "offset": 0, "target": "Alpha Bulletin", "accepted": false}
+{"name": "mixed-fig-and-full-reference-4", "label": "Fig 7", "target": "图7", "accepted": true, "source": "See Fig 7 and Figure 7.", "translation": "参见图7及图7。", "offset": 4, "expectedStart": 2}
+{"name": "mixed-fig-and-full-reference-14", "label": "Figure 7", "target": "图7", "accepted": true, "source": "See Fig 7 and Figure 7.", "translation": "参见图7及图7。", "offset": 14, "expectedStart": 5}
+{"name": "mixed-tab-and-full-reference-4", "label": "Tab 7", "target": "表7", "accepted": true, "source": "See Tab 7 and Table 7.", "translation": "参见表7及表7。", "offset": 4, "expectedStart": 2}
+{"name": "mixed-tab-and-full-reference-14", "label": "Table 7", "target": "表7", "accepted": true, "source": "See Tab 7 and Table 7.", "translation": "参见表7及表7。", "offset": 14, "expectedStart": 5}
+{"name": "split-first-author-and-conjunction", "source": "See (Baker & Frost, 2013).", "translation": "\u89c1\uff08Baker \u548c Frost\uff0c2013\uff09\u3002", "label": "Baker &", "target": "Baker \u548c", "offset": 5, "expectedStart": 2, "accepted": true}
+{"name": "split-first-author-rejects-changed-pair", "source": "See (Baker & Frost, 2013).", "translation": "\u89c1\uff08Baker \u548c Green\uff0c2013\uff09\u3002", "label": "Baker &", "target": "Baker \u548c", "offset": 5, "accepted": false}
+{"name": "dated-single-author-fragment", "source": "See (Riverstone, 2013).", "translation": "\u89c1\uff08Riverstone\uff0c2013\uff09\u3002", "label": "River", "target": "River", "offset": 5, "expectedStart": 2, "accepted": true}
+{"name": "dated-single-author-fragment-rejects-year-change", "source": "See (Riverstone, 2013).", "translation": "\u89c1\uff08Riverstone\uff0c2014\uff09\u3002", "label": "River", "target": "River", "offset": 5, "accepted": false}
+{"name": "dated-single-author-fragment-rejects-duplicate-target", "source": "See (Riverstone, 2013).", "translation": "\u89c1\uff08Riverstone\uff0c2013\uff09\u548c\uff08Riverstone\uff0c2013\uff09\u3002", "label": "River", "target": "River", "offset": 5, "accepted": false}
+{"name": "dated-single-author-fragment-rejects-name-change", "source": "See (Riverstone, 2013).", "translation": "\u89c1\uff08Riverton\uff0c2013\uff09\u3002", "label": "River", "target": "River", "offset": 5, "accepted": false}
+{"name":"diaeresis-author-pair-localizes-citation-link","source":"See (A¨lfa¸re & Bengo, 2013).","translation":"参见（A¨lfa¸re 和 Bengo，2013）。","label":"A¨lfa¸re & Bengo","offset":5,"target":"A¨lfa¸re 和 Bengo","expectedStart":3,"accepted":true}
+{"name": "wrapped-author-pair-spans-conjunction-and-partial-second-name", "source": "See (Baker & Frostwood, 2013).", "translation": "见（Baker 和 Frostwood，2013）。", "label": "Baker & Frost", "offset": 5, "target": "Baker 和 Frost", "expectedStart": 2, "accepted": true}
+{"name": "wrapped-author-pair-rejects-changed-second-name", "source": "See (Baker & Frostwood, 2013).", "translation": "见（Baker 和 Frostfield，2013）。", "label": "Baker & Frost", "offset": 5, "target": "Baker 和 Frost", "accepted": false}
+{"name": "wrapped-author-pair-still-requires-native-control-hyphen-proof", "source": "See (Baker & Frostwood, 2013).", "translation": "见（Baker 和 Frostwood，2013）。", "label": "Baker & Frost\u0002", "offset": 5, "target": "Baker 和 Frost", "accepted": false}
+{"name": "theorem-number-link-includes-source-sentence-period", "source": "Proof of Theorem 7. We proceed.", "translation": "定理7的证明。以下继续。", "label": "7.", "offset": 17, "target": "7", "expectedStart": 2, "accepted": true}
+{"name": "theorem-number-link-rejects-changed-theorem", "source": "Proof of Theorem 7. We proceed.", "translation": "定理8的证明。以下继续。", "label": "7.", "offset": 17, "target": "7", "accepted": false}
+{"name": "theorem-number-link-cannot-borrow-equation-number", "source": "Proof of Theorem 7. We proceed.", "translation": "由方程7可知。", "label": "7.", "offset": 17, "target": "7", "accepted": false}
+{"name":"wrapped-collective-citation-tail-keeps-dated-identity","source":"et al., 2031b)","translation":"等，2031b)","label":"et al.,","offset":0,"target":"等，","expectedStart":0,"accepted":true}
+{"name":"wrapped-collective-citation-tail-verifies-in-reverse","source":"等人，2031a）","translation":"et al.,2031a)","label":"等人，","offset":0,"target":"et al.,","expectedStart":0,"accepted":true}
+{"name":"wrapped-collective-citation-tail-rejects-changed-year","source":"et al., 2031b)","translation":"等，2032b)","label":"et al.,","offset":0,"target":"等，","accepted":false}
+{"name":"wrapped-collective-citation-tail-rejects-changed-year-suffix","source":"et al., 2031b)","translation":"等，2031a)","label":"et al.,","offset":0,"target":"等，","accepted":false}
+{"name":"collective-marker-without-dated-tail-is-not-a-link-identity","source":"et al.,","translation":"等，","label":"et al.,","offset":0,"target":"等，","accepted":false}
+{"name":"collective-tail-cannot-borrow-a-year-from-following-prose","source":"et al., 2031b) reported.","translation":"等，2031b)报道。","label":"et al.,","offset":0,"target":"等，","accepted":false}
+{"name": "quoted-citation-allows-target-sentence-punctuation", "source": "Follow “the method.”27", "translation": "遵循“该方法”。27", "label": "”27", "offset": 19, "target": "”。27", "expectedStart": 6, "accepted": true}
+{"name": "quoted-citation-with-punctuation-cannot-change-number", "source": "Follow “the method.”27", "translation": "遵循“该方法”。28", "label": "”27", "offset": 19, "target": "”。28", "accepted": false}
+{"name": "caption-footnote-letter-attached-to-title", "source": "Table 4. Baselinea,b", "translation": "表4.基线a,b", "label": "a", "offset": 17, "target": "a", "expectedStart": 5, "accepted": true}
+{"name": "caption-footnote-letter-verifies-in-reverse", "source": "表4.基线a,b", "translation": "Table 4. Baselinea,b", "label": "a", "offset": 5, "target": "a", "expectedStart": 17, "accepted": true}
+{"name": "caption-footnote-letter-does-not-borrow-changed-marker", "source": "Table 4. Baselinea,b", "translation": "表4.基线a,c", "label": "a", "offset": 17, "target": "a", "expectedStart": 5, "accepted": false}
+{"name": "unicode-footnote-keeps-link-identity", "source": "See note 1.", "translation": "参见注¹。", "label": "1", "target": "¹", "offset": 9, "accepted": true, "expectedStart": 3}
+{"name": "unicode-footnote-rejects-changed-number", "source": "See note 1.", "translation": "参见注²。", "label": "1", "target": "¹", "offset": 9, "accepted": false, "expectedStart": -1}
+{"name": "unicode-footnote-rejects-ambiguous-duplicate", "source": "See 1 and note 1.", "translation": "见1和注¹。", "label": "1", "target": "¹", "offset": 15, "accepted": false, "expectedStart": 4}
+{"name": "unicode-footnote-reverse-verification", "source": "参见注¹。", "translation": "See note 1.", "label": "¹", "target": "1", "offset": 3, "accepted": true, "expectedStart": 9}
+{"name": "repeated-bracket-citation-preserves-second-link", "source": "See [Taylor et al., 2021] then [Taylor et al., 2021].", "translation": "见[Taylor et al., 2021]以及[Taylor et al., 2021]。", "label": "[Taylor et al.", "target": "[Taylor et al.", "offset": 31, "accepted": true, "expectedStart": 24}
+{"name": "bracket-citation-rejects-changed-year", "source": "See [Taylor et al., 2021].", "translation": "见[Taylor et al., 2022]。", "label": "[Taylor et al.", "target": "[Taylor et al.", "offset": 4, "accepted": false, "expectedStart": 1}
+{"name": "spacing-author-accents-compose", "label": "M¨uller & Frec¸on", "target": "Müller & Freçon", "accepted": true}
+{"name": "spacing-author-accents-reverse", "label": "Müller & Freçon", "target": "M¨uller & Frec¸on", "accepted": true}
+{"name": "spacing-author-accents-not-removed", "label": "M¨uller & Frec¸on", "target": "Muller & Frecon", "accepted": false}
+{"name": "spacing-author-accents-not-changed", "label": "M¨uller & Frec¸on", "target": "Müller & Frećon", "accepted": false}
+{"name": "spacing-author-accents-repeated-second-link", "source": "(M¨uller & Frec¸on, 2020) and (M¨uller & Frec¸on, 2020).", "translation": "（Müller & Freçon, 2020）以及（Müller & Freçon, 2020）。", "label": "M¨uller & Frec¸on", "target": "Müller & Freçon", "offset": 31, "expectedStart": 26, "accepted": true}
+{"name": "supplementary-appendix-reversed-chinese-label", "label": "Suppl. Appendix", "target": "附录补充", "accepted": true}
+{"name": "supplementary-appendix-reversed-traditional-label", "label": "Suppl. Appendix", "target": "附錄補充", "accepted": true}
+{"name": "reject-ambiguous-supplementary-appendix-aliases", "label": "Suppl. Appendix", "target": "附录补充", "translation": "参见附录补充和补充附录。", "accepted": false}
+{"name": "panel-number-with-added-day", "source": "POD2 and Fig. 2B.", "translation": "术后第2天（POD2）和图2B。", "label": "2", "offset": 14, "accepted": true, "target": "2", "expectedStart": 13}
+{"name": "panel-wrong-letter", "source": "Fig. 2B", "translation": "图2A", "label": "2", "offset": 5, "accepted": false, "target": "2", "expectedStart": 1}
+{"name": "panel-number-with-other-panel", "source": "Fig. 2A and Fig. 2B", "translation": "图2A及图2B", "label": "2", "offset": 17, "accepted": true, "target": "2", "expectedStart": 5}
+{"name": "panel-repeated", "source": "Fig. 2A and Fig. 2A", "translation": "图2A及图2A", "label": "2", "offset": 17, "accepted": true, "target": "2", "expectedStart": 5}
+{"name": "panel-missing-repeat", "source": "Fig. 2A and Fig. 2A", "translation": "图2A", "label": "2", "offset": 17, "accepted": false, "target": "2", "expectedStart": 1}
+{"name": "complete-dated-collective-link", "label": "Arden et al., 2014", "target": "Arden等人，2014", "accepted": true}
+{"name": "complete-dated-collective-link-reverse", "label": "Arden等人，2014", "target": "Arden et al., 2014", "accepted": true}
+{"name": "complete-dated-pair-link", "label": "Müller & Freçon, 2020a", "target": "Müller和Freçon，2020a年", "accepted": true}
+{"name": "dated-link-changed-year", "label": "Arden et al., 2014", "target": "Arden等人，2015", "accepted": false}
+{"name": "dated-link-changed-suffix", "label": "Arden et al., 2014a", "target": "Arden等人，2014b", "accepted": false}
+{"name": "dated-link-changed-author", "label": "Arden et al., 2014", "target": "Bristol等人，2014", "accepted": false}
+{"name": "dated-link-extra-digit", "label": "Arden et al., 2014", "target": "Arden等人，20145", "accepted": false}
+{"name": "dated-link-repeated-second", "source": "Arden et al., 2014 and Arden et al., 2014", "translation": "Arden等人，2014和Arden等人，2014", "label": "Arden et al., 2014", "target": "Arden等人，2014", "offset": 23, "expectedStart": 13, "accepted": true}
+{"name": "dated-link-missing-repeat", "source": "Arden et al., 2014 and Arden et al., 2014", "translation": "Arden等人，2014", "label": "Arden et al., 2014", "target": "Arden等人，2014", "offset": 23, "accepted": false}
+{"name": "dated-narrative-collective-link", "label": "Mercer et al. (2013", "target": "Mercer等人（2013年", "accepted": true}
+{"name": "dated-narrative-pair-link", "label": "Vale and Lang (2015", "target": "Vale和Lang（2015", "accepted": true}
+{"name": "dated-pair-and-link", "label": "Birch and Kerr, 2008", "target": "Birch和Kerr，2008", "accepted": true}
+{"name": "dated-single-author-link", "label": "Hale, 2014", "target": "Hale，2014", "accepted": true}
+{"name": "dated-single-author-wrong-name", "label": "Hale, 2014", "target": "Kerr，2014", "accepted": false}
+{"name": "dated-narrative-wrong-year", "label": "Mercer et al. (2013", "target": "Mercer等人（2014", "accepted": false}
+{"name": "figure caption link includes terminal period", "label": "Fig 1.", "target": "图 1.", "accepted": true, "source": "Fig 1. Flow diagram.", "translation": "图 1. 流程图。", "offset": 0, "expectedStart": 0}
+{"name": "table caption period localizes independently", "label": "Table 2.", "target": "表 2。", "accepted": true, "source": "Table 2. Baseline characteristics.", "translation": "表 2。基线特征。", "offset": 0, "expectedStart": 0}
+{"name": "localized caption period maps back to native reference", "label": "图 3。", "target": "Fig 3.", "accepted": true, "source": "图 3。生存期。", "translation": "Fig 3. Survival.", "offset": 0, "expectedStart": 0}
+{"name": "caption period cannot change numbered destination", "label": "Fig 1.", "target": "图 2.", "accepted": false, "source": "Fig 1. Flow.", "translation": "图 2. 流程。", "offset": 0}
+{"name": "caption period requires target punctuation", "label": "Table 2.", "target": "表 2", "accepted": false, "source": "Table 2. Baseline.", "translation": "表 2 基线。", "offset": 0}
+{"name": "decimal caption number is not a terminal period", "label": "Fig 1.", "target": "图 1.", "accepted": false, "source": "Fig 1.2 panel.", "translation": "图 1.2 分图。", "offset": 0}
+{"name": "supplementary-file-link-preserves-stable-number", "label": "S1 File", "target": "S1 文件", "accepted": true, "source": "S1 File. Checklist.", "translation": "S1 文件。清单。", "offset": 0, "expectedStart": 0}
+{"name": "supplementary-file-link-reverse-identity", "label": "S2 文件", "target": "S2 File", "accepted": true, "source": "S2 文件。数据。", "translation": "S2 File. Data.", "offset": 0, "expectedStart": 0}
+{"name": "supplementary-file-traditional-label", "label": "S3 File", "target": "S3 檔案", "accepted": true, "source": "S3 File. Protocol.", "translation": "S3 檔案。方案。", "offset": 0, "expectedStart": 0}
+{"name": "supplementary-file-number-changed", "label": "S1 File", "target": "S2 文件", "accepted": false, "source": "S1 File. Checklist.", "translation": "S2 文件。清单。", "offset": 0}
+{"name": "supplementary-file-identifier-not-prefix-of-longer-number", "label": "S1 File", "target": "S10 文件", "accepted": false, "source": "S1 File. Checklist.", "translation": "S10 文件。清单。", "offset": 0}
+{"name": "supplementary-file-missing-repeated-identity", "label": "S1 File", "target": "S1 文件", "accepted": false, "source": "S1 File and S1 File.", "translation": "S1 文件。", "offset": 0}
+{"name": "supplementary-file-no-inference-across-inserted-prose", "label": "S3 File", "target": "S3 协议说明文件", "accepted": false, "source": "S3 File. Protocol.", "translation": "S3 协议说明文件。", "offset": 0}
+{"name": "supplementary-file-word-boundary-is-complete", "label": "S1 File", "target": "S1 文件", "accepted": false, "source": "S1 Filename. Checklist.", "translation": "S1 文件。清单。", "offset": 0}
+{"name": "english-conjunction-citation-tail-localizes", "label": "and Harlow", "target": "和Harlow", "accepted": true, "source": "See (Quinn and Harlow, 2011).", "translation": "见（Quinn和Harlow，2011）。", "offset": 11, "expectedStart": 7}
+{"name": "english-conjunction-citation-prefix-localizes", "label": "Quinn and", "target": "Quinn和", "accepted": true, "source": "See (Quinn and Harlow, 2011).", "translation": "见（Quinn和Harlow，2011）。", "offset": 5, "expectedStart": 2}
+{"name": "english-conjunction-prefix-rejects-other-second-author", "label": "Quinn and", "target": "Quinn和", "accepted": false, "source": "See (Quinn and Harlow, 2011).", "translation": "见（Quinn和Baker，2011）。", "offset": 5}
+{"name": "multiword-author-pair-complete-identity", "label": "Taylor Lane and De Quinn", "target": "Taylor Lane 和 De Quinn", "accepted": true, "source": "See (Taylor Lane and De Quinn, 2011).", "translation": "见（Taylor Lane 和 De Quinn，2011）。", "offset": 5, "expectedStart": 2}
+{"name": "multiword-author-pair-changed-name", "label": "Taylor Lane and De Quinn", "target": "Taylor Lane 和 De Baker", "accepted": false, "source": "See (Taylor Lane and De Quinn, 2011).", "translation": "见（Taylor Lane 和 De Baker，2011）。", "offset": 5}
+{"name": "citation-suffix-year-matches-entire-ordered-year-list", "label": "2031a", "target": "2031a", "accepted": true, "source": "See (Quinn et al., 2029, 2031a).", "translation": "见（Quinn等人，2029，2031a）。", "offset": 25, "expectedStart": 15}
+{"name": "citation-suffix-year-changed-other-year-rejects", "label": "2031a", "target": "2031a", "accepted": false, "source": "See (Quinn et al., 2029, 2031a).", "translation": "见（Quinn等人，2028，2031a）。", "offset": 25}
+{"name": "citation-suffix-year-repeated-with-missing-occurrence-rejects", "label": "2031a", "target": "2031a", "accepted": false, "source": "See (Quinn et al., 2031a) and (Quinn et al., 2031a).", "translation": "见（Quinn等人，2031a）。", "offset": 18}
+{"name": "suffix-year-rejects-changed-author-prefix", "label": "2031a", "target": "2031a", "source": "See fooQuinn et al., 2031a.", "translation": "见 Quinn 等人，2031a。", "offset": 20, "accepted": false}
+{"name": "compound-author-rejects-erased-word-boundaries", "label": "Taylor Lane and De Quinn", "target": "TaylorLane 和 DeQuinn", "source": "See (Taylor Lane and De Quinn, 2011).", "translation": "见（TaylorLane 和 DeQuinn，2011）。", "offset": 5, "accepted": false}
+{"name": "suffix-author-rejects-changed-first-author", "label": "and Harlow", "target": "和 Harlow", "source": "See (Quinn and Harlow, 2011).", "translation": "见（Baker 和 Harlow，2011）。", "offset": 11, "accepted": false}
+{"name": "suffix-author-tracks-full-dated-pair-after-reordering", "label": "and Harlow", "target": "和 Harlow", "source": "(Quinn and Harlow,2011) then (Baker and Harlow,2012)", "translation": "（Baker 和 Harlow，2012），然后（Quinn 和 Harlow，2011）", "offset": 7, "expectedStart": 31, "accepted": true}
+{"name": "complete-author-pair-tracks-its-dated-reference", "label": "Quinn and Harlow", "target": "Quinn 和 Harlow", "source": "See (Quinn and Harlow, 2011) then (Quinn and Harlow, 2012).", "translation": "见（Quinn 和 Harlow，2012），然后（Quinn 和 Harlow，2011）。", "offset": 5, "expectedStart": 26, "accepted": true}
+{"name": "complete-author-pair-rejects-changed-year", "label": "Quinn and Harlow", "target": "Quinn 和 Harlow", "source": "See (Quinn and Harlow, 2011).", "translation": "见（Quinn 和 Harlow，2012）。", "offset": 5, "accepted": false}
+{"name": "collective citation after translated prose conjunction", "source": "Pre-training BERT Unlike Quinn et al. (2031).", "translation": "预训练 BERT 与 Quinn 等人（2031）不同。", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 25, "expectedStart": 11, "accepted": true}
+{"name": "collective citation after translated prose conjunction reverse", "source": "预训练 BERT 与 Quinn 等人（2031）不同。", "translation": "Pre-training BERT Unlike Quinn et al. (2031).", "label": "Quinn 等人", "target": "Quinn et al.", "offset": 11, "expectedStart": 25, "accepted": true}
+{"name": "collective citation after translated prose conjunction changed author", "source": "Pre-training BERT Unlike Quinn et al. (2031).", "translation": "预训练 BERT 与 Baker 等人（2031）不同。", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 25, "accepted": false}
+{"name": "collective citation after translated prose conjunction ambiguous added occurrence", "source": "Pre-training BERT Unlike Quinn et al. (2031).", "translation": "预训练 BERT 与 Quinn 等人（2031）不同。 Quinn 等人", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 25, "accepted": false}
+{"name": "author pair after narrative conjunction", "source": "Related to Vale et al. (2030) and Quinn and Harlow (2031).", "translation": "与 Vale 等人（2030）及 Quinn 和 Harlow（2031）相关。", "label": "Quinn and Harlow", "target": "Quinn 和 Harlow", "offset": 34, "expectedStart": 17, "accepted": true}
+{"name": "author pair after narrative conjunction reverse", "source": "与 Vale 等人（2030）及 Quinn 和 Harlow（2031）相关。", "translation": "Related to Vale et al. (2030) and Quinn and Harlow (2031).", "label": "Quinn 和 Harlow", "target": "Quinn and Harlow", "offset": 17, "expectedStart": 34, "accepted": true}
+{"name": "author pair after narrative conjunction changed author", "source": "Related to Vale et al. (2030) and Quinn and Harlow (2031).", "translation": "与 Vale 等人（2030）及 Baker 和 Harlow（2031）相关。", "label": "Quinn and Harlow", "target": "Quinn 和 Harlow", "offset": 34, "accepted": false}
+{"name": "author pair after narrative conjunction ambiguous added occurrence", "source": "Related to Vale et al. (2030) and Quinn and Harlow (2031).", "translation": "与 Vale 等人（2030）及 Quinn 和 Harlow（2031）相关。 Quinn 和 Harlow", "label": "Quinn and Harlow", "target": "Quinn 和 Harlow", "offset": 34, "accepted": false}
+{"name": "collective citation after narrative conjunction", "source": "Similar to Vale et al. (2030) and Quinn et al. (2031).", "translation": "类似 Vale 等人（2030）与 Quinn 等人（2031）。", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 34, "expectedStart": 18, "accepted": true}
+{"name": "collective citation after narrative conjunction reverse", "source": "类似 Vale 等人（2030）与 Quinn 等人（2031）。", "translation": "Similar to Vale et al. (2030) and Quinn et al. (2031).", "label": "Quinn 等人", "target": "Quinn et al.", "offset": 18, "expectedStart": 34, "accepted": true}
+{"name": "collective citation after narrative conjunction changed author", "source": "Similar to Vale et al. (2030) and Quinn et al. (2031).", "translation": "类似 Vale 等人（2030）与 Baker 等人（2031）。", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 34, "accepted": false}
+{"name": "collective citation after narrative conjunction ambiguous added occurrence", "source": "Similar to Vale et al. (2030) and Quinn et al. (2031).", "translation": "类似 Vale 等人（2030）与 Quinn 等人（2031）。 Quinn 等人", "label": "Quinn et al.", "target": "Quinn 等人", "offset": 34, "accepted": false}
+{"name": "wrapped figure prefix keeps complete numbered identity", "source": "See (Fig 3).", "translation": "参见（图 3）。", "label": "Fig", "target": "图", "offset": 5, "expectedStart": 3, "accepted": true}
+{"name": "wrapped figure prefix rejects changed number", "source": "See (Fig 3).", "translation": "参见（图 4）。", "label": "Fig", "target": "图", "offset": 5, "accepted": false}
+{"name": "wrapped figure prefix rejects missing target number", "source": "See (Fig 3).", "translation": "参见（图）。", "label": "Fig", "target": "图", "offset": 5, "accepted": false}
+{"name": "wrapped table prefix matches its ordered occurrence", "source": "Table 2 and Table 2", "translation": "表 2 和 表 2", "label": "Table", "target": "表", "offset": 12, "expectedStart": 6, "accepted": true}
+{"name": "wrapped URL prefix uses full address among repeated short prefixes", "source": "Links (www.first.org), (www. second.org).", "translation": "链接（www.first.org）、（www.second.org）。", "label": "www.", "target": "www.", "offset": 24, "expectedStart": 19, "accepted": true}
+{"name": "wrapped URL suffix follows complete address", "source": "Links (www.first.org), (www. second.org).", "translation": "链接（www.first.org）、（www.second.org）。", "label": "second.org", "target": "second.org", "offset": 29, "expectedStart": 23, "accepted": true}
+{"name": "wrapped URL prefix rejects changed full address", "source": "Links (www.first.org), (www. second.org).", "translation": "链接（www.first.org）、（www.third.org）。", "label": "www.", "target": "www.", "offset": 24, "accepted": false}
+{"name": "wrapped URL rejects unequal complete address counts", "source": "www. second.org and www. second.org", "translation": "www.second.org", "label": "second.org", "target": "second.org", "offset": 5, "accepted": false}
+{"name": "wrapped URL rejects fragment outside literal address", "source": "www.second.org and second.org", "translation": "www.second.org 和 second.org", "label": "second.org", "target": "second.org", "offset": 19, "accepted": false}
+{"name": "wrapped URL rejects changed target fragment", "source": "www. second.org", "translation": "www.second.com", "label": "second.org", "target": "second.org", "offset": 5, "accepted": false}
+{"name":"wrapped localized figure prefix maps back to native prefix","source":"参见（图 3）。","translation":"See (Fig 3).","label":"图","target":"Fig","offset":3,"expectedStart":5,"accepted":true}
+{"name":"wrapped URL whole label maps back to its native spaces","source":"www.second.org","translation":"www. second.org","label":"www.second.org","target":"www. second.org","offset":0,"expectedStart":0,"accepted":true}
+{"name":"wrapped figure prefix rejects changed reference kind","source":"See (Fig 3).","translation":"参见（表 3）。","label":"Fig","target":"表","offset":5,"accepted":false}
+{"name":"wrapped figure prefix rejects changed subpanel","source":"See (Fig 3b).","translation":"参见（图 3）。","label":"Fig","target":"图","offset":5,"accepted":false}
+{"name":"wrapped table prefix rejects collapsed repeated references","source":"Table 2 and Table 2","translation":"表 2","label":"Table","target":"表","offset":12,"accepted":false}
+{"name":"wrapped URL never accepts an incomplete address prefix","source":"A www. and B www.","translation":"甲 www. 和乙 www.","label":"www.","target":"www.","offset":13,"accepted":false}

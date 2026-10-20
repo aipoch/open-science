@@ -1,0 +1,6 @@
+{"name":"negative-score-table-keeps-formula-rows-separate","sign":"-","rows":4,"drift":0,"gap":100,"table":true}
+{"name":"unicode-minus-score-table-keeps-formula-rows-separate","sign":"−","rows":4,"drift":0,"gap":100,"table":true}
+{"name":"positive-score-table-keeps-formula-rows-separate","sign":"+","rows":4,"drift":0,"gap":100,"table":true}
+{"name":"isolated-signed-pair-does-not-prove-table","sign":"-","rows":2,"drift":0,"gap":100,"table":false}
+{"name":"drifting-signed-values-do-not-prove-table","sign":"-","rows":4,"drift":18,"gap":100,"table":false}
+{"name":"nearby-signed-prose-values-do-not-prove-table","sign":"-","rows":4,"drift":0,"gap":12,"table":false}

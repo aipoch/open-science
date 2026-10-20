@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -418,3 +419,5 @@ describe('legacy Session Plan compatibility', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -1,17 +1,9 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
+import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 import { Check, Eye, LoaderCircle, SlidersHorizontal } from 'lucide-react'
 import { useEffect, useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useDateTimeFormat } from '@/hooks/useDateTimeFormat'
 
-import type {
-  ArtifactLiteratureManifest,
-  ArtifactLiteratureReference
-} from '../../../../shared/artifact-literature'
-import type {
-  LiteratureCitationStyleView,
-  LiteratureFormattedReference
-} from '../../../../shared/literature'
 import { Button } from '@/components/ui/button'
 import {
   Select,
@@ -20,6 +12,12 @@ import {
   SelectTrigger,
   SelectValue
 } from '@/components/ui/select'
+import type { LiteratureCitationStyleView } from '@aipoch/literature-citations/contracts'
+import type { LiteratureFormattedReference } from '@aipoch/literature-library/contracts'
+import type {
+  ArtifactLiteratureManifest,
+  ArtifactLiteratureReference
+} from '../../../../shared/artifact-literature'
 import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 
 const creatorName = (creator: ArtifactLiteratureReference['item']['creators'][number]): string =>

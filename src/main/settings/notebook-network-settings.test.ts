@@ -1,4 +1,4 @@
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -46,4 +46,34 @@ describe('Notebook network settings', () => {
       }
     })
   })
+})
+
+it('round-trips private grants through a fresh settings repository and preserves revocation', async () => {
+  const dir = await mkdtemp(join(tmpdir(), 'open-science-private-service-'))
+  const rule = {
+    hostname: 'lab.internal.example',
+    port: 8443,
+    approvedAddresses: ['10.32.0.7', 'fd12::7']
+  }
+  try {
+    await new SettingsRepository(dir).setNotebookNetwork({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: [rule]
+    })
+    const disk = JSON.parse(await readFile(join(dir, 'settings.json'), 'utf8'))
+    expect(disk.notebookNetwork.trustedPrivateDestinations).toEqual([rule])
+    const restarted = new SettingsRepository(dir)
+    expect((await restarted.getSettings()).notebookNetwork?.trustedPrivateDestinations).toEqual([
+      rule
+    ])
+    await restarted.setNotebookNetwork({
+      ...DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+      trustedPrivateDestinations: []
+    })
+    expect(
+      (await new SettingsRepository(dir).getSettings()).notebookNetwork?.trustedPrivateDestinations
+    ).toEqual([])
+  } finally {
+    await rm(dir, { recursive: true, force: true })
+  }
 })

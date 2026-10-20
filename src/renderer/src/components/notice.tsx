@@ -31,6 +31,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 
 type NoticeButtonProps = {
   label: string
+  variant?: 'default' | 'secondary' | 'outline' | 'ghost'
   testId?: string
   description?: string
   onClick: () => void
@@ -83,7 +84,10 @@ const NoticeButton = ({
           compact && 'h-auto min-h-8 max-w-full whitespace-normal text-left',
           button.className
         )}
-        variant={compact ? (secondary ? 'ghost' : 'outline') : secondary ? 'secondary' : 'default'}
+        variant={
+          button.variant ??
+          (compact ? (secondary ? 'ghost' : 'outline') : secondary ? 'secondary' : 'default')
+        }
         size={compact ? 'sm' : 'default'}
         onClick={button.onClick}
         disabled={button.disabled || button.loading}

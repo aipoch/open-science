@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -80,6 +81,7 @@ describe('storage command owner onboarding persistence', () => {
   })
 
   afterEach(async () => {
+    await resetOwnership()
     initDataRoot(undefined)
     await rm(currentParent, { recursive: true, force: true })
     await rm(targetParent, { recursive: true, force: true })
@@ -172,3 +174,5 @@ describe('storage command owner onboarding persistence', () => {
     })
   })
 })
+
+const resetOwnership = await configureTestElectronHost(await import('electron'))

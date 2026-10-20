@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { IpcMain } from 'electron'
 
@@ -157,3 +158,5 @@ describe('core Electron production composition', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

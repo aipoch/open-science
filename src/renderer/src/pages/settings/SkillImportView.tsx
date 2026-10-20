@@ -5,12 +5,9 @@ import { useRef, useState } from 'react'
 import { ChevronDown, ChevronUp, LoaderCircle, ScrollText, SearchX, Star } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
-import type {
-  GitHubRepositorySearchView,
-  ScannedSkillView,
-  SkillView
-} from '../../../../shared/settings'
-import { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '../../../../shared/settings'
+import type { ScannedSkillView, SkillView } from '../../../../shared/settings'
+import type { GitHubRepositorySearchView } from '@aipoch/skills/document'
+import { GITHUB_REPOSITORY_SEARCH_TOO_LONG_MESSAGE } from '@aipoch/skills/document'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { formatDisplayNumber } from '@/lib/locale-format'

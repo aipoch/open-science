@@ -339,7 +339,7 @@ export type VersionProbe = {
 export type VersionProbeSpawn = (
   command: string,
   args: readonly string[],
-  options: { encoding: 'utf8'; timeout: number; signal?: AbortSignal }
+  options: { encoding: 'utf8'; timeout: number; signal?: AbortSignal; windowsHide?: boolean }
 ) => VersionProbe | Promise<VersionProbe>
 
 const spawnVersionProbe: VersionProbeSpawn = async (command, args, options) => {
@@ -361,7 +361,9 @@ export const runVersionProbe = (
   spawn: VersionProbeSpawn = spawnVersionProbe,
   signal?: AbortSignal
 ): Promise<VersionProbe> =>
-  Promise.resolve(spawn(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000, signal }))
+  Promise.resolve(
+    spawn(binPath, ['--version'], { encoding: 'utf8', timeout: 15_000, signal, windowsHide: true })
+  )
 
 // Pure classifier for a version probe. A spawn error, a terminating signal, or a non-zero exit all mean
 // the binary is not usable here; `illegalInstruction` is the AVX2-baseline signal (SIGILL on POSIX, the

@@ -1,0 +1,319 @@
+{
+  "name": "@aipoch/connector-builtins",
+  "version": "0.1.0",
+  "description": "Independent Connector implementations",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    "./pubmed": {
+      "types": "./dist/pubmed.d.ts",
+      "default": "./dist/pubmed.js"
+    },
+    "./literature-openalex": {
+      "types": "./dist/literature-openalex.d.ts",
+      "default": "./dist/literature-openalex.js"
+    },
+    "./cellosaurus": {
+      "types": "./dist/cellosaurus.d.ts",
+      "default": "./dist/cellosaurus.js"
+    },
+    "./ncbi": {
+      "types": "./dist/ncbi.d.ts",
+      "default": "./dist/ncbi.js"
+    },
+    "./biorxiv": {
+      "types": "./dist/biorxiv.d.ts",
+      "default": "./dist/biorxiv.js"
+    },
+    "./biomart": {
+      "types": "./dist/biomart.d.ts",
+      "default": "./dist/biomart.js"
+    },
+    "./alliance": {
+      "types": "./dist/alliance.d.ts",
+      "default": "./dist/alliance.js"
+    },
+    "./genes-gprofiler": {
+      "types": "./dist/genes-gprofiler.d.ts",
+      "default": "./dist/genes-gprofiler.js"
+    },
+    "./expression": {
+      "types": "./dist/expression.d.ts",
+      "default": "./dist/expression.js"
+    },
+    "./research-resources": {
+      "types": "./dist/research-resources.d.ts",
+      "default": "./dist/research-resources.js"
+    },
+    "./human-genetics": {
+      "types": "./dist/human-genetics.d.ts",
+      "default": "./dist/human-genetics.js"
+    },
+    "./omics-archives": {
+      "types": "./dist/omics-archives.d.ts",
+      "default": "./dist/omics-archives.js"
+    },
+    "./interproscan": {
+      "types": "./dist/interproscan.d.ts",
+      "default": "./dist/interproscan.js"
+    },
+    "./protein-annotation": {
+      "types": "./dist/protein-annotation.d.ts",
+      "default": "./dist/protein-annotation.js"
+    },
+    "./clinical-trials": {
+      "types": "./dist/clinical-trials.d.ts",
+      "default": "./dist/clinical-trials.js"
+    },
+    "./literature-doi": {
+      "types": "./dist/literature-doi.d.ts",
+      "default": "./dist/literature-doi.js"
+    },
+    "./structures-complexportal": {
+      "types": "./dist/structures-complexportal.d.ts",
+      "default": "./dist/structures-complexportal.js"
+    },
+    "./genomes-reference": {
+      "types": "./dist/genomes-reference.d.ts",
+      "default": "./dist/genomes-reference.js"
+    },
+    "./variants-mavedb": {
+      "types": "./dist/variants-mavedb.d.ts",
+      "default": "./dist/variants-mavedb.js"
+    },
+    "./literature": {
+      "types": "./dist/literature.d.ts",
+      "default": "./dist/literature.js"
+    },
+    "./structures": {
+      "types": "./dist/structures.d.ts",
+      "default": "./dist/structures.js"
+    },
+    "./genomes-ensembl": {
+      "types": "./dist/genomes-ensembl.d.ts",
+      "default": "./dist/genomes-ensembl.js"
+    },
+    "./genes": {
+      "types": "./dist/genes.d.ts",
+      "default": "./dist/genes.js"
+    },
+    "./humangenetics-gwas": {
+      "types": "./dist/humangenetics-gwas.d.ts",
+      "default": "./dist/humangenetics-gwas.js"
+    },
+    "./chembl": {
+      "types": "./dist/chembl.d.ts",
+      "default": "./dist/chembl.js"
+    },
+    "./chemistry": {
+      "types": "./dist/chemistry.d.ts",
+      "default": "./dist/chemistry.js"
+    },
+    "./cellguide": {
+      "types": "./dist/cellguide.d.ts",
+      "default": "./dist/cellguide.js"
+    },
+    "./cellxgene-discover": {
+      "types": "./dist/cellxgene-discover.d.ts",
+      "default": "./dist/cellxgene-discover.js"
+    },
+    "./genomes": {
+      "types": "./dist/genomes.d.ts",
+      "default": "./dist/genomes.js"
+    },
+    "./genomes-blast": {
+      "types": "./dist/genomes-blast.d.ts",
+      "default": "./dist/genomes-blast.js"
+    },
+    "./monarch": {
+      "types": "./dist/monarch.d.ts",
+      "default": "./dist/monarch.js"
+    },
+    "./genes-proteins": {
+      "types": "./dist/genes-proteins.d.ts",
+      "default": "./dist/genes-proteins.js"
+    },
+    "./gdc": {
+      "types": "./dist/gdc.d.ts",
+      "default": "./dist/gdc.js"
+    },
+    "./rna": {
+      "types": "./dist/rna.d.ts",
+      "default": "./dist/rna.js"
+    },
+    "./pathway-commons": {
+      "types": "./dist/pathway-commons.d.ts",
+      "default": "./dist/pathway-commons.js"
+    },
+    "./genes-enrichr": {
+      "types": "./dist/genes-enrichr.d.ts",
+      "default": "./dist/genes-enrichr.js"
+    },
+    "./regulation": {
+      "types": "./dist/regulation.d.ts",
+      "default": "./dist/regulation.js"
+    },
+    "./structures-alphafold": {
+      "types": "./dist/structures-alphafold.d.ts",
+      "default": "./dist/structures-alphafold.js"
+    },
+    "./genes-reactome": {
+      "types": "./dist/genes-reactome.d.ts",
+      "default": "./dist/genes-reactome.js"
+    },
+    "./structures-pdb": {
+      "types": "./dist/structures-pdb.d.ts",
+      "default": "./dist/structures-pdb.js"
+    },
+    "./genes-uniprot-mapping": {
+      "types": "./dist/genes-uniprot-mapping.d.ts",
+      "default": "./dist/genes-uniprot-mapping.js"
+    },
+    "./drug-regulatory": {
+      "types": "./dist/drug-regulatory.d.ts",
+      "default": "./dist/drug-regulatory.js"
+    },
+    "./cancer-models": {
+      "types": "./dist/cancer-models.d.ts",
+      "default": "./dist/cancer-models.js"
+    },
+    "./humangenetics-phewas": {
+      "types": "./dist/humangenetics-phewas.d.ts",
+      "default": "./dist/humangenetics-phewas.js"
+    },
+    "./variants-clinvar": {
+      "types": "./dist/variants-clinvar.d.ts",
+      "default": "./dist/variants-clinvar.js"
+    },
+    "./literature-arxiv": {
+      "types": "./dist/literature-arxiv.d.ts",
+      "default": "./dist/literature-arxiv.js"
+    },
+    "./pdc": {
+      "types": "./dist/pdc.d.ts",
+      "default": "./dist/pdc.js"
+    },
+    "./variants-gnomad": {
+      "types": "./dist/variants-gnomad.d.ts",
+      "default": "./dist/variants-gnomad.js"
+    },
+    "./zenodo": {
+      "types": "./dist/zenodo.d.ts",
+      "default": "./dist/zenodo.js"
+    },
+    "./clinical-genomics": {
+      "types": "./dist/clinical-genomics.d.ts",
+      "default": "./dist/clinical-genomics.js"
+    },
+    "./molecule": {
+      "types": "./dist/molecule.d.ts",
+      "default": "./dist/molecule.js"
+    },
+    "./zinc": {
+      "types": "./dist/zinc.d.ts",
+      "default": "./dist/zinc.js"
+    },
+    "./omics-geo-matrix": {
+      "types": "./dist/omics-geo-matrix.d.ts",
+      "default": "./dist/omics-geo-matrix.js"
+    },
+    "./genomes-clustal": {
+      "types": "./dist/genomes-clustal.d.ts",
+      "default": "./dist/genomes-clustal.js"
+    },
+    "./structures-intact": {
+      "types": "./dist/structures-intact.d.ts",
+      "default": "./dist/structures-intact.js"
+    },
+    "./omics-ena": {
+      "types": "./dist/omics-ena.d.ts",
+      "default": "./dist/omics-ena.js"
+    },
+    "./structures-emdb": {
+      "types": "./dist/structures-emdb.d.ts",
+      "default": "./dist/structures-emdb.js"
+    },
+    "./variants": {
+      "types": "./dist/variants.d.ts",
+      "default": "./dist/variants.js"
+    },
+    "./omics-workbench": {
+      "types": "./dist/omics-workbench.d.ts",
+      "default": "./dist/omics-workbench.js"
+    },
+    "./clinpgx": {
+      "types": "./dist/clinpgx.d.ts",
+      "default": "./dist/clinpgx.js"
+    },
+    "./genomes-ucsc": {
+      "types": "./dist/genomes-ucsc.d.ts",
+      "default": "./dist/genomes-ucsc.js"
+    },
+    "./humangenetics-eqtl": {
+      "types": "./dist/humangenetics-eqtl.d.ts",
+      "default": "./dist/humangenetics-eqtl.js"
+    },
+    "./hmmer": {
+      "types": "./dist/hmmer.d.ts",
+      "default": "./dist/hmmer.js"
+    },
+    "./iedb": {
+      "types": "./dist/iedb.d.ts",
+      "default": "./dist/iedb.js"
+    },
+    "./variants-dbsnp": {
+      "types": "./dist/variants-dbsnp.d.ts",
+      "default": "./dist/variants-dbsnp.js"
+    },
+    "./genes-ontology": {
+      "types": "./dist/genes-ontology.d.ts",
+      "default": "./dist/genes-ontology.js"
+    },
+    "./molecule-render": {
+      "types": "./dist/molecule/render.d.ts",
+      "default": "./dist/molecule/render.js"
+    },
+    "./encori": {
+      "types": "./dist/encori.d.ts",
+      "default": "./dist/encori.js"
+    },
+    "./catalog": {
+      "types": "./dist/catalog.d.ts",
+      "default": "./dist/catalog.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node tsc.cjs -p tsconfig.json",
+    "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "ajv": "^8.20.0",
+    "@types/js-yaml": "^4.0.9",
+    "@types/papaparse": "^5.5.2"
+  },
+  "dependencies": {
+    "@xmldom/xmldom": "0.8.15",
+    "zod": "^4.6.5",
+    "js-yaml": "^4.1.0",
+    "parse5": "^7.3.0",
+    "openchemlib": "^9.25.0",
+    "papaparse": "^5.7.0",
+    "fflate": "0.8.3"
+  },
+  "peerDependencies": {
+    "@aipoch/connector-core": "^0.1.0"
+  }
+}

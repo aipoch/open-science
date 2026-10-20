@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { existsSync } from 'node:fs'
 import {
   chmod,
@@ -15,7 +16,7 @@ import { tmpdir } from 'node:os'
 import { execPath } from 'node:process'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { defaultVendorModel } from '../../shared/provider-registry'
+import { defaultVendorModel } from '../../shared/provider-model-policy'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
   CLAUDE_SHARED_PROVIDER_ID,
@@ -31,12 +32,12 @@ import type { ClaudeSharedAuthControllerPort } from './claude-shared-auth'
 import type { UserSkillRepository as UserSkillRepositoryType } from '../skills/user-skill-repository'
 import type { SystemProxyEnvironment } from './system-proxy'
 import type { AgentBackendResolutionContext } from './backend-resolver'
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import type { SettingsServiceOptions } from './service'
 import { SettingsInstallCoordinator } from './settings-install-coordinator'
-import { SkillMarketplaceService } from '../skills/marketplace-service'
-import { SkillCatalogModule } from './skill-catalog'
+import { SkillMarketplaceService } from '../skill-marketplace/service'
+import { SkillCatalogModule } from '../skills/catalog'
 import { marketplaceCatalog } from '../../shared/__fixtures__/skill-marketplace'
 
 // Reversible fake safeStorage so provider keys can be encrypted/decrypted without an OS keychain.
@@ -60,17 +61,18 @@ vi.mock('electron', () => ({
 
 const { initDataRoot } = await import('../storage-root')
 const { SettingsService } = await import('./service')
-const { ResponsesBridge: ResponsesBridgeClass } = await import('./responses-bridge')
+const { ResponsesToChatCompletionsBridge: ResponsesToChatCompletionsBridgeClass } =
+  await import('./responses-to-chat-completions-bridge')
 const { SettingsRepository } = await import('./repository')
 const { getAppClaudeConfigDir } = await import('./provider-env')
 const { getClaudeSkillRuntimeRoot } = await import('./claude-runtime-provisioner')
 const { connectorSkillSourceDir } = await import('../connectors/provision')
-const { SkillRegistry } = await import('../skills/registry')
+const { SkillRegistry } = await import('@aipoch/skills')
 const { managedClaudeDir } = await import('./managed-claude')
 const { managedOpencodeDir } = await import('./managed-opencode')
-const { netFetch } = await import('../skills/net-fetch')
+const { netFetch } = await import('../network-fetch')
 const { UserSkillRepository } = await import('../skills/user-skill-repository')
-const { UserSkillSpecialistPackageAdapter } = await import('../skills/specialist-package-adapter')
+const { UserSkillSpecialistPackageAdapter } = await import('@aipoch/skills')
 const { opencodeConfigDir, opencodeTransportProviderId } =
   await import('../agent-framework/opencode')
 const { net: mockedNet } = (await import('electron')) as unknown as {
@@ -176,7 +178,7 @@ const silentLog: Logger = {
 }
 
 const createService = (
-  detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.0' },
+  detectResult: ClaudeDetectResult = { found: true, path: '/bin/claude', version: '2.1.118' },
   options: {
     installManagedClaudeImpl?: ManagedInstallImpl
     installManagedOpencodeImpl?: ManagedInstallImpl
@@ -210,6 +212,7 @@ const createService = (
     log?: Logger
     installCoordinator?: SettingsInstallCoordinator
     wslSetup?: SettingsServiceOptions['wslSetup']
+    getNotebookNetworkStatus?: SettingsServiceOptions['getNotebookNetworkStatus']
     wsl2PreviewStatus?: SettingsServiceOptions['wsl2PreviewStatus']
   } = {}
 ): InstanceType<typeof SettingsService> =>
@@ -282,7 +285,7 @@ const createService = (
           path === options.codexDetected?.nativePath
             ? options.codexDetected.nativeVersion
             : path === options.managedCodexNativePath
-              ? 'codex-cli 0.144.6'
+              ? 'codex-cli 0.157.1'
               : path === options.codexExternalNative?.path
                 ? options.codexExternalNative.version
                 : undefined
@@ -301,6 +304,13 @@ const createService = (
     claudeSharedAuth: options.claudeSharedAuth as any,
     installCoordinator: options.installCoordinator,
     wslSetup: options.wslSetup,
+    getNotebookNetworkStatus:
+      options.getNotebookNetworkStatus ??
+      (async () => ({
+        kind: 'setupRequired',
+        platform: 'win32',
+        reasons: ['windowsProfileMissing']
+      })),
     wsl2PreviewStatus:
       options.wsl2PreviewStatus ?? (() => ({ available: true, reason: 'available' }))
   })
@@ -629,6 +639,33 @@ describe('SettingsService: Marketplace installation projection', () => {
 })
 
 describe('SettingsService: Local Shell runtime', () => {
+  it('uses Core only after protection is ready', async () => {
+    const service = createService(undefined, {
+      getNotebookNetworkStatus: async () => ({ kind: 'ready', warnings: [] })
+    })
+    expect((await service.switchLocalShellToPowerShell()).result.runtimeBinding).toEqual({
+      kind: 'powershell',
+      version: '7.6'
+    })
+  })
+
+  it.each(['error', 'checking'] as const)(
+    'preserves the selected runtime while protection is %s',
+    async (kind) => {
+      const service = createService(undefined, {
+        getNotebookNetworkStatus: async () =>
+          kind === 'error' ? { kind, reason: 'runtimeFailure' } : { kind }
+      })
+      const profile = { distro: 'fixture-distro', user: 'fixture-user' }
+      await repository.setLocalShellRuntime('wsl2-bash', profile)
+      await expect(service.switchLocalShellToPowerShell()).rejects.toThrow(
+        'Prepare Notebook protection'
+      )
+      await expect(repository.getSettings()).resolves.toMatchObject({
+        localShellRuntime: 'wsl2-bash'
+      })
+    }
+  )
   it('projects the current persisted Shell runtime into a cached WSL setup snapshot', async () => {
     const selection = { distro: 'Ubuntu-24.04', user: 'scientist' }
     let cachedRuntime: 'powershell' | 'wsl2-bash' = 'wsl2-bash'
@@ -867,7 +904,11 @@ describe('SettingsService: custom MCP OAuth', () => {
     const id = added.customServers[0].id
     const authenticator = vi.fn(async (serverId: string) => {
       await service.saveCustomServerOAuthState(serverId, {
-        tokens: { access_token: 'access', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'access',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
     })
     const cancel = vi.fn(async () => undefined)
@@ -902,7 +943,7 @@ describe('SettingsService: custom MCP OAuth', () => {
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'access', token_type: 'Bearer' }
+      tokens: { access_token: 'access', token_type: 'Bearer', issuer: 'https://auth.example.test/' }
     })
     const disconnectRuntime = vi.fn(async () => undefined)
     service.setDeviceCredentialAuthenticator(vi.fn(), vi.fn(), disconnectRuntime)
@@ -1226,6 +1267,9 @@ describe('SettingsService: providers', () => {
         models: [
           'gpt-5.6-sol',
           'gpt-6-astra',
+          'gpt-6.1-sol',
+          'gpt-6-sol',
+          'gpt-6-luna',
           'gpt-5.6-terra',
           'gpt-5.6-luna',
           'gpt-5.5',
@@ -2105,7 +2149,7 @@ describe('SettingsService: validation', () => {
         baseUrl: 'https://g',
         model: 'm',
         key: 'k',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
     ).providers[0]
 
@@ -2132,7 +2176,7 @@ describe('SettingsService: validation', () => {
         baseUrl: 'https://g',
         model: 'm',
         key: 'k',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       })
     ).providers[0]
 
@@ -2249,7 +2293,7 @@ describe('SettingsService: validation', () => {
         name: 'G',
         baseUrl: 'https://g/v1',
         model: 'm',
-        apiEndpoints: ['anthropic'],
+        apiEndpoints: ['messages'],
         key: 'k'
       })
     ).providers[0]
@@ -2374,7 +2418,7 @@ describe('SettingsService: validation', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Chat Gateway',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://g/v1',
         model: 'm',
         key: 'k'
@@ -2406,7 +2450,7 @@ describe('SettingsService: preflight & spawn config', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue(validAnthropicResponse()))
 
     // Seed an existing executable path so the launch re-check passes.
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -2446,7 +2490,7 @@ describe('SettingsService: preflight & spawn config', () => {
     'checks the provider gate after discovery changes for $vendorId',
     async ({ vendorId, model, ready }) => {
       const service = createService()
-      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
       const created = (
         await service.upsertProvider({
           type: 'official',
@@ -2488,7 +2532,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.loginClaudeShared()
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
@@ -2514,7 +2558,7 @@ describe('SettingsService: preflight & spawn config', () => {
         cancelLogin: vi.fn()
       }
       const service = createService(undefined, { claudeSharedAuth })
-      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+      await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
       await repository.upsertProvider({
         id: CLAUDE_SHARED_PROVIDER_ID,
         type: 'claude-shared',
@@ -2554,7 +2598,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2595,7 +2639,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2627,7 +2671,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2653,7 +2697,7 @@ describe('SettingsService: preflight & spawn config', () => {
       claudeSharedAuth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2680,7 +2724,7 @@ describe('SettingsService: preflight & spawn config', () => {
       cancelLogin: vi.fn()
     }
     const service = createService(undefined, { claudeSharedAuth })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertProvider({
       id: CLAUDE_SHARED_PROVIDER_ID,
       type: 'claude-shared',
@@ -2705,7 +2749,7 @@ describe('SettingsService: preflight & spawn config', () => {
     // Executable-but-corrupt runtime: execPath is a real file (X_OK passes) yet `--version` fails.
     // Preflight must validate via --version like the env check, so this must NOT pass as ready.
     const service = createService({ found: false })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
 
     const preflight = await service.getPreflight()
 
@@ -2716,7 +2760,7 @@ describe('SettingsService: preflight & spawn config', () => {
   it('does not report opencode ready when the recorded binary exists but fails --version', async () => {
     // Same for OpenCode: the recorded path is a real executable, but its --version probe fails
     // (no opencodeDetected declared, so the injected getVersion returns undefined for it).
-    const service = createService({ found: true, path: '/bin/claude', version: '2.1.0' })
+    const service = createService({ found: true, path: '/bin/claude', version: '2.1.118' })
     await repository.setOpencodeInfo(execPath, '1.18.3')
 
     const preflight = await service.getPreflight()
@@ -2736,7 +2780,7 @@ describe('SettingsService: preflight & spawn config', () => {
         resolvedPath: adapter,
         version: '1.6.2',
         nativePath,
-        nativeVersion: '0.144.6'
+        nativeVersion: '0.157.1'
       })
       const snapshot = await service.getSettingsView()
       expect(snapshot.codexManaged).toBe(true)
@@ -2766,6 +2810,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(configPath, 'model = "account-default"\n')
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex',
       managedCodexAdapterPath: adapterPath
     })
     await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
@@ -2805,7 +2850,7 @@ describe('SettingsService: preflight & spawn config', () => {
         path: adapterPath,
         version: 'codex-acp 1.6.2',
         nativePath,
-        nativeVersion: 'codex-cli 0.144.6'
+        nativeVersion: 'codex-cli 0.157.1'
       }
     })
 
@@ -2816,7 +2861,7 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativeManaged: false,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     expect(await service.getPreflight()).toMatchObject({ codexReady: true, agentReady: true })
   })
@@ -2828,7 +2873,7 @@ describe('SettingsService: preflight & spawn config', () => {
     await repository.setAgentFramework('codex')
     const service = createService(undefined, {
       codexDetected: { path: '/opt/tools/codex-acp', version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.144.6' }
+      codexExternalNative: { path: '/usr/local/bin/codex', version: 'codex-cli 0.157.1' }
     })
 
     const result = await service.checkEnvironment()
@@ -2851,7 +2896,7 @@ describe('SettingsService: preflight & spawn config', () => {
     const globalNativePath = '/usr/local/bin/codex'
     const service = createService(undefined, {
       codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setAgentFramework('codex')
@@ -2859,7 +2904,7 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: globalAdapterPath,
       version: '1.6.2',
       nativePath: globalNativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
 
     const result = await service.checkEnvironment()
@@ -2869,7 +2914,7 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: managedAdapterPath,
       version: '1.6.2',
       nativePath: globalNativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
   })
 
@@ -2935,14 +2980,15 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await service.detectCodex()
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     const provider = (
       await service.upsertProvider({
@@ -3018,7 +3064,7 @@ describe('SettingsService: preflight & spawn config', () => {
         path: adapterPath,
         version: 'codex-acp 1.6.2',
         nativePath,
-        nativeVersion: 'codex-cli 0.144.6'
+        nativeVersion: 'codex-cli 0.157.1'
       }
     })
     await repository.setCodexInfo({
@@ -3055,14 +3101,14 @@ describe('SettingsService: preflight & spawn config', () => {
         path: adapterPath,
         version: 'codex-acp 1.6.2',
         nativePath,
-        nativeVersion: 'codex-cli 0.144.2'
+        nativeVersion: 'codex-cli 0.158.0'
       }
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     const provider = (
       await service.upsertProvider({
@@ -3098,10 +3144,13 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
-    const service = createService(undefined, { managedCodexAdapterPath: adapterPath })
+    const service = createService(undefined, {
+      managedCodexAdapterPath: adapterPath,
+      managedCodexNativePath: '/data/codex-managed/native/codex'
+    })
     const provider = (
       await service.upsertProvider({
         type: 'custom',
@@ -3137,14 +3186,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
       managedCodexAdapterPath: managedAdapterPath
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
       version: '1.6.2',
       nativePath: globalNativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3176,14 +3225,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await chmod(globalNativePath, 0o755)
     const service = createService(undefined, {
       codexDetected: { path: globalAdapterPath, version: 'codex-acp 1.6.2' },
-      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.144.6' },
+      codexExternalNative: { path: globalNativePath, version: 'codex-cli 0.157.1' },
       managedCodexAdapterPath: join(storageRoot, 'missing-managed-adapter', 'index.js')
     })
     await repository.setCodexInfo({
       resolvedPath: globalAdapterPath,
       version: '1.6.2',
       nativePath: globalNativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3249,13 +3298,14 @@ describe('SettingsService: preflight & spawn config', () => {
     }
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3302,6 +3352,7 @@ describe('SettingsService: preflight & spawn config', () => {
     }
     const service = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex',
       codexAuth,
       resolveCodexProxyEnvironment: () =>
         Promise.resolve({
@@ -3317,7 +3368,7 @@ describe('SettingsService: preflight & spawn config', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3399,6 +3450,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
     const fallbackService = createService(undefined, {
       codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex',
       resolveCodexProxyEnvironment: () => Promise.resolve(undefined)
     })
     const fallbackBackend = await resolveActiveBackend(fallbackService)
@@ -3414,13 +3466,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     await repository.upsertProvider({
@@ -3526,20 +3579,21 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
         type: 'custom',
         name: 'Chat Gateway',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://api.deepseek.com/v1',
         model: 'deepseek-v4-pro',
         contextWindow: 1_000_000,
@@ -3640,7 +3694,7 @@ describe('SettingsService: preflight & spawn config', () => {
     )
     expect(pubmedSkill).toContain('host.mcp')
 
-    await backend.responsesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
     await repository.setConversationSkillImportEnabled(false)
     upstreamRequest = undefined
     const disabledBackend = await resolveActiveBackend(service)
@@ -3663,7 +3717,7 @@ describe('SettingsService: preflight & spawn config', () => {
     ).map((tool) => tool.function?.name)
     expect(disabledToolNames).toContain('mcp__open_science_notebook__notebook_execute')
     expect(disabledToolNames).not.toContain('mcp__open_science_skills__request_skill_import')
-    await disabledBackend.responsesBridgeLease?.release()
+    await disabledBackend.responsesTransportLease?.release()
   })
 
   it('keeps bridged Codex backends pinned to the provider target they were created for', async () => {
@@ -3705,20 +3759,21 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const first = (
       await service.upsertProvider({
         type: 'custom',
         name: 'Provider One',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://one.example/v1',
         model: 'model-one',
         key: 'key-one'
@@ -3728,7 +3783,7 @@ describe('SettingsService: preflight & spawn config', () => {
       await service.upsertProvider({
         type: 'custom',
         name: 'Provider Two',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://two.example/v1',
         model: 'model-two',
         key: 'key-two'
@@ -3748,8 +3803,8 @@ describe('SettingsService: preflight & spawn config', () => {
       secondBackend.providerConfiguration?.baseUrl
     )
 
-    firstBackend.responsesBridgeLease?.registerReviewerSession('reviewer-one')
-    secondBackend.responsesBridgeLease?.registerReviewerSession('reviewer-two')
+    firstBackend.responsesTransportLease?.registerReviewerSession('reviewer-one')
+    secondBackend.responsesTransportLease?.registerReviewerSession('reviewer-two')
 
     const send = async (backend: typeof firstBackend, promptCacheKey: string): Promise<void> => {
       const response = await localFetch(`${backend.providerConfiguration?.baseUrl}/responses`, {
@@ -3788,33 +3843,38 @@ describe('SettingsService: preflight & spawn config', () => {
       expect.arrayContaining(['mcp__open_science_reviewer__submit_findings'])
     ])
 
-    await firstBackend.responsesBridgeLease?.release()
-    await secondBackend.responsesBridgeLease?.release()
+    await firstBackend.responsesTransportLease?.release()
+    await secondBackend.responsesTransportLease?.release()
   })
 
   it('closes and evicts a responses bridge whose start fails', async () => {
     const startError = new Error('bridge start failed')
-    const startSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'start').mockRejectedValue(startError)
-    const closeSpy = vi.spyOn(ResponsesBridgeClass.prototype, 'close').mockResolvedValue(undefined)
+    const startSpy = vi
+      .spyOn(ResponsesToChatCompletionsBridgeClass.prototype, 'start')
+      .mockRejectedValue(startError)
+    const closeSpy = vi
+      .spyOn(ResponsesToChatCompletionsBridgeClass.prototype, 'close')
+      .mockResolvedValue(undefined)
     const adapterPath = join(storageRoot, 'bin', 'codex-acp')
     await mkdir(dirname(adapterPath), { recursive: true })
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
         type: 'custom',
         name: 'Broken bridge provider',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://broken.example/v1',
         model: 'model-one',
         key: 'key-one'
@@ -3842,13 +3902,14 @@ describe('SettingsService: preflight & spawn config', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -3905,13 +3966,13 @@ describe('SettingsService: preflight & spawn config', () => {
     expect(backend.authentication).toBeUndefined()
     expect(backend.env.CODEX_CONFIG).not.toContain('mm-secret')
 
-    await backend.responsesBridgeLease?.release()
+    await backend.responsesTransportLease?.release()
   })
 
   it('builds spawn env from the active provider with the decrypted key', async () => {
     const service = createService()
 
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -3947,7 +4008,7 @@ describe('SettingsService: preflight & spawn config', () => {
   it('does not inject WebFetch preflight settings into isolated Claude sessions', async () => {
     const service = createService()
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-isolated'),
       keyMask: maskKey('sk-ant-isolated')
@@ -3962,7 +4023,7 @@ describe('SettingsService: preflight & spawn config', () => {
 
   it('throws a clear error when no active provider is configured', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
 
     await expect(resolveActiveBackend(service)).rejects.toThrow(/active model provider/i)
   })
@@ -3988,7 +4049,8 @@ describe('SettingsService: official vendors', () => {
       hasKey: true
     })
     // Catalog comes from the registry, not the user; base URL is not stored on the record.
-    expect(view.models).toContain('MiniMax-M3[1m]')
+    expect(view.models).toContain('MiniMax-M3')
+    expect(view.models).not.toContain('MiniMax-M3[1m]')
     expect(view.baseUrl).toBeUndefined()
 
     const stored = (await repository.getSettings()).providers[0]
@@ -4044,7 +4106,7 @@ describe('SettingsService: official vendors', () => {
 
   it('builds spawn env from the registry base URL and the active model', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'official',
@@ -4070,14 +4132,12 @@ describe('SettingsService: official vendors', () => {
         availableModels: [
           'deepseek-v4-flash',
           'deepseek-v4-pro',
-          'deepseek-v4-pro[1m]',
           'deepseek-flash',
           'deepseek-v4-flash-vision-exp'
         ],
         modelOverrides: {
           'deepseek-v4-flash': 'deepseek-v4-flash',
           'deepseek-v4-pro': 'deepseek-v4-pro',
-          'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
           'deepseek-flash': 'deepseek-flash',
           'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
         }
@@ -4090,14 +4150,12 @@ describe('SettingsService: official vendors', () => {
       availableModels: [
         'deepseek-v4-flash',
         'deepseek-v4-pro',
-        'deepseek-v4-pro[1m]',
         'deepseek-flash',
         'deepseek-v4-flash-vision-exp'
       ],
       modelOverrides: {
         'deepseek-v4-flash': 'deepseek-v4-flash',
         'deepseek-v4-pro': 'deepseek-v4-pro',
-        'deepseek-v4-pro[1m]': 'deepseek-v4-pro[1m]',
         'deepseek-flash': 'deepseek-flash',
         'deepseek-v4-flash-vision-exp': 'deepseek-v4-flash-vision-exp'
       }
@@ -4107,7 +4165,7 @@ describe('SettingsService: official vendors', () => {
 
   it('carries the upstream model through the Claude backend for context tokenization', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('claude-code')
     const provider = (
       await service.upsertProvider({
@@ -4164,7 +4222,6 @@ describe('SettingsService: official vendors', () => {
     expect(view.models).toEqual([
       'deepseek-v5',
       'deepseek-v4-pro',
-      'deepseek-v4-pro[1m]',
       'deepseek-flash',
       'deepseek-v4-flash',
       'deepseek-v4-flash-vision-exp'
@@ -4173,7 +4230,7 @@ describe('SettingsService: official vendors', () => {
 
   it('keeps a captured DeepSeek session model usable and passes its original id after refresh', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'official',
@@ -4322,7 +4379,7 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-pro',
       stream: true,
@@ -4341,9 +4398,9 @@ describe('SettingsService: official vendors', () => {
     })
 
     expect(result).toMatchObject({ ok: true, category: 'ok' })
-    // deepseek-v4-flash supports the native Responses API, so the probe must hit /v1/responses with
+    // deepseek-v4-flash supports the native Responses API, so the probe must hit /responses with
     // the namespace compatibility contract instead of the Chat Completions bridge.
-    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/v1/responses')
+    expect(fetchMock.mock.calls[0][0]).toBe('https://api.deepseek.com/responses')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
       model: 'deepseek-v4-flash',
       stream: true,
@@ -4894,7 +4951,7 @@ describe('SettingsService: skills', () => {
   it('force-loads a disabled picked skill for the turn without mutating stored settings', async () => {
     const service = await createSkillService()
 
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const created = (
       await service.upsertProvider({
         type: 'custom',
@@ -4975,7 +5032,7 @@ describe('SettingsService: skills', () => {
       availability: () => undefined,
       isRefreshing: () => false
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
 
@@ -5033,7 +5090,7 @@ describe('SettingsService: skills', () => {
 
   it('injects the selected shared Claude model context window into the spawn config', async () => {
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-8' })
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID, 'claude-opus-4-8')
 
@@ -5060,7 +5117,7 @@ describe('SettingsService: skills', () => {
         platform: process.platform,
         isRunnable: (path) => Promise.resolve(path === adapterPath),
         getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve(undefined),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5070,7 +5127,7 @@ describe('SettingsService: skills', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
@@ -5198,7 +5255,7 @@ describe('SettingsService: skills', () => {
         platform: 'linux',
         isRunnable: (path) => Promise.resolve(path === adapterPath),
         getAdapterVersion: () => Promise.resolve('codex-acp 1.6.2'),
-        getCodexVersion: () => Promise.resolve(undefined),
+        getCodexVersion: () => Promise.resolve('codex-cli 0.157.1'),
         smokeInitialize: () => Promise.resolve(true),
         resolveNpmBinDirs: () => Promise.resolve([]),
         managedAdapterPath: adapterPath
@@ -5208,7 +5265,7 @@ describe('SettingsService: skills', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const customSkillName = 'mcp-xt'
@@ -5615,7 +5672,7 @@ describe('installCodex', () => {
         adapterPath: '/data/codex-managed/adapter/dist/index.js',
         adapterVersion: '1.6.2',
         codexPath: '/data/codex-managed/codex/vendor/target/bin/codex',
-        codexVersion: '0.144.6'
+        codexVersion: '0.157.1'
       })
     })
 
@@ -5626,7 +5683,7 @@ describe('installCodex', () => {
       resolvedPath: '/data/codex-managed/adapter/dist/index.js',
       version: '1.6.2',
       nativePath: '/data/codex-managed/codex/vendor/target/bin/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
   })
 })
@@ -5673,7 +5730,7 @@ describe('detectOpencode', () => {
 
 describe('detectClaude hardening', () => {
   it('forgets the recorded claude when its binary is gone from disk (uninstall)', async () => {
-    await repository.setClaudeInfo({ resolvedPath: '/gone/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/gone/bin/claude', version: '2.1.118' })
     // found:false + version:undefined makes the injected probe report nothing runnable.
     const service = createService({ found: false, path: undefined, version: undefined })
 
@@ -5687,7 +5744,7 @@ describe('detectClaude hardening', () => {
     const present = join(storageRoot, 'claude-present')
     await writeFile(present, '', 'utf8')
     await chmod(present, 0o755)
-    await repository.setClaudeInfo({ resolvedPath: present, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: present, version: '2.1.118' })
     const service = createService({ found: false, path: undefined, version: undefined })
 
     await service.detectClaude()
@@ -5695,14 +5752,14 @@ describe('detectClaude hardening', () => {
     // A GUI PATH gap must not wipe a still-installed claude.
     expect((await repository.getSettings()).claude).toEqual({
       resolvedPath: present,
-      version: '2.1.0'
+      version: '2.1.118'
     })
   })
 })
 
 describe('checkEnvironment', () => {
   it('keeps a cached executable that still runs when a GUI PATH cannot rediscover it', async () => {
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5712,14 +5769,14 @@ describe('checkEnvironment', () => {
         platform: 'linux',
         // PATH scan finds nothing, but the cached path still reports a version.
         isExecutable: () => Promise.resolve(false),
-        getVersion: (path) => Promise.resolve(path === execPath ? '2.1.0' : undefined),
+        getVersion: (path) => Promise.resolve(path === execPath ? '2.1.118' : undefined),
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
 
     const result = await service.checkEnvironment()
 
-    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.118' })
     expect(result.checks.find((check) => check.id === 'agent')?.status).toBe('passed')
   })
 
@@ -5727,7 +5784,7 @@ describe('checkEnvironment', () => {
     // Pinned platform is 'linux', so use posix literals; a host join() would splice a win32 drive
     // letter into PATH and be mis-split on ':' by the posix delimiter.
     const other = '/other-bin/claude'
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5738,7 +5795,7 @@ describe('checkEnvironment', () => {
         // A different claude is discoverable on PATH, but the cached one is still healthy.
         isExecutable: (path) => Promise.resolve(path === other),
         getVersion: (path) =>
-          Promise.resolve(path === execPath ? '2.1.0' : path === other ? '9.9.9' : undefined),
+          Promise.resolve(path === execPath ? '2.1.118' : path === other ? '9.9.9' : undefined),
         resolveNpmBinDirs: () => Promise.resolve([])
       }
     })
@@ -5746,7 +5803,7 @@ describe('checkEnvironment', () => {
     const result = await service.checkEnvironment()
 
     // The recorded runtime is retained rather than being replaced by the PATH discovery.
-    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.0' })
+    expect(result.runtime).toEqual({ found: true, path: execPath, version: '2.1.118' })
     expect((await repository.getSettings()).claude?.resolvedPath).toBe(execPath)
   })
 
@@ -5754,7 +5811,7 @@ describe('checkEnvironment', () => {
     // Pinned platform is 'linux', so use posix literals (see the note above about PATH splitting).
     const stale = '/stale/claude'
     const found = '/found-bin/claude'
-    await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: stale, version: '2.1.118' })
     const service = new SettingsService({
       repository,
       configRoot: storageRoot,
@@ -5867,7 +5924,7 @@ describe('SettingsService: managed-runtime flags', () => {
   it('reports claudeManaged when the resolved path is the app-managed install, opencode as non-managed', async () => {
     await repository.setClaudeInfo({
       resolvedPath: join(managedClaudeDir(storageRoot), 'claude'),
-      version: '2.1.0'
+      version: '2.1.118'
     })
     // A user's own PATH opencode is never treated as managed.
     await repository.setOpencodeInfo('/usr/local/bin/opencode', '1.18.3')
@@ -5888,7 +5945,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     await repository.setCodexInfo({ resolvedPath: adapterPath, version: '1.6.2' })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await repository.setAgentFramework('codex')
     const service = createService()
 
@@ -5901,13 +5958,13 @@ describe('SettingsService: uninstall managed runtime', () => {
   })
 
   it('uninstallClaude is a no-op for a non-managed (PATH/npm) install', async () => {
-    await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/usr/local/bin/claude', version: '2.1.118' })
     const service = createService()
 
     const { snapshot, activeBackendAffected } = await service.uninstallClaude()
 
     // The install we did not own is left untouched, and nothing about the active backend changed.
-    expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.0' })
+    expect(snapshot.claude).toEqual({ resolvedPath: '/usr/local/bin/claude', version: '2.1.118' })
     expect(snapshot.claudeManaged).toBe(false)
     expect(activeBackendAffected).toBe(false)
   })
@@ -5924,7 +5981,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
     await chmod(claudeBin, 0o755)
-    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.118' })
     await repository.setAgentFramework('opencode')
     const service = createService()
 
@@ -5963,7 +6020,7 @@ describe('SettingsService: uninstall managed runtime', () => {
     const claudeBin = join(storageRoot, 'fake-claude', 'claude')
     await mkdir(dirname(claudeBin), { recursive: true })
     await writeFile(claudeBin, '', 'utf8')
-    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: claudeBin, version: '2.1.118' })
     await repository.setAgentFramework('opencode')
     // getVersion resolves undefined for every path, so Claude reads as not ready (like preflight).
     const service = createService({ found: false, path: undefined, version: undefined })
@@ -5988,7 +6045,7 @@ describe('SettingsService: uninstall managed runtime', () => {
       resolvedPath: codexAdapter,
       version: '1.6.2',
       nativePath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('opencode')
     const service = createService(
@@ -5998,7 +6055,7 @@ describe('SettingsService: uninstall managed runtime', () => {
           path: codexAdapter,
           version: 'codex-acp 1.6.2',
           nativePath,
-          nativeVersion: 'codex-cli 0.144.6'
+          nativeVersion: 'codex-cli 0.157.1'
         }
       }
     )
@@ -6132,7 +6189,7 @@ describe('SettingsService: reasoning effort', () => {
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: execPath,
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     const codex = (await service.upsertProvider({ type: 'codex-isolated' })).providers[0]
     await service.setActiveProvider(codex.id)
@@ -6146,7 +6203,7 @@ describe('SettingsService: reasoning effort', () => {
   it('does not guess an effort profile for an unpinned Claude subscription model', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const claude = (await service.upsertProvider({ type: 'claude-shared' })).providers.find(
       (provider) => provider.type === 'claude-shared'
     )!
@@ -6218,7 +6275,7 @@ describe('SettingsService: reasoning effort', () => {
   it('surfaces sessionEffort on the Claude backend too (the early-return path)', async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const provider = (
       await service.upsertProvider({
         type: 'custom',
@@ -6249,7 +6306,7 @@ describe('SettingsService: reasoning effort', () => {
   it("leaves sessionEffort undefined when the level is 'default' or unset", async () => {
     vi.stubEnv('OPEN_SCIENCE_AGENT_FRAMEWORK', 'claude-code')
     const service = createService()
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     const provider = (
       await service.upsertProvider({
         type: 'custom',
@@ -6297,20 +6354,21 @@ describe('SettingsService: reasoning effort', () => {
     await writeFile(adapterPath, MANAGED_CODEX_ADAPTER_FIXTURE, 'utf8')
     await chmod(adapterPath, 0o755)
     const service = createService(undefined, {
-      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' }
+      codexDetected: { path: adapterPath, version: 'codex-acp 1.6.2' },
+      managedCodexNativePath: '/data/codex-managed/native/codex'
     })
     await repository.setCodexInfo({
       resolvedPath: adapterPath,
       version: '1.6.2',
       nativePath: '/data/codex-managed/native/codex',
-      nativeVersion: '0.144.6'
+      nativeVersion: '0.157.1'
     })
     await repository.setAgentFramework('codex')
     const provider = (
       await service.upsertProvider({
         type: 'custom',
         name: 'DeepSeek',
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         baseUrl: 'https://api.deepseek.com',
         model: 'deepseek-v4-flash',
         key: 'test-key'
@@ -6339,18 +6397,18 @@ describe('SettingsService: reasoning effort', () => {
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
 
     // The active runtime owns this lease, so it updates only the bridge for its own provider/model.
-    backend.responsesBridgeLease?.setReasoningEffort?.('high')
+    backend.responsesTransportLease?.setReasoningEffort?.('high')
     await post()
     expect(upstreamRequest).toMatchObject({ reasoning_effort: 'high' })
 
     // The bridge receives the concrete mapped value, not a forwarding boolean: it replaces Codex's
     // own request effort instead of letting an incompatible value leak to the selected model.
-    backend.responsesBridgeLease?.setReasoningEffort?.('max')
+    backend.responsesTransportLease?.setReasoningEffort?.('max')
     await post()
     expect(upstreamRequest).toMatchObject({ reasoning_effort: 'max' })
 
     // Back to 'default': stripping is restored so Codex's own effort can't leak upstream.
-    backend.responsesBridgeLease?.setReasoningEffort?.(undefined)
+    backend.responsesTransportLease?.setReasoningEffort?.(undefined)
     await post()
     expect(upstreamRequest).not.toHaveProperty('reasoning_effort')
   })
@@ -6362,7 +6420,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Session provider',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://session.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6392,7 +6450,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Subagent gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6419,7 +6477,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Ephemeral admitted gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6460,7 +6518,7 @@ describe('SettingsService: Subagent model', () => {
     const draft = {
       type: 'custom' as const,
       name: 'Restorable Subagent gateway',
-      apiEndpoints: ['anthropic' as const],
+      apiEndpoints: ['messages' as const],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6508,7 +6566,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Failing Subagent gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'subagent-model',
       key: 'secret'
@@ -6533,7 +6591,7 @@ describe('SettingsService: Subagent model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'No-effort gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://subagent.example/v1',
       model: 'no-effort-model',
       key: 'secret',
@@ -6559,7 +6617,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Routing gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://routing.example/v1',
       model: 'routing-model',
       key: 'secret'
@@ -6599,7 +6657,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6626,7 +6684,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Admitted Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6661,7 +6719,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Overridden Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6692,7 +6750,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Failing Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6719,7 +6777,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Restorable Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://reviewer.example/v1',
       model: 'reviewer-model',
       key: 'secret'
@@ -6749,7 +6807,7 @@ describe('SettingsService: Reviewer model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Active Reviewer gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://active.example/v1',
       model: 'active-model',
       key: 'secret'
@@ -6791,7 +6849,7 @@ describe('SettingsService: Vision model', () => {
     const created = await service.upsertProvider({
       type: 'custom',
       name: 'Vision gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://vision.example/v1',
       model: 'vision-model',
       key: 'secret',
@@ -6820,7 +6878,7 @@ describe('SettingsService: Vision model', () => {
     const visual = await service.upsertProvider({
       type: 'custom',
       name: 'Visual gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://vision.example/v1',
       model: 'vision-model',
       key: 'secret',
@@ -6835,7 +6893,7 @@ describe('SettingsService: Vision model', () => {
     const textOnly = await service.upsertProvider({
       type: 'custom',
       name: 'Text gateway',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl: 'https://text.example/v1',
       model: 'text-model',
       key: 'secret',
@@ -7608,7 +7666,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7640,7 +7698,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7668,7 +7726,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/missing/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/missing/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7691,7 +7749,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7713,7 +7771,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7733,7 +7791,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       executeClaudeProbe: probe
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7764,7 +7822,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
         })
     )
     const service = createService(undefined, { executeClaudeProbe: probe })
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertProvider({
       id: 'builtin-claude-isolated',
       type: 'claude-isolated',
@@ -7802,7 +7860,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
       })
     const service = createService(undefined, { executeClaudeProbe: probe })
     const { encryptKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertProvider({
       id: 'builtin-claude-isolated',
       type: 'claude-isolated',
@@ -7846,7 +7904,7 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     // Seed the provider card. The loginIsolatedClaude path requires an existing record to find
     // (the early-return for a missing card is the "applied: false" branch).
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('sk-ant-valid'),
       keyMask: maskKey('sk-ant-valid')
@@ -7934,7 +7992,7 @@ describe('SettingsService: claude-isolated validation flow', () => {
       claudeIsolatedAuth: successAuth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await seedStoredToken()
 
     const storedId = 'builtin-claude-isolated'
@@ -7959,7 +8017,7 @@ describe('SettingsService: claude-isolated edit preserves expiresAt + keyRef', (
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
     const { encryptKey, maskKey } = await import('./crypto.js')
-    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertClaudeIsolatedProvider({
       keyRef: encryptKey('test-token-seed'),
       keyMask: maskKey('test-token-seed')
@@ -8432,7 +8490,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({
       type: 'claude-shared',
       name: 'Claude subscription',
@@ -8452,6 +8510,11 @@ describe('SettingsService: claude-shared login orchestration', () => {
       [
         '--settings',
         join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--permission-mode',
+        'default',
         '--add-dir',
         expect.stringContaining(getClaudeSkillRuntimeRoot(storageRoot))
       ]
@@ -8470,7 +8533,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
     const gateway = (
       await service.upsertProvider({
@@ -8508,7 +8571,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-opus-4-6' })
 
     const login = service.loginClaudeShared()
@@ -8556,7 +8619,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: sharedAuth({ loginOk: true }),
       executeClaudeProbe: vi.fn().mockRejectedValue(new Error('temporary network failure'))
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
     await service.logoutClaudeShared()
     expect(
@@ -8585,7 +8648,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-bad-model' })
 
     const result = await service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
@@ -8597,6 +8660,11 @@ describe('SettingsService: claude-shared login orchestration', () => {
       [
         '--settings',
         join(getAppClaudeConfigDir(storageRoot), 'settings.json'),
+        '--setting-sources',
+        '',
+        '--strict-mcp-config',
+        '--permission-mode',
+        'default',
         '--add-dir',
         expect.stringContaining(getClaudeSkillRuntimeRoot(storageRoot))
       ]
@@ -8609,26 +8677,25 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('does not re-verify shared Claude after it is disconnected during validation', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const probeGate = Promise.withResolvers<void>()
+    const probe = vi.fn(() => probeGate.promise)
     const auth = sharedAuth()
     vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
     const service = createService(undefined, {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared' })
 
     const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
-    await service.logoutClaudeShared()
-    finishProbe?.()
+    try {
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce(), { timeout: 20_000 })
+      await service.logoutClaudeShared()
+    } finally {
+      probeGate.resolve()
+      await validation
+    }
 
     await expect(validation).resolves.toMatchObject({ ok: true, applied: false })
     const provider = (await repository.getSettings()).providers.find(
@@ -8640,20 +8707,15 @@ describe('SettingsService: claude-shared login orchestration', () => {
   })
 
   it('records shared Claude validation after an unrelated active provider switch', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const probeGate = Promise.withResolvers<void>()
+    const probe = vi.fn(() => probeGate.promise)
     const auth = sharedAuth()
     vi.mocked(auth.getStatus).mockResolvedValue({ supported: true, authenticated: true })
     const service = createService(undefined, {
       claudeSharedAuth: auth,
       executeClaudeProbe: probe
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', model: 'claude-sonnet-4-5' })
     const first = await service.upsertProvider({
       type: 'custom',
@@ -8675,9 +8737,13 @@ describe('SettingsService: claude-shared login orchestration', () => {
     await service.setActiveProvider(firstId)
 
     const validation = service.validateProvider({ providerId: CLAUDE_SHARED_PROVIDER_ID })
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
-    await service.setActiveProvider(secondId)
-    finishProbe?.()
+    try {
+      await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce(), { timeout: 20_000 })
+      await service.setActiveProvider(secondId)
+    } finally {
+      probeGate.resolve()
+      await validation
+    }
 
     await expect(validation).resolves.toMatchObject({ ok: true, applied: true })
     expect(
@@ -8694,7 +8760,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
     await service.loginClaudeShared()
     const validatedAt = (await service.getSettingsView()).providers.find(
@@ -8727,7 +8793,7 @@ describe('SettingsService: claude-shared login orchestration', () => {
       claudeSharedAuth: auth,
       executeClaudeProbe: vi.fn().mockResolvedValue(undefined)
     })
-    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.0' })
+    await repository.setClaudeInfo({ resolvedPath: execPath, version: '2.1.118' })
     await service.upsertProvider({ type: 'claude-shared', name: 'Claude subscription' })
     await service.loginClaudeShared()
     await service.setActiveProvider(CLAUDE_SHARED_PROVIDER_ID)
@@ -8833,3 +8899,81 @@ describe('SettingsService: claude-shared login orchestration', () => {
     expect(auth.cancelLogin).toHaveBeenCalledOnce()
   })
 })
+
+describe('Notebook protection Shell capability switch', () => {
+  it('refreshes existing conversations after setup and removal before returning status', async () => {
+    const calls: string[] = []
+    let protectedMode = false
+    const service = new SettingsService({
+      configRoot: storageRoot,
+      repository,
+      installNotebookNetwork: async () => {
+        protectedMode = true
+        calls.push('install')
+        return { cancelled: false }
+      },
+      removeNotebookNetwork: async () => {
+        protectedMode = false
+        calls.push('remove')
+        return { cancelled: false }
+      },
+      refreshNotebookShellCapabilities: async () => {
+        calls.push(protectedMode ? 'refresh-7.6' : 'refresh-5.1')
+      },
+      getNotebookNetworkStatus: async () => {
+        calls.push('status')
+        return protectedMode
+          ? { kind: 'ready', warnings: [] }
+          : { kind: 'setupRequired', platform: 'win32', reasons: [] }
+      }
+    })
+    await service.installNotebookNetwork()
+    await service.removeNotebookNetwork()
+    expect(calls).toEqual(['install', 'refresh-7.6', 'status', 'remove', 'refresh-5.1', 'status'])
+  })
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not refresh when %s is cancelled or fails',
+    async (method) => {
+      const operation = vi
+        .fn()
+        .mockResolvedValueOnce({ cancelled: true })
+        .mockRejectedValueOnce(new Error('setup failed'))
+      const refresh = vi.fn()
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: operation,
+        refreshNotebookShellCapabilities: refresh,
+        getNotebookNetworkStatus: async () => ({
+          kind: 'setupRequired',
+          platform: 'win32',
+          reasons: []
+        })
+      })
+      await service[method]()
+      await expect(service[method]()).rejects.toThrow('setup failed')
+      expect(refresh).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['installNotebookNetwork', 'removeNotebookNetwork'] as const)(
+    'does not report %s success until capabilities have refreshed',
+    async (method) => {
+      const status = vi.fn().mockResolvedValue({ kind: 'ready' })
+      const service = new SettingsService({
+        configRoot: storageRoot,
+        repository,
+        [method]: async () => ({ cancelled: false }),
+        refreshNotebookShellCapabilities: async () => {
+          throw new Error('refresh failed')
+        },
+        getNotebookNetworkStatus: status
+      })
+      await expect(service[method]()).rejects.toThrow('refresh failed')
+      expect(status).not.toHaveBeenCalled()
+    }
+  )
+})
+
+await configureTestElectronHost(await import('electron'))

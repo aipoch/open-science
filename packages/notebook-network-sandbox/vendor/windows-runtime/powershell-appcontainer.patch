@@ -1,0 +1,33 @@
+--- a/src/System.Management.Automation/namespaces/FileSystemProvider.cs
++++ b/src/System.Management.Automation/namespaces/FileSystemProvider.cs
+@@ -978,6 +978,11 @@
+                     }
+                     // If there are issues accessing properties of the DriveInfo, do
+                     // not add the drive
++                    catch (Win32Exception error) when (error.NativeErrorCode == 5)
++                    {
++                        // WNetGetConnection can deny a mapped drive inside AppContainer.
++                        // An inaccessible drive must not discard the accessible local drives.
++                    }
+                     catch (IOException)
+                     {
+                     }
+@@ -5647,7 +5652,17 @@
+                 {
+                     currentPath = MakePath(currentPath, childName);
+ 
+-                    var fsinfo = GetFileSystemInfo(currentPath, out bool _);
++                    FileSystemInfo fsinfo;
++                    try
++                    {
++                        fsinfo = GetFileSystemInfo(currentPath, out bool _);
++                    }
++                    catch (UnauthorizedAccessException) when (Platform.IsWindows && tokenizedPathStack.Count > 0)
++                    {
++                        // Windows can grant access to a descendant without granting metadata access
++                        // to its ancestors. Preserve this component and still validate the final item.
++                        fsinfo = null;
++                    }
+ 
+                     // Clean up the child name to proper casing and short-path
+                     // expansion if required. Also verify that .NET hasn't over-normalized

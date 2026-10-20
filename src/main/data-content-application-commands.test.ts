@@ -28,6 +28,7 @@ import {
   SessionRevisionConflictError,
   SessionSizeLimitError,
   type PersistedChatSession,
+  type SaveSessionOptions,
   type SessionDeletionResult
 } from '../shared/session-persistence'
 import { ApplicationCommandError } from '../shared/application-command-contract'
@@ -94,11 +95,33 @@ const registeredCommands = (): Array<{ name: string }> => {
 // The inferred spy surface is intentionally retained so each assertion keeps its exact Vitest type.
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const createDependencies = () => {
+  const reproducibility = {
+    sessionCommand: vi.fn(),
+    outputStorage: vi.fn(),
+    clearOutputs: vi.fn(),
+    previewOutput: vi.fn(),
+    describeEnvironmentLock: vi.fn(),
+    createEnvironmentFromLock: vi.fn(),
+    exportEnvironmentLock: vi.fn(),
+    exportReceipt: vi.fn(),
+    importEnvironmentLock: vi.fn(),
+    getCheck: vi.fn(),
+    getCheckLog: vi.fn(),
+    listReceipts: vi.fn(),
+    start: vi.fn(),
+    cancel: vi.fn(),
+    dispose: vi.fn()
+  }
   const artifacts = {
     finalizeRunArtifacts: vi.fn(async () => []),
     reconcilePendingArtifacts: vi.fn(async () => []),
     openFile: vi.fn(async () => undefined),
-    readPreview: vi.fn(async () => ({ content: '', encoding: 'utf8', size: 0, truncated: false })),
+    readPreview: vi.fn(async () => ({
+      content: '',
+      encoding: 'utf8' as const,
+      size: 0,
+      truncated: false
+    })),
     getLineage: vi.fn(async () => undefined),
     getVersionProvenance: vi.fn(),
     getVersionLiterature: vi.fn(),
@@ -110,6 +133,12 @@ const createDependencies = () => {
     resolveVersionDescriptors: vi.fn(async () => [])
   }
   const events = { publish: vi.fn() }
+  const managedFileVersions = {
+    inspect: vi.fn(async () => ({ ok: false })),
+    saveTextEdit: vi.fn(async () => ({ ok: false })),
+    diffText: vi.fn(async () => ({ ok: false })),
+    cancelDiff: vi.fn(() => ({ ok: true, value: { cancelled: false } }))
+  }
   const managedPreview = {
     acquire: vi.fn(async () => ({
       id: 'resource-1',
@@ -166,6 +195,8 @@ const createDependencies = () => {
     messages: []
   }
   const sessions = {
+    listRuntimeTerminalFailures: vi.fn(async () => []),
+    retryRuntimeTerminalCommit: vi.fn(async () => undefined),
     searchMessages: vi.fn(),
     editDetails: vi.fn(async () => session),
     filterPdfContextCandidates: vi.fn(async () => ({
@@ -215,7 +246,11 @@ const createDependencies = () => {
     readPreview: vi.fn()
   }
   const electron = {
+    openRecoveryFolder: vi.fn(),
     forkSession: vi.fn(async () => null),
+    inspectSessionDiagnostics: vi.fn(async () => ({ items: [] })),
+    exportSessionDiagnostics: vi.fn(async () => ({ status: 'cancelled' as const })),
+    cancelSessionDiagnostics: vi.fn(async () => undefined),
     exportSessionPackage: vi.fn(async () => ({ saved: false })),
     sessionPackageOperation: vi.fn(async () => null),
     importSessionPackage: vi.fn(async () => null),
@@ -224,9 +259,24 @@ const createDependencies = () => {
   }
   const withDataRootWrite = vi.fn(async <Result>(operation: () => Promise<Result>) => operation())
   const dependencies = {
+    officePreviewCommands: {
+      open: vi.fn(),
+      attachFrame: vi.fn(),
+      close: vi.fn(),
+      reportState: vi.fn(),
+      dispose: vi.fn()
+    },
+    fileSaveCommands: {
+      'file:save-blob': vi.fn(),
+      'file:save-managed': vi.fn(),
+      'file:save-session-artifacts': vi.fn(),
+      'file:save-project-artifacts': vi.fn()
+    },
+    reproducibility,
     artifacts,
     electron,
     events,
+    managedFileVersions,
     managedPreview,
     preview,
     projectFiles,
@@ -237,10 +287,12 @@ const createDependencies = () => {
   } as unknown as DataContentApplicationCommandDependencies
   return {
     dependencies,
+    reproducibility,
     artifacts,
     attachment,
     electron,
     events,
+    managedFileVersions,
     managedPreview,
     preview,
     project,
@@ -270,11 +322,16 @@ const WRAPPED_COMMAND_KEYS = [
   'sessionExportPackage',
   'sessionImportPackage',
   'sessionPackageOperation',
+  'sessionInspectDiagnostics',
+  'sessionExportDiagnostics',
+  'sessionCancelDiagnostics',
   'sessionFilterPdfContextCandidates',
   'sessionLinkPdfContext',
   'sessionList',
   'sessionLoadAll',
   'sessionLoadOne',
+  'sessionListRuntimeTerminalFailures',
+  'sessionRetryRuntimeTerminalCommit',
   'sessionSearchMessages',
   'sessionLoadUsage',
   'sessionSaveManifest',
@@ -313,6 +370,37 @@ const dispatchCommand = (
 }
 
 describe('Data and content application commands', () => {
+  it('routes explicit terminal retries to their exact Main execution and rejects malformed identity', async () => {
+    const deps = createDependencies()
+    const router = createApplicationCommandRouter()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = {
+      projectId: 'project',
+      sessionId: 'session',
+      promptMessageId: 'prompt',
+      executionId: 'execution'
+    }
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionListRuntimeTerminalFailures,
+        invocation([])
+      )
+    ).resolves.toEqual([])
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionRetryRuntimeTerminalCommit,
+        invocation([request])
+      )
+    ).resolves.toBeUndefined()
+    expect(deps.sessions.retryRuntimeTerminalCommit).toHaveBeenCalledExactlyOnceWith(request)
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionRetryRuntimeTerminalCommit,
+        invocation([{ ...request, executionId: '' }])
+      )
+    ).rejects.toThrow()
+    expect(deps.sessions.retryRuntimeTerminalCommit).toHaveBeenCalledOnce()
+  })
   it('owns exactly the current data and content invoke channels', () => {
     expect(registeredCommands()).toEqual(
       [
@@ -353,9 +441,13 @@ describe('Data and content application commands', () => {
         'projects:retry-deletion-cleanup',
         'projects:update',
         'projects:update-session-defaults',
+        'sessions:open-recovery-folder',
         'sessions:delete-session',
         'sessions:edit-details',
         'sessions:export-conversation',
+        'sessions:inspect-diagnostics',
+        'sessions:export-diagnostics',
+        'sessions:cancel-diagnostics',
         'sessions:fork',
         'sessions:export-package',
         'sessions:import-package',
@@ -365,6 +457,8 @@ describe('Data and content application commands', () => {
         'sessions:list',
         'sessions:load-all',
         'sessions:load-one',
+        'sessions:list-runtime-terminal-failures',
+        'sessions:retry-runtime-terminal-commit',
         'sessions:search-messages',
         'sessions:load-usage',
         'sessions:save-manifest',
@@ -389,7 +483,33 @@ describe('Data and content application commands', () => {
         'uploads:recover-draft',
         'uploads:stage-local-file',
         'uploads:stage-local-path',
-        'uploads:transfer-status'
+        'uploads:transfer-status',
+        'managed-file-versions:inspect',
+        'managed-file-versions:save-text-edit',
+        'managed-file-versions:diff-text',
+        'managed-file-versions:cancel-diff',
+        'artifacts:session-reproducibility',
+        'artifacts:get-reproducibility-output-storage',
+        'artifacts:clear-reproducibility-outputs',
+        'artifacts:read-reproducibility-output',
+        'artifacts:describe-environment-lock',
+        'artifacts:create-environment-from-lock',
+        'artifacts:export-environment-lock',
+        'artifacts:export-reproducibility-receipt',
+        'artifacts:import-environment-lock',
+        'artifacts:get-reproducibility-check',
+        'artifacts:get-reproducibility-check-log',
+        'artifacts:list-reproducibility-receipts',
+        'artifacts:start-reproducibility-check',
+        'artifacts:cancel-reproducibility-check',
+        'file:save-blob',
+        'file:save-managed',
+        'file:save-session-artifacts',
+        'file:save-project-artifacts',
+        'office-preview:open',
+        'office-preview:attach-frame',
+        'office-preview:close',
+        'office-preview:report-state'
       ].map((name) => expect.objectContaining({ name }))
     )
   })
@@ -420,6 +540,167 @@ describe('Data and content application commands', () => {
     registerDataContentApplicationCommands(router.registrar, deps.dependencies)
     const request = (key: string): Readonly<{ key: string }> => Object.freeze({ key })
     const cases = [
+      {
+        key: 'sessionOpenRecoveryFolder',
+        args: [request('openRecoveryFolder')],
+        owner: deps.electron.openRecoveryFolder,
+        passInvocation: true
+      },
+      {
+        key: 'officePreviewOpen',
+        args: [request('office')],
+        owner: deps.dependencies.officePreviewCommands.open,
+        passInvocation: true
+      },
+      {
+        key: 'officePreviewAttachFrame',
+        args: ['session-1'],
+        owner: deps.dependencies.officePreviewCommands.attachFrame,
+        passInvocation: true
+      },
+      {
+        key: 'officePreviewClose',
+        args: ['session-1'],
+        owner: deps.dependencies.officePreviewCommands.close,
+        passInvocation: true
+      },
+      {
+        key: 'officePreviewReportState',
+        args: ['session-1', { sessionId: 'session-1', phase: 'ready' }],
+        owner: deps.dependencies.officePreviewCommands.reportState,
+        passInvocation: true
+      },
+      {
+        key: 'fileSaveBlob',
+        args: [request('file:save-blob')],
+        owner: deps.dependencies.fileSaveCommands['file:save-blob'],
+        passInvocation: true
+      },
+      {
+        key: 'fileSaveManaged',
+        args: [request('file:save-managed')],
+        owner: deps.dependencies.fileSaveCommands['file:save-managed'],
+        passInvocation: true
+      },
+      {
+        key: 'fileSaveSessionArtifacts',
+        args: [request('file:save-session-artifacts')],
+        owner: deps.dependencies.fileSaveCommands['file:save-session-artifacts'],
+        passInvocation: true
+      },
+      {
+        key: 'fileSaveProjectArtifacts',
+        args: [request('file:save-project-artifacts')],
+        owner: deps.dependencies.fileSaveCommands['file:save-project-artifacts'],
+        passInvocation: true
+      },
+
+      {
+        key: 'reproducibilitySessionCommand',
+        args: [request('sessionCommand')],
+        owner: deps.reproducibility.sessionCommand,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityOutputStorage',
+        args: [request('outputStorage')],
+        owner: deps.reproducibility.outputStorage,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityClearOutputs',
+        args: [request('clearOutputs')],
+        owner: deps.reproducibility.clearOutputs,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityPreviewOutput',
+        args: [request('previewOutput')],
+        owner: deps.reproducibility.previewOutput,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityDescribeEnvironmentLock',
+        args: [request('describeEnvironmentLock')],
+        owner: deps.reproducibility.describeEnvironmentLock,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityCreateEnvironmentFromLock',
+        args: [request('createEnvironmentFromLock')],
+        owner: deps.reproducibility.createEnvironmentFromLock,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityExportEnvironmentLock',
+        args: [request('exportEnvironmentLock')],
+        owner: deps.reproducibility.exportEnvironmentLock,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityExportReceipt',
+        args: [request('exportReceipt')],
+        owner: deps.reproducibility.exportReceipt,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityImportEnvironmentLock',
+        args: [request('importEnvironmentLock')],
+        owner: deps.reproducibility.importEnvironmentLock,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityGetCheck',
+        args: [request('getCheck')],
+        owner: deps.reproducibility.getCheck,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityGetCheckLog',
+        args: [request('getCheckLog')],
+        owner: deps.reproducibility.getCheckLog,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityListReceipts',
+        args: [request('listReceipts')],
+        owner: deps.reproducibility.listReceipts,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityStart',
+        args: [request('start')],
+        owner: deps.reproducibility.start,
+        passInvocation: true
+      },
+      {
+        key: 'reproducibilityCancel',
+        args: [request('cancel')],
+        owner: deps.reproducibility.cancel,
+        passInvocation: true
+      },
+      {
+        key: 'managedFileInspect',
+        args: [request('inspect')],
+        owner: deps.managedFileVersions.inspect
+      },
+      {
+        key: 'managedFileSaveTextEdit',
+        args: [request('save')],
+        owner: deps.managedFileVersions.saveTextEdit
+      },
+      {
+        key: 'managedFileDiffText',
+        args: [request('diff')],
+        owner: deps.managedFileVersions.diffText,
+        passInvocation: true
+      },
+      {
+        key: 'managedFileCancelDiff',
+        args: [request('cancel')],
+        owner: deps.managedFileVersions.cancelDiff,
+        passInvocation: true
+      },
       {
         key: 'artifactGenerateCodeReconstruction',
         args: [request('generate-code-reconstruction')],
@@ -623,7 +904,12 @@ describe('Data and content application commands', () => {
     ] as const
 
     for (const testCase of cases) {
-      const dispatched = dispatchCommand(router, testCase.key, testCase.args)
+      const dispatched = dispatchCommand(
+        router,
+        testCase.key,
+        testCase.args,
+        testCase.key === 'sessionOpenRecoveryFolder' ? electronCaller : callerContext
+      )
       await dispatched.result
       const expectedArgs =
         'passInvocation' in testCase
@@ -1578,6 +1864,51 @@ describe('Data and content application commands', () => {
     )
   })
 
+  it.each([callerContext, electronCaller])(
+    'binds renderer prompt preparation to its calling document: $surface',
+    async (caller) => {
+      const router = createApplicationCommandRouter()
+      const deps = createDependencies()
+      registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+      const session = materializeSessionConversationGraph({
+        ...deps.session,
+        messages: [
+          {
+            id: 'prompt-1',
+            role: 'user',
+            content: 'Research this.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ]
+      })
+      const request = invocation<readonly [PersistedChatSession, SaveSessionOptions]>(
+        [
+          session,
+          {
+            conversationCommands: [
+              {
+                kind: 'prepare-prompt' as const,
+                id: 'prepare-1',
+                promptMessageId: 'prompt-1',
+                mode: 'rearm' as const,
+                timestamp: 2
+              }
+            ]
+          }
+        ],
+        caller
+      )
+      await router.dispatcher.invoke(dataContentApplicationCommands.sessionSave, request)
+      expect(deps.sessions.saveSession).toHaveBeenCalledWith(expect.anything(), expect.anything(), {
+        taskRunCommit: false,
+        callerSignal: request.callerLease.signal
+      })
+    }
+  )
+
   it('normalizes graph-only Session arguments and results without preserving incomplete objects', async () => {
     const router = createApplicationCommandRouter()
     const deps = createDependencies()
@@ -1975,6 +2306,45 @@ describe('Data and content application commands', () => {
 
     await expect(dispatched).resolves.toBe(deps.session)
     expect(deps.sessions.editDetails).toHaveBeenCalledWith(request)
+  })
+
+  it('routes diagnostics without acquiring business write leases or loading sessions', async () => {
+    const router = createApplicationCommandRouter()
+    const deps = createDependencies()
+    registerDataContentApplicationCommands(router.registrar, deps.dependencies)
+    const request = { projectId: 'project-1', sessionId: 'session-1', operationId: 'diagnostic-1' }
+    deps.withDataRootWrite.mockRejectedValue(new Error('Business storage unavailable'))
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([request], electronCaller)
+      )
+    ).resolves.toEqual({ items: [] })
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionExportDiagnostics,
+        invocation([{ ...request, selectedItems: [] }], electronCaller)
+      )
+    ).resolves.toEqual({ status: 'cancelled' })
+    await router.dispatcher.invoke(
+      dataContentApplicationCommands.sessionCancelDiagnostics,
+      invocation([{ operationId: request.operationId }], electronCaller)
+    )
+    expect(deps.withDataRootWrite).not.toHaveBeenCalled()
+    expect(deps.sessions.loadOne).not.toHaveBeenCalled()
+    expect(deps.sessions.saveSession).not.toHaveBeenCalled()
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([request])
+      )
+    ).rejects.toThrow('Channel only available from the Electron app')
+    await expect(
+      router.dispatcher.invoke(
+        dataContentApplicationCommands.sessionInspectDiagnostics,
+        invocation([{ ...request, sessionId: '../session' }], electronCaller)
+      )
+    ).rejects.toMatchObject({ code: 'invalid-command-arguments' })
   })
 
   it('keeps native and local upload/export capability restrictions and standalone invalidation', async () => {

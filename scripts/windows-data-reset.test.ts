@@ -299,6 +299,18 @@ describe.skipIf(process.platform !== 'win32')('Windows data reset', () => {
     expect(existsSync(join(f.profile, '.open-science/settings.json'))).toBe(true)
   })
 
+  it('removes read-only skill directories from the configuration root', () => {
+    const f = fixture()
+    const skill = join(f.profile, '.open-science', 'codex', 'skills', 'os-fair-esm2')
+    mkdirSync(skill, { recursive: true })
+    writeFileSync(join(skill, 'SKILL.md'), 'read-only skill')
+    const result = run(
+      `${plan(f)} ${stopped} ${confirmed} Get-ChildItem -LiteralPath ${quote(skill)} -Recurse -Force | ForEach-Object { $_.Attributes = $_.Attributes -bor [IO.FileAttributes]::ReadOnly }; (Get-Item -LiteralPath ${quote(skill)} -Force).Attributes = [IO.FileAttributes]::ReadOnly; Invoke-Reset $plan ${quote(f.profile)} 'fixture-user'`
+    )
+    expect(result.status, result.stderr).toBe(0)
+    expect(existsSync(join(f.profile, '.open-science'))).toBe(false)
+  })
+
   it('refuses mismatched external cache ownership before touching data', () => {
     const f = fixture()
     const out = success(

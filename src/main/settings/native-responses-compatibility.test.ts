@@ -1,3 +1,9 @@
+import { prepareNativeResponsesRequest } from '@aipoch/providers/protocol'
+import { createServer } from 'node:http'
+import type { AddressInfo } from 'node:net'
+import { gzipSync } from 'node:zlib'
+
+import { fetch as nodeFetch } from 'undici'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const logSpies = vi.hoisted(() => ({
@@ -7,16 +13,12 @@ const logSpies = vi.hoisted(() => ({
   warn: vi.fn()
 }))
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => logSpies
 }))
 
-import {
-  NativeResponsesCompatibilityProxy,
-  flattenNativeResponsesRequest,
-  restoreNativeResponsesPayload
-} from './native-responses-compatibility'
+import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
 afterEach(() => {
@@ -24,6 +26,368 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('decodes upstream compression when the client accepts zstd', async () => {
+    const payload = { id: 'resp-fixture', object: 'response', status: 'completed', output: [] }
+    // Zstandard frame for JSON.stringify(payload), including the 0x28 magic byte.
+    const zstd = Buffer.from(
+      'KLUv/SBKUQIAeyJpZCI6InJlc3AtZml4dHVyZSIsIm9iamVjdCI6InJlc3BvbnNlIiwic3RhdHVzIjoiY29tcGxldGVkIiwib3V0cHV0IjpbXX0=',
+      'base64'
+    )
+    const upstream = createServer((request, response) => {
+      request.resume()
+      request.on('end', () => {
+        const encoding = request.headers['accept-encoding']?.includes('zstd') ? 'zstd' : 'gzip'
+        response.writeHead(200, {
+          'content-type': 'application/json',
+          'content-encoding': encoding
+        })
+        response.end(encoding === 'zstd' ? zstd : gzipSync(JSON.stringify(payload)))
+      })
+    })
+    await new Promise<void>((resolve) => upstream.listen(0, '127.0.0.1', resolve))
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}/v1` },
+      nodeFetch as unknown as typeof fetch
+    )
+    try {
+      const connection = await proxy.start()
+      const response = await fetch(`${connection.baseUrl}/responses`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${connection.token}`,
+          'content-type': 'application/json',
+          'accept-encoding': 'gzip, deflate, br, zstd'
+        },
+        body: JSON.stringify({ model: 'fixture-model', input: 'Reply with OK.', stream: false })
+      })
+      expect(await response.json()).toEqual(payload)
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-encoding')).toBeNull()
+    } finally {
+      await proxy.close()
+      await new Promise<void>((resolve, reject) =>
+        upstream.close((error) => (error ? reject(error) : resolve()))
+      )
+    }
+  })
+
+  // Synthetic protocol fixtures only: no captured conversation, identifiers, or user code.
+  type CallItem = {
+    type: string
+    id: string
+    call_id: string
+    name: string
+    arguments: string
+  }
+  type CallEvent = { type: string; output_index: number; item: CallItem }
+  type ArgumentEvent = {
+    type: string
+    item_id: string
+    output_index: number
+    arguments?: string
+    delta?: string
+  }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  type ForwardedEvent = Record<string, any>
+  const callItem = (id = 'item-a', args = ''): CallItem => ({
+    type: 'function_call',
+    id,
+    call_id: `call-${id}`,
+    name: 'mcp__fixture__echo',
+    arguments: args
+  })
+  const addedCall = (id = 'item-a', index = 0): CallEvent => ({
+    type: 'response.output_item.added',
+    output_index: index,
+    item: callItem(id)
+  })
+  const argumentEvent = (value: string, done = false, id = 'item-a', index = 0): ArgumentEvent => ({
+    type: `response.function_call_arguments.${done ? 'done' : 'delta'}`,
+    item_id: id,
+    output_index: index,
+    ...(done ? { arguments: value } : { delta: value })
+  })
+  const finishedCall = (id = 'item-a', index = 0, args = ''): CallEvent => ({
+    type: 'response.output_item.done',
+    output_index: index,
+    item: callItem(id, args)
+  })
+  const forwardArgumentStreams = async (
+    streams: unknown[][],
+    options?: ConstructorParameters<typeof NativeResponsesCompatibilityProxy>[2]
+  ): Promise<ForwardedEvent[][]> => {
+    let nextStream = 0
+    const proxy = new NativeResponsesCompatibilityProxy(
+      { baseUrl: 'https://provider.invalid/v1', model: 'fixture-model' },
+      async () =>
+        new Response(
+          streams[nextStream++]
+            .map((event) =>
+              typeof event === 'string' ? event : `data: ${JSON.stringify(event)}\n\n`
+            )
+            .join(''),
+          { headers: { 'content-type': 'text/event-stream' } }
+        ),
+      options
+    )
+    const connection = await proxy.start()
+    try {
+      const results: ForwardedEvent[][] = []
+      for (let index = 0; index < streams.length; index++) {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'fixture-model',
+            stream: true,
+            input: 'Echo the supplied fixture value.',
+            tools: [
+              {
+                type: 'namespace',
+                name: 'mcp__fixture',
+                tools: [
+                  {
+                    type: 'function',
+                    name: 'echo',
+                    parameters: {
+                      type: 'object',
+                      properties: { value: { type: 'string' } },
+                      required: ['value']
+                    }
+                  }
+                ]
+              }
+            ]
+          })
+        })
+        expect(response.status).toBe(200)
+        results.push(
+          (await response.text())
+            .split('\n\n')
+            .filter(Boolean)
+            .map((record) =>
+              JSON.parse(
+                record
+                  .split('\n')
+                  .filter((line) => line.startsWith('data:'))
+                  .map((line) => line.slice(6))
+                  .join('\n')
+              )
+            )
+        )
+      }
+      return results
+    } finally {
+      await proxy.close()
+    }
+  }
+
+  it.each(['done', 'delta', 'both'] as const)(
+    'recovers empty final arguments from matching %s events without changing earlier events',
+    async (source) => {
+      const args = '{"value":"fixture"}'
+      const events = [
+        addedCall(),
+        ...(source !== 'done' ? [argumentEvent('{"value":'), argumentEvent('"fixture"}')] : []),
+        ...(source !== 'delta' ? [argumentEvent(args, true)] : []),
+        finishedCall(),
+        { type: 'response.completed', response: { output: [callItem()] } }
+      ]
+      const [output] = await forwardArgumentStreams([events])
+      expect(output[0].item.arguments).toBe('')
+      expect(output.slice(1, -2)).toEqual(events.slice(1, -2))
+      expect(output.at(-2)?.item).toMatchObject({
+        arguments: args,
+        name: 'echo',
+        namespace: 'mcp__fixture'
+      })
+      expect(output.at(-1)?.response.output[0].arguments).toBe(args)
+    }
+  )
+
+  it('keeps interleaved calls and consecutive responses isolated', async () => {
+    const [first, second] = await forwardArgumentStreams([
+      [
+        addedCall(),
+        addedCall('item-b', 1),
+        argumentEvent('{"value":"a"}'),
+        argumentEvent('{"value":"b"}', true, 'item-b', 1),
+        finishedCall('item-b', 1),
+        finishedCall()
+      ],
+      [addedCall(), finishedCall()]
+    ])
+    expect(first.at(-2)?.item.arguments).toBe('{"value":"b"}')
+    expect(first.at(-1)?.item.arguments).toBe('{"value":"a"}')
+    expect(second.at(-1)?.item.arguments).toBe('')
+  })
+
+  it.each([
+    ['no parameter evidence', []],
+    ['unknown item', [argumentEvent('{"value":"fixture"}', true, 'unknown')]],
+    ['wrong output index', [argumentEvent('{"value":"fixture"}', true, 'item-a', 1)]],
+    ['partial JSON', [argumentEvent('{"value":')]],
+    ['non-object JSON', [argumentEvent('["fixture"]', true)]],
+    ['null JSON', [argumentEvent('null', true)]],
+    [
+      'conflicting done events',
+      [argumentEvent('{"value":"a"}', true), argumentEvent('{"value":"b"}', true)]
+    ],
+    [
+      'conflicting delta and done',
+      [argumentEvent('{"value":"a"}'), argumentEvent('{"value":"b"}', true)]
+    ],
+    ['reused item identity', [argumentEvent('{"value":"fixture"}'), addedCall()]],
+    ['reused output index', [argumentEvent('{"value":"fixture"}'), addedCall('item-b')]],
+    [
+      'terminal failure',
+      [argumentEvent('{"value":"fixture"}'), { type: 'response.failed', response: {} }]
+    ]
+  ])('does not guess arguments after %s', async (_label, evidence) => {
+    const [output] = await forwardArgumentStreams([[addedCall(), ...evidence, finishedCall()]])
+    expect(output.at(-1)?.item.arguments).toBe('')
+  })
+
+  it('does not overwrite supplied final arguments or use late parameter events', async () => {
+    const [complete, late] = await forwardArgumentStreams([
+      [
+        addedCall(),
+        argumentEvent('{"value":"earlier"}'),
+        finishedCall('item-a', 0, '{"value":"final"}')
+      ],
+      [
+        addedCall(),
+        finishedCall(),
+        argumentEvent('{"value":"late"}', true),
+        { type: 'response.completed', response: { output: [callItem()] } }
+      ]
+    ])
+    expect(complete.at(-1)?.item.arguments).toBe('{"value":"final"}')
+    expect(late.at(-1)?.response.output[0].arguments).toBe('')
+  })
+
+  it.each(['incomplete', 'in_progress', 'failed'])(
+    'does not recover an explicitly %s final item or response',
+    async (status) => {
+      const [itemOutput, responseOutput] = await forwardArgumentStreams([
+        [
+          addedCall(),
+          argumentEvent('{"value":"fixture"}'),
+          {
+            ...finishedCall(),
+            item: { ...callItem(), status }
+          },
+          { type: 'response.completed', response: { output: [callItem()] } }
+        ],
+        [
+          addedCall(),
+          argumentEvent('{"value":"fixture"}'),
+          {
+            type: 'response.completed',
+            response: { status, output: [callItem()] }
+          }
+        ]
+      ])
+      expect(itemOutput.at(-2)?.item.arguments).toBe('')
+      expect(itemOutput.at(-1)?.response.output[0].arguments).toBe('')
+      expect(responseOutput.at(-1)?.response.output[0].arguments).toBe('')
+    }
+  )
+
+  it.each([
+    ['changed call', { call_id: 'different-call' }],
+    ['changed name', { name: 'different-tool' }],
+    ['changed namespace', { namespace: 'different-namespace' }],
+    ['unknown item', { id: 'unknown' }],
+    ['null arguments', { arguments: null }],
+    ['non-string arguments', { arguments: { value: 'fixture' } }]
+  ])('does not repair %s on the final item', async (_label, change) => {
+    const item = { ...callItem(), ...change }
+    const [output] = await forwardArgumentStreams([
+      [addedCall(), argumentEvent('{"value":"fixture"}'), { ...finishedCall(), item }]
+    ])
+    expect(output.at(-1)?.item.arguments).toEqual(item.arguments)
+  })
+
+  it('bounds accumulated arguments and expanded completion events by the configured limits', async () => {
+    const largeArgs = JSON.stringify({ value: 'x'.repeat(800) })
+    const [output] = await forwardArgumentStreams(
+      [
+        [
+          addedCall(),
+          ...largeArgs.match(/.{1,100}/g)!.map((part) => argumentEvent(part)),
+          finishedCall()
+        ]
+      ],
+      { maxSseEventBytes: 512, maxSseLineBytes: 512 }
+    )
+    expect(output.at(-1)?.item.arguments).toBe('')
+  })
+
+  it('counts non-data SSE lines in the recovery budget and keeps terminal history consistent', async () => {
+    const args = JSON.stringify({ value: 'x'.repeat(150) })
+    const completion = finishedCall()
+    const [output] = await forwardArgumentStreams(
+      [
+        [
+          addedCall(),
+          argumentEvent(args, true),
+          `: ${'x'.repeat(150)}\ndata: ${JSON.stringify(completion)}\n\n`,
+          { type: 'response.completed', response: { output: [callItem()] } }
+        ]
+      ],
+      { maxSseEventBytes: 400, maxSseLineBytes: 400 }
+    )
+    expect(output.at(-2)?.item.arguments).toBe('')
+    expect(output.at(-1)?.response.output[0].arguments).toBe('')
+  })
+
+  it('does not expand repeated completion events or carry unfinished evidence past EOF', async () => {
+    const [repeated, unfinished, next] = await forwardArgumentStreams([
+      [
+        addedCall(),
+        argumentEvent('{"value":"fixture"}'),
+        finishedCall(),
+        finishedCall(),
+        finishedCall()
+      ],
+      [addedCall(), argumentEvent('{"value":"unfinished"}')],
+      [addedCall(), finishedCall()]
+    ])
+    expect(repeated.at(-3)?.item.arguments).toBe('{"value":"fixture"}')
+    expect(repeated.at(-2)?.item.arguments).toBe('')
+    expect(repeated.at(-1)?.item.arguments).toBe('')
+    expect(unfinished).toHaveLength(2)
+    expect(next.at(-1)?.item.arguments).toBe('')
+  })
+
+  it('enforces the total forwarded response budget after argument recovery', async () => {
+    const args = JSON.stringify({ value: 'x'.repeat(150) })
+    const events = [
+      addedCall(),
+      argumentEvent(args, true),
+      finishedCall(),
+      { type: 'response.completed', response: { output: [callItem()] } }
+    ]
+    const rawBytes = Buffer.byteLength(
+      events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join('')
+    )
+    const [withinBudget] = await forwardArgumentStreams([events], {
+      maxResponseBytes: rawBytes * 3
+    })
+    expect(withinBudget.at(-1)?.response.output[0].arguments).toBe(args)
+    await expect(
+      forwardArgumentStreams([events], { maxResponseBytes: rawBytes + 1 })
+    ).rejects.toThrow()
+    expect(logSpies.warn.mock.calls).toContainEqual([
+      'native Responses compatibility request failed',
+      expect.objectContaining({ phase: 'forward-response', outcome: 'error' })
+    ])
+  })
+
   it('attributes a delayed rejection to the request target before retargeting', async () => {
     const originalObserver = vi.fn()
     const nextObserver = vi.fn()
@@ -395,80 +759,8 @@ describe('native Responses compatibility', () => {
     }
   })
 
-  it('flattens namespace tools and matching history without changing plain functions', () => {
-    const { request, aliases } = flattenNativeResponsesRequest({
-      model: 'MiniMax-M3',
-      tools: [
-        {
-          type: 'namespace',
-          name: 'mcp__open_science_notebook',
-          description: 'Open-Science notebook tools.',
-          tools: [
-            {
-              type: 'function',
-              name: 'repl_execute',
-              description: 'Run control-plane JavaScript.',
-              parameters: { type: 'object' },
-              strict: false
-            }
-          ]
-        },
-        {
-          type: 'function',
-          name: 'shell_command',
-          description: 'Run a shell command.',
-          parameters: { type: 'object' }
-        }
-      ],
-      tool_choice: {
-        type: 'function',
-        namespace: 'mcp__open_science_notebook',
-        name: 'repl_execute'
-      },
-      input: [
-        {
-          type: 'function_call',
-          namespace: 'mcp__open_science_notebook',
-          name: 'repl_execute',
-          call_id: 'call-1',
-          arguments: '{}'
-        },
-        { type: 'function_call_output', call_id: 'call-1', output: 'ok' }
-      ]
-    })
-
-    expect(request.tools).toEqual([
-      {
-        type: 'function',
-        name: 'mcp__open_science_notebook__repl_execute',
-        description: 'Open-Science notebook tools.\n\nRun control-plane JavaScript.',
-        parameters: { type: 'object' },
-        strict: false
-      },
-      {
-        type: 'function',
-        name: 'shell_command',
-        description: 'Run a shell command.',
-        parameters: { type: 'object' }
-      }
-    ])
-    expect(request.tool_choice).toEqual({
-      type: 'function',
-      name: 'mcp__open_science_notebook__repl_execute'
-    })
-    expect(request.input[0]).toMatchObject({
-      type: 'function_call',
-      name: 'mcp__open_science_notebook__repl_execute'
-    })
-    expect(request.input[0]).not.toHaveProperty('namespace')
-    expect(aliases.get('mcp__open_science_notebook__repl_execute')).toEqual({
-      namespace: 'mcp__open_science_notebook',
-      name: 'repl_execute'
-    })
-  })
-
   it('preserves the captured Codex MCP image fixture through the final native Responses request', () => {
-    const { request } = flattenNativeResponsesRequest(CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE)
+    const { request } = prepareNativeResponsesRequest(CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE)
 
     expect(request.input).toEqual([
       {
@@ -479,79 +771,6 @@ describe('native Responses compatibility', () => {
       },
       CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE.input[1]
     ])
-  })
-
-  it('rejects an alias collision instead of routing a tool ambiguously', () => {
-    expect(() =>
-      flattenNativeResponsesRequest({
-        tools: [
-          {
-            type: 'namespace',
-            name: 'mcp__server',
-            tools: [{ type: 'function', name: 'echo', parameters: { type: 'object' } }]
-          },
-          {
-            type: 'function',
-            name: 'mcp__server__echo',
-            parameters: { type: 'object' }
-          }
-        ]
-      })
-    ).toThrow('duplicate native Responses tool alias')
-  })
-
-  it('restores namespace identity in streamed and completed response items', () => {
-    const aliases = new Map([
-      [
-        'mcp__open_science_notebook__repl_execute',
-        { namespace: 'mcp__open_science_notebook', name: 'repl_execute' }
-      ]
-    ])
-
-    expect(
-      restoreNativeResponsesPayload(
-        {
-          type: 'response.output_item.done',
-          item: {
-            type: 'function_call',
-            name: 'mcp__open_science_notebook__repl_execute',
-            arguments: '{}',
-            call_id: 'call-1'
-          }
-        },
-        aliases
-      )
-    ).toMatchObject({
-      item: {
-        type: 'function_call',
-        namespace: 'mcp__open_science_notebook',
-        name: 'repl_execute'
-      }
-    })
-
-    expect(
-      restoreNativeResponsesPayload(
-        {
-          id: 'resp-1',
-          output: [
-            {
-              type: 'function_call',
-              name: 'mcp__open_science_notebook__repl_execute',
-              arguments: '{}',
-              call_id: 'call-1'
-            }
-          ]
-        },
-        aliases
-      )
-    ).toMatchObject({
-      output: [
-        {
-          namespace: 'mcp__open_science_notebook',
-          name: 'repl_execute'
-        }
-      ]
-    })
   })
 
   it('promotes Artifact guidance when a Notebook run returns a generated file', async () => {
@@ -785,80 +1004,111 @@ describe('native Responses compatibility', () => {
     }
   })
 
-  it('aborts a native Responses stream after the configured idle period', async () => {
-    let upstreamSignal: AbortSignal | undefined
-    let failUpstream: ((reason?: unknown) => void) | undefined
-    const upstreamRequested = Promise.withResolvers<void>()
-    const fetchImpl = vi.fn(
-      async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        upstreamSignal = init?.signal ?? undefined
-        const body = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(
-              new TextEncoder().encode(
-                'data: {"type":"response.output_text.delta","delta":"working"}\n\n'
-              )
-            )
-            failUpstream = (reason) => controller.error(reason)
-            upstreamSignal?.addEventListener(
-              'abort',
-              () => failUpstream?.(upstreamSignal?.reason),
-              {
-                once: true
-              }
+  it.each(['idle timeout', 'client abort'])(
+    'discards pending arguments after %s and keeps a new response isolated',
+    async (cancellation) => {
+      let upstreamSignal: AbortSignal | undefined
+      let failUpstream: ((reason?: unknown) => void) | undefined
+      const upstreamRequested = Promise.withResolvers<void>()
+      const fetchImpl = vi.fn(
+        async (_url: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          if (upstreamSignal) {
+            return new Response(
+              [addedCall(), finishedCall()]
+                .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                .join(''),
+              { headers: { 'content-type': 'text/event-stream' } }
             )
           }
-        })
-        upstreamRequested.resolve()
-        return new Response(body, {
-          status: 200,
-          headers: { 'content-type': 'text/event-stream' }
-        })
-      }
-    )
-    const proxy = new NativeResponsesCompatibilityProxy(
-      { baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-v4-pro' },
-      fetchImpl,
-      { streamIdleTimeoutMs: 25 }
-    )
-    const connection = await proxy.start()
-
-    try {
-      const responsePromise = fetch(`${connection.baseUrl}/responses`, {
+          upstreamSignal = init?.signal ?? undefined
+          const body = new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.enqueue(
+                new TextEncoder().encode(
+                  [addedCall(), argumentEvent('{"value":"cancelled"}')]
+                    .map((event) => `data: ${JSON.stringify(event)}\n\n`)
+                    .join('')
+                )
+              )
+              failUpstream = (reason) => controller.error(reason)
+              upstreamSignal?.addEventListener(
+                'abort',
+                () => failUpstream?.(upstreamSignal?.reason),
+                { once: true }
+              )
+            }
+          })
+          upstreamRequested.resolve()
+          return new Response(body, {
+            status: 200,
+            headers: { 'content-type': 'text/event-stream' }
+          })
+        }
+      )
+      const proxy = new NativeResponsesCompatibilityProxy(
+        { baseUrl: 'https://provider.invalid/v1', model: 'fixture-model' },
+        fetchImpl,
+        { streamIdleTimeoutMs: cancellation === 'idle timeout' ? 25 : 5000 }
+      )
+      const connection = await proxy.start()
+      const client = new AbortController()
+      const request = {
         method: 'POST',
         headers: {
           authorization: `Bearer ${connection.token}`,
           'content-type': 'application/json'
         },
-        body: JSON.stringify({ model: 'deepseek-v4-pro', input: 'analyze', stream: true })
-      })
-      await upstreamRequested.promise
-      const response = await responsePromise
-      const body = response.text()
+        body: JSON.stringify({ model: 'fixture-model', input: 'echo fixture', stream: true })
+      }
 
-      const outcome = await Promise.race([
-        body.then(
-          () => 'completed',
-          (error: unknown) => error
-        ),
-        new Promise<'still-pending'>((resolve) => setTimeout(() => resolve('still-pending'), 500))
-      ])
-
-      expect(outcome).toBeInstanceOf(Error)
-      expect(upstreamSignal?.aborted).toBe(true)
-      expect(logSpies.warn.mock.calls).toContainEqual([
-        'native Responses compatibility request failed',
-        expect.objectContaining({
-          phase: 'forward-response',
-          outcome: 'error',
-          errorCategory: 'timeout'
+      try {
+        const responsePromise = fetch(`${connection.baseUrl}/responses`, {
+          ...request,
+          signal: client.signal
         })
-      ])
-    } finally {
-      failUpstream?.()
-      await proxy.close()
+        await upstreamRequested.promise
+        const response = await responsePromise
+        const reader = response.body!.getReader()
+        const decoder = new TextDecoder()
+        let received = ''
+        while (!received.includes('cancelled')) {
+          const chunk = await reader.read()
+          expect(chunk.done).toBe(false)
+          received += decoder.decode(chunk.value, { stream: true })
+        }
+        if (cancellation === 'client abort') client.abort()
+        await expect(
+          (async (): Promise<void> => {
+            while (!(await reader.read()).done) {
+              // Drain any remaining chunks until cancellation rejects the stream.
+            }
+          })()
+        ).rejects.toThrow()
+        await vi.waitFor(() => expect(upstreamSignal?.aborted).toBe(true))
+        if (cancellation === 'idle timeout') {
+          expect(logSpies.warn.mock.calls).toContainEqual([
+            'native Responses compatibility request failed',
+            expect.objectContaining({
+              phase: 'forward-response',
+              outcome: 'error',
+              errorCategory: 'timeout'
+            })
+          ])
+        }
+
+        const nextResponse = await fetch(`${connection.baseUrl}/responses`, request)
+        const events = (await nextResponse.text())
+          .trim()
+          .split('\n\n')
+          .map((event) => JSON.parse(event.slice(6)))
+        expect(events.at(-1).item.arguments).toBe('')
+      } finally {
+        client.abort()
+        failUpstream?.()
+        await proxy.close()
+      }
     }
-  })
+  )
 
   it('keeps a native Responses stream open while upstream events continue', async () => {
     let upstreamSignal: AbortSignal | undefined

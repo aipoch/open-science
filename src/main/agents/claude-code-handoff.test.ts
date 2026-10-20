@@ -4,6 +4,7 @@ import {
   CompletionGateCoordinator,
   CompletionGateRuntimeRegistry,
   runCompletionGatedTool,
+  type CompletionDisposition,
   type ToolCompletionEnvelope,
   type TrustedToolCompletionContext
 } from './completion-gate'
@@ -21,6 +22,55 @@ const context: TrustedToolCompletionContext = {
 }
 
 describe('Claude Code completion handoff', () => {
+  it.each([false, true])(
+    'ignores cancelled late replay preparation and preserves newer ownership (%s)',
+    async (newer) => {
+      const preparation = Promise.withResolvers<void>()
+      let staged: string | undefined
+      let preparations = 0
+      const switchSpecialist = vi.fn(async () => ({ contextReset: true }))
+      const runtime = createClaudeCodeCompletionGateRuntime({
+        sessionFramework: () => 'claude-code',
+        cancelPrompt: vi.fn(),
+        waitForPromptOwnershipRelease: vi.fn(),
+        resolveSpecialistId: () => 'approved',
+        resolveSwitchReadBack: async (sessionId, targetName) => ({
+          status: 'approved',
+          operation: 'switch',
+          binding: { sessionId, targetName, specialistId: 'approved' }
+        }),
+        prepareReplayContext: async (input, isCurrent) => {
+          if (++preparations === 1) await preparation.promise
+          if (isCurrent?.()) staged = input.switchReadBack.binding.targetName ?? 'Main'
+        },
+        discardReplayContext: async () => {
+          staged = undefined
+        },
+        switchSpecialist,
+        createContinuationRequest: vi.fn(),
+        sendAppContinuation: vi.fn()
+      })
+      const captured = (
+        targetName: string
+      ): Extract<CompletionDisposition, { kind: 'capture-for-handoff' }> => ({
+        kind: 'capture-for-handoff' as const,
+        targetName,
+        generation: 1,
+        envelope: { kind: 'returned' as const, value: 'approved' }
+      })
+      const first = runtime.reconfigure(captured('A'), context)
+      const rejected = expect(first).rejects.toThrow('superseded')
+      await vi.waitFor(() => expect(preparations).toBe(1))
+      if (newer)
+        await runtime.reconfigure(captured('B'), { ...context, toolInvocationId: 'tool-2' })
+      await runtime.cleanupCancelledHandoff(context)
+      preparation.resolve()
+      await rejected
+      await runtime.reportHandoffFailure(new Error('old failure'), captured('A'), context)
+      expect(staged).toBe(newer ? 'B' : undefined)
+      expect(switchSpecialist).toHaveBeenCalledTimes(newer ? 1 : 0)
+    }
+  )
   it('selects only durable user task context for a resumed-session replay', () => {
     expect(
       selectPersistedUserTaskContext([

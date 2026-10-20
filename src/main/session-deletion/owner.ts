@@ -4,7 +4,7 @@ import {
   type DeleteSessionRequest,
   type SessionDeletionResult
 } from '../../shared/session-persistence'
-import { createLogger, diagnosticErrorFields, type Logger } from '../logger'
+import { createLogger, diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 
 type SessionDeletionRuntime = {
   deleteSession(request: { sessionId: string }): Promise<AcpRuntimeState>

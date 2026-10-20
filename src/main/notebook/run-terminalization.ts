@@ -1,10 +1,13 @@
+import { notebookErrorRecovery } from '../../shared/notebook-execution-error'
+import type { NotebookEnvironmentManifest } from '../../shared/notebook'
 import type {
-  NotebookEnvironmentManifest,
+  NotebookRunEnvironmentCapture,
+  NotebookRunEnvironmentLockCapture
+} from '@aipoch/environment/contracts'
+import type {
   NotebookHelperModuleEvidence,
   NotebookHelperEvidenceStatus,
   NotebookOutput,
-  NotebookRunEnvironmentCapture,
-  NotebookRunEnvironmentLockCapture,
   NotebookRunRecord,
   NotebookRunStatus,
   NotebookWorkingFile
@@ -48,6 +51,8 @@ type NotebookRunTerminalResult = {
   environmentCapture?: NotebookRunEnvironmentCapture
   environmentLock?: NotebookRunEnvironmentLockCapture
   kernelDispatched?: boolean
+  // False proves no user source began execution; absent evidence remains conservative.
+  executionStarted?: boolean
   helperModules?: NotebookHelperModuleEvidence[]
   helperEvidenceStatus?: NotebookHelperEvidenceStatus
 }
@@ -224,6 +229,7 @@ class NotebookRunTerminalizationOwner {
           status: 'interrupted',
           stdout: '',
           stderr: errorMessage(error),
+          ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
           traceback: '',
           cwdAfter: runningRun.cwdBefore,
           outputs: [],
@@ -375,6 +381,7 @@ class NotebookRunTerminalizationOwner {
           status: 'interrupted',
           stdout: '',
           stderr: errorMessage(error),
+          ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
           traceback: '',
           cwdAfter: runningRun.cwdBefore,
           outputs: []
@@ -397,6 +404,7 @@ class NotebookRunTerminalizationOwner {
         status: 'interrupted',
         stdout: '',
         stderr: errorMessage(error),
+        ...(notebookErrorRecovery(error) ? { recovery: notebookErrorRecovery(error) } : {}),
         traceback: '',
         cwdAfter: runningRun.cwdBefore,
         outputs: []
@@ -480,6 +488,9 @@ class NotebookRunTerminalizationOwner {
       ...(limitedResult.recovery ? { recovery: limitedResult.recovery } : {}),
       environmentCapture,
       ...(limitedResult.environmentLock ? { environmentLock: limitedResult.environmentLock } : {}),
+      ...(limitedResult.executionStarted !== undefined
+        ? { executionStarted: limitedResult.executionStarted }
+        : {}),
       ...(limitedResult.kernelDispatched !== undefined
         ? { kernelDispatched: limitedResult.kernelDispatched }
         : {}),
