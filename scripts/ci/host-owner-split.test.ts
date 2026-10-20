@@ -5,6 +5,9 @@ import { dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { afterEach, expect, it } from 'vitest'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
+import { createAffectedTestPlan } from './module-test-impact.mjs'
+import { checkDerivedConsumerRevisions } from './generate-module-derived-consumers.mjs'
+import { withDerivedConsumers } from './module-derived-consumers.mjs'
 
 const roots: string[] = []
 afterEach(() => {
@@ -18,6 +21,9 @@ const contract = 'src/main/contract.test.ts'
 const consumer = 'src/main/consumer.test.ts'
 const uncertain = 'src/main/uncertain.test.ts'
 const unrelated = 'src/main/unrelated.test.ts'
+const other = 'src/main/other.ts'
+const otherTest = 'src/main/other.test.ts'
+const otherContract = 'src/main/other-contract.test.ts'
 
 function fixture() {
   const cwd = mkdtempSync(join(tmpdir(), 'host-owner-split-'))
@@ -80,6 +86,304 @@ function fixture() {
   }
   return { cwd, git, put, commit, manifest, save, base, split, check }
 }
+
+function existingOwnerFixture(prepare?: (state: ReturnType<typeof fixture>) => void) {
+  const state = fixture()
+  const host = state.manifest.modules.host
+  host.interfacePaths.push(app)
+  host.testFiles.consumer.push(consumer)
+  state.put(other, 'export const other = 1')
+  state.put(otherTest, "import './other'")
+  state.put(otherContract, 'export {}')
+  state.manifest.modules.foundation = {
+    ownerPaths: [other, otherTest, otherContract],
+    interfacePaths: [other],
+    testFiles: { owner: [otherTest], contract: [otherContract], consumer: [leafTest] },
+    consumerModules: [],
+    capabilityOverlays: ['windows_sensitive'],
+    fallbackCapability: 'main_runtime'
+  }
+  prepare?.(state)
+  state.save()
+  const baseline = structuredClone(state.manifest)
+  const base = state.commit()
+  const target = state.manifest.modules.foundation
+  host.ownerPaths = host.ownerPaths.filter((path) => ![leaf, leafTest].includes(path))
+  target.ownerPaths.push(leaf, leafTest)
+  target.interfacePaths.push(leaf)
+  target.consumerModules = host.consumerModules.filter((id) => id !== 'foundation')
+  // Keep the target's historical consumer classification for leafTest.
+  const evidence = new Set(Object.values(target.testFiles).flat())
+  target.testFiles.consumer.push(
+    ...Object.values(host.testFiles)
+      .flat()
+      .filter((test) => !evidence.has(test))
+  )
+  return { ...state, base, baseline, check: () => state.check(base) }
+}
+
+it('transfers unchanged paths between existing owners without copying unrelated interfaces or retiring history', () => {
+  const state = existingOwnerFixture()
+  const result = state.check()
+  expect(result.ok).toBe(true)
+  expect(result.boundedOwnerSplits).toEqual([`host:${leaf}`, `host:${leafTest}`])
+  expect(result.retiredConsumers).toEqual([])
+  expect(result.retiredPackageTests).toEqual([])
+  const { host, foundation } = state.manifest.modules
+  expect(host.interfacePaths).toEqual([leaf, app])
+  expect(foundation.interfacePaths).toEqual([other, leaf])
+  expect(foundation.testFiles.consumer).toContain(leafTest)
+  expect(host.testFiles).toEqual(state.baseline.modules.host.testFiles)
+  for (const path of [leaf, leafTest, app, appTest, other, otherTest]) {
+    const plan = (manifest: typeof state.manifest) =>
+      createAffectedTestPlan(
+        [{ path, status: 'modified' }],
+        { status: 'not-used', testFiles: [] },
+        manifest
+      )
+    const before = plan(state.baseline)
+    const after = plan(state.manifest)
+    expect(after.mode).toBe('selective')
+    for (const field of ['testFiles', 'capabilityOverlays', 'fallbackCapabilities']) {
+      expect(after[field]).toEqual(expect.arrayContaining(before[field]))
+    }
+  }
+})
+
+it.each(['host', 'foundation'])(
+  'retains every historical %s test bucket during an existing-owner transfer',
+  (id) => {
+    for (const kind of ['owner', 'contract', 'consumer'] as const) {
+      const state = existingOwnerFixture()
+      const tests = state.manifest.modules[id].testFiles
+      const removed = tests[kind].shift()!
+      // Even retaining the same test in another bucket cannot erase its historical role.
+      tests[kind === 'consumer' ? 'owner' : 'consumer'].push(removed)
+      const result = state.check()
+      expect(result.ok).toBe(false)
+      expect(result.boundedOwnerSplits).toEqual([])
+    }
+  }
+)
+
+it('preserves routing when the original owner already consumes the destination', () => {
+  const state = existingOwnerFixture((state) => {
+    state.manifest.modules.host.consumerModules.push('foundation')
+  })
+  expect(state.check().ok).toBe(true)
+  expect(state.manifest.modules.host.consumerModules).toContain('foundation')
+  expect(state.manifest.modules.foundation.consumerModules).not.toContain('foundation')
+})
+
+it('verifies existing-owner transfers from sharded registration snapshots', () => {
+  const state = existingOwnerFixture()
+  const save = (manifest: typeof state.manifest) => {
+    state.put('scripts/ci/module-impact.json', JSON.stringify({ schemaVersion: 1 }))
+    for (const [id, module] of Object.entries(manifest.modules)) {
+      state.put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(module))
+    }
+  }
+  save(state.baseline)
+  const base = state.commit()
+  save(state.manifest)
+  expect(moduleOwnershipFromRevisions(base, state.commit(), { cwd: state.cwd }).ok).toBe(true)
+})
+
+it('rejects incompatible pre-existing owner fallbacks', () => {
+  const state = existingOwnerFixture((state) => {
+    state.manifest.modules.foundation.fallbackCapability = 'windows_sensitive'
+  })
+  expect(state.check().ok).toBe(false)
+})
+
+it('allows unchanged renderer ownership to follow the same preservation proof', () => {
+  const state = existingOwnerFixture((state) => {
+    for (const module of Object.values(state.manifest.modules)) {
+      for (const field of ['ownerPaths', 'interfacePaths'] as const) {
+        module[field] = module[field].map((path) => path.replace('/main/', '/renderer/'))
+      }
+      for (const kind of ['owner', 'contract', 'consumer'] as const) {
+        module.testFiles[kind] = module.testFiles[kind].map((path) =>
+          path.replace('/main/', '/renderer/')
+        )
+      }
+    }
+    state.git('mv', 'src/main', 'src/renderer')
+  })
+  // The generic fixture transfers the main paths; replace that candidate with the renderer move.
+  const { host, foundation } = state.manifest.modules
+  host.ownerPaths = host.ownerPaths.filter(
+    (path) => ![leaf, leafTest].map((path) => path.replace('/main/', '/renderer/')).includes(path)
+  )
+  foundation.ownerPaths = foundation.ownerPaths.map((path) => path.replace('/main/', '/renderer/'))
+  foundation.interfacePaths = foundation.interfacePaths.map((path) =>
+    path.replace('/main/', '/renderer/')
+  )
+  expect(state.check().ok).toBe(true)
+})
+
+it.each(['host', 'foundation'])(
+  'retains %s interfaces, capabilities and fallback during an existing-owner transfer',
+  (id) => {
+    for (const field of ['interface', 'overlay', 'fallback', 'full']) {
+      const state = existingOwnerFixture()
+      const module = state.manifest.modules[id]
+      if (field === 'interface') module.interfacePaths.shift()
+      if (field === 'overlay') module.capabilityOverlays = []
+      if (field === 'fallback') module.fallbackCapability = 'windows_sensitive'
+      if (field === 'full') module.fullTestReason = 'Requires full validation'
+      const result = state.check()
+      expect(result.ok).toBe(false)
+      expect(result.boundedOwnerSplits).toEqual([])
+    }
+  }
+)
+
+it.each(['owner', 'contract', 'consumer'] as const)(
+  'requires the destination to inherit all source %s evidence',
+  (kind) => {
+    const state = existingOwnerFixture()
+    const missing = state.baseline.modules.host.testFiles[kind][0]
+    const target = state.manifest.modules.foundation
+    for (const bucket of ['owner', 'contract', 'consumer'] as const) {
+      target.testFiles[bucket] = target.testFiles[bucket].filter((test) => test !== missing)
+    }
+    const result = state.check()
+    expect(result.ok).toBe(false)
+    expect(result.boundedOwnerSplits).toEqual([])
+  }
+)
+
+it.each(['source', 'destination'])('retains %s consumer routing', (side) => {
+  const state = existingOwnerFixture()
+  state.manifest.modules[side === 'source' ? 'host' : 'foundation'].consumerModules = []
+  expect(state.check().ok).toBe(false)
+})
+
+it('retains pre-existing destination consumers even when source consumers are inherited', () => {
+  const state = existingOwnerFixture((state) => {
+    state.manifest.modules.foundation.consumerModules = ['consumers']
+    state.manifest.modules.host.consumerModules = []
+  })
+  expect(state.check().ok).toBe(false)
+})
+
+it('requires the moved public interface and preserves pre-existing destination ownership', () => {
+  const missingInterface = existingOwnerFixture()
+  missingInterface.manifest.modules.foundation.interfacePaths = [other]
+  expect(missingInterface.check().ok).toBe(false)
+  const missingOwner = existingOwnerFixture()
+  missingOwner.manifest.modules.foundation.ownerPaths =
+    missingOwner.manifest.modules.foundation.ownerPaths.filter((path) => path !== other)
+  expect(missingOwner.check().ok).toBe(false)
+})
+
+it.each(['runtime', 'policy', 'workflow', 'source', 'test', 'delete', 'rename'])(
+  'does not use the existing-owner registration proof alongside %s changes',
+  (kind) => {
+    const state = existingOwnerFixture()
+    if (kind === 'runtime') state.put('scripts/ci/module-runtime-consumers.json', '{"extra":[]}')
+    if (kind === 'policy')
+      state.put('scripts/ci/host-owner-split.mjs', 'throw Error("candidate policy")')
+    if (kind === 'workflow') state.put('.github/workflows/ci.yml', 'name: candidate')
+    if (kind === 'source') state.put(leaf, 'export const value = 2')
+    if (kind === 'test') state.put(leafTest, 'export {}')
+    if (kind === 'delete') state.git('rm', unrelated)
+    if (kind === 'rename') state.git('mv', unrelated, 'src/main/renamed.test.ts')
+    if (kind === 'delete' || kind === 'rename') {
+      const module = state.manifest.modules.consumers
+      module.ownerPaths = module.ownerPaths.filter((path) => path !== unrelated)
+      module.testFiles.owner = module.testFiles.owner.filter((path) => path !== unrelated)
+    }
+    const result = state.check()
+    expect(result.ok).toBe(false)
+    expect(result.boundedOwnerSplits).toEqual([])
+  }
+)
+
+it.each(['host', 'foundation'])('rejects protected %s owners', (id) => {
+  for (const path of [
+    'src/shared/protected.ts',
+    'src/preload/protected.ts',
+    'packages/lib/protected.ts'
+  ]) {
+    const state = existingOwnerFixture((state) => {
+      state.put(path, 'export {}')
+      state.manifest.modules[id].ownerPaths.push(path)
+    })
+    expect(state.check().ok).toBe(false)
+  }
+  const full = existingOwnerFixture((state) => {
+    state.manifest.modules[id].fullTestReason = 'Requires full validation'
+  })
+  expect(full.check().ok).toBe(false)
+})
+
+it('rejects duplicate owners and candidate transfer flags before granting exceptions', () => {
+  const duplicate = existingOwnerFixture()
+  duplicate.manifest.modules.consumers.ownerPaths.push(leaf)
+  expect(() => duplicate.check()).toThrow('is shared')
+  const flag = existingOwnerFixture()
+  Object.assign(flag.manifest.modules.foundation, { allowTransfer: true })
+  expect(flag.check().ok).toBe(false)
+})
+
+it('rejects a lost transitive test even when the replacement plan has as many tests', () => {
+  const state = existingOwnerFixture()
+  // Foundation retains host's direct evidence and consumer edge, but the transitive
+  // consumer loses one historical test and replaces it with a different one.
+  state.manifest.modules.consumers.testFiles.owner =
+    state.manifest.modules.consumers.testFiles.owner.filter((path) => path !== unrelated)
+  state.manifest.modules.consumers.testFiles.consumer.push(otherTest)
+  const plan = (manifest: typeof state.manifest) =>
+    createAffectedTestPlan(
+      [{ path: leaf, status: 'modified' }],
+      { status: 'not-used', testFiles: [] },
+      manifest
+    )
+  expect(plan(state.manifest).testFiles.length).toBeGreaterThanOrEqual(
+    plan(state.baseline).testFiles.length
+  )
+  const result = state.check()
+  expect(result.ok).toBe(false)
+  expect(result.boundedOwnerSplits).toEqual([])
+})
+
+it('preserves effective coverage when an unchanged valid derived index leaves evidence on the original owner', () => {
+  const derivedTest = 'src/main/derived.test.ts'
+  const index = { schemaVersion: 1, modules: { host: [derivedTest] } }
+  const state = existingOwnerFixture((state) => {
+    state.put(derivedTest, "import './app'")
+    state.put('scripts/ci/module-derived-consumers.json', JSON.stringify(index))
+    // Remove unrelated dependency edges so this is the complete generated index.
+    state.put(app, 'export const app = 1')
+    state.put(consumer, 'export {}')
+    state.manifest.modules.host.consumerModules = []
+  })
+  // Retain leafTest ownership so this reproduces a production-source-only transfer.
+  state.manifest.modules.host.ownerPaths.push(leafTest)
+  state.manifest.modules.foundation.ownerPaths =
+    state.manifest.modules.foundation.ownerPaths.filter((path) => path !== leafTest)
+  const plan = (manifest: typeof state.manifest) =>
+    createAffectedTestPlan(
+      [{ path: leaf, status: 'modified' }],
+      { status: 'not-used', testFiles: [] },
+      withDerivedConsumers(manifest, index)
+    )
+  const before = plan(state.baseline)
+  const after = plan(state.manifest)
+  expect(before.testFiles).toContain(derivedTest)
+  expect(after.testFiles).not.toContain(derivedTest)
+  expect(after.testFiles.length).toBeGreaterThanOrEqual(before.testFiles.length)
+  const rejected = state.check()
+  // Regeneration alone does not fix it: the derived test still imports the remaining app.
+  expect(() => checkDerivedConsumerRevisions(state.base, 'HEAD', state.cwd)).not.toThrow()
+  expect(rejected.ok).toBe(false)
+  expect(rejected.boundedOwnerSplits).toEqual([])
+  state.manifest.modules.foundation.testFiles.consumer.push(derivedTest)
+  expect(state.check().ok).toBe(true)
+  expect(plan(state.manifest).testFiles).toEqual(expect.arrayContaining(before.testFiles))
+})
 
 it('permits unchanged host owners to split while preserving reachable, uncertain and explicit evidence', () => {
   const state = fixture()

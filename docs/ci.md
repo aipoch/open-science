@@ -334,10 +334,25 @@ the old execution plan. Explicit contracts, non-host evidence and explicit tests
 provable old source dependency follow the split as well. Moved owner tests keep their owner
 classification in the new module; tests still reaching the remaining owner, or with incomplete
 or unproven old source evidence, must also remain registered there. Original owners containing shared/preload/package sources, full owners (before or after the split), existing-module transfers and
-mixed source/policy edits do not qualify. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
+mixed source/policy edits do not qualify for this split proof. Host build scripts and test harnesses may remain on the original owner; only main/renderer source paths can transfer. An old consumer registration may follow a verified split
 only when complete evidence proves its old dependency and no dependency on the remaining owner;
 uncertain and already-unproven host consumers stay registered. Original contracts and consumer-edge protections remain
 in force. Merge this protected policy before proposing a registration split that depends on it.
+Registration-only transfers between **existing** host owners use a separate preservation proof.
+Only module-impact JSON may change, with unchanged source and test bytes and unambiguous surviving
+paths. Both owners retain their historical interfaces, test buckets, consumer edges, overlays and
+fallback; the destination also retains its existing owner paths and inherits every source test
+obligation, consumer edge (except itself) and overlay with a compatible fallback. Existing test
+classifications stay intact, including a moved test already registered as a destination consumer.
+Only moved public interfaces must be added to the destination; unrelated source interfaces remain
+on the original owner. Trusted Integrity compares actual selected test and capability sets, including
+each revision's derived consumers, for every old source/destination owner and interface path.
+Raw registrations still prove explicit history retention; derived evidence cannot replace it.
+Any selection reduction is rejected. Shared/preload/package
+owners, full markers and mixed source/test/runtime/policy edits do not qualify. This proof grants
+owner-path transfers only: it authorizes no historical test retirement or reclassification and adds
+no manifest flags. Merge the protected policy before proposing a registration transfer that uses it.
+
 Source-changing host transfers have a separate, stricter proof. Exact surviving owner paths
 identify transfers into new or existing host modules, including targets assembled from several
 host owners. All transfers from an original owner must verify before any of its evidence can
