@@ -5,7 +5,7 @@ import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import { isCollectionOnlyChange, useLiteratureChanges } from '../literature/useLiteratureChanges'
+import { isCollectionOnlyChange, useLiteratureChanges } from '../literature/public/events'
 import { ArtifactLiteratureDetailDialog } from './ArtifactLiteratureDetailDialog'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 

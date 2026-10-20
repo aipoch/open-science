@@ -127,7 +127,7 @@ test('releases a blurred tooltip before Escape dismisses Settings', async ({ pag
         (event.target as HTMLElement).getAnimations().forEach((a) => a.pause())
     })
   )
-  await page.getByRole('tab', { name: 'Conversation models', exact: true }).focus()
+  await page.getByRole('combobox', { name: 'Interface language', exact: true }).focus()
   await page.keyboard.press('Escape')
   await expect(page.getByRole('dialog')).toHaveCount(0)
 })

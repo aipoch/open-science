@@ -1,3 +1,4 @@
+import { createLiteraturePackageSource } from '../literature/package-source'
 import { desktopInteraction } from '../desktop-interaction'
 import { join } from 'node:path'
 import { BrowserPackageImport } from '../session-package/browser-import'
@@ -74,6 +75,9 @@ export async function composeSessionPackages({
   } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
+      literatureSource: createLiteraturePackageSource(() =>
+        getProjectDbClient(resolveConfigRoot())
+      ),
       getDefaultPermissionProfile: async () =>
         getDefaultPermissionProfile(await settingsRepository.getSettings()),
       onSessionPublished: async (publication) => {

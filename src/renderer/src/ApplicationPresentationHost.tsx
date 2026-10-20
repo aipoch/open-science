@@ -39,7 +39,7 @@ const WorkspacePage = lazy(() =>
   }))
 )
 const LiteratureLibraryPage = lazy(() =>
-  import('@/pages/literature/LiteratureLibraryPage').then(({ LiteratureLibraryPage }) => ({
+  import('@/pages/literature/public/page').then(({ LiteratureLibraryPage }) => ({
     default: LiteratureLibraryPage
   }))
 )

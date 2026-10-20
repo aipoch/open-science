@@ -1,0 +1,1 @@
+export { JournalAttributes } from '../JournalAttributes'

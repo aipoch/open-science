@@ -111,7 +111,7 @@ describe('ProviderForm field switching', () => {
 
     expect(onChange).toHaveBeenCalledWith({
       baseUrl: 'http://localhost:11434',
-      apiEndpoint: 'openai',
+      apiEndpoint: 'chat-completions',
       name: 'Ollama'
     })
   })
@@ -188,13 +188,13 @@ describe('ProviderForm field switching', () => {
       type: 'custom',
       baseUrl: 'http://localhost:11434',
       model: 'qwen3:14b',
-      apiEndpoint: 'openai'
+      apiEndpoint: 'chat-completions'
     })
     render(value, {
       framework: {
         id: 'claude-code',
         displayName: 'Claude Code',
-        supportedApiTypes: ['anthropic'],
+        supportedApiTypes: ['messages'],
         supportsSkills: true
       }
     })
@@ -207,7 +207,7 @@ describe('ProviderForm field switching', () => {
       framework: {
         id: 'opencode',
         displayName: 'OpenCode',
-        supportedApiTypes: ['anthropic', 'openai'],
+        supportedApiTypes: ['messages', 'chat-completions'],
         supportsSkills: true
       }
     })
@@ -425,7 +425,7 @@ describe('ProviderForm field switching', () => {
         type: 'official',
         name: 'Bailian for Plan',
         vendorId: 'bailianplan',
-        apiEndpoint: 'openai'
+        apiEndpoint: 'chat-completions'
       })
     )
 
@@ -463,7 +463,7 @@ describe('ProviderForm field switching', () => {
     render(
       createEmptyProviderFormValue({
         type: 'custom',
-        apiEndpoint: 'openai',
+        apiEndpoint: 'chat-completions',
         reasoningEffortPreset: 'none-high',
         reasoningEffortTransport: 'deepseek'
       })
@@ -515,7 +515,7 @@ describe('ProviderForm field switching', () => {
 
   it.each([
     [
-      'anthropic' as const,
+      'messages' as const,
       "Messages API uses the framework's Anthropic-compatible thinking request automatically."
     ],
     ['responses' as const, 'Responses API uses its native reasoning request automatically.']
@@ -598,7 +598,7 @@ describe('ProviderForm field switching', () => {
       createEmptyProviderFormValue({
         type: 'claude-isolated',
         name: 'Claude subscription',
-        apiEndpoint: 'anthropic'
+        apiEndpoint: 'messages'
       }),
       { showClaudeIsolated: true }
     )

@@ -42,7 +42,9 @@ import { buildSessionReferencePrompt } from './session-reference-prompt'
 import { codeBuddySkillRuntimeRoot, type TurnSkillHandle } from './turn-skill-owner'
 
 const log = createLogger('acp-prompt-preparation-owner')
-type SelectBridgeSkills = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>['selectSkills']
+type SelectBridgeSkills = NonNullable<
+  ResolvedAgentBackend['responsesTransportLease']
+>['selectSkills']
 type NotebookTurnInputs = Readonly<{
   projectId: string
   appSessionId: string

@@ -1,5 +1,5 @@
 import type { AgentUserChoicePrompt } from './elicitation'
-import type { ResolvedReasoningEffort } from './reasoning-effort'
+import type { ResolvedReasoningEffort } from '@aipoch/providers'
 import type { AgentFrameworkId } from './settings'
 
 export type DelegatedWorkAttemptStatus = 'running' | 'completed' | 'cancelled' | 'error'
@@ -20,6 +20,7 @@ export type ResolvedSubagentModelSnapshot = Readonly<{
   frameworkId: AgentFrameworkId
   providerId: string
   backendId: string
+  // Stable persisted route identity used to resume accepted work; not a ModelProtocol value.
   modelRoute:
     | 'claude-anthropic'
     | 'opencode-anthropic'

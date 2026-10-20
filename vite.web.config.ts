@@ -25,6 +25,9 @@ export default defineConfig({
       '@aipoch/connector-mcp-client/oauth-redirect',
       '@aipoch/compute',
       '@aipoch/diagnostics',
+      '@aipoch/providers',
+      '@aipoch/providers/errors',
+      '@aipoch/providers/transport',
       '@aipoch/skills/document',
       '@aipoch/notebook-analysis/contracts',
       '@aipoch/environment/contracts',
@@ -41,7 +44,7 @@ export default defineConfig({
     commonjsOptions: {
       include: [
         /node_modules/,
-        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|skills|specialists)[\\/]dist/,
+        /packages[\\/](?:connector-(?:core|mcp-client)|compute|diagnostics|providers|skills|specialists)[\\/]dist/,
         /packages[\\/](?:notebook-analysis|environment|reproducibility)[\\/]dist/
       ]
     },

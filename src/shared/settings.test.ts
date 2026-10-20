@@ -1,6 +1,6 @@
 import { describe, expect, expectTypeOf, it } from 'vitest'
 
-import { isModelBridgeSupported } from './provider-registry'
+import { isModelBridgeSupported } from './provider-bridge-policy'
 import {
   canonicalSessionProviderId,
   canUseClaudeProviderTransport,
@@ -26,14 +26,14 @@ describe('canUseClaudeProviderTransport', () => {
     expect(
       canUseClaudeProviderTransport({
         type: 'custom',
-        apiEndpoints: ['anthropic'],
+        apiEndpoints: ['messages'],
         baseUrl: 'http://localhost:11434'
       })
     ).toBe(true)
     expect(
       canUseClaudeProviderTransport({
         type: 'custom',
-        apiEndpoints: ['anthropic'],
+        apiEndpoints: ['messages'],
         baseUrl: 'https://gateway.example/v1',
         key: 'sk-key'
       })
@@ -41,7 +41,7 @@ describe('canUseClaudeProviderTransport', () => {
     expect(
       canUseClaudeProviderTransport({
         type: 'custom',
-        apiEndpoints: ['anthropic'],
+        apiEndpoints: ['messages'],
         baseUrl: 'https://gateway.example/v1'
       })
     ).toBe(false)
@@ -73,52 +73,62 @@ describe('providerValidationFailed', () => {
 
 describe('provider endpoint compatibility', () => {
   it("derives a provider's endpoints, defaulting absent to anthropic", () => {
-    expect(providerEndpoints({ apiEndpoints: ['anthropic'] })).toEqual(['anthropic'])
-    expect(providerEndpoints({ apiEndpoints: ['openai'] })).toEqual(['openai'])
-    expect(providerEndpoints({ apiEndpoints: ['anthropic', 'openai'] })).toEqual([
-      'anthropic',
-      'openai'
+    expect(providerEndpoints({ apiEndpoints: ['messages'] })).toEqual(['messages'])
+    expect(providerEndpoints({ apiEndpoints: ['chat-completions'] })).toEqual(['chat-completions'])
+    expect(providerEndpoints({ apiEndpoints: ['messages', 'chat-completions'] })).toEqual([
+      'messages',
+      'chat-completions'
     ])
     expect(providerEndpoints({ apiEndpoints: ['responses'] })).toEqual(['responses'])
     // Absent/empty ⇒ anthropic.
-    expect(providerEndpoints({})).toEqual(['anthropic'])
+    expect(providerEndpoints({})).toEqual(['messages'])
   })
 
   it('is compatible only when provider and framework share an endpoint', () => {
     // Claude Code speaks anthropic only.
-    expect(isProviderCompatibleWith(['anthropic'], ['anthropic'])).toBe(true)
-    expect(isProviderCompatibleWith(['openai'], ['anthropic'])).toBe(false)
-    expect(isProviderCompatibleWith(['anthropic', 'openai'], ['anthropic'])).toBe(true)
+    expect(isProviderCompatibleWith(['messages'], ['messages'])).toBe(true)
+    expect(isProviderCompatibleWith(['chat-completions'], ['messages'])).toBe(false)
+    expect(isProviderCompatibleWith(['messages', 'chat-completions'], ['messages'])).toBe(true)
     // OpenCode speaks both.
-    expect(isProviderCompatibleWith(['openai'], ['anthropic', 'openai'])).toBe(true)
-    expect(isProviderCompatibleWith(['anthropic'], ['anthropic', 'openai'])).toBe(true)
+    expect(isProviderCompatibleWith(['chat-completions'], ['messages', 'chat-completions'])).toBe(
+      true
+    )
+    expect(isProviderCompatibleWith(['messages'], ['messages', 'chat-completions'])).toBe(true)
     // Codex speaks Responses, which is intentionally distinct from Chat Completions.
     expect(isProviderCompatibleWith(['responses'], ['responses'])).toBe(true)
-    expect(isProviderCompatibleWith(['openai'], ['responses'])).toBe(false)
-    expect(isProviderCompatibleWith(['anthropic', 'openai'], ['responses'])).toBe(false)
+    expect(isProviderCompatibleWith(['chat-completions'], ['responses'])).toBe(false)
+    expect(isProviderCompatibleWith(['messages', 'chat-completions'], ['responses'])).toBe(false)
   })
 
   it('prefers the OpenAI endpoint when both sides support it (both + both → openai)', () => {
-    const openCodeEndpoint = preferredEndpoint(['anthropic', 'openai'], ['anthropic', 'openai'])
-    expectTypeOf(openCodeEndpoint).toEqualTypeOf<'anthropic' | 'openai' | undefined>()
-    expect(openCodeEndpoint).toBe('openai')
+    const openCodeEndpoint = preferredEndpoint(
+      ['messages', 'chat-completions'],
+      ['messages', 'chat-completions']
+    )
+    expectTypeOf(openCodeEndpoint).toEqualTypeOf<'messages' | 'chat-completions' | undefined>()
+    expect(openCodeEndpoint).toBe('chat-completions')
     // A both-provider on an anthropic-only framework falls back to the shared anthropic endpoint.
-    expect(preferredEndpoint(['anthropic', 'openai'], ['anthropic'])).toBe('anthropic')
+    expect(preferredEndpoint(['messages', 'chat-completions'], ['messages'])).toBe('messages')
     // Single-endpoint providers resolve to that endpoint when shared.
-    expect(preferredEndpoint(['openai'], ['anthropic', 'openai'])).toBe('openai')
-    expect(preferredEndpoint(['anthropic'], ['anthropic', 'openai'])).toBe('anthropic')
+    expect(preferredEndpoint(['chat-completions'], ['messages', 'chat-completions'])).toBe(
+      'chat-completions'
+    )
+    expect(preferredEndpoint(['messages'], ['messages', 'chat-completions'])).toBe('messages')
     // Incompatible pair → no endpoint.
-    expect(preferredEndpoint(['openai'], ['anthropic'])).toBeUndefined()
+    expect(preferredEndpoint(['chat-completions'], ['messages'])).toBeUndefined()
   })
 
   it('allows Chat Completions providers through Codex bridge without changing endpoint identity', () => {
     const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
 
-    expect(isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['openai'] }, codex)).toBe(
-      true
-    )
     expect(
-      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['anthropic', 'openai'] }, codex)
+      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['chat-completions'] }, codex)
+    ).toBe(true)
+    expect(
+      isProviderUsableByFramework(
+        { type: 'custom', apiEndpoints: ['messages', 'chat-completions'] },
+        codex
+      )
     ).toBe(true)
     expect(
       isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['responses'] }, codex)
@@ -128,29 +138,29 @@ describe('provider endpoint compatibility', () => {
   it('requires the Codex bridge only when Chat Completions is the provider best route', () => {
     const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
 
-    expect(requiresChatCompletionsBridge({ apiEndpoints: ['openai'] }, codex)).toBe(true)
-    expect(requiresChatCompletionsBridge({ apiEndpoints: ['anthropic', 'openai'] }, codex)).toBe(
-      true
-    )
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['chat-completions'] }, codex)).toBe(true)
+    expect(
+      requiresChatCompletionsBridge({ apiEndpoints: ['messages', 'chat-completions'] }, codex)
+    ).toBe(true)
     expect(requiresChatCompletionsBridge({ apiEndpoints: ['responses'] }, codex)).toBe(false)
-    expect(requiresChatCompletionsBridge({ apiEndpoints: ['openai', 'responses'] }, codex)).toBe(
-      false
-    )
+    expect(
+      requiresChatCompletionsBridge({ apiEndpoints: ['chat-completions', 'responses'] }, codex)
+    ).toBe(false)
   })
 
   it('uses a Chat compatibility transport for CodeBuddy only when OpenAI Chat is absent', () => {
-    const codebuddy = { id: 'codebuddy' as const, supportedApiTypes: ['openai'] as const }
+    const codebuddy = { id: 'codebuddy' as const, supportedApiTypes: ['chat-completions'] as const }
 
     expect(requiresChatCompletionsBridge({ apiEndpoints: ['responses'] }, codebuddy)).toBe(true)
-    expect(requiresChatCompletionsBridge({ apiEndpoints: ['anthropic'] }, codebuddy)).toBe(true)
+    expect(requiresChatCompletionsBridge({ apiEndpoints: ['messages'] }, codebuddy)).toBe(true)
     expect(
-      requiresChatCompletionsBridge({ apiEndpoints: ['openai', 'responses'] }, codebuddy)
+      requiresChatCompletionsBridge({ apiEndpoints: ['chat-completions', 'responses'] }, codebuddy)
     ).toBe(false)
     expect(
       isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['responses'] }, codebuddy)
     ).toBe(true)
     expect(
-      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['anthropic'] }, codebuddy)
+      isProviderUsableByFramework({ type: 'custom', apiEndpoints: ['messages'] }, codebuddy)
     ).toBe(true)
   })
 
@@ -167,10 +177,10 @@ describe('provider endpoint compatibility', () => {
 
   it('allows Codex subscription profiles only with the Codex framework', () => {
     const codex = { id: 'codex' as const, supportedApiTypes: ['responses'] as const }
-    const claude = { id: 'claude-code' as const, supportedApiTypes: ['anthropic'] as const }
+    const claude = { id: 'claude-code' as const, supportedApiTypes: ['messages'] as const }
     const opencode = {
       id: 'opencode' as const,
-      supportedApiTypes: ['anthropic', 'openai'] as const
+      supportedApiTypes: ['messages', 'chat-completions'] as const
     }
 
     for (const type of ['codex-shared', 'codex-isolated'] as const) {

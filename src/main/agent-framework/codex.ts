@@ -14,8 +14,8 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
-import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { ModelReasoningEffort, OfficialVendorId } from '@aipoch/providers'
+
 import {
   CODEX_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentFramework,
@@ -196,16 +196,16 @@ const normalizeResponsesBaseUrl = (
 
 const resolveResponsesBaseUrl = (provider: {
   responsesBaseUrl?: string
-  openaiBaseUrl?: string
+  chatCompletionsBaseUrl?: string
   baseUrl?: string
 }): string | undefined => {
   const exactBase = provider.responsesBaseUrl?.trim()
-  const openAiBase = provider.openaiBaseUrl?.trim()
-  const base = exactBase || openAiBase || provider.baseUrl
+  const chatCompletionsBase = provider.chatCompletionsBaseUrl?.trim()
+  const base = exactBase || chatCompletionsBase || provider.baseUrl
   return normalizeResponsesBaseUrl(base, {
     // A custom provider's baseUrl is a root even when it has a path prefix (`/proxy`); only an
     // explicitly projected OpenAI base is already versioned. A native Responses base is exact.
-    appendVersionPath: !exactBase && !openAiBase
+    appendVersionPath: !exactBase && !chatCompletionsBase
   })
 }
 
@@ -295,7 +295,7 @@ type CodexNativeModelCatalogInput = {
   model?: string
   vendorId?: OfficialVendorId
   baseUrl?: string
-  openaiBaseUrl?: string
+  chatCompletionsBaseUrl?: string
   responsesBaseUrl?: string
   nativeVersion?: string
   contextWindow?: number
@@ -318,7 +318,7 @@ const buildCodexNativeModelCatalogEntry = (provider: CodexNativeModelCatalogInpu
       : undefined
   const hasTrustedBundledMetadata =
     (provider.vendorId === 'openai' ||
-      isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)) &&
+      isOfficialOpenAiResponsesBase(provider.chatCompletionsBaseUrl ?? provider.baseUrl)) &&
     bundledModelIds?.includes(model ?? '') === true
   if (!model || hasTrustedBundledMetadata) return undefined
 
@@ -590,7 +590,7 @@ export const createCodexFramework = ({
       }
     }
 
-    const bridge = ctx.responsesBridge
+    const bridge = ctx.responsesConnection
     const useChatBridge =
       bridge !== undefined &&
       bridge.kind !== 'responses-compatibility' &&
@@ -601,7 +601,7 @@ export const createCodexFramework = ({
     const useLocalResponsesEndpoint = useChatBridge || useNativeCompatibility
     const codexModel = useChatBridge ? CODEX_BRIDGE_MODEL : provider.model
     // A dual-endpoint vendor keeps its Anthropic route in `baseUrl` and its OpenAI Chat base in
-    // `openaiBaseUrl`. Native Responses may use a separate base, so prefer that when supplied.
+    // `chatCompletionsBaseUrl`. Native Responses may use a separate base, so prefer that when supplied.
     // The Chat bridge and the protocol-preserving native compatibility endpoint both expose a local
     // Responses URL.
     const responsesBaseUrl = useLocalResponsesEndpoint

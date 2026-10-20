@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { spawn } from 'node:child_process'
-import { existsSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -57,12 +57,14 @@ export async function buildDevPackages({
 } = {}) {
   const graph = packageBuildProjects(root)
   const selected = new Set()
+  const visited = new Set()
   const include = (project) => {
     if (!project) throw new Error('Unknown package build target')
-    if (selected.has(project)) return
-    selected.add(project)
+    if (visited.has(project)) return
+    visited.add(project)
     for (const ref of project.config.projectReferences ?? [])
       include(graph.find((candidate) => candidate.configPath === resolve(ref.path)))
+    selected.add(project)
   }
   if (packages)
     for (const name of packages) include(graph.find((p) => p.root === join(root, 'packages', name)))
@@ -104,6 +106,30 @@ export async function buildDevPackages({
       code === 0 ? resolveBuild() : reject(new Error(`Package build failed (${signal ?? code}).`))
     )
   })
+  // Packages own non-TypeScript output. Run their declared step after successful compilation,
+  // including incremental builds that may need to repair missing resources.
+  for (const project of projects) {
+    const manifest = JSON.parse(readFileSync(join(project.root, 'package.json'), 'utf8'))
+    if (!manifest.scripts?.['build:assets']) continue
+    const npmCli = process.env.npm_execpath
+    await new Promise((resolveAssets, reject) => {
+      const child = spawn(
+        npmCli ? process.execPath : process.platform === 'win32' ? 'npm.cmd' : 'npm',
+        [...(npmCli ? [npmCli] : []), 'run', 'build:assets'],
+        {
+          cwd: project.root,
+          stdio: 'inherit',
+          shell: !npmCli && process.platform === 'win32'
+        }
+      )
+      child.once('error', reject)
+      child.once('exit', (code, signal) =>
+        code === 0
+          ? resolveAssets()
+          : reject(new Error(`Package assets failed for ${manifest.name} (${signal ?? code}).`))
+      )
+    })
+  }
   log(
     `Packages ready (${((performance.now() - start) / 1000).toFixed(2)}s, ${clean ? 'clean' : 'incremental'}).`
   )

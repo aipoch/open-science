@@ -1,3 +1,4 @@
+import { prepareNativeResponsesRequest } from '@aipoch/providers/protocol'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { gzipSync } from 'node:zlib'
@@ -17,11 +18,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
   createLogger: () => logSpies
 }))
 
-import {
-  NativeResponsesCompatibilityProxy,
-  flattenNativeResponsesRequest,
-  restoreNativeResponsesPayload
-} from './native-responses-compatibility'
+import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import { CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE } from './provider-tool-image-wire.test-fixtures'
 
 afterEach(() => {
@@ -762,80 +759,8 @@ describe('native Responses compatibility', () => {
     }
   })
 
-  it('flattens namespace tools and matching history without changing plain functions', () => {
-    const { request, aliases } = flattenNativeResponsesRequest({
-      model: 'MiniMax-M3',
-      tools: [
-        {
-          type: 'namespace',
-          name: 'mcp__open_science_notebook',
-          description: 'Open-Science notebook tools.',
-          tools: [
-            {
-              type: 'function',
-              name: 'repl_execute',
-              description: 'Run control-plane JavaScript.',
-              parameters: { type: 'object' },
-              strict: false
-            }
-          ]
-        },
-        {
-          type: 'function',
-          name: 'shell_command',
-          description: 'Run a shell command.',
-          parameters: { type: 'object' }
-        }
-      ],
-      tool_choice: {
-        type: 'function',
-        namespace: 'mcp__open_science_notebook',
-        name: 'repl_execute'
-      },
-      input: [
-        {
-          type: 'function_call',
-          namespace: 'mcp__open_science_notebook',
-          name: 'repl_execute',
-          call_id: 'call-1',
-          arguments: '{}'
-        },
-        { type: 'function_call_output', call_id: 'call-1', output: 'ok' }
-      ]
-    })
-
-    expect(request.tools).toEqual([
-      {
-        type: 'function',
-        name: 'mcp__open_science_notebook__repl_execute',
-        description: 'Open-Science notebook tools.\n\nRun control-plane JavaScript.',
-        parameters: { type: 'object' },
-        strict: false
-      },
-      {
-        type: 'function',
-        name: 'shell_command',
-        description: 'Run a shell command.',
-        parameters: { type: 'object' }
-      }
-    ])
-    expect(request.tool_choice).toEqual({
-      type: 'function',
-      name: 'mcp__open_science_notebook__repl_execute'
-    })
-    expect(request.input[0]).toMatchObject({
-      type: 'function_call',
-      name: 'mcp__open_science_notebook__repl_execute'
-    })
-    expect(request.input[0]).not.toHaveProperty('namespace')
-    expect(aliases.get('mcp__open_science_notebook__repl_execute')).toEqual({
-      namespace: 'mcp__open_science_notebook',
-      name: 'repl_execute'
-    })
-  })
-
   it('preserves the captured Codex MCP image fixture through the final native Responses request', () => {
-    const { request } = flattenNativeResponsesRequest(CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE)
+    const { request } = prepareNativeResponsesRequest(CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE)
 
     expect(request.input).toEqual([
       {
@@ -846,79 +771,6 @@ describe('native Responses compatibility', () => {
       },
       CODEX_NATIVE_TOOL_IMAGE_REQUEST_FIXTURE.input[1]
     ])
-  })
-
-  it('rejects an alias collision instead of routing a tool ambiguously', () => {
-    expect(() =>
-      flattenNativeResponsesRequest({
-        tools: [
-          {
-            type: 'namespace',
-            name: 'mcp__server',
-            tools: [{ type: 'function', name: 'echo', parameters: { type: 'object' } }]
-          },
-          {
-            type: 'function',
-            name: 'mcp__server__echo',
-            parameters: { type: 'object' }
-          }
-        ]
-      })
-    ).toThrow('duplicate native Responses tool alias')
-  })
-
-  it('restores namespace identity in streamed and completed response items', () => {
-    const aliases = new Map([
-      [
-        'mcp__open_science_notebook__repl_execute',
-        { namespace: 'mcp__open_science_notebook', name: 'repl_execute' }
-      ]
-    ])
-
-    expect(
-      restoreNativeResponsesPayload(
-        {
-          type: 'response.output_item.done',
-          item: {
-            type: 'function_call',
-            name: 'mcp__open_science_notebook__repl_execute',
-            arguments: '{}',
-            call_id: 'call-1'
-          }
-        },
-        aliases
-      )
-    ).toMatchObject({
-      item: {
-        type: 'function_call',
-        namespace: 'mcp__open_science_notebook',
-        name: 'repl_execute'
-      }
-    })
-
-    expect(
-      restoreNativeResponsesPayload(
-        {
-          id: 'resp-1',
-          output: [
-            {
-              type: 'function_call',
-              name: 'mcp__open_science_notebook__repl_execute',
-              arguments: '{}',
-              call_id: 'call-1'
-            }
-          ]
-        },
-        aliases
-      )
-    ).toMatchObject({
-      output: [
-        {
-          namespace: 'mcp__open_science_notebook',
-          name: 'repl_execute'
-        }
-      ]
-    })
   })
 
   it('promotes Artifact guidance when a Notebook run returns a generated file', async () => {

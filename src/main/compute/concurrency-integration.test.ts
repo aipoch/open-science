@@ -22,14 +22,10 @@ import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import type { ComputeConnectionBroker } from './connection-broker'
 import { createComputeJobRuntime } from './job-runtime'
 
-// Mock the job-dispatcher module to prevent real SSH dispatches
-vi.mock('@aipoch/compute/node', async () => {
-  const actual = await vi.importActual('@aipoch/compute/node')
-  return {
-    ...actual,
-    dispatchJob: vi.fn(() => Promise.resolve())
-  }
-})
+// Keep real admission and queue behavior while preventing background dispatch.
+vi.mock('./dispatch-evidence', () => ({
+  dispatchComputeJob: vi.fn(async () => undefined)
+}))
 
 // Fake SSH runner that always succeeds (no actual SSH connections).
 const makeFakeRunner = (): SshRunner => ({

@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { auth } from '@modelcontextprotocol/sdk/client/auth.js'
 import { redirectUriMatches } from '@modelcontextprotocol/sdk/server/auth/handlers/authorize.js'
 
 import { OAuthCallbackServer, PersistentOAuthClientProvider } from './oauth-client'
@@ -135,6 +136,7 @@ describe('PersistentOAuthClientProvider', () => {
 
     await expect(provider.clientInformation()).resolves.toEqual({
       client_id: 'registered-client',
+      issuer: 'https://auth.example.test',
       client_secret: 'registered-secret'
     })
     expect(saveState).not.toHaveBeenCalled()
@@ -178,13 +180,210 @@ describe('PersistentOAuthClientProvider', () => {
       token_endpoint_auth_method: 'none',
       scope: 'openid profile'
     })
-    await provider.saveTokens({ access_token: 'access', token_type: 'Bearer' })
-    expect(provider.tokens()?.access_token).toBe('access')
+    await provider.saveTokens({
+      access_token: 'access',
+      token_type: 'Bearer',
+      issuer: 'https://auth.example.test'
+    })
+    expect((await provider.tokens())?.access_token).toBe('access')
     expect(saveState).toHaveBeenCalledWith(
-      expect.objectContaining({ tokens: { access_token: 'access', token_type: 'Bearer' } })
+      expect.objectContaining({
+        tokens: {
+          access_token: 'access',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test'
+        }
+      })
     )
     expect(JSON.stringify(provider.clientMetadata)).not.toContain('access')
   })
+
+  it.each([undefined, '', ' ', 42, null])(
+    'discards credentials with an invalid issuer (%s) before exposing a bearer token',
+    async (issuer) => {
+      const state = {
+        tokens: { access_token: 'legacy-access', token_type: 'Bearer', issuer: issuer as string },
+        clientInformation: {
+          client_id: 'legacy-client',
+          client_secret: 'legacy-secret',
+          issuer: 'https://auth.example.test'
+        }
+      }
+      const saveState = vi.fn(async () => undefined)
+      const provider = new PersistentOAuthClientProvider({
+        serverId: 'legacy',
+        redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+        config: {},
+        state,
+        saveState
+      })
+
+      await expect(provider.tokens()).resolves.toBeUndefined()
+      await expect(provider.clientInformation()).resolves.toBeUndefined()
+      expect(saveState).toHaveBeenCalledExactlyOnceWith({})
+      expect(state.tokens.access_token).toBe('legacy-access')
+    }
+  )
+
+  it('discards a bound token together with an unbound dynamic registration', async () => {
+    const saveState = vi.fn(async () => undefined)
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'legacy',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {},
+      state: {
+        tokens: {
+          access_token: 'bound-access',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test'
+        },
+        clientInformation: { client_id: 'legacy-client', client_secret: 'legacy-secret' }
+      },
+      saveState
+    })
+
+    await expect(provider.clientInformation()).resolves.toBeUndefined()
+    await expect(provider.tokens()).resolves.toBeUndefined()
+    expect(saveState).toHaveBeenCalledExactlyOnceWith({})
+  })
+
+  it('propagates a failed legacy-credential removal before returning tokens', async () => {
+    const provider = new PersistentOAuthClientProvider({
+      serverId: 'legacy',
+      redirectUrl: 'http://127.0.0.1:4000/oauth/callback',
+      config: {},
+      state: { tokens: { access_token: 'legacy-access', token_type: 'Bearer' } },
+      saveState: async () => {
+        throw new Error('storage unavailable')
+      }
+    })
+
+    await expect(provider.tokens()).rejects.toThrow('storage unavailable')
+  })
+
+  it.each([undefined, 'https://original-auth.example.test'])(
+    'does not send credentials bound to %s to a newly selected issuer',
+    async (oldIssuer) => {
+      const issuer = 'https://new-auth.example.test'
+      const cachedIssuer = oldIssuer ? issuer : 'https://obsolete-auth.example.test'
+      const redirectUrl = 'http://127.0.0.1:4000/oauth/callback'
+      const saveState = vi.fn<(state: import('./types').McpOAuthState) => Promise<void>>(
+        async () => undefined
+      )
+      const openExternal = vi.fn<(url: string) => Promise<void>>(async () => undefined)
+      const provider = new PersistentOAuthClientProvider({
+        serverId: 'oauth',
+        redirectUrl,
+        config: {},
+        state: {
+          clientInformation: {
+            client_id: 'old-client',
+            client_secret: 'old-secret',
+            issuer: oldIssuer
+          },
+          tokens: {
+            access_token: 'old-access',
+            refresh_token: 'old-refresh',
+            token_type: 'Bearer',
+            issuer: oldIssuer
+          },
+          discoveryState: {
+            authorizationServerUrl: cachedIssuer,
+            resourceMetadata: {
+              resource: 'https://mcp.example.test',
+              authorization_servers: [cachedIssuer]
+            },
+            authorizationServerMetadata: {
+              issuer: cachedIssuer,
+              authorization_endpoint: `${cachedIssuer}/authorize`,
+              token_endpoint: `${cachedIssuer}/token`,
+              registration_endpoint: `${cachedIssuer}/register`,
+              response_types_supported: ['code'],
+              code_challenge_methods_supported: ['S256']
+            }
+          }
+        },
+        saveState,
+        openExternal
+      })
+      const fetchFn = vi.fn<typeof fetch>(async (input) => {
+        if (String(input) === 'https://mcp.example.test/.well-known/oauth-protected-resource') {
+          return Response.json({
+            resource: 'https://mcp.example.test',
+            authorization_servers: [issuer]
+          })
+        }
+        if (String(input) === `${issuer}/.well-known/oauth-authorization-server`) {
+          return Response.json({
+            issuer,
+            authorization_endpoint: `${issuer}/authorize`,
+            token_endpoint: `${issuer}/token`,
+            registration_endpoint: `${issuer}/register`,
+            response_types_supported: ['code'],
+            code_challenge_methods_supported: ['S256']
+          })
+        }
+        if (String(input) === `${issuer}/register`) {
+          return Response.json({
+            client_id: 'new-client',
+            redirect_uris: [redirectUrl],
+            token_endpoint_auth_method: 'none'
+          })
+        }
+        if (String(input) === `${issuer}/token`) {
+          return Response.json({
+            access_token: 'new-access',
+            refresh_token: 'new-refresh',
+            token_type: 'Bearer'
+          })
+        }
+        throw new Error(`Unexpected OAuth request: ${String(input)}`)
+      })
+      const options = { serverUrl: new URL('https://mcp.example.test'), fetchFn }
+
+      await expect(auth(provider, options)).resolves.toBe('REDIRECT')
+      expect(openExternal).toHaveBeenCalledOnce()
+      expect(new URL(openExternal.mock.calls[0][0]).origin).toBe(issuer)
+      expect(fetchFn.mock.calls.map(([url]) => String(url))).toEqual(
+        oldIssuer
+          ? [`${issuer}/register`]
+          : [
+              'https://mcp.example.test/.well-known/oauth-protected-resource',
+              `${issuer}/.well-known/oauth-authorization-server`,
+              `${issuer}/register`
+            ]
+      )
+      await expect(auth(provider, { ...options, authorizationCode: 'new-code' })).resolves.toBe(
+        'AUTHORIZED'
+      )
+      const requests = fetchFn.mock.calls
+        .map(([url, init]) => `${url} ${String(init?.body)} ${JSON.stringify(init?.headers)}`)
+        .join('\n')
+      for (const secret of ['old-client', 'old-secret', 'old-access', 'old-refresh']) {
+        expect(requests).not.toContain(secret)
+      }
+      await expect(provider.tokens()).resolves.toMatchObject({ access_token: 'new-access', issuer })
+      await expect(provider.clientInformation()).resolves.toMatchObject({
+        client_id: 'new-client',
+        issuer
+      })
+      const persisted = saveState.mock.calls.at(-1)?.[0]
+      const restarted = new PersistentOAuthClientProvider({
+        serverId: 'oauth',
+        redirectUrl,
+        config: {},
+        state: JSON.parse(JSON.stringify(persisted))
+      })
+      await expect(restarted.tokens()).resolves.toMatchObject({
+        access_token: 'new-access',
+        issuer
+      })
+      await expect(restarted.clientInformation()).resolves.toMatchObject({
+        client_id: 'new-client',
+        issuer
+      })
+    }
+  )
 
   it('clears stale tokens instead of opening a browser outside an interactive sign-in', async () => {
     const saveState = vi.fn(async () => undefined)
@@ -199,7 +398,7 @@ describe('PersistentOAuthClientProvider', () => {
     await expect(
       provider.redirectToAuthorization(new URL('https://auth.example.test/authorize'))
     ).rejects.toThrow('OAuth authentication required. Start an interactive authorization flow.')
-    expect(provider.tokens()).toBeUndefined()
+    await expect(provider.tokens()).resolves.toBeUndefined()
     expect(saveState).toHaveBeenLastCalledWith({})
   })
 
@@ -255,7 +454,7 @@ describe('PersistentOAuthClientProvider', () => {
     await expect(
       provider.redirectToAuthorization(new URL('http://auth.example.test/authorize'))
     ).rejects.toThrow('OAuth authorization URL must use HTTPS or loopback HTTP.')
-    expect(provider.tokens()).toBeUndefined()
+    await expect(provider.tokens()).resolves.toBeUndefined()
     expect(saveState).toHaveBeenLastCalledWith({})
   })
 
@@ -268,22 +467,28 @@ describe('PersistentOAuthClientProvider', () => {
       state: {
         clientInformation: {
           client_id: 'registered-client',
+          issuer: 'https://auth.example.test',
           redirect_uris: ['http://127.0.0.1:4000/oauth/callback']
         },
-        tokens: { access_token: 'rejected', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'rejected',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test'
+        }
       },
       saveState
     })
 
-    expect(provider.tokens()?.access_token).toBe('rejected')
+    expect((await provider.tokens())?.access_token).toBe('rejected')
     expect(saveState).not.toHaveBeenCalled()
 
     await expect(provider.clientInformation()).resolves.toBeUndefined()
-    expect(provider.tokens()).toBeUndefined()
+    await expect(provider.tokens()).resolves.toBeUndefined()
     expect(saveState).toHaveBeenLastCalledWith({})
 
     await provider.saveClientInformation({
       client_id: 'replacement-client',
+      issuer: 'https://auth.example.test',
       redirect_uris: ['http://127.0.0.1:5000/oauth/callback']
     })
     await expect(provider.clientInformation()).resolves.toMatchObject({
@@ -297,12 +502,18 @@ describe('PersistentOAuthClientProvider', () => {
       serverId: 'server-1',
       redirectUrl: 'http://127.0.0.1:5000/oauth/callback',
       config: { clientMetadataUrl: 'https://client.example.test/metadata' },
-      state: { clientInformation: { client_id: 'https://client.example.test/metadata' } },
+      state: {
+        clientInformation: {
+          client_id: 'https://client.example.test/metadata',
+          issuer: 'https://auth.example.test'
+        }
+      },
       saveState
     })
 
     await expect(provider.clientInformation()).resolves.toEqual({
-      client_id: 'https://client.example.test/metadata'
+      client_id: 'https://client.example.test/metadata',
+      issuer: 'https://auth.example.test'
     })
     expect(saveState).not.toHaveBeenCalled()
   })

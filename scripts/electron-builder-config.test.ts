@@ -1,8 +1,10 @@
-import { readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync } from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { createRequire } from 'node:module'
 import type { Stats } from 'node:fs'
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import { copyFiles, FileMatcher } from 'app-builder-lib/out/fileMatcher'
 import { load } from 'js-yaml'
@@ -122,6 +124,71 @@ describe('electron-builder local evidence exclusion', () => {
     }
   })
 
+  it('loads the installed providers protocol through the desktop filter without host tokenizer dependencies', async () => {
+    const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
+    const root = await mkdtemp(join(tmpdir(), 'desktop-providers-'))
+    const source = join(root, 'source')
+    const destination = join(root, 'packaged')
+    const require = createRequire(import.meta.url)
+    const collected = new Set<string>()
+    // Mirror dependency collection from package manifests, without naming provider internals.
+    const collect = async (name: string, resolveFrom: NodeJS.Require): Promise<void> => {
+      if (collected.has(name)) return
+      collected.add(name)
+      let packageRoot = dirname(resolveFrom.resolve(name))
+      while (
+        !existsSync(join(packageRoot, 'package.json')) ||
+        JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).name !== name
+      ) {
+        const parent = dirname(packageRoot)
+        if (parent === packageRoot) throw new Error(`Missing package root: ${name}`)
+        packageRoot = parent
+      }
+      await cp(packageRoot, join(source, 'node_modules', name), {
+        recursive: true,
+        filter: (path) =>
+          path === packageRoot ||
+          !path
+            .slice(packageRoot.length + 1)
+            .split(/[\\/]/)
+            .includes('node_modules')
+      })
+      const manifest = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8'))
+      for (const dependency of Object.keys(manifest.dependencies ?? {}))
+        await collect(dependency, createRequire(join(packageRoot, 'package.json')))
+    }
+    try {
+      await collect('@aipoch/providers', require)
+      const filter = new FileMatcher(source, destination, (value) => value, [
+        '**/*',
+        ...config.files
+      ]).createFilter()
+      await mkdir(join(destination, 'node_modules'), { recursive: true })
+      for (const name of collected) {
+        await cp(join(source, 'node_modules', name), join(destination, 'node_modules', name), {
+          recursive: true,
+          filter: (path) => filter(path, statSync(path))
+        })
+      }
+      const result = execFileSync(
+        process.execPath,
+        [
+          '-e',
+          `
+        const protocol = require('@aipoch/providers/protocol')
+        if (!(protocol.countMessagesInputTokens({messages:[{role:'user',content:'hello'}]}) > 0))
+          throw new Error('Installed provider token count failed')
+        console.log('ok')
+      `
+        ],
+        { cwd: destination, env: { ...process.env, NODE_PATH: '' }, encoding: 'utf8' }
+      )
+      expect(result.trim()).toBe('ok')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('declares the native PDF worker imports as production dependencies', () => {
     const manifest = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
     for (const dependency of [
@@ -173,6 +240,9 @@ describe('electron-builder local evidence exclusion', () => {
       'resources/notebook/python_loop.py',
       'node_modules/@aipoch/credential-identity-probe-native/build/Release/credential_secret',
       'node_modules/@aipoch/diagnostics/dist/node.js',
+      'node_modules/@aipoch/providers/dist/providers.js',
+      'node_modules/@aipoch/providers/dist/protocol.js',
+      'node_modules/@aipoch/providers/dist/client.js',
       'node_modules/i18next/index.js',
       'node_modules/electron-updater/out/main.js',
       'package.json',
@@ -188,8 +258,8 @@ describe('electron-builder local evidence exclusion', () => {
       'node_modules/.prisma',
       'node_modules/prisma',
       'node_modules/typescript',
-      'node_modules/tiktoken',
       'node_modules/js-tiktoken',
+      'node_modules/tiktoken',
       'node_modules/web-tree-sitter',
       'node_modules/openchemlib',
       'node_modules/citeme-engine-wasm',

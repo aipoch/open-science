@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
@@ -6,7 +7,7 @@ import {
   type JournalResult
 } from '@aipoch/journal-catalog/contracts'
 
-import { refreshJournalAttributes } from './journal-attribute-store'
+import { useJournalStore } from './journal-attribute-store'
 
 const JOURNAL_IDENTITY_COLUMNS_KEY = 'open-science:journal-identity-columns'
 type IdentityColumns = { issn: boolean; externalIds: boolean }
@@ -73,8 +74,12 @@ export function useJournalEditing({
   saveFields: () => Promise<void>
   saveEntry: () => Promise<void>
 } {
+  const { refreshJournalAttributes } = useJournalStore()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
-  const api = window.api.literature.journals
+  const api = hostApi.literature.journals
   const [identityColumns, setIdentityColumns] = useState(loadIdentityColumns)
   const [identityDraft, setIdentityDraft] = useState(identityColumns)
   useEffect(() => {
@@ -171,18 +176,19 @@ export function useJournalEditing({
       }
     },
     [
-      api,
       dataset,
       remoteDatasets,
       t,
       cancelledRef,
-      catalogGenerationRef,
       setBusy,
       setError,
+      catalogGenerationRef,
+      api,
       setRemoteDatasets,
       setDatasets,
       setSortField,
-      setOffset
+      setOffset,
+      refreshJournalAttributes
     ]
   )
   const moveField = (id: string, targetId: string): void => {
@@ -233,19 +239,20 @@ export function useJournalEditing({
       setBusy(false)
     }
   }, [
-    api,
     dataset,
     entryDraft,
-    fail,
     remoteDatasets,
-    t,
     cancelledRef,
-    catalogGenerationRef,
     setBusy,
     setError,
+    catalogGenerationRef,
+    api,
     setRemoteDatasets,
     setDatasets,
-    setMessage
+    setMessage,
+    t,
+    refreshJournalAttributes,
+    fail
   ])
   return {
     identityColumns,

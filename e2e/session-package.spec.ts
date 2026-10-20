@@ -716,7 +716,7 @@ for (const launch of ['cold', 'warm'] as const) {
       })
       await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-confirmation.png`) })
       await dialog.getByRole('button', { name: 'Import', exact: true }).click()
-      await expect(dialog.getByText('Package operation completed', { exact: true })).toBeVisible({
+      await expect(dialog.getByText('Session imported', { exact: true })).toBeVisible({
         timeout: 60_000
       })
       await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-imported.png`) })

@@ -99,6 +99,8 @@ test('runs local ONNX translation, cancellation and checkpoint recovery in built
     elapsed.firstInferenceMs = performance.now() - started
     expect(typeof first).toBe('string')
     expect(first).not.toBe('')
+    expect(first).toMatch(/\p{Script=Han}/u)
+    expect(first).not.toBe(sources[0])
     const readCheckpoint = (): Promise<PdfTranslationCheckpoint | null> =>
       page.evaluate((id) => window.api.pdfTranslation!.readCheckpoint(id), attachmentVersionId)
     const saved = (await readCheckpoint())!
@@ -148,6 +150,8 @@ test('runs local ONNX translation, cancellation and checkpoint recovery in built
     elapsed.resumedInferenceMs = performance.now() - resumeStarted
     expect(typeof second).toBe('string')
     expect(second).not.toBe('')
+    expect(second).toMatch(/\p{Script=Han}/u)
+    expect(second).not.toBe(sources[1])
     await page.evaluate(
       (operationId) => window.api.pdfTranslation!.close({ operationId }),
       resumed.operationId

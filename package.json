@@ -3,7 +3,7 @@
   "productName": "Open-Science",
   "desktopName": "open-science.desktop",
   "version": "1.0.0",
-  "description": "Open-Science — an open-source, model-agnostic AI workbench for scientific discovery.",
+  "description": "Open-Science \u2014 an open-source, model-agnostic AI workbench for scientific discovery.",
   "main": "./out/main/index.js",
   "author": "aipoch",
   "license": "Apache-2.0",
@@ -120,7 +120,8 @@
     "check:durable-files-package": "node scripts/check-durable-files-package.mjs",
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
-    "check:test-impact-package": "node scripts/check-test-impact-package.mjs"
+    "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
+    "check:providers-package": "node scripts/check-providers-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
@@ -136,7 +137,7 @@
     "@electron-toolkit/utils": "^4.0.0",
     "@embedpdf/pdfium": "2.15.1",
     "@huggingface/transformers": "4.2.0",
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/sdk": "^1.31.0",
     "@napi-rs/canvas": "0.1.100",
     "@peculiar/x509": "2.1.0",
     "@prisma/client": "^6.19.3",
@@ -188,7 +189,8 @@
     "@aipoch/durable-files": "file:packages/durable-files",
     "@aipoch/resilient-download": "file:packages/resilient-download",
     "@aipoch/literature-library": "file:packages/literature-library",
-    "@aipoch/literature-reading": "file:packages/literature-reading"
+    "@aipoch/literature-reading": "file:packages/literature-reading",
+    "@aipoch/providers": "file:packages/providers"
   },
   "overrides": {
     "@huggingface/transformers": {

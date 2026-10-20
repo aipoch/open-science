@@ -1,6 +1,5 @@
-import type { PrismaClient } from '@prisma/client'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { LiteratureCatalog } from '../literature/catalog'
+import type { PackageLiteratureSource } from './literature-source'
 import type { PackageLiterature } from './literature-contract'
 import { packageLiteratureSchema } from './literature-contract'
 import type { PackageRecords } from './records-contract'
@@ -54,7 +53,7 @@ export const sessionLiteratureReferences = (
 // Package-owned immutable copies reuse Upload storage/publication/deletion. The Literature
 // section preserves their real source identity; no Library rows are installed on import.
 export const capturePackageLiterature = async (
-  client: PrismaClient,
+  source: PackageLiteratureSource | undefined,
   session: PersistedChatSession,
   records: PackageRecords,
   additionalVersionIds: readonly string[] = []
@@ -79,13 +78,13 @@ export const capturePackageLiterature = async (
   const localVersionIds = [...references.versionIds].filter(
     (id) => !literature.attachments.some((entry) => entry.versionId === id)
   )
-  const catalog = new LiteratureCatalog(async () => client)
-  const rows = await client.literatureAttachmentVersion.findMany({
-    where: { id: { in: localVersionIds } },
-    include: { attachment: { include: { item: true } }, contentBlob: true },
-    orderBy: [{ attachmentId: 'asc' }, { versionNumber: 'asc' }]
-  })
-  if (rows.length !== localVersionIds.length)
+  if (localVersionIds.length && !source) throw new Error('Literature source is unavailable.')
+  const rows = localVersionIds.length ? await source!.readVersions(localVersionIds) : []
+  if (
+    rows.length !== localVersionIds.length ||
+    new Set(rows.map(({ id }) => id)).size !== rows.length ||
+    rows.some(({ id }) => !localVersionIds.includes(id))
+  )
     throw new Error('Literature PDF Version is unavailable.')
   if (
     rows.length &&
@@ -107,24 +106,16 @@ export const capturePackageLiterature = async (
   }
   for (const row of rows) {
     if (
-      row.attachment.item.deletedAt ||
-      row.contentBlob.state !== 'available' ||
-      row.contentType !== 'application/pdf' ||
-      row.checksum !== row.contentBlob.checksum ||
-      row.sizeBytes !== row.contentBlob.sizeBytes
-    )
-      throw new Error('Literature PDF content identity is invalid.')
-    if (
       records.tables.UploadVersion.some((version) => version.id === row.id) ||
       records.tables.ArtifactVersion.some((version) => version.id === row.id)
     )
       throw new Error('Literature PDF Version identity collides with file evidence.')
-    if (!literature.items.some((item) => item.itemId === row.attachment.itemId)) {
-      const view = await catalog.get(row.attachment.itemId)
-      if (!view || view.id !== row.attachment.itemId)
+    if (!literature.items.some((item) => item.itemId === row.itemId)) {
+      const view = await source!.readItem(row.itemId)
+      if (!view || view.itemId !== row.itemId)
         throw new Error('Literature metadata is unavailable.')
       literature.items.push({
-        itemId: view.id,
+        itemId: view.itemId,
         metadataRevision: view.metadataRevision,
         item: view.item
       })
@@ -132,10 +123,10 @@ export const capturePackageLiterature = async (
     literature.attachments.push({
       versionId: row.id,
       attachmentId: row.attachmentId,
-      itemId: row.attachment.itemId
+      itemId: row.itemId
     })
     const storageKey = `uploads/${session.projectId}/${session.id}/${row.attachmentId}/versions/${row.id}/content`
-    sources.set(storageKey, row.contentBlob.storageKey)
+    sources.set(storageKey, row.storageKey)
     const timestamp = row.createdAt.toISOString()
     let file = records.tables.UploadFile.find((file) => file.id === row.attachmentId)
     if (

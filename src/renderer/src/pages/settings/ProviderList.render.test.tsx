@@ -5,11 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
   AgentFrameworkId,
-  ChatApiEndpoint,
+  ModelProtocol,
   ClaudeSubscriptionProviderId,
   ProviderView
 } from '../../../../shared/settings'
-import { defaultVendorModel } from '../../../../shared/provider-registry'
+import { defaultVendorModel } from '../../../../shared/provider-model-policy'
 import { ProviderList } from './ProviderList'
 
 let container: HTMLDivElement
@@ -69,7 +69,7 @@ const renderList = (
     claudeSubscriptionProviderId?: ClaudeSubscriptionProviderId
     activeModel?: string
     agentFrameworkId?: AgentFrameworkId
-    frameworkEndpoints?: readonly ChatApiEndpoint[]
+    frameworkEndpoints?: readonly ModelProtocol[]
     frameworkName?: string
   } = {}
 ): void => {
@@ -183,12 +183,12 @@ describe('ProviderList', () => {
 
   it('tags a provider the active framework cannot drive while keeping the card visible', () => {
     renderList(
-      [provider({ apiEndpoints: ['openai'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
+      [provider({ apiEndpoints: ['chat-completions'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
       undefined,
       undefined,
       {
         agentFrameworkId: 'claude-code',
-        frameworkEndpoints: ['anthropic'],
+        frameworkEndpoints: ['messages'],
         frameworkName: 'Claude Code'
       }
     )
@@ -197,12 +197,12 @@ describe('ProviderList', () => {
 
     // A pairing the framework can drive carries no tag.
     renderList(
-      [provider({ apiEndpoints: ['openai'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
+      [provider({ apiEndpoints: ['chat-completions'], model: 'qwen3:14b', models: ['qwen3:14b'] })],
       undefined,
       undefined,
       {
         agentFrameworkId: 'opencode',
-        frameworkEndpoints: ['anthropic', 'openai'],
+        frameworkEndpoints: ['messages', 'chat-completions'],
         frameworkName: 'OpenCode'
       }
     )
@@ -256,7 +256,7 @@ describe('ProviderList', () => {
         provider({
           model: 'model-b',
           models: ['model-a', 'model-b'],
-          lastValidatedTarget: { model: 'model-a', endpoint: 'anthropic' }
+          lastValidatedTarget: { model: 'model-a', endpoint: 'messages' }
         })
       ],
       'p1',
@@ -271,8 +271,8 @@ describe('ProviderList', () => {
     renderList(
       [
         provider({
-          apiEndpoints: ['anthropic', 'openai'],
-          lastValidatedTarget: { model: 'claude-sonnet-4-5', endpoint: 'anthropic' }
+          apiEndpoints: ['messages', 'chat-completions'],
+          lastValidatedTarget: { model: 'claude-sonnet-4-5', endpoint: 'messages' }
         })
       ],
       'p1',
@@ -280,7 +280,7 @@ describe('ProviderList', () => {
       {
         activeModel: 'claude-sonnet-4-5',
         agentFrameworkId: 'opencode',
-        frameworkEndpoints: ['openai']
+        frameworkEndpoints: ['chat-completions']
       }
     )
 
@@ -295,7 +295,7 @@ describe('ProviderList', () => {
           type: 'official',
           vendorId: 'anthropic',
           model: undefined,
-          lastValidatedTarget: { model, endpoint: 'anthropic' }
+          lastValidatedTarget: { model, endpoint: 'messages' }
         })
       ],
       'p1'
@@ -581,7 +581,7 @@ describe('ProviderList', () => {
   })
 
   it('badges an OpenAI-compatible provider distinctly', () => {
-    renderList([provider({ apiEndpoints: ['openai'] })])
+    renderList([provider({ apiEndpoints: ['chat-completions'] })])
 
     const badge = container.querySelector('[aria-label="Speaks the /v1/chat/completions endpoint"]')
     expect(badge).not.toBeNull()
@@ -597,7 +597,7 @@ describe('ProviderList', () => {
   })
 
   it('badges a dual-endpoint provider with both routes', () => {
-    renderList([provider({ apiEndpoints: ['anthropic', 'openai'] })])
+    renderList([provider({ apiEndpoints: ['messages', 'chat-completions'] })])
 
     expect(container.textContent).toContain('/v1/messages · /v1/chat/completions')
   })

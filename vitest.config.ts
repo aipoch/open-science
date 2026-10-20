@@ -46,8 +46,8 @@ export const VITEST_PROCESS_TEST_GLOBS = [
   'src/main/local-rpc-transport.test.ts',
   'src/main/session-plan/plan-mcp-server.test.ts',
   'src/main/acp/mcp-http-host.test.ts',
-  'src/main/settings/openai-provider-bridge.test.ts',
-  'src/main/settings/anthropic-provider-bridge.test.ts',
+  'src/main/settings/protocol-forwarding-bridge.test.ts',
+  'src/main/settings/messages-bridge.test.ts',
   'resources/skills/literature-review/kernel.test.ts'
 ] as const
 
@@ -89,6 +89,23 @@ function vitestExcludePatternsFor(env: NodeJS.ProcessEnv): string[] {
     ...(env.VITEST_PORTABLE_CI === '1' ? VITEST_PORTABLE_CI_EXCLUDE_PATTERNS : [])
   ]
 }
+
+// These suites use the same package-owned configuration locally and in the host runner.
+const standalonePackageRoots = [
+  'packages/resilient-download',
+  'packages/durable-files',
+  'packages/compute',
+  'packages/providers',
+  'packages/pdf-structure',
+  'packages/pdf-translation',
+  'packages/literature-citations',
+  'packages/journal-catalog',
+  'packages/literature-discovery',
+  'packages/literature-screening',
+  'packages/literature-library',
+  'packages/literature-reading'
+]
+const standalonePackageExcludes = standalonePackageRoots.map((root) => `${root}/**`)
 
 const VITEST_EXCLUDE_PATTERNS = vitestExcludePatternsFor(process.env)
 const portableTestScope = portableTestScopeFor(process.env)
@@ -221,28 +238,31 @@ export default defineConfig({
       ? 1
       : resolveVitestMaxWorkers(undefined, process.env.OPEN_SCIENCE_TEST_MAX_WORKERS),
     projects: [
-      ...(portableTestScope === 'host' ||
-      packageTestExcludePatterns(process.env).includes('packages/resilient-download/**')
-        ? []
-        : ['packages/resilient-download/vitest.config.ts']),
-      ...(portableTestScope === 'host' ||
-      packageTestExcludePatterns(process.env).includes('packages/durable-files/**')
-        ? []
-        : ['packages/durable-files/vitest.config.ts']),
-      // Standalone package configuration owns its setup, concurrency and native shell tests.
-      ...(portableTestScope === 'host' ||
-      packageTestExcludePatterns(process.env).includes('packages/compute/**')
-        ? []
-        : ['packages/compute/vitest.config.ts']),
+      ...standalonePackageRoots
+        .filter(
+          (root) =>
+            portableTestScope !== 'host' &&
+            !packageTestExcludePatterns(process.env).includes(`${root}/**`)
+        )
+        .map((root) => {
+          const config = `${root}/vitest.config.ts`
+          const index = standalonePackageRoots.indexOf(root)
+          // Packages keep their own worker caps; Vitest requires separate scheduling groups.
+          return index < 4
+            ? config
+            : {
+                extends: config,
+                root,
+                test: { sequence: { groupOrder: index } }
+              }
+        }),
       {
         extends: true,
         test: {
           name: 'default',
           exclude: [
             ...VITEST_EXCLUDE_PATTERNS,
-            'packages/compute/**',
-            'packages/durable-files/**',
-            'packages/resilient-download/**',
+            ...standalonePackageExcludes,
             ...VITEST_ARCHITECTURE_TEST_GLOBS,
             ...VITEST_DATABASE_TEST_GLOBS,
             ...VITEST_PROCESS_TEST_GLOBS
@@ -254,12 +274,7 @@ export default defineConfig({
         test: {
           name: 'architecture',
           include: [...VITEST_ARCHITECTURE_TEST_GLOBS],
-          exclude: [
-            ...VITEST_EXCLUDE_PATTERNS,
-            'packages/compute/**',
-            'packages/durable-files/**',
-            'packages/resilient-download/**'
-          ],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, ...standalonePackageExcludes],
           isolate: false,
           fileParallelism: false,
           maxWorkers: 1,
@@ -271,12 +286,7 @@ export default defineConfig({
         test: {
           name: 'process',
           include: [...VITEST_PROCESS_TEST_GLOBS],
-          exclude: [
-            ...VITEST_EXCLUDE_PATTERNS,
-            'packages/compute/**',
-            'packages/durable-files/**',
-            'packages/resilient-download/**'
-          ],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, ...standalonePackageExcludes],
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1
@@ -287,12 +297,7 @@ export default defineConfig({
         test: {
           name: 'database',
           include: [...VITEST_DATABASE_TEST_GLOBS],
-          exclude: [
-            ...VITEST_EXCLUDE_PATTERNS,
-            'packages/compute/**',
-            'packages/durable-files/**',
-            'packages/resilient-download/**'
-          ],
+          exclude: [...VITEST_EXCLUDE_PATTERNS, ...standalonePackageExcludes],
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1,

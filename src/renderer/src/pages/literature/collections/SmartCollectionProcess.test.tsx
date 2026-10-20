@@ -1,10 +1,18 @@
 // @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { SmartCollectionProcess } from './SmartCollectionProcess'
 import { createSmartCollectionState } from './smart-collection-state'
 import { WEB_EVENT_CONNECTION_STATE_EVENT } from '../../../../../shared/web-event-connection'
 import type { SmartCollectionView, SmartRunProgress } from '@aipoch/literature-screening/contracts'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 vi.mock('react-i18next', () => ({ useTranslation: () => ({ t: (key: string) => key }) }))
 afterEach(cleanup)

@@ -8,8 +8,8 @@ import type { SearchResult } from './search-result'
 import type { Project } from '../../../../shared/projects'
 import type { ProjectFilesChangedEvent } from '../../../../shared/project-files'
 
-vi.mock('@/pages/literature/useLiteratureChanges', () => ({ useLiteratureChanges: () => {} }))
-vi.mock('@/pages/literature/literature-read-pages', () => ({
+vi.mock('@/pages/literature/public/events', () => ({ useLiteratureChanges: () => {} }))
+vi.mock('../../lib/literature-queries', () => ({
   readLiteratureSelectionPage: vi.fn(async () => ({ entries: [], totalCount: 0 }))
 }))
 afterEach(cleanup)

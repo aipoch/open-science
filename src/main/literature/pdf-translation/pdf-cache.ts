@@ -16,7 +16,9 @@ const log = createLogger('pdf-translation-pdf-cache')
 export class PdfTranslationPdfCache {
   private readonly cache: Cache
   constructor(
-    options: Omit<CacheOptions, 'owner'> & { owner: Pick<PdfTranslationOwner, 'readCheckpoint'> }
+    options: Omit<CacheOptions, 'owner'> & {
+      owner: Pick<PdfTranslationOwner, 'readCheckpoint' | 'recordLayout'>
+    }
   ) {
     this.cache = new Cache({
       sourceKey: (id) => pdfTranslationSourceKey(fromTranslationSourceId(id)),
@@ -27,6 +29,11 @@ export class PdfTranslationPdfCache {
         return options.revision
       },
       owner: {
+        recordLayout: (request, caller) =>
+          options.owner.recordLayout(
+            { ...request, source: fromTranslationSourceId(request.source) },
+            caller
+          ),
         async readCheckpoint(source, caller, key) {
           const value = await options.owner.readCheckpoint(
             fromTranslationSourceId(source),
@@ -62,8 +69,14 @@ export class PdfTranslationPdfCache {
       caller
     )
   }
-  confirm(input: PdfTranslationRecordLayoutRequest, caller: TranslationCallerLease): Promise<void> {
-    return this.cache.confirm({ ...input, source: toTranslationSourceId(input.source) }, caller)
+  recordLayout(
+    input: PdfTranslationRecordLayoutRequest,
+    caller: TranslationCallerLease
+  ): Promise<void> {
+    return this.cache.recordLayout(
+      { ...input, source: toTranslationSourceId(input.source) },
+      caller
+    )
   }
   cancel(id: string, caller: TranslationCallerLease): void {
     this.cache.cancel(id, caller)

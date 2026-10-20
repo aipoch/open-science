@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { useId, useState } from 'react'
 import { Download, ListChecks, LoaderCircle, MoreHorizontal, Pencil, Trash2, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -71,6 +72,8 @@ export function JournalDatasetActions({
   onDelete: () => void
   onOpenItem: (id: string, initiator?: HTMLElement) => void | Promise<void>
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const inputId = useId()
   const descriptionId = useId()
@@ -93,7 +96,7 @@ export function JournalDatasetActions({
     setSaving(true)
     setError('')
     try {
-      const result = await window.api.literature.journals({
+      const result = await hostApi.literature.journals({
         action: 'rename',
         datasetId: dataset.id,
         expectedRevision: revision,

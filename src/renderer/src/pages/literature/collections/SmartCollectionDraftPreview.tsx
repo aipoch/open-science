@@ -1,3 +1,4 @@
+import { useLiteratureHost } from '../renderer-host'
 import { Button } from '@/components/ui/button'
 import { CollectionOptionHelp } from './CollectionOptionHelp'
 import { useEffect, useState } from 'react'
@@ -23,6 +24,8 @@ export function SmartCollectionDraftPreview({
   scope: SmartScope
   disabled: boolean
 }): React.JSX.Element {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const [enabled, setEnabled] = useState(false)
   const [attempt, setAttempt] = useState(0)
@@ -46,7 +49,7 @@ export function SmartCollectionDraftPreview({
     const timer = setTimeout(() => {
       started = true
       setResult({ key, loading: true })
-      void window.api.literature
+      void hostApi.literature
         .transact({
           kind: 'preview-smart-collection',
           requestId,
@@ -65,11 +68,11 @@ export function SmartCollectionDraftPreview({
       current = false
       clearTimeout(timer)
       if (started)
-        void window.api.literature
+        void hostApi.literature
           .transact({ kind: 'cancel-smart-preview', requestId })
           .catch(() => undefined)
     }
-  }, [enabled, disabled, description, scopeKey, evidenceMode, key])
+  }, [enabled, disabled, description, scopeKey, evidenceMode, key, hostApi.literature])
   return (
     <section className="space-y-2 border-t border-border pt-3" aria-label={t('Live rule preview')}>
       <div className="space-y-1">

@@ -153,7 +153,11 @@ describe('settings Connectors slice', () => {
         oauth: {}
       })
       await credentials.saveOAuthState(credential.id, {
-        tokens: { access_token: 'old-token', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'old-token',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test'
+        }
       })
       const list = async (): Promise<{ credentials: DeviceCredentialView[] }> => ({
         credentials: (await credentials.list()).map((entry) => credentials.view(entry, []))

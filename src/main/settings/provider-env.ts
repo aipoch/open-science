@@ -1,15 +1,18 @@
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import type { OfficialVendorId } from '../../shared/provider-registry'
-import type { CustomReasoningEffortTransport } from '../../shared/reasoning-effort'
+import type {
+  ModelProtocol,
+  OfficialVendorId,
+  CustomReasoningEffortTransport
+} from '@aipoch/providers'
+
 import type {
   CodexSubscriptionAuthMode,
   CodexSubscriptionTransport,
   ProviderType
 } from '../../shared/settings'
-import { normalizeAnthropicBaseUrl } from './base-url'
+import { normalizeMessagesRootUrl } from '@aipoch/providers/protocol'
 
 // Resolves an active provider into the environment overrides that the ACP agent (and the claude
 // binary it spawns) read. Pure and free of Electron so the branch matrix stays unit-testable.
@@ -29,10 +32,10 @@ export type ResolvedProvider = {
   // Anthropic /v1/messages base (also the sole base for a custom provider). Claude always uses this.
   baseUrl?: string
   // Distinct OpenAI /v1/chat/completions base for a dual-endpoint vendor (e.g. DeepSeek). Used only
-  // when the chosen endpoint is openai; falls back to baseUrl when absent.
-  openaiBaseUrl?: string
+  // when the chosen endpoint is chat-completions; falls back to baseUrl when absent.
+  chatCompletionsBaseUrl?: string
   // Native Responses API base when it differs from the OpenAI chat base (e.g. DeepSeek). Used only
-  // when the chosen endpoint is responses; falls back to openaiBaseUrl and then baseUrl.
+  // when the chosen endpoint is responses; falls back to chatCompletionsBaseUrl and then baseUrl.
   responsesBaseUrl?: string
   model?: string
   // Model token limits. Context is the shared request/response budget; input/output are independent
@@ -42,8 +45,8 @@ export type ResolvedProvider = {
   maxOutputTokens?: number
   key?: string
   // Which chat APIs the endpoint speaks; opencode uses this to pick anthropic vs openai-compatible.
-  // Absent ⇒ ['anthropic'].
-  apiEndpoints?: readonly ChatApiEndpoint[]
+  // Absent ⇒ ['messages'].
+  apiEndpoints?: readonly ModelProtocol[]
   // Whether the active model accepts image input. opencode strips image parts for a custom/registered
   // model whose config does not declare vision, so this is surfaced into its per-model capabilities.
   supportsImageInput?: boolean
@@ -104,7 +107,7 @@ const buildProviderEnv = (
     // The base URL is normalized so a user-supplied trailing `/v1` isn't doubled by the client's own
     // `/v1/messages` suffix (which would 404). Custom gateways authenticate with a bearer token.
     if (provider.baseUrl) {
-      const baseUrl = normalizeAnthropicBaseUrl(provider.baseUrl)
+      const baseUrl = normalizeMessagesRootUrl(provider.baseUrl)
 
       if (baseUrl) env.ANTHROPIC_BASE_URL = baseUrl
     }

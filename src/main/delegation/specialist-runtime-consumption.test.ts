@@ -60,7 +60,7 @@ const openCodeModelConfig = (
       baseUrl: 'https://provider.example/v1',
       model: 'certification-model',
       key: 'certification-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     },
     { storageRoot, executablePath: '/bin/opencode' }
   )

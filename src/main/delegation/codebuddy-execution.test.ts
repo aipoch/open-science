@@ -39,7 +39,7 @@ const codeBuddySpawn = (runtimeHome: string): AgentSpawnInput => {
       baseUrl: 'https://provider.example/v1',
       model: 'certification-model',
       key: 'certification-key',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     },
     {
       storageRoot: runtimeHome,

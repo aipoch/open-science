@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { inspectPdfPageCount } from '../uploads/attachment-media'
 
@@ -141,7 +142,11 @@ it('retains the selected manuscript source after the downloaded PDF is persisted
   try {
     await migrateApplicationDatabase(client)
     let catalog = new LiteratureCatalog(async () => client)
-    const content = new ContentRepository({ storageRoot, getClient: async () => client })
+    const content = new ContentRepository({
+      references: persistentContentReferences,
+      storageRoot,
+      getClient: async () => client
+    })
     const created = await catalog.transact({ kind: 'create-item', item: setup().item.item })
     const bytes = twoPagePdf()
     const finder = new LiteratureFullTextFinder({

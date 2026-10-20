@@ -35,7 +35,7 @@ import {
   isSupportedCodexAcpVersion,
   MINIMUM_CODEX_ACP_VERSION
 } from '../../shared/codex-runtime'
-import { isModelBridgeSupported } from '../../shared/provider-registry'
+import { isModelBridgeSupported } from '../../shared/provider-bridge-policy'
 import { CLAUDE_EXECUTABLE_MISSING_MESSAGE } from '../../shared/run-error-classification'
 import { buildAgentSpawnEnv } from '../acp/agent-process'
 import {
@@ -493,7 +493,7 @@ export class AgentRuntimeManager {
               activeProvider.type === 'xai-subscription'
                 ? (['responses'] as const)
                 : framework.id === 'codex'
-                  ? (['anthropic', 'openai', 'responses'] as const)
+                  ? (['messages', 'chat-completions', 'responses'] as const)
                   : requiresChatCompletionsBridge({ apiEndpoints: activeEndpoints }, framework)
                     ? (activeEndpoints ?? [])
                     : framework.supportedApiTypes

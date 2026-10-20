@@ -1,33 +1,21 @@
 import type { ValidateProviderResult } from './settings'
 import type { AcpMessageImage } from './acp-image-contract'
 
-/** Classification endpoints are not chat providers and never enter conversation model catalogs. */
-export const TYPESAFE_MODEL_ID = 'jev-latest'
-export type ClassificationAdapter = 'typesafe' | 'openrouter' | 'opencode' | 'custom'
-export type ClassificationModel = { id: string; label: string }
-export const CLASSIFICATION_MODELS = {
-  typesafe: [
-    { id: TYPESAFE_MODEL_ID, label: 'Jev Latest' },
-    { id: 'jev-preview', label: 'Jev Preview' }
-  ],
-  openrouter: [
-    { id: 'typesafe/jev-1.13', label: 'Jev 1.13' },
-    { id: 'typesafe/jev-1.14', label: 'Jev 1.14' }
-  ],
-  opencode: [
-    { id: 'jev-1.13', label: 'Jev 1.13' },
-    { id: 'jev-1.13-free', label: 'Jev 1.13 Free' }
-  ]
-} satisfies Record<Exclude<ClassificationAdapter, 'custom'>, ClassificationModel[]>
+/** Shared provider definitions are filtered by capability before host-specific preference ordering. */
+import { getProviderModels } from '@aipoch/providers'
+import type { ClassificationAdapter, ClassificationModelDefinition } from '@aipoch/providers'
 
 export const classificationModelsForService = (service: {
   adapter: ClassificationAdapter
   models?: readonly string[]
   modelId?: string
-}): ClassificationModel[] => {
+}): ClassificationModelDefinition[] => {
   if (service.adapter !== 'custom') {
-    const catalog = CLASSIFICATION_MODELS[service.adapter]
-    if (service.adapter !== 'opencode') return catalog
+    const catalog = getProviderModels(service.adapter, 'classification').map((model) => ({
+      id: model.modelId,
+      label: model.label
+    }))
+    if (service.adapter !== 'opencode') return [...catalog]
     // Zen stores the explicitly selected default first; retain the complete allowlisted catalog.
     const preferredId = service.modelId ?? service.models?.[0]
     return [

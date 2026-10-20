@@ -1,3 +1,4 @@
+import { persistentContentReferences } from './prisma-content-references'
 import { createHash } from 'node:crypto'
 import {
   copyFile,
@@ -15,7 +16,7 @@ import {
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
@@ -73,11 +74,17 @@ describe('content repository', () => {
     if (storageRoot) await rm(storageRoot, { recursive: true, force: true })
   })
 
-  const createRepository = async (): Promise<ContentRepository> => {
+  const createRepository = async (
+    references = persistentContentReferences
+  ): Promise<ContentRepository> => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-content-repository-'))
     client = createProjectDbClient(storageRoot)
     await migrateApplicationDatabase(client)
-    return new ContentRepository({ storageRoot, getClient: () => Promise.resolve(client!) })
+    return new ContentRepository({
+      references,
+      storageRoot,
+      getClient: () => Promise.resolve(client!)
+    })
   }
 
   const publishFixture = async (
@@ -102,6 +109,73 @@ describe('content repository', () => {
       await markContentBlobAvailable(transaction, input, createdAt)
     })
   }
+
+  it('requires durable reference protection even when feature services are absent', () => {
+    expect(
+      () =>
+        new ContentRepository({
+          storageRoot: '/unused',
+          getClient: async () => client!,
+          // @ts-expect-error JavaScript callers must not accidentally disable reference protection.
+          references: undefined
+        })
+    ).toThrow('Content reference protection is required')
+  })
+
+  it('rechecks injected references inside the deletion transaction without querying feature tables', async () => {
+    const references = {
+      findReferencedIds: vi.fn(async () => new Set<string>()),
+      hasReferences: vi.fn(async (transaction: Prisma.TransactionClient, id: string) => {
+        expect(transaction === client).toBe(false)
+        expect('$transaction' in transaction).toBe(false)
+        expect(await transaction.contentBlob.findUnique({ where: { id } })).not.toBeNull()
+        return true
+      })
+    } satisfies typeof persistentContentReferences
+    const repository = await createRepository(references)
+    await publishFixture('protected', 'content/protected', Buffer.from('keep'))
+    const featureQuery = vi.spyOn(client!.literatureAttachmentVersion, 'findMany')
+    await expect(
+      repository.sweep({ contentIds: ['protected'], createdBefore: new Date() })
+    ).resolves.toEqual({
+      removedIds: [],
+      retainedIds: ['protected'],
+      failedIds: []
+    })
+    expect(references.findReferencedIds).toHaveBeenCalledOnce()
+    expect(references.hasReferences).toHaveBeenCalledOnce()
+    expect(featureQuery).not.toHaveBeenCalled()
+    await expect(readFile(join(storageRoot!, 'content/protected'), 'utf8')).resolves.toBe('keep')
+  })
+
+  it.each(['prefilter', 'transaction'] as const)(
+    'preserves bytes and authority if the %s reference check fails',
+    async (phase) => {
+      const references = {
+        findReferencedIds: async () => {
+          if (phase === 'prefilter') throw new Error('reference store unavailable')
+          return new Set<string>()
+        },
+        hasReferences: async () => {
+          throw new Error('reference store unavailable')
+        }
+      }
+      const repository = await createRepository(references)
+      await publishFixture('protected', 'content/protected', Buffer.from('keep'))
+      const sweep = repository.sweep({ contentIds: ['protected'], createdBefore: new Date() })
+      if (phase === 'prefilter') await expect(sweep).rejects.toThrow('reference store unavailable')
+      else
+        await expect(sweep).resolves.toEqual({
+          removedIds: [],
+          retainedIds: [],
+          failedIds: ['protected']
+        })
+      await expect(
+        client!.contentBlob.findUnique({ where: { id: 'protected' } })
+      ).resolves.not.toBeNull()
+      await expect(readFile(join(storageRoot!, 'content/protected'), 'utf8')).resolves.toBe('keep')
+    }
+  )
 
   it('retains orphan authority when its content parent is replaced by a symlink', async () => {
     const repository = await createRepository()
@@ -151,6 +225,7 @@ describe('content repository', () => {
     await createRepository()
     await publishFixture('retained', 'content/retained', Buffer.from('keep'))
     const unavailable = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: join(storageRoot!, 'unavailable'),
       getClient: async () => client!
     })
@@ -374,6 +449,7 @@ describe('content repository', () => {
     async (fail) => {
       const publisher = await createRepository()
       const other = new ContentRepository({
+        references: persistentContentReferences,
         storageRoot: storageRoot!,
         getClient: async () => client!
       })
@@ -530,6 +606,7 @@ describe('content repository', () => {
   it('serializes cancellation cleanup with another publisher of the same bytes', async () => {
     const repository = await createRepository()
     const other = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: storageRoot!,
       getClient: async () => client!
     })
@@ -689,6 +766,7 @@ describe('content repository', () => {
   it('serializes publication against an in-flight sweep across repository instances', async () => {
     const sweeper = await createRepository()
     const publisher = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: storageRoot!,
       getClient: () => Promise.resolve(client!)
     })
@@ -761,6 +839,7 @@ describe('content repository', () => {
     const published = await verifier.publish({ sourcePath, contentType: 'application/pdf' })
     await writeFile(published.path, 'broken')
     const publisher = new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: storageRoot!,
       getClient: async () => client!
     })
@@ -1124,6 +1203,7 @@ describe('content repository', () => {
     try {
       await ready
       const sweeper = new ContentRepository({
+        references: persistentContentReferences,
         storageRoot: storageRoot!,
         getClient: async () => client!
       })

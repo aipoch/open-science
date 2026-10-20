@@ -199,13 +199,13 @@ describe('AcpAgentConnectionAdapter', () => {
       framework: { ...claudeCodeFramework, spawn: () => asAgentProcess(process) },
       executablePath: '/bin/agent',
       env: {},
-      responsesBridgeLease: {
+      responsesTransportLease: {
         selectSkills: vi.fn(async () => []),
         registerReviewerSession: vi.fn(),
         unregisterReviewerSession: vi.fn(() => false),
         release: releaseBridge
       },
-      anthropicBridgeLease: {
+      messagesBridgeLease: {
         setTarget: vi.fn(() => true),
         release: releaseAnthropic
       },
@@ -257,13 +257,13 @@ describe('AcpAgentConnectionAdapter', () => {
         framework: claudeCodeFramework,
         executablePath: '',
         env: {},
-        responsesBridgeLease: {
+        responsesTransportLease: {
           selectSkills: vi.fn(async () => []),
           registerReviewerSession: vi.fn(),
           unregisterReviewerSession: vi.fn(() => false),
           release: releaseBridge
         },
-        anthropicBridgeLease: {
+        messagesBridgeLease: {
           setTarget: vi.fn(() => true),
           release: releaseAnthropic
         },

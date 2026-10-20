@@ -181,7 +181,7 @@ test('shares PDF editions across independent projects and Literature after owner
           type: 'custom',
           name: model,
           model,
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           baseUrl: `http://127.0.0.1:${port}`
         })
         ids[model] = snapshot.providers.find((provider) => provider.name === model)!.id

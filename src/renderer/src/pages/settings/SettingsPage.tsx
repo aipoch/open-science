@@ -98,7 +98,7 @@ import type { ArchivedView } from '@/lib/settings-navigation'
 import type { MemoryView } from '@/lib/settings-navigation'
 import type { TagsView } from '@/lib/settings-navigation'
 import type { CredentialsView } from '@/lib/settings-navigation'
-import { resolveVendorModelsUrl } from '../../../../shared/provider-registry'
+import { resolveVendorModelsUrl } from '@aipoch/providers'
 import { ProviderForm } from './ProviderForm'
 import {
   createEmptyProviderFormValue,
@@ -261,7 +261,7 @@ const toFormValue = (provider: ProviderView): ProviderFormValue =>
     contextWindow: provider.contextWindow?.toString() ?? '',
     maxInputTokens: provider.maxInputTokens?.toString() ?? '',
     maxOutputTokens: provider.maxOutputTokens?.toString() ?? '',
-    apiEndpoint: provider.apiEndpoints?.[0] ?? 'anthropic',
+    apiEndpoint: provider.apiEndpoints?.[0] ?? 'messages',
     supportsImageInput: provider.supportsImageInput,
     reasoningEffortPreset: provider.reasoningEffortPreset ?? 'standard-5',
     reasoningEffortTransport: provider.reasoningEffortTransport ?? 'reasoning-effort',

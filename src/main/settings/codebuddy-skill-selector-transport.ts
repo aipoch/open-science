@@ -1,15 +1,18 @@
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
+import type { ModelReasoningEffort } from '@aipoch/providers'
 import type { ResolvedAgentBackend } from '../agent-framework'
-import { openAiCompletionsBase } from './base-url'
+import { resolveChatCompletionsBaseUrl } from '@aipoch/providers/protocol'
 import type { ProviderRuntimeTarget } from './provider-accounts'
-import type { ResponsesBridge, ResponsesBridgeOptions } from './responses-bridge'
-import type { ResponsesBridgeTarget } from './responses-bridge-contract'
+import type {
+  ResponsesToChatCompletionsBridge,
+  ResponsesToChatCompletionsBridgeOptions
+} from './responses-to-chat-completions-bridge'
+import type { ResponsesToChatCompletionsBridgeTarget } from './responses-transport-contract'
 
-type SelectorPort = Pick<ResponsesBridge, 'close' | 'selectSkills'>
+type SelectorPort = Pick<ResponsesToChatCompletionsBridge, 'close' | 'selectSkills'>
 type ProviderTransportLease = NonNullable<ResolvedAgentBackend['providerTransportLease']>
 
-export type ProviderResponsesBridgePort = Pick<
-  ResponsesBridge,
+export type ProviderResponsesToChatCompletionsBridgePort = Pick<
+  ResponsesToChatCompletionsBridge,
   | 'start'
   | 'close'
   | 'selectSkills'
@@ -23,18 +26,21 @@ export type ProviderResponsesBridgePort = Pick<
   | 'setModelTarget'
   | 'setTarget'
 > &
-  Partial<Pick<ResponsesBridge, 'registerMcpSession' | 'unregisterMcpSession'>>
+  Partial<Pick<ResponsesToChatCompletionsBridge, 'registerMcpSession' | 'unregisterMcpSession'>>
 
 export function createCodeBuddySkillSelectorTransport(input: {
   activeTarget: ProviderRuntimeTarget
   reasoningEffort?: ModelReasoningEffort
-  createSelector: (target: ResponsesBridgeTarget, options?: ResponsesBridgeOptions) => SelectorPort
+  createSelector: (
+    target: ResponsesToChatCompletionsBridgeTarget,
+    options?: ResponsesToChatCompletionsBridgeOptions
+  ) => SelectorPort
 }): Readonly<{
   providerTransportLease?: ProviderTransportLease
   release: () => Promise<void>
 }> {
   const provider = input.activeTarget.provider
-  const baseUrl = openAiCompletionsBase(provider)
+  const baseUrl = resolveChatCompletionsBaseUrl(provider)
   const model = input.activeTarget.effectiveModel ?? provider.model
   if (!baseUrl || !model) return Object.freeze({ release: async () => undefined })
   const selector = input.createSelector(

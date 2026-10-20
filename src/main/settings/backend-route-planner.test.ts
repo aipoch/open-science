@@ -12,7 +12,7 @@ const makeStoredProvider = (overrides: Partial<StoredProvider> = {}): StoredProv
   id: 'provider-a',
   type: 'custom',
   name: 'Provider A',
-  apiEndpoints: ['anthropic', 'openai', 'responses'],
+  apiEndpoints: ['messages', 'chat-completions', 'responses'],
   baseUrl: 'https://provider-a.example/v1',
   model: 'model-a',
   keyRef: 'provider-a-key-ref',
@@ -39,11 +39,11 @@ const makeTarget = (
     providerId: provider.id,
     providerType: provider.type,
     effectiveModel: provider.model,
-    apiEndpoints: provider.apiEndpoints ?? ['anthropic'],
+    apiEndpoints: provider.apiEndpoints ?? ['messages'],
     provider: {
       type: provider.type,
       baseUrl: provider.baseUrl,
-      openaiBaseUrl: provider.baseUrl,
+      chatCompletionsBaseUrl: provider.baseUrl,
       model: provider.model,
       key: 'plain-provider-key',
       apiEndpoints: provider.apiEndpoints,
@@ -55,7 +55,7 @@ const makeTarget = (
     },
     frameworkCompatible: true,
     modelBridgeSupported: true,
-    needsChatResponsesBridge: false,
+    needsChatResponsesToChatCompletionsBridge: false,
     needsNativeResponsesCompatibility: false,
     ...targetOverrides
   }
@@ -83,25 +83,25 @@ describe('BackendRoutePlanner route matrix', () => {
     {
       name: 'OpenCode OpenAI',
       frameworkId: 'opencode',
-      target: { apiEndpoints: ['openai'] },
+      target: { apiEndpoints: ['chat-completions'] },
       route: 'opencode-openai'
     },
     {
       name: 'OpenCode Anthropic',
       frameworkId: 'opencode',
-      target: { apiEndpoints: ['anthropic'] },
+      target: { apiEndpoints: ['messages'] },
       route: 'opencode-anthropic'
     },
     {
       name: 'CodeBuddy Responses compatibility',
       frameworkId: 'codebuddy',
-      target: { apiEndpoints: ['responses'], needsChatResponsesBridge: true },
+      target: { apiEndpoints: ['responses'], needsChatResponsesToChatCompletionsBridge: true },
       route: 'codebuddy-openai'
     },
     {
       name: 'Codex Chat bridge',
       frameworkId: 'codex',
-      target: { needsChatResponsesBridge: true },
+      target: { needsChatResponsesToChatCompletionsBridge: true },
       route: 'codex-bridge'
     },
     {
@@ -194,7 +194,7 @@ describe('BackendRoutePlanner route matrix', () => {
 
   it.each([
     { apiEndpoints: ['responses'] as const, wire: 'responses' as const },
-    { apiEndpoints: ['anthropic'] as const, wire: 'anthropic' as const }
+    { apiEndpoints: ['messages'] as const, wire: 'messages' as const }
   ])('adapts a $wire-only provider to CodeBuddy Chat Completions', ({ apiEndpoints, wire }) => {
     const provider = makeStoredProvider({ apiEndpoints: [...apiEndpoints] })
     const plan = makePlanner().planBackend({
@@ -202,7 +202,7 @@ describe('BackendRoutePlanner route matrix', () => {
       frameworkId: 'codebuddy',
       target: makeTarget(provider, {
         apiEndpoints: [...apiEndpoints],
-        needsChatResponsesBridge: true
+        needsChatResponsesToChatCompletionsBridge: true
       }),
       effortIntent: 'high',
       conversationSkillImportEnabled: true
@@ -232,7 +232,7 @@ describe('BackendRoutePlanner route matrix', () => {
           type: 'xai-subscription',
           vendorId: 'xai',
           baseUrl: 'https://api.x.ai/v1',
-          openaiBaseUrl: 'https://api.x.ai/v1',
+          chatCompletionsBaseUrl: 'https://api.x.ai/v1',
           model: 'grok-4.6',
           key: undefined
         }
@@ -265,7 +265,7 @@ describe('BackendRoutePlanner route matrix', () => {
         type: 'xai-subscription',
         vendorId: 'xai',
         baseUrl: 'https://api.x.ai/v1',
-        openaiBaseUrl: 'https://api.x.ai/v1',
+        chatCompletionsBaseUrl: 'https://api.x.ai/v1',
         model: 'grok-4.6',
         key: undefined
       }
@@ -293,12 +293,12 @@ describe('BackendRoutePlanner provider candidates', () => {
     })
     const stale = makeStoredProvider({ id: 'stale', model: 'stale-model' })
     const targetA = makeTarget(providerA, {
-      apiEndpoints: ['anthropic'],
-      provider: { apiEndpoints: ['anthropic'] }
+      apiEndpoints: ['messages'],
+      provider: { apiEndpoints: ['messages'] }
     })
     const targetB = makeTarget(providerB, {
-      apiEndpoints: ['anthropic'],
-      provider: { apiEndpoints: ['anthropic'], vendorId: 'tencent' }
+      apiEndpoints: ['messages'],
+      provider: { apiEndpoints: ['messages'], vendorId: 'tencent' }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn((provider) => {
@@ -363,14 +363,14 @@ describe('BackendRoutePlanner provider candidates', () => {
     const provider = makeStoredProvider({
       type: 'official',
       vendorId,
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       baseUrl,
       model: 'deepseek-v4-pro-202606'
     })
     const target = makeTarget(provider, {
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       // Official providers project to the custom credential transport while retaining vendorId.
-      provider: { type: 'custom', vendorId, apiEndpoints: ['anthropic'] }
+      provider: { type: 'custom', vendorId, apiEndpoints: ['messages'] }
     })
 
     const plan = makePlanner().planBackend({
@@ -400,16 +400,16 @@ describe('BackendRoutePlanner provider candidates', () => {
     const provider = makeStoredProvider({
       type: 'official',
       vendorId: 'apodex',
-      apiEndpoints: ['anthropic', 'openai'],
+      apiEndpoints: ['messages', 'chat-completions'],
       baseUrl: 'https://api.apodex.ai',
       model: 'apodex-1.1'
     })
     const target = makeTarget(provider, {
-      apiEndpoints: ['anthropic', 'openai'],
+      apiEndpoints: ['messages', 'chat-completions'],
       provider: {
         type: 'custom',
         vendorId: 'apodex',
-        apiEndpoints: ['anthropic', 'openai']
+        apiEndpoints: ['messages', 'chat-completions']
       }
     })
 
@@ -441,13 +441,13 @@ describe('BackendRoutePlanner provider candidates', () => {
   it('filters model catalogs by route and preserves deduplicated effort slots', () => {
     const provider = makeStoredProvider()
     const active = makeTarget(provider, {
-      apiEndpoints: ['openai'],
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const catalogTarget = makeTarget(provider, {
       effectiveModel: 'catalog-model',
-      apiEndpoints: ['openai'],
-      provider: { model: 'catalog-model', apiEndpoints: ['openai'] },
+      apiEndpoints: ['chat-completions'],
+      provider: { model: 'catalog-model', apiEndpoints: ['chat-completions'] },
       reasoningEffortProfile: {
         supported: true,
         slots: ['low', 'high', 'high', 'xhigh', 'max']
@@ -455,8 +455,8 @@ describe('BackendRoutePlanner provider candidates', () => {
     })
     const wrongRoute = makeTarget(provider, {
       effectiveModel: 'anthropic-model',
-      apiEndpoints: ['anthropic'],
-      provider: { model: 'anthropic-model', apiEndpoints: ['anthropic'] }
+      apiEndpoints: ['messages'],
+      provider: { model: 'anthropic-model', apiEndpoints: ['messages'] }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn(() => active),
@@ -484,13 +484,13 @@ describe('BackendRoutePlanner provider candidates', () => {
     const provider = makeStoredProvider({ model: 'third-party/model-a' })
     const targetA = makeTarget(provider, {
       effectiveModel: 'third-party/model-a',
-      apiEndpoints: ['anthropic'],
-      provider: { model: 'third-party/model-a', apiEndpoints: ['anthropic'] }
+      apiEndpoints: ['messages'],
+      provider: { model: 'third-party/model-a', apiEndpoints: ['messages'] }
     })
     const targetB = makeTarget(provider, {
       effectiveModel: 'third-party/model-b',
-      apiEndpoints: ['anthropic'],
-      provider: { model: 'third-party/model-b', apiEndpoints: ['anthropic'] }
+      apiEndpoints: ['messages'],
+      provider: { model: 'third-party/model-b', apiEndpoints: ['messages'] }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn(() => targetA),
@@ -527,7 +527,10 @@ describe('BackendRoutePlanner provider candidates', () => {
       providersById.map((provider) => {
         const invalidOverrides: Parameters<typeof makeTarget>[1] =
           provider.id === 'openai-only'
-            ? { apiEndpoints: ['openai'], provider: { apiEndpoints: ['openai'] } }
+            ? {
+                apiEndpoints: ['chat-completions'],
+                provider: { apiEndpoints: ['chat-completions'] }
+              }
             : provider.id === 'missing-key'
               ? { provider: { key: undefined } }
               : provider.id === 'missing-base'
@@ -609,12 +612,12 @@ describe('BackendRoutePlanner provider candidates', () => {
     const providerA = makeStoredProvider({ id: 'provider-a', model: 'model-a' })
     const providerB = makeStoredProvider({ id: 'provider-b', model: 'model-b' })
     const targetA = makeTarget(providerA, {
-      apiEndpoints: ['openai'],
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const targetB = makeTarget(providerB, {
-      apiEndpoints: ['openai'],
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const settings = makeSettings(providerA)
     settings.providers = [providerA, providerB]
@@ -649,16 +652,16 @@ describe('BackendRoutePlanner provider candidates', () => {
     const providerB = makeStoredProvider({ id: 'provider-b', model: 'model-b' })
     const providerC = makeStoredProvider({ id: 'provider-c', model: 'model-c' })
     const targetA = makeTarget(providerA, {
-      apiEndpoints: ['openai'],
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const targetB = makeTarget(providerB, {
-      apiEndpoints: ['openai'],
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const targetC = makeTarget(providerC, {
-      apiEndpoints: ['anthropic'],
-      provider: { apiEndpoints: ['anthropic'] }
+      apiEndpoints: ['messages'],
+      provider: { apiEndpoints: ['messages'] }
     })
     const targets = new Map([
       [providerA.id, targetA],
@@ -702,14 +705,14 @@ describe('BackendRoutePlanner provider candidates', () => {
     const providerA = makeStoredProvider({ id: 'provider-a', model: 'model-a' })
     const providerB = makeStoredProvider({ id: 'provider-b', model: 'model-b' })
     const targetA = makeTarget(providerA, {
-      apiEndpoints: ['openai'],
-      needsChatResponsesBridge: true,
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      needsChatResponsesToChatCompletionsBridge: true,
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const targetB = makeTarget(providerB, {
-      apiEndpoints: ['openai'],
-      needsChatResponsesBridge: true,
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      needsChatResponsesToChatCompletionsBridge: true,
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn((provider) => (provider.id === providerA.id ? targetA : targetB)),
@@ -792,16 +795,16 @@ describe('BackendRoutePlanner model-change projection', () => {
 
     expect(change).toMatchObject({
       sessionModel: 'model-b',
-      anthropicBridgeTargetId: JSON.stringify(['provider-a', 'model-b'])
+      messagesBridgeTargetId: JSON.stringify(['provider-a', 'model-b'])
     })
   })
 
   it('projects the generated provider and target for a single-provider OpenCode model change', () => {
-    const provider = makeStoredProvider({ model: 'model-a', apiEndpoints: ['openai'] })
+    const provider = makeStoredProvider({ model: 'model-a', apiEndpoints: ['chat-completions'] })
     const target = makeTarget(provider, {
       effectiveModel: 'model-b',
-      apiEndpoints: ['openai'],
-      provider: { model: 'model-b', apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      provider: { model: 'model-b', apiEndpoints: ['chat-completions'] }
     })
     const agentProviderId = opencodeTransportProviderId(provider.id, 'model-b')
 
@@ -843,19 +846,19 @@ describe('BackendRoutePlanner model-change projection', () => {
     const providerA = makeStoredProvider({ id: 'provider-a', model: 'model-a' })
     const providerB = makeStoredProvider({ id: 'provider-b', model: 'model-b' })
     const targetA = makeTarget(providerA, {
-      apiEndpoints: ['openai'],
-      needsChatResponsesBridge: true,
+      apiEndpoints: ['chat-completions'],
+      needsChatResponsesToChatCompletionsBridge: true,
       provider: {
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         vendorId: 'deepseek',
         contextWindow: 128_000,
         reasoningEffortTransport: 'deepseek'
       }
     })
     const targetB = makeTarget(providerB, {
-      apiEndpoints: ['openai'],
-      needsChatResponsesBridge: true,
-      provider: { apiEndpoints: ['openai'] }
+      apiEndpoints: ['chat-completions'],
+      needsChatResponsesToChatCompletionsBridge: true,
+      provider: { apiEndpoints: ['chat-completions'] }
     })
     const providers: BackendRouteProviderPort = {
       resolveRuntimeTarget: vi.fn((provider) => (provider.id === providerA.id ? targetA : targetB)),

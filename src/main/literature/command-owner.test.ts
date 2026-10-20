@@ -194,8 +194,8 @@ it('maps package style errors to the existing application command error envelope
   const { toApplicationCommandErrorEnvelope } =
     await import('../../shared/application-command-contract')
   const owner = createLiteratureCommandOwner({
-    literatureCitationStyles: {
-      import: async () => {
+    literatureCitationFormatter: {
+      citationStyles: async () => {
         throw new CitationStyleError('csl-undefined-macro', 'Unknown macro', { macro: 'missing' })
       }
     }

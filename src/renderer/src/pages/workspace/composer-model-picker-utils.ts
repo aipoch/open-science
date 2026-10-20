@@ -4,7 +4,7 @@ import {
   configuredModelApiEndpoints,
   type ConfiguredModelCatalogEntry
 } from '../../../../shared/configured-model-catalog'
-import type { ChatApiEndpoint } from '../../../../shared/model-preference-contract'
+import type { ModelProtocol } from '@aipoch/providers'
 import {
   ENDPOINT_PATHS,
   providerEndpoints,
@@ -14,14 +14,14 @@ import {
 
 // Human-readable route for an endpoint, so a reason reads as a route rather than a vendor name. The
 // routes are literal API paths, identical in every locale; only the joining word is translated.
-const routeList = (endpoints: readonly ChatApiEndpoint[], t: TFunction): string =>
+const routeList = (endpoints: readonly ModelProtocol[], t: TFunction): string =>
   endpoints.map((endpoint) => ENDPOINT_PATHS[endpoint]).join(t(' or '))
 
 export const modelUnavailableReason = (
   option: Pick<ConfiguredModelCatalogEntry, 'label' | 'model' | 'unavailableReason'>,
   provider: Pick<ProviderView, 'type' | 'vendorId' | 'apiEndpoints'>,
   frameworkName: string,
-  frameworkEndpoints: readonly ChatApiEndpoint[],
+  frameworkEndpoints: readonly ModelProtocol[],
   t: TFunction
 ): string | undefined => {
   if (!option.unavailableReason) return undefined
@@ -42,16 +42,16 @@ export const modelUnavailableReason = (
 // Why a provider can't drive the current framework, shown on hover next to "· unavailable". One axis:
 // a chat-endpoint mismatch. Framework and provider names are proper nouns and interpolate verbatim.
 export const incompatibilityReason = (
-  provider: { apiEndpoints?: readonly ChatApiEndpoint[]; type: ProviderType; name: string },
+  provider: { apiEndpoints?: readonly ModelProtocol[]; type: ProviderType; name: string },
   frameworkName: string,
-  frameworkEndpoints: readonly ChatApiEndpoint[],
+  frameworkEndpoints: readonly ModelProtocol[],
   t: TFunction
 ): string => {
   const endpoints = providerEndpoints(provider)
   if (
     frameworkName === 'Codex' &&
     frameworkEndpoints.includes('responses') &&
-    endpoints.includes('openai')
+    endpoints.includes('chat-completions')
   ) {
     return t(
       '{{provider}} speaks /v1/chat/completions. Codex requires /v1/responses; choose an OpenAI Responses provider or switch the agent framework.',

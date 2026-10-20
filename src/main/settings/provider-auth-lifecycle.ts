@@ -10,7 +10,7 @@ import {
   isCodexSubscriptionProviderId,
   resolveCodexSubscriptionType
 } from '../../shared/settings'
-import { customProviderRequiresKey } from '../../shared/provider-base-url'
+import { customProviderRequiresKey } from '../../shared/provider-url-policy'
 import { codexSubscriptionStorageDir } from '../agent-framework/codex'
 import {
   clearAppOwnedCodexAuthentication,
@@ -337,7 +337,7 @@ class ProviderAuthLifecycleOwner {
     const validationTarget = probeStarted
       ? targetForValidationResult(result, {
           model: resolvedTarget.model,
-          endpoint: 'anthropic'
+          endpoint: 'messages'
         })
       : undefined
     const validationPatch = buildProviderValidationPatch(provider, result, validationTarget)
@@ -411,7 +411,7 @@ class ProviderAuthLifecycleOwner {
     const validationTarget = authStatus.authenticated
       ? targetForValidationResult(result, {
           model: resolvedTarget.model,
-          endpoint: 'anthropic'
+          endpoint: 'messages'
         })
       : undefined
     const validationPatch = buildProviderValidationPatch(targetProvider, result, validationTarget)

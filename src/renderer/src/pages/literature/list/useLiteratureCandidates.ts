@@ -1,10 +1,11 @@
+import { useLiteratureHost } from '../renderer-host'
 import type {
   LiteratureCatalogCommand,
   LiteratureInboxCandidateView
 } from '@aipoch/literature-library/contracts'
 import { useState, type Dispatch, type SetStateAction } from 'react'
 import { useTranslation } from 'react-i18next'
-import { literatureClient } from '../literature-read-pages'
+import { useLiteratureClient } from '../literature-read-pages'
 import type { LiteratureSelectionStore } from './literature-selection'
 
 const LITERATURE_INBOX_COMMAND_SIZE = 100
@@ -59,6 +60,10 @@ export function useLiteratureCandidates({
   restoreDismissedCandidates: (candidateIds?: readonly string[]) => Promise<boolean>
   dismissUndo: () => void
 } {
+  const literatureClient = useLiteratureClient()
+
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const clearSelection = (): void => selectionStore.clear()
   const [pendingCandidateId, setPendingCandidateId] = useState<string>()
@@ -119,7 +124,7 @@ export function useLiteratureCandidates({
     setCandidateUpdateUncertain(false)
     setUndoNotice(undefined)
     try {
-      await window.api.literature.transact(command)
+      await hostApi.literature.transact(command)
     } catch {
       // A rejected transport response does not prove that the transaction rolled back.
       // Reload handles its own read errors; never put a saved candidate snapshot back here.
@@ -252,7 +257,7 @@ export function useLiteratureCandidates({
       while (remaining.length) {
         const batch = remaining.slice(0, LITERATURE_INBOX_COMMAND_SIZE)
         try {
-          await window.api.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
+          await hostApi.literature.transact({ kind: 'restore-candidates', candidateIds: batch })
         } catch {
           await recheckDismissedCandidates([...new Set([...undoRemaining, ...remaining])])
           return false

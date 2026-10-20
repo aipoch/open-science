@@ -1,23 +1,30 @@
 import { redactSensitiveText } from '@aipoch/diagnostics'
 import { randomUUID } from 'node:crypto'
 
-import type { ChatApiEndpoint } from '../../shared/model-preference-contract'
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
+import { type ModelProtocol, usesVendorMessagesApiKeyHeader } from '@aipoch/providers'
+
 import type { ValidateProviderResult, ValidationCategory } from '../../shared/settings'
 import { preferredEndpoint } from '../../shared/settings'
 import { resolveResponsesBaseUrl } from '../agent-framework/codex'
 import { toErrorMessage } from '../error-message'
 import {
-  normalizeAnthropicBaseUrl,
-  openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
-import { ResponseBodyLimitError, readBoundedResponseText } from './bounded-response'
+  normalizeMessagesRootUrl,
+  resolveChatCompletionsUrl,
+  resolveChatCompletionsBaseUrl,
+  convertResponsesRequest
+} from '@aipoch/providers/protocol'
+import {
+  ResponseBodyLimitError,
+  readBoundedResponseText,
+  fetchProviderRequest
+} from '@aipoch/providers/transport'
+
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
 import type { ResolvedProvider } from './provider-env'
-import { fetchProviderRequest } from './provider-fetch'
+
 import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { ResponsesBridge, responsesToChatRequest } from './responses-bridge'
+
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 
 // Runs a real connectivity/auth probe for a provider and classifies the outcome into an actionable
 // category. Request construction and classification are pure so the branch matrix is unit-testable;
@@ -40,7 +47,7 @@ type ValidationHttpRequest = {
   url: string
   headers: Record<string, string>
   body: string
-  endpoint: ChatApiEndpoint
+  endpoint: ModelProtocol
   requiresBridgeToolCall?: boolean
 }
 
@@ -97,7 +104,7 @@ const nativeResponsesCompatibilityProbeBody = (model: string): Record<string, un
 // The endpoint preference to intersect the provider against when no active framework is supplied. A
 // direct caller (or unit test) that doesn't care about a specific framework probes the provider's own
 // best route: Responses > Chat Completions > Messages.
-const ALL_ENDPOINTS: readonly ChatApiEndpoint[] = ['anthropic', 'openai', 'responses']
+const ALL_ENDPOINTS: readonly ModelProtocol[] = ['messages', 'chat-completions', 'responses']
 
 const buildValidationRequest = (
   provider: ResolvedProvider,
@@ -105,27 +112,28 @@ const buildValidationRequest = (
   // The routes the active agent framework can drive. The probe targets the endpoint shared by the
   // provider and the framework, so a passing test proves the exact route the agent will run — not just
   // some route the provider happens to speak. Defaults to every route (framework-agnostic probe).
-  frameworkEndpoints: readonly ChatApiEndpoint[] = ALL_ENDPOINTS
+  frameworkEndpoints: readonly ModelProtocol[] = ALL_ENDPOINTS
 ): ValidationHttpRequest => {
   if (!provider.baseUrl) {
     throw new Error('Missing base URL.')
   }
 
-  const endpoint = preferredEndpoint(provider.apiEndpoints ?? ['anthropic'], frameworkEndpoints)
+  const endpoint = preferredEndpoint(provider.apiEndpoints ?? ['messages'], frameworkEndpoints)
 
   if (endpoint === 'responses') return buildResponsesValidationRequest(provider)
-  if (endpoint === 'openai') return buildOpenAiValidationRequest(provider, requireBridgeToolCall)
+  if (endpoint === 'chat-completions')
+    return buildChatCompletionsValidationRequest(provider, requireBridgeToolCall)
 
-  return buildAnthropicValidationRequest(provider)
+  return buildMessagesValidationRequest(provider)
 }
 
 // A minimal /v1/messages probe (Anthropic). The base URL is normalized first so a trailing `/v1`
 // isn't doubled into `.../v1/v1/messages` (a 404).
-const buildAnthropicValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
+const buildMessagesValidationRequest = (provider: ResolvedProvider): ValidationHttpRequest => {
   let url: string
 
   try {
-    url = new URL(`${normalizeAnthropicBaseUrl(provider.baseUrl ?? '')}/v1/messages`).toString()
+    url = new URL(`${normalizeMessagesRootUrl(provider.baseUrl ?? '')}/v1/messages`).toString()
   } catch {
     throw new Error('Invalid base URL.')
   }
@@ -136,7 +144,7 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
   }
 
   if (provider.key) {
-    if (provider.vendorId && usesVendorAnthropicApiKeyHeader(provider.vendorId)) {
+    if (provider.vendorId && usesVendorMessagesApiKeyHeader(provider.vendorId)) {
       headers['x-api-key'] = provider.key
     } else {
       headers.authorization = `Bearer ${provider.key}`
@@ -149,12 +157,12 @@ const buildAnthropicValidationRequest = (provider: ResolvedProvider): Validation
     messages: [{ role: 'user', content: 'ping' }]
   })
 
-  return { url, headers, body, endpoint: 'anthropic' }
+  return { url, headers, body, endpoint: 'messages' }
 }
 
 // A bridge contract probe for /v1/chat/completions. Codex depends on function calls, so a plain text
 // ping is insufficient: providers that ignore/reject this tool request must remain unverified.
-const buildOpenAiValidationRequest = (
+const buildChatCompletionsValidationRequest = (
   provider: ResolvedProvider,
   requireBridgeToolCall: boolean
 ): ValidationHttpRequest => {
@@ -162,7 +170,7 @@ const buildOpenAiValidationRequest = (
 
   // Probe the same OpenAI endpoint the bridge/opencode will use: an official vendor's versioned base,
   // or a custom root normalized to `<root>/v1`.
-  const endpoint = openAiChatCompletionsUrl(provider)
+  const endpoint = resolveChatCompletionsUrl(provider)
   if (!endpoint) throw new Error('Missing base URL.')
 
   try {
@@ -181,7 +189,10 @@ const buildOpenAiValidationRequest = (
 
   const body = JSON.stringify(
     requireBridgeToolCall
-      ? responsesToChatRequest(bridgeProbeResponsesBody(provider.model ?? ''), provider.model)
+      ? convertResponsesRequest({
+          body: bridgeProbeResponsesBody(provider.model ?? ''),
+          model: provider.model
+        })
       : {
           model: provider.model ?? '',
           // Requesty rejects Chat probes below 16 output tokens, including for OpenAI models.
@@ -195,7 +206,7 @@ const buildOpenAiValidationRequest = (
     url,
     headers,
     body,
-    endpoint: 'openai',
+    endpoint: 'chat-completions',
     ...(requireBridgeToolCall ? { requiresBridgeToolCall: true } : {})
   }
 }
@@ -229,7 +240,7 @@ const buildResponsesValidationRequest = (provider: ResolvedProvider): Validation
   }
 }
 
-const hasValidAnthropicMessage = (bodyText: string): boolean => {
+const hasValidMessagesResponse = (bodyText: string): boolean => {
   try {
     const parsed = JSON.parse(bodyText) as {
       type?: unknown
@@ -464,7 +475,7 @@ const hasResponsesProbeToolCall = (
   return completed && found
 }
 
-const hasResponsesBridgeProbeToolCall = (bodyText: string): boolean =>
+const hasResponsesToChatCompletionsBridgeProbeToolCall = (bodyText: string): boolean =>
   hasResponsesProbeToolCall(bodyText, { name: BRIDGE_PROBE_TOOL })
 
 const hasNativeResponsesCompatibilityProbeToolCall = (bodyText: string): boolean =>
@@ -480,7 +491,7 @@ export type ValidateProviderDeps = {
   requireNativeResponsesCompatibility?: boolean
   // The routes the active agent framework can drive; the probe targets the endpoint shared with the
   // provider so the test exercises the route the agent will actually use. Omitted → framework-agnostic.
-  frameworkEndpoints?: readonly ChatApiEndpoint[]
+  frameworkEndpoints?: readonly ModelProtocol[]
 }
 
 type LocalResponsesValidationAdapter = {
@@ -596,14 +607,14 @@ const validateProviderThroughLocalResponsesAdapter = async (
   }
 }
 
-const validateProviderThroughResponsesBridge = async (
+const validateProviderThroughResponsesToChatCompletionsBridge = async (
   provider: ResolvedProvider,
   { fetchImpl = fetch, timeoutMs = DEFAULT_VALIDATE_TIMEOUT_MS }: ValidateProviderDeps
 ): Promise<ValidateProviderResult> => {
-  const targetBaseUrl = openAiCompletionsBase(provider)
+  const targetBaseUrl = resolveChatCompletionsBaseUrl(provider)
   if (!targetBaseUrl) return toResult('bad-url', { message: 'Missing base URL.' })
 
-  const bridge = new ResponsesBridge(
+  const bridge = new ResponsesToChatCompletionsBridge(
     { baseUrl: targetBaseUrl, key: provider.key, model: provider.model },
     fetchImpl
   )
@@ -612,7 +623,7 @@ const validateProviderThroughResponsesBridge = async (
       start: () => bridge.start(),
       close: () => bridge.close(),
       body: bridgeProbeResponsesBody(provider.model ?? ''),
-      hasRequiredToolCall: hasResponsesBridgeProbeToolCall,
+      hasRequiredToolCall: hasResponsesToChatCompletionsBridgeProbeToolCall,
       missingToolCallMessage:
         'The provider answered through the bridge, but did not complete the required streaming function tool call.'
     },
@@ -672,7 +683,7 @@ const validateCustomProvider = async (
   }
 
   if (requireBridgeToolCall) {
-    return validateProviderThroughResponsesBridge(provider, {
+    return validateProviderThroughResponsesToChatCompletionsBridge(provider, {
       fetchImpl,
       timeoutMs,
       requireBridgeToolCall
@@ -727,7 +738,7 @@ const validateCustomProvider = async (
       })
     }
 
-    if (category === 'ok' && request.endpoint === 'anthropic') {
+    if (category === 'ok' && request.endpoint === 'messages') {
       let bodyText = ''
       try {
         bodyText = await readBoundedResponseText(
@@ -744,7 +755,7 @@ const validateCustomProvider = async (
         }
         // An unreadable success body cannot prove the Messages contract.
       }
-      if (!hasValidAnthropicMessage(bodyText)) {
+      if (!hasValidMessagesResponse(bodyText)) {
         return toResult('unknown', {
           status: response.status,
           message: 'The provider returned success without a valid Anthropic message.'
@@ -832,6 +843,6 @@ export {
   classifyStatus,
   extractProviderErrorMessage,
   hasBridgeProbeToolCall,
-  hasResponsesBridgeProbeToolCall,
+  hasResponsesToChatCompletionsBridgeProbeToolCall,
   validateProvider
 }

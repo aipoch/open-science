@@ -45,7 +45,7 @@ import {
   type ShellRuntimeAgentContract
 } from '../notebook/shell-runtime'
 import { createCodexBridgeMcpTools, namespaceFor } from '../settings/codex-bridge-tools'
-import type { ResponsesBridgeNamespacedTool } from '../settings/responses-protocol-types'
+import type { ResponsesNamespacedTool } from '@aipoch/providers/protocol'
 
 const log = createLogger('acp')
 
@@ -206,7 +206,7 @@ type BuiltSessionCapabilities = SessionCapabilities &
   Readonly<{
     shellRuntime?: ShellRuntimeBinding
     shellRuntimeAgentContract?: ShellRuntimeAgentContract
-    bridgeMcpTools?: ResponsesBridgeNamespacedTool[]
+    bridgeMcpTools?: ResponsesNamespacedTool[]
     bridgeMcpNamespaces?: readonly string[]
   }>
 
@@ -235,7 +235,7 @@ export type SessionCapabilityProvision = Readonly<{
   mcpServers: McpServer[]
   descriptor: EffectiveSessionCapabilityDescriptor
   shellRuntimeAgentContract?: ShellRuntimeAgentContract
-  bridgeMcpTools?: ResponsesBridgeNamespacedTool[]
+  bridgeMcpTools?: ResponsesNamespacedTool[]
   bridgeMcpNamespaces?: readonly string[]
   registerBridgeMcpSession?: (appSessionId: string, providerSessionId: string) => void
   wslSetup?: true
@@ -272,7 +272,7 @@ type RevokeProvisionalSessionCapabilitiesRequest = {
 type SessionCapabilityOwnerOptions = {
   registerBridgeMcpSession?: (
     sessionId: string,
-    tools: ResponsesBridgeNamespacedTool[],
+    tools: ResponsesNamespacedTool[],
     namespaces: readonly string[]
   ) => void
   unregisterBridgeMcpSession?: (sessionId: string) => boolean | undefined

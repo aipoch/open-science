@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import { createHash } from 'node:crypto'
 import {
   mkdir,
@@ -5281,6 +5282,7 @@ describe('artifact provenance repository', () => {
       const deletedVersion = await createProjectVersion('project_1', 'a')
       const survivingVersion = await createProjectVersion('project-2', 'b')
       const content = new ContentRepository({
+        references: persistentContentReferences,
         storageRoot,
         getClient: () => Promise.resolve(client)
       })

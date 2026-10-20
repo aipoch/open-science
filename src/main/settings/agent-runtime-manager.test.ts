@@ -731,13 +731,13 @@ describe('AgentRuntimeManager', () => {
       type: 'custom',
       name: 'Provider A',
       model: 'stored-model',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       keyRef: 'encrypted-key',
       lastValidatedAt: 10
     })
     await repository.setActiveProvider('provider-a', 'model-a')
     const providers: ProviderPreflightAccess = {
-      resolveProviderApiEndpoints: vi.fn().mockReturnValue(['openai']),
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(['chat-completions']),
       resolveActiveModel: vi.fn().mockReturnValue('model-a'),
       isProviderKeyUsable: vi.fn().mockResolvedValue(true)
     }
@@ -761,12 +761,12 @@ describe('AgentRuntimeManager', () => {
       type: 'custom',
       name: 'Provider A',
       model: 'model-a',
-      apiEndpoints: ['anthropic'],
+      apiEndpoints: ['messages'],
       keyRef: 'missing-key'
     })
     await repository.setActiveProvider('provider-a', 'model-a')
     const providers: ProviderPreflightAccess = {
-      resolveProviderApiEndpoints: vi.fn().mockReturnValue(['anthropic']),
+      resolveProviderApiEndpoints: vi.fn().mockReturnValue(['messages']),
       resolveActiveModel: vi.fn().mockReturnValue('model-a'),
       isProviderKeyUsable: vi.fn().mockResolvedValue(false)
     }

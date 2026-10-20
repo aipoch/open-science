@@ -9,7 +9,7 @@ import type {
   LiteratureScopeReference,
   SessionPdfContextSource
 } from '../../../../shared/session-persistence'
-import { readLiteratureSelectionPage } from '../literature/literature-read-pages'
+import { readLiteratureSelectionPage } from '../../lib/literature-queries'
 
 export type LiteraturePdfOption = Readonly<{
   itemId: string

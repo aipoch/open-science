@@ -1,10 +1,18 @@
-import { formatSmartRule, parseSmartRule } from './smart-rule-fields'
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../../test/renderer/literature'
+import { formatSmartRule, parseSmartRule } from './smart-rule-fields'
 import { LITERATURE_COLLECTION_REVISION_CONFLICT } from '@aipoch/literature-library/contracts'
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor } from '@testing-library/react'
 import { createRef } from 'react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { CollectionEditorDialog, type CollectionEditorDialogHandle } from './CollectionEditorDialog'
+
+const { render } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 afterEach(cleanup)
 it('labels project and collection scopes in the menu and selected value', async () => {

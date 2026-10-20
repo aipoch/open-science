@@ -17,7 +17,7 @@ const provider = {
   maxOutputTokens: 8_192,
   supportsImageInput: true,
   key: 'test-key',
-  apiEndpoints: ['openai' as const]
+  apiEndpoints: ['chat-completions' as const]
 }
 
 describe('codebuddy framework', () => {

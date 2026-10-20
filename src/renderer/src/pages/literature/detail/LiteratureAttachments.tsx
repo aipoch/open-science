@@ -25,8 +25,8 @@ import {
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { formatBytes } from '../../../../../shared/update'
 import {
-  useAttachmentOperations,
-  type AttachmentAction
+  type AttachmentAction,
+  useAttachmentOperationsStore
 } from '../workflows/literature-attachment-operations'
 import { AttachmentOperationStatus } from '../workflows/LiteratureAttachmentOperations'
 
@@ -149,6 +149,8 @@ export const LiteratureAttachments = ({
   readItem: (id: string) => Promise<LiteratureItemView | undefined>
   onPreview: (version: Version) => void
 }): React.JSX.Element => {
+  const useAttachmentOperations = useAttachmentOperationsStore()
+
   const { t, i18n } = useTranslation()
   const menuButtons = useRef(new Map<string, HTMLButtonElement>())
   const returnFocus = useRef<HTMLButtonElement | undefined>(undefined)

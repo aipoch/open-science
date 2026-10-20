@@ -1,11 +1,12 @@
 import { z } from 'zod'
-import type { ReasoningEffort } from '../../shared/model-preference-contract'
-import { usesVendorAnthropicApiKeyHeader } from '../../shared/provider-registry'
+import { type ReasoningEffort } from '../../shared/model-preference-contract'
 import {
-  resolveReasoningEffortValue,
+  usesVendorMessagesApiKeyHeader,
   type ModelReasoningEffort,
   type ResolvedReasoningEffort
-} from '../../shared/reasoning-effort'
+} from '@aipoch/providers'
+import { resolveReasoningEffortValue } from '../../shared/reasoning-effort'
+
 import {
   canUseClaudeProviderTransport,
   CODEX_ISOLATED_PROVIDER_ID,
@@ -30,16 +31,17 @@ import { CODEX_BRIDGE_MODEL, resolveResponsesBaseUrl } from '../agent-framework/
 import { opencodeTransportProviderId } from '../agent-framework/opencode'
 import { REVIEWER_BRIDGE_NAMESPACED_TOOLS } from '../reviewer/bridge-tools'
 import { requestSkillImportToolSchema } from '../skills/mcp-server'
-import type { AnthropicProviderBridgeTarget } from './anthropic-provider-bridge'
+import type { MessagesBridgeTarget } from './messages-bridge'
 import {
-  normalizeAnthropicBaseUrl,
-  openAiChatCompletionsUrl,
-  openAiCompletionsBase
-} from './base-url'
+  normalizeMessagesRootUrl,
+  resolveChatCompletionsUrl,
+  resolveChatCompletionsBaseUrl,
+  type ResponsesNamespacedTool
+} from '@aipoch/providers/protocol'
 import type { ClaudeRuntimeModelConfig } from './claude-config-provision'
 import { codexBridgeStaticMcpTools } from './codex-bridge-tools'
 import type { ProviderAccountsModule, ProviderRuntimeTarget } from './provider-accounts'
-import type { ResponsesBridgeNamespacedTool } from './responses-bridge'
+
 import type { StoredSettings } from './types'
 type BackendRouteProviderPort = Pick<
   ProviderAccountsModule,
@@ -68,11 +70,11 @@ type BackendTransportPlan =
   | Readonly<{ kind: 'direct' }>
   | Readonly<{
       kind: 'codebuddy-provider-compatibility'
-      wire: 'anthropic' | 'responses'
+      wire: 'messages' | 'responses'
     }>
   | Readonly<{
       kind: 'claude-anthropic'
-      targets: readonly (AnthropicProviderBridgeTarget & {
+      targets: readonly (MessagesBridgeTarget & {
         runtimeTarget?: ProviderRuntimeTarget
       })[]
       initialTargetId: string
@@ -95,8 +97,8 @@ type BackendRoutePlan = Readonly<{
   providerModelCatalog: readonly AgentModelCatalogEntry[]
   transport: BackendTransportPlan
   claudeModelConfig?: ClaudeRuntimeModelConfig
-  codexBridgeTools?: readonly ResponsesBridgeNamespacedTool[]
-  reviewerBridgeTools?: readonly ResponsesBridgeNamespacedTool[]
+  codexBridgeTools?: readonly ResponsesNamespacedTool[]
+  reviewerBridgeTools?: readonly ResponsesNamespacedTool[]
 }>
 const modelRouteFor = (
   frameworkId: AgentFrameworkId,
@@ -104,10 +106,12 @@ const modelRouteFor = (
 ): AgentModelRoute => {
   if (frameworkId === 'claude-code') return 'claude-anthropic'
   if (frameworkId === 'opencode') {
-    return target.apiEndpoints.includes('openai') ? 'opencode-openai' : 'opencode-anthropic'
+    return target.apiEndpoints.includes('chat-completions')
+      ? 'opencode-openai'
+      : 'opencode-anthropic'
   }
   if (frameworkId === 'codebuddy') return 'codebuddy-openai'
-  if (target.needsChatResponsesBridge) return 'codex-bridge'
+  if (target.needsChatResponsesToChatCompletionsBridge) return 'codex-bridge'
   if (target.needsNativeResponsesCompatibility) return 'codex-responses-compatibility'
   return 'codex-responses'
 }
@@ -128,14 +132,14 @@ const transportTargetId = (
 const namespaceFor = (serverName: string): string =>
   `mcp__${serverName.replace(/[^a-zA-Z0-9_]/g, '_')}`
 const STATIC_APP_MCP_TOOLS = codexBridgeStaticMcpTools()
-const SKILL_IMPORT_TOOLS: ResponsesBridgeNamespacedTool[] = [
+const SKILL_IMPORT_TOOLS: ResponsesNamespacedTool[] = [
   {
     namespace: namespaceFor(SKILL_IMPORT_MCP_SERVER_NAME),
     name: REQUEST_SKILL_IMPORT_TOOL_NAME,
     description: REQUEST_SKILL_IMPORT_TOOL_DESCRIPTION,
     parameters: z.toJSONSchema(z.object(requestSkillImportToolSchema), {
       target: 'draft-7'
-    }) as ResponsesBridgeNamespacedTool['parameters']
+    }) as ResponsesNamespacedTool['parameters']
   }
 ]
 class BackendRoutePlanner {
@@ -259,7 +263,7 @@ class BackendRoutePlanner {
       supportsImageInput: input.target.provider.supportsImageInput === true,
       reasoningEffort: modelEffort(input.effortIntent, input.target),
       ...(hasClaudeTransport
-        ? { anthropicBridgeTargetId: claudeTargetId(input.target.providerId, model) }
+        ? { messagesBridgeTargetId: claudeTargetId(input.target.providerId, model) }
         : {}),
       ...(providerTransportTargetId ? { providerTransportTargetId } : {}),
       ...(input.target.provider.contextWindow
@@ -293,11 +297,9 @@ class BackendRoutePlanner {
         return Object.freeze({ kind: 'direct' })
       }
       const targets = candidates.flatMap(
-        (
-          candidate
-        ): (AnthropicProviderBridgeTarget & { runtimeTarget?: ProviderRuntimeTarget })[] => {
+        (candidate): (MessagesBridgeTarget & { runtimeTarget?: ProviderRuntimeTarget })[] => {
           const model = candidate.effectiveModel ?? candidate.provider.model
-          const baseUrl = normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+          const baseUrl = normalizeMessagesRootUrl(candidate.provider.baseUrl ?? '')
           return !model || !baseUrl
             ? []
             : [
@@ -311,7 +313,7 @@ class BackendRoutePlanner {
                     ? { backgroundModel: 'apodex-1.1-mini' }
                     : {}),
                   ...(candidate.provider.vendorId &&
-                  usesVendorAnthropicApiKeyHeader(candidate.provider.vendorId)
+                  usesVendorMessagesApiKeyHeader(candidate.provider.vendorId)
                     ? { useApiKeyHeader: true }
                     : {})
                 })
@@ -336,10 +338,10 @@ class BackendRoutePlanner {
       })
     }
     if (frameworkId === 'codebuddy') {
-      if (active.apiEndpoints.includes('openai')) return Object.freeze({ kind: 'direct' })
+      if (active.apiEndpoints.includes('chat-completions')) return Object.freeze({ kind: 'direct' })
       return Object.freeze({
         kind: 'codebuddy-provider-compatibility',
-        wire: active.apiEndpoints.includes('responses') ? 'responses' : 'anthropic'
+        wire: active.apiEndpoints.includes('responses') ? 'responses' : 'messages'
       })
     }
     if (route === 'codex-bridge' || route === 'codex-responses-compatibility') {
@@ -396,15 +398,15 @@ class BackendRoutePlanner {
       if (!shareProviderTransportFamily(active.provider.type, candidate.provider.type)) return false
       const endpoint =
         frameworkId === 'claude-code'
-          ? normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+          ? normalizeMessagesRootUrl(candidate.provider.baseUrl ?? '')
           : frameworkId === 'opencode'
             ? route === 'opencode-openai'
-              ? openAiChatCompletionsUrl(candidate.provider)
-              : normalizeAnthropicBaseUrl(candidate.provider.baseUrl ?? '')
+              ? resolveChatCompletionsUrl(candidate.provider)
+              : normalizeMessagesRootUrl(candidate.provider.baseUrl ?? '')
             : frameworkId === 'codebuddy'
-              ? openAiChatCompletionsUrl(candidate.provider)
+              ? resolveChatCompletionsUrl(candidate.provider)
               : route === 'codex-bridge'
-                ? openAiCompletionsBase(candidate.provider)
+                ? resolveChatCompletionsBaseUrl(candidate.provider)
                 : resolveResponsesBaseUrl(candidate.provider)
       const id = model
         ? frameworkId === 'claude-code'

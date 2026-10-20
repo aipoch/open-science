@@ -1,13 +1,22 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { cleanup, render as renderComponent, fireEvent } from '@testing-library/react'
+import { cleanup, fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { WorkspaceLiteratureToolCard } from './WorkspaceLiteratureToolCard'
 import { buildLiteratureLibraryToolSummary } from './literature-tool-presentation'
 import { LibraryPreviewNavigationContext } from './previews/library-reference-actions'
 import { LiteratureCandidateSessionContext } from './literature-candidate-session-context'
 import { useNavigationStore } from '../../stores/navigation-store'
+
+const { render: renderComponent } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
+
 const reference = (id: string): LiteratureItemView => ({
   id,
   metadataRevision: 1,

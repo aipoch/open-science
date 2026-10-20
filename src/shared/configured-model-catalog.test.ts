@@ -19,7 +19,7 @@ const provider = (
   id,
   type: 'custom',
   name: id,
-  apiEndpoints: ['openai'],
+  apiEndpoints: ['chat-completions'],
   baseUrl: 'https://example.test/v1',
   model: models[0],
   models,
@@ -35,7 +35,7 @@ describe('configured model catalog', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [provider('first', ['shared']), provider('second', ['shared'])],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['openai']
+      frameworkEndpoints: ['chat-completions']
     })
 
     expect(entries.map((entry) => entry.key)).toEqual([
@@ -52,11 +52,11 @@ describe('configured model catalog', () => {
     const entries = buildConfiguredModelCatalog({
       providers: [
         provider('failed', ['a'], { lastValidationFailure: { at: 11, category: 'auth' } }),
-        provider('incompatible', ['b'], { apiEndpoints: ['anthropic'] }),
+        provider('incompatible', ['b'], { apiEndpoints: ['messages'] }),
         provider('ready', ['c'])
       ],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['openai']
+      frameworkEndpoints: ['chat-completions']
     })
 
     expect(
@@ -75,11 +75,11 @@ describe('configured model catalog', () => {
       providers: [
         provider('ollama', ['qwen3:14b'], {
           lastValidatedAt: 20,
-          lastValidatedTarget: { model: 'qwen3:14b', endpoint: 'openai' }
+          lastValidatedTarget: { model: 'qwen3:14b', endpoint: 'chat-completions' }
         })
       ],
       frameworkId: 'claude-code',
-      frameworkEndpoints: ['anthropic']
+      frameworkEndpoints: ['messages']
     })
 
     expect(
@@ -97,14 +97,14 @@ describe('configured model catalog', () => {
       lastValidationFailure: {
         at: 11,
         category: 'model-not-found',
-        target: { model: 'model-b', endpoint: 'openai' }
+        target: { model: 'model-b', endpoint: 'chat-completions' }
       }
     } as Partial<ProviderView>)
 
     const entries = buildConfiguredModelCatalog({
       providers: [failedTargetProvider],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['openai']
+      frameworkEndpoints: ['chat-completions']
     })
 
     expect(entries.map((entry) => entry.model)).toEqual(['model-a'])
@@ -119,7 +119,7 @@ describe('configured model catalog', () => {
         })
       ],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['anthropic', 'openai']
+      frameworkEndpoints: ['messages', 'chat-completions']
     })
 
     expect(
@@ -136,8 +136,8 @@ describe('configured model catalog', () => {
   })
 
   it.each([
-    { frameworkId: 'claude-code', frameworkEndpoints: ['anthropic'] },
-    { frameworkId: 'opencode', frameworkEndpoints: ['anthropic', 'openai'] },
+    { frameworkId: 'claude-code', frameworkEndpoints: ['messages'] },
+    { frameworkId: 'opencode', frameworkEndpoints: ['messages', 'chat-completions'] },
     { frameworkId: 'codex', frameworkEndpoints: ['responses'] }
   ] as const)('offers the new Ark vision models to $frameworkId', (framework) => {
     const models = [
@@ -163,12 +163,12 @@ describe('configured model catalog', () => {
       providers: [
         provider('builtin-xai-subscription', ['grok-4.6'], {
           type: 'xai-subscription',
-          apiEndpoints: ['anthropic', 'openai', 'responses'],
+          apiEndpoints: ['messages', 'chat-completions', 'responses'],
           supportsImageInput: true
         })
       ],
       frameworkId: 'opencode',
-      frameworkEndpoints: ['openai']
+      frameworkEndpoints: ['chat-completions']
     })
 
     expect(entry.supportsImageInput).toBe(true)
@@ -179,7 +179,7 @@ describe('configured model catalog', () => {
       providers: [provider('custom', [], { model: 'custom-model' })],
       activeProviderId: 'custom',
       frameworkId: 'opencode',
-      frameworkEndpoints: ['openai']
+      frameworkEndpoints: ['chat-completions']
     })
 
     expect(entries).toMatchObject([
@@ -191,18 +191,18 @@ describe('configured model catalog', () => {
     const providers = [
       provider(CLAUDE_SHARED_PROVIDER_ID, ['shared-model'], {
         type: 'claude-shared',
-        apiEndpoints: ['anthropic']
+        apiEndpoints: ['messages']
       }),
       provider(CLAUDE_ISOLATED_PROVIDER_ID, ['isolated-model'], {
         type: 'claude-isolated',
-        apiEndpoints: ['anthropic']
+        apiEndpoints: ['messages']
       })
     ]
     const input = {
       providers,
       activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
       frameworkId: 'claude-code' as const,
-      frameworkEndpoints: ['anthropic' as const]
+      frameworkEndpoints: ['messages' as const]
     }
 
     expect(buildConfiguredModelCatalog(input).map((entry) => entry.providerId)).toEqual([

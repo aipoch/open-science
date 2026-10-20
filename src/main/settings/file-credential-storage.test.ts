@@ -114,7 +114,8 @@ describe('explicit file credentials without a keyring', () => {
         tokens: {
           access_token: 'access-secret',
           token_type: 'Bearer',
-          refresh_token: 'refresh-secret'
+          refresh_token: 'refresh-secret',
+          issuer: 'https://fixture.example'
         }
       })
       const resolved = await new DeviceCredentialStore(root).resolveOAuth(created.id)

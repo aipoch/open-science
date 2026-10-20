@@ -112,7 +112,7 @@ it.runIf(opencodePath)(
         type: 'custom',
         agentProviderId: 'isolation-probe',
         baseUrl: `${modelUrl}/v1`,
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         model: 'probe-model',
         key: 'local-test'
       },

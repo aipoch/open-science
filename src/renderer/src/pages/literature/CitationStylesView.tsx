@@ -1,3 +1,4 @@
+import { useLiteratureHost } from './renderer-host'
 import { ErrorNotice } from '@/components/error-notice'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: citation style manager · genre: modern-minimal · theme: existing Open-Science tokens · enrichment: none */
@@ -37,6 +38,8 @@ const CitationStylesView = ({
   onStylesChange,
   embedded = false
 }: CitationStylesViewProps): React.JSX.Element => {
+  const { api: hostApi } = useLiteratureHost()
+
   const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement>(null)
   const [loading, setLoading] = useState(styles === undefined)
@@ -124,7 +127,7 @@ const CitationStylesView = ({
   useEffect(() => {
     if (styles !== undefined) return
     let active = true
-    void window.api.literature.citationStyles({ kind: 'list' }).then(
+    void hostApi.literature.citationStyles({ kind: 'list' }).then(
       (result) => {
         if (!active) return
         onStylesChange(result.styles)
@@ -139,7 +142,7 @@ const CitationStylesView = ({
     return () => {
       active = false
     }
-  }, [onStylesChange, styles])
+  }, [hostApi.literature, onStylesChange, styles])
 
   const loadPreview = useCallback(
     (style: LiteratureCitationStyleView): void => {
@@ -151,7 +154,7 @@ const CitationStylesView = ({
         return
       previewRequestsRef.current.add(style.id)
       setPreviewStates((current) => ({ ...current, [style.id]: { status: 'loading' } }))
-      void window.api.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
+      void hostApi.literature.citationStyles({ kind: 'preview', styleId: style.id }).then(
         (result) => {
           const preview = result.preview
           if (preview?.styleId !== style.id) previewRequestsRef.current.delete(style.id)
@@ -169,7 +172,7 @@ const CitationStylesView = ({
         }
       )
     },
-    [previewStates]
+    [hostApi.literature, previewStates]
   )
 
   const showPreview = useCallback(
@@ -204,7 +207,7 @@ const CitationStylesView = ({
     }
     setImporting(true)
     try {
-      const result = await window.api.literature.citationStyles({
+      const result = await hostApi.literature.citationStyles({
         kind: 'import',
         content: await file.text()
       })
@@ -221,7 +224,7 @@ const CitationStylesView = ({
     setError(undefined)
     setDeletingId(styleId)
     try {
-      const result = await window.api.literature.citationStyles({ kind: 'delete', styleId })
+      const result = await hostApi.literature.citationStyles({ kind: 'delete', styleId })
       onStylesChange(result.styles)
     } catch {
       setError('delete-failed')
@@ -390,11 +393,11 @@ const CitationStylesView = ({
             {example ? (
               <>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('In-text citation')}</p>
+                  <p className="font-medium text-muted-foreground">{t('In-text citation')}</p>
                   <p className="mt-0.5 leading-5">{example.inText}</p>
                 </div>
                 <div>
-                  <p className="font-medium text-bg-000/70">{t('Reference')}</p>
+                  <p className="font-medium text-muted-foreground">{t('Reference')}</p>
                   <p className="mt-0.5 leading-5">{example.reference}</p>
                 </div>
               </>

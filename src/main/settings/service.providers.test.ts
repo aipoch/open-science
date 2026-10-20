@@ -28,7 +28,7 @@ describe('SettingsService provider facade', () => {
       baseUrl: 'https://gateway.example/v1',
       model: 'model-a',
       key: 'existing-secret',
-      apiEndpoints: ['openai']
+      apiEndpoints: ['chat-completions']
     })
     const before = (await service.getSettingsView()).providers[0]
     vi.stubGlobal(
@@ -80,7 +80,7 @@ describe('SettingsService provider facade', () => {
         baseUrl: 'https://gateway.example/v1',
         model: 'test-model',
         key: 'synthetic-key',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       expect(result).toMatchObject({ validation: { ok: true }, providerId: expect.any(String) })
       expect(result.snapshot).toBeUndefined()
@@ -98,11 +98,11 @@ describe('SettingsService provider facade', () => {
   })
 
   it.each([
-    { framework: 'claude-code', endpoint: 'anthropic', route: 'claude-anthropic' },
-    { framework: 'opencode', endpoint: 'openai', route: 'opencode-openai' },
+    { framework: 'claude-code', endpoint: 'messages', route: 'claude-anthropic' },
+    { framework: 'opencode', endpoint: 'chat-completions', route: 'opencode-openai' },
     { framework: 'codex', endpoint: 'responses', route: 'codex-responses-compatibility' },
-    { framework: 'codex', endpoint: 'openai', route: 'codex-bridge' },
-    { framework: 'codebuddy', endpoint: 'openai', route: 'codebuddy-openai' }
+    { framework: 'codex', endpoint: 'chat-completions', route: 'codex-bridge' },
+    { framework: 'codebuddy', endpoint: 'chat-completions', route: 'codebuddy-openai' }
   ] as const)(
     'resolves the saved custom model through $route after an edit',
     async ({ framework, endpoint, route }) => {
@@ -211,7 +211,7 @@ describe('SettingsService provider facade', () => {
       name: 'Legacy',
       baseUrl: 'https://legacy.example/v1',
       model: 'legacy-model',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       keyRef: legacyRef,
       keyMask: 'le•••••ey'
     })
@@ -249,7 +249,7 @@ describe('SettingsService provider facade', () => {
         baseUrl: 'https://first.example/v1',
         model: 'first-model',
         key: 'first-key',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       expect(first.providers[0]?.id).toBe('p_123_1')
 
@@ -262,7 +262,7 @@ describe('SettingsService provider facade', () => {
         baseUrl: 'https://second.example/v1',
         model: 'second-model',
         key: 'second-key',
-        apiEndpoints: ['openai']
+        apiEndpoints: ['chat-completions']
       })
       expect(second.providers.find((provider) => provider.name === 'Second')?.id).toBe('p_123_3')
     } finally {

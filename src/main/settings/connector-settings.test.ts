@@ -38,6 +38,7 @@ const { ConnectorSettingsModule } = await import('./connector-settings')
 const { DeviceCredentialStore } = await import('./device-credentials')
 const { encryptKey } = await import('./crypto')
 const { selectEnabledCustomServers } = await import('../connectors/custom-mcp-config')
+const { projectConnectorsFromStored } = await import('../connectors/read-model')
 const { CustomServerIdConflictError } = await import('./custom-server-identity')
 const { SettingsRepository } = await import('./repository')
 const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
@@ -176,7 +177,11 @@ describe('ConnectorSettingsModule', () => {
         }
       })
       await service.saveCustomServerOAuthState(`credential:${oauth.createdCredential.id}`, {
-        tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+        tokens: {
+          access_token: 'oauth-access',
+          token_type: 'Bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
 
       makeSecretsUnreadable()
@@ -392,7 +397,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const credential = credentials.createdCredential
     await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
-      tokens: { access_token: 'initial-oauth-token', token_type: 'bearer' }
+      tokens: {
+        access_token: 'initial-oauth-token',
+        token_type: 'bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
     const added = await addCustomServer({
       name: 'shared-oauth',
@@ -407,7 +416,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const id = added.customServers[0]!.id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'oauth-token', token_type: 'bearer' }
+      tokens: {
+        access_token: 'oauth-token',
+        token_type: 'bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
 
     const stored = (await repository.getSettings()).connectors?.customMcpServers?.[0]
@@ -489,7 +502,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const id = added.customServers[0]!.id
     await service.saveCustomServerOAuthState(`credential:${credential.id}`, {
-      tokens: { access_token: 'connected-token', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'connected-token',
+        token_type: 'Bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
 
     const updated = await service.updateCustomServer({
@@ -612,7 +629,11 @@ describe('ConnectorSettingsModule', () => {
       })
     ).createdCredential
     await credentialStore.saveOAuthState(credential.id, {
-      tokens: { access_token: 'shared-token', token_type: 'bearer' }
+      tokens: {
+        access_token: 'shared-token',
+        token_type: 'bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
     const barrierEntered = Promise.withResolvers<void>()
     const releaseBarrier = Promise.withResolvers<void>()
@@ -666,7 +687,11 @@ describe('ConnectorSettingsModule', () => {
         })
       ).createdCredential
       await credentialStore.saveOAuthState(credential.id, {
-        tokens: { access_token: 'scoped-token', token_type: 'bearer' }
+        tokens: {
+          access_token: 'scoped-token',
+          token_type: 'bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
       await addCustomServer({
         name: 'tampered-oauth-scope',
@@ -1983,14 +2008,22 @@ describe('ConnectorSettingsModule', () => {
     await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
 
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'oauth-access', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'oauth-access',
+        token_type: 'Bearer',
+        issuer: 'https://example.com/oauth'
+      },
+      clientInformation: { client_id: 'registered', issuer: 'https://example.com/oauth' }
     })
     const storedJson = await readFile(join(dir, 'settings.json'), 'utf8')
     expect(storedJson).not.toContain('oauth-access')
     expect(storedJson).toContain('oauthRef')
 
     const resolved = (await service.getConnectors())?.customMcpServers?.[0]
-    expect(resolved?.oauthState?.tokens?.access_token).toBe('oauth-access')
+    expect(resolved?.oauthState).toMatchObject({
+      tokens: { access_token: 'oauth-access', issuer: 'https://example.com/oauth' },
+      clientInformation: { client_id: 'registered', issuer: 'https://example.com/oauth' }
+    })
     const connected = (await service.listConnectors()).customServers[0]
     expect(connected.oauth?.hasTokens).toBe(true)
     expect(connected.availability).toBeUndefined()
@@ -1999,6 +2032,66 @@ describe('ConnectorSettingsModule', () => {
     const enabled = await service.setCustomServerEnabled({ id, enabled: true })
     expect(enabled.customServers[0].enabled).toBe(true)
   })
+
+  it.each(['legacy', 'shared'] as const)(
+    'projects %s unbound OAuth credentials as unauthenticated before connecting',
+    async (storage) => {
+      service = new ConnectorSettingsModule(repository, fetch, new DeviceCredentialStore(dir))
+      const oauth = { authorizationServerUrl: 'https://example.com/oauth' }
+      const credential =
+        storage === 'shared'
+          ? (
+              await service.createDeviceCredential({
+                displayName: 'Historical OAuth',
+                kind: 'oauth',
+                resourceUri: 'https://example.com/mcp',
+                transport: 'streamable_http',
+                oauth
+              })
+            ).createdCredential
+          : undefined
+      const snapshot = credential
+        ? await service.addCustomServer({
+            name: 'historical-oauth',
+            displayName: 'Historical OAuth',
+            transport: 'streamable_http',
+            url: 'https://example.com/mcp',
+            oauthCredentialId: credential.id
+          })
+        : await addHistoricalCustomServer({
+            name: 'historical-oauth',
+            transport: 'streamable_http',
+            url: 'https://example.com/mcp',
+            oauth
+          })
+      const id = snapshot.customServers[0].id
+      await service.saveCustomServerOAuthState(id, {
+        tokens: { access_token: 'legacy-token', token_type: 'Bearer' },
+        clientInformation: { client_id: 'bound-client', issuer: oauth.authorizationServerUrl },
+        discoveryState: { authorizationServerUrl: 'https://obsolete-auth.example.test' }
+      })
+      await repository.setCustomServerEnabled(id, true)
+
+      const resolved = await service.getConnectors()
+      expect(resolved?.customMcpServers?.[0].oauthState).toEqual({})
+      expect(selectEnabledCustomServers(resolved)).toEqual([])
+      expect(projectConnectorsFromStored(resolved).find((entry) => entry.id === id)).toMatchObject({
+        mainEnabled: false,
+        availability: 'unauthenticated'
+      })
+      expect((await service.listConnectors()).customServers[0]).toMatchObject({
+        availability: 'unauthenticated',
+        oauth: { hasTokens: false }
+      })
+      await expect(service.setCustomServerEnabled({ id, enabled: true })).rejects.toThrow('Sign in')
+      if (credential) {
+        expect((await service.listDeviceCredentials()).credentials[0]).toMatchObject({
+          status: 'disconnected',
+          needsSecret: false
+        })
+      }
+    }
+  )
 
   it('does not let a stale OAuth save replace a concurrent configuration edit', async () => {
     const added = await addHistoricalCustomServer({
@@ -2156,7 +2249,11 @@ describe('ConnectorSettingsModule', () => {
     })
 
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'static-token', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'static-token',
+        token_type: 'Bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
     await service.updateCustomServer({
       id,
@@ -2214,7 +2311,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'issuer-token', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'issuer-token',
+        token_type: 'Bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
 
     const updated = await service.updateCustomServer({
@@ -2245,7 +2346,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'endpoint-token', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'endpoint-token',
+        token_type: 'Bearer',
+        issuer: 'https://example.com/oauth'
+      }
     })
     await service.setCustomServerEnabled({ id, enabled: true })
 
@@ -2274,7 +2379,11 @@ describe('ConnectorSettingsModule', () => {
     })
     const id = added.customServers[0].id
     await service.saveCustomServerOAuthState(id, {
-      tokens: { access_token: 'remote-token', token_type: 'Bearer' }
+      tokens: {
+        access_token: 'remote-token',
+        token_type: 'Bearer',
+        issuer: 'https://auth.example.test/'
+      }
     })
 
     const updated = await service.updateCustomServer({
