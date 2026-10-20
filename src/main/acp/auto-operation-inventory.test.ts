@@ -161,15 +161,15 @@ describe('Auto operation completeness against real tool registrations', () => {
         // preserve linked-PDF identity, mounted-server checks and single-use authorization.
         'literature/mcp-server.ts':
           'e1ec395347887d9b6645ae0f74c268901712e26ff5b93ec7b128d46134c986ed',
-        // Reviewed: choice-mode description only; input validation and handlers are unchanged.
+        // Reviewed: question/mode guidance only; input validation and handlers are unchanged.
         'notebook/mcp-server.ts':
-          '90efc067960c0c887e73202bd196905670ad84037419aabf1cd97b0c0ac1b18f',
+          '9f0c679d39461462307788133da200b7534604d1bd9086819d513dca78bf2dc5',
         'session-plan/plan-mcp-server.ts':
           'b32ac73d8a2655f556c50b067892eb4caa3940acdcae6df7d8475d81cf7b98d9',
         'skills/mcp-server.ts': '3064af8275f8026e9dbf84b445f3a5061d41619c523def579c4b759c0aac338b'
       },
       notebookSchemas: {
-        ask_user_question: '69901c4279b1ef3bc0e1f9702f86e3da1cd55a8fb96976b05c21a756d5c30d07',
+        ask_user_question: '87edfae3e0bfa12e06917f12d87b55a4c44a486550541e7ca4f6f1086e576cee',
         background_run: '4198921bb3f61261431524f7e57c92d8713bfe5db49c360a30b66b3cc4e027fd',
         manage_environments: '15d33c6e75c14aaddad62bc062f714238ae7c87ab08976d77efd1f77e8641675',
         request_network_access: '6b5a49d73cc704691da193510764101bc5577b48bb7c0fa8bf99f1b29b500f95'
