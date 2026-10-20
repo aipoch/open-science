@@ -4,6 +4,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   realpath,
   rm,
   stat,
@@ -19,10 +20,22 @@ import { afterEach, describe, expect, it } from 'vitest'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
 import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
 import { NotebookInputRegistry } from './input-registry'
 import { createNotebookInputPreviewKey } from '../../shared/notebook'
 import { getNotebookInputRoot } from './input-staging'
-import { getNotebookDataRoot } from './repository'
+import {
+  getNotebookDataRoot,
+  getNotebookSessionRoot,
+  getNotebookFileEvidenceLocation
+} from './repository'
+import { createRootNotebookLane } from './lane-identity'
+import {
+  startWorkingFileObservation,
+  completeWorkingFileEvidence,
+  deleteWorkingFileEvidenceProject
+} from './working-file-observer'
+import { materializeNotebookPromptInput } from './prompt-input-materialization'
 
 // Hosted Windows runners migrate a fresh database for each case under disk
 // contention. The Windows full-test workflow default is 60s; the heavier
@@ -187,6 +200,166 @@ const setup = async (): Promise<NotebookInputRegistry> => {
 }
 
 describe('NotebookInputRegistry', () => {
+  it.each(['unlink', 'project-delete'] as const)(
+    'shares upload evidence with one isolated execution copy through %s',
+    async (cleanup) => {
+      const registry = await setup()
+      const content = 'x\n'.padEnd(1024 * 1024, '1')
+      const storageKey = await createUpload({
+        projectId: 'project-1',
+        sessionId: 'source-session-1',
+        uploadFileId: 'upload-1',
+        versionId: 'upload-version-1',
+        filename: 'large.csv',
+        content
+      })
+      const request = {
+        projectId: 'project-1',
+        appSessionId: 'active-session',
+        promptMessageId: 'prompt-1',
+        uploads: [
+          {
+            id: 'upload-1',
+            versionId: 'upload-version-1',
+            versionNumber: 1,
+            sessionId: 'source-session-1',
+            name: 'large.csv',
+            originalName: 'large.csv',
+            path: '/untrusted-renderer-path',
+            size: content.length
+          }
+        ],
+        references: []
+      }
+      const [input] = await registry.registerTurn(request)
+      const dataRoot = getNotebookDataRoot(storageRoot!, request.projectId, request.appSessionId)
+      const workingPath = join(dataRoot, input!.notebookPath)
+      const originalPath = join(storageRoot!, storageKey)
+      const original = await stat(originalPath)
+      const working = await stat(workingPath)
+      expect([working.dev, working.ino]).not.toEqual([original.dev, original.ino])
+      await expect(
+        stat(getNotebookInputRoot(storageRoot!, request.projectId, request.appSessionId))
+      ).rejects.toMatchObject({ code: 'ENOENT' })
+      await registry.registerTurn({ ...request, promptMessageId: 'prompt-2' })
+      expect((await stat(workingPath)).ino).toBe(working.ino)
+      const location = getNotebookFileEvidenceLocation(
+        storageRoot!,
+        request.projectId,
+        request.appSessionId,
+        createRootNotebookLane(request.projectId, request.appSessionId, 'root-frame-active-session')
+      )
+      const evidencePaths: string[] = []
+      for (let index = 0; index < 3; index++) {
+        const runId = `shared-upload-${index}`
+        const observation = await startWorkingFileObservation({
+          dataRoot,
+          notebookSessionRoot: getNotebookSessionRoot(
+            storageRoot!,
+            request.projectId,
+            request.appSessionId
+          ),
+          cwd: dataRoot,
+          language: 'python',
+          code: `open('${input!.notebookPath}').read()`,
+          runId,
+          fileEvidenceStorageRoot: storageRoot!,
+          fileEvidenceRoot: location.root,
+          fileEvidenceStoragePrefix: location.storageKeyPrefix,
+          registeredInputFiles: registry.getTurnInputs(request)
+        })
+        const result = await observation.finish()
+        expect(result.fileEvidence.fileReads).toBe('complete')
+        await completeWorkingFileEvidence(
+          { ...location, storageRoot: storageRoot! },
+          {
+            runId,
+            fileEvidence: result.fileEvidence
+          }
+        )
+        const sidecar = JSON.parse(
+          await readFile(join(storageRoot!, result.fileEvidence.storageKey!), 'utf8')
+        )
+        const evidencePath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
+        evidencePaths.push(evidencePath)
+        const evidence = await stat(evidencePath)
+        expect([evidence.dev, evidence.ino]).toEqual([original.dev, original.ino])
+      }
+      // Count physical identities, not the number of activity names or their logical sizes.
+      const poolPath = join(
+        storageRoot!,
+        'execution-file-evidence',
+        request.projectId,
+        'blobs',
+        `sha256-${checksum(content)}`
+      )
+      const uniqueBytes = new Map<string, number>()
+      for (const path of [originalPath, workingPath, poolPath, ...evidencePaths]) {
+        const file = await stat(path)
+        uniqueBytes.set(`${file.dev}:${file.ino}`, file.size)
+      }
+      expect([...uniqueBytes.values()].reduce((sum, size) => sum + size, 0)).toBe(
+        2 * content.length
+      )
+      await chmod(workingPath, 0o644)
+      await writeFile(workingPath, 'changed working input')
+      await expect(readFile(originalPath, 'utf8')).resolves.toBe(content)
+      if (cleanup === 'unlink') {
+        await rm(originalPath)
+        for (const path of evidencePaths)
+          await expect(readFile(path, 'utf8')).resolves.toBe(content)
+      } else {
+        const provenance = new ArtifactProvenanceRepository({
+          storageRoot: storageRoot!,
+          getClient: async () => client!
+        })
+        await provenance.deleteProjectProvenance(request.projectId)
+        expect(await client!.uploadVersion.count()).toBe(0)
+        await expect(stat(originalPath)).rejects.toMatchObject({ code: 'ENOENT' })
+        for (const path of [poolPath, ...evidencePaths]) {
+          expect((await stat(path)).size).toBe(0)
+        }
+      }
+      await deleteWorkingFileEvidenceProject(storageRoot!, request.projectId)
+      await expect(stat(poolPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(readFile(workingPath, 'utf8')).resolves.toBe('changed working input')
+    }
+  )
+
+  it.each(['interrupted', 'corrupt'] as const)(
+    'does not publish or retain a %s direct input copy',
+    async (failure) => {
+      storageRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-direct-input-')))
+      const content = 'expected input'
+      await expect(
+        materializeNotebookPromptInput({
+          storageRoot,
+          projectId: 'project-1',
+          appSessionId: 'session-1',
+          input: {
+            inputFileVersionId: 'version-1',
+            sourceKind: 'upload-version',
+            sourceFileId: 'upload-1',
+            sourceProjectId: 'project-1',
+            sourceSessionId: 'source-session',
+            filename: 'input.csv',
+            sizeBytes: content.length,
+            checksum: checksum(content),
+            storageKey: 'unused',
+            association: 'turn-attached'
+          },
+          copyContent: async (path) => {
+            await writeFile(path, 'partial')
+            if (failure === 'interrupted') throw new Error('Interrupted copy')
+          }
+        })
+      ).rejects.toThrow(failure === 'interrupted' ? 'Interrupted copy' : 'immutable Version')
+      await expect(
+        readdir(join(getNotebookDataRoot(storageRoot, 'project-1', 'session-1'), 'inputs'))
+      ).resolves.toEqual([])
+    }
+  )
+
   it('rejects a replaced Notebook data-root symlink before materializing prompt inputs', async () => {
     const registry = await setup()
     await createUpload({

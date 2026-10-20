@@ -1,3 +1,5 @@
+import { readdir } from 'node:fs/promises'
+import { posix } from 'node:path'
 import { z } from 'zod'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
@@ -7,25 +9,27 @@ import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archiv
 import type { PackageRecords } from './records-contract'
 
 const checksum = z.string().regex(/^[a-f0-9]{64}$/)
+const generationSchema = z
+  .object({
+    generationId: z.string(),
+    checksum,
+    contentStorageKey: z.string(),
+    sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_FILE_BYTES)
+  })
+  .passthrough()
 export const executionEvidenceSchema = z
   .object({
     schemaVersion: z.literal(1),
     evidenceId: z.string(),
     activityId: z.string(),
     activityKind: z.enum(['notebook-run', 'compute-job']),
+    predecessorGenerations: z.array(generationSchema).max(10000).optional(),
     relations: z
       .array(
         z
           .object({
-            generation: z
-              .object({
-                generationId: z.string(),
-                checksum,
-                contentStorageKey: z.string(),
-                sizeBytes: z.number().int().nonnegative().max(PACKAGE_MAX_FILE_BYTES)
-              })
-              .passthrough()
-              .optional()
+            generation: generationSchema.optional(),
+            previousGenerationId: z.string().optional()
           })
           .passthrough()
       )
@@ -118,9 +122,40 @@ export const executionEvidenceKeys = async (
     )
       throw new Error('Execution file evidence ownership mismatch.')
     keys.add(key)
-    for (const relation of evidence.relations) {
-      if (!relation.generation) continue
-      const generation = relation.generation
+    const generations = [
+      ...evidence.relations.flatMap((relation) =>
+        relation.generation ? [relation.generation] : []
+      ),
+      ...(evidence.predecessorGenerations ?? [])
+    ]
+    const generationIds = new Set(generations.map((generation) => generation.generationId))
+    // Old writers retained predecessor bytes but sometimes omitted their mapping. Preserve the
+    // entire Activity blob directory; exporting must not silently discard potentially needed bytes.
+    if (
+      evidence.relations.some(
+        (relation) =>
+          relation.previousGenerationId && !generationIds.has(relation.previousGenerationId)
+      )
+    ) {
+      const blobKey = `${posix.dirname(key)}/blobs`
+      await assertPackageSourcePath(storageRoot, blobKey)
+      for (const entry of await readdir(resolveStorageKey(storageRoot, blobKey), {
+        withFileTypes: true
+      })) {
+        if (!entry.isFile() || !/^sha256-[a-f0-9]{64}$/.test(entry.name))
+          throw new Error('Unverifiable legacy predecessor content.')
+        const contentKey = `${blobKey}/${entry.name}`
+        await assertPackageSourcePath(storageRoot, contentKey)
+        if (
+          (await fileChecksum(resolveStorageKey(storageRoot, contentKey), signal)) !==
+          entry.name.slice(7)
+        )
+          throw new Error('Legacy predecessor content checksum mismatch.')
+        keys.add(contentKey)
+        if (keys.size > 10000) throw new Error('Execution file evidence exceeds the package limit.')
+      }
+    }
+    for (const generation of generations) {
       const project = key.split('/')[1]
       if (!generation.contentStorageKey.startsWith(`${key.split('/')[0]}/${project}/`))
         throw new Error('Execution file generation escapes its Project.')
