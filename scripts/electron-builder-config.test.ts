@@ -38,6 +38,40 @@ describe('macOS native privacy purpose descriptions', () => {
 })
 
 describe('electron-builder local evidence exclusion', () => {
+  it('runs desktop staging with an explicit target after building its current checkout', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'desktop-hook-'))
+    try {
+      await mkdir(join(root, 'scripts'))
+      for (const name of ['native-components', 'build-backend', 'stage-backend'])
+        await writeFile(
+          join(root, 'scripts', `${name}.mjs`),
+          `import { appendFileSync } from 'node:fs'; appendFileSync('calls.jsonl', JSON.stringify({name:${JSON.stringify(name)},args:process.argv.slice(2)})+'\\n')`
+        )
+      await writeFile(
+        join(root, 'scripts/stage-node-runtime.mjs'),
+        `export async function stageNodeRuntime() {}`
+      )
+      const require = createRequire(import.meta.url)
+      await require('../build/stage-desktop-runtime.cjs')({
+        electronPlatformName: process.platform,
+        arch: require('builder-util').Arch[process.arch],
+        packager: { projectDir: root }
+      })
+      expect(
+        (await readFile(join(root, 'calls.jsonl'), 'utf8'))
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+      ).toEqual([
+        { name: 'native-components', args: [] },
+        { name: 'build-backend', args: [] },
+        { name: 'stage-backend', args: ['--desktop'] }
+      ])
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('keeps repository tooling and prior CLI artifacts out while retaining runtime resources', async () => {
     const config = load(readFileSync('electron-builder.yml', 'utf8')) as { files: string[] }
     const root = await mkdtemp(join(tmpdir(), 'desktop-cli-artifacts-'))
@@ -54,7 +88,8 @@ describe('electron-builder local evidence exclusion', () => {
     const cliArtifacts = [
       'out/cli-artifacts/open-science-0.37.0-win32-x64.zip',
       'out/cli-artifacts/win32-x64.json',
-      'out/cli-artifacts/.archive-fixture/backend/index.cjs'
+      'out/cli-artifacts/.archive-fixture/backend/index.cjs',
+      'out/desktop-backend/out/backend/index.cjs'
     ]
     const developmentFiles = [
       'scripts/stage-backend.mjs',
@@ -101,10 +136,13 @@ describe('electron-builder local evidence exclusion', () => {
     ]
     try {
       for (const file of files) {
-        const path = join(root, 'out/standalone', file)
+        const path = join(root, 'out/desktop-backend', file)
         await mkdir(join(path, '..'), { recursive: true })
         await writeFile(path, file)
       }
+      // A prior npm release may coexist; desktop packaging must never pick its stale payload.
+      await mkdir(join(root, 'out/standalone/out/backend'), { recursive: true })
+      await writeFile(join(root, 'out/standalone/out/backend/index.cjs'), 'stale standalone')
       const matchers = config.extraResources
         .filter((entry) => entry.to === 'backend' || entry.to.startsWith('backend/'))
         .map(

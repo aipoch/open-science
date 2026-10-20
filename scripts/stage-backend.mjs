@@ -1,6 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
   backendDependencyIncludes,
+  createDesktopDependencyFilter,
+  desktopBackendDependencies,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -8,14 +10,22 @@ import {
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
+import { parseArgs } from 'node:util'
 
 const root = resolve(import.meta.dirname, '..')
-const stage = join(root, 'out/standalone')
+const { values } = parseArgs({ options: { desktop: { type: 'boolean', default: false } } })
+const stage = join(root, values.desktop ? 'out/desktop-backend' : 'out/standalone')
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const cliManifest = JSON.parse(
   await readFile(join(root, 'packages/open-science/package.json'), 'utf8')
 )
 const forbidden = isElectronPackage
+const dependencyRoots = values.desktop
+  ? desktopBackendDependencies(
+      manifest.dependencies,
+      JSON.parse(await readFile(join(root, 'out/backend/dependencies.json'), 'utf8'))
+    )
+  : Object.keys(manifest.dependencies)
 await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
 await cp(join(root, 'out/backend'), join(stage, 'out/backend'), { recursive: true })
@@ -82,10 +92,17 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (!atRoot) destination = join(stage, 'node_modules', name)
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
+  const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => backendDependencyIncludes(pkg, relative(source, path))
+    filter: async (path) => {
+      const file = relative(source, path)
+      return (
+        backendDependencyIncludes(pkg, file) &&
+        (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
+      )
+    }
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
@@ -119,7 +136,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   }
 }
 const dependencies = {}
-for (const name of Object.keys(manifest.dependencies)) {
+for (const name of dependencyRoots) {
   if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
@@ -200,5 +217,5 @@ await writeFile(
   ) + '\n'
 )
 console.log(
-  `Staged ${process.platform}/${process.arch} standalone artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
+  `Staged ${process.platform}/${process.arch} ${values.desktop ? 'desktop' : 'standalone'} artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
 )

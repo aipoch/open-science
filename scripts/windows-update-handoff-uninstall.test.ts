@@ -19,18 +19,26 @@ afterEach(() => {
 })
 
 describe.skipIf(process.platform !== 'win32')('Windows update presentation uninstall', () => {
-  it.each([
-    'unknown',
-    'partial',
-    'active',
-    'foreign',
-    'other-installation',
-    'reused-parent',
-    'reused-helper',
-    'reused-successor'
-  ])(
-    'handles %s operations without terminating processes or deleting unknown content',
-    (scenario) => {
+  it.each(
+    [
+      'unknown',
+      'no-storage',
+      'partial',
+      'active',
+      'foreign',
+      'other-installation',
+      'reused-parent',
+      'reused-helper',
+      'reused-successor'
+    ].flatMap((scenario) =>
+      ['Open-Science/UpdateHandoffs', 'Open-Science-UpdateHandoffs'].map((storage) => [
+        scenario,
+        storage
+      ])
+    )
+  )(
+    'handles %s operations in %s without terminating processes or deleting unknown content',
+    (scenario, storage) => {
       const root = mkdtempSync(join(tmpdir(), 'update-uninstall-'))
       roots.push(root)
       const identity = [process.env.USERDOMAIN, process.env.USERNAME].filter(Boolean).join('\\')
@@ -48,7 +56,7 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
       )
       expect(acl.error, acl.stderr || acl.stdout).toBeUndefined()
       expect(acl.status, acl.stderr || acl.stdout).toBe(0)
-      const operations = join(root, 'operations')
+      const operations = join(root, storage)
       const operationId = randomUUID()
       const directory = join(operations, operationId)
       const install = join(root, 'installation')
@@ -78,15 +86,24 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
           writeFileSync(join(directory, `${stage}.receipt`), `${operationId}\r\n${stage}\r\n`)
       }
       if (scenario === 'foreign') writeFileSync(join(directory, 'unrelated-file'), 'preserve')
+      if (scenario === 'no-storage') rmSync(operations, { recursive: true })
       const script = readFileSync(resolve('build/windows-update-handoff-uninstall.ps1'), 'utf8')
       // Redirect only the fixed managed root; exercise the production ownership/process/removal code.
       const redirected = script.replace(
-        "Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Open-Science\\UpdateHandoffs'",
-        `'${operations.replaceAll("'", "''")}'`
+        "[Environment]::GetFolderPath('ApplicationData')",
+        `'${root.replaceAll("'", "''")}'`
       )
       expect(redirected).not.toBe(script)
       const target = join(root, 'uninstall.ps1')
-      writeFileSync(target, redirected)
+      writeFileSync(
+        target,
+        scenario === 'no-storage'
+          ? redirected.replace(
+              "$ErrorActionPreference = 'Stop'",
+              "$ErrorActionPreference = 'Stop'\nfunction Get-CimInstance { throw 'No storage should not require WMI' }"
+            )
+          : redirected
+      )
       copyFileSync(
         resolve('build/windows-runtime-cache-uninstall.ps1'),
         join(root, 'windows-runtime-cache-uninstall.ps1')
@@ -119,7 +136,10 @@ describe.skipIf(process.platform !== 'win32')('Windows update presentation unins
         expect(result.stderr).toContain('still active')
       } else expect(result.status, result.stderr || result.stdout).toBe(0)
       const removed =
-        scenario === 'unknown' || scenario === 'partial' || scenario.startsWith('reused-')
+        scenario === 'no-storage' ||
+        scenario === 'unknown' ||
+        scenario === 'partial' ||
+        scenario.startsWith('reused-')
       expect(existsSync(directory)).toBe(!removed)
       if (removed) {
         const retry = run('idempotent uninstall')

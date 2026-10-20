@@ -22,10 +22,14 @@ module.exports = async (context) => {
     pathToFileURL(path.join(root, 'scripts/stage-node-runtime.mjs')).href
   )
   await stageNodeRuntime({ platform: process.platform, arch })
-  const result = spawnSync(process.execPath, [path.join(root, 'scripts/stage-backend.mjs')], {
-    cwd: root,
-    stdio: 'inherit'
-  })
+  const result = spawnSync(
+    process.execPath,
+    [path.join(root, 'scripts/stage-backend.mjs'), '--desktop'],
+    {
+      cwd: root,
+      stdio: 'inherit'
+    }
+  )
   if (result.error || result.status !== 0)
     throw result.error || new Error('Desktop backend staging failed.')
 }

@@ -110,7 +110,15 @@
       "src/renderer/src/pages/workspace/composer/ArtifactMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
-    "durable_files": ["src/main/session-package/literature-source.test.ts"],
+    "durable_files": [
+      "src/main/desktop-update-integration.test.ts",
+      "src/main/session-package/literature-source.test.ts",
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
     "environment_contracts": [
       "src/main/session-package/literature-source.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -143,10 +151,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "environment_engine": ["src/main/session-package/literature-source.test.ts"],
-    "host_runtime_lifecycle": [
-      "src/main/update/windows-install-progress.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
+    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
     "host_runtime_ports": [
       "src/main/cli-install/launcher.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
@@ -154,8 +159,7 @@
     "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
-      "src/main/update/electron-updater-strategy.test.ts",
-      "src/main/update/windows-install-progress.test.ts"
+      "src/main/update/electron-updater-strategy.test.ts"
     ],
     "i18n_renderer_adapter": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -165,7 +169,6 @@
     "i18n_shared_runtime": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
-      "src/main/update/windows-install-progress.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"

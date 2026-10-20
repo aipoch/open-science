@@ -3,16 +3,27 @@ param([Parameter(Mandatory = $true)][string]$InstallPath)
 $ErrorActionPreference = 'Stop'
 # Reuse the existing owner/ACL and reparse checks. Do not execute runtime-cache cleanup here.
 . (Join-Path $PSScriptRoot 'windows-runtime-cache-uninstall.ps1') -LoadFunctionsOnly
-$root = Join-Path ([Environment]::GetFolderPath('ApplicationData')) 'Open-Science\UpdateHandoffs'
-if (-not (Test-Path -LiteralPath $root)) { exit 0 }
-if (-not (Test-NoReparsePointInPath $root) -or -not (Test-TrustedAcl $root)) {
-  throw 'Update presentation storage ownership could not be verified.'
+$appData = [Environment]::GetFolderPath('ApplicationData')
+$roots = @(
+  (Join-Path $appData 'Open-Science\UpdateHandoffs'),
+  (Join-Path $appData 'Open-Science-UpdateHandoffs')
+)
+$roots = @($roots | Where-Object { Test-Path -LiteralPath $_ })
+if ($roots.Count -eq 0) { exit 0 }
+# Validate both fixed roots before removing anything; retain historical configuration leases.
+foreach ($root in $roots) {
+  if (-not (Test-Path -LiteralPath $root)) { continue }
+  if (-not (Test-NoReparsePointInPath $root) -or -not (Test-TrustedAcl $root)) {
+    throw 'Update presentation storage ownership could not be verified.'
+  }
 }
 $installation = [IO.Path]::GetFullPath($InstallPath).TrimEnd('\')
 # Read-only process inventory. An unavailable inventory must not authorize deletion.
 $processes = @(Get-CimInstance -ClassName Win32_Process -ErrorAction Stop)
 $uuid = '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}'
 $owned = "^(request\.json|config\.bin|helper\.exe|cancel|(accepted|installing|installed|failed|ready|closed|aborted|handoff|unconfirmed)\.receipt)(?:\.$uuid\.tmp|\.tmp)?$"
+foreach ($root in $roots) {
+if (-not (Test-Path -LiteralPath $root)) { continue }
 foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   if (-not $directory.PSIsContainer -or $directory.Name -cnotmatch "^$uuid$" -or
       -not (Test-NoReparsePointInPath $directory.FullName) -or
@@ -60,4 +71,5 @@ foreach ($directory in @(Get-ChildItem -LiteralPath $root -Force)) {
   }
   Remove-Item -LiteralPath $requestPath -Force
   [IO.Directory]::Delete($directory.FullName, $false)
+}
 }

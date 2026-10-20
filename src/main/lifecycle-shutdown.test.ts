@@ -140,6 +140,29 @@ describe('BackendShutdownCoordinator', () => {
     vi.useRealTimers()
   })
 
+  it.each([true, false])('waits for late Notebook cleanup and checks reaped=%s', async (reaped) => {
+    vi.useFakeTimers()
+    let finishCleanup!: (result: { reaped: boolean }) => void
+    const cleanup = new Promise<{ reaped: boolean }>((resolve) => {
+      finishCleanup = resolve
+    })
+    const deps = makeDeps()
+    vi.mocked(deps.notebook.shutdownAll).mockReturnValue(cleanup)
+    const preparation = new BackendShutdownCoordinator(deps).runForQuitPreparation()
+    const settled = vi.fn()
+    void preparation.then(settled)
+
+    // Native process-tree proof can precede supervisor exit and ACL restoration.
+    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS + 2500)
+    expect(settled).not.toHaveBeenCalled()
+    expect(deps.notebook.dispose).not.toHaveBeenCalled()
+    expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()
+
+    finishCleanup({ reaped })
+    await expect(preparation).resolves.toBe(reaped ? 'completed' : 'failed')
+    expect(deps.log?.error).not.toHaveBeenCalled()
+  })
+
   it('keeps pending Notebook cleanup reusable after quit preparation times out', async () => {
     vi.useFakeTimers()
     let finishCleanup!: (result: { reaped: boolean }) => void
@@ -151,7 +174,7 @@ describe('BackendShutdownCoordinator', () => {
     const coordinator = new BackendShutdownCoordinator(deps)
 
     const preparation = coordinator.runForQuitPreparation()
-    await vi.advanceTimersByTimeAsync(QUIT_SHUTDOWN_BUDGET_MS)
+    await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
     await expect(preparation).resolves.toBe('timeout')
     expect(deps.notebook.dispose).not.toHaveBeenCalled()
     expect(deps.runtime.shutdownForQuit).not.toHaveBeenCalled()

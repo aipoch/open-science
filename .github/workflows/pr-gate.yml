@@ -1123,10 +1123,8 @@ jobs:
           npx vitest run
           scripts/ci/run-windows-browser-diagnostics.test.ts
           scripts/windows-updater-certification.test.ts
-          scripts/windows-update-progress.test.ts
           build/packaging.test.ts
           scripts/windows-update-handoff-uninstall.test.ts
-          src/main/update/windows-install-progress.test.ts
           src/main/update/windows-update-handoff.test.ts
           src/main/update/electron-updater-provider-regressions.test.ts
           src/main/update/electron-updater-strategy.test.ts

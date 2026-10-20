@@ -62,6 +62,31 @@ export const useNetworkStore = create<NetworkStore>((set, get) => {
         reachable = true
       } else {
         try {
+          // The recovery store starts connected before its React subscriber mounts.
+          // Startup admission is separate: probing now would turn a starting backend
+          // into a sticky internet-check failure before the app can even open.
+          const startup = window.api?.runtimeStartup
+          if (startup) {
+            const state = await readWithDeadline(startup.getState, 10_000)
+            if (probeGeneration !== generation || useDesktopRuntimeRecoveryStore.getState().closing)
+              return
+            if (state.phase !== 'ready') {
+              set({ connectivity: get().isOnline ? 'unknown' : 'unreachable' })
+              return
+            }
+          }
+          // Electron can report runtime ready before the backend finishes composing its
+          // RPC owners. Database startup publishes ready only after that composition.
+          const backendStartup = window.api?.databaseStartup
+          if (backendStartup) {
+            const state = await readWithDeadline(backendStartup.getState, 10_000)
+            if (probeGeneration !== generation || useDesktopRuntimeRecoveryStore.getState().closing)
+              return
+            if (state.phase !== 'ready') {
+              set({ connectivity: get().isOnline ? 'unknown' : 'unreachable' })
+              return
+            }
+          }
           if (useDesktopRuntimeRecoveryStore.getState().phase !== 'connected') {
             throw new Error('Backend unavailable for network check.')
           }
@@ -137,6 +162,13 @@ let monitorStarted = false
 export const startNetworkMonitor = (): void => {
   if (monitorStarted || typeof window === 'undefined') return
   monitorStarted = true
+
+  window.api?.runtimeStartup?.onStateChanged(() => {
+    void useNetworkStore.getState().probeConnectivity({ invalidate: true })
+  })
+  window.api?.databaseStartup?.onStateChanged(() => {
+    void useNetworkStore.getState().probeConnectivity({ invalidate: true })
+  })
 
   useSettingsStore.subscribe((state, previous) => {
     const next = state.networkProxy

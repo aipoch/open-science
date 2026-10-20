@@ -156,12 +156,7 @@
     "Retry startup": "Повторить запуск",
     "Open startup logs": "Открыть журналы запуска",
     "Could not open the logs folder.": "Не удалось открыть папку журналов.",
-    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены.",
-    "Installing the Open-Science update…": "Установка обновления Open-Science…",
-    "Opening the updated Open-Science…": "Открытие обновлённого Open-Science…",
-    "The Open-Science update could not finish.": "Не удалось завершить обновление Open-Science.",
-    "Close update window": "Закрыть окно обновления",
-    "The update status could not be confirmed. Closing this window does not stop installation.": "Не удалось подтвердить состояние обновления. Закрытие этого окна не остановит установку."
+    "This encrypted data format is not supported by this app version. Use a compatible app version or restore the original profile. Existing credentials have not been replaced.": "Эта версия приложения не поддерживает данный формат зашифрованных данных. Используйте совместимую версию приложения или восстановите исходный профиль. Существующие учётные данные не были заменены."
   },
   "renderer": {
     "Preparing to receive package…": "Подготовка к получению пакета…",
