@@ -55,6 +55,82 @@ const QueueHarness = (
 }
 
 describe('ComposerMessageQueue', () => {
+  it.each([false, true])(
+    'announces failed work while collapsed (appended: %s)',
+    (messageAppended) => {
+      container = document.createElement('div')
+      root = createRoot(container)
+      act(() =>
+        root.render(
+          <QueueHarness
+            items={[
+              {
+                id: 'failed',
+                text: 'retry this',
+                attachmentCount: 0,
+                phase: 'error',
+                messageAppended,
+                error: { kind: 'send', detail: 'offline' }
+              }
+            ]}
+            announcement="Message added to queue."
+            actions={{
+              move: vi.fn(),
+              moveTo: vi.fn(),
+              remove: vi.fn(),
+              edit: vi.fn(),
+              sendNow: vi.fn(async () => undefined)
+            }}
+          />
+        )
+      )
+      const trigger = container.querySelector('[data-testid="composer-queue-trigger"]')!
+      expect(trigger.textContent).toContain('Needs attention: 1')
+      expect(trigger.textContent?.includes('Not saved')).toBe(!messageAppended)
+      expect(trigger.querySelector('[role="status"]')?.textContent).toContain('Needs attention: 1')
+      expect(container.querySelector('[data-queue-error]')).toBeNull()
+      click(trigger)
+      expect(container.querySelector('[data-queue-error]')?.textContent).toContain('offline')
+      expect(container.textContent?.includes('Unsent messages: 1.')).toBe(!messageAppended)
+    }
+  )
+
+  it('keeps Undo reachable when removing the last item empties the queue', () => {
+    container = document.createElement('div')
+    root = createRoot(container)
+    const undoRemove = vi.fn()
+    act(() =>
+      root.render(
+        <QueueHarness
+          items={[]}
+          removed={[
+            {
+              id: 'removed',
+              sessionId: 'session-a',
+              text: 'recover this',
+              expiresAt: Date.now() + 8000
+            }
+          ]}
+          announcement="Queued message removed."
+          actions={{
+            move: vi.fn(),
+            moveTo: vi.fn(),
+            remove: vi.fn(),
+            edit: vi.fn(),
+            sendNow: vi.fn(async () => undefined),
+            undoRemove
+          }}
+        />
+      )
+    )
+    const undo = Array.from(container.querySelectorAll('button')).find(
+      (button) => button.textContent === 'Undo'
+    )!
+    expect(undo).toBeDefined()
+    click(undo)
+    expect(undoRemove).toHaveBeenCalledWith('removed')
+  })
+
   it('expands on demand and exposes the queued message actions', () => {
     container = document.createElement('div')
     root = createRoot(container)

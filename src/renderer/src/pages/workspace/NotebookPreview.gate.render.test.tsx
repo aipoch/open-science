@@ -5,7 +5,7 @@ import {
 } from '../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, screen } from '@testing-library/react'
+import { fireEvent, screen, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
@@ -1460,6 +1460,22 @@ describe('NotebookPreview per-kernel tabs', () => {
 
     await act(async () => {
       fireEvent.click(screen.getByRole('button', { name: 'Restart R kernel' }))
+    })
+    expect(window.api.notebook.restart).not.toHaveBeenCalled()
+    const confirmation = screen.getByRole('alertdialog')
+    expect(confirmation.textContent).toContain('clears its live variables and loaded packages')
+    expect(confirmation.textContent).toContain('Saved files and Notebook history are kept.')
+    await act(async () => {
+      fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }))
+    })
+    expect(window.api.notebook.restart).not.toHaveBeenCalled()
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Restart R kernel' }))
+    })
+    await act(async () => {
+      fireEvent.click(
+        within(screen.getByRole('alertdialog')).getByRole('button', { name: 'Restart R kernel' })
+      )
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
@@ -2033,6 +2049,9 @@ describe('NotebookPreview per-kernel tabs', () => {
         startedAt: 1
       }
     })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Inspect variables' }))
+    })
     const state = vi.mocked(window.api.notebook.state)
     state.mockClear()
     window.api.notebook.abortCodeCell = vi.fn().mockRejectedValue(new Error('Cancellation failed'))
@@ -2042,7 +2061,10 @@ describe('NotebookPreview per-kernel tabs', () => {
     })
 
     expect(state).toHaveBeenCalledOnce()
-    expect(container.textContent).toContain('Cancellation failed')
+    const error = screen.getByText('Cancellation failed')
+    expect(error.closest('[data-testid="notebook-primary-view"]')).toBeNull()
+    expect(error.closest('[role="alert"]')).not.toBeNull()
+    expect(screen.getAllByText('Cancellation failed')).toHaveLength(1)
     expect(
       (screen.getByRole('button', { name: 'Cancel code reception' }) as HTMLButtonElement).disabled
     ).toBe(false)

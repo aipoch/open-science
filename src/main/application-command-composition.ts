@@ -175,6 +175,8 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'specialist:cancel-handoff',
   'file:save-blob',
   'file:save-managed',
+  'file:artifact-save-progress',
+  'file:cancel-artifact-save',
   'file:save-session-artifacts',
   'file:save-project-artifacts',
   'specialist:create',

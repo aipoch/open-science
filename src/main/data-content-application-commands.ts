@@ -253,6 +253,14 @@ const dataContentApplicationCommands = Object.freeze({
   ),
 
   sessionOpenRecoveryFolder: electronCommand('sessions:open-recovery-folder', 'openRecoveryFolder'),
+  artifactSaveProgress: invocationCommandFor<FileSaveCommands>()(
+    'file:artifact-save-progress',
+    'file:artifact-save-progress'
+  ),
+  cancelArtifactSave: invocationCommandFor<FileSaveCommands>()(
+    'file:cancel-artifact-save',
+    'file:cancel-artifact-save'
+  ),
   fileSaveBlob: invocationCommandFor<FileSaveCommands>()('file:save-blob', 'file:save-blob'),
   fileSaveManaged: invocationCommandFor<FileSaveCommands>()(
     'file:save-managed',
@@ -735,6 +743,8 @@ const dataContentApplicationCommandGroups = Object.freeze([
     dataContentApplicationCommands.reproducibilityCancel
   ]),
   defineApplicationCommandGroup('native-file-save', [
+    dataContentApplicationCommands.artifactSaveProgress,
+    dataContentApplicationCommands.cancelArtifactSave,
     dataContentApplicationCommands.fileSaveBlob,
     dataContentApplicationCommands.fileSaveManaged,
     dataContentApplicationCommands.fileSaveSessionArtifacts,
@@ -1333,6 +1343,10 @@ const registerDataContentApplicationCommands = (
         dependencies.reproducibility.cancel(invocation)
     })
     scope.registerGroup(dataContentApplicationCommandGroups[10], {
+      'file:artifact-save-progress': (invocation) =>
+        dependencies.fileSaveCommands['file:artifact-save-progress'](invocation),
+      'file:cancel-artifact-save': (invocation) =>
+        dependencies.fileSaveCommands['file:cancel-artifact-save'](invocation),
       'file:save-blob': (invocation) => dependencies.fileSaveCommands['file:save-blob'](invocation),
       'file:save-managed': (invocation) =>
         dependencies.fileSaveCommands['file:save-managed'](invocation),
