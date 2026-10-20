@@ -120,15 +120,23 @@ const canPrepareExistingWorkspacePrompt = ({
   !runtimeState.promptInFlightSessionIds.includes(sessionId) &&
   (!session?.compacting || allowCompactionRecovery) &&
   (!session ||
-    projectSessionActionability(session, {
-      rootPermissionPending: resolveRootPermissionPending(
-        runtimeState.pendingPermissions,
-        sessionId
-      ),
-      allowPendingSessionRetry: Boolean(
-        session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
-      )
-    }).actions.startTurn.allowed)
+    projectSessionActionability(
+      // Recovery owns the failed turn and has already replaced/compacted its provider context.
+      // The prior prompt's idle snapshot may lag the terminal event and reset response. Ignore
+      // only that presentation flag; active runs and pending interactions still block admission.
+      allowCompactionRecovery && session.compacting
+        ? { ...session, agentPromptInFlight: false }
+        : session,
+      {
+        rootPermissionPending: resolveRootPermissionPending(
+          runtimeState.pendingPermissions,
+          sessionId
+        ),
+        allowPendingSessionRetry: Boolean(
+          session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
+        )
+      }
+    ).actions.startTurn.allowed)
 
 const canAdmitExistingWorkspacePrompt = (
   runtimeState: ExistingWorkspacePromptAdmission['runtimeState'],
