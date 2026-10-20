@@ -6859,6 +6859,7 @@
     "Folder access was updated. Run the command again when you are ready.": "폴더 액세스 권한이 업데이트되었습니다. 준비가 되면 명령을 다시 실행하세요.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "이 폴더 권한은 파일에서 취소할 때까지 모든 세션에 적용됩니다. 명령은 자동으로 실행되지 않습니다.",
     "Drop files to attach or import a .science package": "파일을 놓아 첨부하거나 .science 패키지 가져오기",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "폴더는 첨부할 수 없습니다. 폴더 안의 파일을 선택해 주세요. 추가된 파일이 없습니다.",
     "Files cannot be attached right now.": "지금은 파일을 첨부할 수 없습니다.",
     "This turn was interrupted. Resume to continue.": "이번 턴이 중단되었습니다. 계속하려면 재개하세요.",
     "Connection lost — Resume to reconnect and continue.": "연결이 끊어졌습니다 — 재개하여 다시 연결하고 계속하세요.",

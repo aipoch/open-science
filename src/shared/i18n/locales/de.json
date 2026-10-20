@@ -7021,6 +7021,7 @@
     "Folder access was updated. Run the command again when you are ready.": "Der Ordnerzugriff wurde aktualisiert. Führen Sie den Befehl erneut aus, wenn Sie bereit sind.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Diese Ordnerberechtigung gilt sitzungsübergreifend, bis Sie sie unter Dateien widerrufen. Befehle werden nicht automatisch ausgeführt.",
     "Drop files to attach or import a .science package": "Dateien zum Anhängen oder ein .science-Paket zum Importieren ablegen",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "Ordner können nicht angehängt werden. Wählen Sie stattdessen Dateien im Ordner aus. Es wurden keine Dateien hinzugefügt.",
     "Files cannot be attached right now.": "Dateien können derzeit nicht angehängt werden.",
     "This turn was interrupted. Resume to continue.": "Diese Interaktion wurde unterbrochen. Setzen Sie sie fort, um weiterzumachen.",
     "Connection lost — Resume to reconnect and continue.": "Verbindung verloren — Setzen Sie die Sitzung fort, um die Verbindung wiederherzustellen und weiterzumachen.",

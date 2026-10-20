@@ -6861,6 +6861,7 @@
     "Folder access was updated. Run the command again when you are ready.": "資料夾存取權限已更新。準備好後，請手動重新執行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此資料夾權限適用於各個工作階段，直到您在「檔案」中撤銷。命令不會自動執行。",
     "Drop files to attach or import a .science package": "拖放檔案以新增附件，或匯入 .science 研究套件",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "暫不支援新增資料夾。請選擇資料夾中的檔案。本次未新增任何檔案。",
     "Files cannot be attached right now.": "目前無法新增附件。",
     "This turn was interrupted. Resume to continue.": "此輪操作已中斷。恢復以繼續。",
     "Connection lost — Resume to reconnect and continue.": "連線已中斷 — 恢復以重新連線並繼續。",

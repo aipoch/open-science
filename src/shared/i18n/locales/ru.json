@@ -7328,6 +7328,7 @@
     "Folder access was updated. Run the command again when you are ready.": "Доступ к папке обновлён. Запустите команду повторно, когда будете готовы.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Это разрешение для папки действует во всех сессиях, пока вы не отзовёте его в разделе «Файлы». Команды не будут запускаться автоматически.",
     "Drop files to attach or import a .science package": "Перетащите файлы для прикрепления или пакет .science для импорта",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "Папки нельзя прикреплять. Выберите файлы внутри папки. Файлы не добавлены.",
     "Files cannot be attached right now.": "Сейчас невозможно прикрепить файлы.",
     "This turn was interrupted. Resume to continue.": "Этот ход был прерван. Возобновите его, чтобы продолжить.",
     "Connection lost — Resume to reconnect and continue.": "Соединение потеряно — Возобновите работу, чтобы переподключиться и продолжить.",

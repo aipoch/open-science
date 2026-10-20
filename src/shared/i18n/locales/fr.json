@@ -7189,6 +7189,7 @@
     "Folder access was updated. Run the command again when you are ready.": "L’accès au dossier a été mis à jour. Relancez la commande lorsque vous le souhaitez.",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "Cette autorisation de dossier s’applique à toutes les sessions jusqu’à sa révocation dans Fichiers. Les commandes ne seront pas exécutées automatiquement.",
     "Drop files to attach or import a .science package": "Déposez des fichiers à joindre ou un paquet .science à importer",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "Les dossiers ne peuvent pas être joints. Sélectionnez plutôt les fichiers du dossier. Aucun fichier n’a été ajouté.",
     "Files cannot be attached right now.": "Impossible de joindre des fichiers pour le moment.",
     "This turn was interrupted. Resume to continue.": "Ce tour a été interrompu. Reprenez pour continuer.",
     "Connection lost — Resume to reconnect and continue.": "Connexion perdue — Reprenez pour vous reconnecter et continuer.",

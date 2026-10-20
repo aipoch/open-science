@@ -1,4 +1,35 @@
 import { expect, test, type Locator } from '@playwright/test'
+import { mkdir } from 'node:fs/promises'
+
+test('rejects a real native folder drop before package import', async ({ page }, testInfo) => {
+  await page.goto('/session-package.html?background=running&surface=home&locale=zh-Hans')
+  const folder = testInfo.outputPath('raw-data.science')
+  await mkdir(folder, { recursive: true })
+  const surface = page.getByRole('main')
+  await expect(surface).toBeVisible()
+  const box = await surface.boundingBox()
+  expect(box).not.toBeNull()
+  const point = { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 }
+  const cdp = await page.context().newCDPSession(page)
+  try {
+    // Chromium creates the native File and directory entry from the real filesystem path.
+    const data = { items: [], files: [folder], dragOperationsMask: 1 }
+    await cdp.send('Input.dispatchDragEvent', { type: 'dragEnter', ...point, data })
+    await cdp.send('Input.dispatchDragEvent', { type: 'dragOver', ...point, data })
+    await expect(page.getByText('拖入 .science 文件以导入', { exact: true })).toBeVisible()
+    await cdp.send('Input.dispatchDragEvent', { type: 'drop', ...point, data })
+    await expect(
+      page.getByRole('status').filter({
+        hasText: '暂不支持添加文件夹。请选择文件夹中的文件。本次未添加任何文件。'
+      })
+    ).toBeVisible()
+    await expect(page.getByText('拖入 .science 文件以导入', { exact: true })).toHaveCount(0)
+    await expect(page.getByRole('dialog')).toHaveCount(0)
+    await page.screenshot({ path: testInfo.outputPath('folder-drop-rejected.png') })
+  } finally {
+    await cdp.detach()
+  }
+})
 
 // Inspect real overflow: jsdom cannot detect a second scrollbar or a clipped footer.
 async function expectSingleBodyScroll(dialog: Locator, primary: Locator): Promise<void> {

@@ -6861,6 +6861,7 @@
     "Folder access was updated. Run the command again when you are ready.": "文件夹访问权限已更新。准备好后，请手动重新运行命令。",
     "This folder permission applies across Sessions until you revoke it in Files. Commands will not run automatically.": "此文件夹权限跨会话生效，直到您在“文件”中撤销。命令不会自动运行。",
     "Drop files to attach or import a .science package": "拖放文件以添加附件，或导入 .science 研究包",
+    "Folders cannot be attached. Select files inside the folder instead. No files were added.": "暂不支持添加文件夹。请选择文件夹中的文件。本次未添加任何文件。",
     "Files cannot be attached right now.": "当前无法添加附件。",
     "This turn was interrupted. Resume to continue.": "此轮操作已中断。恢复以继续。",
     "Connection lost — Resume to reconnect and continue.": "连接已断开 — 恢复以重新连接并继续。",
