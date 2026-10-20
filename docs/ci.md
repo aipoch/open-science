@@ -274,15 +274,20 @@ retirement checks described below authorize removing those existing obligations.
 
 ## Actions cache maintenance
 
-The **Clean up closed PR caches** workflow removes caches scoped to a closed internal PR's
-`refs/pull/<number>/merge` ref. It checks the PR's current state before deletion, runs only
-trusted main-branch code, and preserves open-PR, main, branch and tag caches. A reopened PR
-may need to populate its cache again. This follows GitHub's
-[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches).
+The **Clean up closed PR caches** workflow sweeps `refs/pull/<number>/merge` caches after
+PR Gate completes for a PR or merge group. It checks each PR's current state and deletes
+only closed-PR caches, including fork PRs. Open-PR, main, branch and tag caches are preserved;
+a reopened PR may need to populate its cache again.
 
-Fork PRs skip automatic cleanup because their tokens cannot delete caches. For closed fork
-PRs, older closed PRs, or caches saved by jobs that finished after the close event, run a
-manual sweep on main. Inspect the dry-run logs before enabling deletion:
+The privileged workflow uses
+[`workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+so both its definition and cleanup script come from main. It does not execute upstream code,
+restore caches or download artifacts. This applies GitHub's
+[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches)
+without granting write access to a PR-controlled workflow.
+
+A PR closed after its last Gate run is swept by the next Gate completion or a manual run.
+For immediate recovery, run a manual sweep on main. Inspect the dry-run logs before enabling deletion:
 
 ```bash
 gh workflow run cache-cleanup.yml --ref main -f dry_run=true

@@ -1,27 +1,16 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 // Closed PR merge-ref caches cannot serve main or other PRs, but consume the same quota.
-export async function cleanupPrCaches({
-  github,
-  repo,
-  pullNumber,
-  dryRun = true,
-  log = console.log
-}) {
-  if (pullNumber !== undefined && (!Number.isSafeInteger(pullNumber) || pullNumber < 1)) {
-    throw new Error('Expected a positive PR number.')
-  }
-  const ref = pullNumber === undefined ? undefined : `refs/pull/${pullNumber}/merge`
+export async function cleanupPrCaches({ github, repo, dryRun = true, log = console.log }) {
   const caches = await github.paginate('GET /repos/{owner}/{repo}/actions/caches', {
     ...repo,
-    ...(ref ? { ref } : {}),
     per_page: 100
   })
   const states = new Map()
   const deleted = []
   for (const cache of caches) {
     const match = /^refs\/pull\/([1-9]\d*)\/merge$/.exec(cache.ref ?? '')
-    if (!match || (ref && cache.ref !== ref)) continue
+    if (!match) continue
     const number = Number(match[1])
     if (!Number.isSafeInteger(number)) continue
     if (!states.has(number)) {

@@ -63,18 +63,13 @@ describe('closed PR cache cleanup', () => {
     expect(f.github.rest.pulls.get).toHaveBeenCalledTimes(2)
   })
 
-  it('limits close events to that exact PR ref and rechecks its current state', async () => {
-    const f = fixture([cache(1), cache(2, 'refs/pull/43/merge')])
-    expect(await cleanupPrCaches({ ...f, pullNumber: 42 })).toEqual([1])
-    expect(f.github.paginate).toHaveBeenCalledWith('GET /repos/{owner}/{repo}/actions/caches', {
-      ...repo,
-      per_page: 100,
-      ref: 'refs/pull/42/merge'
-    })
+  it('checks current PR state again on each sweep, preserving reopened PRs', async () => {
+    const f = fixture()
+    expect(await cleanupPrCaches(f)).toEqual([1])
     expect(f.github.rest.pulls.get).toHaveBeenCalledWith({ ...repo, pull_number: 42 })
     f.github.rest.pulls.get.mockResolvedValue({ data: { state: 'open' } })
     f.github.request.mockClear()
-    expect(await cleanupPrCaches({ ...f, pullNumber: 42 })).toEqual([])
+    expect(await cleanupPrCaches(f)).toEqual([])
     expect(f.github.request).not.toHaveBeenCalled()
   })
 
@@ -84,15 +79,6 @@ describe('closed PR cache cleanup', () => {
     expect(f.log).toHaveBeenCalledWith('Would delete cache 1 (refs/pull/42/merge, 150000000 bytes)')
     expect(f.github.request).not.toHaveBeenCalled()
   })
-
-  it.each([0, -1, 1.5, NaN, Number.MAX_SAFE_INTEGER + 1])(
-    'rejects invalid PR number %s before accessing GitHub',
-    async (pullNumber) => {
-      const f = fixture()
-      await expect(cleanupPrCaches({ ...f, pullNumber })).rejects.toThrow('positive PR number')
-      expect(f.github.paginate).not.toHaveBeenCalled()
-    }
-  )
 
   it.each([404, 403, 429, 500])(
     'does not delete when PR lookup returns HTTP %i',
@@ -140,7 +126,7 @@ describe('closed PR cache cleanup', () => {
       }
     }
     expect(workflow.on).toEqual({
-      pull_request: { branches: ['main'], types: ['closed'] },
+      workflow_run: { workflows: ['PR Gate'], types: ['completed'] },
       workflow_dispatch: {
         inputs: {
           dry_run: {
@@ -153,7 +139,7 @@ describe('closed PR cache cleanup', () => {
     })
     const job = workflow.jobs.cleanup
     expect(job.if).toBe(
-      "${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}"
+      "${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || github.event.workflow_run.event == 'pull_request' || github.event.workflow_run.event == 'merge_group') }}"
     )
     expect(job.permissions).toEqual({
       contents: 'read',
@@ -167,13 +153,14 @@ describe('closed PR cache cleanup', () => {
       'sparse-checkout': 'scripts/ci/cleanup-pr-caches.mjs'
     })
     expect(job.steps[1].env).toEqual({
-      PR_NUMBER: "${{ github.event.pull_request.number || '' }}",
       DRY_RUN: "${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}"
     })
     expect(job.steps[1].with.script).toContain("dryRun: process.env.DRY_RUN === 'true'")
     expect(job.steps[1].with.script).not.toContain('${{')
+    expect(job.steps[1].with.script).not.toContain('context.payload')
+    expect(job.steps.some((step) => step.uses.includes('download-artifact'))).toBe(false)
     expect(workflow.concurrency).toEqual({
-      group: "closed-pr-cache-cleanup-${{ github.event.pull_request.number || 'sweep' }}",
+      group: 'closed-pr-cache-cleanup',
       'cancel-in-progress': false
     })
   })
