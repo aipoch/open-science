@@ -30,6 +30,7 @@ const INVESTIGATOR_FIELDS = [
 ].join('|')
 const ENDPOINT_FIELDS = 'NCTId|protocolSection.outcomesModule'
 const DETAILS_FIELDS = 'protocolSection|hasResults'
+const RESULTS_FIELDS = 'NCTId|BriefTitle|OfficialTitle|hasResults|resultsSection'
 
 // Enum vocabularies (from GET /api/v2/studies/enums, API 2.0.5).
 const PHASE_ENUM = ['EARLY_PHASE1', 'PHASE1', 'PHASE2', 'PHASE3', 'PHASE4', 'NA']
@@ -98,7 +99,11 @@ type Proto = {
   armsInterventionsModule?: { interventions?: { name?: string }[] }
   contactsLocationsModule?: { locations?: Location[] }
 }
-type Study = { protocolSection?: Proto; hasResults?: boolean }
+type Study = {
+  protocolSection?: Proto
+  hasResults?: boolean
+  resultsSection?: Record<string, unknown>
+}
 type SearchPage = { studies?: Study[]; totalCount?: number; nextPageToken?: string }
 
 // ── shared helpers ───────────────────────────────────────────────────────────
@@ -441,6 +446,21 @@ function trialNotFoundResponse(nctId: string, error: string): Record<string, unk
   return { found: false, nct_id: nctId, error }
 }
 
+function trialResultsResponse(study: Study, requestedNctId: string): Record<string, unknown> {
+  const ident = study.protocolSection?.identificationModule
+  const nctId = ident?.nctId ?? requestedNctId
+  return {
+    found: true,
+    nct_id: nctId,
+    title: ident?.officialTitle ?? ident?.briefTitle ?? null,
+    url: `https://clinicaltrials.gov/study/${nctId}?tab=results`,
+    has_results: study.hasResults ?? null,
+    // Keep the API hierarchy: each module/outcome owns its groups and denominators.
+    // Flattening or joining to protocol arms can silently misattribute reported results.
+    results_section: study.resultsSection ?? null
+  }
+}
+
 // Aggregate protocol endpoints across the analyzed studies; common_measures = the 20 most common
 // measure names (ties keep first-seen order — a stable sort of an insertion-ordered count map).
 function endpointsResponse(
@@ -593,6 +613,32 @@ export const CLINICAL_TRIALS_TOOLS: ToolDescriptor[] = [
       try {
         const study = await getStudy(ctx, nct, DETAILS_FIELDS)
         return trialDetailsResponse(study)
+      } catch (err) {
+        if (isNotFound(err)) return trialNotFoundResponse(nct, `Trial ${nct} not found`)
+        throw err
+      }
+    }
+  },
+  {
+    id: 'get_trial_results',
+    connector: 'clinical-trials',
+    credentialKeys: [],
+    description:
+      'Read posted trial results by NCT id (case-insensitive; bare 8 digits accepted). Returns actual outcome measurements, group-specific counts and denominators, units, statistical analyses, participant flow, baseline characteristics, adverse events and reporting caveats from resultsSection. Nested fields retain the official API camelCase names and hierarchy. Resolve groupId/groupIds only against the groups in the same module or outcome; do not join them to protocol arms or other modules. Missing data does not mean zero events or no treatment effect.',
+    input: {
+      type: 'object',
+      properties: { nct_id: { type: 'string' } },
+      required: ['nct_id']
+    },
+    required: ['nct_id'],
+    returns:
+      'Found: `{ found: true, nct_id, title, url, has_results (API flag; null if unknown), results_section (unaltered API resultsSection; null if absent) }`. results_section may contain participantFlowModule, baselineCharacteristicsModule, outcomeMeasuresModule (outcomeMeasures with type, title, timeFrame, unitOfMeasure, groups, denoms, classes and analyses), adverseEventsModule and moreInfoModule. Preserve analysis populations, dispersion/precision, confidence intervals, p-values and event assessment/time-frame context as reported; values may be strings or nonnumeric. has_results=false means no posted results, not a missing trial. Missing modules remain absent and do not imply zero. Missing/invalid id: `{ found: false, nct_id, error }`.',
+    exampleArgs: { nct_id: 'NCT04280705' },
+    run: async (ctx, a) => {
+      const nct = normalizeNct(a.nct_id)
+      try {
+        const study = await getStudy(ctx, nct, RESULTS_FIELDS)
+        return trialResultsResponse(study, nct)
       } catch (err) {
         if (isNotFound(err)) return trialNotFoundResponse(nct, `Trial ${nct} not found`)
         throw err
