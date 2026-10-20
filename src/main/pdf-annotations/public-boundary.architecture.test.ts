@@ -41,4 +41,5 @@ it('keeps annotation document storage and sharing behind the supported entries',
     }
   }
   expect(violations.sort()).toEqual([])
-})
+  // Whole-repository TypeScript resolution needs the same CI budget as consumer coverage scans.
+}, 120_000)
