@@ -1,5 +1,5 @@
+import type { MessageQueueItem } from './composer-contract'
 import { docToArtifactRefs, docToMessageParts } from './composer/composer-doc'
-import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   isQueueLiveTurn,
   queueErrorMessage,
@@ -10,10 +10,10 @@ import {
   queuedAdmissionFailure,
   queuedItemHasPayload
 } from './workspace-message-queue-admission'
+import { MESSAGE_QUEUE_ANNOUNCEMENTS } from './workspace-message-queue-announcement'
 import {
   WorkspaceMessageQueueOwner,
   type MessageQueueDispatch,
-  type MessageQueueItem,
   type WorkspaceMessageQueueControllerOptions
 } from './workspace-message-queue-owner'
 
@@ -128,11 +128,13 @@ const dispatchQueuedSession = (
             text: item.text,
             attachments: item.snapshot?.attachments,
             annotations: item.snapshot?.annotations,
+            discussionFocus: item.snapshot?.discussionFocus,
             referencedArtifacts: item.snapshot ? docToArtifactRefs(item.snapshot.doc) : undefined,
             parts: item.snapshot ? docToMessageParts(item.snapshot.doc) : undefined,
             pdfContext: item.snapshot?.pdfContext,
             pdfReadingPosition: item.snapshot?.pdfReadingPosition,
             pdfReadingPositionSource: item.snapshot?.pdfReadingPositionSource,
+            pdfProseReadingSelections: item.snapshot?.pdfProseReadingSelections,
             pendingPdfContextAttachmentIds: item.snapshot?.pendingPdfContextAttachmentIds,
             pendingPdfContextVersions: item.snapshot?.pendingPdfContextVersions,
             cwd: item.cwd,

@@ -41,7 +41,7 @@ import type { ArtifactVersionContentResolver } from '../reviewer/host-sdk'
 import { selectReviewChainForArtifactVersion } from '../reviewer/artifact-version-review'
 import { toReview } from '../reviewer/repository'
 import { loadReviewSubmissionProjection } from '../reviewer/review-submission-read-model'
-import type { ArtifactDurability } from './durability'
+import type { FileDurability } from '@aipoch/durable-files'
 import {
   parseArtifactExecutionSnapshot,
   validateArtifactExecutionSnapshot
@@ -197,7 +197,7 @@ type ArtifactProvenanceReadModelOptions = {
     appSessionId: string
   ) => Promise<PersistedChatSession | undefined>
   createId: () => string
-  durability: ArtifactDurability
+  durability: FileDurability
   reconcileSession: (projectId: string, appSessionId: string) => Promise<unknown>
   projectVersionDescriptor: (
     version: VersionDescriptorRecord,

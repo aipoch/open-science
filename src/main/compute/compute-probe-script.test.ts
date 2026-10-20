@@ -1,11 +1,13 @@
+import type { ComputeHost } from '@aipoch/compute'
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-import type { ComputeHost } from '../../shared/compute'
+
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+
 import type { ComputeHostRepository } from './repository'
 
 describe.skipIf(process.platform === 'win32')('compute probe shell protocol', () => {

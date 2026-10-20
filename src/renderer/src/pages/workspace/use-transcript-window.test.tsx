@@ -546,6 +546,7 @@ describe('useTranscriptWindow', () => {
       { id: 'message-2', type: 'message' },
       { id: 'session-config-change-message-3', type: 'session-config-change' },
       { id: 'message-3', type: 'message' },
+      { id: 'runtime-switch', type: 'session-config-change', followsLiveActivity: true },
       { id: 'activity-1', type: 'activity' }
     ] as WorkspaceConversationTimelineItem[]
     const result = {
@@ -560,6 +561,7 @@ describe('useTranscriptWindow', () => {
     expect(result.current.entries.map((entry) => entry.item.id)).toEqual([
       'message-1',
       'message-2',
+      'runtime-switch',
       'activity-1'
     ])
 

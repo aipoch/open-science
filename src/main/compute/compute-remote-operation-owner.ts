@@ -1,37 +1,39 @@
-import { mkdir, mkdtemp, rename, stat as fsStat, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { stat as fsStat, mkdir, mkdtemp, rename, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
-import { app } from 'electron'
+import { runtimeMetadata } from '../runtime-metadata'
 
-import type { ComputeCallError, ComputeHost, ExecResult } from '../../shared/compute'
-import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
-import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ComputeCallError, ExecResult } from '../../shared/compute'
+
 import {
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
-import type { ComputeHostRepository } from './repository'
-import { quoteRemotePath } from './remote-path-security'
-import type { SessionCacheOwner } from './session-cache-owner'
-import { withDataRootWrite } from '../storage/migration-state'
-import { redactSensitiveText } from '../diagnostic-redaction'
+} from '@aipoch/compute/node'
+import type { DirListing, DownloadDest, LocalFile, RemoteFsError } from '../../shared/remote-fs'
+import { classifyRemoteError, parseFindListing } from '../../shared/remote-fs'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
+
 import {
   MAX_DOWNLOAD_BYTES,
   MAX_IMPORT_BYTES,
   inferMimeType,
-  resolveDestFilename,
-  validateImportPath
-} from './scp-runner'
-import {
   parseRemoteFileStat,
+  quoteRemotePath,
   remoteFileStatCommand,
+  resolveDestFilename,
   sameRemoteFileSnapshot,
+  shellSingleQuote,
+  validateImportPath,
   type RemoteFileSnapshot,
   type RemoteFileStat
-} from './remote-file-snapshot'
+} from '@aipoch/compute/node'
+import { redactSensitiveText } from '@aipoch/diagnostics'
+import { withDataRootWrite } from '../storage/migration-state'
+import type { ComputeHostRepository } from './repository'
+import type { SessionCacheOwner } from './session-cache-owner'
 
 const CALL_COMMAND_DEFAULT_TIMEOUT_MS = 60_000
 const CALL_COMMAND_MAX_OUTPUT_BYTES = 64 * 1024
@@ -112,11 +114,24 @@ export class ComputeRemoteOperationOwner {
     }
 
     const quotedPath = quoteRemotePath(path)
+    // BSD find has no -printf. Emit the same NUL-delimited records with native stat;
+    // pass filenames as arguments so whitespace and shell syntax remain literal.
+    const bsdListing = [
+      'for entry do',
+      `  fields=$(LC_ALL=C stat -f '%z\t%.9Fm' "$entry") || exit 1`,
+      '  if [ -d "$entry" ]; then kind=d; else kind=f; fi',
+      `  printf '%s\\t%s\\t%s\\0' "$kind" "$fields" "\${entry#./}"`,
+      'done'
+    ].join('\n')
     const remoteCommand = [
       `realpath ${quotedPath} 2>/dev/null || echo ${quotedPath}`,
       `cd ${quotedPath} || exit 1`,
       'echo "$HOME"',
-      `find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0' 2>/dev/null`
+      `if find . -maxdepth 0 -printf '' >/dev/null 2>&1; then`,
+      `  find . -maxdepth 1 -mindepth 1 -printf '%Y\\t%s\\t%T@\\t%f\\0'`,
+      'else',
+      `  find . -maxdepth 1 -mindepth 1 -exec sh -c ${shellSingleQuote(bsdListing)} sh {} +`,
+      'fi'
     ].join('\n')
 
     let runResult
@@ -143,13 +158,16 @@ export class ComputeRemoteOperationOwner {
       throw fsError
     }
 
-    if (runResult.exitCode !== 0 && runResult.stderr) {
-      const classified = classifyRemoteError({ stderr: runResult.stderr })
-      const fsError = new Error(runResult.stderr) as Error & {
+    if (runResult.exitCode !== 0) {
+      const detail =
+        runResult.stderr ||
+        `Remote directory listing failed (exit code ${runResult.exitCode ?? 'unknown'}).`
+      const classified = classifyRemoteError({ stderr: detail })
+      const fsError = new Error(detail) as Error & {
         remoteFsError: RemoteFsError & { retry_after_user_action: boolean }
       }
       fsError.remoteFsError = {
-        detail: runResult.stderr,
+        detail,
         remoteKind: classified.remoteKind,
         retry_after_user_action: classified.retry_after_user_action
       }
@@ -537,7 +555,7 @@ export class ComputeRemoteOperationOwner {
 
   private getDownloadsDir(): string {
     try {
-      return app.getPath('downloads')
+      return runtimeMetadata().downloadsPath
     } catch {
       return join(tmpdir(), 'downloads')
     }

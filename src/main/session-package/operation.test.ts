@@ -1,8 +1,50 @@
 import { sessionPackageCommandContracts } from '../../shared/session-package'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { SessionPackageOperation } from './operation'
 
+afterEach(() => vi.useRealTimers())
+
 const session = { projectId: 'project', sessionId: 'session' }
+
+it('throttles byte-only receipt events to 150 ms while publishing task boundaries immediately', () => {
+  vi.useFakeTimers()
+  vi.setSystemTime(1000)
+  const changed = vi.fn()
+  const owner = new SessionPackageOperation(changed)
+  const transfer = {
+    id: 'one',
+    filename: 'one.science',
+    state: 'receiving' as const,
+    completedBytes: 0,
+    totalBytes: 100
+  }
+  owner.setBrowserTransfers([transfer])
+  expect(changed).toHaveBeenCalledTimes(1)
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 10 }])
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 20 }])
+  expect(owner.snapshot?.browserTransfers?.[0].completedBytes).toBe(20)
+  expect(changed).toHaveBeenCalledTimes(1)
+  vi.advanceTimersByTime(150)
+  owner.setBrowserTransfers([{ ...transfer, completedBytes: 30 }])
+  expect(changed).toHaveBeenCalledTimes(2)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30 },
+    { ...transfer, id: 'two' }
+  ])
+  expect(changed).toHaveBeenCalledTimes(3)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30, state: 'cancelled' },
+    { ...transfer, id: 'two' }
+  ])
+  expect(changed).toHaveBeenCalledTimes(4)
+  owner.setBrowserTransfers([
+    { ...transfer, completedBytes: 30, state: 'cancelled' },
+    { ...transfer, id: 'two', completedBytes: 100 }
+  ])
+  expect(changed).toHaveBeenCalledTimes(5)
+  owner.setBrowserTransfers([])
+  expect(changed).toHaveBeenCalledTimes(6)
+})
 const file = {
   storageKey: 'artifacts/p/s/file',
   filename: 'result.csv',
@@ -37,7 +79,7 @@ describe('SessionPackageOperation', () => {
         })
       ).toThrow('Invalid package selection')
       owner.respond({ action: 'select', operationId: owner.snapshot!.id, excludedStorageKeys: [] })
-      await expect(run).resolves.toEqual([])
+      await expect(run).resolves.toEqual({ excludedStorageKeys: [], includePdfNotes: false })
     } finally {
       owner.cancel()
       await run.catch(() => undefined)
@@ -65,7 +107,10 @@ describe('SessionPackageOperation', () => {
         operationId: owner.snapshot!.id,
         excludedStorageKeys: ['oversized']
       })
-      await expect(run).resolves.toEqual(['oversized'])
+      await expect(run).resolves.toEqual({
+        excludedStorageKeys: ['oversized'],
+        includePdfNotes: false
+      })
     } finally {
       owner.cancel()
       await run.catch(() => undefined)
@@ -88,6 +133,30 @@ describe('SessionPackageOperation', () => {
     expect(() =>
       owner.respond({ action: 'set-speed', operationId: id, bytesPerSecond: 4 * 1024 ** 2 })
     ).toThrow('no longer active')
+  })
+
+  it('adapts the default budget to sustained disk throughput and can return to Auto', async () => {
+    vi.useFakeTimers()
+    const owner = new SessionPackageOperation()
+    const completion = deferred()
+    const run = owner.run('import', undefined, () => completion.promise)
+    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+
+    await vi.advanceTimersByTimeAsync(2_000)
+    owner.reportIo(16 * 1024 ** 2)
+    expect(owner.transferBytesPerSecond).toBe(32 * 1024 ** 2)
+
+    owner.respond({
+      action: 'set-speed',
+      operationId: owner.snapshot!.id,
+      bytesPerSecond: 64 * 1024 ** 2
+    })
+    expect(owner.transferBytesPerSecond).toBe(64 * 1024 ** 2)
+    owner.respond({ action: 'set-speed', operationId: owner.snapshot!.id, bytesPerSecond: null })
+    expect(owner.transferBytesPerSecond).toBe(16 * 1024 ** 2)
+
+    completion.resolve()
+    await run
   })
   it('retains selection across clients and rejects stale or invalid selections', async () => {
     const changed = vi.fn()
@@ -119,7 +188,10 @@ describe('SessionPackageOperation', () => {
       operationId: snapshot.id,
       excludedStorageKeys: [file.storageKey]
     })
-    await expect(run).resolves.toEqual([file.storageKey])
+    await expect(run).resolves.toEqual({
+      excludedStorageKeys: [file.storageKey],
+      includePdfNotes: false
+    })
     expect(owner.snapshot?.state).toBe('succeeded')
     expect(owner.snapshot?.summary).toBeUndefined()
     expect(changed.mock.lastCall?.[0].state).toBe('succeeded')
@@ -226,4 +298,35 @@ describe('SessionPackageOperation', () => {
       result: { imported: session }
     })
   })
+})
+
+it('publishes browser transfers without claiming an import or replacing an active export', async () => {
+  const owner = new SessionPackageOperation()
+  const transfers = [
+    {
+      id: 'browser-1',
+      filename: 'study.science',
+      state: 'waiting' as const,
+      completedBytes: 0,
+      totalBytes: 5
+    }
+  ]
+  owner.setBrowserTransfers(transfers)
+  expect(sessionPackageCommandContracts.operation.result.parse(owner.snapshot)).toMatchObject({
+    browserReceiptOnly: true,
+    browserTransfers: transfers,
+    state: 'running'
+  })
+  expect(owner.active).toBe(false)
+  const completion = deferred()
+  const exporting = owner.run('export', session, () => completion.promise)
+  const id = owner.snapshot!.id
+  owner.setBrowserTransfers([{ ...transfers[0], state: 'receiving', completedBytes: 2 }])
+  expect(owner.snapshot).toMatchObject({
+    id,
+    kind: 'export',
+    browserTransfers: [{ completedBytes: 2 }]
+  })
+  completion.resolve()
+  await exporting
 })

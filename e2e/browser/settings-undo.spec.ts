@@ -3,7 +3,7 @@ import { expect, test } from '@playwright/test'
 test('Undo remains reachable above Settings at the viewport top center', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/?undo')
-  await page.getByRole('button', { name: /^(Model settings|Settings)$/ }).click()
+  await page.getByRole('button', { name: /^Settings$/ }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await expect(settings).toBeVisible()
   const undo = page.getByTestId('permission-undo-snackbar')
@@ -28,7 +28,7 @@ for (const width of [375, 1280]) {
       await page.goto('/?undo')
       const undo = page.getByTestId('permission-undo-snackbar')
       const original = await undo.elementHandle()
-      await page.getByRole('button', { name: 'Model settings', exact: true }).focus()
+      await page.getByRole('button', { name: 'Settings', exact: true }).focus()
       await page.keyboard.press('Enter')
       const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
       await expect(settings).toBeVisible()
@@ -42,7 +42,7 @@ for (const width of [375, 1280]) {
       await settings.getByRole('button', { name: 'Close settings', exact: true }).click()
       await expect(settings).toHaveCount(0)
       expect(await undo.evaluate((el, previous) => el === previous, original)).toBe(true)
-      await page.getByRole('button', { name: 'Model settings', exact: true }).focus()
+      await page.getByRole('button', { name: 'Settings', exact: true }).focus()
       await page.keyboard.press('Enter')
       await expect(settings).toBeVisible()
       expect(await undo.evaluate((el, previous) => el === previous, original)).toBe(true)
@@ -60,7 +60,7 @@ for (const width of [375, 1280]) {
 test('revoking inside Permissions shows an actionable Undo above Settings', async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 })
   await page.goto('/?undo&revoke')
-  await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Settings', exact: true }).click()
   const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
   await settings
     .getByRole('navigation', { name: 'Settings', exact: true })
@@ -96,7 +96,7 @@ for (const reducedMotion of ['reduce', 'no-preference'] as const) {
   test(`Settings retains its panel animation (${reducedMotion})`, async ({ page }) => {
     await page.emulateMedia({ reducedMotion })
     await page.goto('/?undo')
-    await page.getByRole('button', { name: 'Model settings', exact: true }).click()
+    await page.getByRole('button', { name: 'Settings', exact: true }).click()
     const panel = page.locator('[data-slot="settings-surface"]')
     await expect(panel).toHaveAttribute('data-state', 'open')
     expect(await panel.evaluate((el) => getComputedStyle(el).animationName)).toBe(
@@ -113,7 +113,7 @@ test('mobile navigation hides Undo until its focus trap closes', async ({ page }
   await cdp.send('Emulation.setCPUThrottlingRate', { rate: 6 })
   await page.setViewportSize({ width: 375, height: 900 })
   await page.goto('/?undo')
-  await page.getByRole('button', { name: 'Model settings', exact: true }).focus()
+  await page.getByRole('button', { name: 'Settings', exact: true }).focus()
   await page.keyboard.press('Enter')
   const undo = page.getByTestId('permission-undo-snackbar')
   const original = await undo.elementHandle()

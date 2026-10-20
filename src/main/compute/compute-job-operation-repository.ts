@@ -1,8 +1,18 @@
+import type {
+  ClaimedComputeJobOperation,
+  ComputeJobOperationKind,
+  ComputeJobOperationOutcome,
+  ComputeJobOperationPhase,
+  ComputeJobOperationRecord,
+  ComputeJobOperationScope
+} from '@aipoch/compute'
+import { hasCleanupStopEvidence } from '@aipoch/compute/node'
+import { OptionalSecureStorageStringProtection } from './credential-vault'
 import { randomUUID } from 'node:crypto'
 
-import type { Prisma, PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient, ComputeJob as PrismaComputeJob } from '@prisma/client'
 
-import type { ComputeJobStatus } from '../../shared/compute'
+import type { ComputeJobStatus } from '@aipoch/compute'
 
 // Match upload publication's admission budget on the shared single-connection SQLite client.
 // Execution deadlines and rollback behavior remain Prisma defaults.
@@ -28,37 +38,6 @@ const runOperationTransaction = async <Result>(
 
 type OperationClient = Pick<PrismaClient, '$transaction' | 'computeJobOperation'>
 type OperationClientProvider = () => Promise<OperationClient>
-
-type ComputeJobOperationKind = 'cancel'
-type ComputeJobOperationPhase = 'active' | 'settled'
-type ComputeJobOperationOutcome = 'fulfilled' | 'superseded'
-
-type ComputeJobOperationRecord = Readonly<{
-  id: string
-  jobId: string
-  kind: ComputeJobOperationKind
-  phase: ComputeJobOperationPhase
-  outcome: ComputeJobOperationOutcome | null
-  revision: number
-  attemptCount: number
-  eligibleAt: Date | null
-  claimToken: string | null
-  claimExpiresAt: Date | null
-  createdAt: Date
-  settledAt: Date | null
-  updatedAt: Date
-}>
-
-type ComputeJobOperationScope = Readonly<{
-  projectId: string
-  sessionId: string
-  providerId: string
-}>
-
-type ClaimedComputeJobOperation = Readonly<{
-  operation: ComputeJobOperationRecord
-  jobId: string
-}>
 
 const ACTIVE_STATUSES = ['queued', 'submitted', 'running'] as const
 const TERMINAL_STATUSES = ['success', 'failed', 'timeout', 'error'] as const
@@ -114,7 +93,54 @@ const toRecord = (row: {
 })
 
 class ComputeJobOperationRepository {
-  constructor(private readonly getClient: OperationClientProvider) {}
+  constructor(
+    private readonly getClient: OperationClientProvider,
+    private readonly fieldProtection: Pick<
+      OptionalSecureStorageStringProtection,
+      'reveal' | 'revealJson'
+    > = new OptionalSecureStorageStringProtection()
+  ) {}
+
+  private cancellationDidNotLaunch(job: PrismaComputeJob): boolean {
+    if (job.remoteHandle || !job.lastPollError) return false
+    try {
+      return this.fieldProtection.reveal(job.lastPollError) === 'dispatch_definitely_not_started'
+    } catch {
+      return false
+    }
+  }
+
+  private cleanupStopError(job: PrismaComputeJob): string | null {
+    const protection = this.fieldProtection
+    const reveal = (value: string | null): string | undefined =>
+      value === null ? undefined : job.sensitiveDataEncrypted ? protection.reveal(value) : value
+    try {
+      if (!job.remoteHandle && reveal(job.lastPollError) === 'dispatch_definitely_not_started')
+        return job.lastPollError
+      return hasCleanupStopEvidence({
+        job_id: job.id,
+        provider_id: job.providerId,
+        project_id: job.projectId,
+        session_id: job.sessionId,
+        created_at: job.createdAt.getTime(),
+        command_hash: job.commandHash,
+        execution_mode: job.executionMode === 'slurm' ? 'slurm' : 'direct_ssh',
+        remote_workdir: reveal(job.remoteWorkdir),
+        remote_handle:
+          job.remoteHandle === null
+            ? undefined
+            : job.sensitiveDataEncrypted
+              ? protection.revealJson(job.remoteHandle, 'object')
+              : job.remoteHandle,
+        last_poll_error: reveal(job.lastPollError)
+      })
+        ? job.lastPollError
+        : null
+    } catch {
+      // Unreadable encrypted evidence must not be destroyed by cancellation settlement.
+      return job.lastPollError
+    }
+  }
 
   async get(
     jobId: string,
@@ -282,6 +308,8 @@ class ComputeJobOperationRepository {
     return runOperationTransaction(client, async (transaction) => {
       switch (claim.operation.kind) {
         case 'cancel': {
+          const job = await transaction.computeJob.findUnique({ where: { id: claim.jobId } })
+          if (!job) return false
           const terminalized = await transaction.computeJob.updateMany({
             where: {
               id: claim.jobId,
@@ -298,8 +326,13 @@ class ComputeJobOperationRepository {
             data: {
               status: 'failed',
               finishedAt: now,
-              // Persist the definitive no-launch result with cancellation settlement so a restart
-              // cannot retry harvesting a directory that was never created.
+              // Definitive cancellation evidence supersedes uncertain dispatch diagnostics.
+              lastPollError: this.cleanupStopError(job),
+              // No launched workload means there are no results to harvest. Directory absence
+              // remains a separate fact; only that fact can settle remote cleanup.
+              ...(this.cancellationDidNotLaunch(job)
+                ? { harvestedAt: now, harvestError: null }
+                : {}),
               ...(remoteWorkdirAbsent
                 ? { harvestedAt: now, harvestError: null, remoteCleanupDisposition: 'cleaned' }
                 : {})
@@ -346,8 +379,7 @@ class ComputeJobOperationRepository {
           projectId: scope.projectId,
           sessionId: scope.sessionId,
           providerId: scope.providerId
-        },
-        select: { status: true }
+        }
       })
       if (!job) throw new Error('Compute Job cleanup scope does not match.')
       const operation = await transaction.computeJobOperation.findUnique({
@@ -362,7 +394,7 @@ class ComputeJobOperationRepository {
       if ((ACTIVE_STATUSES as readonly string[]).includes(job.status)) {
         await transaction.computeJob.update({
           where: { id: jobId },
-          data: { status: 'failed', finishedAt: now }
+          data: { status: 'failed', finishedAt: now, lastPollError: this.cleanupStopError(job) }
         })
       }
       const settled = await transaction.computeJobOperation.updateMany({
@@ -411,13 +443,4 @@ class ComputeJobOperationRepository {
 }
 
 export { ComputeJobOperationRepository }
-export type {
-  ClaimedComputeJobOperation,
-  ComputeJobOperationKind,
-  ComputeJobOperationOutcome,
-  ComputeJobOperationPhase,
-  ComputeJobOperationRecord,
-  ComputeJobOperationScope,
-  OperationClient,
-  OperationClientProvider
-}
+export type { OperationClient, OperationClientProvider }

@@ -38,6 +38,13 @@ const manifest = (): Manifest => ({
   }
 })
 const files = [source, test, manifestPath]
+const packageConfigs = [
+  'packages/example/tsconfig.json',
+  'packages/example/tsconfig.dev.json',
+  'packages/example/tsconfig.test.json',
+  'packages/example/package.json',
+  'packages/example/package-lock.json'
+]
 const check = (overrides: Record<string, unknown> = {}): ReturnType<typeof checkModuleOwnership> =>
   checkModuleOwnership({
     baseManifest: manifest(),
@@ -49,6 +56,21 @@ const check = (overrides: Record<string, unknown> = {}): ReturnType<typeof check
   })
 
 describe('module ownership admission', () => {
+  it.each(packageConfigs)('accepts package-root configuration without registration: %s', (path) => {
+    expect(
+      check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
+    ).toMatchObject({ ok: true, violations: [] })
+  })
+
+  it('preserves existing configuration ownership evidence', () => {
+    const path = packageConfigs[0]
+    const baseManifest = manifest()
+    baseManifest.modules.sample.ownerPaths.push(path)
+    expect(
+      check({ baseManifest, baseFiles: [...files, path], headFiles: [...files, path] }).violations
+    ).toContainEqual(expect.objectContaining({ rule: 'module-registration-regression' }))
+  })
+
   it('accepts explicit ownership with intentional full validation', () => {
     const headManifest = manifest()
     headManifest.modules.sample.fullTestReason = 'Dynamic consumers require full validation'
@@ -70,7 +92,15 @@ describe('module ownership admission', () => {
     'packages/native/src/new.cc',
     'packages/native/src/new.rs',
     'src/main/notebook/fixture.py',
-    'src/main/notebook/fixture.R'
+    'src/main/notebook/fixture.R',
+    'packages/example/runtime.json',
+    'packages/example/src/tsconfig.json',
+    'packages/example/test/package.json',
+    'packages/example/fixtures/tsconfig.dev.json',
+    'packages/example/resources/package-lock.json',
+    'packages/example/tsconfig.dev.jsonl',
+    'src/shared/i18n/locales/de.json',
+    'src/main/package.json'
   ])('blocks an unregistered new code file: %s', (path) => {
     expect(
       check({ headFiles: [...files, path], changes: [{ path, status: 'added' }] })
@@ -316,6 +346,7 @@ it('reads candidate JSON only and blocks additions through the actual CI Integri
     git('add', '.')
     git('commit', '--quiet', '-m', 'base')
     const base = git('rev-parse', 'HEAD')
+    for (const path of packageConfigs) put(path, '{}\n')
     put(fresh, 'throw new Error("candidate code must not execute")\n')
     put(
       'scripts/ci/check-module-ownership.mjs',
@@ -341,6 +372,18 @@ it('reads candidate JSON only and blocks additions through the actual CI Integri
     expect(moduleOwnershipFromRevisions(base, git('rev-parse', 'HEAD'), { cwd: root }).ok).toBe(
       true
     )
+    const accepted = spawnSync(
+      process.execPath,
+      [
+        resolve('scripts/ci/check-ci-integrity.mjs'),
+        '--base',
+        base,
+        '--head',
+        git('rev-parse', 'HEAD')
+      ],
+      { cwd: root, encoding: 'utf8', env: { ...process.env, GITHUB_STEP_SUMMARY: '' } }
+    )
+    expect(accepted.status, accepted.stdout + accepted.stderr).toBe(0)
     // An attacker cannot disable the new invariant by editing the candidate checker.
     updated.modules.sample.fallbackCapability = 'renderer_view'
     put(manifestPath, JSON.stringify(updated))
@@ -364,4 +407,120 @@ it('reads candidate JSON only and blocks additions through the actual CI Integri
   } finally {
     rmSync(root, { recursive: true, force: true })
   }
+})
+
+describe('lossless module consolidation', () => {
+  const consolidation = (): {
+    baseManifest: Manifest
+    headManifest: Manifest
+    baseFiles: string[]
+    headFiles: string[]
+  } => {
+    const baseManifest = manifest()
+    baseManifest.modules.second = {
+      ...structuredClone(baseManifest.modules.sample),
+      ownerPaths: [fresh],
+      interfacePaths: [fresh],
+      testFiles: { owner: [], contract: [test], consumer: [] }
+    }
+    const combined = structuredClone(baseManifest.modules.sample)
+    combined.ownerPaths.push(fresh)
+    combined.interfacePaths.push(fresh)
+    const headManifest = { schemaVersion: 1, modules: { combined } }
+    return {
+      baseManifest,
+      headManifest,
+      baseFiles: [...files, fresh],
+      headFiles: [...files, fresh]
+    }
+  }
+  it('accepts a merged owner retaining interfaces and test evidence across categories', () => {
+    expect(check(consolidation()).ok).toBe(true)
+  })
+  it('uses renamed owner paths to disambiguate otherwise identical replacement evidence', () => {
+    const state = consolidation()
+    const renamed = 'packages/combined/source.ts'
+    state.headFiles = state.headFiles.filter((path) => path !== source).concat(renamed)
+    state.headManifest.modules.combined.ownerPaths = state.headManifest.modules.combined.ownerPaths
+      .filter((path) => path !== source)
+      .concat(renamed)
+    state.headManifest.modules.combined.interfacePaths = [renamed, fresh]
+    state.headManifest.modules.unrelated = {
+      ...structuredClone(state.headManifest.modules.combined),
+      ownerPaths: ['src/main/unrelated.ts']
+    }
+    state.headFiles.push('src/main/unrelated.ts')
+    expect(
+      check({ ...state, changes: [{ path: renamed, previousPath: source, status: 'renamed' }] }).ok
+    ).toBe(true)
+  })
+  it.each(['test', 'interface', 'owner', 'overlay', 'fallback', 'full'])(
+    'rejects a consolidation that drops its %s obligation',
+    (kind) => {
+      const state = consolidation()
+      const before = state.baseManifest.modules.sample
+      const after = state.headManifest.modules.combined
+      if (kind === 'test') {
+        const unrelated = 'src/main/unrelated.test.ts'
+        after.testFiles.owner = [unrelated]
+        after.ownerPaths.push(unrelated)
+        state.headFiles.push(unrelated)
+      }
+      if (kind === 'interface') after.interfacePaths = [fresh]
+      if (kind === 'owner') after.ownerPaths = [fresh, test]
+      if (kind === 'overlay') before.capabilityOverlays.push('windows_sensitive')
+      if (kind === 'fallback') after.fallbackCapability = 'renderer_view'
+      if (kind === 'full') before.fullTestReason = 'Dynamic consumers'
+      expect(check(state).ok).toBe(false)
+    }
+  )
+  it('redirects incoming edges and preserves outgoing consumer obligations', () => {
+    const state = consolidation()
+    const third = {
+      ...structuredClone(manifest().modules.sample),
+      ownerPaths: ['src/main/third.ts'],
+      interfacePaths: ['src/main/third.ts'],
+      consumerModules: ['sample']
+    }
+    Object.assign(state.baseManifest.modules, { third })
+    Object.assign(state.headManifest.modules, {
+      third: { ...third, consumerModules: ['combined'] }
+    })
+    state.baseFiles.push('src/main/third.ts')
+    state.headFiles.push('src/main/third.ts')
+    expect(check(state).ok).toBe(true)
+    state.headManifest.modules['third'].consumerModules = []
+    expect(check(state).ok).toBe(false)
+  })
+  it('preserves outgoing consumer edges rather than copying only their current tests', () => {
+    const state = consolidation()
+    const third = {
+      ...structuredClone(manifest().modules.sample),
+      ownerPaths: ['src/main/third.ts'],
+      interfacePaths: ['src/main/third.ts']
+    }
+    Object.assign(state.baseManifest.modules, { third })
+    Object.assign(state.headManifest.modules, { third })
+    state.baseManifest.modules.sample.consumerModules = ['third']
+    state.baseFiles.push('src/main/third.ts')
+    state.headFiles.push('src/main/third.ts')
+    expect(check(state).ok).toBe(false)
+    state.headManifest.modules.combined.consumerModules = ['third']
+    expect(check(state).ok).toBe(true)
+  })
+  it('allows a separate owner only when it retains the old owner obligations', () => {
+    const baseManifest = manifest()
+    const headManifest = structuredClone(baseManifest)
+    headManifest.modules.sample.ownerPaths = [test]
+    headManifest.modules.extracted = {
+      ...structuredClone(baseManifest.modules.sample),
+      ownerPaths: [source]
+    }
+    expect(check({ baseManifest, headManifest }).ok).toBe(true)
+    headManifest.modules.extracted.testFiles.owner = ['src/main/unrelated.test.ts']
+    headManifest.modules.extracted.ownerPaths.push('src/main/unrelated.test.ts')
+    expect(
+      check({ baseManifest, headManifest, headFiles: [...files, 'src/main/unrelated.test.ts'] }).ok
+    ).toBe(false)
+  })
 })

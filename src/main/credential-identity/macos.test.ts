@@ -1,3 +1,4 @@
+import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -142,9 +143,10 @@ it.each([
       later = true
       expect(() => credentialCipher(cipher).encryptString('replacement')).toThrow(/recovery/i)
       expect(cipher.encryptString).not.toHaveBeenCalled()
-      const { formatLine } = await import('../logger')
       const error = recover.mock.calls[0][0]
-      const line = formatLine('error', 'credentials', 'recovery', { identityProbe: error.probe })
+      const [line] = await captureDiagnosticLogs((log) =>
+        log.error('recovery', { identityProbe: error.probe })
+      )
       expect(JSON.parse(line).data.identityProbe.reason).toBe('keychain-search-list-changed')
       expect(line).not.toContain('never-log-raw-response')
     } else expect(cipher.decryptString).toHaveBeenCalledWith(Buffer.from('v10original'))

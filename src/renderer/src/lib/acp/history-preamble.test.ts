@@ -405,13 +405,15 @@ describe('history replay target resolution', () => {
     expect(resolveHistoryReplayTarget('codex', provider(['responses']), codex)).toBe(
       'codex-response'
     )
-    expect(resolveHistoryReplayTarget('codex', provider(['openai']), codex)).toBe('codex-bridge')
+    expect(resolveHistoryReplayTarget('codex', provider(['chat-completions']), codex)).toBe(
+      'codex-bridge'
+    )
   })
 
   it('derives persisted session policy from its backend instead of active settings', () => {
     const bridgeProvider = {
       id: 'persisted-provider',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       contextWindow: 100_000
     } as ProviderView
 

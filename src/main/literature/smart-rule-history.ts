@@ -1,5 +1,5 @@
 import type { Prisma } from '@prisma/client'
-import { parseSmartRule } from '../../shared/smart-collection-rule'
+import { parseSmartRule } from '@aipoch/literature-screening/rules'
 
 // Called in the same transaction that creates or advances the collection rule.
 export async function saveSmartRuleVersion(

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { decodeRemoteFsError } from '../../shared/remote-fs'
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
 import type { PersistedChatSession } from '../../shared/session-persistence'

@@ -13,7 +13,8 @@ import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import { notebookHelperEvidenceKey } from '../notebook/helper-evidence'
 import { artifactProvenanceGraphValue } from './artifact-provenance-graph'
-import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import type {
   ArtifactProvenanceGraph,
   PersistedArtifactExecutionSnapshot
@@ -1041,7 +1042,7 @@ const withIndependentReplay = (
     ]
   }
   execution.provenanceGraph = graph
-  execution.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+  execution.reproducibilityRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
     provenanceGraph: graph,
     runs: execution.runs,
     inputFiles: []
@@ -1126,7 +1127,7 @@ it.each([
       }
     }
     if (change === 'blocked-original' || change === 'required-failed-run') {
-      execution.reproducibilityRecipe = sealArtifactReproducibilityRecipe({
+      execution.reproducibilityRecipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: execution.provenanceGraph!,
         runs: execution.runs,
         inputFiles: []

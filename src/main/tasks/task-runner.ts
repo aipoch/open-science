@@ -3,41 +3,48 @@ import { access, realpath, stat } from 'node:fs/promises'
 import { isAbsolute } from 'node:path'
 import { isDeepStrictEqual } from 'node:util'
 
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { AcpRuntimeEvent, AgentTurnProvenanceContext } from '../../shared/acp'
-import { ComputeHostPreferenceValidationError } from '../../shared/compute'
-import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
 import {
   getAcpRuntimeEventImage,
   getAcpRuntimeEventText,
-  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
-  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE,
   normalizeClaudeCodeRefusalText
 } from '../../shared/acp'
+import {
+  MAX_ACP_MESSAGE_IMAGE_BYTES_PER_MESSAGE,
+  MAX_ACP_MESSAGE_IMAGES_PER_MESSAGE
+} from '../../shared/acp-image-contract'
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   ArtifactFile,
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult,
   ResolveArtifactVersionDescriptorsRequest
 } from '../../shared/artifacts'
-import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import { artifactCreatedAtMs } from '../../shared/artifacts'
-import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { ComputeHostPreferenceValidationError } from '../../shared/compute'
+import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
 import {
   ensureConversationRuntimeSegment,
   getActiveConversationContext
 } from '../../shared/conversation-graph'
+import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
+import { DEFAULT_PERMISSION_PROFILE } from '../../shared/permission-profiles'
 import {
   PROJECT_DESCRIPTION_MAX_LENGTH,
   PROJECT_NAME_MAX_LENGTH,
   type Project,
   type UpdateProjectRequest
 } from '../../shared/projects'
-import { buildConfiguredModelCatalog } from '../../shared/configured-model-catalog'
+import {
+  resolveSelectableConfiguration,
+  resolveSessionAgentConfiguration
+} from '../../shared/session-agent-configuration'
 import {
   projectSessionDefaultsSchema,
-  sessionAgentConfigurationSchema,
   sessionAgentConfigurationPatchSchema,
+  sessionAgentConfigurationSchema,
   updateProjectSessionDefaultsRequestSchema,
   updateSessionConfigurationRequestSchema,
   type ProjectSessionDefaults,
@@ -48,17 +55,10 @@ import {
   type UpdateSessionConfigurationRequest
 } from '../../shared/session-configuration'
 import {
-  resolveSelectableConfiguration,
-  resolveSessionAgentConfiguration
-} from '../../shared/session-agent-configuration'
-import type {
-  AgentFrameworkId,
-  SessionAgentConfiguration,
-  SettingsSnapshot
-} from '../../shared/settings'
-import {
   isSessionConfigurationBusyError,
   materializeSessionConversationGraph,
+  type AdmitTaskSessionTurnRequest,
+  type BindTaskSessionRequest,
   type DelegationPolicy,
   type FailTaskSessionRunRequest,
   type PersistedArtifact,
@@ -67,10 +67,13 @@ import {
   type PersistedMessageImage,
   type PersistedToolActivity,
   type SettleTaskSessionCompletionRequest,
-  type BindTaskSessionRequest,
-  type AdmitTaskSessionTurnRequest,
   type StageTaskSessionCompletionRequest
 } from '../../shared/session-persistence'
+import type {
+  AgentFrameworkId,
+  SessionAgentConfiguration,
+  SettingsSnapshot
+} from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
@@ -79,18 +82,17 @@ import type {
   TaskProject,
   TaskProjectSessionDefaults,
   TaskRun,
-  TaskRunStatus,
   TaskRunIdentity,
   TaskRunProgressEvent,
   TaskRunProgressPhase,
   TaskRunReview,
-  TaskSessionSummary,
+  TaskRunStatus,
   TaskSessionConfiguration,
+  TaskSessionSummary,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { ArchiveAvailabilityError, archiveAvailabilityMessage } from '../archive/availability-error'
 import { toErrorMessage } from '../error-message'
-import { createLogger } from '../logger'
 import type { TaskRunJournal, TaskRunJournalEntry } from './task-run-journal'
 
 const log = createLogger('task-runner')
@@ -607,7 +609,7 @@ const taskModelCatalog = (
     claudeSubscriptionProviderId: settings.claudeSubscriptionProviderId,
     includeAllClaudeSubscriptions: true,
     frameworkId: settings.agentFrameworkId,
-    frameworkEndpoints: framework?.supportedApiTypes ?? ['anthropic']
+    frameworkEndpoints: framework?.supportedApiTypes ?? ['messages']
   })
 }
 
@@ -2707,26 +2709,9 @@ class TaskRunner {
         continue
       }
       const error = current.error ?? PROCESS_RESTARTED_MESSAGE
-      if (current.runtimeTranscriptOwner === 'main') {
-        await this.dependencies.sessions.failRun({
-          projectId: current.projectId,
-          sessionId: current.id,
-          promptMessageId: run.promptMessageId,
-          taskRunCommitId: run.id,
-          artifacts: [],
-          error,
-          updatedAt: this.dependencies.now()
-        })
-      } else {
-        await this.dependencies.sessions.save({
-          ...current,
-          status: 'error',
-          activeRun: undefined,
-          taskRunCommitId: run.id,
-          error,
-          updatedAt: this.dependencies.now()
-        })
-      }
+      // One unadoptable Session must not reject initialize(): the journal keeps the failed Run and
+      // its witness, so the next startup retries the exact same repair.
+      await this.failRecoveredRun(current, run, error)
       run.status = 'failed'
     }
     for (const run of terminalSessionRepairs) {
@@ -2735,28 +2720,36 @@ class TaskRunner {
       )
       if (!current) continue
       const error = current.error ?? run.error ?? PROCESS_RESTARTED_MESSAGE
-      if (current.runtimeTranscriptOwner === 'main') {
-        await this.dependencies.sessions.failRun({
-          projectId: current.projectId,
-          sessionId: current.id,
-          promptMessageId: run.promptMessageId,
-          taskRunCommitId: run.id,
-          artifacts: [],
-          error,
-          updatedAt: this.dependencies.now()
-        })
-      } else {
-        await this.dependencies.sessions.save({
-          ...current,
-          status: 'error',
-          activeRun: undefined,
-          taskRunCommitId: run.id,
-          error,
-          updatedAt: this.dependencies.now()
-        })
-      }
+      await this.failRecoveredRun(current, run, error)
     }
     if (interrupted.length > 0) await this.persistRuns()
+  }
+
+  private async failRecoveredRun(
+    session: PersistedChatSession,
+    run: MutableTaskRun,
+    error: string
+  ): Promise<void> {
+    try {
+      await this.dependencies.sessions.failRun({
+        projectId: session.projectId,
+        sessionId: session.id,
+        promptMessageId: run.promptMessageId,
+        taskRunCommitId: run.id,
+        artifacts: [],
+        error,
+        ...(run.failureCode === 'process_restarted'
+          ? { interruptionCause: 'app-restart' as const }
+          : {}),
+        updatedAt: this.dependencies.now()
+      })
+    } catch (failure) {
+      log.error('Failed to record a recovered Task Run on its Session.', {
+        error: toErrorMessage(failure),
+        runId: run.id,
+        sessionId: session.id
+      })
+    }
   }
 
   private persistRuns(): Promise<void> {
@@ -2933,7 +2926,7 @@ class TaskRunner {
   }
 }
 
-export { TaskRunner, TaskRunnerError, summarizeSession }
+export { summarizeSession, TaskRunner, TaskRunnerError }
 export type {
   TaskAgentCreateSessionRequest,
   TaskAgentPort,
@@ -2943,8 +2936,8 @@ export type {
   TaskAgentSession,
   TaskArtifactPort,
   TaskComputePreferencePort,
-  TaskProjectPort,
   TaskPreviewResourcePort,
+  TaskProjectPort,
   TaskRunnerDependencies,
   TaskRuntimeEventPort,
   TaskSessionPort

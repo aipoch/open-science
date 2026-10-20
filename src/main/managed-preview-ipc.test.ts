@@ -629,3 +629,6 @@ describe('managed preview IPC handlers', () => {
     expect(resources.acquire).not.toHaveBeenCalled()
   })
 })
+
+const { configureIpcHandlerRegistry } = await import('./ipc-handler-registry')
+configureIpcHandlerRegistry((await import('electron')).ipcMain)

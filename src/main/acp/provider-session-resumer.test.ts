@@ -2,10 +2,9 @@ import * as acp from '@agentclientprotocol/sdk'
 import type { ActiveSession, ClientConnection, McpServer } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
-
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
 import { claudeCodeFramework, codexFramework, opencodeFramework } from '../agent-framework'
 import {
   shellRuntimeAgentContract,

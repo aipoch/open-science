@@ -1,3 +1,18 @@
+import type {
+  ApproveCompletionHandoff,
+  CompletionHandoffContinuation,
+  CompletionHandoffRetryStage,
+  CompletionHandoffStage,
+  DurableCompletionHandoff
+} from './completion-handoff-contract'
+export {
+  type ApproveCompletionHandoff,
+  type CompletionHandoffContinuation,
+  type CompletionHandoffProvenance,
+  type CompletionHandoffRetryStage,
+  type CompletionHandoffStage,
+  type DurableCompletionHandoff
+} from './completion-handoff-contract'
 // Durable, application-owned lifecycle for a completion captured after an approved specialist
 // switch. The lifecycle intentionally has no renderer dependency: only its repository state and
 // provider-facing runtime requests decide whether an old prompt can resume.
@@ -5,55 +20,15 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { deserialize, serialize } from 'node:v8'
-
+import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
+import type { CompletionHandoffLifecycleEvent } from '../../shared/specialist'
+import { completionHandoffKey } from './completion-gate'
 import type {
   CompletionDisposition,
   CompletionGateRuntime,
   ToolCompletionEnvelope,
   TrustedToolCompletionContext
-} from './completion-gate'
-import { completionHandoffKey } from './completion-gate'
-import type { ApprovedSwitchReadback } from '../../shared/agents-contract'
-import type {
-  CompletionHandoffLifecycleEvent,
-  CompletionHandoffPhase,
-  CompletionHandoffRetryFrom
-} from '../../shared/specialist'
-import type { HandoffApprovalContext } from '../../shared/handoff-lifecycle'
-
-export type CompletionHandoffStage = CompletionHandoffPhase
-export type CompletionHandoffRetryStage = CompletionHandoffRetryFrom
-
-export type CompletionHandoffProvenance = {
-  originatingTurnId: string
-  originatingUserMessageId?: string
-  attachmentIds: string[]
-  artifactIds: string[]
-}
-
-export type CompletionHandoffContinuation = {
-  outcome: string
-  switchReadback?: ApprovedSwitchReadback
-}
-
-export type DurableCompletionHandoff = {
-  id: string
-  context: TrustedToolCompletionContext
-  targetName: string | null
-  approvedSpecialistId?: string
-  approvedSpecialistRevision?: number
-  generation: number
-  sequence: number
-  commitOrder?: number
-  observedAt: number
-  provenance: CompletionHandoffProvenance
-  stage: CompletionHandoffStage
-  envelope?: ToolCompletionEnvelope
-  retryFrom?: CompletionHandoffRetryStage
-  cancelled: boolean
-  failureMessage?: string
-  continuation?: CompletionHandoffContinuation
-}
+} from './completion-gate-contract'
 
 // Renderer adapters consume this projection as read-only data. The lifecycle owns the durable
 // authority; this shape merely prevents every adapter from inventing a subtly different mapping.
@@ -274,20 +249,13 @@ export class FileCompletionHandoffRepository implements CompletionHandoffReposit
 
 export type CompletionHandoffRuntime = CompletionGateRuntime
 
-export type ApproveCompletionHandoff = {
-  context: TrustedToolCompletionContext
-  targetName: string | null
-  generation: number
-  provenance?: Omit<CompletionHandoffProvenance, 'originatingTurnId'>
-  continuation?: CompletionHandoffContinuation
-}
-
 export type ApprovedSpecialistIdentity = {
   specialistId: string
   revision: number
 }
 
 export class CompletionHandoffLifecycle {
+  private readonly reconfigurationAttempts = new Map<string, object>()
   private readonly retryLifecycles = new Map<string, Promise<DurableCompletionHandoff>>()
 
   constructor(
@@ -403,6 +371,7 @@ export class CompletionHandoffLifecycle {
   // no old identity is eligible to receive a completion. A caller can later retry from the saved
   // safe stage if its product policy permits it.
   async cancel(context: TrustedToolCompletionContext): Promise<void> {
+    this.reconfigurationAttempts.delete(completionHandoffKey(context))
     const cancelled = await this.repository.update(context, (current) => {
       if (!current || current.stage === 'continued') return current
       return this.observe({
@@ -414,6 +383,7 @@ export class CompletionHandoffLifecycle {
       })
     })
     if (cancelled) this.emit(cancelled)
+    if (cancelled?.cancelled) await this.runtime.cleanupCancelledHandoff?.(context)
   }
 
   async run(context: TrustedToolCompletionContext): Promise<DurableCompletionHandoff> {
@@ -435,7 +405,13 @@ export class CompletionHandoffLifecycle {
         return this.fail(switching, 'switching', error)
       }
       const current = await this.require(context)
-      if (current.cancelled || current.stage === 'failed') return current
+      if (
+        current.cancelled ||
+        current.stage === 'failed' ||
+        current.generation !== switching.generation ||
+        current.sequence !== switching.sequence
+      )
+        return current
       return this.runReconfigure(current)
     }
 
@@ -512,16 +488,38 @@ export class CompletionHandoffLifecycle {
   private async runReconfigure(
     handoff: DurableCompletionHandoff
   ): Promise<DurableCompletionHandoff> {
+    const key = completionHandoffKey(handoff.context)
+    const attempt = {}
+    this.reconfigurationAttempts.set(key, attempt)
+    const isCurrentAttempt = (): boolean => this.reconfigurationAttempts.get(key) === attempt
     const reconfiguring = await this.saveStage(handoff, 'reconfiguring')
-    if (reconfiguring.cancelled || reconfiguring.stage === 'failed') return reconfiguring
+    if (reconfiguring.cancelled || reconfiguring.stage === 'failed' || !isCurrentAttempt()) {
+      if (isCurrentAttempt()) this.reconfigurationAttempts.delete(key)
+      return reconfiguring
+    }
     try {
-      await this.runtime.reconfigure(asCapturedDisposition(reconfiguring), reconfiguring.context)
+      await this.runtime.reconfigure(
+        asCapturedDisposition(reconfiguring),
+        reconfiguring.context,
+        isCurrentAttempt
+      )
     } catch (error) {
       return this.fail(reconfiguring, 'reconfiguring', error)
+    } finally {
+      if (isCurrentAttempt()) this.reconfigurationAttempts.delete(key)
     }
 
     const current = await this.require(handoff.context)
-    if (current.cancelled || current.stage === 'failed') return current
+    if (current.cancelled) {
+      await this.runtime.cleanupCancelledHandoff?.(current.context)
+      return current
+    }
+    if (
+      current.stage === 'failed' ||
+      current.generation !== reconfiguring.generation ||
+      current.sequence !== reconfiguring.sequence
+    )
+      return current
     const continuing = await this.saveStage(current, 'continuation-start')
     return this.runContinuation(continuing)
   }
@@ -574,6 +572,7 @@ export class CompletionHandoffLifecycle {
     retryFrom: CompletionHandoffRetryStage,
     error: unknown
   ): Promise<DurableCompletionHandoff> {
+    let claimedFailure = false
     const failed = await this.repository.update(handoff.context, (current) => {
       if (
         !current ||
@@ -582,6 +581,7 @@ export class CompletionHandoffLifecycle {
       ) {
         return current
       }
+      claimedFailure = true
       return this.observe({
         ...current,
         stage: 'failed',
@@ -590,6 +590,11 @@ export class CompletionHandoffLifecycle {
       })
     })
     if (!failed) throw new Error('Approved completion handoff disappeared while failing closed.')
+    if (failed.cancelled) {
+      await this.runtime.cleanupCancelledHandoff?.(failed.context)
+      return failed
+    }
+    if (!claimedFailure) return failed
     this.emit(failed)
     try {
       await this.runtime.reportHandoffFailure(error, asCapturedDisposition(failed), failed.context)

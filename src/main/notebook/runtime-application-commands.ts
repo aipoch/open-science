@@ -1,10 +1,7 @@
-import type { NotebookLanguage } from '../../shared/notebook'
-import type {
-  DiscoveredInterpreter,
-  EnvPackage,
-  RuntimeEnablement,
-  RuntimeUsage
-} from '../../shared/notebook-runtime'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
+import type { DiscoveredInterpreter, EnvPackage } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import type { RuntimeEnablement, RuntimeUsage } from '../../shared/notebook-runtime'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
@@ -12,7 +9,6 @@ import {
   type ApplicationCommandRegistrar
 } from '../application-command-router'
 import type { CallerContext } from '../caller-context'
-import { createLogger, diagnosticErrorFields } from '../logger'
 import type { RuntimeWorkflows } from './runtime-workflows'
 
 const log = createLogger('notebook:runtime-commands')

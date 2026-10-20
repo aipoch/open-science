@@ -1,18 +1,18 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { SshRunner } from './ssh-runner'
-import type { ComputeApprovalBroker } from './compute-approval-broker'
-import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
+import type { SshRunner } from '@aipoch/compute/node'
 import {
   ComputeConnectionError,
-  type ComputeConnectionBroker,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
+} from '@aipoch/compute/node'
+import type { ComputeApprovalBroker } from './compute-approval-broker'
+import { createMigratedComputeTestDatabase } from './compute-integration.test-support'
+import { type ComputeConnectionBroker } from './connection-broker'
+
 import { ComputeService } from './compute-service'
-import { DispatchTracker } from './dispatch-tracker'
 import { ComputeJobRepository } from './job-repository'
-import { JobPoller } from './job-poller'
 import { ComputeHostRepository } from './repository'
 
 const successfulRun = (stdout: string): Awaited<ReturnType<ComputeConnectionLease['run']>> => ({
@@ -23,8 +23,11 @@ const successfulRun = (stdout: string): Awaited<ReturnType<ComputeConnectionLeas
   truncated: false
 })
 
-const serviceBroker = (run: ComputeConnectionLease['run']): ComputeConnectionBroker => ({
-  acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn() })),
+const serviceBroker = (
+  run: ComputeConnectionLease['run'],
+  redactSensitiveOutputs?: ComputeConnectionLease['redactSensitiveOutputs']
+): ComputeConnectionBroker => ({
+  acquire: vi.fn(async () => ({ run, upload: vi.fn(), download: vi.fn(), redactSensitiveOutputs })),
   beginHostDeletion: vi.fn(async () => undefined),
   abortHostDeletion: vi.fn(),
   completeHostDeletion: vi.fn()
@@ -44,7 +47,7 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     timeoutSeconds
   }: {
     id: string
-    remoteWorkdir: string
+    remoteWorkdir?: string
     intent?: string
     command?: string
     timeoutSeconds?: number
@@ -99,11 +102,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       )
     )
     const connectionBroker = serviceBroker(run)
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -119,6 +121,100 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     expect(run).toHaveBeenCalledOnce()
   })
+
+  it.each(['running', 'exited', 'vanished'] as const)(
+    'persists the historical fallback across %s recovery, restart, harvest, and deletion',
+    async (observation) => {
+      const jobId = `legacy-path-${observation}`
+      const workdir = `~/.openscience/jobs/${jobId}`
+      await createSubmittedJob({ id: jobId })
+      await jobRepository.update(jobId, {
+        lastPollError: 'dispatch_may_have_started: dispatch_recovery_pending'
+      })
+      const run = vi
+        .fn<ComputeConnectionLease['run']>()
+        .mockResolvedValue(
+          successfulRun(
+            [
+              'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
+              'workdir:1',
+              `exit_code:${observation === 'exited' ? 0 : ''}`,
+              'pid:4321',
+              `cwd_match:${observation === 'running' ? 1 : 0}`
+            ].join('\n')
+          )
+        )
+      const harvestFn = vi.fn(async () => undefined)
+      const connectionBroker = serviceBroker(run)
+      const nonce = 'legacy_path_'
+      let poller = createComputeExecution().createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+        harvestFn,
+        makeNonce: () => nonce
+      })
+      await poller.tick()
+      const restoredRepository = new ComputeJobRepository(() => Promise.resolve(database.client))
+      await expect(restoredRepository.get(jobId)).resolves.toMatchObject({
+        remote_workdir: workdir
+      })
+      if (observation === 'running') {
+        const recovered = await restoredRepository.get(jobId)
+        expect(recovered).toMatchObject({ status: 'running', last_poll_error: undefined })
+        expect(JSON.parse(recovered!.remote_handle!)).toMatchObject({ pid: 4321, workdir })
+        poller = createComputeExecution().createPoller({
+          connectionBroker,
+          hostRepository,
+          jobRepository: restoredRepository,
+          harvestFn,
+          makeNonce: () => nonce
+        })
+        const output = (alive: number, exitCode: string): string =>
+          [
+            `${nonce}JOB_START:${jobId}`,
+            `${nonce}alive:${alive}`,
+            `${nonce}exit:${exitCode}`,
+            '',
+            `${nonce}STDOUT_END:${jobId}`,
+            '',
+            `${nonce}STDERR_END:${jobId}`
+          ].join('\n')
+        run.mockResolvedValue(successfulRun(output(1, '')))
+        await poller.tick()
+        await expect(restoredRepository.get(jobId)).resolves.toMatchObject({
+          status: 'running',
+          remote_workdir: workdir,
+          error_code: undefined
+        })
+        run.mockResolvedValue(successfulRun(output(0, '0')))
+        await poller.tick()
+      }
+      await poller.pause()
+      const expectedStatus = observation === 'vanished' ? 'failed' : 'success'
+      await expect(restoredRepository.get(jobId)).resolves.toMatchObject({
+        status: expectedStatus,
+        remote_workdir: workdir
+      })
+      expect(harvestFn).toHaveBeenCalledWith(
+        expect.objectContaining({ status: expectedStatus, remote_workdir: workdir }),
+        observation === 'running' ? expect.any(AbortSignal) : undefined
+      )
+      const cleanupRun = vi.fn<ComputeConnectionLease['run']>().mockResolvedValue(successfulRun(''))
+      const owner = createComputeExecution().createDeletionOwner({
+        jobRepository: restoredRepository,
+        hostRepository,
+        connectionBroker: serviceBroker(cleanupRun)
+      })
+      await owner.prepareSessionJobDeletion('project-1', 'session-1')
+      await owner.commitSessionJobDeletion('project-1', 'session-1')
+      expect(cleanupRun).toHaveBeenCalledWith(
+        expect.stringContaining(`~/'.openscience/jobs/${jobId}'`),
+        expect.anything()
+      )
+      await expect(restoredRepository.get(jobId)).resolves.toBeNull()
+    }
+  )
 
   it('adopts a launched job when lsof proves cwd on a host without procfs', async () => {
     const remoteWorkdir = '/scratch/.openscience/jobs/job-lsof'
@@ -139,12 +235,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       )
     )
 
-    await new JobPoller({
-      connectionBroker: serviceBroker(run),
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: serviceBroker(run),
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-lsof')).resolves.toMatchObject({ status: 'running' })
   })
@@ -174,11 +271,11 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       }))
     }
     const harvest = vi.fn(async () => undefined)
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
       jobRepository,
-      dispatchTracker: new DispatchTracker(),
+
       harvestFn: harvest
     })
 
@@ -220,13 +317,15 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     }
     const harvest = vi.fn(async () => undefined)
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker(),
-      harvestFn: harvest
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+
+        harvestFn: harvest
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-vanished')).resolves.toMatchObject({ status: 'failed' })
     const recovered = await jobRepository.get('job-vanished')
@@ -259,13 +358,15 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     }
     const harvest = vi.fn(async () => undefined)
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker(),
-      harvestFn: harvest
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository,
+
+        harvestFn: harvest
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-incomplete-protocol')).resolves.toMatchObject({
       status: 'submitted'
@@ -292,12 +393,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     const acquire = vi.fn<ComputeConnectionBrokerAcquirer['acquire']>()
 
-    await new JobPoller({
-      connectionBroker: { acquire },
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: { acquire },
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-queued')).resolves.toMatchObject({ status: 'queued' })
     expect(acquire).not.toHaveBeenCalled()
@@ -397,12 +499,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       status: 'submitted'
     })
 
-    await new JobPoller({
-      connectionBroker,
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker,
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(dispatchingService.getJobStatus(submitted.job_id)).resolves.toMatchObject({
       status: 'running'
@@ -451,14 +554,16 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     const harvest = vi.fn(async () => undefined)
     const onJobUpdated = vi.fn()
 
-    await new JobPoller({
-      connectionBroker: serviceBroker(run),
-      hostRepository,
-      jobRepository,
-      harvestFn: harvest,
-      onJobUpdated,
-      makeNonce: () => nonce
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: serviceBroker(run),
+        hostRepository,
+        jobRepository,
+        harvestFn: harvest,
+        onJobUpdated,
+        makeNonce: () => nonce
+      })
+      .tick()
 
     await expect(service.getJobStatus(jobId)).resolves.toMatchObject({ status: 'running' })
     expect(onJobUpdated).toHaveBeenCalledWith(
@@ -473,14 +578,14 @@ describe('ambiguous Compute Job dispatch recovery', () => {
   })
 
   it.each([
-    { name: 'malformed', stdout: '2468junk\n', truncated: false },
+    { name: 'malformed', stdout: '2468junk dispatch-protocol-secret\n', truncated: false },
     { name: 'truncated', stdout: '2468\n', truncated: true },
     { name: 'reserved process id', stdout: '1\n', truncated: false }
-  ])('rejects a $name dispatch PID response unless recovery proves a launch', async (protocol) => {
+  ])('keeps a $name dispatch PID response recoverable across later polling', async (protocol) => {
     const run = vi
       .fn<ComputeConnectionLease['run']>()
       .mockResolvedValueOnce({ ...successfulRun(protocol.stdout), truncated: protocol.truncated })
-      .mockResolvedValueOnce(
+      .mockResolvedValue(
         successfulRun(
           [
             'OPEN_SCIENCE_DISPATCH_RECOVERY_V1',
@@ -491,11 +596,14 @@ describe('ambiguous Compute Job dispatch recovery', () => {
           ].join('\n')
         )
       )
+    const connectionBroker = serviceBroker(run, async (outputs) =>
+      outputs.map((output) => output.replaceAll('dispatch-protocol-secret', '[redacted]'))
+    )
     const dispatchingService = new ComputeService({
       runner: { run: vi.fn() } as unknown as SshRunner,
       repository: hostRepository,
       jobRepository,
-      connectionBroker: serviceBroker(run),
+      connectionBroker,
       approvalBroker: {
         requestWithContext: vi.fn(async () => 'once')
       } as unknown as ComputeApprovalBroker
@@ -510,14 +618,31 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     )
 
     await vi.waitFor(async () => {
-      await expect(dispatchingService.getJobStatus(submitted.job_id)).resolves.toMatchObject({
-        status: 'error'
+      await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
+        status: 'submitted',
+        remote_handle: undefined,
+        error_code: undefined,
+        last_poll_error: expect.stringContaining('dispatch_may_have_started: Could not read pid')
       })
     })
-    await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
-      remote_handle: undefined,
-      error_code: 'dispatch_failed'
+    const dispatched = await jobRepository.get(submitted.job_id)
+    expect(JSON.stringify(dispatched)).not.toContain('dispatch-protocol-secret')
+    if (protocol.name === 'malformed') expect(dispatched?.last_poll_error).toContain('[redacted]')
+    const restartedPoller = createComputeExecution().createPoller({
+      connectionBroker,
+      hostRepository,
+      jobRepository
     })
+    for (let attempt = 0; attempt < 3; attempt++) await restartedPoller.tick()
+    await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
+      status: 'submitted',
+      remote_handle: undefined,
+      error_code: undefined,
+      last_poll_error: 'dispatch_may_have_started: dispatch_recovery_pending'
+    })
+    expect(JSON.stringify(await jobRepository.get(submitted.job_id))).not.toContain(
+      'dispatch-protocol-secret'
+    )
   })
 
   it('keeps a lost dispatcher response submitted when an immediate probe cannot prove it will not launch', async () => {
@@ -568,7 +693,7 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     const run = vi
       .fn<ComputeConnectionLease['run']>()
       .mockRejectedValueOnce(new ComputeConnectionError('host_unreachable'))
-      .mockRejectedValueOnce(new ComputeConnectionError('timeout'))
+      .mockRejectedValue(new ComputeConnectionError('timeout'))
     const dispatchingService = new ComputeService({
       runner: { run: vi.fn() } as unknown as SshRunner,
       repository: hostRepository,
@@ -590,7 +715,19 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     await vi.waitFor(() => expect(run).toHaveBeenCalledTimes(2))
     await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
       status: 'submitted',
-      last_poll_error: 'timeout'
+      last_poll_error: 'dispatch_may_have_started: timeout'
+    })
+    const restartedPoller = createComputeExecution().createPoller({
+      connectionBroker: serviceBroker(run),
+      hostRepository,
+      jobRepository
+    })
+    await restartedPoller.tick()
+    await restartedPoller.tick()
+    await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
+      status: 'submitted',
+      error_code: undefined,
+      last_poll_error: 'dispatch_may_have_started: timeout'
     })
   })
 
@@ -620,7 +757,19 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
       error_code: undefined,
-      last_poll_error: 'dispatch_recovery_probe_failed'
+      last_poll_error: 'dispatch_may_have_started: dispatch_recovery_probe_failed'
+    })
+    const restartedPoller = createComputeExecution().createPoller({
+      connectionBroker: serviceBroker(run),
+      hostRepository,
+      jobRepository
+    })
+    await restartedPoller.tick()
+    await restartedPoller.tick()
+    await expect(jobRepository.get(submitted.job_id)).resolves.toMatchObject({
+      status: 'submitted',
+      error_code: undefined,
+      last_poll_error: 'dispatch_may_have_started: host_unreachable'
     })
   })
 
@@ -647,11 +796,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       }))
     }
 
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker,
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -692,11 +840,10 @@ describe('ambiguous Compute Job dispatch recovery', () => {
       .mockRejectedValueOnce(new ComputeConnectionError('timeout'))
       .mockResolvedValueOnce(successfulRun(pendingOutput))
       .mockResolvedValueOnce(successfulRun(pendingOutput))
-    const poller = new JobPoller({
+    const poller = createComputeExecution().createPoller({
       connectionBroker: serviceBroker(run),
       hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
+      jobRepository
     })
 
     await poller.tick()
@@ -728,12 +875,13 @@ describe('ambiguous Compute Job dispatch recovery', () => {
     })
     const acquire = vi.fn<ComputeConnectionBrokerAcquirer['acquire']>()
 
-    await new JobPoller({
-      connectionBroker: { acquire },
-      hostRepository,
-      jobRepository,
-      dispatchTracker: new DispatchTracker()
-    }).tick()
+    await createComputeExecution()
+      .createPoller({
+        connectionBroker: { acquire },
+        hostRepository,
+        jobRepository
+      })
+      .tick()
 
     await expect(service.getJobStatus('job-legacy')).resolves.toMatchObject({ status: 'submitted' })
     await expect(jobRepository.get('job-legacy')).resolves.toMatchObject({

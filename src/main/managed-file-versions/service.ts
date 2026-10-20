@@ -1,18 +1,31 @@
 import { realpath } from 'node:fs/promises'
 import { basename, relative, resolve, sep } from 'node:path'
 import { createHash, randomUUID } from 'node:crypto'
-import { isImportedResearchSession } from '../storage/session-package-state'
 import {
+  VERSION_HISTORY_PAGE_SIZE,
   parseVersionHistoryCursor,
-  versionHistoryPage,
-  VERSION_HISTORY_PAGE_SIZE
+  versionHistoryPage
 } from '../../shared/version-history'
+import { isImportedResearchSession } from '../storage/session-package-state'
+import type {
+  ArtifactProducerInputScope,
+  ManagedFileLeaseSnapshot,
+  ManagedFileReadLease,
+  ManagedFileVersionRecord,
+  ManagedLogicalFile,
+  ResolvedManagedFileVersion
+} from './read-port'
+export type { ArtifactProducerInputScope } from './read-port'
 
 import type { Prisma, PrismaClient } from '@prisma/client'
 
 import {
-  MANAGED_TEXT_EDIT_MAX_BYTES,
+  artifactLiteratureManifestSchema,
+  type ArtifactLiteratureManifest
+} from '../../shared/artifact-literature'
+import {
   MANAGED_DIFF_MAX_INPUT_BYTES,
+  MANAGED_TEXT_EDIT_MAX_BYTES,
   inspectManagedTextEditEligibility,
   type ManagedFileIdentity,
   type ManagedFileSource,
@@ -26,10 +39,9 @@ import {
   type ManagedTextFormat,
   type SaveTextEditResult
 } from '../../shared/managed-file-versions'
-import {
-  artifactLiteratureManifestSchema,
-  type ArtifactLiteratureManifest
-} from '../../shared/artifact-literature'
+import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
+import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
+import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 import { ManagedTextDiffTaskRunner } from './diff-task'
 import { ManagedFileVersionError } from './error'
 import {
@@ -41,87 +53,12 @@ import {
   type VersionFileOperator,
   type VersionFileRecovery
 } from './version-file-operator'
-import { canonicalJson, sha256, type CanonicalJson } from '../artifacts/provenance-canonical'
-import { normalizeArtifactFilename } from '../artifacts/provenance-version-writer'
-import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
-
-export type ArtifactProducerInputScope = {
-  appSessionId: string
-  artifactRunId: string
-  rootFrameId: string
-  agentFrameId: string
-  messageBranchId: string
-  runtimeSegmentId: string
-  promptMessageId: string
-  // Host-owned liveness check; never deserialize this capability from an RPC request.
-  assertActive: () => void
-}
 
 const COMPLETE_STATE = { artifact: 'finalized', upload: 'ready' } as const
 const STORAGE_COLLISION_MAX_ATTEMPTS = 16
 const INTEGRITY_AUDIT_BATCH_SIZE = 100
 const INTEGRITY_AUDIT_MAX_ERRORS = 1000
 const SAFE_STORAGE_SEGMENT = /^[A-Za-z0-9][A-Za-z0-9._-]*$/u
-
-type ManagedFileVersionRecord = {
-  id: string
-  fileId: string
-  versionNumber: number
-  state: string
-  managedVisibleAt?: Date | null
-  originKind: string
-  basedOnVersionId: string | null
-  storageTag: string | null
-  storedFilename: string | null
-  writeOperationId: string | null
-  contentStorageKey: string
-  filename: string
-  originalFilename: string | null
-  contentType: string | null
-  sizeBytes: bigint
-  checksum: string
-  createdAt: Date
-}
-
-type ManagedLogicalFile = {
-  source: ManagedFileSource
-  id: string
-  projectId: string
-  sessionId: string
-  displayName: string
-  currentVersionId: string | null
-}
-
-type ResolvedManagedFileVersion = {
-  hiddenAccess?: boolean
-  logicalFile: ManagedLogicalFile
-  version: ManagedFileVersionRecord
-}
-
-type ManagedFileReadLease = ResolvedManagedFileVersion & {
-  path: string
-  size: number
-  versionToken: number
-  snapshot: ManagedFileLeaseSnapshot
-  read: (
-    buffer: Uint8Array,
-    offset: number,
-    length: number,
-    position: number
-  ) => Promise<{ bytesRead: number }>
-  readRange: (begin: number, end: number) => Promise<Uint8Array>
-  copyTo: (destinationPath: string, options?: { exclusive?: boolean }) => Promise<void>
-  assertCanCopyTo?: (destinationPath: string) => Promise<void>
-  verifyUnchanged: () => Promise<void>
-  close: () => Promise<void>
-}
-
-type ManagedFileLeaseSnapshot = {
-  dev: bigint
-  ino: bigint
-  size: bigint
-  mtimeNs: bigint
-}
 
 type ManagedFileVersionRecoveryResult = {
   recovered: number
@@ -650,6 +587,63 @@ class ManagedFileVersionService {
     return this.openVersionLease(
       await this.resolveRecord({ ...request, versionId }, { unpublished: true })
     )
+  }
+
+  // Opens one exact finalized version from metadata already checked by the project catalog batch.
+  // Used by the reviewer staleness pass to avoid a per-version logical-file/version lookup while
+  // preserving the operator's size/checksum verification and verifyUnchanged() lease contract.
+  async openExactVersionContent(record: {
+    contentStorageKey: string
+    sizeBytes: number
+    checksum: string
+    filename: string
+    contentType?: string
+  }): Promise<{
+    path: string
+    filename: string
+    contentType?: string
+    checksum: string
+    size: number
+    readRange: (begin: number, end: number) => Promise<Uint8Array>
+    verifyUnchanged: () => Promise<void>
+    close: () => Promise<void>
+  }> {
+    try {
+      const lease = await this.versionFileOperator.openImmutable(record.contentStorageKey, {
+        sizeBytes: record.sizeBytes,
+        checksum: record.checksum
+      })
+      const assertVisible = (): Promise<void> => this.assertArtifactPathVisible(lease.localPath)
+      try {
+        await assertVisible()
+      } catch (error) {
+        await lease.close()
+        throw error
+      }
+      return {
+        path: lease.localPath,
+        filename: record.filename,
+        ...(record.contentType ? { contentType: record.contentType } : {}),
+        checksum: record.checksum,
+        size: lease.sizeBytes,
+        readRange: async (begin, end) => {
+          await assertVisible()
+          const bytes = await lease.readRange(begin, end)
+          await assertVisible()
+          return bytes
+        },
+        verifyUnchanged: async () => {
+          await assertVisible()
+          await lease.verifyUnchanged()
+        },
+        close: lease.close
+      }
+    } catch (error) {
+      throw translateVersionFileError(
+        error,
+        'Managed file version content is unavailable or corrupt.'
+      )
+    }
   }
 
   async openProducerVersion(
@@ -2773,11 +2767,11 @@ class ManagedFileVersionService {
 
 export { ManagedFileVersionError, ManagedFileVersionService }
 export type {
-  AdoptedLegacyArtifact,
   AdoptLegacyArtifactRequest,
+  AdoptedLegacyArtifact,
   ManagedFileReadLease,
-  ManagedFileVersionSaveDerivedEditRequest,
   ManagedFileVersionRecoveryResult,
+  ManagedFileVersionSaveDerivedEditRequest,
   ManagedFileVersionServiceOptions,
   ResolvedManagedFileVersion
 }

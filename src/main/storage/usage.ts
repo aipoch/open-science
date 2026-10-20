@@ -7,7 +7,7 @@ import {
   type StorageUsage,
   type UsageChild
 } from '../../shared/storage'
-import { logicalEnvNameFromDirectory } from '../notebook/runtime-paths'
+import { logicalEnvNameFromDirectory } from '@aipoch/environment'
 import { MANAGED_WORKSPACE_OWNERSHIP_DIR } from './managed-workspace-ownership-dir'
 
 // Ownership enrichment is injected by the electron-side wrapper (usage-ownership.ts) so this module

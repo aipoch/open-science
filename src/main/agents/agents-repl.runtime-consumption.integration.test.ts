@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -5,7 +6,6 @@ import { createInterface } from 'node:readline'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
-
 import { NotebookLocalRpcServer } from '../notebook/local-rpc-server'
 import { NotebookRuntimeService } from '../notebook/runtime-service'
 import { NotebookRunRepository } from '../notebook/repository'
@@ -18,11 +18,9 @@ import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import { createSpecialistService } from '../specialist/service'
 import {
   resolveEffectiveSpecialistSkills,
-  filterSpecialistConnectorSkills,
-  type SpecialistSkillCatalogEntry,
-  type SpecialistView
-} from '../../shared/specialist'
-import type { StoredConnectors } from '../settings/types'
+  type SpecialistSkillCatalogEntry
+} from '@aipoch/specialists'
+import { filterSpecialistConnectorSkills, type SpecialistView } from '../../shared/specialist'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.runtime-consumption.integration.test.ts
 //
@@ -95,21 +93,22 @@ const stubCatalog: AgentsCatalogSource = {
       available: true
     }
   ],
-  getConnectors: async (): Promise<StoredConnectors | undefined> => ({
-    enabledIds: [],
-    autoAllowIds: [],
-    disabledConnectorIds: [],
-    customMcpServers: [
-      {
-        id: 'cust-1',
-        name: 'my-server',
-        displayName: 'My Server',
-        transport: 'stdio',
-        enabled: true,
-        command: 'run'
-      }
-    ]
-  })
+  getConnectors: async () =>
+    projectConnectorsFromStored({
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [],
+      customMcpServers: [
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        }
+      ]
+    })
 }
 
 // Projects the read-back into the SpecialistView shape the runtime resolvers consume.

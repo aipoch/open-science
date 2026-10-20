@@ -1,6 +1,6 @@
 import { Prisma, type FileOriginSession, type ManagedFile } from '@prisma/client'
 
-import { createArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import type {
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,

@@ -1,0 +1,4 @@
+{"name": "source-proven-unicode-variable-is-normalized-before-validation", "source": "The value θ remains stable.", "translation": "数值 $\\theta$ 保持稳定。", "reject": false, "corrected": "数值 θ 保持稳定。", "expected": "数值 θ 保持稳定。"}
+{"name": "native-overbar-must-not-become-latex-command", "source": "The function f¯(θ) remains fixed.", "translation": "函数 $\\bar{f}(\\theta)$ 保持固定。", "reject": true, "corrected": "函数 f¯(θ) 保持固定。"}
+{"name": "literal-tex-in-source-remains-document-text", "source": "The literal \\theta denotes a variable.", "translation": "字面文本 \\theta 表示变量。", "reject": false}
+{"name": "source-set-difference-is-not-a-tex-command", "source": "Use θ \\ θph in this expression.", "translation": "此表达式使用 θ \\ θph。", "reject": false}

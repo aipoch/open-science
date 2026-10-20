@@ -1,0 +1,30 @@
+{"name":"legacy-cmsy-norm-delimiter","font":"CMSY10","text":"k","bounds":[10,20,12.3,30],"expected":"‖"}
+{"name":"subset-cmsy-norm-delimiter","font":"ABCDEF+CMSY7","text":"k ","bounds":[10,20,12.3,30],"expected":"‖ "}
+{"name":"italic-variable-k-stays-a-letter","font":"CMMI10","text":"k","bounds":[10,20,12.3,30],"expected":"k"}
+{"name":"non-delimiter-shaped-glyph-is-not-reinterpreted","font":"CMSY10","text":"k","bounds":[10,20,17,30],"expected":"k"}
+{"name":"legacy-extension-font-radical","font":"CMEX10","text":"p","bounds":[10,20,18.8,31.6],"expected":"√"}
+{"name":"italic-variable-p-stays-a-letter","font":"CMMI10","text":"p","bounds":[10,20,18.8,31.6],"expected":"p"}
+{"name":"norm-and-gradient-share-native-object","font":"CMSY10","text":"k∇","bounds":[10,20,20,30],"expected":"‖∇"}
+{"name": "cmsy10-norm-with-middle-dot", "font": "CMSY10", "text": "k · k", "bounds": [100, 100, 120, 110], "expected": "‖ · ‖"}
+{"name": "cmmi10-norm-with-middle-dot", "font": "CMMI10", "text": "k · k", "bounds": [100, 100, 120, 110], "expected": "k · k"}
+{"name": "cmex10-product-or-latin-q-108.3", "font": "CMEX10", "text": "Q", "bounds": [100, 100, 108.3, 110], "expected": "∏"}
+{"name": "cmmi10-product-or-latin-q-108.3", "font": "CMMI10", "text": "Q", "bounds": [100, 100, 108.3, 110], "expected": "Q"}
+{"name": "cmex10-product-or-latin-q-112", "font": "CMEX10", "text": "Q", "bounds": [100, 100, 112, 110], "expected": "Q"}
+{"name": "cmex10-summation-or-latin-p", "font": "CMEX10", "text": "P", "bounds": [100, 100, 109.4, 110], "expected": "∑"}
+{"name": "cmr10-summation-or-latin-p", "font": "CMR10", "text": "P", "bounds": [100, 100, 109.4, 110], "expected": "P"}
+{"name": "legacy-cmsy-prime", "font": "CMSY6", "text": "0", "bounds": [10, 20, 11.6, 23.1], "expected": "′"}
+{"name": "ordinary-zero-stays-numeric", "font": "CMR6", "text": "0", "bounds": [10, 20, 11.6, 23.1], "expected": "0"}
+{"name": "round-glyph-is-not-a-prime", "font": "CMSY6", "text": "0", "bounds": [10, 20, 13, 23.1], "expected": "0"}
+{"name": "native-prime-with-trailing-space", "font": "CMSY7", "text": "0 ", "bounds": [10, 20, 11.6, 23.1], "expected": "′ "}
+{"name": "legacy-angle-h-cmsy", "font": "CMSY10", "text": "h", "bounds": [10, 20, 12.3, 30], "expected": "〈"}
+{"name": "legacy-angle-h-subset", "font": "ABCDEF+CMSY7", "text": "h", "bounds": [10, 20, 12.3, 30], "expected": "〈"}
+{"name": "legacy-angle-h-italic", "font": "CMMI10", "text": "h", "bounds": [10, 20, 12.3, 30], "expected": "h"}
+{"name": "legacy-angle-h-ordinary", "font": "Helvetica", "text": "h", "bounds": [10, 20, 12.3, 30], "expected": "h"}
+{"name": "legacy-angle-h-wide", "font": "CMSY10", "text": "h", "bounds": [10, 20, 17, 30], "expected": "h"}
+{"name": "legacy-angle-i-cmsy", "font": "CMSY10", "text": "i", "bounds": [10, 20, 12.3, 30], "expected": "〉"}
+{"name": "legacy-angle-i-subset", "font": "ABCDEF+CMSY7", "text": "i", "bounds": [10, 20, 12.3, 30], "expected": "〉"}
+{"name": "legacy-angle-i-italic", "font": "CMMI10", "text": "i", "bounds": [10, 20, 12.3, 30], "expected": "i"}
+{"name": "legacy-angle-i-ordinary", "font": "Helvetica", "text": "i", "bounds": [10, 20, 12.3, 30], "expected": "i"}
+{"name": "legacy-angle-i-wide", "font": "CMSY10", "text": "i", "bounds": [10, 20, 17, 30], "expected": "i"}
+{"name": "legacy-angle-rejects-mixed-run", "font": "CMSY10", "text": "hi", "bounds": [10, 20, 12.3, 30], "expected": "hi"}
+{"name": "legacy-angle-rejects-zero-width", "font": "CMSY10", "text": "i", "bounds": [10, 20, 10, 30], "expected": "i"}

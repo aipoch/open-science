@@ -6,8 +6,8 @@ import { describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
 import { NotebookPackageAdmissionOwner } from './package-admission'
-import { envPrefix, managedRepairRegistryKey, repairRegistryPath } from './runtime-paths'
-import { NotebookRuntimeRepairPolicy } from './runtime-repair-policy'
+import { envPrefix, managedRepairRegistryKey, repairRegistryPath } from '@aipoch/environment'
+import { NotebookRuntimeRepairPolicy } from '@aipoch/environment'
 import type { NotebookSessionRuntimeBinding } from './session-aggregate'
 
 type AdmissionOptions = ConstructorParameters<typeof NotebookPackageAdmissionOwner>[0]

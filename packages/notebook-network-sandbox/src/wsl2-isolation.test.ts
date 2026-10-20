@@ -1,7 +1,11 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { wsl2Launch, type Wsl2Launch } from '../runtime/src/platform/wsl2-isolation.js'
-import { notebookWorkloadCacheEnv } from '../../../src/main/notebook/notebook-workload-cache-paths.js'
+import {
+  mapWslUncPath,
+  wsl2Launch,
+  type Wsl2Launch
+} from '../runtime/src/platform/wsl2-isolation.js'
+import { cacheEnvironmentFixture } from '../test/cache-environment.js'
 
 const mapped = new Map([
   ['C:\\Open-Science\\Workspace 路径', '/mnt/c/Open-Science/Workspace 路径'],
@@ -63,9 +67,11 @@ describe('WSL2 sandbox adapter', () => {
   })
 
   it('compiles Windows policy into a gateway-only bwrap Bash launch', async () => {
-    const runtimeRoot = 'C:\\Open-Science\\runtime 路径'
-    const cacheEnvironment = notebookWorkloadCacheEnv(runtimeRoot)
+    const cacheEnvironment = cacheEnvironmentFixture(
+      'C:\\Open-Science\\runtime 路径\\cache\\notebook'
+    )
     const cacheRoot = cacheEnvironment.OPEN_SCIENCE_NOTEBOOK_CACHE_DIR!
+    const npmPrefix = 'C:\\Open-Science\\runtime 路径\\npm\\linux-x64'
     const mapPath = vi.fn(async (path: string) => {
       const known = mapped.get(path)
       if (known) return known
@@ -100,6 +106,8 @@ describe('WSL2 sandbox adapter', () => {
       pathEnvironment: {
         OPEN_SCIENCE_HANDOFF_DIR: 'C:\\Open-Science\\handoff',
         OPEN_SCIENCE_INPUT_DIR: 'C:\\Open-Science\\inputs',
+        NPM_CONFIG_PREFIX: npmPrefix,
+        NPM_CONFIG_CACHE: `${cacheRoot}\\npm\\linux-x64`,
         ...cacheEnvironment
       },
       filesystem: {
@@ -108,7 +116,8 @@ describe('WSL2 sandbox adapter', () => {
         readWriteRoots: [
           'C:\\Open-Science\\Workspace 路径',
           'C:\\Open-Science\\handoff',
-          cacheRoot
+          cacheRoot,
+          npmPrefix
         ],
         deniedReadRoots: ['C:\\private'],
         deniedWriteRoots: []
@@ -162,7 +171,7 @@ describe('WSL2 sandbox adapter', () => {
       expect.arrayContaining([
         '--setenv',
         'PATH',
-        '/usr/bin:/bin',
+        '/mnt/c/Open-Science/runtime 路径/npm/linux-x64/bin:/usr/bin:/bin',
         '--setenv',
         'OPEN_SCIENCE_HANDOFF_DIR',
         '/mnt/c/Open-Science/handoff',
@@ -201,7 +210,11 @@ describe('WSL2 sandbox adapter', () => {
     ).toBe(false)
     expect(launch.env.PATH).toBeUndefined()
     expect(launch.env.AWS_SECRET_ACCESS_KEY).toBeUndefined()
+    expect(launch.env.WSL_UTF8).toBe('1')
     expect(mapPath).toHaveBeenCalledWith('C:\\Open-Science\\Workspace 路径', undefined)
+    // cwd, mounts and environment channels reuse paths; each wslpath call starts a Windows process.
+    const mappedPaths = mapPath.mock.calls.map(([path]) => path)
+    expect(mappedPaths).toHaveLength(new Set(mappedPaths).size)
     launch.beginSpawn().started()
     await expect(launch.release()).resolves.toEqual({
       processesTerminated: true,
@@ -654,5 +667,69 @@ describe('WSL2 sandbox adapter', () => {
         mapPath: async (path) => `/mnt/c/${path.slice(3).replaceAll('\\', '/')}`
       })
     ).rejects.toThrow('WSL2 sandbox path environment key is reserved')
+  })
+})
+
+describe('mapWslUncPath', () => {
+  it('maps Explorer-style distro paths straight to the guest', () => {
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu\\home\\researcher\\project', 'Ubuntu')).toBe(
+      '/home/researcher/project'
+    )
+    expect(mapWslUncPath('\\\\wsl$\\Ubuntu\\home\\researcher\\Documents\\archive', 'Ubuntu')).toBe(
+      '/home/researcher/Documents/archive'
+    )
+  })
+
+  it('is case-insensitive on the host and distro segments', () => {
+    expect(mapWslUncPath('\\\\WSL.LOCALHOST\\UBUNTU\\home\\researcher', 'ubuntu')).toBe(
+      '/home/researcher'
+    )
+  })
+
+  it('maps distro roots and rejects drive-letter paths and other distros', () => {
+    expect(mapWslUncPath('E:\\OpenScience\\data', 'Ubuntu')).toBeUndefined()
+    expect(mapWslUncPath('\\\\wsl.localhost\\Debian\\home\\researcher', 'Ubuntu')).toBeUndefined()
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu', 'Ubuntu')).toBe('/')
+    expect(mapWslUncPath('\\\\wsl.localhost\\Ubuntu\\', 'Ubuntu')).toBe('/')
+    expect(mapWslUncPath('/home/researcher', 'Ubuntu')).toBeUndefined()
+  })
+
+  it('authorizes same-distro UNC path environment values before mapping them', async () => {
+    const unc = '\\\\wsl.localhost\\Ubuntu\\home\\researcher\\data'
+    const mapPath = vi.fn(async (path: string) => mapWslUncPath(path, 'Ubuntu') ?? path)
+    const launch = await wsl2Launch({
+      target: {
+        kind: 'wsl2',
+        profileId: 'unc-profile',
+        distro: 'Ubuntu',
+        user: 'open-science-spike'
+      },
+      command: 'pwd',
+      cwd: unc,
+      env: {},
+      pathEnvironment: { OPEN_SCIENCE_INPUT_DIR: unc },
+      filesystem: {
+        readOnlyRoots: [unc],
+        readWriteRoots: [],
+        deniedReadRoots: [],
+        deniedWriteRoots: []
+      },
+      reconcileGuest: reconciled,
+      mapPath,
+      gatewayPort: 4312,
+      gatewayCredentials: { username: 'command-user', password: 'command-secret' },
+      openBridge: async () => ({
+        socketPath: '/tmp/open-science-network-command/gateway.sock',
+        close: async () => ({ networkClosed: true, temporaryResourcesRemoved: true })
+      })
+    })
+    try {
+      expect(launch.argv).toEqual(
+        expect.arrayContaining(['--setenv', 'OPEN_SCIENCE_INPUT_DIR', '/home/researcher/data'])
+      )
+      expect(launch.argv).toEqual(expect.arrayContaining(['--chdir', '/home/researcher/data']))
+    } finally {
+      await launch.release()
+    }
   })
 })

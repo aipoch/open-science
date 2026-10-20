@@ -2,16 +2,18 @@ import { createStore, type StoreApi } from 'zustand/vanilla'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type {
-  AgentHomeSkillRef,
-  AgentHomeSkillView,
   ImportAgentHomeSkillsResult,
   ImportSkillResult,
   ImportSkillZipBatchResult,
   ScanRepoResult,
-  SkillBundlePreviewResult,
   SkillImportPreviewContent,
   SkillView
 } from '../../../shared/settings'
+import type {
+  AgentHomeSkillRef,
+  AgentHomeSkillView,
+  SkillBundlePreviewResult
+} from '@aipoch/skills/document'
 import {
   createInitialSettingsSkillsState,
   createSettingsSkillsSlice,

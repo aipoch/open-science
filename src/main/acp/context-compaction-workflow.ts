@@ -3,7 +3,7 @@ import type { ActiveSession, PromptResponse, SessionNotification } from '@agentc
 
 import type { AcpCompactSessionRequest, AcpRuntimeEvent } from '../../shared/acp'
 import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { ContextUsageTracker, SessionEstimateInput } from './context-usage-tracker'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
@@ -12,6 +12,7 @@ import type { AcpProviderTurnProbe, AcpProviderTurnResult } from './provider-tur
 import type {
   AcpCompactionSessionInteractionScope,
   AcpPromptSessionInteractionScope,
+  AcpSessionInteractionScope,
   AcpSessionInteractionOwner
 } from './session-interaction-owner'
 
@@ -24,7 +25,13 @@ type AcpContextCompactionWorkflowOptions = Readonly<{
   sessions: AcpContextCompactionSessions
   interactions: Pick<
     AcpSessionInteractionOwner,
-    'claim' | 'current' | 'has' | 'release' | 'supersede'
+    | 'claim'
+    | 'current'
+    | 'has'
+    | 'release'
+    | 'supersede'
+    | 'cancellationCheckpoint'
+    | 'isCancellationAccepted'
   >
   context: Pick<
     ContextUsageTracker,
@@ -115,7 +122,7 @@ class AcpContextCompactionWorkflow {
     ) {
       return undefined
     }
-    return this.runNative(request.session, request.sessionId, 'automatic')
+    return this.runNative(request.session, request.sessionId, 'automatic', request.interaction)
   }
 
   async compactIfIdle(sessionId: string): Promise<PromptResponse | undefined> {
@@ -169,7 +176,7 @@ class AcpContextCompactionWorkflow {
     const promise = (async (): Promise<PromptResponse> => {
       try {
         this.safeProjection('compaction state callback failed', this.options.emitState)
-        return await this.runNative(session, sessionId, reason)
+        return await this.runNative(session, sessionId, reason, interaction)
       } finally {
         this.options.interactions.release(interaction)
         this.safeProjection('compaction state callback failed', this.options.emitState)
@@ -199,7 +206,8 @@ class AcpContextCompactionWorkflow {
   private async runNative(
     session: ActiveSession,
     sessionId: string,
-    reason: CompactionReason
+    reason: CompactionReason,
+    interaction: AcpSessionInteractionScope
   ): Promise<PromptResponse> {
     const strategy = this.options.sessions.currentFramework().contextCompaction
     if (strategy.kind !== 'native-command') {
@@ -208,8 +216,30 @@ class AcpContextCompactionWorkflow {
       )
     }
     const checkpoint = this.options.context.checkpointSession(sessionId)
-    const restoreContext = (): void => this.options.context.restoreSession(sessionId, checkpoint)
+    const restoreContext = (): void => {
+      if (this.options.interactions.current(sessionId) === interaction)
+        this.options.context.restoreSession(sessionId, checkpoint)
+    }
     const toolCallId = `context-compaction:${randomUUID()}`
+    const finishCancelled = (response: PromptResponse): PromptResponse => {
+      restoreContext()
+      this.publishEvent({
+        kind: 'compaction',
+        compactionReason: reason,
+        level: 'info',
+        sessionId,
+        status: 'cancelled',
+        title: 'Context compaction cancelled',
+        toolCallId
+      })
+      return response
+    }
+    const cancelledBeforeDispatch = async (): Promise<boolean> => {
+      const cancellation = await this.options.interactions.cancellationCheckpoint(interaction)
+      return (
+        cancellation === 'cancelled' || this.options.interactions.current(sessionId) !== interaction
+      )
+    }
     this.publishEvent({
       kind: 'compaction',
       compactionReason: reason,
@@ -224,7 +254,9 @@ class AcpContextCompactionWorkflow {
       return await this.options.serialization.run(
         this.options.sessions.currentFramework(),
         async () => {
+          if (await cancelledBeforeDispatch()) return finishCancelled({ stopReason: 'cancelled' })
           await this.options.beforePromptDispatch?.({ appSessionId: sessionId, session })
+          if (await cancelledBeforeDispatch()) return finishCancelled({ stopReason: 'cancelled' })
           const frameworkId = this.options.sessions.currentFramework().id
           let usageProbe = await this.options.usage?.begin({
             providerSessionId: session.sessionId,
@@ -232,7 +264,17 @@ class AcpContextCompactionWorkflow {
             frameworkId
           })
           try {
+            if (await cancelledBeforeDispatch()) return finishCancelled({ stopReason: 'cancelled' })
             let failureText: string | undefined
+            let controlText = ''
+            let compaction: AcpProviderTurnResult['compaction']
+            // Recheck synchronously: cancellation can settle while the async checkpoint's
+            // result returns to this dispatch continuation.
+            if (
+              this.options.interactions.isCancellationAccepted(interaction) ||
+              this.options.interactions.current(sessionId) !== interaction
+            )
+              return finishCancelled({ stopReason: 'cancelled' })
             const promptFailure = new Promise<never>((_, reject) => {
               session.prompt([{ type: 'text', text: strategy.command }]).catch(reject)
             })
@@ -242,6 +284,7 @@ class AcpContextCompactionWorkflow {
                 if (usageProbe) {
                   const facts = await usageProbe.finalize({ response: message.response })
                   usageProbe = undefined
+                  compaction = facts.compaction
                   if (facts.turnUsage) {
                     await this.options.usage
                       ?.record({
@@ -261,17 +304,7 @@ class AcpContextCompactionWorkflow {
                   }
                 }
                 if (message.response.stopReason === 'cancelled') {
-                  restoreContext()
-                  this.publishEvent({
-                    kind: 'compaction',
-                    compactionReason: reason,
-                    level: 'info',
-                    sessionId,
-                    status: 'cancelled',
-                    title: 'Context compaction cancelled',
-                    toolCallId
-                  })
-                  return message.response
+                  return finishCancelled(message.response)
                 }
                 if (message.response.stopReason !== 'end_turn') {
                   throw new Error(
@@ -279,6 +312,9 @@ class AcpContextCompactionWorkflow {
                   )
                 }
                 if (failureText) throw new Error(failureText)
+                if (frameworkId === 'opencode' && !compaction?.succeeded) {
+                  throw new Error(compaction?.error ?? 'Context compaction could not be verified.')
+                }
                 this.options.context.resetAfterCompaction(
                   sessionId,
                   this.options.contextEstimateInput(sessionId),
@@ -301,13 +337,13 @@ class AcpContextCompactionWorkflow {
               usageProbe?.observe?.(message.notification)
               const update = message.notification.update
               if (
-                !failureText &&
                 strategy.failureTextPrefix &&
                 update.sessionUpdate === 'agent_message_chunk' &&
-                update.content.type === 'text' &&
-                update.content.text.trimStart().startsWith(strategy.failureTextPrefix)
+                update.content.type === 'text'
               ) {
-                failureText = update.content.text.trim()
+                controlText = (controlText + update.content.text).slice(-4000)
+                const failureStart = controlText.indexOf(strategy.failureTextPrefix)
+                if (failureStart >= 0) failureText = controlText.slice(failureStart).trim()
               }
               this.options.routeHiddenNotification(message.notification, sessionId)
             }

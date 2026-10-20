@@ -1,20 +1,22 @@
 import { join } from 'node:path'
 
-import { app } from 'electron'
+import { APP } from '../../shared/app-config'
+import { runtimeMetadata } from '../runtime-metadata'
 
-import type { ApplicationCommandComposition } from '../application-command-composition'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
+import type { ApplicationCommandComposition } from '../application-command-composition-contract'
 import type { ApplicationEventSource } from '../application-events'
 import type { PermissionApprovalPresence } from '../permission-approval-presence'
+import { resolveConfigRoot } from '../storage-root'
 import type { TaskControlPorts } from '../tasks/task-control-ports'
 import { FileTaskRunJournal, type TaskRunJournal } from '../tasks/task-run-journal'
 import type { TaskAgentPort, TaskComputePreferencePort } from '../tasks/task-runner'
-import { resolveConfigRoot } from '../storage-root'
-import { loadOrCreateWebToken } from './auth'
-import { startWebHttpServer, type ExternalWebAccess, type RunningWebServer } from './http-server'
 import { projectTaskRuntimeEvents } from './application-event-projections'
-import { HeadlessTaskApi } from './task-api'
+import { loadOrCreateWebToken } from './auth'
+import type { ExternalWebAccess } from './external-access-contract'
+import { startWebHttpServer, type RunningWebServer } from './http-server'
 import { removeWebServiceState, writeWebServiceState, type WebServiceState } from './state-file'
+import { HeadlessTaskApi } from './task-api'
 
 const log = createLogger('web-service')
 
@@ -54,7 +56,7 @@ export type WebServiceControllerDeps = {
     appPath: string
     appName: string
     appVersion: string
-    versions: { electron: string; chrome: string; node: string }
+    versions: { electron?: string; chrome?: string; node: string }
     pid: number
   }
 }
@@ -71,6 +73,7 @@ const buildAuthenticatedWebUrl = async (port: number): Promise<string> =>
 const createWebServiceController = (
   {
     applicationCommands,
+    fetchPreview,
     requestQuit,
     externalAccess,
     applicationEvents,
@@ -81,6 +84,7 @@ const createWebServiceController = (
     detectActiveSessions
   }: {
     applicationCommands: Pick<ApplicationCommandComposition, 'localWeb' | 'remoteWeb' | 'task'>
+    fetchPreview?: Parameters<typeof startWebHttpServer>[0]['fetchPreview']
     requestQuit: () => void
     externalAccess?: ExternalWebAccess
     applicationEvents: ApplicationEventSource
@@ -101,9 +105,9 @@ const createWebServiceController = (
   const appInfo =
     deps.appInfo ??
     (() => ({
-      appPath: app.getAppPath(),
-      appName: app.getName(),
-      appVersion: app.getVersion(),
+      appPath: runtimeMetadata().applicationPath,
+      appName: APP.name,
+      appVersion: runtimeMetadata().version,
       versions: {
         electron: process.versions.electron,
         chrome: process.versions.chrome,
@@ -185,6 +189,7 @@ const createWebServiceController = (
     const info = appInfo()
     const server = await startServer({
       host: '127.0.0.1',
+      fetchPreview,
       port,
       token,
       staticRoot: join(info.appPath, 'out', 'web'),
@@ -242,6 +247,7 @@ const createWebServiceController = (
     const url = authUrl(token, server.port)
     log.info(`Open-Science Web: http://127.0.0.1:${server.port}/`, {
       host: '127.0.0.1',
+      fetchPreview,
       port: server.port,
       attached
     })

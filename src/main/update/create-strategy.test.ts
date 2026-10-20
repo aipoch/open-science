@@ -12,8 +12,8 @@ vi.mock('node:child_process', async (importOriginal) => ({
   ...(await importOriginal<typeof import('node:child_process')>()),
   spawnSync
 }))
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: loggerMocks.createLogger
 }))
 
@@ -108,7 +108,7 @@ describe('createUpdateStrategy', () => {
     await strategy.apply()
 
     expect(installGate).toHaveBeenCalledTimes(1)
-    expect(quitAndInstall).toHaveBeenCalledWith(true, true)
+    expect(quitAndInstall).toHaveBeenCalledWith(process.platform !== 'win32', true)
   })
 
   it('forwards update handoff cleanup to the in-place strategy', async () => {

@@ -1791,8 +1791,10 @@ describe('artifact handler edge cases', () => {
     const reconcilePendingArtifactPaths = vi.fn().mockResolvedValue([compatibilityArtifact])
     const recoverPendingArtifacts = vi.fn().mockResolvedValue(undefined)
     const repository = { reconcilePendingArtifactPaths } as unknown as ArtifactRepository
+    const commitRecoveredArtifacts = vi.fn(async () => undefined)
     const handlers = createArtifactHandlers(repository, new ArtifactRunRegistry(), {
-      recoverPendingArtifacts
+      recoverPendingArtifacts,
+      commitRecoveredArtifacts
     })
     const request = {
       projectId: 'default-project',
@@ -1805,6 +1807,9 @@ describe('artifact handler edge cases', () => {
       compatibilityArtifact
     ])
     expect(reconcilePendingArtifactPaths).toHaveBeenCalledWith(request)
+    expect(commitRecoveredArtifacts).toHaveBeenCalledExactlyOnceWith(request, [
+      compatibilityArtifact
+    ])
   })
 
   it('preserves same-named compatibility files when native recovery covers only some pending runs', async () => {
@@ -1890,3 +1895,7 @@ describe('artifact handler edge cases', () => {
     })
   })
 })
+
+await (
+  await import('../../../test/runtime-host')
+).configureTestElectronHost(await import('electron'))

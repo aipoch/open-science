@@ -1,25 +1,27 @@
-import {
-  MAX_ACP_RUNTIME_EVENTS,
-  sanitizeAcpContextWindowSample,
-  type AcpContextWindowSample,
-  type AcpModelCallUsage,
-  type AcpTurnTokenUsage
-} from '../../../shared/acp'
+import { MAX_ACP_RUNTIME_EVENTS, sanitizeAcpContextWindowSample } from '../../../shared/acp'
+import type {
+  AcpContextWindowSample,
+  AcpModelCallUsage,
+  AcpTurnTokenUsage
+} from '../../../shared/acp-usage-contract'
 import { isReportableRunFailure } from '../../../shared/run-error-classification'
-import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
 import type {
   PersistedActivityGroup,
   PersistedChatSession,
   PersistedSessionResumeRecovery
 } from '../../../shared/session-persistence'
+import { retainRecentSessionEventIds } from '../../../shared/session-persistence'
+import type { ChatMessage, ChatSession, ToolActivity } from './session-store-contract'
+import {
+  projectLiveSessionInteractionState,
+  projectSessionInteractionState
+} from './session-store-interaction-state'
 import { synchronizeSessionGraph } from './session-store-message-graph-helpers'
 import {
   completeOpenActivities,
   completeOpenActivityGroups,
   failOpenActivities
 } from './session-store-run-activity-helpers'
-import { projectSessionInteractionState } from './session-store-interaction-state'
-import type { ChatMessage, ChatSession, ToolActivity } from './session-store-persistence-owner'
 
 const ARTIFACT_ERROR_PREFIX = 'Generated file finalization failed'
 const TERMINAL_ARTIFACT_ERROR_PREFIX = 'Generated file finalization cannot be retried'
@@ -231,14 +233,32 @@ export const projectAgentPromptInFlight = (
       }
 }
 
-export const projectElicitationPending = (session: ChatSession, pending: boolean): ChatSession => {
+export const projectElicitationPending = (
+  session: ChatSession,
+  pending: boolean,
+  liveProjection?: 'writer' | 'observer'
+): ChatSession => {
+  if (liveProjection)
+    return projectLiveSessionInteractionState(
+      session,
+      { elicitation: pending },
+      liveProjection === 'observer'
+    )
   return projectSessionInteractionState(session, { elicitation: pending })
 }
 
 export const projectPermissionPending = (
   session: ChatSession,
-  rearmAuthority = false
+  rearmAuthority = false,
+  liveProjection?: 'writer' | 'observer'
 ): ChatSession => {
+  if (liveProjection) {
+    return projectLiveSessionInteractionState(
+      session,
+      { permission: true },
+      liveProjection === 'observer'
+    )
+  }
   const runtimeContext = session.runtimeContext
   const permission = runtimeContext?.permission
   if (rearmAuthority && (!runtimeContext || permission?.state !== 'continuing')) return session
@@ -257,8 +277,16 @@ export const projectPermissionPending = (
 export const projectPermissionCleared = (
   session: ChatSession,
   authority?: 'continuing' | 'settled',
-  requestId?: string
+  requestId?: string,
+  liveProjection?: 'writer' | 'observer'
 ): ChatSession => {
+  if (liveProjection) {
+    return projectLiveSessionInteractionState(
+      session,
+      { permission: false },
+      liveProjection === 'observer'
+    )
+  }
   const runtimeContext = session.runtimeContext
   const permission = runtimeContext?.permission
   if (
@@ -451,29 +479,12 @@ export const projectFailedRun = (
 export const projectAgentStatus = (session: ChatSession, text: string): ChatSession =>
   session.status === 'running' ? { ...session, agentStatus: text } : session
 
-export const projectCompactionStarted = (
-  session: ChatSession,
-  supersedeActiveRun = false
-): ChatSession => {
-  if (session.activeRun && !supersedeActiveRun) return session
-  return {
-    ...session,
-    ...CLEARED_AGENT_RUN_STATE,
-    status: 'idle',
-    error: undefined,
-    errorReportable: undefined,
-    compacting: true,
-    messages: compactTerminalMessageEventIds(failStreamingMessages(session.messages)),
-    activities: compactTerminalActivityEventIds(failOpenActivities(session.activities)),
-    activityGroups: completeOpenActivityGroups(session.activityGroups, Date.now()),
-    updatedAt: Date.now()
-  }
-}
+// Compaction is a local command gate; terminal run/message/tool settlement belongs to Main.
+export const projectCompactionStarted = (session: ChatSession): ChatSession =>
+  session.activeRun || session.compacting ? session : { ...session, compacting: true }
 
 export const projectCompactionFinished = (session: ChatSession): ChatSession =>
-  session.compacting && !session.activeRun
-    ? { ...session, status: 'idle', compacting: undefined, updatedAt: Date.now() }
-    : session
+  session.compacting ? { ...session, compacting: undefined } : session
 
 export const projectCompactionFailed = (session: ChatSession, error: string): ChatSession =>
   session.compacting && !session.activeRun

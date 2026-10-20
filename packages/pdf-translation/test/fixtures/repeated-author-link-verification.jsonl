@@ -1,0 +1,6 @@
+{"name": "repeated-author-remains-within-original-paragraph", "targetPrefix": "Alpha", "accepted": true}
+{"name": "longer-word-cannot-count-as-repeated-author", "targetPrefix": "NotAlpha", "accepted": false}
+{"name": "missing-author-occurrence-is-rejected", "targetPrefix": "该作者", "accepted": false}
+{"name":"multiword-organization-retains-exact-letter-order","targetPrefix":"Sample Reports","author":"Sample Reports","accepted":true}
+{"name":"longer-multiword-name-does-not-count-as-owner","targetPrefix":"NotSample Reports","author":"Sample Reports","accepted":false}
+{"name":"multiword-name-cannot-lose-word-boundary","targetPrefix":"SampleReports","author":"Sample Reports","accepted":false}

@@ -10,35 +10,36 @@
  *             §6 (enumeration), §9 (harvest_failed).
  */
 
+import { randomBytes } from 'node:crypto'
 import { mkdir, readFile, readdir, realpath, rename, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
-import { randomBytes } from 'node:crypto'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 
 import { describe, expect, it, vi } from 'vitest'
 
-import type { ComputeJob } from '../../shared/compute'
-import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
-import type { SshRunner } from './ssh-runner'
-import type { BoundedScpResult, ScpRunner, ScpResult } from './scp-runner'
+import type { BoundedScpResult, ScpResult, ScpRunner, SshRunner } from '@aipoch/compute/node'
 import {
   ComputeConnectionError,
   type ComputeConnectionBrokerAcquirer,
   type ComputeConnectionLease
-} from './connection-broker'
-import type { ComputeJobRepository } from './job-repository'
-import type { ComputeHostRepository } from './repository'
+} from '@aipoch/compute/node'
+import type { ComputeJob } from '../../shared/compute'
+import type { ExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
+
+import {
+  beginComputeJobFileEvidence,
+  publishComputeJobFileEvidence
+} from '../notebook/working-file-observer'
+import { beginMigration, clearMigrationPending } from '../storage/migration-state'
 import {
   HARVEST_FREE_DISK_RESERVE_BYTES,
   getJobHarvestDir,
   harvestJob,
   type HarvestDeps
 } from './harvest-engine'
-import { beginMigration, clearMigrationPending } from '../storage/migration-state'
-import {
-  beginComputeJobFileEvidence,
-  publishComputeJobFileEvidence
-} from '../notebook/working-file-observer'
+import type { ComputeJobRepository } from './job-repository'
+import type { ComputeHostRepository } from './repository'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -82,7 +83,7 @@ const makeJob = (overrides: Partial<ComputeJob> = {}): ComputeJob => ({
   ...overrides
 })
 
-const sampleHost = (): import('../../shared/compute').ComputeHost => ({
+const sampleHost = (): import('@aipoch/compute').ComputeHost => ({
   id: 'host-1',
   providerId: 'ssh:biowulf',
   displayName: 'biowulf',
@@ -1266,7 +1267,7 @@ describe('harvestJob — compute_done notification (issue 06)', () => {
     // SSH enumerate throws → harvest_failed
     const ssh = {
       run: vi.fn().mockRejectedValue(new Error('SSH timeout'))
-    } as unknown as import('./ssh-runner').SshRunner
+    } as unknown as import('@aipoch/compute/node').SshRunner
     const scp = makeScpRunner()
 
     // Repo maps notifiedAt → notified_at
@@ -1665,3 +1666,5 @@ describe('harvestJob - bounded logs and disk reserve', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

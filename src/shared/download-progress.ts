@@ -1,19 +1,7 @@
-// Cross-process download progress vocabulary + display formatters. No I/O so both main and renderer
-// import it. formatBytes is reused from update.ts to keep one byte-unit convention app-wide.
+// Host download progress display. Keep translation and byte-unit conventions outside the downloader.
+import type { DownloadProgress } from '@aipoch/resilient-download'
 import type { TFunction } from 'i18next'
 import { formatBytes } from './update'
-
-export type DownloadPhase = 'downloading' | 'reconnecting'
-
-export type DownloadProgress = {
-  phase: DownloadPhase
-  transferred: number
-  total?: number
-  percent?: number
-  bytesPerSecond: number
-  etaSeconds?: number
-  attempt: number
-}
 
 export const formatSpeed = (bytesPerSecond: number): string =>
   bytesPerSecond <= 0 ? '0 B/s' : `${formatBytes(bytesPerSecond)}/s`

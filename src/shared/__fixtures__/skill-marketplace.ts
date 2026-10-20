@@ -1,8 +1,5 @@
-import type {
-  SkillMarketplaceCatalog,
-  SkillMarketplaceDetail,
-  SkillMarketplaceEntry
-} from '../skill-marketplace'
+import type { SkillMarketplaceCatalog, SkillMarketplaceEntry } from '../skill-marketplace'
+import type { SkillMarketplaceDetail } from '../skill-marketplace'
 
 // Renderer tests only. Production data always comes through the verified main-process owner.
 export const marketplaceEntry: SkillMarketplaceEntry = {

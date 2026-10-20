@@ -1,0 +1,22 @@
+[
+  {
+    "language": "bash",
+    "script": "ls -la inputs/ 2>/dev/null && python3 -c \"import openpyxl; wb=openpyxl.load_workbook('inputs/set-membership-111111111111.xlsx', data_only=True); print('Sheets:', wb.sheetnames); \nfor s in wb.sheetnames:\n    ws = wb[s]\n    print(f'--- Sheet: {s} ({ws.max_row} rows x {ws.max_column} cols) ---')\n    for row in ws.iter_rows(min_row=1, max_row=min(15, ws.max_row), values_only=True):\n        print(row)\n\""
+  },
+  {
+    "language": "bash",
+    "script": "python3 -c \"\nimport openpyxl\nwb = openpyxl.load_workbook('inputs/set-membership-111111111111.xlsx', data_only=True)\nws = wb['5 groups']\nprint(f'Total rows: {ws.max_row}')\n# Check the last rows to see where data ends\nprint('--- Last 5 rows ---')\nfor row in ws.iter_rows(min_row=ws.max_row-4, max_row=ws.max_row, values_only=True):\n    print(row)\n# Count non-empty per column\ncounts = {}\nfor col_idx, col_letter in enumerate(['A','B','C','D','E'], 1):\n    count = 0\n    for r in range(2, ws.max_row+1):\n        v = ws.cell(row=r, column=col_idx).value\n        if v is not None and str(v).strip() != '':\n            count += 1\n    counts[col_letter] = count\nprint('Non-empty counts per column:', counts)\n\""
+  },
+  {
+    "language": "r",
+    "script": "suppressPackageStartupMessages({\n  library(readxl)\n  library(ggVennDiagram)\n  library(ggplot2)\n})\n# Read the Excel file (path relative to data kernel cwd)\ninput_path <- \"inputs/set-membership-111111111111.xlsx\"\ndf <- read_excel(input_path, sheet = \"5 groups\")\ncat(\"Dimensions:\", dim(df), \"\\n\")\ncat(\"Columns:\", paste(names(df), collapse = \", \"), \"\\n\")\nstr(df)"
+  },
+  {
+    "language": "r",
+    "script": "# Build per-column unique-element lists (drop NA / empty)\nsets <- lapply(df, function(col) {\n  vals <- as.character(col)\n  vals <- vals[!is.na(vals) & nzchar(vals)]\n  unique(vals)\n})\ncat(\"Set sizes:\\n\")\nprint(sapply(sets, length))\n# Universe size and pairwise overlaps for sanity\nuniverse <- unique(unlist(sets))\ncat(\"\\nUniverse size:\", length(universe), \"\\n\")\ncat(\"\\nPairwise intersections:\\n\")\nfor (i in seq_along(sets)) {\n  for (j in seq_along(sets)) {\n    if (j > i) {\n      n <- length(intersect(sets[[i]], sets[[j]]))\n      cat(sprintf(\"  %s ∩ %s = %d\\n\", names(sets)[i], names(sets)[j], n))\n    }\n  }\n}"
+  },
+  {
+    "language": "r",
+    "script": "# Compute all region counts (intersection table) and draw proportional Venn diagram\nvenn_obj <- Venn(sets)\nregion_counts <- process_region_data(Venn(sets))\ncat(\"Region counts table (head):\\n\")\nprint(head(as.data.frame(region_counts), 15))\ncat(\"\\nTotal distinct regions:\", nrow(region_counts), \"\\n\")\n# Proportional (area-aware) Venn diagram\np_prop <- ggVennDiagram(\n  sets,\n  label_alpha      = 0,\n  label_geom       = \"label\",\n  set_size         = 5,\n  label_size       = 3.2\n) +\n  scale_fill_gradient(low = \"#F4FAFE\", high = \"#4981BF\") +\n  scale_x_continuous(expand = expansion(mult = 0.2)) +\n  scale_y_continuous(expand = expansion(mult = 0.2)) +\n  theme_void() +\n  theme(\n    legend.position = \"right\",\n    plot.title = element_text(hjust = 0.5, face = \"bold\", size = 14)\n  ) +\n  labs(title = \"Synthetic Venn diagram (Proportional Venn Diagram of 5 sets)\")\nprint(p_prop)\n# Save PNG to the session data dir\nggsave(\"proportional_venn_5sets.png\", p_prop, width = 10, height = 8, dpi = 200)\ncat(\"\\nSaved: proportional_venn_5sets.png\\n\")"
+  }
+]

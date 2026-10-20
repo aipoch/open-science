@@ -1,3 +1,4 @@
+import { installSourcePreviewWebviews } from './source-preview-webview'
 import {
   app,
   BrowserWindow,
@@ -18,20 +19,12 @@ import iconWindows from '../../resources/icon-light.ico?asset'
 import { createFrameNavigationGuard, isAllowedExternalNavigation } from './navigation-policy'
 import { createFindOverlayManager, type FindOverlayDeps } from './find-overlay'
 import { registerFindOverlayOwner } from './find-overlay-registry'
-import { createLogger, diagnosticErrorFields } from './logger'
-import { createSourcePreviewLoadMonitor } from './source-preview-load-monitor'
-import { createSourcePreviewEmbedPolicy } from './source-preview-embed-policy'
-import { registerSourcePreviewWebRequestOwner } from './source-preview-web-request-owner'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   installPreviewContextMenuBridge,
   type PreviewContextMenuWebContents
 } from './preview-context-menu'
 import { englishNativeTranslator, type NativeTranslator } from './locale/main-process-messages'
-import {
-  SOURCE_PREVIEW_LOAD_STATE_CHANNEL,
-  SOURCE_PREVIEW_RELEASE_CHANNEL,
-  parseHttpsSourceUrl
-} from '../shared/source-preview'
 import {
   CLOSE_ACTIVE_PANE_CHANNEL,
   CLOSE_ACTIVE_PANE_READY_CHANNEL,
@@ -39,9 +32,11 @@ import {
   WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL,
   WINDOW_FIND_CONTENT_READY_CHANNEL,
   WINDOW_FIND_HIDE_CHANNEL,
+  WINDOW_FIND_OFFICE_CHANNEL,
   WINDOW_FIND_READY_CHANNEL,
   WINDOW_FIND_SHOW_CHANNEL,
   WINDOW_FIND_UNREADY_CHANNEL,
+  WINDOWS_TITLEBAR_HEIGHT,
   isCloseWindowChord,
   isFindInPageChord,
   isWindowFindAppearance,
@@ -49,6 +44,7 @@ import {
   type CloseConfirmChoice,
   type WindowFindAppearance
 } from '../shared/window-controls'
+import { getOfficeSearchSessionId } from '../shared/office-preview'
 
 const rendererEntry = join(__dirname, '../renderer/index.html')
 const preloadEntry = join(__dirname, '../preload/index.js')
@@ -70,20 +66,6 @@ const RECOVERABLE_RENDERER_EXIT_REASONS = new Set([
   'launch-failed',
   'integrity-failure'
 ])
-const sourcePreviewLoadMonitors = new WeakMap<BrowserWindow, SourcePreviewLoadMonitor>()
-const sourcePreviewEmbedPolicies = new WeakMap<BrowserWindow, SourcePreviewEmbedPolicy>()
-const sourcePreviewNavigationGuards = new WeakMap<BrowserWindow, SourcePreviewNavigationGuard>()
-
-type SourcePreviewLoadMonitor = ReturnType<typeof createSourcePreviewLoadMonitor>
-type SourcePreviewEmbedPolicy = ReturnType<typeof createSourcePreviewEmbedPolicy>
-type SourcePreviewNavigationGuard = ReturnType<typeof createFrameNavigationGuard>
-
-const clearSourcePreviewState = (window: BrowserWindow): void => {
-  sourcePreviewLoadMonitors.get(window)?.clearAll()
-  sourcePreviewEmbedPolicies.get(window)?.clearAll()
-  sourcePreviewNavigationGuards.get(window)?.clearAll()
-}
-
 const loadRenderer = (window: BrowserWindow): Promise<void> => {
   if (is.dev && process.env['ELECTRON_RENDERER_URL']) {
     return window.loadURL(process.env['ELECTRON_RENDERER_URL'])
@@ -126,6 +108,8 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     permission: string,
     details: { isMainFrame: boolean; requestingUrl?: string }
   ): boolean => {
+    if (window.isDestroyed()) return false
+    if (requestingWebContents !== window.webContents) return false
     const rendererUrl = window.webContents.getURL()
     return (
       rendererUrl !== '' &&
@@ -135,8 +119,7 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       ALLOWED_RENDERER_PERMISSIONS.has(permission)
     )
   }
-  // Remote source pages share the main window Session but never need Chromium permissions. The
-  // trusted renderer only needs sanitized clipboard writes; fail every other capability closed.
+  // Remote source guests use their own Session and permission handlers.
   window.webContents.session.setPermissionRequestHandler(
     (webContents, permission, callback, details) =>
       callback(isAllowedRendererPermission(webContents, permission, details))
@@ -145,34 +128,11 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
     (webContents, permission, _requestingOrigin, details) =>
       isAllowedRendererPermission(webContents, permission, details)
   )
-  const sourcePreviewLoadMonitor = createSourcePreviewLoadMonitor((state) => {
-    window.webContents.send(SOURCE_PREVIEW_LOAD_STATE_CHANNEL, state)
-  })
-  const sourcePreviewEmbedPolicy = createSourcePreviewEmbedPolicy(window.webContents.id)
-  const unregisterSourcePreviewWebRequestOwner = registerSourcePreviewWebRequestOwner(
-    window.webContents.session,
-    window.webContents.id,
-    sourcePreviewLoadMonitor,
-    sourcePreviewEmbedPolicy
-  )
   const unregisterPreviewContextMenuBridge = installPreviewContextMenuBridge(
     window.webContents as unknown as PreviewContextMenuWebContents
   )
-  window.on('closed', () => {
-    clearSourcePreviewState(window)
-    unregisterSourcePreviewWebRequestOwner()
-    unregisterPreviewContextMenuBridge()
-  })
-  sourcePreviewLoadMonitors.set(window, sourcePreviewLoadMonitor)
-  sourcePreviewEmbedPolicies.set(window, sourcePreviewEmbedPolicy)
-  const isAllowedFrameNavigation = createFrameNavigationGuard(
-    window.webContents.mainFrame,
-    (frame, sourceUrl) => {
-      sourcePreviewLoadMonitor.registerRoot(frame, sourceUrl)
-      sourcePreviewEmbedPolicy.registerRoot(frame, sourceUrl)
-    }
-  )
-  sourcePreviewNavigationGuards.set(window, isAllowedFrameNavigation)
+  window.on('closed', unregisterPreviewContextMenuBridge)
+  const isAllowedFrameNavigation = createFrameNavigationGuard()
   type FrameNavigationDetails = {
     url: string
     isMainFrame: boolean
@@ -225,26 +185,6 @@ const createAppWindow = (options: BrowserWindowConstructorOptions): BrowserWindo
       enforceFrameNavigationPolicy(details, frame)
     }
   )
-  window.webContents.on(
-    'did-navigate-in-page',
-    (_event, url, _isMainFrame, processId, routingId) => {
-      sourcePreviewLoadMonitor.navigateInPage(
-        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
-        url
-      )
-    }
-  )
-  window.webContents.on(
-    'did-frame-navigate',
-    (_event, url, httpResponseCode, httpStatusText, _isMainFrame, processId, routingId) => {
-      sourcePreviewLoadMonitor.finishNavigation(
-        webFrameMain.fromId(processId, routingId) ?? { processId, routingId },
-        url,
-        httpResponseCode,
-        httpStatusText
-      )
-    }
-  )
 
   return window
 }
@@ -262,6 +202,9 @@ type MainWindowCloseOptions = {
 }
 
 const mainWindowCloseOptions = new WeakMap<BrowserWindow, MainWindowCloseOptions>()
+const mainWindows = new WeakSet<BrowserWindow>()
+
+const isMainWindow = (window: BrowserWindow): boolean => mainWindows.has(window)
 
 const configureMainWindow = (window: BrowserWindow, opts: MainWindowCloseOptions): void => {
   mainWindowCloseOptions.set(window, opts)
@@ -279,8 +222,24 @@ const createMainWindow = (
     height: 960,
     minWidth: 1100,
     minHeight: 720,
-    title: 'Open-Science'
+    title: 'Open-Science',
+    ...(process.platform === 'win32'
+      ? { titleBarStyle: 'hidden', titleBarOverlay: { height: WINDOWS_TITLEBAR_HEIGHT } }
+      : {}),
+    webPreferences: { webviewTag: true }
   })
+  // The renderer owns the Windows menu row. Keep Alt from revealing a second native menu bar.
+  if (process.platform === 'win32') {
+    window.removeMenu()
+    window.on('enter-full-screen', () =>
+      window.webContents.send('window:full-screen-changed', true)
+    )
+    window.on('leave-full-screen', () =>
+      window.webContents.send('window:full-screen-changed', false)
+    )
+  }
+  mainWindows.add(window)
+  installSourcePreviewWebviews(window)
   if (opts) configureMainWindow(window, opts)
 
   // The renderer decides pane-vs-window, but only once it has a live, responsive listener. If main
@@ -451,33 +410,19 @@ const createMainWindow = (
     findOverlay.updateAppearance(appearance)
     mainWindowCloseOptions.get(window)?.onAppearanceChanged?.(appearance)
   }
-  const onSourcePreviewRelease = (event: IpcMainEvent, value: unknown): void => {
-    if (event.sender !== window.webContents || typeof value !== 'string') return
-    const sourceUrl = parseHttpsSourceUrl(value)
-    if (!sourceUrl) return
-
-    sourcePreviewLoadMonitors.get(window)?.releaseSource(sourceUrl.href)
-    sourcePreviewEmbedPolicies.get(window)?.releaseSource(sourceUrl.href)
-    sourcePreviewNavigationGuards.get(window)?.releaseSource(sourceUrl.href)
-  }
   ipcMain.on(CLOSE_ACTIVE_PANE_READY_CHANNEL, onListenerReady)
   ipcMain.on(CLOSE_ACTIVE_PANE_UNREADY_CHANNEL, onListenerGone)
   ipcMain.on(WINDOW_FIND_READY_CHANNEL, onWindowFindReady)
   ipcMain.on(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
   ipcMain.on(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
   ipcMain.on(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
-  ipcMain.on(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
   // A top-level document swap replaces the mounted hook, which must re-subscribe; a dead render process
   // took its listener with it. Both revoke readiness until the next READY handshake. Gate on the main
   // frame and a real document change so a dynamic preview iframe loading (or a same-document hash /
   // pushState navigation) — neither of which remounts the hook — does not falsely disarm the forward.
   window.webContents.on('did-start-navigation', (details) => {
-    sourcePreviewLoadMonitors
-      .get(window)
-      ?.startNavigation(details.frame, details.url, details.isSameDocument)
     if (details.isMainFrame && !details.isSameDocument) {
       mainFrameNavigationGeneration += 1
-      clearSourcePreviewState(window)
       rendererListenerReady = false
       windowFindListenerReady = false
       windowFindOpenPending = false
@@ -488,24 +433,7 @@ const createMainWindow = (
   // error message (all of which can contain local paths or Session-derived data).
   window.webContents.on(
     'did-fail-load',
-    (
-      _event,
-      errorCode,
-      errorDescription,
-      validatedURL,
-      isMainFrame,
-      frameProcessId,
-      frameRoutingId
-    ) => {
-      sourcePreviewLoadMonitors.get(window)?.failNavigation(
-        webFrameMain.fromId(frameProcessId, frameRoutingId) ?? {
-          processId: frameProcessId,
-          routingId: frameRoutingId
-        },
-        validatedURL,
-        errorCode,
-        errorDescription
-      )
+    (_event, errorCode, errorDescription, _validatedURL, isMainFrame) => {
       if (!isMainFrame) return
       log.error('renderer document failed to load', { errorCode, errorDescription })
       // Chromium reports a superseded navigation as ERR_ABORTED after the replacement navigation may
@@ -539,7 +467,6 @@ const createMainWindow = (
     windowFindOpenPending = false
     clearRendererHangState()
     findOverlay.close()
-    clearSourcePreviewState(window)
 
     if (!RECOVERABLE_RENDERER_EXIT_REASONS.has(details.reason) || window.isDestroyed()) return
 
@@ -577,7 +504,6 @@ const createMainWindow = (
     ipcMain.removeListener(WINDOW_FIND_UNREADY_CHANNEL, onWindowFindGone)
     ipcMain.removeListener(WINDOW_FIND_CONTENT_READY_CHANNEL, onWindowFindContentReady)
     ipcMain.removeListener(WINDOW_FIND_APPEARANCE_CHANGED_CHANNEL, onWindowFindAppearanceChanged)
-    ipcMain.removeListener(SOURCE_PREVIEW_RELEASE_CHANNEL, onSourcePreviewRelease)
     findOverlay.destroy()
   })
 
@@ -608,6 +534,11 @@ const createMainWindow = (
     if (isFindInPageChord(input, process.platform)) {
       if (windowFindListenerReady && rendererResponsive) {
         event.preventDefault()
+        const officeSessionId = getOfficeSearchSessionId(window.webContents.focusedFrame?.url ?? '')
+        if (officeSessionId) {
+          window.webContents.send(WINDOW_FIND_OFFICE_CHANNEL, officeSessionId)
+          return
+        }
         windowFindOpenPending = true
         window.webContents.send(WINDOW_FIND_SHOW_CHANNEL, windowFindAppearance)
       }
@@ -700,5 +631,5 @@ const createMainWindow = (
   return window
 }
 
-export { configureMainWindow, createMainWindow }
+export { configureMainWindow, createMainWindow, isMainWindow }
 export type { MainWindowCloseOptions }

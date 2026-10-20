@@ -1,9 +1,27 @@
 // @vitest-environment jsdom
-import { act, cleanup, renderHook } from '@testing-library/react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { act, cleanup } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { useLiteratureChanges } from './useLiteratureChanges'
 
-afterEach(cleanup)
+const recoveryListeners = new Set<() => void>()
+const recover = (): void => recoveryListeners.forEach((listener) => listener())
+const { renderHook } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: (listener) => {
+    recoveryListeners.add(listener)
+    return () => {
+      recoveryListeners.delete(listener)
+    }
+  }
+})
+
+afterEach(() => {
+  cleanup()
+  recoveryListeners.clear()
+})
 it('coalesces mutation bursts and restores missed changes on visibility and replay without leaking subscriptions', async () => {
   let notify!: () => void
   const unsubscribe = vi.fn()
@@ -139,4 +157,19 @@ it('consumes only queued changes covered by a command refresh, preserving other 
   } finally {
     vi.useRealTimers()
   }
+})
+
+it('refreshes missed changes on host recovery and unsubscribes on unmount', async () => {
+  const invalidate = vi.fn()
+  const { unmount } = renderHook(() => useLiteratureChanges(invalidate))
+  expect(invalidate).not.toHaveBeenCalled()
+  expect(recoveryListeners.size).toBe(1)
+  await act(async () => recover())
+  expect(invalidate).toHaveBeenCalledExactlyOnceWith()
+  unmount()
+  await act(async () => {
+    expect(recoveryListeners.size).toBe(0)
+    recover()
+  })
+  expect(invalidate).toHaveBeenCalledOnce()
 })

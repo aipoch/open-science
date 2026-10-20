@@ -1,15 +1,14 @@
 import { remoteAccessApplicationCommandContracts } from '../../shared/remote-access'
-import { callerContextForEvent, hasCallerAuthority, type CallerContext } from '../caller-context'
+import {
+  callerContextForEvent,
+  hasCallerAuthority,
+  requireDesktopCaller,
+  type CallerContext
+} from '../caller-context'
 import { ipcMainHandle } from '../ipc-handler-registry'
 import { RemoteAccessService } from './service'
 
 const isDesktopCaller = (context: CallerContext): boolean => context.surface === 'electron'
-
-const requireDesktopCaller = (context: CallerContext): void => {
-  if (!isDesktopCaller(context)) {
-    throw new Error('This action must be approved from the Open-Science desktop app.')
-  }
-}
 
 const canManagePairing = (context: CallerContext): boolean =>
   isDesktopCaller(context) ||

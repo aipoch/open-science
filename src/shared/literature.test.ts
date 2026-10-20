@@ -1,25 +1,32 @@
+import {
+  literatureCandidateStatesRequestSchema,
+  literatureCandidateStatesResultSchema
+} from './literature'
+import { literatureItemInputSchema as contractItemSchema } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema as itemSchema } from '@aipoch/literature-library/item'
 import { describe, expect, it } from 'vitest'
 
 import {
-  createLiteratureAttachmentVersionReference,
-  createLiteratureIdentifierUrl,
-  literatureApplicationCommandContracts,
   literatureCatalogCommandSchema,
   literatureCatalogSearchRequestSchema,
-  literatureCollectionViewSchema,
   literatureCitationStylesRequestSchema,
+  literatureCollectionViewSchema,
   literatureFormatDocumentRequestSchema,
-  literatureFormatReferencesRequestSchema,
-  literatureIdentifierInputSchema,
-  normalizeLiteratureIdentifierValue,
+  literatureFormatReferencesRequestSchema
+} from '@aipoch/literature-library/contracts'
+import {
+  createLiteratureAttachmentVersionReference,
   parseLiteratureAttachmentVersionReference
-} from './literature'
+} from './literature-attachment-reference'
+import { literatureApplicationCommandContracts } from './literature'
 
-describe('Literature DOI draft lookup contract', () => {
+describe('Literature identifier draft lookup contract', () => {
   it('accepts a DOI and rejects URLs, malformed identifiers, and oversized arguments', () => {
     const { args } = literatureApplicationCommandContracts.lookupMetadata
     expect(args.parse(['10.1007/s11914-026-00956-3'])).toEqual(['10.1007/s11914-026-00956-3'])
+    expect(args.parse(['pmid:29370583'])).toEqual(['pmid:29370583'])
     for (const input of [
+      ['pmid:abc'],
       [],
       ['https://example.com'],
       ['10.1007/has space'],
@@ -42,55 +49,6 @@ describe('Literature citation style requests', () => {
     expect(() =>
       literatureCitationStylesRequestSchema.parse({ kind: 'list', includePreviews: true })
     ).toThrow()
-  })
-})
-
-describe('Literature identifier links', () => {
-  it('normalizes resolvable identifiers and builds their canonical URLs', () => {
-    expect(normalizeLiteratureIdentifierValue('doi', '10.1234/exampleCopyright')).toBe(
-      '10.1234/example'
-    )
-    expect(createLiteratureIdentifierUrl('doi', '10.1234/exampleCopyright')).toBe(
-      'https://doi.org/10.1234/example'
-    )
-    expect(createLiteratureIdentifierUrl('pmid', 'PMID: 32877581')).toBe(
-      'https://pubmed.ncbi.nlm.nih.gov/32877581/'
-    )
-    expect(
-      normalizeLiteratureIdentifierValue(
-        'pmid',
-        'https://pubmed.ncbi.nlm.nih.gov/12345678/?from=library'
-      )
-    ).toBe('12345678')
-    expect(createLiteratureIdentifierUrl('pmcid', '7610567')).toBe(
-      'https://pmc.ncbi.nlm.nih.gov/articles/PMC7610567/'
-    )
-    expect(
-      normalizeLiteratureIdentifierValue(
-        'pmcid',
-        'https://pmc.ncbi.nlm.nih.gov/articles/PMC1234567/'
-      )
-    ).toBe('PMC1234567')
-    expect(
-      normalizeLiteratureIdentifierValue(
-        'arxiv',
-        'https://arxiv.org/pdf/2401.12345v2.pdf?download=1'
-      )
-    ).toBe('2401.12345')
-    expect(createLiteratureIdentifierUrl('arxiv', 'arXiv:2401.12345v2')).toBe(
-      'https://arxiv.org/abs/2401.12345'
-    )
-    expect(createLiteratureIdentifierUrl('issn', '0028-4793')).toBeUndefined()
-  })
-
-  it('canonicalizes identifier values at the input boundary', () => {
-    expect(
-      literatureIdentifierInputSchema.parse({
-        scheme: 'doi',
-        value: 'https://doi.org/10.1234/exampleCopyright',
-        isPrimary: true
-      })
-    ).toEqual({ scheme: 'doi', value: '10.1234/example', isPrimary: true })
   })
 })
 
@@ -261,31 +219,12 @@ describe('Literature Inbox contracts', () => {
   })
 })
 
-describe('Literature full-text transfer contract', () => {
-  it('restores a transfer by item and acknowledges only an explicit task identity', () => {
-    const { args, result } = literatureApplicationCommandContracts.fullText
-    expect(args.parse([{ mode: 'transfer', itemId: 'item' }])).toEqual([
-      { mode: 'transfer', itemId: 'item' }
-    ])
-    expect(() => args.parse([{ mode: 'transfer', itemId: 'item', acknowledgeId: '' }])).toThrow()
-    expect(result.parse({ mode: 'transfer' })).toEqual({ mode: 'transfer' })
-    const transfer = {
-      id: 'task',
-      itemId: 'item',
-      status: 'running',
-      candidate: {
-        id: 'candidate',
-        provider: 'unpaywall',
-        source: 'Repository',
-        url: 'https://example.com/paper.pdf'
-      },
-      progress: { receivedBytes: 10, bytesPerSecond: 2, phase: 'downloading' }
-    }
-    expect(result.parse({ mode: 'transfer', transfer })).toEqual({ mode: 'transfer', transfer })
-    expect(() =>
-      result.parse({ mode: 'transfer', transfer: { ...transfer, status: 'invented' } })
-    ).toThrow()
-  })
+it('binds the full-text contract to application command argument tuples', () => {
+  const { args, result } = literatureApplicationCommandContracts.fullText
+  expect(args.parse([{ mode: 'transfer', itemId: 'item' }])).toEqual([
+    { mode: 'transfer', itemId: 'item' }
+  ])
+  expect(result.parse({ mode: 'transfer' })).toEqual({ mode: 'transfer' })
 })
 
 it('bounds decision-only reads without accepting mutation fields', () => {
@@ -310,4 +249,31 @@ it('scopes progress reads to a run and rejects mutation or unbounded paging fiel
     { ...request, limit: 100000 }
   ])
     expect(literatureCatalogCommandSchema.safeParse(invalid).success).toBe(false)
+})
+
+it('keeps the public literature item schema identical to the snapshot contract', () => {
+  expect(contractItemSchema).toBe(itemSchema)
+})
+
+it('bounds exact candidate reads and rejects unknown persisted states', () => {
+  expect(literatureCandidateStatesRequestSchema.parse({ candidateIds: [' candidate '] })).toEqual({
+    candidateIds: ['candidate']
+  })
+  for (const candidateIds of [
+    [],
+    [''],
+    ['x'.repeat(257)],
+    Array.from({ length: 201 }, () => 'id')
+  ]) {
+    expect(literatureCandidateStatesRequestSchema.safeParse({ candidateIds }).success).toBe(false)
+  }
+  expect(
+    literatureCandidateStatesRequestSchema.safeParse({ candidateIds: ['a'], state: 'pending' })
+      .success
+  ).toBe(false)
+  expect(
+    literatureCandidateStatesResultSchema.safeParse({
+      candidates: [{ candidateId: 'a', state: 'imported' }]
+    }).success
+  ).toBe(false)
 })

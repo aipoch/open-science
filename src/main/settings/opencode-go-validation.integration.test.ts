@@ -2,7 +2,7 @@ import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { afterEach, describe, expect, it } from 'vitest'
 
-import type { ChatApiEndpoint } from '../../shared/settings'
+import type { ModelProtocol } from '../../shared/settings'
 import { validateProvider, type ValidateProviderDeps } from './validate'
 
 const cleanups: Array<() => Promise<void>> = []
@@ -113,13 +113,13 @@ const startGoGateway = async (): Promise<{ baseUrl: string; requests: GatewayReq
 }
 
 describe('OpenCode Go validation wire contract', () => {
-  it.each<{ name: string; endpoint: ChatApiEndpoint; path: string; deps?: ValidateProviderDeps }>([
-    { name: 'Chat Completions', endpoint: 'openai', path: '/chat/completions' },
-    { name: 'Messages', endpoint: 'anthropic', path: '/messages' },
+  it.each<{ name: string; endpoint: ModelProtocol; path: string; deps?: ValidateProviderDeps }>([
+    { name: 'Chat Completions', endpoint: 'chat-completions', path: '/chat/completions' },
+    { name: 'Messages', endpoint: 'messages', path: '/messages' },
     { name: 'Responses', endpoint: 'responses', path: '/responses' },
     {
       name: 'Codex Chat Completions bridge',
-      endpoint: 'openai',
+      endpoint: 'chat-completions',
       path: '/chat/completions',
       deps: { requireBridgeToolCall: true }
     },
@@ -137,7 +137,7 @@ describe('OpenCode Go validation wire contract', () => {
         type: 'official' as const,
         vendorId: 'opencode-go' as const,
         baseUrl,
-        openaiBaseUrl: baseUrl,
+        chatCompletionsBaseUrl: baseUrl,
         key: 'synthetic-go-key',
         model: 'probe-model',
         apiEndpoints: [endpoint]
@@ -169,7 +169,7 @@ describe('OpenCode Go validation wire contract', () => {
         type: vendorId ? 'official' : 'custom',
         vendorId,
         baseUrl,
-        apiEndpoints: ['openai'],
+        apiEndpoints: ['chat-completions'],
         model: 'probe-model'
       })
       expect(result).toMatchObject({

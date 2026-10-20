@@ -11,7 +11,16 @@ const inspection = z
       z
         .object({
           id: z.string().min(1).max(512),
-          kind: z.enum(['session', 'invalid-session', 'log', 'database']),
+          kind: z.enum([
+            'session',
+            'invalid-session',
+            'log',
+            'database',
+            'notebook',
+            'environment',
+            'sensitive-evidence',
+            'sensitive-file'
+          ]),
           name: z.string(),
           available: z.boolean(),
           sizeBytes: z.number().nonnegative().optional(),
@@ -27,8 +36,7 @@ const result = z
     status: z.enum(['exported', 'partial', 'cancelled', 'failed']),
     path: z.string().optional(),
     error: z.string().optional(),
-    report: z.string().optional(),
-    reportPath: z.string().optional()
+    report: z.string().optional()
   })
   .strict()
 
@@ -40,7 +48,12 @@ export const sessionDiagnosticCommandContracts = {
   export: defineApplicationCommandContract(
     validationCodec(
       z.tuple([
-        request.extend({ selectedItems: z.array(z.string().min(1).max(512)).max(1000) }).strict()
+        request
+          .extend({
+            selectedItems: z.array(z.string().min(1).max(512)).max(1000),
+            includeExecutionCode: z.boolean().optional()
+          })
+          .strict()
       ])
     ),
     validationCodec(result)

@@ -1,5 +1,10 @@
-import { readPackageArchive, PACKAGE_REQUIRES_UPDATE } from './archive'
-import { mkdir, mkdtemp, open, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  readPackageArchive,
+  validatePackageDirectory,
+  writePackageArchive,
+  PACKAGE_REQUIRES_UPDATE
+} from './archive'
+import { mkdir, mkdtemp, open, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { Header, Pax, c } from 'tar'
@@ -9,6 +14,7 @@ import { withPackageTransfer } from './transfer'
 import { packageInventoryEntrySchema } from '../../shared/session-package'
 import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
+import { sha256 } from '../artifacts/provenance-canonical'
 
 const directories: string[] = []
 
@@ -52,6 +58,118 @@ it('accepts 32 GiB inventory and execution evidence, rejecting one byte over', (
     packageInventoryEntrySchema.safeParse({ ...entry, sizeBytes: entry.sizeBytes + 1 }).success
   ).toBe(false)
   expect(executionEvidenceSchema.safeParse(evidence(entry.sizeBytes + 1)).success).toBe(false)
+})
+
+it('deduplicates identical content objects in a self-contained package', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'science-package-content-dedupe-'))
+  directories.push(directory)
+  const session = JSON.stringify({ version: 2, session: { id: 'session' } })
+  const records = JSON.stringify({ schemaVersion: 1, tables: {} })
+  const readme = 'Content dedupe fixture'
+  const content = Buffer.from('identical version bytes')
+  const checksum = sha256(content)
+  const objectPath = `objects/${checksum}`
+  await mkdir(join(directory, 'objects'))
+  await writeFile(join(directory, 'session.json'), session)
+  await writeFile(join(directory, 'records.json'), records)
+  await writeFile(join(directory, 'README.md'), readme)
+  await writeFile(join(directory, objectPath), content)
+  await writeFile(
+    join(directory, 'manifest.json'),
+    JSON.stringify({
+      format: 'open-science-session',
+      requiredFeatures: ['content-dedupe'],
+      schemaVersion: 1,
+      createdAt: 1,
+      source: {
+        projectId: 'project',
+        sessionId: 'session',
+        projectName: 'Research',
+        title: 'Content dedupe'
+      },
+      inventory: [
+        {
+          path: 'session.json',
+          kind: 'session',
+          sizeBytes: Buffer.byteLength(session),
+          checksum: sha256(session)
+        },
+        {
+          path: 'records.json',
+          kind: 'records',
+          sizeBytes: Buffer.byteLength(records),
+          checksum: sha256(records)
+        },
+        {
+          path: 'README.md',
+          kind: 'readme',
+          sizeBytes: Buffer.byteLength(readme),
+          checksum: sha256(readme)
+        },
+        {
+          path: objectPath,
+          kind: 'file',
+          sizeBytes: content.byteLength,
+          checksum,
+          storageKey: 'artifacts/project/session/artifact/managed-versions/v1_result.csv'
+        },
+        {
+          path: objectPath,
+          kind: 'file',
+          sizeBytes: content.byteLength,
+          checksum,
+          storageKey: 'artifacts/project/session/artifact/managed-versions/v2_result.csv'
+        }
+      ],
+      excludedFiles: [],
+      omissions: []
+    })
+  )
+  const archive = join(directory, 'deduplicated.science')
+
+  await writePackageArchive(directory, archive)
+  const extracted = join(directory, 'extracted')
+  const manifest = await readPackageArchive(archive, extracted)
+
+  expect(manifest.requiredFeatures).toContain('content-dedupe')
+  expect(manifest.inventory.filter((entry) => entry.storageKey).map((entry) => entry.path)).toEqual(
+    [objectPath, objectPath]
+  )
+  await expect(readdir(join(extracted, 'objects'))).resolves.toEqual([checksum])
+  await expect(readFile(join(extracted, objectPath))).resolves.toEqual(content)
+})
+
+it('bounds the reconstructed size of content-dedupe aliases', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'science-package-content-dedupe-limit-'))
+  directories.push(directory)
+  const checksum = 'a'.repeat(64)
+  const objectPath = `objects/${checksum}`
+  await writeFile(
+    join(directory, 'manifest.json'),
+    JSON.stringify({
+      format: 'open-science-session',
+      requiredFeatures: ['content-dedupe'],
+      schemaVersion: 1,
+      createdAt: 1,
+      source: {
+        projectId: 'project',
+        sessionId: 'session',
+        projectName: 'Research',
+        title: 'Oversized reconstruction'
+      },
+      inventory: Array.from({ length: 9 }, (_, index) => ({
+        path: objectPath,
+        kind: 'file',
+        sizeBytes: 32 * 1024 ** 3,
+        checksum,
+        storageKey: `artifacts/project/session/artifact/managed-versions/v${index}_result.csv`
+      })),
+      excludedFiles: [],
+      omissions: []
+    })
+  )
+
+  await expect(validatePackageDirectory(directory)).rejects.toThrow('reconstructed content limit')
 })
 
 it.each(['base-256', 'pax'])(

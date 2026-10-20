@@ -20,6 +20,8 @@ import {
 } from '../../../../shared/settings'
 import {
   isSupportedCodexAcpVersion,
+  isSupportedCodexCliVersion,
+  MINIMUM_CODEX_CLI_VERSION,
   hasCodexNativeUpdate,
   MANAGED_CODEX_VERSION,
   MINIMUM_CODEX_ACP_VERSION
@@ -257,7 +259,9 @@ const AgentPanel = ({
     (framework) => framework.id === pendingSwitch
   )?.displayName
   const codexReady =
-    preflight.codexReady && (!codex.version || isSupportedCodexAcpVersion(codex.version))
+    preflight.codexReady &&
+    (!codex.version || isSupportedCodexAcpVersion(codex.version)) &&
+    isSupportedCodexCliVersion(codex.nativeVersion)
 
   // First-run users should land on a runtime they can actually use. Registry order is the stable
   // tie-breaker, and this onboarding-only preference never changes Settings selection behavior.
@@ -423,9 +427,14 @@ const AgentPanel = ({
       ready: codexReady,
       installed: Boolean(codex.resolvedPath),
       updateRequired: Boolean(
-        codex.resolvedPath && codex.version && !isSupportedCodexAcpVersion(codex.version)
+        codex.resolvedPath &&
+        ((codex.version && !isSupportedCodexAcpVersion(codex.version)) ||
+          !isSupportedCodexCliVersion(codex.nativeVersion))
       ),
-      minimumVersion: MINIMUM_CODEX_ACP_VERSION,
+      minimumVersion:
+        codex.version && !isSupportedCodexAcpVersion(codex.version)
+          ? MINIMUM_CODEX_ACP_VERSION
+          : undefined,
       versionDetail:
         codex.resolvedPath || codex.version || codex.nativeVersion
           ? t('Codex CLI {{nativeVersion}} · ACP {{adapterVersion}}', {
@@ -436,17 +445,24 @@ const AgentPanel = ({
       updateAvailable: Boolean(
         codexManaged && codex.nativeManaged && hasCodexNativeUpdate(codex.nativeVersion)
       ),
-      updateHint: hasCodexNativeUpdate(codex.nativeVersion)
-        ? codexManaged && codex.nativeManaged
+      updateHint:
+        codex.resolvedPath &&
+        !codex.nativeManaged &&
+        !isSupportedCodexCliVersion(codex.nativeVersion)
           ? t(
-              'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
-              { version: MANAGED_CODEX_VERSION }
+              'Repair installs an app-managed Codex CLI without changing your external installation. You can also update it manually and re-detect.'
             )
-          : t(
-              'Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.',
-              { version: MANAGED_CODEX_VERSION }
-            )
-        : undefined,
+          : hasCodexNativeUpdate(codex.nativeVersion)
+            ? codexManaged && codex.nativeManaged
+              ? t(
+                  'Update to the tested Codex CLI v{{version}}. Close Codex sessions before updating.',
+                  { version: MANAGED_CODEX_VERSION }
+                )
+              : t(
+                  'Codex CLI v{{version}} is available. Update your external installation manually, then re-detect.',
+                  { version: MANAGED_CODEX_VERSION }
+                )
+            : undefined,
       path: codex.resolvedPath,
       sourceLabel: 'agentclientprotocol/codex-acp',
       sourceUrl: 'https://github.com/agentclientprotocol/codex-acp',
@@ -459,16 +475,24 @@ const AgentPanel = ({
                 minimumVersion: MINIMUM_CODEX_ACP_VERSION
               }
             )
-          : codex.resolvedPath
+          : codex.resolvedPath && !isSupportedCodexCliVersion(codex.nativeVersion)
             ? t(
-                'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
+                'Codex CLI v{{minimumVersion}} or later is required. Update or repair Codex before using it.',
+                { minimumVersion: MINIMUM_CODEX_CLI_VERSION }
               )
-            : t(
-                'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.'
-              ),
+            : codex.resolvedPath
+              ? t(
+                  'The adapter or its paired native Codex runtime did not pass detection. Reinstall the managed pair below, or repair your manual installation and re-detect.'
+                )
+              : t(
+                  'Codex ACP is required for this framework. Install it below, or install it manually and re-detect.'
+                ),
       uninstallCommand: 'npm uninstall -g @agentclientprotocol/codex-acp',
       managed: codexManaged,
-      installSources: getCodexInstallSources(),
+      installSources:
+        codex.resolvedPath && !isSupportedCodexCliVersion(codex.nativeVersion)
+          ? getCodexInstallSources().filter((source) => source.id === 'managed')
+          : getCodexInstallSources(),
       install: codexInstall,
       // Codex has no official-script source; the guard keeps the shared install-source type happy.
       onInstall: (source) => {

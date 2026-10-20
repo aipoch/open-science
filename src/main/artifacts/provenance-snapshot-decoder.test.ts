@@ -6,7 +6,8 @@ import type {
   PersistedArtifactExecutionSnapshot
 } from '../../shared/artifact-provenance'
 import { decodeArtifactExecutionSnapshot } from './provenance-execution-evidence'
-import { sealArtifactReproducibilityRecipe } from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import { canonicalJson, sha256, type CanonicalJson } from './provenance-canonical'
 import {
   decodeArtifactMessageSnapshot,
@@ -222,7 +223,7 @@ describe('Artifact persistence decoders', () => {
   it('keeps Execution evidence readable when nested graph or recipe versions are newer', () => {
     const snapshot = executionSnapshot(2) as unknown as PersistedArtifactExecutionSnapshot
     const graph = provenanceGraph() as unknown as ArtifactProvenanceGraph
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs: snapshot.runs
@@ -261,7 +262,7 @@ describe('Artifact persistence decoders', () => {
   it('accepts a sealed recipe inside Execution v2 and rejects recipe tampering', () => {
     const snapshot = executionSnapshot(2) as unknown as PersistedArtifactExecutionSnapshot
     const graph = provenanceGraph() as unknown as ArtifactProvenanceGraph
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs: snapshot.runs

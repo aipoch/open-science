@@ -1,10 +1,11 @@
-import { McpClientManager } from '../../connectors/custom-mcp'
+import { mcpHostDependencies } from '../../connectors/mcp-host-dependencies'
+import { McpClientManager } from '@aipoch/connector-mcp-client'
 import {
   classifyCustomMcpFailure,
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe,
   toCustomMcpConfig
-} from '../../connectors/custom-mcp'
+} from '../../connectors/custom-mcp-config'
 import type {
   AuthenticateCustomServerRequest,
   CreateDeviceCredentialRequest,
@@ -139,8 +140,14 @@ class ConnectorSettingsWorkflows {
       }
     // A probe must not reset or populate the shared runtime client cache.
     const manager = new McpClientManager({
-      saveOAuthState: (id, state, fingerprint, secretRef) =>
-        this.settings.saveCustomServerOAuthState(id, state, fingerprint, secretRef)
+      ...mcpHostDependencies,
+      saveOAuthState: (id, state, guard) =>
+        this.settings.saveCustomServerOAuthState(
+          id,
+          state,
+          guard?.configurationFingerprint,
+          guard?.oauthClientSecretRef
+        )
     })
     const timeout = AbortSignal.timeout(10_000)
     const signal = callerSignal ? AbortSignal.any([callerSignal, timeout]) : timeout

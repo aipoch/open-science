@@ -1,17 +1,16 @@
-import { useTranslation } from 'react-i18next'
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
+import type { ComposerDraft } from './composer-contract'
+export { type ComposerDraft } from './composer-contract'
 
+import type { Annotation } from '../../../../shared/annotation-contract'
 import { VISION_MODEL_NOT_CONFIGURED_MESSAGE } from '../../../../shared/run-error-classification'
+import type { SessionPdfContextSource } from '../../../../shared/session-pdf-contract'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
-import type { Annotation } from '../../../../shared/annotations'
-import type { SessionPdfContextSource } from '../../../../shared/session-persistence'
 
+import { stageUploadFile as stageComposerFile, type UploadStagingApi } from '@/lib/upload-transfer'
 import { planComposerAttachmentIntake } from './composer-attachment-intake'
-import {
-  stageComposerFile,
-  type ComposerUploadTransfer,
-  type UploadStagingApi
-} from './composer-upload-transfer'
+import type { ComposerUploadTransfer } from './composer-upload-transfer'
 import {
   insertPastedTextNodeAtLogicalOffset,
   pastedTextLogicalOffset,
@@ -23,18 +22,6 @@ import {
   type ComposerPastedTextNode,
   type ComposerPastedTextStage
 } from './composer/composer-doc'
-
-import type { MessageQueueEditIntent } from './workspace-message-queue-owner'
-
-export type ComposerDraft = {
-  setupSessionToken?: string
-  queuedEdit?: MessageQueueEditIntent
-  doc: ComposerDoc
-  annotations: Annotation[]
-  attachments: UploadedAttachment[]
-  attachmentTransfers: ComposerUploadTransfer[]
-  automaticReadingEnabled: boolean
-}
 
 type ComposerDeletionCleanup = Pick<ComposerDraft, 'attachments' | 'attachmentTransfers'>
 

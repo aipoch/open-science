@@ -1,5 +1,6 @@
-import type { Logger } from '../logger'
-import type { CompletionGateCoordinator, CompletionGateLifecycleEvent } from './completion-gate'
+import type { Logger } from '@aipoch/diagnostics/node'
+import type { CompletionGateCoordinator } from './completion-gate'
+import type { CompletionGateLifecycleEvent } from './completion-gate-contract'
 
 type CompletionGateDiagnosticsDependencies = {
   log: Pick<Logger, 'debug' | 'warn'>

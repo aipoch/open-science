@@ -1,0 +1,6 @@
+{"name": "unique exact region excludes adjacent padding", "change": "unique", "accepted": true}
+{"name": "real overlapping regions remain ambiguous", "change": "overlap", "accepted": false}
+{"name": "glyph only in both padding areas remains ambiguous", "change": "padding-only", "accepted": false}
+{"name": "glyph relocated to neighboring paragraph is rejected", "change": "moved", "accepted": false}
+{"name": "native-coordinate-rounding-keeps-unique-region", "change": "rounded", "accepted": true}
+{"name": "real-offset-cannot-use-rounding-tolerance", "change": "outside", "accepted": false}

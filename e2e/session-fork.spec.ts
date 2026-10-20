@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test.use({ windowMode: 'normal' })
 
@@ -10,13 +12,9 @@ test('forks local and imported research and immediately continues through the re
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Fork lifecycle')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Fork lifecycle')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
@@ -46,24 +44,25 @@ test('forks local and imported research and immediately continues through the re
       await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
       await page.getByRole('menuitem', { name: 'Export Session package', exact: true }).click()
       const exporting = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-      await exporting.getByRole('button', { name: 'Export', exact: true }).click()
-      await expect(
-        exporting.getByText('Package operation completed', { exact: true })
-      ).toBeVisible()
+      await exporting.getByRole('button', { name: 'Choose save location…', exact: true }).click()
+      await expect(exporting.getByText('Session package exported', { exact: true })).toBeVisible()
       await exporting.getByRole('button', { name: 'Close', exact: true }).click()
       await page.getByRole('button', { name: 'Fork lifecycle', exact: true }).click()
       await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
       const importing = page.getByRole('dialog', { name: 'Import Session package', exact: true })
       await importing.getByRole('button', { name: 'Import', exact: true }).click()
       await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-      await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
       await page.getByRole('button', { name: 'Fork to continue', exact: true }).click()
-      await expect(page.getByRole('region', { name: 'Imported research history' })).toHaveCount(0)
+      await expect(
+        page.getByRole('region', { name: 'Research discussion', exact: true })
+      ).toHaveCount(0)
+      await expect(page.getByRole('button', { name: /^Continued from chat #\d+$/ })).toBeVisible()
     }
-    const replies = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+    const replies = page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
     const previousReplies = await replies.count()
-    await page.getByRole('textbox', { name: 'Ask anything' }).fill(followup)
-    await page.getByRole('button', { name: 'Send message' }).click()
+    await submitPromptViaUi(page, followup)
     await expect(replies).toHaveCount(previousReplies + 1)
     await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
     await expect(page.getByText(/Project owner is unavailable/)).toHaveCount(0)
@@ -95,10 +94,11 @@ test('forks local and imported research and immediately continues through the re
       .locator('[data-slot="session-open-button"][aria-current="page"]')
       .getByRole('img', { name: 'Read-only' })
   ).toHaveCount(0)
-  const replies = restarted.getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  const replies = restarted
+    .getByRole('region', { name: 'Conversation', exact: true })
+    .getByText(`Deterministic reply: ${prompt}`, { exact: true })
   const before = await replies.count()
-  await restarted.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after restart')
-  await restarted.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(restarted, 'Continue after restart')
   await expect(replies).toHaveCount(before + 1)
   await expect(restarted.getByText(/Project owner is unavailable/)).toHaveCount(0)
   await expect
@@ -119,13 +119,9 @@ test('changes branch permissions before the first follow-up without changing sou
 }) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Branch permissions')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Branch permissions')
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, prompt)
   const reply = page.getByText(`Deterministic reply: ${prompt}`, { exact: true })
   // The first turn includes provider preparation on Windows. Wait for its actual durable
   // completion before checking paced text presentation; this is not a latency benchmark.
@@ -203,8 +199,7 @@ test('changes branch permissions before the first follow-up without changing sou
       )
     )
     .toBe(true)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue the research')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue the research')
   await expect(reply).toHaveCount(2)
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await expect

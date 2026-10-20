@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { mkdtemp, rm } from 'node:fs/promises'
@@ -18,7 +19,6 @@ import { AgentsService, type AgentsCatalogSource } from './agents-service'
 import { passthroughApprovalGateway } from './passthrough-approval-gateway'
 import { createSpecialistService } from '../specialist/service'
 import { SessionBindingService } from '../specialist/session-binding'
-import type { StoredConnectors } from '../settings/types'
 import type { ApprovalGateway, ApprovalResult } from '../../shared/agents-contract'
 
 // Run with: RUN_KERNEL=1 npx vitest run src/main/agents/agents-repl.privileged.integration.test.ts
@@ -103,21 +103,22 @@ const stubCatalog: AgentsCatalogSource = {
       available: true
     }
   ],
-  getConnectors: async (): Promise<StoredConnectors | undefined> => ({
-    enabledIds: [],
-    autoAllowIds: [],
-    disabledConnectorIds: [],
-    customMcpServers: [
-      {
-        id: 'cust-1',
-        name: 'my-server',
-        displayName: 'My Server',
-        transport: 'stdio',
-        enabled: true,
-        command: 'run'
-      }
-    ]
-  })
+  getConnectors: async () =>
+    projectConnectorsFromStored({
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [],
+      customMcpServers: [
+        {
+          id: 'cust-1',
+          name: 'my-server',
+          displayName: 'My Server',
+          transport: 'stdio',
+          enabled: true,
+          command: 'run'
+        }
+      ]
+    })
 }
 
 // Build an AgentsService wired exactly like production (src/main/ipc.ts): passthrough gateway for the

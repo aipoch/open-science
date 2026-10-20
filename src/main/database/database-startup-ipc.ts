@@ -1,7 +1,7 @@
 import type { App, BrowserWindow, IpcMain } from 'electron'
 
 import { DATABASE_STARTUP_CHANNELS } from '../../shared/database-startup'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { DatabaseStartupOwner } from './database-startup-owner'
 
 const log = createLogger('database-startup-ipc')

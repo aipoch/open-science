@@ -1,10 +1,10 @@
+import type { DurableDelegateRequest } from '../delegation/delegate-request-contract'
+import { MAX_DELEGATE_NAME_CODE_POINTS } from '../delegation/delegated-work-admission'
 import type {
   DurableCollectOptions,
-  DurableCollectSelector,
-  DurableDelegateRequest,
-  DurableDelegatedWork
-} from '../delegation/durable-delegated-work'
-import { MAX_DELEGATE_NAME_CODE_POINTS } from '../delegation/delegated-work-admission'
+  DurableCollectSelector
+} from '../delegation/delegated-work-record-types'
+import type { DurableDelegatedWork } from '../delegation/durable-delegated-work-contract'
 
 const MAX_DELEGATE_BATCH_ITEMS = 4
 
@@ -396,8 +396,8 @@ const parseCollectRpcCall = (params: Readonly<Record<string, unknown>>): Collect
 
 export {
   COLLECT_AGENT_CONTRACT,
-  DELEGATE_OBSERVATION_SCHEMA,
   DELEGATE_AGENT_CONTRACT,
+  DELEGATE_OBSERVATION_SCHEMA,
   parseCollectRpcCall,
   parseDelegateRpcCall
 }

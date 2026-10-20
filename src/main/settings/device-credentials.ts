@@ -13,9 +13,10 @@ import type {
   DeviceCredentialView,
   UpdateDeviceCredentialRequest
 } from '../../shared/settings'
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp'
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
+import { clearUnboundOAuthCredentials } from '@aipoch/connector-mcp-client'
+import { isSecureRemoteUrl } from '@aipoch/connector-core/url-admission'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
 import { encryptKey, tryDecryptKey } from './crypto'
 import {
@@ -127,7 +128,8 @@ export class DeviceCredentialStore {
               const oauth = normalizeOAuthConfig(request.oauth)
               validateOAuthRegistration(oauth, Boolean(request.oauth.clientSecret?.trim()))
               const resourceUri = canonicalizeResourceUri(request.resourceUri)
-              assertSecureCustomMcpUrl(resourceUri)
+              if (!isSecureRemoteUrl(resourceUri))
+                throw new Error('Remote MCP server URL must use HTTPS or loopback HTTP.')
               return {
                 id,
                 displayName,
@@ -308,7 +310,9 @@ export class DeviceCredentialStore {
         return undefined
       }
       assertDeviceCredentialOAuthStateLimits(parsed)
-      return parsed as StoredCustomMcpOAuthState
+      const state = parsed as StoredCustomMcpOAuthState
+      clearUnboundOAuthCredentials(state)
+      return state
     } catch {
       return undefined
     }

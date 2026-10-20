@@ -1,14 +1,11 @@
-import { pdfStructureCommandContracts } from '../shared/pdf-structure'
-import type {
-  ParsePdfStructureRequest,
-  ReadCachedPdfStructureRequest,
-  ReadPdfStructureThumbnailRequest,
-  PdfStructureResult
-} from '../shared/pdf-structure'
-import type { PdfStructureReader } from './literature/pdf-structure/reader'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import type { ArtifactPreviewResult, ReadArtifactPreviewRequest } from '../shared/artifacts'
-import type { LocalModelSnapshot } from '../shared/local-models'
-import type { LocalModelOwner } from './local-models/owner'
+import type {
+  BackgroundResultDeliveryProjectRequest,
+  BackgroundResultDeliverySessionRequest,
+  ProjectBackgroundActivity,
+  SessionBackgroundResultActivity
+} from '../shared/background-result-delivery'
 import type { CliLauncherStatus } from '../shared/cli'
 import type {
   GrantLocalRootRequest,
@@ -19,14 +16,33 @@ import type {
   RemoveGrantedLocalRootRequest,
   SetGrantedLocalRootAccessRequest
 } from '../shared/local-fs'
-import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
 import type {
+  LocalModelApi,
+  LocalModelCapability,
+  LocalModelSnapshot
+} from '../shared/local-models'
+import type {
+  InitializeLocalePreferenceRequest,
+  LocalePreferenceSnapshot,
+  SetLocalePreferenceRequest
+} from '../shared/locale'
+import type { LogFileStatus, OpenLogFileResult, RevealLogFileResult } from '../shared/logs'
+import type { NetworkInfo } from '../shared/network'
+import type {
+  NotificationDesktopAvailability,
   NotificationInboxSnapshot,
   NotificationMarkAllReadRequest,
   NotificationMarkReadRequest,
   NotificationMarkSessionCompletionsReadRequest,
+  NotificationTestResult,
   OpenSessionFromNotificationRequest
 } from '../shared/notifications'
+import type {
+  ParsePdfStructureRequest,
+  ReadCachedPdfStructureRequest,
+  ReadPdfStructureThumbnailRequest
+} from '../shared/pdf-structure'
+import { pdfStructureCommandContracts } from '../shared/pdf-structure'
 import type {
   ApproveRemotePairingRequest,
   RemoteAccessSnapshot,
@@ -40,10 +56,15 @@ import type {
   ReviewRunRequest,
   ReviewRunResult,
   ReviewSessionRequest,
+  ReviewLogRequest,
+  ReviewerLogEntry,
   ReviewWithChecks
 } from '../shared/reviewer'
-import type { RendererSessionPersistenceTarget } from './session-persistence/renderer-flush'
 import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
+import type {
+  CompletionHandoffCommand,
+  CompletionHandoffLifecycleEvent
+} from '../shared/specialist'
 import type {
   ActiveSessionInfo,
   DataRootInspection,
@@ -60,17 +81,22 @@ import type {
   UpdateDownloadOptions,
   UpdateStatus
 } from '../shared/update'
+import type { CompletionHandoffCommandOwner } from './agents/completion-handoff-ipc'
 import {
   defineApplicationCommand,
   defineApplicationCommandGroup,
   type ApplicationCommandInstallation,
   type ApplicationCommandRegistrar
 } from './application-command-router'
+import type { BackgroundResultActivityOwner } from './background-result-delivery/ipc'
 import type { CallerContext } from './caller-context'
 import type { CliCommandOwner } from './cli-install/ipc'
 import type { GithubCommandOwner } from './github-ipc'
+import type { PdfStructureReader } from './literature/pdf-structure/reader'
 import type { LocalFsService } from './local-fs/service'
+import type { LocalePreferenceOwner } from './locale/owner'
 import type { LogsCommandOwner } from './logs-ipc'
+import type { NetworkCommandOwner } from './network-ipc'
 import {
   requireNotificationMarkAllReadRequest,
   requireNotificationMarkReadRequest,
@@ -84,7 +110,8 @@ import {
 } from './remote-access/ipc'
 import type { RemoteAccessService } from './remote-access/service'
 import type { ReviewerCommandOwner } from './reviewer/ipc'
-import type { UpdateCommandOwner } from './update/ipc'
+import type { RendererSessionPersistenceTarget } from './session-persistence/flush-protocol'
+import type { UpdateCommandOwner } from './update/command-owner'
 
 type StorageParentRequest = Readonly<{ parent: string }>
 type StorageRootRequest = Readonly<{ parent: string; markOnboarding?: boolean }>
@@ -163,6 +190,16 @@ const logsCommands = Object.freeze({
 })
 
 const notificationCommands = Object.freeze({
+  getDesktopAvailability: defineApplicationCommand<
+    'notifications:get-desktop-availability',
+    readonly [],
+    NotificationDesktopAvailability
+  >('notifications:get-desktop-availability'),
+  sendTest: defineApplicationCommand<
+    'notifications:send-test',
+    readonly [],
+    NotificationTestResult
+  >('notifications:send-test'),
   getSnapshot: defineApplicationCommand<
     'notifications:get-snapshot',
     readonly [],
@@ -254,6 +291,11 @@ const reviewerCommands = Object.freeze({
     readonly [request: ReviewSessionRequest],
     ReviewWithChecks[]
   >('reviewer:get-for-session'),
+  getReviewLog: defineApplicationCommand<
+    'reviewer:get-review-log',
+    readonly [request: ReviewLogRequest],
+    ReviewerLogEntry[]
+  >('reviewer:get-review-log'),
   run: defineApplicationCommand<
     'reviewer:run',
     readonly [request: ReviewRunRequest],
@@ -337,6 +379,8 @@ const updateCommands = Object.freeze({
   >('update:apply'),
   cancel: defineApplicationCommand<'update:cancel', readonly [], UpdateStatus>('update:cancel'),
   check: defineApplicationCommand<'update:check', readonly [], UpdateStatus>('update:check'),
+  recheck: defineApplicationCommand<'update:recheck', readonly [], UpdateStatus>('update:recheck'),
+  recover: defineApplicationCommand<'update:recover', readonly [], UpdateStatus>('update:recover'),
   download: defineApplicationCommand<
     'update:download',
     readonly [options?: UpdateDownloadOptions],
@@ -380,21 +424,83 @@ const pdfStructureCommands = {
 const localModelCommands = Object.freeze({
   getSnapshot: defineApplicationCommand<
     'local-models:get-snapshot',
-    readonly [],
+    readonly [capability?: LocalModelCapability],
     LocalModelSnapshot
   >('local-models:get-snapshot'),
-  install: defineApplicationCommand<'local-models:install', readonly [], LocalModelSnapshot>(
-    'local-models:install'
+  install: defineApplicationCommand<
+    'local-models:install',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:install'),
+  cancel: defineApplicationCommand<
+    'local-models:cancel',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:cancel'),
+  remove: defineApplicationCommand<
+    'local-models:remove',
+    readonly [capability?: LocalModelCapability],
+    LocalModelSnapshot
+  >('local-models:remove')
+})
+
+const backgroundResultCommands = Object.freeze({
+  sessionActivity: defineApplicationCommand<
+    'background-result-delivery:session-activity',
+    readonly [BackgroundResultDeliverySessionRequest],
+    SessionBackgroundResultActivity
+  >('background-result-delivery:session-activity'),
+  projectActivity: defineApplicationCommand<
+    'background-result-delivery:project-activity',
+    readonly [BackgroundResultDeliveryProjectRequest],
+    ProjectBackgroundActivity
+  >('background-result-delivery:project-activity')
+})
+
+const networkCommands = Object.freeze({
+  getInfo: defineApplicationCommand<'network:get-info', readonly [], NetworkInfo>(
+    'network:get-info'
   ),
-  cancel: defineApplicationCommand<'local-models:cancel', readonly [], LocalModelSnapshot>(
-    'local-models:cancel'
-  ),
-  remove: defineApplicationCommand<'local-models:remove', readonly [], LocalModelSnapshot>(
-    'local-models:remove'
+  checkConnectivity: defineApplicationCommand<'network:check-connectivity', readonly [], boolean>(
+    'network:check-connectivity'
   )
 })
 
+const localeCommands = Object.freeze({
+  initialize: defineApplicationCommand<
+    'locale:initialize',
+    readonly [InitializeLocalePreferenceRequest],
+    LocalePreferenceSnapshot
+  >('locale:initialize'),
+  setPreference: defineApplicationCommand<
+    'locale:set-preference',
+    readonly [SetLocalePreferenceRequest],
+    LocalePreferenceSnapshot
+  >('locale:set-preference')
+})
+
+const completionHandoffCommands = Object.freeze({
+  getEvents: defineApplicationCommand<
+    'specialist:get-handoff-events',
+    readonly [string],
+    CompletionHandoffLifecycleEvent[]
+  >('specialist:get-handoff-events'),
+  retry: defineApplicationCommand<
+    'specialist:retry-handoff',
+    readonly [CompletionHandoffCommand],
+    unknown
+  >('specialist:retry-handoff'),
+  cancel: defineApplicationCommand<
+    'specialist:cancel-handoff',
+    readonly [CompletionHandoffCommand],
+    void
+  >('specialist:cancel-handoff')
+})
 const hostApplicationCommands = Object.freeze({
+  completionHandoff: completionHandoffCommands,
+  locale: localeCommands,
+  network: networkCommands,
+  backgroundResults: backgroundResultCommands,
   localModels: localModelCommands,
   pdfStructure: pdfStructureCommands,
   cli: cliCommands,
@@ -419,15 +525,26 @@ const hostApplicationCommandGroups = Object.freeze([
   defineApplicationCommandGroup('storage', Object.values(storageCommands)),
   defineApplicationCommandGroup('update', Object.values(updateCommands)),
   defineApplicationCommandGroup('local-models', Object.values(localModelCommands)),
-  defineApplicationCommandGroup('pdf-structure', Object.values(pdfStructureCommands))
+  defineApplicationCommandGroup('pdf-structure', Object.values(pdfStructureCommands)),
+  defineApplicationCommandGroup(
+    'background-result-delivery',
+    Object.values(backgroundResultCommands)
+  ),
+  defineApplicationCommandGroup('network', Object.values(networkCommands)),
+  defineApplicationCommandGroup('locale', Object.values(localeCommands)),
+  defineApplicationCommandGroup('completion-handoff', Object.values(completionHandoffCommands))
 ] as const)
 
 type HostApplicationCommandDependencies = Readonly<{
+  completionHandoff: CompletionHandoffCommandOwner
+  locale: Pick<LocalePreferenceOwner, 'initialize' | 'setPreference'>
+  network: NetworkCommandOwner
+  backgroundResults: BackgroundResultActivityOwner
   pdfStructure: Pick<
     PdfStructureReader,
     'parse' | 'cancel' | 'readThumbnail' | 'clearCache' | 'readCached'
   >
-  localModels: Pick<LocalModelOwner, 'getSnapshot' | 'install' | 'cancel' | 'remove'>
+  localModels: LocalModelApi
   cli: CliCommandOwner
   github: GithubCommandOwner
   localFs: Pick<
@@ -445,6 +562,9 @@ type HostApplicationCommandDependencies = Readonly<{
   >
   logs: LogsCommandOwner
   notifications: Readonly<{
+    getDesktopAvailability():
+      NotificationDesktopAvailability | Promise<NotificationDesktopAvailability>
+    sendTest(): Promise<NotificationTestResult>
     getSnapshot: () => Promise<NotificationInboxSnapshot>
     markAllRead: (request: NotificationMarkAllReadRequest) => Promise<void>
     markRead: (request: NotificationMarkReadRequest) => Promise<void>
@@ -466,7 +586,10 @@ type HostApplicationCommandDependencies = Readonly<{
     | 'revoke'
     | 'revokeBrowsers'
   >
-  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
+  reviewer: Pick<
+    ReviewerCommandOwner,
+    'run' | 'getForSession' | 'getReviewLog' | 'abort' | 'abortFixLoop'
+  >
   storage: Readonly<{
     acceptMissingDataRoot: () => Promise<void>
     acknowledgeDataRootHandoffFlush: (
@@ -584,6 +707,14 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[4], {
+      'notifications:get-desktop-availability': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.notifications.getDesktopAvailability()
+      },
+      'notifications:send-test': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.notifications.sendTest()
+      },
       'notifications:get-snapshot': () => dependencies.notifications.getSnapshot(),
       'notifications:mark-all-read': ({ args }) =>
         dependencies.notifications.markAllRead(requireNotificationMarkAllReadRequest(args[0])),
@@ -655,6 +786,7 @@ const registerHostApplicationCommands = (
       'reviewer:abort': ({ args }) => dependencies.reviewer.abort(args[0]),
       'reviewer:abort-fix-loop': ({ args }) => dependencies.reviewer.abortFixLoop(args[0]),
       'reviewer:get-for-session': ({ args }) => dependencies.reviewer.getForSession(args[0]),
+      'reviewer:get-review-log': ({ args }) => dependencies.reviewer.getReviewLog(args[0]),
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[7], {
@@ -723,24 +855,32 @@ const registerHostApplicationCommands = (
       'update:cancel': ({ callerContext }) =>
         localCommand(callerContext, 'update:cancel', () => dependencies.update.cancel()),
       'update:check': () => dependencies.update.check(),
+      'update:recheck': ({ callerContext }) =>
+        localCommand(callerContext, 'update:recheck', () => dependencies.update.recheck()),
+      'update:recover': ({ callerContext }) =>
+        localCommand(callerContext, 'update:recover', () => dependencies.update.recover()),
       'update:download': ({ args, callerContext }) =>
         localCommand(callerContext, 'update:download', () => dependencies.update.download(args[0])),
       'update:get-app-info': () => dependencies.update.getAppInfo(),
       'update:get-status': () => dependencies.update.getStatus()
     })
     scope.registerGroup(hostApplicationCommandGroups[9], {
-      'local-models:get-snapshot': ({ callerContext }) =>
+      'local-models:get-snapshot': ({ callerContext, args }) =>
         localCommand(callerContext, 'local-models:get-snapshot', () =>
-          dependencies.localModels.getSnapshot()
+          dependencies.localModels.getSnapshot(args[0])
         ),
-      'local-models:install': ({ callerContext }) =>
+      'local-models:install': ({ callerContext, args }) =>
         localCommand(callerContext, 'local-models:install', () =>
-          dependencies.localModels.install()
+          dependencies.localModels.install(args[0])
         ),
-      'local-models:cancel': ({ callerContext }) =>
-        localCommand(callerContext, 'local-models:cancel', () => dependencies.localModels.cancel()),
-      'local-models:remove': ({ callerContext }) =>
-        localCommand(callerContext, 'local-models:remove', () => dependencies.localModels.remove())
+      'local-models:cancel': ({ callerContext, args }) =>
+        localCommand(callerContext, 'local-models:cancel', () =>
+          dependencies.localModels.cancel(args[0])
+        ),
+      'local-models:remove': ({ callerContext, args }) =>
+        localCommand(callerContext, 'local-models:remove', () =>
+          dependencies.localModels.remove(args[0])
+        )
     })
     scope.registerGroup(hostApplicationCommandGroups[10], {
       'pdf-structure:read-cached': ({ callerContext, callerLease, args: [request] }) =>
@@ -763,6 +903,46 @@ const registerHostApplicationCommands = (
         localCommand(callerContext, 'pdf-structure:clear-cache', () =>
           dependencies.pdfStructure.clearCache(callerContext, callerLease)
         )
+    })
+    scope.registerGroup(hostApplicationCommandGroups[11], {
+      'background-result-delivery:session-activity': ({ args }) =>
+        dependencies.backgroundResults.sessionActivity(args[0]),
+      'background-result-delivery:project-activity': ({ args }) =>
+        dependencies.backgroundResults.projectActivity(args[0])
+    })
+    scope.registerGroup(hostApplicationCommandGroups[13], {
+      'locale:initialize': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.locale.initialize(args[0]?.cachedPreference)
+      },
+      'locale:set-preference': ({ args, callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.locale.setPreference(args[0]?.preference)
+      }
+    })
+    scope.registerGroup(hostApplicationCommandGroups[12], {
+      'network:get-info': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.getInfo()
+      },
+      'network:check-connectivity': ({ callerContext }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.network.checkConnectivity()
+      }
+    })
+    scope.registerGroup(hostApplicationCommandGroups[14], {
+      'specialist:get-handoff-events': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.getEvents(args[0])
+      },
+      'specialist:retry-handoff': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.retry(args[0])
+      },
+      'specialist:cancel-handoff': ({ callerContext, args }) => {
+        requireDesktopCaller(callerContext)
+        return dependencies.completionHandoff.cancel(args[0])
+      }
     })
     return scope.complete()
   } catch (error) {

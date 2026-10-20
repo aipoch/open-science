@@ -1,35 +1,40 @@
+// @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
+import { FocusScope } from '@radix-ui/react-focus-scope'
+import { configureTestRuntimeMetadata } from '../../../../../test/runtime-metadata'
+import { literatureDeletionError } from '../../../../shared/literature-deletion'
 import type { PdfAnnotation } from '../../../../shared/pdf-annotations'
 import * as annotationReveal from '../workspace/annotations/annotation-reveal'
-import { FocusScope } from '@radix-ui/react-focus-scope'
-import { literatureDeletionError } from '../../../../shared/literature-deletion'
-// @vitest-environment jsdom
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
-import { literatureJobRequestSchema } from '../../../../shared/literature-jobs'
+import { i18next } from '@/i18n'
+import { useNavigationStore } from '@/stores/navigation-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
+import { createInitialTagState, useTagStore } from '@/stores/tag-store'
+import { literatureJobRequestSchema } from '@aipoch/literature-discovery/jobs'
+import type {
+  LiteratureCatalogReceipt,
+  LiteratureCatalogSearchRequest,
+  LiteratureInboxCandidateView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import {
   LITERATURE_IMPORT_IDENTITY_CONFLICT,
   literatureCatalogCommandSchema
-} from '../../../../shared/literature'
-import type {
-  LiteratureCatalogReceipt,
-  LiteratureCatalogSearchPage,
-  LiteratureCatalogSearchRequest,
-  LiteratureInboxCandidateView,
-  LiteratureItemInput,
-  LiteratureItemView
-} from '../../../../shared/literature'
-import type { SmartCollectionView } from '../../../../shared/literature-smart-collections'
+} from '@aipoch/literature-library/contracts'
+import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
+import type { LiteratureCatalogSearchPage } from '../../../../shared/literature'
 import type { Project } from '../../../../shared/projects'
-import { useNavigationStore } from '@/stores/navigation-store'
-import { createInitialSessionState, useSessionStore } from '@/stores/session-store'
-import { useSettingsStore } from '@/stores/settings-store'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
-import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
-import { createInitialTagState, useTagStore } from '@/stores/tag-store'
 import { LiteratureLibraryPage } from './LiteratureLibraryPage'
-import { useAttachmentOperations } from './literature-attachment-operations'
-import { i18next } from '@/i18n'
+import { LiteratureSearchInput } from './list/LiteratureSearchInput'
+
+// Integration: exercise the real navigation, project and preview adapters.
+const { render } = createLiteratureTestRenderer(literatureRendererHost)
 
 if (!Element.prototype.scrollIntoView) {
   Element.prototype.scrollIntoView = (): void => undefined
@@ -60,7 +65,8 @@ vi.mock('./LiteratureTable', async (importOriginal) => {
   }
 })
 
-vi.mock('./literature-pdf-metadata', () => ({
+vi.mock('./imports/literature-pdf-metadata', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./imports/literature-pdf-metadata')>()),
   extractLiteraturePdfDraft,
   completeLiteraturePdfDraft
 }))
@@ -257,7 +263,6 @@ describe('LiteratureLibraryPage', () => {
   const saveBlobFile = vi.fn()
 
   beforeEach(() => {
-    useAttachmentOperations.setState({ operations: [] })
     useSessionStore.setState(createInitialSessionState())
     // Failed assertions must not leak unused one-shot IPC replies into another scenario.
     search.mockReset()
@@ -270,6 +275,8 @@ describe('LiteratureLibraryPage', () => {
       activeProjectId: undefined,
       pendingLiteratureItemId: undefined,
       pendingLiteratureAnnotation: undefined,
+      pendingLiteraturePdfImport: undefined,
+      pendingLiteratureLibrarySection: undefined,
       pendingLiteratureProjectId: undefined,
       pendingLiteratureCollectionId: undefined,
       startPdfReadingConversation,
@@ -371,9 +378,11 @@ describe('LiteratureLibraryPage', () => {
           : {})
       })
     )
-    completeLiteraturePdfDraft.mockImplementation(async (draft: LiteratureItemInput) => draft)
-    extractLiteraturePdfDraft.mockImplementation((_file: File, fallback: LiteratureItemInput) =>
-      Promise.resolve(fallback)
+    completeLiteraturePdfDraft.mockImplementation(
+      async (_api: unknown, draft: LiteratureItemInput) => draft
+    )
+    extractLiteraturePdfDraft.mockImplementation(
+      (_api: unknown, _file: File, fallback: LiteratureItemInput) => Promise.resolve(fallback)
     )
     completeMetadata.mockImplementation((request: { mode: 'commit' | 'preview' }) => {
       const completedItem = {
@@ -418,6 +427,8 @@ describe('LiteratureLibraryPage', () => {
         platform: 'darwin',
         saveBlobFile,
         literature: {
+          getCandidateStates: vi.fn(async () => ({ candidates: [] })),
+          journals: vi.fn(async () => ({ datasets: [], matches: [] })),
           exportRecord: vi.fn(),
           sources: vi.fn(async () => []),
           onChanged: vi.fn(() => () => undefined),
@@ -450,6 +461,7 @@ describe('LiteratureLibraryPage', () => {
           formatDocument: vi.fn(),
           formatReferences,
           importPdf,
+          addPdf: vi.fn(),
           cancelPdfImport: vi.fn().mockResolvedValue({ cancelled: true }),
           importRecords
         },
@@ -538,8 +550,11 @@ describe('LiteratureLibraryPage', () => {
       render(<LiteratureLibraryPage />)
       if (collapsed) fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
       const back = screen.getByRole('button', { name: 'Back to Project' })
-      if (collapsed) expect(back.getAttribute('title')).toBe('Back to Project')
-      else expect(back.textContent).toBe('Back to Project')
+      if (collapsed) {
+        expect(back.hasAttribute('title')).toBe(false)
+        fireEvent.pointerMove(back, { pointerType: 'mouse' })
+        expect((await screen.findByRole('tooltip')).textContent).toBe('Back to Project')
+      } else expect(back.textContent).toBe('Back to Project')
       fireEvent.click(back)
       expect(useNavigationStore.getState()).toMatchObject({
         view: 'workspace',
@@ -548,6 +563,74 @@ describe('LiteratureLibraryPage', () => {
       expect(useSessionStore.getState().selectedSessionId).toBe('older')
     }
   )
+
+  it('opens All references for an explicit user-level Literature section intent', async () => {
+    search.mockImplementation(async ({ scope }: { scope?: string }) =>
+      scope === 'library' ? { entries: [libraryItem], totalCount: 1 } : { entries: [] }
+    )
+    useNavigationStore.setState({ pendingLiteratureLibrarySection: 'library' })
+
+    render(<LiteratureLibraryPage />)
+
+    expect(await screen.findByRole('heading', { name: 'All references' })).not.toBeNull()
+    await waitFor(() =>
+      expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+    )
+    expect(useNavigationStore.getState().pendingLiteratureLibrarySection).toBeUndefined()
+  })
+
+  it('imports a Workspace PDF through the existing metadata dialog into its Project without re-uploading', async () => {
+    const source = {
+      kind: 'upload-version' as const,
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      sourceFileId: 'upload-1',
+      versionId: 'version-1',
+      checksum: 'a'.repeat(64),
+      name: 'workspace-paper.pdf',
+      path: 'upload-version:version-1'
+    }
+    useNavigationStore.getState().openProjectLiterature('project-1', 'user', { pdf: source })
+    vi.mocked(window.api.literature.addPdf).mockResolvedValue({ item: libraryItem })
+    render(<LiteratureLibraryPage />)
+    expect(await screen.findByRole('dialog', { name: 'Import PDF' })).not.toBeNull()
+    const title = await screen.findByLabelText('Title')
+    expect((title as HTMLInputElement).value).toBe('workspace paper')
+    expect(extractLiteraturePdfDraft).toHaveBeenCalledWith(
+      expect.objectContaining({ api: window.api }),
+      source,
+      expect.anything(),
+      expect.any(Function)
+    )
+    expect(window.api.literature.addPdf).not.toHaveBeenCalled()
+    fireEvent.change(title, { target: { value: 'Reviewed Workspace paper' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+    await waitFor(() =>
+      expect(window.api.literature.addPdf).toHaveBeenCalledWith({
+        source,
+        itemId: libraryItem.id,
+        operationId: expect.any(String)
+      })
+    )
+    expect(transact).toHaveBeenCalledWith({
+      kind: 'create-item',
+      item: expect.objectContaining({ title: 'Reviewed Workspace paper' })
+    })
+    expect(transact).toHaveBeenCalledWith({
+      kind: 'set-project-item',
+      projectId: 'project-1',
+      itemId: libraryItem.id,
+      included: true,
+      source: 'library'
+    })
+    expect(transact.mock.calls.some(([command]) => command.kind === 'set-collection-item')).toBe(
+      false
+    )
+    expect(stageLocalFile).not.toHaveBeenCalled()
+    expect(importPdf).not.toHaveBeenCalled()
+    expect(deleteUpload).not.toHaveBeenCalled()
+    expect(useNavigationStore.getState().pendingLiteraturePdfImport).toBeUndefined()
+  })
 
   it.each(['home', 'deleted', 'archived'] as const)('returns Home for a %s origin', (kind) => {
     useNavigationStore.setState({ activeProjectId: kind === 'home' ? undefined : 'project-1' })
@@ -726,6 +809,95 @@ describe('LiteratureLibraryPage', () => {
     }
   })
 
+  it.each(['committed', 'pending'] as const)(
+    'clears the catalog search and its %s draft without a stale debounce restoring it',
+    async (phase) => {
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      await waitFor(() =>
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ scope: 'library' }))
+      )
+      if (phase === 'pending') {
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+        fireEvent.change(screen.getByLabelText('From year'), { target: { value: '2020' } })
+        await waitFor(() =>
+          expect(search).toHaveBeenCalledWith(
+            expect.objectContaining({ filter: expect.objectContaining({ yearFrom: 2020 }) })
+          )
+        )
+        fireEvent.keyDown(screen.getByLabelText('From year'), { key: 'Escape' })
+      }
+      const input = screen.getByLabelText('Search references') as HTMLInputElement
+      vi.useFakeTimers()
+      try {
+        fireEvent.change(input, { target: { value: 'missing' } })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(phase === 'committed' ? 301 : 200)
+        })
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+        expect(input.value).toBe('')
+        expect(screen.getByLabelText('Search references')).toBe(input)
+        search.mockClear()
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(301)
+        })
+        expect(search).not.toHaveBeenCalledWith(expect.objectContaining({ query: 'missing' }))
+        fireEvent.change(input, { target: { value: 'new search' } })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(300)
+        })
+        expect(search).toHaveBeenCalledWith(expect.objectContaining({ query: 'new search' }))
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  )
+
+  it('keeps a newer search draft when its own earlier commit is acknowledged', async () => {
+    const commit = vi.fn()
+    const props = { resetRevision: 0, onCommit: commit, onDraftChange: vi.fn() }
+    const { rerender } = render(<LiteratureSearchInput initialValue="" {...props} />)
+    const input = screen.getByLabelText('Search references') as HTMLInputElement
+    vi.useFakeTimers()
+    try {
+      fireEvent.change(input, { target: { value: 'first' } })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).toHaveBeenCalledExactlyOnceWith('first')
+      fireEvent.change(input, { target: { value: 'newer' } })
+      rerender(<LiteratureSearchInput initialValue="first" {...props} />)
+      expect(input.value).toBe('newer')
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).toHaveBeenLastCalledWith('newer')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('resets a composing search draft even when the owner query is already empty', async () => {
+    const commit = vi.fn()
+    const props = { initialValue: '', onCommit: commit, onDraftChange: vi.fn() }
+    const { rerender } = render(<LiteratureSearchInput resetRevision={0} {...props} />)
+    const input = screen.getByLabelText('Search references') as HTMLInputElement
+    vi.useFakeTimers()
+    try {
+      fireEvent.compositionStart(input)
+      fireEvent.change(input, { target: { value: 'zhong' } })
+      rerender(<LiteratureSearchInput resetRevision={1} {...props} />)
+      expect(input.value).toBe('')
+      fireEvent.compositionEnd(input)
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(300)
+      })
+      expect(commit).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it.each(['focus', 'visibility', 'scope return', 'remount'] as const)(
     'reads externally committed references after %s',
     async (recovery) => {
@@ -874,6 +1046,23 @@ describe('LiteratureLibraryPage', () => {
         ? { entries: structuredClone(rows), totalCount: 1029, nextOffset: 50 }
         : { entries: [] }
     )
+    vi.mocked(window.api.literature.journals).mockImplementation(async (request) =>
+      request.action === 'list'
+        ? {
+            datasets: [
+              {
+                id: 'stable',
+                source: 'Stable metadata',
+                year: 2031,
+                revision: 1,
+                count: 50,
+                importedAt: 1,
+                fields: [{ id: 'score', label: 'Score', kind: 'number', colors: {}, visible: true }]
+              }
+            ]
+          }
+        : { matches: [] }
+    )
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
     await screen.findByRole('button', { name: 'Render fixture 0' })
@@ -883,6 +1072,10 @@ describe('LiteratureLibraryPage', () => {
     expect([...rowTitleRenders.values()].reduce((a, b) => a + b, 0)).toBe(0)
     await act(async () => {
       window.dispatchEvent(new Event('focus'))
+    })
+    expect([...rowTitleRenders.values()].reduce((a, b) => a + b, 0)).toBe(0)
+    await act(async () => {
+      window.dispatchEvent(new Event('open-science:web-events-open'))
     })
     expect([...rowTitleRenders.values()].reduce((a, b) => a + b, 0)).toBe(0)
     rows = rows.map((entry, i) =>
@@ -1272,7 +1465,7 @@ describe('LiteratureLibraryPage', () => {
       fireEvent.click(screen.getByRole('button', { name: 'All references' }))
       await screen.findByText(libraryItem.item.title)
       fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
-      fireEvent.click(await screen.findByRole('checkbox', { name: 'Notes' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Notes: Show column' }))
       expect(screen.getByRole('columnheader', { name: 'Notes' })).not.toBeNull()
       const attempts = write.mock.calls.length
       await act(async () => {})
@@ -1307,7 +1500,7 @@ describe('LiteratureLibraryPage', () => {
       if (deliverEvent)
         expect.soft(screen.queryByRole('columnheader', { name: 'Abstract' })).not.toBeNull()
       fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
-      fireEvent.click(await screen.findByRole('checkbox', { name: 'Notes' }))
+      fireEvent.click(await screen.findByRole('button', { name: 'Notes: Show column' }))
       expect(JSON.parse(localStorage.getItem(key)!).visible).toEqual(
         expect.arrayContaining(['abstract', 'notes'])
       )
@@ -1432,6 +1625,36 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.queryByRole('button', { name: 'Collection 101' })).not.toBeNull()
   })
 
+  it.each(['Escape', 'Cancel', 'Back', 'Close'])(
+    'confirms dirty metadata dismissal through %s and retains cancelled drafts',
+    async (action) => {
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
+      )
+      get.mockResolvedValue(libraryItem)
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      await openMenu(screen.getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+      fireEvent.change(screen.getByLabelText('Title'), { target: { value: 'Keep this draft' } })
+      const dismiss = (): void => {
+        if (action === 'Escape')
+          fireEvent.keyDown(screen.getByLabelText('Title'), { key: 'Escape' })
+        else fireEvent.click(within(detail).getByRole('button', { name: action }))
+      }
+      dismiss()
+      expect(await screen.findByRole('alertdialog')).not.toBeNull()
+      fireEvent.click(screen.getByRole('button', { name: 'Keep editing' }))
+      expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe('Keep this draft')
+      expect(transact).not.toHaveBeenCalled()
+      dismiss()
+      fireEvent.click(await screen.findByRole('button', { name: 'Discard changes' }))
+      expect(screen.queryByLabelText('Title')).toBeNull()
+      expect(transact).not.toHaveBeenCalled()
+    }
+  )
+
   it('prevents metadata edits from being lost while a save is in flight', async () => {
     search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -1524,7 +1747,7 @@ describe('LiteratureLibraryPage', () => {
     })
     expect(await screen.findByText('No duplicates found')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    expect(await screen.findByText('No references found')).not.toBeNull()
+    expect(await screen.findByText('No references yet')).not.toBeNull()
   })
 
   it('shows duplicate group count between All references and Trash and reviews a group before merging', async () => {
@@ -1566,9 +1789,11 @@ describe('LiteratureLibraryPage', () => {
       .map((button) => button.getAttribute('aria-label'))
     expect(buttons.indexOf('Duplicates')).toBe(buttons.indexOf('All references') + 1)
     expect(buttons.indexOf('Trash')).toBe(buttons.indexOf('Duplicates') + 1)
+    expect(buttons.indexOf('Journals')).toBeGreaterThan(buttons.indexOf('Trash'))
+    expect(buttons.indexOf('Citation styles')).toBeGreaterThan(buttons.indexOf('Journals'))
     expect(await within(nav).findByLabelText('1 duplicate group')).not.toBeNull()
     fireEvent.click(within(nav).getByRole('button', { name: 'All references' }))
-    expect(await screen.findByText('No references found')).not.toBeNull()
+    expect(await screen.findByText('No references yet')).not.toBeNull()
     const libraryRequests = search.mock.calls.filter(
       ([request]) => request.scope === 'library' && !request.countOnly
     ).length
@@ -2486,15 +2711,92 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('shows the current reference URL when opening a table row', async () => {
+    const urlOnlyItem: LiteratureItemView = {
+      ...libraryItem,
+      item: { ...libraryItem.item, url: 'https://example.test/A', identifiers: [] }
+    }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [urlOnlyItem] } : { entries: [] })
+    )
+    get.mockResolvedValue(urlOnlyItem)
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+
+    const detail = await openReferenceDetail(await screen.findByText(urlOnlyItem.item.title))
+    expect(
+      within(detail)
+        .getByRole('link', { name: `URL: ${urlOnlyItem.item.url}` })
+        .getAttribute('href')
+    ).toBe(urlOnlyItem.item.url)
+  })
+
+  it('shows the current reference URL after cancelling metadata edits and switching references', async () => {
+    const first: LiteratureItemView = {
+      ...libraryItem,
+      item: { ...libraryItem.item, url: 'https://example.test/A', identifiers: [] }
+    }
+    const second: LiteratureItemView = {
+      ...libraryItem,
+      id: 'item-2',
+      item: {
+        ...libraryItem.item,
+        title: 'Second reference',
+        url: 'https://example.test/B',
+        identifiers: []
+      }
+    }
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(request.scope === 'library' ? { entries: [first, second] } : { entries: [] })
+    )
+    get.mockImplementation((id: string) => Promise.resolve(id === first.id ? first : second))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const firstDetail = await openReferenceDetail(await screen.findByText(first.item.title))
+    await openMenu(within(firstDetail).getByRole('button', { name: 'More actions' }))
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Edit metadata' }))
+    fireEvent.click(within(firstDetail).getByRole('button', { name: 'Cancel' }))
+    await waitFor(() => expect(screen.queryByLabelText('Title')).toBeNull())
+    expect(
+      within(firstDetail)
+        .getByRole('link', { name: `URL: ${first.item.url}` })
+        .getAttribute('href')
+    ).toBe(first.item.url)
+    fireEvent.click(within(firstDetail).getByRole('button', { name: 'Close' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+
+    const secondDetail = await openReferenceDetail(await screen.findByText(second.item.title))
+    expect(
+      within(secondDetail)
+        .getByRole('link', { name: `URL: ${second.item.url}` })
+        .getAttribute('href')
+    ).toBe(second.item.url)
+    expect(within(secondDetail).queryByRole('link', { name: `URL: ${first.item.url}` })).toBeNull()
+  })
+
   it('opens the Literature detail selected by a one-shot navigation intent', async () => {
-    get.mockResolvedValue(libraryItem)
-    useNavigationStore.getState().openLiteratureItem(libraryItem.id, 'user')
+    const urlOnlyItem: LiteratureItemView = {
+      ...libraryItem,
+      item: {
+        ...libraryItem.item,
+        url: 'https://example.test/reference',
+        identifiers: []
+      }
+    }
+    get.mockResolvedValue(urlOnlyItem)
+    useNavigationStore.getState().openLiteratureItem(urlOnlyItem.id, 'user')
 
     render(<LiteratureLibraryPage />)
 
-    await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
-    expect(await screen.findByRole('dialog')).not.toBeNull()
-    expect(await screen.findByRole('heading', { name: libraryItem.item.title })).not.toBeNull()
+    await waitFor(() => expect(get).toHaveBeenCalledWith(urlOnlyItem.id))
+    const dialog = await screen.findByRole('dialog')
+    expect(await screen.findByRole('heading', { name: urlOnlyItem.item.title })).not.toBeNull()
+    const urlLink = within(dialog).getByRole('link', {
+      name: `URL: ${urlOnlyItem.item.url}`
+    })
+    expect(urlLink.getAttribute('href')).toBe(urlOnlyItem.item.url)
+    expect(urlLink.getAttribute('target')).toBe('_blank')
+    expect(urlLink.getAttribute('rel')).toBe('noreferrer')
     expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
   })
 
@@ -2576,6 +2878,16 @@ describe('LiteratureLibraryPage', () => {
       pendingLiteratureProjectId: 'project-1',
       openProject
     })
+
+    search.mockImplementation((request: LiteratureCatalogSearchRequest) =>
+      Promise.resolve(
+        request.scope === 'project-counts'
+          ? { entries: [{ projectId: 'project-1', itemCount: 1 }] }
+          : request.scope === 'library'
+            ? { entries: [libraryItem] }
+            : { entries: [] }
+      )
+    )
 
     render(<LiteratureLibraryPage />)
 
@@ -2877,7 +3189,7 @@ describe('LiteratureLibraryPage', () => {
     const newCollectionButton = screen.getByRole('button', { name: 'New collection' })
     expect(collectionsGroup.parentElement).toBe(newCollectionButton.parentElement)
     expect(collectionsGroup.contains(newCollectionButton)).toBe(false)
-    expect(screen.getByRole('button', { name: 'Settings' }).parentElement).not.toBe(
+    expect(screen.getByRole('button', { name: 'Citation styles' }).parentElement).not.toBe(
       newCollectionButton.parentElement
     )
     fireEvent.click(collectionsGroup)
@@ -3051,7 +3363,31 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.queryByText('Your research references')).toBeNull()
     expect(screen.getByRole('button', { name: 'Expand sidebar panel' })).not.toBeNull()
     expect(screen.getByRole('button', { name: 'All references' })).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Settings' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Citation styles' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Journals' })).not.toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Citation styles' }).querySelector('.lucide-file-cog')
+    ).not.toBeNull()
+    expect(
+      screen.getByRole('button', { name: 'Journals' }).querySelector('.lucide-library-big')
+    ).not.toBeNull()
+    for (const label of [
+      'Expand sidebar panel',
+      'Inbox',
+      'All references',
+      'Duplicates',
+      'Trash',
+      'New collection',
+      'Citation styles',
+      'Journals'
+    ]) {
+      const button = screen.getByRole('button', { name: label })
+      expect(button.hasAttribute('title')).toBe(false)
+      fireEvent.pointerMove(button, { pointerType: 'mouse' })
+      await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe(label))
+      fireEvent.pointerLeave(button, { pointerType: 'mouse' })
+      await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull())
+    }
     expect(
       screen.getByRole('button', { name: 'New collection' }).parentElement?.className
     ).toContain('items-center')
@@ -3174,6 +3510,15 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Show fewer collections' }))
     expect(screen.getByRole('button', { name: 'Collection 8' })).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Collection 5' })).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar panel' }))
+    for (const label of ['Project 1', 'Collection 8']) {
+      const button = screen.getByRole('button', { name: label })
+      fireEvent.pointerMove(button, { pointerType: 'mouse' })
+      await waitFor(() => expect(screen.getByRole('tooltip').textContent).toBe(label))
+      fireEvent.keyDown(button, { key: 'Escape' })
+      fireEvent.pointerLeave(button, { pointerType: 'mouse' })
+    }
   })
 
   it('toggles the Literature navigation with the platform sidebar shortcut', () => {
@@ -3330,6 +3675,219 @@ describe('LiteratureLibraryPage', () => {
           itemIds: [libraryItem.id]
         })
       )
+    )
+  })
+
+  it.each(['success', 'failure'] as const)(
+    'keeps record import open until delayed destination linking settles with %s',
+    async (outcome) => {
+      const linking = Promise.withResolvers<LiteratureCatalogReceipt>()
+      transact.mockImplementationOnce(() => linking.promise)
+      const file = new File(['references'], 'references.bib')
+      Object.defineProperty(file, 'text', { value: async () => '@article{x,title={Example}}' })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'Retrieval research' }))
+      fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+      const dialog = await screen.findByRole('dialog')
+      const submit = await within(dialog).findByRole('button', { name: 'Import references' })
+      await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+      fireEvent.click(submit)
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+      const done = within(dialog).getByRole('button', { name: 'Done' })
+      expect(done).toHaveProperty('disabled', true)
+      fireEvent.click(done)
+      fireEvent.click(within(dialog).getByRole('button', { name: 'Close' }))
+      fireEvent.keyDown(dialog, { key: 'Escape' })
+      expect(screen.getByRole('dialog')).toBe(dialog)
+      await act(async () => {
+        if (outcome === 'success') linking.resolve({ kind: 'item', id: libraryItem.id })
+        else linking.reject(new Error('Destination unavailable'))
+      })
+      if (outcome === 'failure')
+        expect(
+          await within(dialog).findByText(
+            'References were saved, but the destination could not be updated. You can find them in All references.'
+          )
+        ).not.toBeNull()
+      await waitFor(() => expect(done).toHaveProperty('disabled', false))
+      expect(
+        importRecords.mock.calls.filter(([request]) => request.mode === 'commit')
+      ).toHaveLength(1)
+      fireEvent.click(done)
+      await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    }
+  )
+
+  it('keeps the committed records and only the linked project subset after a later import batch fails', async () => {
+    const importedItems = Array.from({ length: 201 }, (_, index) => {
+      const item = createLibraryItem(index)
+      return {
+        ...item,
+        item: {
+          ...item.item,
+          title: `Partial import reference ${index}`,
+          identifiers: [
+            { scheme: 'doi' as const, value: `10.0000/import-${index}`, isPrimary: true }
+          ]
+        }
+      }
+    })
+    const savedItems = new Map<string, LiteratureItemView>()
+    const linkedIds = new Set<string>()
+    const secondBatch = Promise.withResolvers<LiteratureCatalogReceipt>()
+    let revision = 0
+    const broadcastSavedItems = (itemIds: string[]): void => {
+      // Successful catalog writes publish itemIds before returning their receipt.
+      const event = { revision: ++revision, itemIds }
+      vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) => listener(event))
+    }
+    search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+      if (request.scope === 'project-counts')
+        return { entries: [{ projectId: 'project-1', itemCount: linkedIds.size }] }
+      if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+      const matching = [...savedItems.values()]
+        .filter((item) => !request.projectId || item.projectIds.includes(request.projectId))
+        .sort((a, b) => b.createdAt - a.createdAt)
+      const offset = request.offset ?? 0
+      const limit = request.limit ?? 50
+      return {
+        entries: request.countOnly ? [] : matching.slice(offset, offset + limit),
+        totalCount: matching.length,
+        nextOffset:
+          !request.countOnly && offset + limit < matching.length ? offset + limit : undefined
+      }
+    })
+    importRecords.mockImplementation(async (request: { mode: 'commit' | 'preview' }) => {
+      if (request.mode === 'commit') {
+        importedItems.forEach((item) => savedItems.set(item.id, item))
+        broadcastSavedItems(importedItems.map((item) => item.id))
+      }
+      return {
+        format: 'bibtex',
+        items: importedItems.map((item) => item.item),
+        entries: importedItems.map((item, index) => ({
+          index,
+          title: item.item.title,
+          status: 'ready',
+          warnings: [],
+          item: item.item
+        })),
+        errors: [],
+        truncated: false,
+        scannedEntries: importedItems.length,
+        ...(request.mode === 'commit'
+          ? {
+              imported: {
+                itemIds: importedItems.map((item) => item.id),
+                createdCount: importedItems.length,
+                reusedCount: 0
+              }
+            }
+          : {})
+      }
+    })
+    transact.mockImplementation((command) => {
+      if (command.kind !== 'set-project-items') throw new Error('Unexpected catalog command')
+      if (transact.mock.calls.length === 2) return secondBatch.promise
+      command.itemIds.forEach((id: string) => {
+        linkedIds.add(id)
+        savedItems.set(id, { ...savedItems.get(id)!, projectIds: [command.projectId] })
+      })
+      broadcastSavedItems(command.itemIds)
+      return Promise.resolve({ kind: 'item', id: command.itemIds[0], state: 'linked' })
+    })
+    useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+    render(<LiteratureLibraryPage />)
+    await screen.findByRole('heading', { name: 'Retrieval research' })
+    const projectButton = screen.getByRole('button', { name: 'Retrieval research' })
+    const libraryButton = screen.getByRole('button', { name: 'All references' })
+    await within(projectButton).findByText('0')
+    const content = '@article{example, title={Example}}'
+    const file = new File([content], 'references.bib')
+    Object.defineProperty(file, 'text', { value: async () => content })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    const dialog = await screen.findByRole('dialog')
+    const submit = await within(dialog).findByRole('button', { name: 'Import references' })
+    await waitFor(() => expect(submit).toHaveProperty('disabled', false))
+    fireEvent.click(submit)
+    await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+    expect(transact.mock.calls.map(([command]) => command)).toEqual([
+      {
+        kind: 'set-project-items',
+        projectId: 'project-1',
+        itemIds: importedItems.slice(0, 200).map((item) => item.id),
+        included: true,
+        source: 'library'
+      },
+      {
+        kind: 'set-project-items',
+        projectId: 'project-1',
+        itemIds: [importedItems[200].id],
+        included: true,
+        source: 'library'
+      }
+    ])
+    await within(projectButton).findByText('200')
+    await within(libraryButton).findByText('201')
+    const done = within(dialog).getByRole('button', { name: 'Done' })
+    const close = within(dialog).getByRole('button', { name: 'Close' })
+    expect(done).toHaveProperty('disabled', true)
+    expect(close).toHaveProperty('disabled', true)
+    fireEvent.click(done)
+    fireEvent.click(close)
+    fireEvent.keyDown(dialog, { key: 'Escape' })
+    expect(screen.getByRole('dialog')).toBe(dialog)
+    await act(async () => secondBatch.reject(new Error('Second project batch unavailable')))
+    expect(
+      await within(dialog).findByText(
+        'References were saved, but the destination could not be updated. You can find them in All references.'
+      )
+    ).not.toBeNull()
+    expect(within(dialog).getByText('Created').parentElement?.textContent).toBe('201Created')
+    expect(within(dialog).getByText('Failed').parentElement?.textContent).toBe('0Failed')
+    await waitFor(() => expect(done).toHaveProperty('disabled', false))
+    expect(close).toHaveProperty('disabled', false)
+    expect(within(dialog).queryByRole('button', { name: 'Import references' })).toBeNull()
+    expect(importRecords.mock.calls.filter(([request]) => request.mode === 'commit')).toEqual([
+      [{ mode: 'commit', content }]
+    ])
+    expect(savedItems.size).toBe(201)
+    expect(linkedIds).toEqual(new Set(importedItems.slice(0, 200).map((item) => item.id)))
+    fireEvent.click(done)
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(within(projectButton).getByText('200')).not.toBeNull()
+    expect(screen.getByText(/200 references/)).not.toBeNull()
+    fireEvent.click(screen.getByLabelText('References per page'))
+    fireEvent.click(screen.getByRole('option', { name: '100' }))
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 199' })
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      ).toHaveLength(100)
+    )
+    const firstPage = screen
+      .getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      .map((checkbox) => checkbox.getAttribute('aria-label'))
+    expect(
+      screen.queryByRole('checkbox', { name: 'Select Partial import reference 200' })
+    ).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 99' })
+    const secondPage = screen
+      .getAllByRole('checkbox', { name: /^Select Partial import reference / })
+      .map((checkbox) => checkbox.getAttribute('aria-label'))
+    expect(new Set([...firstPage, ...secondPage])).toEqual(
+      new Set(importedItems.slice(0, 200).map((item) => `Select ${item.item.title}`))
+    )
+    expect(screen.getByRole('button', { name: 'Next page' })).toHaveProperty('disabled', true)
+    fireEvent.click(libraryButton)
+    await screen.findByRole('checkbox', { name: 'Select Partial import reference 200' })
+    expect(screen.getByText(/201 references/)).not.toBeNull()
+    expect(within(libraryButton).getByText('201')).not.toBeNull()
+    expect(within(projectButton).getByText('200')).not.toBeNull()
+    expect(transact).toHaveBeenCalledTimes(2)
+    expect(importRecords.mock.calls.filter(([request]) => request.mode === 'commit')).toHaveLength(
+      1
     )
   })
 
@@ -3864,6 +4422,7 @@ describe('LiteratureLibraryPage', () => {
     (action) => {
       const startPendingAction = async (): Promise<{
         detail: HTMLElement
+        remount: () => void
         finish: (error?: Error) => Promise<void>
       }> => {
         const entry = createLibraryItemWithPdf()
@@ -3882,7 +4441,7 @@ describe('LiteratureLibraryPage', () => {
           reject = fail
         })
         transact.mockImplementation(() => pending)
-        render(<LiteratureLibraryPage />)
+        const view = render(<LiteratureLibraryPage />)
         fireEvent.click(screen.getByRole('button', { name: 'All references' }))
         const detail = await openReferenceDetail(
           await within(await screen.findByRole('table')).findByText(entry.item.title)
@@ -3897,6 +4456,10 @@ describe('LiteratureLibraryPage', () => {
         await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
         return {
           detail,
+          remount: () => {
+            view.rerender(<></>)
+            view.rerender(<LiteratureLibraryPage />)
+          },
           finish: async (error) => {
             await act(async () => {
               if (error) reject(error)
@@ -3971,10 +4534,9 @@ describe('LiteratureLibraryPage', () => {
       })
 
       it('retains admission when the entire library page remounts', async () => {
-        const { finish } = await startPendingAction()
+        const { finish, remount } = await startPendingAction()
         try {
-          cleanup()
-          render(<LiteratureLibraryPage />)
+          remount()
           fireEvent.click(screen.getByRole('button', { name: 'All references' }))
           fireEvent.click(
             await within(await screen.findByRole('table')).findByText(libraryItem.item.title)
@@ -4716,33 +5278,10 @@ describe('LiteratureLibraryPage', () => {
     expect(within(detailDialog).getByRole('heading', { name: 'Citation' })).not.toBeNull()
   })
 
-  it('opens the Citation styles manager from Library Settings', async () => {
-    citationStyles.mockResolvedValueOnce({
-      styles: [
-        { id: 'apa', title: 'APA Style 7th edition', source: 'built-in' },
-        {
-          id: 'custom:preview',
-          title: 'Imported journal style',
-          source: 'custom',
-          preview: {
-            inText: '(Rivera and Chen 2024)',
-            reference: 'Rivera, Alex, and Wei Chen. 2024. Genome Editing in Human Cells.'
-          }
-        }
-      ]
-    })
-    citationStyles.mockResolvedValueOnce({
-      styles: [],
-      preview: {
-        styleId: 'apa',
-        inText: '(Rivera & Chen, 2024)',
-        reference:
-          'Rivera, A., & Chen, W. (2024). Genome Editing in Human Cells. Nature, 1(2), 10–20.'
-      }
-    })
+  it('opens the Citation styles manager from its Literature navigation entry', async () => {
     render(<LiteratureLibraryPage />)
 
-    const settingsButton = screen.getByRole('button', { name: 'Settings' })
+    const settingsButton = screen.getByRole('button', { name: 'Citation styles' })
     const newCollectionButton = screen.getByRole('button', { name: 'New collection' })
     expect(settingsButton.closest('aside')).not.toBeNull()
     expect(
@@ -4751,25 +5290,21 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(settingsButton)
 
     expect(await screen.findByRole('heading', { name: 'Citation styles' })).not.toBeNull()
-    expect(citationStyles).toHaveBeenCalledWith({ kind: 'list' })
-    expect(screen.getByText('Built-in styles')).not.toBeNull()
-    const apaStyle = screen.getByText('APA Style 7th edition').closest('li')
-    expect(apaStyle).not.toBeNull()
-    expect(within(apaStyle as HTMLElement).queryByRole('button', { name: 'Preview' })).toBeNull()
-    expect(screen.queryByText('(Rivera & Chen, 2024)')).toBeNull()
-    const apaPreviewTrigger = screen.getByLabelText('Preview: APA Style 7th edition')
-    fireEvent.pointerEnter(apaPreviewTrigger, { pointerType: 'mouse' })
-    fireEvent.pointerMove(apaPreviewTrigger, { pointerType: 'mouse' })
-    const preview = await screen.findByRole('dialog', { name: 'Preview: APA Style 7th edition' })
-    expect(within(preview).getByText('In-text citation')).not.toBeNull()
-    expect(within(preview).getByText('(Rivera & Chen, 2024)')).not.toBeNull()
-    expect(within(preview).getByText('Reference')).not.toBeNull()
-    expect(within(preview).getByText(/Genome Editing in Human Cells/)).not.toBeNull()
-    expect(screen.getByRole('link', { name: 'Browse styles' }).getAttribute('href')).toBe(
-      'https://www.zotero.org/styles'
-    )
-    fireEvent.click(screen.getByRole('button', { name: 'Back to references' }))
-    expect(screen.getByRole('heading', { name: 'Inbox' })).not.toBeNull()
+    const allReferences = screen.getByRole('button', { name: 'All references' })
+    expect(allReferences.className).not.toContain('font-medium')
+    expect(allReferences.getAttribute('aria-current')).toBeNull()
+    expect(settingsButton.getAttribute('aria-current')).toBe('page')
+  })
+
+  it('opens the Journals manager inside Literature', async () => {
+    render(<LiteratureLibraryPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
+
+    expect(await screen.findByRole('heading', { name: 'Journals' })).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Download template' })).not.toBeNull()
+    expect(await screen.findByRole('button', { name: 'Import attributes' })).not.toBeNull()
+    expect(screen.getByText('Drag and drop or click to upload')).not.toBeNull()
   })
 
   it.each([
@@ -4790,7 +5325,7 @@ describe('LiteratureLibraryPage', () => {
     )
     render(<LiteratureLibraryPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Citation styles' }))
     expect(await screen.findByRole('heading', { name: 'Citation styles' })).not.toBeNull()
     expect(await screen.findByText(style.title)).not.toBeNull()
     expect(citationStyles).toHaveBeenCalledTimes(1)
@@ -5663,7 +6198,6 @@ describe('LiteratureLibraryPage', () => {
       'Reading list',
       'Duplicates',
       'Trash',
-      'Settings',
       'All references'
     ]) {
       const button = screen.getByRole('button', { name })
@@ -5686,38 +6220,69 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('dialog', { name })).toBe(dialog)
   })
 
-  it('exposes the metadata overwrite selection that is submitted', async () => {
-    search.mockImplementation((request: { scope: string }) =>
-      Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
-    )
-    render(<LiteratureLibraryPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
-    const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
-    await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
-    fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
-    fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
-    const choice = await screen.findByRole('button', { name: 'Use Crossref' })
-    expect(choice.getAttribute('aria-pressed')).toBe('false')
-    expect(
-      screen.getByRole('button', { name: 'Use Crossref', description: /Title.*Corrective RAG/ })
-    ).toBe(choice)
-    fireEvent.click(choice)
-    expect(choice.getAttribute('aria-pressed')).toBe('true')
-    fireEvent.click(choice)
-    expect(choice.getAttribute('aria-pressed')).toBe('false')
-    fireEvent.click(choice)
-    const pressed = choice.getAttribute('aria-pressed')
-    fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
-    await waitFor(() =>
-      expect(completeMetadata).toHaveBeenCalledWith(
-        expect.objectContaining({
-          mode: 'commit',
-          overwriteFields: ['title']
+  it.each([false, true])(
+    'exposes the metadata overwrite selection with supplemental sources: %s',
+    async (supplemental) => {
+      const provider = supplemental ? 'Use Crossref / Europe PMC' : 'Use Crossref'
+      if (supplemental) {
+        const reply = await completeMetadata.getMockImplementation()!({ mode: 'preview' })
+        completeMetadata.mockResolvedValueOnce({
+          ...reply,
+          sources: [
+            {
+              provider: 'crossref',
+              sourceUrl: 'https://api.crossref.org/works/10.0000/example',
+              rawMetadata: {}
+            },
+            {
+              provider: 'europe-pmc',
+              sourceUrl: 'https://europepmc.org/article/MED/123',
+              rawMetadata: {}
+            }
+          ],
+          failures: [{ code: 'rate-limit', phase: 'search', source: 'pubmed', retryable: true }]
         })
+      }
+      search.mockImplementation((request: { scope: string }) =>
+        Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
       )
-    )
-    expect(pressed).toBe('true')
-  })
+      render(<LiteratureLibraryPage />)
+      fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+      const detail = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+      await openMenu(within(detail).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Complete metadata' }))
+      fireEvent.click(within(detail).getByRole('button', { name: 'Search' }))
+      const choice = await screen.findByRole('button', { name: provider })
+      if (supplemental) {
+        expect(
+          screen.getByText('Some sources were unavailable. Results may be incomplete.')
+        ).toBeTruthy()
+        expect(screen.getByRole('link', { name: 'Europe PMC' }).getAttribute('href')).toBe(
+          'https://europepmc.org/article/MED/123'
+        )
+      }
+      expect(choice.getAttribute('aria-pressed')).toBe('false')
+      expect(
+        screen.getByRole('button', { name: provider, description: /Title.*Corrective RAG/ })
+      ).toBe(choice)
+      fireEvent.click(choice)
+      expect(choice.getAttribute('aria-pressed')).toBe('true')
+      fireEvent.click(choice)
+      expect(choice.getAttribute('aria-pressed')).toBe('false')
+      fireEvent.click(choice)
+      const pressed = choice.getAttribute('aria-pressed')
+      fireEvent.click(screen.getByRole('button', { name: 'Apply metadata' }))
+      await waitFor(() =>
+        expect(completeMetadata).toHaveBeenCalledWith(
+          expect.objectContaining({
+            mode: 'commit',
+            overwriteFields: ['title']
+          })
+        )
+      )
+      expect(pressed).toBe('true')
+    }
+  )
 
   it('shows identifier-only additions and submits one publication-date conflict choice', async () => {
     search.mockImplementation((request: { scope: string }) =>
@@ -5887,6 +6452,8 @@ describe('LiteratureLibraryPage', () => {
     )
     await waitFor(() => expect(get).toHaveBeenCalledWith(libraryItem.id))
     expect(await screen.findByRole('heading', { name: 'Manual paper' })).not.toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Add reference' })).toBeNull()
+    expect(screen.queryByRole('alertdialog')).toBeNull()
     await within(countButton).findByText('1')
     expect(
       search.mock.calls.filter(([request]) => request.scope === 'library' && request.countOnly)
@@ -5952,6 +6519,7 @@ describe('LiteratureLibraryPage', () => {
         await openMenu(screen.getByRole('button', { name: 'Add' }))
         fireEvent.click(screen.getByRole('menuitem', { name: 'Add reference' }))
         if (policy === 'separate') {
+          fireEvent.click(screen.getByRole('button', { name: 'Advanced settings' }))
           await openMenu(screen.getByRole('combobox', { name: 'When identifiers match' }))
           fireEvent.click(screen.getByRole('option', { name: 'Keep as separate reference' }))
         }
@@ -6118,6 +6686,309 @@ describe('LiteratureLibraryPage', () => {
     )
   })
 
+  it('returns from reference details to the same journal alignment page', async () => {
+    const token = '11111111-1111-4111-8111-111111111111'
+    get.mockResolvedValue(libraryItem)
+    const journals = vi.mocked(window.api.literature.journals)
+    journals.mockImplementation(async (request) => {
+      if (request.action === 'list')
+        return {
+          datasets: [
+            {
+              id: 'alignment-dataset',
+              source: 'WOS',
+              year: 2025,
+              revision: 1,
+              count: 1,
+              importedAt: 1,
+              fields: []
+            }
+          ]
+        }
+      if (request.action === 'entries') return { total: 0, entries: [] }
+      if (request.action === 'audit-step') return { scan: { token, processed: 60, done: true } }
+      if (request.action === 'audit')
+        return {
+          alignment: {
+            token,
+            counts: { matched: 0, missing: 60, ambiguous: 0 },
+            total: 60,
+            rows: [
+              {
+                itemId: libraryItem.id,
+                metadataRevision: 1,
+                bindingRevision: null,
+                title: libraryItem.item.title,
+                identity: { name: 'Example Journal', aliases: [], issns: [] },
+                status: 'missing',
+                reason: 'not-found',
+                candidates: [],
+                candidateTotal: 0
+              }
+            ]
+          }
+        }
+      return { matches: [] }
+    })
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'More actions' }))
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Journal alignment' }))
+    const alignment = await screen.findByRole('dialog', { name: 'Journal alignment' })
+    fireEvent.click(within(alignment).getByRole('button', { name: 'Check library' }))
+    fireEvent.click(await within(alignment).findByRole('button', { name: 'Page 2' }))
+    await waitFor(() =>
+      expect(journals).toHaveBeenCalledWith({
+        action: 'audit',
+        token,
+        status: 'missing',
+        offset: 25,
+        limit: 25
+      })
+    )
+    await waitFor(() =>
+      expect(
+        within(alignment).getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')
+      ).toBe('page')
+    )
+    const table = within(alignment).getByRole('table')
+    table.parentElement!.scrollTop = 80
+    const reference = within(alignment).getByRole('button', { name: libraryItem.item.title })
+    fireEvent.click(reference)
+    await waitFor(() => expect(screen.getByRole('dialog')).not.toBe(alignment))
+    const detail = screen.getByRole('dialog')
+    fireEvent.pointerDown(within(detail).getByRole('button', { name: 'Close' }))
+    fireEvent.click(within(detail).getByRole('button', { name: 'Close' }))
+    await waitFor(() =>
+      expect(screen.getByRole('dialog', { name: 'Journal alignment' })).toBe(alignment)
+    )
+    expect(within(alignment).getByRole('table')).toBe(table)
+    expect(table.parentElement!.scrollTop).toBe(80)
+    expect(
+      within(alignment).getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')
+    ).toBe('page')
+    expect(journals.mock.calls.filter(([request]) => request.action === 'audit-step')).toHaveLength(
+      1
+    )
+    expect(useNavigationStore.getState().pendingLiteratureItemId).toBeUndefined()
+    fireEvent.click(within(alignment).getByRole('button', { name: 'Close' }))
+    expect(screen.getByRole('heading', { name: 'Journals' })).toBeTruthy()
+  })
+
+  it('retains the Journals page and avoids rereading its table when navigating back', async () => {
+    const journalDataset = {
+      id: 'retained-dataset',
+      source: 'Retained source',
+      year: 2031,
+      revision: 1,
+      count: 123,
+      importedAt: 1,
+      fields: [{ id: 'score', label: 'Score', kind: 'number' as const, colors: {}, visible: true }]
+    }
+    const journals = vi.mocked(window.api.literature.journals)
+    journals.mockImplementation(async (request) =>
+      request.action === 'list'
+        ? { datasets: [structuredClone(journalDataset)] }
+        : request.action === 'entries'
+          ? {
+              total: 123,
+              entries: [
+                {
+                  id: 'journal-retained',
+                  row: 1,
+                  name: 'Retained journal',
+                  aliases: [],
+                  issns: [],
+                  values: { score: '3' }
+                }
+              ]
+            }
+          : { matches: [] }
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
+    await screen.findByText('Retained journal')
+    fireEvent.change(screen.getByRole('textbox', { name: 'Search journals' }), {
+      target: { value: 'Retained' }
+    })
+    await waitFor(() =>
+      expect(journals).toHaveBeenCalledWith(
+        expect.objectContaining({ action: 'entries', query: 'Retained' })
+      )
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }))
+    await waitFor(() =>
+      expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe(
+        'page'
+      )
+    )
+    const row = screen.getByText('Retained journal')
+    journals.mockClear()
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('textbox', { name: 'Search references' })
+    fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
+    expect(screen.getByText('Retained journal')).toBe(row)
+    expect(
+      (screen.getByRole('textbox', { name: 'Search journals' }) as HTMLInputElement).value
+    ).toBe('Retained')
+    expect(screen.getByRole('button', { name: 'Page 2' }).getAttribute('aria-current')).toBe('page')
+    await act(async () => {})
+    expect(journals.mock.calls.filter(([request]) => request.action === 'entries')).toHaveLength(0)
+  })
+
+  it('shares source-year choices between Journals and the literature column menu', async () => {
+    const datasets = [2032, 2031].map((year) => ({
+      id: `year-${year}`,
+      source: 'Shared source',
+      year,
+      revision: 1,
+      count: 0,
+      importedAt: 1,
+      fields: [{ id: 'score', label: 'Score', kind: 'number' as const, visible: true, colors: {} }]
+    }))
+    localStorage.setItem(
+      'open-science:literature-table-preferences',
+      JSON.stringify({ order: ['journal:year-2032:score'], visible: ['journal:year-2032:score'] })
+    )
+    vi.mocked(window.api.literature.journals).mockImplementation(async (request) =>
+      request.action === 'list'
+        ? { datasets }
+        : request.action === 'entries'
+          ? { entries: [], total: 0 }
+          : { matches: [] }
+    )
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+    const source = await screen.findByRole('combobox', { name: 'Journal data for Shared source' })
+    fireEvent.click(source)
+    fireEvent.click(await screen.findByRole('option', { name: '2031' }))
+    expect(JSON.parse(localStorage.getItem('open-science:journal-source-years')!)).toEqual({
+      'Shared source': 2031
+    })
+    expect(
+      await screen.findByRole('button', { name: 'Score · Shared source 2031: Hide column' })
+    ).toBeTruthy()
+    fireEvent.keyDown(source, { key: 'Escape' })
+    fireEvent.click(screen.getByRole('button', { name: 'Journals' }))
+    const toggle = await screen.findByRole('switch', { name: 'Show in literature' })
+    expect(toggle.getAttribute('aria-checked')).toBe('false')
+    fireEvent.click(toggle)
+    expect(JSON.parse(localStorage.getItem('open-science:journal-source-years')!)).toEqual({
+      'Shared source': 2032
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+    expect(
+      screen.getByRole('combobox', { name: 'Journal data for Shared source' }).textContent
+    ).toContain('2032')
+    expect(
+      screen.getByRole('button', { name: 'Score · Shared source 2032: Hide column' })
+    ).toBeTruthy()
+    fireEvent.click(screen.getByRole('combobox', { name: 'Journal data for Shared source' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Do not show' }))
+    expect(
+      screen.queryByRole('button', { name: 'Score · Shared source 2032: Hide column' })
+    ).toBeNull()
+    cleanup()
+    localStorage.removeItem('open-science:journal-source-years')
+  })
+
+  it('selects, reorders and restores independently defined journal columns', async () => {
+    let nextYear = false
+    const field = {
+      id: 'signal',
+      label: 'Observatory score',
+      kind: 'number' as const,
+      colors: {},
+      visible: true
+    }
+    const dataset = {
+      id: 'invented-source',
+      source: 'Fictional evaluation',
+      year: 2031,
+      revision: 1,
+      fields: [field],
+      count: 1,
+      importedAt: 1
+    }
+    vi.mocked(window.api.literature.journals).mockImplementation(async (request) =>
+      request.action === 'list'
+        ? {
+            datasets: [
+              nextYear
+                ? {
+                    ...dataset,
+                    id: 'invented-next-year',
+                    year: 2032,
+                    fields: [{ ...field, columnKey: 'invented-source:signal' }]
+                  }
+                : dataset
+            ]
+          }
+        : request.action === 'resolve'
+          ? {
+              matches: request.identities.map(() => ({
+                status: 'matched' as const,
+                attributes: [
+                  {
+                    ...field,
+                    key: 'invented-source:signal',
+                    value: '<0.5',
+                    source: dataset.source,
+                    year: nextYear ? 2032 : dataset.year
+                  }
+                ]
+              }))
+            }
+          : {}
+    )
+    search.mockImplementation((request: { scope: string }) =>
+      Promise.resolve(
+        request.scope === 'library'
+          ? {
+              entries: [
+                {
+                  ...libraryItem,
+                  item: { ...libraryItem.item, containerTitle: 'Imaginary Review of Lunar Gardens' }
+                }
+              ]
+            }
+          : { entries: [] }
+      )
+    )
+    const label = 'Observatory score · Fictional evaluation 2031'
+    const view = render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    await screen.findByRole('button', { name: libraryItem.item.title })
+    expect(screen.queryByRole('columnheader', { name: label })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+    fireEvent.click(await screen.findByRole('button', { name: `${label}: Show column` }))
+    expect(await screen.findByRole('columnheader', { name: label })).not.toBeNull()
+    expect(await screen.findByText('<0.5')).not.toBeNull()
+    fireEvent.keyDown(screen.getByRole('button', { name: `Move ${label}` }), { key: 'ArrowUp' })
+    expect(
+      document
+        .querySelector('[data-column="journal:invented-source:signal"]')
+        ?.nextElementSibling?.getAttribute('data-column')
+    ).toBe('url')
+    view.unmount()
+    nextYear = true
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    expect(
+      await screen.findByRole('columnheader', {
+        name: 'Observatory score · Fictional evaluation 2032'
+      })
+    ).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
+    await waitFor(() =>
+      expect(
+        document.querySelector('[data-column="journal:invented-source:signal"]')
+      ).not.toBeNull()
+    )
+  })
+
   it('groups creation actions and preserves customizable table columns', async () => {
     search.mockImplementation((request: { scope: string }) =>
       Promise.resolve(request.scope === 'library' ? { entries: [libraryItem] } : { entries: [] })
@@ -6158,7 +7029,7 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('button', { name: 'Manage Tags' }).className).toContain('w-full')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain('right-12')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain(
-      'shadow-card-opaque'
+      'group-data-[overflow-right=true]/journal-scroll:before:opacity-100'
     )
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain(
       'bg-bg-200'
@@ -6167,6 +7038,26 @@ describe('LiteratureLibraryPage', () => {
     expect(screen.getByRole('columnheader', { name: 'Actions' }).className).toContain('bg-bg-200')
     expect(screen.getByRole('columnheader', { name: 'Attachment' }).className).toContain('w-28')
     const tableScroll = document.querySelector<HTMLElement>('[data-slot="literature-table-scroll"]')
+    expect(tableScroll?.className).toContain('group/journal-scroll')
+    for (const cell of [
+      stickyRowCells[0],
+      screen.getByRole('columnheader', { name: 'Attachment' })
+    ]) {
+      expect(cell.className).toContain('before:pointer-events-none')
+      expect(cell.className).toContain('before:right-full')
+      expect(cell.className).toContain('before:from-foreground/5')
+      expect(cell.className).not.toContain('shadow-card-opaque')
+      expect(cell.className).not.toContain('overflow-hidden')
+    }
+    Object.defineProperties(tableScroll!, {
+      clientWidth: { value: 600, configurable: true },
+      scrollWidth: { value: 1000, configurable: true }
+    })
+    fireEvent.scroll(tableScroll!)
+    expect(tableScroll?.dataset.overflowRight).toBe('true')
+    tableScroll!.scrollLeft = 400
+    fireEvent.scroll(tableScroll!)
+    expect(tableScroll?.dataset.overflowRight).toBe('false')
     expect(tableScroll?.className).toContain('pb-3')
     expect(tableScroll?.className).toContain('h-full')
     expect(tableScroll?.className).not.toContain('100vh')
@@ -6191,12 +7082,19 @@ describe('LiteratureLibraryPage', () => {
       'Notes',
       'URL'
     ]) {
-      expect(screen.getByRole('checkbox', { name: column }).getAttribute('data-state')).toBe(
-        ['Abstract', 'Notes', 'URL'].includes(column) ? 'unchecked' : 'checked'
-      )
+      const shown = !['Abstract', 'Notes', 'URL'].includes(column)
+      expect(
+        screen
+          .getByRole('button', { name: `${column}: ${shown ? 'Hide' : 'Show'} column` })
+          .getAttribute('aria-pressed')
+      ).toBe(String(shown))
     }
+    fireEvent.click(screen.getByRole('button', { name: 'Year: Hide column' }))
+    expect(screen.queryByRole('columnheader', { name: 'Year' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Year: Show column' }))
+    expect(screen.getByRole('columnheader', { name: 'Year' })).not.toBeNull()
     for (const column of ['Abstract', 'Notes', 'URL']) {
-      fireEvent.click(screen.getByRole('checkbox', { name: column }))
+      fireEvent.click(screen.getByRole('button', { name: `${column}: Show column` }))
     }
     fireEvent.keyDown(screen.getByRole('button', { name: 'Move Abstract' }), {
       key: 'ArrowDown'
@@ -6235,7 +7133,7 @@ describe('LiteratureLibraryPage', () => {
     await screen.findByText('Corrective Retrieval Augmented Generation')
     fireEvent.click(screen.getByRole('button', { name: 'Customize' }))
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Abstract' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Abstract: Show column' }))
     const source = document.querySelector<HTMLElement>('[data-column="abstract"]')!
     const target = document.querySelector<HTMLElement>('[data-column="year"]')!
     vi.spyOn(target, 'getBoundingClientRect').mockReturnValue({
@@ -7718,9 +8616,10 @@ describe('LiteratureLibraryPage', () => {
     expect.soft(screen.queryByText('Enter a valid year range (0–9999).')).not.toBeNull()
     fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
     expect(
-      (screen.getByRole('button', { name: 'Clear filters' }) as HTMLButtonElement).disabled
+      (screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)! as HTMLButtonElement)
+        .disabled
     ).toBe(false)
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)!)
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('')
     expect(screen.queryByText('Enter a valid year range (0–9999).')).toBeNull()
   })
@@ -7820,7 +8719,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /^Filters/ }))
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('2020')
     fireEvent.change(screen.getByLabelText('To year'), { target: { value: '2024' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+    fireEvent.click(screen.getAllByRole('button', { name: 'Clear filters' }).at(-1)!)
     expect((screen.getByLabelText('From year') as HTMLInputElement).value).toBe('')
     expect((screen.getByLabelText('To year') as HTMLInputElement).value).toBe('')
   })
@@ -8888,6 +9787,104 @@ describe('LiteratureLibraryPage', () => {
     }
   )
 
+  it.each(['failure', 'success', 'return-to-source'] as const)(
+    'keeps the current selection and recovery UI when an earlier lifecycle visit settles: %s',
+    async (settlement) => {
+      let sourceItems = Array.from({ length: 201 }, (_, index) => ({
+        ...createLibraryItem(index),
+        collectionIds: ['source']
+      }))
+      const targetItem = { ...createLibraryItem(202), collectionIds: ['target'] }
+      search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return Promise.resolve({
+            entries: [
+              {
+                id: 'source',
+                name: 'Source',
+                description: '',
+                itemCount: sourceItems.length,
+                createdAt: 1,
+                updatedAt: 1
+              },
+              {
+                id: 'target',
+                name: 'Target',
+                description: '',
+                itemCount: 1,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          })
+        if (request.scope !== 'library') return Promise.resolve({ entries: [] })
+        const items = request.collectionId === 'source' ? sourceItems : [targetItem]
+        const offset = request.offset ?? 0
+        const limit = request.limit ?? 100
+        return Promise.resolve({
+          entries: items.slice(offset, offset + limit),
+          totalCount: items.length,
+          nextOffset: offset + limit < items.length ? offset + limit : undefined
+        })
+      })
+      let finish!: (receipt: LiteratureCatalogReceipt) => void
+      let reject!: (error: Error) => void
+      transact
+        .mockImplementationOnce(async (command) => {
+          sourceItems = sourceItems.filter(({ id }) => !command.itemIds.includes(id))
+          return { kind: 'item', id: command.itemIds[0], state: 'deleted' }
+        })
+        .mockImplementationOnce(
+          () =>
+            new Promise<LiteratureCatalogReceipt>((resolve, fail) => {
+              finish = resolve
+              reject = fail
+            })
+        )
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'source' })
+      render(<LiteratureLibraryPage />)
+      await screen.findByText('Reference 0')
+      fireEvent.click(screen.getByLabelText('Select all references'))
+      fireEvent.click(screen.getByRole('button', { name: 'Select all matching references 201' }))
+      const toolbar = document.querySelector<HTMLElement>(
+        '[data-slot="literature-selection-toolbar"]'
+      )!
+      await openMenu(within(toolbar).getByRole('button', { name: 'More actions' }))
+      fireEvent.click(screen.getByRole('menuitem', { name: 'Move to Trash' }))
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(2))
+      expect(sourceItems).toHaveLength(1)
+
+      fireEvent.click(screen.getByRole('button', { name: 'Target' }))
+      await screen.findByText('Reference 202')
+      await act(async () => {})
+      if (settlement === 'return-to-source') {
+        fireEvent.click(screen.getByRole('button', { name: 'Source' }))
+        // Returning can show the cached first page. Select a visible row in this new visit,
+        // distinct from the failed remainder, rather than requiring an unrelated cache refresh.
+        await screen.findByText('Reference 0')
+        await act(async () => {})
+      }
+      const selectedTitle = settlement === 'return-to-source' ? 'Reference 0' : 'Reference 202'
+      fireEvent.click(screen.getByLabelText(`Select ${selectedTitle}`))
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      await act(async () => {
+        if (settlement === 'success') {
+          sourceItems = []
+          finish({ kind: 'item', id: 'item-200', state: 'deleted' })
+        } else reject(new Error('Second lifecycle batch unavailable'))
+      })
+      expect(transact).toHaveBeenCalledTimes(2)
+      expect((screen.getByLabelText(`Select ${selectedTitle}`) as HTMLInputElement).checked).toBe(
+        true
+      )
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      expect(screen.queryByText('Updated: 200. Not updated: 1.')).toBeNull()
+      expect(screen.queryByText('Literature could not be updated.')).toBeNull()
+      expect(screen.queryByText('Literature could not be loaded.')).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull()
+    }
+  )
+
   it('refreshes committed references when a later lifecycle batch fails', async () => {
     let items = Array.from({ length: 201 }, (_, index) => createLibraryItem(index))
     search.mockImplementation((request: LiteratureCatalogSearchRequest) => {
@@ -9491,6 +10488,7 @@ describe('LiteratureLibraryPage', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }))
 
     expect(await screen.findByRole('heading', { name: 'Paper' })).not.toBeNull()
+    expect(screen.queryByRole('dialog', { name: 'Add reference' })).toBeNull()
     expect((await screen.findByRole('alert')).textContent).toBe('PDF could not be added.')
     expect(transact).toHaveBeenCalledTimes(1)
   })
@@ -9517,8 +10515,7 @@ describe('LiteratureLibraryPage', () => {
     const { migrateApplicationDatabase } =
       await import('../../../../main/database/migration-service')
     const { LiteratureCatalog } = await import('../../../../main/literature/catalog')
-    const { LiteratureCitationFormatter } =
-      await import('../../../../main/literature/citation-formatter')
+    const { LiteratureCitationFormatter } = await import('@aipoch/literature-citations')
     const root = await mkdtemp(join(tmpdir(), 'literature-export-pagination-'))
     const client = createProjectDbClient(root)
     try {
@@ -9646,6 +10643,502 @@ describe('LiteratureLibraryPage', () => {
     const closeDetail = (): void => {
       fireEvent.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Close' }))
     }
+
+    it.each(
+      (['project', 'collection'] as const).flatMap((kind) =>
+        (['broadcast first', 'receipt first'] as const).flatMap((order) =>
+          [true, false].map((included) => ({ kind, order, included }))
+        )
+      )
+    )(
+      'reads authoritative $kind counts after linking=$included with $order',
+      async ({ kind, order, included }) => {
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        const targetId = kind === 'project' ? 'project-1' : 'collection-1'
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        const relation = kind === 'project' ? 'projectIds' : 'collectionIds'
+        let serverItems: LiteratureItemView[] = [libraryItem, createLibraryItem(2)].map((item) => ({
+          ...item,
+          [relation]: included ? [] : [targetId]
+        }))
+        const count = (): number =>
+          serverItems.filter((item) => item[relation].includes(targetId)).length
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'project-counts')
+            return {
+              entries: [{ projectId: 'project-1', itemCount: kind === 'project' ? count() : 0 }]
+            }
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: kind === 'collection' ? count() : 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+          const entries = serverItems.filter(
+            (item) =>
+              (!request.projectId || item.projectIds.includes(request.projectId)) &&
+              (!request.collectionId || item.collectionIds.includes(request.collectionId))
+          )
+          return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+        })
+        get.mockImplementation(async () => serverItems[0])
+        const broadcast = (): void => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({
+              revision: 1,
+              itemIds: [libraryItem.id],
+              ...(kind === 'collection' ? { collectionIds: [targetId] } : {})
+            })
+          )
+        }
+        transact.mockImplementationOnce(() => {
+          serverItems = serverItems.map((item) =>
+            item.id === libraryItem.id ? { ...item, [relation]: included ? [targetId] : [] } : item
+          )
+          if (order === 'broadcast first') broadcast()
+          return gate.promise
+        })
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          const targetButton = await screen.findByRole('button', { name: targetName })
+          await within(targetButton).findByText(included ? '0' : '2')
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          expect(transact).toHaveBeenCalledWith(
+            kind === 'project'
+              ? {
+                  kind: 'set-project-item',
+                  projectId: targetId,
+                  itemId: libraryItem.id,
+                  included,
+                  source: 'library'
+                }
+              : {
+                  kind: 'set-collection-item',
+                  collectionId: targetId,
+                  itemId: libraryItem.id,
+                  included
+                }
+          )
+          if (order === 'broadcast first') await within(targetButton).findByText('1')
+          await act(async () =>
+            gate.resolve({
+              kind: 'item',
+              id: libraryItem.id,
+              state: included ? 'linked' : 'unlinked'
+            })
+          )
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(count()).toBe(1)
+          expect(within(targetButton).getByText('1')).not.toBeNull()
+          if (order === 'receipt first') await act(async () => broadcast())
+          await waitFor(() => expect(within(targetButton).getByText('1')).not.toBeNull())
+          expect(
+            within(dialog).getByRole('checkbox', { name: targetName }).getAttribute('aria-checked')
+          ).toBe(String(included))
+          expect(transact).toHaveBeenCalledTimes(1)
+        } finally {
+          await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id }))
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'keeps a same-scope $kind link failure after changing locale',
+      async (kind) => {
+        const originalLanguage = i18next.language || 'en'
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        void gate.promise.catch(() => undefined)
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        get.mockResolvedValue(libraryItem)
+        transact.mockImplementationOnce(() => gate.promise)
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          await screen.findByRole('button', { name: targetName })
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          await act(async () => {
+            await i18next.changeLanguage('zh-Hans')
+          })
+          await act(async () => gate.reject(new Error('Link unavailable')))
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(
+            within(dialog).getByText(
+              i18next.t(
+                kind === 'project'
+                  ? 'Project link could not be updated.'
+                  : 'Collection link could not be updated.'
+              )
+            )
+          ).not.toBeNull()
+          expect(screen.getByRole('dialog')).toBe(dialog)
+        } finally {
+          await act(async () => {
+            gate.reject(new Error('Test cleanup'))
+            await i18next.changeLanguage(originalLanguage)
+          })
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'rejects an older $kind link failure after leaving and returning to the same query',
+      async (kind) => {
+        const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+        void gate.promise.catch(() => undefined)
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        transact.mockImplementationOnce(() => gate.promise)
+        try {
+          render(<LiteratureLibraryPage />)
+          fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+          await screen.findByRole('button', { name: targetName })
+          const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+          fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+          await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+          await act(async () =>
+            useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+          )
+          await screen.findByText('Retrieval research', { selector: 'h2' })
+          await act(async () =>
+            useNavigationStore.setState({ pendingLiteratureLibrarySection: 'library' })
+          )
+          await screen.findByText('All references', { selector: 'h2' })
+          await act(async () => gate.reject(new Error('Old visit unavailable')))
+          await waitFor(() =>
+            expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+              'disabled',
+              false
+            )
+          )
+          expect(
+            within(dialog).queryByText(
+              kind === 'project'
+                ? 'Project link could not be updated.'
+                : 'Collection link could not be updated.'
+            )
+          ).toBeNull()
+          expect(screen.getByRole('dialog')).toBe(dialog)
+        } finally {
+          await act(async () => gate.reject(new Error('Test cleanup')))
+        }
+      }
+    )
+
+    it.each(['project', 'collection'] as const)(
+      'keeps a committed $kind link when its authoritative count read fails',
+      async (kind) => {
+        const targetName = kind === 'project' ? 'Retrieval research' : 'Linked collection'
+        let committed = false
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+          if (
+            committed &&
+            request.scope === (kind === 'project' ? 'project-counts' : 'collections')
+          )
+            throw new Error('Count read unavailable')
+          if (request.scope === 'collections')
+            return {
+              entries: [
+                {
+                  id: 'collection-1',
+                  name: 'Linked collection',
+                  description: '',
+                  itemCount: 0,
+                  createdAt: 1,
+                  updatedAt: 1
+                }
+              ]
+            }
+          return request.scope === 'library'
+            ? { entries: [libraryItem], totalCount: 1 }
+            : { entries: [], totalCount: 0 }
+        })
+        transact.mockImplementationOnce(async () => {
+          committed = true
+          return { kind: 'item', id: libraryItem.id, state: 'linked' }
+        })
+        render(<LiteratureLibraryPage />)
+        fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+        await screen.findByRole('button', { name: targetName })
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: targetName }))
+        await waitFor(() =>
+          expect(within(dialog).getByRole('checkbox', { name: targetName })).toHaveProperty(
+            'disabled',
+            false
+          )
+        )
+        expect(committed).toBe(true)
+        expect(
+          within(dialog).getByRole('checkbox', { name: targetName }).getAttribute('aria-checked')
+        ).toBe('true')
+        expect(
+          within(dialog).queryByText(
+            kind === 'project'
+              ? 'Project link could not be updated.'
+              : 'Collection link could not be updated.'
+          )
+        ).toBeNull()
+        expect(screen.getByText('Literature could not be loaded.')).not.toBeNull()
+        expect(transact).toHaveBeenCalledTimes(1)
+      }
+    )
+
+    it('refreshes the same project after a no-op filter reset changes reload callbacks', async () => {
+      const gate = Promise.withResolvers<LiteratureCatalogReceipt>()
+      let linked = true
+      const other = { ...createLibraryItem(2), projectIds: ['project-1'] }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'project-counts')
+          return { entries: [{ projectId: 'project-1', itemCount: linked ? 2 : 1 }] }
+        if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+        const entries = [...(linked ? [{ ...libraryItem, projectIds: ['project-1'] }] : []), other]
+        return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+      })
+      transact.mockImplementationOnce(() => gate.promise)
+      useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+      try {
+        render(<LiteratureLibraryPage />)
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Retrieval research' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        closeDetail()
+        fireEvent.click(screen.getByRole('button', { name: 'Filters' }))
+        fireEvent.click(screen.getByRole('button', { name: 'Clear filters' }))
+        await act(async () => {})
+        linked = false
+        await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id, state: 'unlinked' }))
+        // The receipt's own read must succeed before its delayed transport notification arrives.
+        await waitFor(() =>
+          expect(
+            screen.queryByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+          ).toBeNull()
+        )
+        expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+        expect(
+          within(screen.getByRole('button', { name: 'Retrieval research' })).getByText('1')
+        ).not.toBeNull()
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id] })
+          )
+        })
+      } finally {
+        await act(async () => gate.resolve({ kind: 'item', id: libraryItem.id }))
+      }
+    })
+
+    it('keeps active collection rows and totals consistent when its unlink broadcast precedes the receipt', async () => {
+      const receipt = Promise.withResolvers<LiteratureCatalogReceipt>()
+      let linked = true
+      const other = { ...createLibraryItem(2), collectionIds: ['source'] }
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections')
+          return {
+            entries: [
+              {
+                id: 'source',
+                name: 'Source',
+                description: '',
+                itemCount: linked ? 2 : 1,
+                createdAt: 1,
+                updatedAt: 1
+              }
+            ]
+          }
+        if (request.scope !== 'library') return { entries: [], totalCount: 0 }
+        const entries =
+          request.collectionId === 'source'
+            ? [...(linked ? [{ ...libraryItem, collectionIds: ['source'] }] : []), other]
+            : [{ ...libraryItem, collectionIds: linked ? ['source'] : [] }, other]
+        return { entries: request.countOnly ? [] : entries, totalCount: entries.length }
+      })
+      get.mockImplementation(async () => ({
+        ...libraryItem,
+        collectionIds: linked ? ['source'] : []
+      }))
+      transact.mockImplementationOnce(() => receipt.promise)
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'source' })
+      try {
+        render(<LiteratureLibraryPage />)
+        const sourceButton = await screen.findByRole('button', { name: 'Source' })
+        const dialog = await openReferenceDetail(await screen.findByText(libraryItem.item.title))
+        fireEvent.click(within(dialog).getByRole('checkbox', { name: 'Source' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        linked = false
+        await act(async () => {
+          vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+            listener({ revision: 1, itemIds: [libraryItem.id], collectionIds: ['source'] })
+          )
+        })
+        await within(sourceButton).findByText('1')
+        await waitFor(() => expect(screen.getByText(/1 reference$/)).not.toBeNull())
+        await act(async () =>
+          receipt.resolve({ kind: 'item', id: libraryItem.id, state: 'unlinked' })
+        )
+        await waitFor(() =>
+          expect(within(dialog).getByRole('checkbox', { name: 'Source' })).toHaveProperty(
+            'disabled',
+            false
+          )
+        )
+        closeDetail()
+        expect(screen.getByText(/1 reference$/)).not.toBeNull()
+        expect(within(sourceButton).getByText('1')).not.toBeNull()
+        expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+        expect(
+          screen.queryByRole('checkbox', { name: `Select ${libraryItem.item.title}` })
+        ).toBeNull()
+      } finally {
+        await act(async () => {
+          receipt.resolve({ kind: 'item', id: libraryItem.id })
+        })
+      }
+    })
+
+    it('keeps the refreshed collection and selection when an older unlink receipt arrives', async () => {
+      const collections = ['Alpha', 'Beta'].map((name) => ({
+        id: name,
+        revision: 1,
+        name,
+        description: '',
+        itemCount: name === 'Alpha' ? 1 : 2,
+        createdAt: 1,
+        updatedAt: 1
+      }))
+      const shared = { ...libraryItem, collectionIds: ['Alpha', 'Beta'] }
+      const other = { ...createLibraryItem(2), collectionIds: ['Beta'] }
+      let committed = false
+      const pending = deferred<LiteratureCatalogReceipt>()
+      search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => {
+        if (request.scope === 'collections') return { entries: collections, totalCount: 2 }
+        if (request.scope !== 'library') return { entries: [] }
+        const entries =
+          request.collectionId === 'Alpha'
+            ? committed
+              ? []
+              : [shared]
+            : [{ ...shared, collectionIds: committed ? ['Beta'] : shared.collectionIds }, other]
+        return { entries, totalCount: entries.length }
+      })
+      transact.mockImplementationOnce(() => pending.promise)
+      useNavigationStore.setState({ pendingLiteratureCollectionId: 'Alpha' })
+      render(<LiteratureLibraryPage />)
+      await openReferenceDetail(await screen.findByText(shared.item.title))
+      fireEvent.click(screen.getByRole('checkbox', { name: 'Alpha' }))
+      await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+      closeDetail()
+      fireEvent.click(screen.getByRole('button', { name: 'Beta' }))
+      await screen.findByRole('heading', { name: 'Beta' })
+      await screen.findByText(other.item.title)
+      fireEvent.click(screen.getByRole('checkbox', { name: `Select ${shared.item.title}` }))
+      committed = true
+      get.mockResolvedValue({ ...shared, collectionIds: ['Beta'] })
+      await act(async () => {
+        vi.mocked(window.api.literature.onChanged).mock.calls.forEach(([listener]) =>
+          listener({ revision: 1, itemIds: [shared.id], collectionIds: ['Alpha'] })
+        )
+      })
+      await waitFor(() => expect(screen.getByText('1 selected')).not.toBeNull())
+      const reads = search.mock.calls.filter(
+        ([request]) => request.scope === 'library' && !request.countOnly
+      ).length
+      await act(async () => pending.resolve({ kind: 'item', id: shared.id, state: 'unlinked' }))
+      expect(screen.getByRole('heading', { name: 'Beta' })).not.toBeNull()
+      expect(screen.getByRole('checkbox', { name: `Select ${shared.item.title}` })).toHaveProperty(
+        'checked',
+        true
+      )
+      expect(screen.getByRole('checkbox', { name: `Select ${other.item.title}` })).not.toBeNull()
+      expect(screen.getByText(/2 references/)).not.toBeNull()
+      expect(screen.getByText('1 selected')).not.toBeNull()
+      expect(
+        search.mock.calls.filter(([request]) => request.scope === 'library' && !request.countOnly)
+      ).toHaveLength(reads)
+    })
+
+    it.each(['different item', 'same item reopened'] as const)(
+      'keeps the current detail after an older project unlink receipt: %s',
+      async (nextDetail) => {
+        const first = { ...libraryItem, projectIds: ['project-1'] }
+        const second = { ...createLibraryItem(2), projectIds: ['project-1'] }
+        search.mockImplementation(async (request: LiteratureCatalogSearchRequest) => ({
+          entries: request.scope === 'library' ? [first, second] : [],
+          totalCount: request.scope === 'library' ? 2 : 0
+        }))
+        const pending = deferred<LiteratureCatalogReceipt>()
+        transact.mockImplementationOnce(() => pending.promise)
+        useNavigationStore.setState({ pendingLiteratureProjectId: 'project-1' })
+        render(<LiteratureLibraryPage />)
+        await openReferenceDetail(await screen.findByText(first.item.title))
+        fireEvent.click(screen.getByRole('checkbox', { name: 'Retrieval research' }))
+        await waitFor(() => expect(transact).toHaveBeenCalledTimes(1))
+        closeDetail()
+        const current = nextDetail === 'different item' ? second : first
+        await openReferenceDetail(screen.getByText(current.item.title))
+        const dialog = screen.getByRole('dialog')
+        await act(async () => pending.resolve({ kind: 'item', id: first.id, state: 'unlinked' }))
+        expect(screen.getByRole('dialog')).toBe(dialog)
+        expect(within(dialog).getByRole('heading', { name: current.item.title })).not.toBeNull()
+      }
+    )
 
     it('returns to all references after the active collection is deleted externally', async () => {
       let removed = false
@@ -10506,7 +11999,7 @@ describe('LiteratureLibraryPage', () => {
       expect(get).toHaveBeenCalledTimes(2)
     })
     it.each(['save', 'completion'] as const)(
-      'publishes an earlier %s without replacing the reopened editor draft',
+      'protects a reopened editor draft across %s completion',
       async (operation) => {
         await showLibrary()
         await openReferenceDetail(screen.getByText(libraryItem.item.title))
@@ -10537,8 +12030,16 @@ describe('LiteratureLibraryPage', () => {
             )
           )
         }
+        if (operation === 'save') {
+          closeDetail()
+          expect(screen.queryByLabelText('Title')).not.toBeNull()
+          await act(async () => pending.resolve(updated))
+          await waitFor(() => expect(screen.queryByLabelText('Title')).toBeNull())
+        }
         closeDetail()
-        await openReferenceDetail(screen.getByText(libraryItem.item.title))
+        await openReferenceDetail(
+          screen.getByText(operation === 'save' ? updated.item.title : libraryItem.item.title)
+        )
         await editDetail()
         fireEvent.change(screen.getByLabelText('Title'), {
           target: { value: 'Keep this newer draft' }
@@ -10547,13 +12048,16 @@ describe('LiteratureLibraryPage', () => {
         expect((screen.getByLabelText('Title') as HTMLInputElement).value).toBe(
           'Keep this newer draft'
         )
-        expect(
-          within(screen.getByRole('dialog')).queryByText(
-            'This reference changed while you were editing. Your draft has been kept.'
-          )
-        ).not.toBeNull()
+        if (operation === 'completion')
+          expect(
+            within(screen.getByRole('dialog')).queryByText(
+              'This reference changed while you were editing. Your draft has been kept.'
+            )
+          ).not.toBeNull()
         expect(screen.queryByRole('button', { name: 'Apply metadata' })).toBeNull()
       }
     )
   })
 })
+
+configureTestRuntimeMetadata()

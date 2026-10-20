@@ -1,5 +1,6 @@
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { app, dialog } from 'electron'
+import { publishUserFile } from '../user-file-publisher'
 import { registerSpecialistIpcHandlers } from '../specialist/ipc'
 import {
   createContributionTemplateExporter,
@@ -50,6 +51,7 @@ export const createSpecialistElectronSurface = ({
         translate,
         showSaveDialog: (options) => dialog.showSaveDialog(options),
         readReadme: () => readFile(resolveContributionTemplateReadmePath(app.getAppPath()), 'utf8'),
+        publishUserFile,
         writeFile: (filePath, bytes) => writeFile(filePath, bytes)
       }),
       {
@@ -67,6 +69,7 @@ export const createSpecialistElectronSurface = ({
           saveSpecialistPackageReport(
             {
               showSaveDialog: (options) => dialog.showSaveDialog(options),
+              publishUserFile,
               writeFile: (filePath, contents) => writeFile(filePath, contents, 'utf8')
             },
             report,
@@ -76,6 +79,7 @@ export const createSpecialistElectronSurface = ({
           saveSpecialistExport(
             {
               showSaveDialog: (options) => dialog.showSaveDialog(options),
+              publishUserFile,
               writeFile: (filePath, bytes) => writeFile(filePath, bytes)
             },
             archive,

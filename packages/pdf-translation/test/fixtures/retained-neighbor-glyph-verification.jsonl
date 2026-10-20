@@ -1,0 +1,8 @@
+{"name": "retained foreign glyph unchanged", "change": "unchanged", "accepted": true}
+{"name": "retained foreign glyph changed", "change": "changed", "accepted": false}
+{"name": "retained foreign glyph moved", "change": "moved", "accepted": false}
+{"name": "retained foreign glyph scaled", "change": "scaled", "accepted": false}
+{"name": "retained foreign glyph width", "change": "width", "accepted": false}
+{"name": "retained foreign glyph missing", "change": "missing", "accepted": false}
+{"name": "retained foreign glyph duplicate", "change": "duplicate", "accepted": false}
+{"name": "retained foreign glyph claimed", "change": "claimed", "accepted": false}

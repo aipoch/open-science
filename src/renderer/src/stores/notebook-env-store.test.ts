@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ProvisionProgress, ProvisionStatus } from '../../../shared/notebook-env'
+import type { ProvisionProgress, ProvisionStatus } from '@aipoch/environment/contracts'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from './notebook-env-store'
 
 type ProgressListener = (p: ProvisionProgress) => void

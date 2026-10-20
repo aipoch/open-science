@@ -1,0 +1,2 @@
+{"name":"serif numbered prefix keeps its text origin inside the paragraph","font":"TimesRoman","prefix":"1. g","translation":"1. g 在每轮迭代中保持稳定，并使用变量 x₁ 计算结果。"}
+{"name":"bold serif numbered prefix keeps its text origin inside the paragraph","font":"TimesRomanBold","prefix":"1. g","translation":"1. g 在每轮迭代中保持稳定，并使用变量 x₁ 计算结果。"}

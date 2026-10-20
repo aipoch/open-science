@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react'
-import type { CreateSpecialistInput, SpecialistView } from '../../../../shared/specialist'
+import type { CreateSpecialistInput } from '@aipoch/specialists'
+import type { SpecialistView } from '../../../../shared/specialist'
 import {
   CREATE_SPECIALIST_DRAFT_KEY,
   useSpecialistStore,

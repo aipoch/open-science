@@ -1,25 +1,27 @@
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import '@/assets/main.css'
-import { useState } from 'react'
+import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { initI18n } from '@/i18n'
+import { LiteratureLibraryPage } from '@/pages/literature/public/page'
+import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
+import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   PdfPreviewContent,
   PdfPreviewRenderer
 } from '@/pages/workspace/previews/renderers/PdfPreview'
-import { createRoot } from 'react-dom/client'
-import { initI18n } from '@/i18n'
-import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
-import { LiteratureLibraryPage } from '@/pages/literature/LiteratureLibraryPage'
+import { useWorkspaceComposerController } from '@/pages/workspace/workspace-composer-controller'
+import { WorkspaceComposerDraftsProvider } from '@/pages/workspace/workspace-composer-drafts'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useTagStore } from '@/stores/tag-store'
-import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
-import { WorkspaceComposerDraftsProvider } from '@/pages/workspace/workspace-composer-drafts'
-import { useWorkspaceComposerController } from '@/pages/workspace/workspace-composer-controller'
-import { AnnotationDraftCards } from '@/pages/workspace/annotations/AnnotationCards'
-import { ComposerEditor } from '@/pages/workspace/composer/ComposerEditor'
 import {
   literatureItemInputSchema,
   type LiteratureCatalogCommand
-} from '../../../src/shared/literature'
+} from '@aipoch/literature-library/contracts'
+import { useState } from 'react'
+import { createRoot } from 'react-dom/client'
 
 initI18n('en')
 const previewCase = new URLSearchParams(location.search).get('preview')
@@ -262,7 +264,7 @@ export const NewConversationPdfPreview = (): React.JSX.Element => {
           <div>
             <h2 className="text-2xl">What will you research in Open-Science?</h2>
             <p className="mt-3 text-muted-foreground">
-              Discover, share, and collaborate on research that matters
+              Attach data or papers, then describe what you want to find out.
             </p>
           </div>
         </div>
@@ -305,15 +307,17 @@ export const NewConversationPdfPreview = (): React.JSX.Element => {
   )
 }
 createRoot(document.getElementById('root')!).render(
-  previewCase === 'new-conversation' ? (
-    <WorkspaceComposerDraftsProvider>
-      <NewConversationPdfPreview />
-    </WorkspaceComposerDraftsProvider>
-  ) : previewCase === 'area-selection' ? (
-    <AreaSelectionPreview />
-  ) : previewCase === 'search' ? (
-    <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />
-  ) : (
-    <LiteratureLibraryPage />
-  )
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    {previewCase === 'new-conversation' ? (
+      <WorkspaceComposerDraftsProvider>
+        <NewConversationPdfPreview />
+      </WorkspaceComposerDraftsProvider>
+    ) : previewCase === 'area-selection' ? (
+      <AreaSelectionPreview />
+    ) : previewCase === 'search' ? (
+      <GlobalSearchDialog open onOpenChange={() => {}} isSessionPersistenceReady />
+    ) : (
+      <LiteratureLibraryPage />
+    )}
+  </LiteratureRendererProvider>
 )

@@ -1,6 +1,8 @@
 import type { DatabaseStartupError } from '../../../shared/database-startup'
 
-// Builds the public GitHub "new issue" URL for a blocked database startup. The URL carries the
+export type StartupIssueDetails = Omit<DatabaseStartupError, 'code'> & { code: string }
+
+// Builds the public GitHub "new issue" URL for a blocked application startup. The URL carries the
 // whole draft (title + body) so no app-side permissions or tokens are involved; GitHub renders the
 // pre-filled form and only asks for an account when the user actually submits.
 
@@ -11,11 +13,11 @@ const MAX_URL_LENGTH = 7800
 
 const STACK_TRUNCATION_NOTE = '… (stack truncated to fit the issue URL)'
 
-const buildStartupIssueTitle = (error: DatabaseStartupError): string =>
+const buildStartupIssueTitle = (error: StartupIssueDetails): string =>
   `Startup blocked: ${error.code}${error.migrationId ? ` (${error.migrationId})` : ''}`
 
 const buildStartupIssueBody = (
-  error: DatabaseStartupError,
+  error: StartupIssueDetails,
   diagnostics: string | undefined
 ): string => {
   const environmentRows = [
@@ -47,14 +49,14 @@ const buildStartupIssueBody = (
   return sections.join('\n\n')
 }
 
-const toIssueUrl = (error: DatabaseStartupError, diagnostics: string | undefined): string =>
+const toIssueUrl = (error: StartupIssueDetails, diagnostics: string | undefined): string =>
   `${ISSUE_BASE_URL}?title=${encodeURIComponent(buildStartupIssueTitle(error))}&body=${encodeURIComponent(buildStartupIssueBody(error, diagnostics))}`
 
 const withTruncationNote = (diagnostics: readonly string[], end: number): string =>
   `${diagnostics.slice(0, end).join('').trimEnd()}\n${STACK_TRUNCATION_NOTE}`
 
 const fitDiagnosticsToUrl = (
-  error: DatabaseStartupError,
+  error: StartupIssueDetails,
   diagnostics: string | undefined
 ): string | undefined => {
   if (!diagnostics) return undefined
@@ -77,7 +79,7 @@ const fitDiagnosticsToUrl = (
 }
 
 const buildStartupIssueUrl = (
-  error: DatabaseStartupError,
+  error: StartupIssueDetails,
   diagnostics: string | undefined = error.diagnostics
 ): string => toIssueUrl(error, fitDiagnosticsToUrl(error, diagnostics))
 

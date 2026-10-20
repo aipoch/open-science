@@ -7,14 +7,14 @@ import {
   type SessionPersistenceState
 } from '@/lib/session-persistence/session-persistence'
 import { resolveStartupView, type StartupView } from '@/pages/onboarding/startup-gate'
-import type { ProvisionUiState } from '@/pages/workspace/provisioning-view'
+import type { ProvisionUiState } from '@/lib/notebook-provisioning'
 import {
   useQuitPersistenceFlush,
   type QuitPersistenceFlushProjection
 } from '@/hooks/useQuitPersistenceFlush'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useProjectStore } from '@/stores/project-store'
-import { useSettingsStore } from '@/stores/settings-store'
+import { useSettingsStore, type SettingsLoadFailure } from '@/stores/settings-store'
 import { useStorageInfoStore } from '@/stores/storage-info-store'
 import { useUpdateStore } from '@/stores/update-store'
 
@@ -28,6 +28,9 @@ type ApplicationStartupProjection = Readonly<{
     isLoaded: boolean
     isLoading: boolean
     loadError: string | undefined
+    loadFailure?: SettingsLoadFailure
+    loadAttempt: number
+    snapshotRevision: number
     startupView: StartupView | undefined
     retry: () => Promise<void>
   }>
@@ -35,6 +38,7 @@ type ApplicationStartupProjection = Readonly<{
   quitPersistence: QuitPersistenceFlushProjection
   environment: Readonly<{
     ui: ProvisionUiState
+    statusError?: string
     retry: () => Promise<void>
   }>
   storageRecovery: Readonly<{
@@ -57,6 +61,9 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   const loadDeletionCleanup = useProjectStore((state) => state.loadDeletionCleanup)
   const isSettingsLoaded = useSettingsStore((state) => state.isLoaded)
   const isSettingsLoading = useSettingsStore((state) => state.isLoading)
+  const settingsLoadAttempt = useSettingsStore((state) => state.settingsLoadGeneration)
+  const settingsSnapshotRevision = useSettingsStore((state) => state.settingsSnapshotRevision)
+  const settingsLoadFailure = useSettingsStore((state) => state.loadFailure)
   const settingsLoadError = useSettingsStore((state) => state.loadError)
   const onboardingCompletedAt = useSettingsStore((state) => state.onboardingCompletedAt)
   const loadSettings = useSettingsStore((state) => state.load)
@@ -64,6 +71,7 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
   const initUpdates = useUpdateStore((state) => state.init)
   const initEnvironment = useNotebookEnvStore((state) => state.init)
   const environmentUi = useNotebookEnvStore((state) => state.ui)
+  const environmentStatusError = useNotebookEnvStore((state) => state.statusError)
   const retryEnvironment = useNotebookEnvStore((state) => state.retry)
   const [missingDataRoot, setMissingDataRoot] = useState<string>()
   const [legacyMove, setLegacyMove] = useState<LegacyDataMove>()
@@ -133,6 +141,9 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
       isLoaded: isSettingsLoaded,
       isLoading: isSettingsLoading,
       loadError: settingsLoadError,
+      loadFailure: settingsLoadFailure,
+      loadAttempt: settingsLoadAttempt ?? 0,
+      snapshotRevision: settingsSnapshotRevision ?? 0,
       startupView: isSettingsLoaded
         ? resolveStartupView({ onboardingDone: onboardingCompletedAt !== undefined })
         : undefined,
@@ -140,7 +151,11 @@ const useApplicationStartup = (): ApplicationStartupProjection => {
     },
     sessions,
     quitPersistence,
-    environment: { ui: environmentUi, retry: retryEnvironment },
+    environment: {
+      ui: environmentUi,
+      statusError: environmentStatusError,
+      retry: retryEnvironment
+    },
     storageRecovery: {
       missingDataRoot,
       legacyMove,

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { renderConnectorInstructions, renderSkillDoc, renderCustomSkillDoc } from './skill-doc'
-import { CONNECTOR_CATALOG } from './catalog'
+import { CONNECTOR_CATALOG } from '@aipoch/connector-builtins/catalog'
 
 const tokenizer = new Tiktoken(cl100kBase)
 
@@ -61,44 +61,6 @@ describe('renderConnectorInstructions', () => {
 })
 
 describe('renderSkillDoc', () => {
-  it('publishes discovery, version and file-access contracts in the generated skill', () => {
-    const doc = renderSkillDoc('zenodo')
-    for (const contract of [
-      'name: mcp-zenodo',
-      '### search_records',
-      '### get_record',
-      'next_page',
-      'pagination_limited',
-      '(page - 1) * page_size',
-      'all_versions',
-      'concept_record_id',
-      'No uploads or file downloads',
-      'not sanitized',
-      'empty file list does not establish'
-    ])
-      expect(doc).toContain(contract)
-  })
-  it('documents ENA discovery limits and original submitted file locations', () => {
-    const md = renderSkillDoc('omics-archives')
-    expect(md).toContain('### ena_query_runs')
-    expect(md).toContain('### ena_get_submitted_files')
-    expect(md).toContain('Discover ENA sequencing runs by taxonomy')
-    expect(md).toContain('including descendant taxa')
-    expect(md).toContain('not the host of a microbiome sample')
-    expect(md).toContain('repeated calls are not pagination')
-    expect(md).toContain('filenames may contain literal #')
-    expect(md).toContain('A CRAM may require its matching reference')
-  })
-
-  it('exposes the PRIDE paged file contract in the generated connector skill', () => {
-    const md = renderSkillDoc('omics-archives')
-    expect(md).toContain('### pride_get_project_files')
-    expect(md).toContain('next_page')
-    expect(md).toContain('for a PXD or PRD accession')
-    expect(md).toContain('paged project file inventories with download locations')
-    expect(md).toContain('Aspera locations are transfer addresses, not HTTP URLs')
-  })
-
   it('renders a compact self-contained catalog without repeating the shared conventions', () => {
     const md = renderSkillDoc('chemistry')
     expect(md).toContain('name: mcp-chemistry')
@@ -128,7 +90,7 @@ describe('renderSkillDoc', () => {
       md.indexOf('### get_article_metadata')
     )
     expect(block).toContain(
-      'const result = await host.mcp("pubmed", "search_articles", {"query": "CRISPR gene editing", "max_results": 10})'
+      'const result = await host.mcp("pubmed", "search_articles", {"query":"CRISPR gene editing","max_results":10})'
     )
     expect(block).not.toContain('```')
   })
@@ -286,4 +248,50 @@ describe('renderSkillDoc', () => {
     expect(md).toContain('HTTP 400/500 job failures are read without automatic retries')
     expect(md).toContain('errors are preserved in messages as "[code] message"')
   })
+})
+
+describe('MaveDB generated skill contracts', () => {
+  it('documents all six public tools and their scope', () => {
+    const doc = renderSkillDoc('variants')
+    for (const id of [
+      'search_score_sets',
+      'get_score_set',
+      'download_scores',
+      'get_mapped_variants',
+      'get_experiment',
+      'get_experiment_score_sets'
+    ]) {
+      expect(doc).toContain(`### mavedb_${id}`)
+    }
+    expect(doc).toContain('a page is not the full dataset')
+    expect(doc).toContain('does not submit variants or perform liftover')
+    expect(doc).toContain('No API key or contact email is required')
+  })
+
+  it('documents unknown totals, upstream absence and manual-download boundaries', () => {
+    const doc = renderSkillDoc('variants')
+    expect(doc).toContain('total: number|null')
+    expect(doc).toContain('An empty page at offset>0 returns total=null (unknown)')
+    expect(doc).toContain('HTTP 404 can mean no mapping records exist')
+    expect(doc).toContain('HTTP 404 can mean no associated score sets are available')
+    expect(doc).toContain('not a complete version history')
+    for (const id of ['get_score_set', 'download_scores', 'get_mapped_variants']) {
+      const section = doc.split(`### mavedb_${id}\n`)[1]?.split('\n### ')[0]
+      expect(section).toContain('manual download by the user')
+      expect(doc).toContain('Do not bypass `host.mcp` with raw HTTP')
+    }
+  })
+})
+
+it('keeps contact-email settings and retention guidance in the host document', () => {
+  const doc = renderSkillDoc('interproscan')
+  expect(doc).toContain('Settings → Credentials → Literature access')
+  expect(doc).toContain('Notebook persistence')
+  expect(doc).toContain('This email is sent to EMBL-EBI')
+})
+
+it('keeps ENCORI approval and Specialist policy in the host Skill', () => {
+  const doc = renderSkillDoc('encori')
+  expect(doc).toContain('Skip approvals and remembered grants retain their existing precedence')
+  expect(doc).toContain('Specialist capability scopes follow their existing independent policy')
 })

@@ -1,4 +1,5 @@
 import {
+  ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_SETTLED_EVENT_TITLE,
   type AcpRuntimeEvent,
@@ -9,7 +10,12 @@ import {
   ARTIFACT_OWNERSHIP_PERSISTENCE_RACE,
   type ArtifactFile
 } from '../../../../shared/artifacts'
-import { SessionRevisionConflictError } from '../../../../shared/session-persistence'
+import {
+  SessionRevisionConflictError,
+  type PersistedChatSession,
+  type SaveSessionOptions
+} from '../../../../shared/session-persistence'
+import { applyRuntimeSessionEvents } from '../../../../shared/runtime-session-projection'
 import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +31,7 @@ import {
 } from '../../stores/session-store'
 import { buildWorkspaceHistoryReplay } from './history-preamble'
 import { saveSessionInOrder } from '../session-persistence/session-persistence'
+import { useWorkspaceOperationErrors } from './workspace-operation-error'
 import {
   applyWorkspaceRuntimeEvent,
   applyWorkspaceRuntimeEventBatch,
@@ -59,11 +66,32 @@ type SessionSaveBoundary = (
   session: Parameters<typeof saveSessionInOrder>[0]
 ) => Promise<Parameters<typeof saveSessionInOrder>[0] | void>
 
+const acknowledgeConversationCommands = (
+  session: PersistedChatSession,
+  options?: SaveSessionOptions
+): PersistedChatSession => ({
+  ...session,
+  runtimeConversationCommandIds: [
+    ...new Set([
+      ...(session.runtimeConversationCommandIds ?? []),
+      ...(options?.conversationCommands?.map(({ id }) => id) ?? [])
+    ])
+  ]
+})
+
 const stubReviewerApi = (
   reviewerRun: ReturnType<typeof vi.fn>,
   saveSession: SessionSaveBoundary = async (session) => session
 ): void => {
-  vi.stubGlobal('window', { api: { reviewer: { run: reviewerRun }, sessions: { saveSession } } })
+  vi.stubGlobal('window', {
+    api: {
+      reviewer: { run: reviewerRun },
+      sessions: {
+        saveSession: async (session: PersistedChatSession, options?: SaveSessionOptions) =>
+          acknowledgeConversationCommands((await saveSession(session)) ?? session, options)
+      }
+    }
+  })
 }
 
 // Creates a pending permission request tied to the default test session.
@@ -145,6 +173,7 @@ describe('workspace runtime events', () => {
     resetDeferredArtifactEventsForTests()
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
+    useWorkspaceOperationErrors.setState({ errors: {} })
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
     useNavigationStore.setState({ view: 'home', activeProjectId: undefined })
     useSessionStore.getState().appendUserMessage({
@@ -811,6 +840,30 @@ describe('workspace runtime events', () => {
     ])
   })
 
+  it('keeps host review provenance through the workspace event adapter', async () => {
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'review-start',
+        kind: 'tool',
+        toolCallId: 'app-approval:review',
+        appOwned: true,
+        status: 'in_progress'
+      })
+    )
+    await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'review-end',
+        kind: 'tool',
+        toolCallId: 'app-approval:review',
+        status: 'completed'
+      })
+    )
+    expect(useSessionStore.getState().sessions[0].activities?.[0]).toMatchObject({
+      appOwned: true,
+      status: 'completed'
+    })
+  })
+
   it('projects Notebook authorization and declined permission metadata', async () => {
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -1339,7 +1392,7 @@ describe('workspace runtime events', () => {
     })
   })
 
-  it('surfaces native compaction failures as non-reportable session errors', async () => {
+  it('surfaces manual native compaction failures as Operation Errors', async () => {
     useSessionStore.getState().finishRun('transport-session-1')
     await applyWorkspaceRuntimeEvent(
       createEvent({
@@ -1362,14 +1415,17 @@ describe('workspace runtime events', () => {
     )
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
+      status: 'idle',
       compacting: undefined,
-      error: 'Agent rejected /compact',
-      errorReportable: false,
+      error: undefined,
+      errorReportable: undefined,
       activities: [
         expect.objectContaining({ status: 'failed', title: 'Context compaction failed' })
       ]
     })
+    expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toBe(
+      'Agent rejected /compact'
+    )
   })
 
   it('ignores stale compaction events after a newer retry owns the session', async () => {
@@ -1459,7 +1515,9 @@ describe('workspace runtime events', () => {
       content: 'compare these screenshots'
     })
     // The recovery effect flips the session to compacting before this event is applied.
-    useSessionStore.getState().beginCompaction('transport-session-1', { supersedeActiveRun: true })
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, compacting: true }))
+    }))
 
     const applied = await applyWorkspaceRuntimeEvent({
       ...overflowEvent(),
@@ -1582,6 +1640,22 @@ describe('workspace runtime events', () => {
     // The run finishing clears the transient status so it never lingers into the next turn.
     await applyWorkspaceRuntimeEvent(createEvent({ id: 'event-2', kind: 'stop', text: 'end_turn' }))
     expect(useSessionStore.getState().sessions[0].agentStatus).toBeUndefined()
+  })
+
+  it('reports Artifact cleanup failure as an operation error without touching the session', async () => {
+    const before = structuredClone(useSessionStore.getState().sessions[0])
+    const applied = await applyWorkspaceRuntimeEvent(
+      createEvent({
+        id: 'cleanup-1',
+        kind: 'system',
+        level: 'warning',
+        title: ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
+        text: 'cleanup exploded'
+      })
+    )
+    expect(applied).toBe(true)
+    expect(useWorkspaceOperationErrors.getState().errors[before.id]).toBe('cleanup exploded')
+    expect(useSessionStore.getState().sessions[0]).toEqual(before)
   })
 
   it('suppresses non-actionable Codex startup and transport fallback diagnostics', async () => {
@@ -1802,6 +1876,67 @@ describe('workspace runtime events', () => {
     expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBe(true)
   })
 
+  it('replays MCP startup evidence and projects an admitted continuation beside a legacy record', async () => {
+    const initial = toPersistedSession(useSessionStore.getState().sessions[0])
+    const graph = initial.conversationGraph!
+    const promptMessageId = initial.messages[0].id
+    const scope = {
+      agentFrameId: graph.rootFrameId,
+      messageBranchId: graph.branches[0].id,
+      promptMessageId,
+      runtimeSegmentId: graph.runtimeSegments[0].id
+    }
+    const startup = createEvent({
+      id: 'startup-original',
+      kind: 'tool',
+      toolCallId: 'mcp_startup.example',
+      status: 'failed',
+      title: 'mcp__example__startup',
+      promptMessageId
+    })
+    const saved = applyRuntimeSessionEvents(initial, scope, [startup])
+    saved.conversationGraph!.activities[0].id = startup.toolCallId!
+    saved.activities![0].id = startup.toolCallId!
+    saved.conversationGraph!.runtimeSegments.push({
+      ...graph.runtimeSegments[0],
+      id: 'continued-segment',
+      startedAt: Date.now() + 1
+    })
+    const continuedScope = { ...scope, runtimeSegmentId: 'continued-segment' }
+    saved.runtimeSessionAdmissions = [
+      {
+        ...continuedScope,
+        executionId: 'continued-execution',
+        rootFrameId: graph.rootFrameId,
+        promptRuntimeSegmentId: scope.runtimeSegmentId
+      }
+    ]
+    saved.runtimeTranscriptOwner = 'main'
+    useSessionStore.getState().hydrateSessions([saved])
+    useSessionStore.getState().setAwaitingFirstAgentOutput(initial.id, false)
+    await applyWorkspaceRuntimeEvent(startup)
+    expect(useSessionStore.getState().sessions[0].activities).toHaveLength(1)
+    expect(useSessionStore.getState().sessions[0].awaitingFirstAgentOutput).toBeUndefined()
+    const retry = {
+      ...startup,
+      id: 'startup-continuation',
+      promptExecutionId: 'continued-execution',
+      timestamp: Date.now() + 2
+    }
+    await applyWorkspaceRuntimeEvent(retry)
+    const projected = useSessionStore.getState().sessions[0]
+    expect(projected.awaitingFirstAgentOutput).toBe(true)
+    expect(projected.activities?.map(({ id }) => id)).toEqual(
+      applyRuntimeSessionEvents(saved, continuedScope, [retry]).activities!.map(({ id }) => id)
+    )
+    expect(toPersistedSession(projected).conversationGraph?.activities.at(-1)).toMatchObject({
+      ...continuedScope,
+      eventIds: [retry.id]
+    })
+    await applyWorkspaceRuntimeEvent(retry)
+    expect(useSessionStore.getState().sessions[0].activities).toHaveLength(2)
+  })
+
   it('keeps first-output waiting through tools and filtered Agent diagnostics', async () => {
     useSessionStore.setState((state) => ({
       sessions: state.sessions.map((session) => ({
@@ -1915,6 +2050,52 @@ describe('workspace runtime events', () => {
       rawOutput: { result: 'ok' }
     })
   })
+
+  it.each([
+    ['single', false],
+    ['single', true],
+    ['batch', false],
+    ['batch', true]
+  ] as const)(
+    'does not let delayed %s output rearm a Main-owned completed Session (existing stream: %s)',
+    async (delivery, existingStream) => {
+      const store = useSessionStore.getState()
+      const running = store.sessions[0]
+      const promptMessageId = running.activeRun!.promptMessageId
+      if (existingStream) {
+        await applyWorkspaceRuntimeEvent(
+          createEvent({
+            id: 'initial-presentation',
+            role: 'assistant',
+            messageId: 'delayed-stream',
+            promptMessageId,
+            text: 'Initial output'
+          })
+        )
+      }
+      store.finishRun(running.id)
+      const terminal = toPersistedSession(useSessionStore.getState().sessions[0])
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: running,
+        session: { ...terminal, runtimeTranscriptOwner: 'main' },
+        mode: 'runtime-transcript-authority'
+      })
+      const delayed = createEvent({
+        id: 'delayed-presentation',
+        role: 'assistant',
+        messageId: 'delayed-stream',
+        promptMessageId,
+        text: 'Already delivered by Main'
+      })
+      if (delivery === 'batch') await applyWorkspaceRuntimeEventBatch([delayed])
+      else await applyWorkspaceRuntimeEvent(delayed)
+      await applyWorkspaceRuntimeEvent(createEvent({ kind: 'stop', promptMessageId }))
+      expect(useSessionStore.getState().sessions[0]).toMatchObject({
+        status: 'idle',
+        activeRun: undefined
+      })
+    }
+  )
 
   it('ignores a terminal tool event that arrives after the run stops', async () => {
     const promptMessageId = useSessionStore.getState().sessions[0].activeRun?.promptMessageId
@@ -2485,11 +2666,13 @@ describe('workspace runtime events', () => {
       releaseQueuedSave = resolve
     })
     let durableTitle = ''
-    const saveSession = vi.fn(async (submitted: ReturnType<typeof toPersistedSession>) => {
-      if (submitted.title === 'Queued stale') await queuedSaveBlocked
-      durableTitle = submitted.title
-      return submitted
-    })
+    const saveSession = vi.fn(
+      async (submitted: ReturnType<typeof toPersistedSession>, options?: SaveSessionOptions) => {
+        if (submitted.title === 'Queued stale') await queuedSaveBlocked
+        durableTitle = submitted.title
+        return acknowledgeConversationCommands(submitted, options)
+      }
+    )
     vi.stubGlobal('window', {
       api: {
         sessions: {
@@ -3183,9 +3366,8 @@ describe('workspace runtime events', () => {
 
     expect(operationOrder).toEqual(['save', 'finalize'])
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
-    expect(useSessionStore.getState().sessions[0].error).toMatch(
-      /^Generated file finalization cannot be retried:/u
-    )
+    // Proof rejection is returned to the operation owner; renderer replay cannot settle a turn.
+    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
   })
 
   it('attempts the recoverable ownership persistence race at most twice', async () => {
@@ -3939,7 +4121,7 @@ describe('workspace runtime events', () => {
     })
   })
 
-  it('records finalize failures and retries when an artifact event is replayed', async () => {
+  it('returns finalize failures without settling a turn and retries replayed artifacts', async () => {
     const finalizedArtifact = createArtifactFile({
       id: 'transport-session-1:message-1:result.txt',
       sessionId: 'transport-session-1',
@@ -3972,8 +4154,8 @@ describe('workspace runtime events', () => {
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: expect.stringContaining('Generated file finalization failed')
+      status: 'idle',
+      error: undefined
     })
 
     await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
@@ -4022,7 +4204,10 @@ describe('workspace runtime events', () => {
     await applyWorkspaceRuntimeEvent(artifactEvent, { finalizeRunArtifacts, saveSession })
 
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
-    expect(useSessionStore.getState().sessions[0].error).toBeUndefined()
+    // A successful replay updates references, but only Main may repair a prior terminal outcome.
+    expect(useSessionStore.getState().sessions[0].error).toContain(
+      'Artifact run claim not found: artifact-claim-expired'
+    )
   })
 
   it('finalizes sibling artifact events independently', async () => {
@@ -4175,7 +4360,7 @@ describe('workspace runtime events', () => {
     expect(reconcilePendingArtifacts).toHaveBeenCalledOnce()
     expect(finalizeRunArtifacts).not.toHaveBeenCalled()
     const publishedSession = useSessionStore.getState().sessions[0]
-    expect(publishedSession.error).toBeUndefined()
+    expect(publishedSession.error).toContain('current claim failed')
     expect(
       publishedSession.artifacts?.find(({ id }) => id === nativePendingArtifact.id)
     ).toMatchObject({ isPublished: true })
@@ -4302,11 +4487,12 @@ describe('workspace runtime events', () => {
     expect(finalizeRunArtifacts).toHaveBeenCalledOnce()
     expect(useSessionStore.getState().sessions[0].error).toContain('generic retry failed')
     expect(useSessionStore.getState().sessions[0].artifactErrorEventIds).toEqual([
+      'replayed-finalized-event',
       'sibling-artifact-event'
     ])
   })
 
-  it('records native artifact reconciliation failures for retry', async () => {
+  it('returns native artifact reconciliation failures without changing terminal state', async () => {
     const nativePendingArtifact = createArtifactFile({
       id: 'native-version-reconcile-failure',
       artifactId: 'native-artifact-reconcile-failure',
@@ -4341,8 +4527,8 @@ describe('workspace runtime events', () => {
     ).rejects.toThrow('reconcile failed')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      error: expect.stringContaining('Generated file finalization failed')
+      status: 'idle',
+      error: undefined
     })
   })
 
@@ -4384,9 +4570,10 @@ describe('workspace runtime events', () => {
     ).rejects.toThrow('Artifact reconciliation did not resolve all native Versions.')
 
     expect(useSessionStore.getState().sessions[0]).toMatchObject({
-      status: 'error',
-      artifactErrorEventIds: ['native-incomplete-event']
+      status: 'idle',
+      error: undefined
     })
+    expect(useSessionStore.getState().sessions[0].artifactErrorEventIds).toBeUndefined()
   })
 })
 

@@ -1,10 +1,20 @@
 import { expect } from '@playwright/test'
-import { stat, writeFile, readFile } from 'node:fs/promises'
+import { stat, writeFile, readFile, readdir } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { test } from './fixtures/electron-app'
+import { findBrowserImportPort } from '../src/main/session-package/test-helpers/browser-import-port'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 // Exercise visible transfer controls without hidden-window frame throttling on Windows.
 test.use({ windowMode: 'normal' })
+
+test.beforeEach(async ({ app }) => {
+  // These presentation assertions use English copy even when no fake provider is configured.
+  // Persist the choice so cold package launches use the same locale as the initial window.
+  await app.page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+  await expect(app.page.locator('html')).toHaveAttribute('lang', 'en')
+})
 
 test('preserves transfer outcomes while showing pending temporary cleanup', async ({
   app
@@ -18,7 +28,9 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
   ] as const) {
     const status =
       state === 'succeeded'
-        ? 'Completed, cleanup pending'
+        ? kind === 'export'
+          ? 'Session package exported'
+          : 'Session imported'
         : state === 'failed'
           ? 'Package operation failed'
           : 'Package operation cancelled'
@@ -67,7 +79,7 @@ test('preserves transfer outcomes while showing pending temporary cleanup', asyn
   }
 })
 
-test('keeps import progress visible when a stage has no measurable total', async ({
+test('distinguishes package checks from confirmed import progress without a measurable total', async ({
   app
 }, testInfo) => {
   const page = await app.completeOnboarding()
@@ -89,6 +101,25 @@ test('keeps import progress visible when a stage has no measurable total', async
       timeout: 1000
     })
   }).toPass({ timeout: 10000 })
+  await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+  await expect(
+    dialog.getByText('Disk activity: 12.0 MiB/s', { exact: true }).filter({ visible: true })
+  ).toBeVisible()
+  await expect(meter).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('import-validating.png') })
+  await dialog.getByRole('button', { name: 'Run in background' }).click()
+  const background = page.getByRole('region', { name: 'Package progress', exact: true })
+  await expect(background.getByRole('status')).toHaveText('Checking Session package…')
+  await expect(background.getByRole('progressbar')).toHaveCount(0)
+  await page.screenshot({ path: testInfo.outputPath('import-background.png') })
+  await background.getByRole('button', { name: 'View progress' }).click()
+  await app.emitSessionPackageProgress({
+    ...operation,
+    progress: { phase: 'importing', completedBytes: 40, totalBytes: 100 }
+  })
+  await expect(dialog.getByText('40%', { exact: true })).toBeVisible()
+  await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'importing' } })
+  await expect(dialog.getByText('40%', { exact: true })).toHaveCount(0)
   // A screen-reader-only progress element is not a visual progress bar.
   await expect.poll(async () => (await meter.boundingBox())?.height ?? 0).toBeGreaterThan(3)
   await expect(meter).not.toHaveAttribute('aria-valuenow')
@@ -99,22 +130,6 @@ test('keeps import progress visible when a stage has no measurable total', async
   await expect
     .poll(() => segment.evaluate((element) => getComputedStyle(element).transform))
     .not.toBe(initialTransform)
-  await page.screenshot({ path: testInfo.outputPath('import-validating.png') })
-  await dialog.getByRole('button', { name: 'Run in background' }).click()
-  const background = page.getByRole('region', { name: 'Package progress', exact: true })
-  await expect
-    .poll(async () => (await background.getByRole('progressbar').boundingBox())?.height ?? 0)
-    .toBeGreaterThan(3)
-  await page.screenshot({ path: testInfo.outputPath('import-background.png') })
-  await background.getByRole('button', { name: 'View progress' }).click()
-  await app.emitSessionPackageProgress({
-    ...operation,
-    progress: { phase: 'importing', completedBytes: 40, totalBytes: 100 }
-  })
-  await expect(dialog.getByText('40%', { exact: true })).toBeVisible()
-  await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'importing' } })
-  await expect(dialog.getByText('40%', { exact: true })).toHaveCount(0)
-  await expect.poll(async () => (await meter.boundingBox())?.height ?? 0).toBeGreaterThan(3)
   await page.emulateMedia({ reducedMotion: 'reduce' })
   await expect(meter.locator('[aria-hidden="true"]')).toHaveCSS('animation-name', 'none')
   await page.screenshot({ path: testInfo.outputPath('import-reduced-motion.png') })
@@ -205,13 +220,19 @@ test('presents waiting, measurable work and cleanup through native progress even
   })
   await dialog.getByText('Transfer details', { exact: true }).click()
   await dialog.getByRole('button', { name: 'Run in background' }).click()
-  const inline = page.getByRole('region', { name: 'Package progress', exact: true })
-  await expect(inline.getByText('37%', { exact: true })).toBeVisible()
+  const compactProgress = page.getByRole('button', {
+    name: 'Export Session package · Copying files… · View progress',
+    exact: true
+  })
+  await expect(dialog).toBeHidden()
+  await expect(page.getByRole('region', { name: 'Package progress', exact: true })).toHaveCount(0)
+  await expect(compactProgress).toBeVisible()
   await page.screenshot({
     path: testInfo.outputPath('transfer-background-fixture.png'),
     animations: 'disabled'
   })
-  await inline.getByRole('button', { name: 'View progress' }).click()
+  await compactProgress.click()
+  await expect(dialog.getByText('37%', { exact: true })).toBeVisible()
   await app.emitSessionPackageProgress({ ...operation, progress: { phase: 'compressing' } })
   await expect(dialog.getByRole('progressbar')).not.toHaveAttribute('value')
   await page.screenshot({
@@ -259,10 +280,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   const page = await app.completeOnboarding()
   const archive = await app.configureSessionPackageDialogs({ availableBytes: 0 })
   await writeFile(archive, 'No archive bytes should be parsed')
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Capacity test')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Capacity test')
   await page.getByRole('button', { name: 'Capacity test', exact: true }).click()
   await page.getByRole('menuitem', { name: 'Import Session package…', exact: true }).click()
   const operation = page.getByRole('dialog', { name: 'Import Session package', exact: true })
@@ -272,7 +290,7 @@ test('shows a recoverable disk-capacity error before copying an import', async (
   await operation.getByRole('button', { name: 'Close', exact: true }).click()
 })
 
-test('exports a Session package and imports its conversation as read-only history', async ({
+test('exports a Session package and opens the imported Session with replay', async ({
   app
 }, testInfo) => {
   // This journey validates the archive several times and performs two persistence restarts.
@@ -283,10 +301,7 @@ test('exports a Session package and imports its conversation as read-only histor
     if (message.type() === 'warning' || message.type() === 'error') console.log(message.text())
   })
   const archive = await app.configureSessionPackageDialogs()
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const project = page.getByRole('dialog', { name: 'New project' })
-  await project.getByLabel('Name').fill('Portable research')
-  await project.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Portable research')
   await page.locator('input[type="file"][multiple]').setInputFiles([
     {
       name: 'research-notes.md',
@@ -303,10 +318,12 @@ test('exports a Session package and imports its conversation as read-only histor
     page.getByRole('button', { name: 'Remove attachment raw-results.csv' })
   ).toBeVisible()
   const prompt = 'Summarize the deterministic fixture.'
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(prompt)
-  await page.getByRole('button', { name: 'Send message' }).click()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await submitPromptViaUi(page, prompt)
+  // Session preparation on Windows is not a response-latency benchmark.
+  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
+    timeout: 60_000
+  })
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
   await page.getByRole('button', { name: `Open actions for ${prompt}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   const exportPackage = page.getByRole('menuitem', { name: 'Export Session package', exact: true })
@@ -314,7 +331,7 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-export.png') })
   await exportPackage.click()
   const operation = page.getByRole('dialog', { name: 'Export Session package', exact: true })
-  await expect(operation.getByRole('button', { name: 'Export' })).toBeVisible()
+  await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeVisible()
   await expect(operation.getByRole('spinbutton')).toHaveCount(0)
   await expect(operation.getByRole('checkbox')).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-default.png') })
@@ -340,7 +357,7 @@ test('exports a Session package and imports its conversation as read-only histor
   const viewport = await page.evaluate(() => ({ width: innerWidth, height: innerHeight }))
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -363,11 +380,11 @@ test('exports a Session package and imports its conversation as read-only histor
   ).toBeVisible()
   await operation.getByRole('spinbutton').fill('1')
   await operation.getByRole('button', { name: 'Exclude large files' }).click()
-  await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
+  await expect(operation.getByText(/Optional files: 1 \/ 2 selected/)).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-selection.png') })
   for (const width of [320, 375, 414, 768]) {
     await page.setViewportSize({ width, height: 800 })
-    await expect(operation.getByRole('button', { name: 'Export' })).toBeInViewport()
+    await expect(operation.getByRole('button', { name: 'Choose save location…' })).toBeInViewport()
     expect(await operation.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
       true
     )
@@ -383,13 +400,12 @@ test('exports a Session package and imports its conversation as read-only histor
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   await page.screenshot({ path: testInfo.outputPath('session-package-background.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Continue another Session during export.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue another Session during export.')
   // The installed fake Agent returns its configured fixed response for every Session.
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
+  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible({
+    timeout: 60_000
+  })
+  await expect(page.getByRole('button', { name: 'Cancel run', exact: true })).toHaveCount(0)
   await page
     .getByRole('navigation', { name: 'Sessions' })
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
@@ -398,12 +414,12 @@ test('exports a Session package and imports its conversation as read-only histor
     .getByRole('region', { name: 'Package progress', exact: true })
     .getByRole('button', { name: 'Continue setup', exact: true })
     .click()
-  await expect(operation.getByText(/Selected: 1 \/ 2 files/)).toBeVisible()
+  await expect(operation.getByText(/Optional files: 1 \/ 2 selected/)).toBeVisible()
   await operation.getByRole('button', { name: 'Customize contents' }).click()
   await operation.getByText('File filters', { exact: true }).click()
   await expect(operation.getByRole('spinbutton')).toHaveValue('1')
-  await operation.getByRole('button', { name: 'Export' }).click()
-  await expect(operation.getByText('Package operation completed', { exact: true })).toBeVisible({
+  await operation.getByRole('button', { name: 'Choose save location…' }).click()
+  await expect(operation.getByText('Session package exported', { exact: true })).toBeVisible({
     timeout: 60_000
   })
   await page.screenshot({ path: testInfo.outputPath('session-package-progress.png') })
@@ -437,13 +453,18 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-import-background.png') })
   await backgroundImport.getByRole('button', { name: 'View progress' }).click()
   await importing.getByRole('button', { name: 'Import', exact: true }).click()
-  await expect(importing.getByText('Package operation completed', { exact: true })).toBeVisible({
+  await expect(importing.getByText('Session imported', { exact: true })).toBeVisible({
     timeout: 60_000
   })
-  await expect(page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
   await page.screenshot({ path: testInfo.outputPath('session-package-import-completed.png') })
   await importing.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-  const imported = page.getByRole('region', { name: 'Imported research history' })
+  await expect(page.getByTestId('replay-panel')).toBeVisible()
+  await expect(
+    page.getByTestId('replay-panel').getByRole('button', { name: 'Play replay', exact: true })
+  ).toBeVisible()
+  const replay = page.getByTestId('replay-panel')
+  const imported = page.getByRole('region', { name: 'Imported research history', exact: true })
   await expect(imported).toBeVisible()
   await expect(imported.getByText(/^Imported on /)).toBeVisible()
   const origins = await page.evaluate(async () =>
@@ -464,7 +485,13 @@ test('exports a Session package and imports its conversation as read-only histor
   await page.screenshot({ path: testInfo.outputPath('session-package-source.png') })
   await imported.getByText('Not included in this package', { exact: true }).click()
   await expect(imported.getByText('raw-results.csv', { exact: true })).toBeVisible()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await replay.getByRole('slider', { name: 'Replay progress', exact: true }).focus()
+  await page.keyboard.press('End')
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   await expect(page.getByRole('textbox', { name: 'Ask anything' })).toHaveCount(0)
   const sessionRow = page
     .getByRole('navigation', { name: 'Sessions', includeHidden: true })
@@ -477,7 +504,7 @@ test('exports a Session package and imports its conversation as read-only histor
     includeHidden: true
   })
   const sessionMenu = sessionRow.getByRole('button', { name: `Open actions for ${prompt}` })
-  await page.getByRole('region', { name: 'Imported research history' }).hover()
+  await imported.hover()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page
     .getByRole('navigation', { name: 'Sessions' })
@@ -492,18 +519,21 @@ test('exports a Session package and imports its conversation as read-only histor
   await expect(page.getByRole('menu', { name: `Open actions for ${prompt}` })).toBeVisible()
   await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await page.keyboard.press('Escape')
-  await page.getByRole('region', { name: 'Imported research history' }).click()
+  await imported.getByText('Package source', { exact: true }).click()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await sessionMenu.focus()
   await expect(readOnlyBadge).toHaveCSS('opacity', '0')
   await expect(sessionMenu).toHaveCSS('opacity', '1')
-  await page.getByRole('region', { name: 'Imported research history' }).click()
+  await imported.getByText('Package source', { exact: true }).click()
   await expect(readOnlyBadge).toHaveCSS('opacity', '1')
   await page.screenshot({ path: testInfo.outputPath('session-package-imported.png') })
   await page.getByRole('button', { name: 'New', exact: true }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue in an ordinary Session.')
-  await page.getByRole('button', { name: 'Send message', exact: true }).click()
-  await expect(page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await submitPromptViaUi(page, 'Continue in an ordinary Session.')
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   await expect(page.getByRole('button', { name: 'Stop generating' })).toHaveCount(0)
   await expect(page.getByText('Conversation storage needs attention', { exact: true })).toHaveCount(
     0
@@ -527,8 +557,16 @@ test('exports a Session package and imports its conversation as read-only histor
     })
     .getByRole('button', { name: new RegExp(`Session status:.*${prompt}`) })
     .click()
-  await expect(app.page.getByRole('region', { name: 'Imported research history' })).toBeVisible()
-  await expect(app.page.getByText(`Deterministic reply: ${prompt}`, { exact: true })).toBeVisible()
+  await app.page
+    .getByRole('region', { name: 'Imported research history', exact: true })
+    .getByRole('button', { name: 'View replay', exact: true })
+    .click()
+  await expect(app.page.getByTestId('replay-panel')).toBeVisible()
+  await expect(
+    app.page
+      .getByRole('region', { name: 'Conversation', exact: true })
+      .getByText(`Deterministic reply: ${prompt}`, { exact: true })
+  ).toBeVisible()
   const identity = await app.page.evaluate(async () => {
     const session = (await window.api.sessions.loadAll()).sessions.find(
       (entry) => entry.packageOrigin
@@ -599,3 +637,142 @@ test('receives a package from cold launch arguments and a subsequent file-open e
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog.getByText('Package operation cancelled', { exact: true })).toBeVisible()
 })
+
+for (const launch of ['cold', 'warm'] as const) {
+  test(`imports a browser-held package over real browser HTTP after ${launch} protocol delivery`, async ({
+    app,
+    browser
+  }, testInfo) => {
+    await app.completeOnboarding()
+    const discoveryPort = await findBrowserImportPort()
+    const previousDiscoveryPort = process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+    process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = String(discoveryPort)
+    await app.restart()
+    const inspection = await app.createTestDirectory('browser-import-inspection')
+    const storage = join(dirname(inspection), 'storage')
+    const context = await browser.newContext()
+    const website = await context.newPage()
+    const source = await readFile('packages/open-science/browser-import.mjs', 'utf8')
+    const archive = await readFile(
+      'src/main/session-package/fixtures/session-package-v0.31.1-minimal.science'
+    )
+    const network: string[] = []
+    website.on('request', (request) => network.push(request.url()))
+    // HTTPS public-origin page, without disabling CORS or browser web security. OS protocol
+    // dispatch is delivered through Electron's real argv/open-url boundaries in this source test.
+    await context.grantPermissions(['local-network-access'], { origin: 'https://research.example' })
+    await website.route('https://research.example/**', async (route) => {
+      const path = new URL(route.request().url()).pathname
+      if (path === '/browser-import.mjs')
+        await route.fulfill({ contentType: 'text/javascript', body: source })
+      else if (path === '/study.science')
+        await route.fulfill({ contentType: 'application/octet-stream', body: archive })
+      else
+        await route.fulfill({
+          contentType: 'text/html',
+          body: '<!doctype html><title>Research package</title><p>Browser import fixture</p>'
+        })
+    })
+    try {
+      await website.goto('https://research.example/')
+      // Discovery precedes the website's only remote package fetch.
+      expect(
+        await website.evaluate(async (port) => {
+          const sdkPath = '/browser-import.mjs'
+          const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
+          return checkBrowserImportAvailability({ port })
+        }, discoveryPort)
+      ).toEqual({ status: 'available' })
+      const url = await website.evaluate(async () => {
+        const sdkPath = '/browser-import.mjs'
+        const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
+        const blob = await (await fetch('/study.science')).blob()
+        const transfer = prepareBrowserImport(blob, { filename: 'study.science' })
+        Object.assign(window, { browserPackageTransfer: transfer, browserPackageBlob: blob })
+        return transfer.url as string
+      })
+      const page = launch === 'cold' ? await app.restartWithPackage(url) : app.page
+      if (launch === 'warm') await app.emitBrowserImport(url)
+      const result = await website.evaluate(async () => {
+        const transfer = (
+          window as unknown as {
+            browserPackageTransfer: { send: () => Promise<{ received: true }> }
+          }
+        ).browserPackageTransfer
+        return transfer.send()
+      })
+      expect(result).toEqual({ received: true })
+      expect(network.filter((url) => url.endsWith('/study.science'))).toHaveLength(1)
+      expect(network.some((url) => /^http:\/\/127\.0\.0\.1:\d+\/v1\/import\/chunk/.test(url))).toBe(
+        true
+      )
+      const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+      await expect(dialog.getByText('study.science', { exact: true })).toBeVisible()
+      await dialog.getByRole('button', { name: 'New project', exact: true }).click()
+      await dialog.getByRole('textbox', { name: 'Project name' }).fill(`Browser ${launch}`)
+      await dialog.getByRole('button', { name: 'Continue', exact: true }).click()
+      await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible({
+        timeout: 60_000
+      })
+      await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-confirmation.png`) })
+      await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+      await expect(dialog.getByText('Session imported', { exact: true })).toBeVisible({
+        timeout: 60_000
+      })
+      await page.screenshot({ path: testInfo.outputPath(`browser-${launch}-imported.png`) })
+      await expect
+        .poll(async () =>
+          (await readdir(join(storage, 'browser-package-imports'))).filter((name) =>
+            name.startsWith('transfer-')
+          )
+        )
+        .toEqual([])
+      await dialog.getByRole('button', { name: 'Open imported Session', exact: true }).click()
+      await expect(
+        page.getByRole('region', { name: 'Imported research history', exact: true })
+      ).toBeVisible()
+      await expect(page.getByTestId('replay-panel')).toBeVisible()
+      await page.getByRole('button', { name: 'All projects', exact: true }).click()
+      await expect(page.getByRole('region', { name: 'Projects', exact: true })).toBeVisible()
+      if (launch === 'warm') {
+        const restarted = await app.restart()
+        expect(
+          await website.evaluate(async (port) => {
+            const sdkPath = '/browser-import.mjs'
+            const { checkBrowserImportAvailability } = await import(/* @vite-ignore */ sdkPath)
+            return checkBrowserImportAvailability({ port })
+          }, discoveryPort)
+        ).toEqual({ status: 'available' })
+        const nextUrl = await website.evaluate(async () => {
+          const sdkPath = '/browser-import.mjs'
+          const { prepareBrowserImport } = await import(/* @vite-ignore */ sdkPath)
+          const blob = (window as unknown as { browserPackageBlob: Blob }).browserPackageBlob
+          const transfer = prepareBrowserImport(blob, { filename: 'again.science' })
+          Object.assign(window, { browserPackageTransfer: transfer })
+          return transfer.url as string
+        })
+        await app.emitBrowserImport(nextUrl)
+        expect(
+          await website.evaluate(() =>
+            (
+              window as unknown as {
+                browserPackageTransfer: { send: () => Promise<{ received: true }> }
+              }
+            ).browserPackageTransfer.send()
+          )
+        ).toEqual({ received: true })
+        // A fresh transfer of the same bytes is received again; final import still needs a choice.
+        await expect(
+          restarted
+            .getByRole('dialog', { name: 'Import Session package', exact: true })
+            .getByText('again.science', { exact: true })
+        ).toBeVisible()
+      }
+    } finally {
+      if (previousDiscoveryPort === undefined)
+        delete process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT
+      else process.env.OPEN_SCIENCE_BROWSER_IMPORT_DISCOVERY_PORT = previousDiscoveryPort
+      await context.close()
+    }
+  })
+}

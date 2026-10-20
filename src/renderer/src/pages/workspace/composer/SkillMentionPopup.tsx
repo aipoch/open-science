@@ -11,7 +11,8 @@ import {
 
 import { Button } from '@/components/ui/button'
 
-import type { SkillSource, SkillView } from '../../../../../shared/settings'
+import type { SkillView } from '../../../../../shared/settings'
+import type { SkillSource } from '@aipoch/skills/document'
 import type { Wsl2BashPreviewStatus } from '../../../../../shared/wsl-setup'
 import { useSettingsStore } from '@/stores/settings-store'
 

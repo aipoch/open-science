@@ -1,0 +1,3 @@
+{"name":"raised numerator and indexed denominator retain native geometry","translation":"导数 ∂g/∂zj−2 保持有界。","raised":true,"matched":true}
+{"name":"changed derivative is not admitted as the original native formula","translation":"导数 ∂h/∂zj−2 保持有界。","raised":true,"matched":false}
+{"name":"flat slash expression is not guessed to have fraction tiers","translation":"导数 ∂g/∂zj−2 保持有界。","raised":false,"matched":false}

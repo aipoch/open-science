@@ -1,0 +1,1 @@
+{"name": "hyphenated-word-before-preserved-formula-keeps-context", "first": "The count of elementary opera-", "next": "tions is Θ(", "expected": "The count of elementary operations is Θ("}

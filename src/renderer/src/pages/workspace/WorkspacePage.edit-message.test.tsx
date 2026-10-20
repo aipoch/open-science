@@ -324,7 +324,8 @@ describe('WorkspacePage inline edit resend', () => {
         messages: [promptMessage],
         conversationGraph: {
           ...graph,
-          frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'branch-b' }))
+          frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'branch-b' })),
+          branches: [...graph.branches, { ...graph.branches[0], id: 'branch-b' }]
         }
       })
     )

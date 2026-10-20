@@ -20,7 +20,7 @@ type SessionCatalogRecoveryAlertProps = {
 
 // Catalog recovery is a storage concern shown before a Project command is attempted. Keep it
 // distinct from command failures and from the Project Files index, which cannot restore Session JSON.
-const SessionCatalogRecoveryAlert = ({
+const SessionCatalogRecoveryAlertContent = ({
   recovery,
   inline,
   onRetry,
@@ -103,11 +103,11 @@ const SessionCatalogRecoveryAlert = ({
                   'One or more saved conversations exceed the 256 MiB storage limit. They were left unchanged and cannot be opened. Review the affected files before retrying.'
                 )
               : t(
-                  '{{count}} damaged saved conversations were moved aside. Project archive stays unavailable because their state cannot be verified. You can still permanently delete the project.',
+                  '{{count}} damaged saved conversations were moved aside. Archiving remains unavailable for affected project data because its state cannot be verified. You can still permanently delete the affected project data.',
                   {
                     count: recovery.affectedFiles.length,
                     defaultValue_one:
-                      'A damaged saved conversation was moved aside. Project archive stays unavailable because its state cannot be verified. You can still permanently delete the project.'
+                      'A damaged saved conversation was moved aside. Archiving remains unavailable for affected project data because its state cannot be verified. You can still permanently delete the affected project data.'
                   }
                 )
           } ${t('Compute jobs in affected Sessions may remain queued. Preserve the affected files and recover a valid copy; dispatch retries automatically.')}`}
@@ -209,5 +209,11 @@ const SessionCatalogRecoveryAlert = ({
     />
   )
 }
+
+const SessionCatalogRecoveryAlert = (
+  props: SessionCatalogRecoveryAlertProps
+): React.JSX.Element => (
+  <SessionCatalogRecoveryAlertContent key={JSON.stringify(props.recovery)} {...props} />
+)
 
 export { SessionCatalogRecoveryAlert }

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { resolve } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
@@ -24,8 +25,8 @@ vi.mock('electron', () => ({
     getAllWindows: () => [{ isDestroyed: () => false, webContents: { send: native.send } }]
   }
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const original = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...original,
     createLogger: () => ({ ...original.createLogger('test'), warn: native.warn })
@@ -85,6 +86,7 @@ const channels = [
   'sessions:load-usage',
   'sessions:search-messages',
   'sessions:load-one',
+  'sessions:list-runtime-terminal-failures',
   'sessions:save-session',
   'sessions:save-manifest',
   'sessions:open-recovery-folder'
@@ -192,3 +194,5 @@ describe('Session persistence Electron surface', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -1,10 +1,10 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import type { RequestPermissionRequest } from '@agentclientprotocol/sdk'
 import type { PrismaClient } from '@prisma/client'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 
 import {
   createPermissionGrantRegistry,
@@ -14,7 +14,8 @@ import { seedDefaultPermissionGrants } from '../permission-grants/defaults'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import { AcpPermissionBroker, projectRegistrySessionGrants } from './permission-broker'
 import { withTrustedMcpToolIdentity, withTrustedNativeToolIdentity } from './permission-policy'
-import { claudeCodeFramework } from '../agent-framework'
+import { createLogger, flushLogs, initLogger } from '@aipoch/diagnostics/node'
+import { claudeCodeFramework, opencodeFramework } from '../agent-framework'
 import { AcpPermissionContext, HUMAN_PERMISSION_ACTION_ORIGIN } from './permission-context'
 import {
   AcpSessionCapabilityOwner,
@@ -130,7 +131,7 @@ it('offers conversation approval for the Claude Code configured Skill loader', a
     expect(emit).toHaveBeenCalledOnce()
     const [grant] = await registry.list()
     expect(grant).toMatchObject({
-      capability: { kind: 'mcp_tool', key: 'mcp:skills/load_skill' },
+      capability: { kind: 'skill_operation', key: 'skill:invoke' },
       scope: { kind: 'session', projectId: 'project-skill', sessionId: 'session-skill' }
     })
     const secondProvision = await owner.provision({
@@ -787,83 +788,97 @@ describe('ACP permission broker with durable grants', () => {
     expect(emitted).toHaveLength(1)
   })
 
-  it.each([
-    ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
-    ['posix', 'curl --auth-token secret https://example.com', ['curl']],
-    ['posix', 'curl --bearer secret https://example.com', ['curl']],
-    ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
-    ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
-    ['posix', 'curl -uuser:secret https://example.com', ['curl']],
-    ['posix', 'curl -b session=secret https://example.com', ['curl']],
-    ['posix', 'curl -bsession=secret https://example.com', ['curl']],
-    ['powershell', 'CURL.EXE -bsession=secret https://example.com', ['CURL.EXE']],
-    ['posix', 'docker login -p secret', ['docker', 'login']],
-    ['posix', 'docker login -psecret', ['docker', 'login']],
-    ['powershell', 'Docker login -psecret', ['Docker', 'login']],
-    ['posix', 'sshpass -psecret ssh user@example.com', ['sshpass']],
-    ['posix', 'redis-cli -asecret ping', ['redis-cli']],
-    ['posix', 'mysql -psecret app', ['mysql']],
-    ['posix', 'mysqldump -psecret app', ['mysqldump']],
-    ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
-    ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
-    ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
-    ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
-    [
-      'posix',
-      'gcloud auth activate-service-account --key-file credentials.json',
-      ['gcloud', 'auth', 'activate-service-account']
-    ],
-    ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
-    ['posix', 'deploy --github-token secret', ['deploy']],
-    ['posix', 'deploy --client_secret=secret', ['deploy']],
-    ['posix', 'deploy --x-api-key secret', ['deploy']],
-    ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
-    ['posix', 'deploy --credentials credentials.json', ['deploy']],
-    ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
-    ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
-  ] as const)(
-    'offers only provider Once for a credential-bearing Codex %s command group: %s',
-    async (shellDialect, command, commandPrefix) => {
-      storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
-      client = createProjectDbClient(storageRoot)
-      await migrateApplicationDatabase(client)
-      await client.project.create({ data: { id: 'project-1', name: 'Project one' } })
-      const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
-      const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
-      const broker = new AcpPermissionBroker(
-        (request) => emitted.push(request),
-        undefined,
-        registry
-      )
-      const request = shellRequest('session-1')
-      request.toolCall.rawInput = { command }
-      request.options.splice(2, 0, {
-        optionId: 'accept_execpolicy_amendment',
-        name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
-        kind: 'allow_always',
-        _meta: {
-          codex: {
-            execpolicyAmendment: [...commandPrefix]
+  describe('credential-bearing Codex command groups', () => {
+    let secretRoot: string | undefined
+    let secretClient: PrismaClient | undefined
+    let secretRegistry: PermissionGrantRegistry
+
+    beforeAll(async () => {
+      secretRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-secret-'))
+      secretClient = createProjectDbClient(secretRoot)
+      await migrateApplicationDatabase(secretClient)
+      await secretClient.project.create({ data: { id: 'project-1', name: 'Project one' } })
+      secretRegistry = await createPermissionGrantRegistry({ getClient: async () => secretClient! })
+    })
+
+    afterAll(async () => {
+      await secretClient?.$disconnect()
+      if (secretRoot) await rm(secretRoot, { recursive: true, force: true })
+    })
+
+    it.each([
+      ['posix', 'python upload.py --token secret', ['python', 'upload.py']],
+      ['posix', 'curl --auth-token secret https://example.com', ['curl']],
+      ['posix', 'curl --bearer secret https://example.com', ['curl']],
+      ['posix', 'curl --oauth2-bearer secret https://example.com', ['curl']],
+      ['posix', 'curl --cookie session=secret https://example.com', ['curl']],
+      ['posix', 'curl -uuser:secret https://example.com', ['curl']],
+      ['posix', 'curl -b session=secret https://example.com', ['curl']],
+      ['posix', 'curl -bsession=secret https://example.com', ['curl']],
+      ['powershell', 'CURL.EXE -bsession=secret https://example.com', ['CURL.EXE']],
+      ['posix', 'docker login -p secret', ['docker', 'login']],
+      ['posix', 'docker login -psecret', ['docker', 'login']],
+      ['powershell', 'Docker login -psecret', ['Docker', 'login']],
+      ['posix', 'sshpass -psecret ssh user@example.com', ['sshpass']],
+      ['posix', 'redis-cli -asecret ping', ['redis-cli']],
+      ['posix', 'mysql -psecret app', ['mysql']],
+      ['posix', 'mysqldump -psecret app', ['mysqldump']],
+      ['posix', 'npm config set //registry.npmjs.org/:_authToken=secret', ['npm', 'config', 'set']],
+      ['posix', 'aws configure set aws_secret_access_key secret', ['aws', 'configure', 'set']],
+      ['posix', 'gpg --passphrase secret --decrypt payload.gpg', ['gpg']],
+      ['posix', 'gpg --passphrase-file=credentials.txt --decrypt payload.gpg', ['gpg']],
+      [
+        'posix',
+        'gcloud auth activate-service-account --key-file credentials.json',
+        ['gcloud', 'auth', 'activate-service-account']
+      ],
+      ['posix', 'oauth login --client-secret secret', ['oauth', 'login']],
+      ['posix', 'deploy --github-token secret', ['deploy']],
+      ['posix', 'deploy --client_secret=secret', ['deploy']],
+      ['posix', 'deploy --x-api-key secret', ['deploy']],
+      ['posix', 'deploy --aws-secret-access-key secret', ['deploy']],
+      ['posix', 'deploy --credentials credentials.json', ['deploy']],
+      ['powershell', 'Invoke-RestMethod -Credential secret', ['Invoke-RestMethod']],
+      ['powershell', 'Invoke-RestMethod -ClientSecret:secret', ['Invoke-RestMethod']]
+    ] as const)(
+      'offers only provider Once for a credential-bearing Codex %s command group: %s',
+      async (shellDialect, command, commandPrefix) => {
+        const emitted: Parameters<ConstructorParameters<typeof AcpPermissionBroker>[0]>[0][] = []
+        const broker = new AcpPermissionBroker(
+          (request) => emitted.push(request),
+          undefined,
+          secretRegistry
+        )
+        const request = shellRequest('session-1')
+        request.toolCall.rawInput = { command }
+        request.options.splice(2, 0, {
+          optionId: 'accept_execpolicy_amendment',
+          name: `Allow Commands Starting With \`${commandPrefix.join(' ')}\``,
+          kind: 'allow_always',
+          _meta: {
+            codex: {
+              execpolicyAmendment: [...commandPrefix]
+            }
           }
-        }
-      })
+        })
 
-      const pending = broker.requestPermission(request, {
-        profile: 'ask',
-        frameworkId: 'codex',
-        shellDialect,
-        projectId: 'project-1'
-      })
-      await new Promise<void>((resolve) => setImmediate(resolve))
+        const pending = broker.requestPermission(request, {
+          profile: 'ask',
+          frameworkId: 'codex',
+          shellDialect,
+          projectId: 'project-1'
+        })
+        await new Promise<void>((resolve) => setImmediate(resolve))
 
-      expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
-      broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
-      await expect(pending).resolves.toEqual({
-        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
-      })
-      await expect(registry.list()).resolves.toEqual([])
-    }
-  )
+        expect(emitted[0].options.map((option) => option.scope).filter(Boolean)).toEqual(['once'])
+        broker.respond({ requestId: emitted[0].requestId, optionId: 'provider-allow-once' })
+        await expect(pending).resolves.toEqual({
+          outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+        })
+        await expect(secretRegistry.list()).resolves.toEqual([])
+      }
+    )
+  })
 
   it('offers only provider Once for a command that executes a mutable script', async () => {
     storageRoot = await mkdtemp(join(tmpdir(), 'open-science-broker-mutable-script-'))
@@ -1613,7 +1628,7 @@ it('releases queued durable searches without granting other capabilities or conv
     settleLive
   })
   const unsubscribe = registry.subscribe(() => {
-    void broker.releaseGrantedWebSearchRequests()
+    void broker.releaseGrantedRequests()
   })
   const request = (
     id: string,
@@ -1688,3 +1703,313 @@ it('releases queued durable searches without granting other capabilities or conv
     broker.cancelAllPending()
   }
 })
+
+it.each([
+  ['claude-code', 'claude-anthropic'],
+  ['opencode', 'opencode-openai'],
+  ['codex', 'codex-responses'],
+  ['codex', 'codex-bridge']
+] as const)('uses revocable shared Skill grants for %s / %s', async (frameworkId, modelRoute) => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'permission-skill-authority-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  const emit = vi.fn()
+  const broker = new AcpPermissionBroker(emit, undefined, registry)
+  const policy = { frameworkId, modelRoute, profile: 'ask' as const, mcpServerNames: ['skills'] }
+  const request = (): RequestPermissionRequest =>
+    frameworkId === 'opencode'
+      ? withTrustedNativeToolIdentity(
+          {
+            ...mcpRequest('session-1', 'skill'),
+            toolCall: {
+              toolCallId: 'skill-call',
+              title: 'skill',
+              kind: 'other',
+              rawInput: { name: 'example' }
+            }
+          },
+          'opencode/skill'
+        )
+      : withTrustedMcpToolIdentity(
+          mcpRequest('session-1', 'mcp__skills__load_skill'),
+          'skills/load_skill'
+        )
+  await seedDefaultPermissionGrants(registry, client)
+  await expect(broker.requestPermission(request(), policy)).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+  })
+  expect(emit).not.toHaveBeenCalled()
+  const grant = (await registry.list()).find((record) => record.capability.key === 'skill:invoke')!
+  await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+  const pending = broker.requestPermission(request(), policy)
+  await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+  await broker.respond({
+    requestId: emit.mock.calls[0][0].requestId,
+    optionId: 'provider-reject-once'
+  })
+  await expect(pending).resolves.toEqual({
+    outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
+  })
+})
+
+it('routes the first OpenCode Skill update through the Registry without routine diagnostics and honors revocation', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'permission-first-opencode-skill-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  await seedDefaultPermissionGrants(registry, client)
+  initLogger({ logDir: storageRoot, mirrorToConsole: false })
+  createLogger('test').info('first Skill test boundary')
+  const emit = vi.fn()
+  const timeout = vi.fn()
+  const context = new AcpPermissionContext({
+    emitPermissionRequest: emit,
+    permissionGrantRegistry: registry,
+    onOpenCodeWaitTimeout: timeout,
+    routing: {
+      resolveAppSessionId: (id) => id,
+      sessionSnapshot: () => ({
+        cwd: storageRoot!,
+        frameworkId: 'opencode',
+        permissionProfile: { selectedProfile: 'ask' }
+      }),
+      hasActivePrimarySession: () => true,
+      capturePrompt: () => ({ sequence: 1, isCancellationAccepted: () => false }),
+      currentInteractionSequence: () => 1,
+      mcpServerNamesFor: () => [],
+      reviewerContextFor: () => undefined,
+      resolveReviewerPermission: () => undefined,
+      currentFramework: () => opencodeFramework,
+      resolveProjectId: () => 'project-skill'
+    }
+  })
+  const load = (toolCallId: string): Promise<unknown> => {
+    context.observeToolCall(
+      {
+        sessionId: 'session-skill',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId,
+          title: 'skill',
+          kind: 'other',
+          status: 'pending',
+          rawInput: {}
+        }
+      },
+      { sessionId: 'session-skill', framework: 'opencode', mcpServerNames: [] }
+    )
+    const response = context.handleProviderRequest({
+      ...mcpRequest('session-skill', 'skill'),
+      toolCall: { toolCallId, title: 'skill', kind: 'other', rawInput: {} }
+    })
+    context.observeToolCall(
+      {
+        sessionId: 'session-skill',
+        update: {
+          sessionUpdate: 'tool_call_update',
+          toolCallId,
+          status: 'in_progress',
+          rawInput: { name: 'private-skill-name' }
+        }
+      },
+      { sessionId: 'session-skill', framework: 'opencode', mcpServerNames: [] }
+    )
+    return response
+  }
+  try {
+    await expect(load('first-call')).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+    })
+    expect(emit).not.toHaveBeenCalled()
+    const grant = (await registry.list()).find(
+      (record) => record.capability.key === 'skill:invoke'
+    )!
+    await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+    const pending = load('revoked-call')
+    await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+    expect(
+      emit.mock.calls[0][0].options.map((option: { scope?: string }) => option.scope)
+    ).toContain('global')
+    await context.respondToPermission(
+      { requestId: emit.mock.calls[0][0].requestId, optionId: 'provider-reject-once' },
+      HUMAN_PERMISSION_ACTION_ORIGIN
+    )
+    await expect(pending).resolves.toEqual({
+      outcome: { outcome: 'selected', optionId: 'provider-reject-once' }
+    })
+    expect(timeout).not.toHaveBeenCalled()
+    await flushLogs()
+    const log = await readFile(join(storageRoot, 'main.log'), 'utf8')
+    expect(log).not.toContain('permission decision trace')
+    expect(log).not.toContain('private-skill-name')
+  } finally {
+    context.dispose()
+    await flushLogs()
+  }
+})
+
+it('keeps historical MCP Skill authority on its original loader only', async () => {
+  storageRoot = await mkdtemp(join(tmpdir(), 'permission-legacy-loader-'))
+  client = createProjectDbClient(storageRoot)
+  await migrateApplicationDatabase(client)
+  const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+  await registry.remember({
+    capability: { kind: 'mcp_tool', key: 'mcp:skills/load_skill' },
+    scope: { kind: 'global' }
+  })
+  const emit = vi.fn()
+  const broker = new AcpPermissionBroker(emit, undefined, registry)
+  await expect(
+    broker.requestPermission(
+      withTrustedMcpToolIdentity(
+        mcpRequest('session-1', 'mcp__skills__load_skill'),
+        'skills/load_skill'
+      ),
+      { profile: 'ask', frameworkId: 'claude-code', mcpServerNames: ['skills'] }
+    )
+  ).resolves.toMatchObject({ outcome: { outcome: 'selected' } })
+  const pending = broker.requestPermission(
+    withTrustedNativeToolIdentity(
+      {
+        ...mcpRequest('session-1', 'skill'),
+        toolCall: { toolCallId: 'native-skill', title: 'skill', kind: 'other' }
+      },
+      'opencode/skill'
+    ),
+    { profile: 'ask', frameworkId: 'opencode' }
+  )
+  await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+  broker.cancelAllPending()
+  await expect(pending).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+  expect((await registry.list()).map((grant) => grant.capability.key)).toEqual([
+    'mcp:skills/load_skill'
+  ])
+})
+
+it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+  'rechecks pending mapped %s capabilities when grants change and unsubscribes on disposal',
+  async (frameworkId) => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'permission-pending-registry-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    await client.project.create({ data: { id: 'project-1', name: 'Permission test' } })
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    const unsubscribe = vi.fn()
+    const subscribe = registry.subscribe.bind(registry)
+    vi.spyOn(registry, 'subscribe').mockImplementation((listener) => {
+      const stop = subscribe(listener)
+      return () => {
+        unsubscribe()
+        stop()
+      }
+    })
+    const emit = vi.fn()
+    const context = new AcpPermissionContext({
+      emitPermissionRequest: emit,
+      permissionGrantRegistry: registry,
+      routing: {
+        resolveAppSessionId: (id) => id,
+        sessionSnapshot: () => undefined,
+        hasActivePrimarySession: () => true,
+        capturePrompt: () => undefined,
+        currentInteractionSequence: () => undefined,
+        mcpServerNamesFor: () => ['open-science-notebook'],
+        reviewerContextFor: () => undefined,
+        resolveReviewerPermission: () => undefined,
+        currentFramework: () => claudeCodeFramework,
+        resolveProjectId: () => 'project-1'
+      }
+    })
+    try {
+      const policy = {
+        profile: 'ask' as const,
+        frameworkId,
+        projectId: 'project-1',
+        mcpServerNames: ['open-science-notebook']
+      }
+      const request = (sessionId: string): RequestPermissionRequest =>
+        withTrustedMcpToolIdentity(
+          mcpRequest(sessionId, 'mcp__open-science-notebook__notebook_state'),
+          'open-science-notebook/notebook_state'
+        )
+      const first = context.requestPermission(request('session-1'), policy)
+      const other = context.requestPermission(request('session-2'), policy)
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledTimes(2))
+      await registry.remember({
+        capability: { kind: 'mcp_tool', key: 'mcp:open-science-notebook/notebook_state' },
+        scope: { kind: 'session', projectId: 'project-1', sessionId: 'session-1' }
+      })
+      await expect(first).resolves.toMatchObject({
+        outcome: { outcome: 'selected', optionId: 'provider-allow-once' }
+      })
+      expect(context.getPendingRequests().map((request) => request.sessionId)).toEqual([
+        'session-2'
+      ])
+      context.cancelForSession('session-2')
+      await expect(other).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+    } finally {
+      context.dispose()
+    }
+    expect(unsubscribe).toHaveBeenCalledOnce()
+  }
+)
+
+it.each(['revoked', 'lookup_failed'])(
+  'cancels a pending automatic grant after settlement when %s',
+  async (failure) => {
+    storageRoot = await mkdtemp(join(tmpdir(), 'permission-revoke-settlement-'))
+    client = createProjectDbClient(storageRoot)
+    await migrateApplicationDatabase(client)
+    const registry = await createPermissionGrantRegistry({ getClient: async () => client! })
+    const resolveGrant = vi.spyOn(registry, 'resolve')
+    let finishSettlement!: () => void
+    const settlement = new Promise<void>((resolve) => {
+      finishSettlement = resolve
+    })
+    const settleLive = vi.fn(() => settlement)
+    const emit = vi.fn()
+    const broker = new AcpPermissionBroker(emit, undefined, registry, undefined, {
+      persist: async () => true,
+      settleLive
+    })
+    const unsubscribe = registry.subscribe(() => {
+      void broker.releaseGrantedRequests()
+    })
+    try {
+      const pending = broker.requestPermission(
+        withTrustedMcpToolIdentity(
+          mcpRequest('session-race', 'mcp__open-science-notebook__notebook_state'),
+          'open-science-notebook/notebook_state'
+        ),
+        {
+          profile: 'ask',
+          frameworkId: 'claude-code',
+          projectId: 'project-1',
+          promptMessageId: 'prompt-1',
+          mcpServerNames: ['open-science-notebook']
+        }
+      )
+      await vi.waitFor(() => expect(emit).toHaveBeenCalledOnce())
+      await registry.remember({
+        capability: { kind: 'mcp_tool', key: 'mcp:open-science-notebook/notebook_state' },
+        scope: { kind: 'global' }
+      })
+      await vi.waitFor(() => expect(settleLive).toHaveBeenCalledOnce())
+      if (failure === 'revoked') {
+        const [grant] = await registry.list()
+        await registry.revoke({ grants: [{ id: grant.id, revision: grant.revision }] })
+      } else {
+        resolveGrant.mockRejectedValue(new Error('registry unavailable'))
+      }
+      finishSettlement()
+      await expect(pending).resolves.toEqual({ outcome: { outcome: 'cancelled' } })
+      expect(broker.getPendingRequests()).toEqual([])
+    } finally {
+      finishSettlement()
+      resolveGrant.mockRestore()
+      unsubscribe()
+      broker.cancelAllPending()
+    }
+  }
+)

@@ -1,0 +1,4 @@
+{"name":"dotted abbreviation uses its distant explicit definition","definition":"Definition. A function is positively homogeneous (p.h.) when scaling its input scales its output.","source":"Each block is composed of p.h. functions.","translation":"每个模块由正齐次（p.h.）函数组成。","included":true}
+{"name":"capitalized abbreviation uses its explicit expansion","definition":"The model uses independent component analysis (ICA).","source":"ICA separates the measured signals.","translation":"独立成分分析（ICA）分离测得的信号。","included":true}
+{"name":"unexplained abbreviation is not promoted to a definition","definition":"We report ICA scores for each signal.","source":"ICA separates the measured signals.","translation":"ICA 分离测得的信号。","included":false}
+{"name":"ordinary parenthesized word is not abbreviation context","definition":"The observed property (stable) is desirable.","source":"The system remains stable.","translation":"系统保持稳定。","included":false}

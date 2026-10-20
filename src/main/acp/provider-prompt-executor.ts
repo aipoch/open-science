@@ -86,6 +86,7 @@ const normalizeFacts = (
 ): AcpProviderTurnResult => {
   const turnUsage = facts.turnUsage ?? toAcpTurnTokenUsage(response.usage)
   return Object.freeze({
+    ...(facts.compaction ? { compaction: Object.freeze({ ...facts.compaction }) } : {}),
     ...(turnUsage ? { turnUsage: Object.freeze({ ...turnUsage }) } : {}),
     ...(facts.modelTurnCount === undefined ? {} : { modelTurnCount: facts.modelTurnCount }),
     ...(facts.modelCalls

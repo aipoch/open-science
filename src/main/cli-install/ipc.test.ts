@@ -26,7 +26,8 @@ vi.mock('electron', () => ({
   }
 }))
 
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => logger
 }))
 
@@ -117,3 +118,20 @@ describe('registerCliInstallIpcHandlers', () => {
     )
   })
 })
+
+const electron = await import('electron')
+;(await import('../ipc-handler-registry')).configureIpcHandlerRegistry(electron.ipcMain)
+vi.mock('../desktop-interaction', () => ({
+  desktopInteraction: () => ({
+    cliLauncherEnvironment: () => ({
+      platform: process.platform,
+      packaged: false,
+      homeDir: '/home/u',
+      userDataDir: '/home/u/.config/os',
+      cliEntryPath: '/test/cli/index.mjs',
+      appExecPath: process.execPath,
+      appImagePath: process.env.APPIMAGE,
+      pathVar: process.env.PATH ?? ''
+    })
+  })
+}))

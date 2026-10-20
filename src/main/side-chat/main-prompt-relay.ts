@@ -5,7 +5,7 @@ import {
   type SideChatSendMessageResult
 } from '../../shared/side-chat'
 import type { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 
 const log = createLogger('side-chat-relay')
 

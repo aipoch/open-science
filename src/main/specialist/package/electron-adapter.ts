@@ -1,11 +1,12 @@
 import {
   SPECIALIST_PACKAGE_ARCHIVE_LIMITS,
+  type SpecialistPackageReport
+} from '@aipoch/specialists'
+import {
   type SpecialistExportSaveResult,
-  type SpecialistPackageReport,
   type SpecialistPackageReportSaveResult
-} from '../../../shared/specialist-package'
+} from '../../../shared/specialist'
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
-import { publishUserFile } from '../../user-file-publisher'
 
 type SpecialistExportDialog = {
   showSaveDialog: (options: {
@@ -13,7 +14,10 @@ type SpecialistExportDialog = {
     filters: [{ name: string; extensions: ['zip'] }]
   }) => Promise<{ canceled: boolean; filePath?: string }>
   writeFile: (path: string, bytes: Uint8Array) => Promise<unknown>
-  publishUserFile?: typeof publishUserFile
+  publishUserFile: (
+    destinationPath: string,
+    write: (temporaryPath: string) => Promise<unknown>
+  ) => Promise<void>
 }
 
 export const saveSpecialistExport = async (
@@ -26,7 +30,7 @@ export const saveSpecialistExport = async (
     filters: [{ name: translate('ZIP archive'), extensions: ['zip'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
+  await adapter.publishUserFile(selected.filePath, async (temporaryPath) => {
     await adapter.writeFile(temporaryPath, archive.archiveBytes)
   })
   return { saved: true }
@@ -66,7 +70,10 @@ type SpecialistPackageReportDialog = {
     filters: [{ name: string; extensions: ['json'] }]
   }) => Promise<{ canceled: boolean; filePath?: string }>
   writeFile: (path: string, contents: string) => Promise<unknown>
-  publishUserFile?: typeof publishUserFile
+  publishUserFile: (
+    destinationPath: string,
+    write: (temporaryPath: string) => Promise<unknown>
+  ) => Promise<void>
 }
 
 export const saveSpecialistPackageReport = async (
@@ -82,7 +89,7 @@ export const saveSpecialistPackageReport = async (
     filters: [{ name: translate('JSON report'), extensions: ['json'] }]
   })
   if (selected.canceled || !selected.filePath) return { saved: false }
-  await (adapter.publishUserFile ?? publishUserFile)(selected.filePath, async (temporaryPath) => {
+  await adapter.publishUserFile(selected.filePath, async (temporaryPath) => {
     await adapter.writeFile(temporaryPath, `${JSON.stringify(report, null, 2)}\n`)
   })
   return { saved: true }

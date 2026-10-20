@@ -1,20 +1,21 @@
 import * as acp from '@agentclientprotocol/sdk'
+import { randomUUID } from 'node:crypto'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { AcpPromptRequest, AcpRuntimeEvent } from '../../shared/acp'
-import type { AgentFramework } from '../agent-framework'
+import type { AgentFramework } from '../agent-framework/types'
+import type { NotebookWorkingFile } from './artifact-publication-continuation'
 import type { ArtifactTurnHandle } from './artifact-turn-owner'
 import { AcpContextCompactionWorkflow } from './context-compaction-workflow'
-import { createLogger, errorLogFields } from '../logger'
 import { AcpPromptPreparationOwner } from './prompt-preparation-owner'
 import {
   AcpPromptTurnWorkflow,
   type AcpPromptTurnPlanWorkflow,
   type AcpPromptTurnWorkflowOptions
 } from './prompt-turn-workflow'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
-import type { NotebookWorkingFile } from './artifact-publication-continuation'
 
 type AcpRuntimePromptReloadHost = Readonly<{
   prepareContinuationReplay: AcpPromptTurnWorkflowOptions['prepareContinuationReplay']
@@ -26,6 +27,7 @@ type AcpRuntimePromptHost = Readonly<{
   plan: AcpPromptTurnPlanWorkflow
   reload: AcpRuntimePromptReloadHost
   onPromptEnded?: (sessionId: string, turnToken: string) => void
+  onProviderPromptAccepted?: (sessionId: string) => void
   requestArtifactPublicationContinuation?: (input: {
     permissionPrompts?: AcpPromptRequest['permissionPrompts']
     sessionId: string
@@ -73,6 +75,30 @@ const composeAcpRuntimePromptOwners = (
   host: AcpRuntimePromptHost
 ) => {
   const callbacks = options.callbacks ?? {}
+  // Persisted skill activities outlive the runtime's prompt sequence.
+  const skillActivityNamespace = randomUUID()
+  // Connection teardown may release an interaction before its finalizer unwinds. Keep callback
+  // ownership separate from terminal outcomes so every published start has exactly one end.
+  const startedPromptTurns = new Map<string, string>()
+  const endPromptTurn = (sessionId: string, turnToken: string): void => {
+    if (startedPromptTurns.get(turnToken) !== sessionId) return
+    startedPromptTurns.delete(turnToken)
+    for (const cleanup of [
+      () => session.sessionUpdateProjector.clearAssistantOutput(sessionId),
+      () => host.onPromptEnded?.(sessionId, turnToken),
+      () => callbacks.onPromptEnded?.(sessionId, turnToken)
+    ]) {
+      try {
+        cleanup()
+      } catch (error) {
+        safeLogError('prompt-end callback failed', error)
+      }
+    }
+  }
+  const releasePromptTurns = (): void => {
+    for (const [turnToken, sessionId] of [...startedPromptTurns])
+      endPromptTurn(sessionId, turnToken)
+  }
   const activeSession = (sessionId: string) =>
     session.sessionRegistry.lookup(sessionId)?.attachment?.session
   const currentFramework = () => base.backendGeneration.current.framework
@@ -94,7 +120,7 @@ const composeAcpRuntimePromptOwners = (
         kind: 'tool',
         level: status === 'failed' ? 'error' : 'info',
         sessionId,
-        toolCallId: `open-science-skill-${promptTurn}-${index}`,
+        toolCallId: `open-science-skill-${skillActivityNamespace}-${promptTurn}-${index}`,
         providerToolName: 'skill',
         title: `Loaded skill: ${name}`,
         status
@@ -162,6 +188,7 @@ const composeAcpRuntimePromptOwners = (
     classifySkills: options.classifySkills,
     classifyReadingRoute: options.classifyReadingRoute,
     promptContent: base.promptContentOwner,
+    classificationImages: base.classificationImageLoader,
     imageInputCompatibility: options.imageInputCompatibility,
     presentation: base.sessionPresentationPolicy,
     contextUsage: base.contextUsageTracker,
@@ -170,6 +197,7 @@ const composeAcpRuntimePromptOwners = (
       [],
     authorizeReferencedUploads: options.skillImport?.authorizeReferencedUploads,
     memory: options.memory,
+    prepareSessionReading: options.prepareSessionReading,
     isMemoryEnabledForSession: (sessionId) =>
       session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().memoryEnabled ?? false,
     ...(options.notebook
@@ -238,39 +266,36 @@ const composeAcpRuntimePromptOwners = (
       })
     },
     serialization: base.providerPromptSerialization,
-    ...(options.auxiliaryUsage
-      ? {
+    usage: {
+      begin: (input) => base.providerPromptExecutor.beginObservation(input),
+      cwd: (sessionId) =>
+        session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd ??
+        base.snapshotOwner.cwd,
+      model: () =>
+        base.backendGeneration.current.context.model ??
+        base.backendGeneration.current.session.model,
+      record: async ({ sessionId, eventId, frameworkId, model, completedAtMs, facts }) => {
+        if (!options.auxiliaryUsage) return
+        const projectId = await options.auxiliaryUsage.projectIdForSession(sessionId)
+        if (!projectId) return
+        await options.auxiliaryUsage!.record({
+          projectId,
+          sessionId,
+          eventId,
+          source: 'context-compaction',
+          frameworkId,
+          ...(base.backendGeneration.current.providerId
+            ? { providerId: base.backendGeneration.current.providerId }
+            : {}),
+          model,
+          completedAtMs,
           usage: {
-            begin: (input) => base.providerPromptExecutor.beginObservation(input),
-            cwd: (sessionId) =>
-              session.sessionRegistry.lookup(sessionId)?.aggregate.snapshot().cwd ??
-              base.snapshotOwner.cwd,
-            model: () =>
-              base.backendGeneration.current.context.model ??
-              base.backendGeneration.current.session.model,
-            record: async ({ sessionId, eventId, frameworkId, model, completedAtMs, facts }) => {
-              const projectId = await options.auxiliaryUsage!.projectIdForSession(sessionId)
-              if (!projectId) return
-              await options.auxiliaryUsage!.record({
-                projectId,
-                sessionId,
-                eventId,
-                source: 'context-compaction',
-                frameworkId,
-                ...(base.backendGeneration.current.providerId
-                  ? { providerId: base.backendGeneration.current.providerId }
-                  : {}),
-                model,
-                completedAtMs,
-                usage: {
-                  ...facts.turnUsage!,
-                  ...(facts.modelTurnCount === undefined ? {} : { turnCount: facts.modelTurnCount })
-                }
-              })
-            }
+            ...facts.turnUsage!,
+            ...(facts.modelTurnCount === undefined ? {} : { turnCount: facts.modelTurnCount })
           }
-        }
-      : {}),
+        })
+      }
+    },
     cancelCompaction: async (sessionId) => {
       const connection = base.connectionResources.connection
       const active = activeSession(sessionId)
@@ -309,7 +334,13 @@ const composeAcpRuntimePromptOwners = (
         : {}),
       emitSkillActivities,
       onSkillImportAttachmentEligible: callbacks.onSkillImportAttachmentEligible,
-      onProviderPromptAccepted: callbacks.onProviderPromptAccepted,
+      onProviderPromptAccepted: (sessionId, promptAttemptId) => {
+        // session/new alone may not create a resumable Claude transcript. Keep approved replay
+        // through pre-prompt Skill reconnects, then retire it once the provider accepts a prompt.
+        base.handoffContinuity.commitClaudeReplay(sessionId)
+        host.onProviderPromptAccepted?.(sessionId)
+        callbacks.onProviderPromptAccepted?.(sessionId, promptAttemptId)
+      },
       ...(options.runtimeSessions
         ? {
             onRuntimeSessionProviderAccepted: async (
@@ -373,20 +404,15 @@ const composeAcpRuntimePromptOwners = (
                 timestamp: event.timestamp ?? Date.now(),
                 level: event.level ?? 'info'
               } as AcpRuntimeEvent
-              options.runtimeSessions!.accept(durableEvent)
-              await options.runtimeSessions!.flush(
-                durableEvent.sessionId ?? '',
-                durableEvent.promptMessageId ?? ''
+              await options.runtimeSessions!.commitTerminal(durableEvent, (published) =>
+                session.publication.pushEvent(published)
               )
-              session.publication.pushEvent({ ...durableEvent, publicationOwner: 'main' })
-            }
+            },
+            retryTerminalCommits: (sessionId: string) =>
+              options.runtimeSessions!.retryTerminalCommits(sessionId)
           }
         : {}),
-      onPromptEnded: (sessionId, turnToken) => {
-        session.sessionUpdateProjector.clearAssistantOutput(sessionId)
-        host.onPromptEnded?.(sessionId, turnToken)
-        callbacks.onPromptEnded?.(sessionId, turnToken)
-      },
+      onPromptEnded: endPromptTurn,
       generationActivityChanged: base.notifyGenerationActivityChanged,
       autoCompact: (sessionId, active, interaction) =>
         contextCompactionWorkflow.compactAutomatic({
@@ -411,7 +437,8 @@ const composeAcpRuntimePromptOwners = (
             reviewOwner,
             planDeliveryCommandId,
             delegatedMessageId,
-            applicationPrompt
+            applicationPrompt,
+            approvedHandoffContinuation
           ) => {
             const provenance = request.provenanceContext
             if (
@@ -448,18 +475,23 @@ const composeAcpRuntimePromptOwners = (
                 reviewOwner,
                 ...(planDeliveryCommandId ? { planDeliveryCommandId } : {}),
                 ...(delegatedMessageId ? { delegatedMessageId } : {}),
-                ...(applicationPrompt ? { applicationPrompt } : {})
+                ...(applicationPrompt ? { applicationPrompt } : {}),
+                ...(approvedHandoffContinuation ? { approvedHandoffContinuation } : {})
               }
             )
-          }
+          },
+          assertRuntimeSessionAdmissionAvailable: (sessionId: string) =>
+            options.runtimeSessions!.assertAdmissionAvailable(sessionId)
         }
       : {}),
-    onPromptStarted: (sessionId, turnToken, promptAttemptId) =>
-      callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId),
+    onPromptStarted: (sessionId, turnToken, promptAttemptId) => {
+      startedPromptTurns.set(turnToken, sessionId)
+      callbacks.onPromptStarted?.(sessionId, turnToken, promptAttemptId)
+    },
     emitState
   })
 
-  return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow })
+  return Object.freeze({ contextCompactionWorkflow, promptTurnWorkflow, releasePromptTurns })
 }
 /* eslint-enable @typescript-eslint/explicit-function-return-type */
 

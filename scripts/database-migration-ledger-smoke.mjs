@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 
 import { join } from 'node:path'
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 
 import { PrismaClient } from '@prisma/client'
 
@@ -182,8 +182,32 @@ const EXPECTED_MIGRATION_LEDGER = [
     checksum: '70145960069e95e1c7894bf18e5bbbd7d96bb51cf192d61c9f85688e0af2fdf3'
   },
   {
-    id: '0045_artifact_hidden',
-    checksum: '8fcef6b6dd92b13bd6179e462447480976120e8da50293f7a62651b95a948439'
+    id: '0045_literature_smart_pause_run',
+    checksum: '04e286e7cfb90cf3cdb1045bb5f8191b7b4edee0fc272c4b042910314485de68'
+  },
+  {
+    id: '0046_journal_attributes',
+    checksum: '6faaa28accbf9297ba56586f0fa647adfca287a92d2bed7b08218323142d0992'
+  },
+  {
+    id: '0047_session_replay',
+    checksum: 'f76aff6bd97c42cabd744f87f0c37241259ffb1c45c5feef2a3643babcef2f91'
+  },
+  {
+    id: '0048_pdf_annotation_sharing',
+    checksum: '4d346933fd6779e0e7b15e1c51bb97043690230b40d29fb2d7c9dacc19f25e52'
+  },
+  {
+    id: '0049_pascalcase_table_names',
+    checksum: 'ed46c378adfcd3e7f0f0d434797a4e775121fa6fce021a4c89b19f2c383b91ad'
+  },
+  {
+    id: '0050_literature_translation',
+    checksum: 'ae3a17741c698765b69e4d651dffea6b46e3e06d5e7e6dce92aefa96a1d6337f'
+  },
+  {
+    id: '0051_artifact_hidden',
+    checksum: '76948e44445dc6527b2181908b6ac1b6c0df58ce2d3cb26f2a5e440c247638c9'
   }
 ]
 const LEGACY_PROJECT_ID = 'package-smoke-legacy-project'
@@ -277,13 +301,43 @@ const verifyLegacyProjectPreserved = async (configRoot) => {
 }
 
 const parsePackagedSqliteVersion = (output) => {
-  const sqliteVersion = output.match(
-    /\[main\] database runtime verified: sqlite_version=(\d+\.\d+\.\d+)/
-  )?.[1]
-  if (!sqliteVersion) {
-    throw new Error('Packaged application did not report its SQLite runtime version.')
+  for (const line of output.split(/\r?\n/)) {
+    let message = line.replace(/^\[main\] /, '')
+    if (!line.startsWith('[main] ')) {
+      try {
+        const record = JSON.parse(line)
+        if (record?.scope !== 'main' || typeof record.msg !== 'string') continue
+        message = record.msg
+      } catch {
+        // Launch captures also contain raw Node and native stderr.
+        continue
+      }
+    }
+    const sqliteVersion = message.match(
+      /^database runtime verified: sqlite_version=(\d+\.\d+\.\d+)\s*$/
+    )?.[1]
+    if (sqliteVersion) return sqliteVersion
   }
-  return sqliteVersion
+  throw new Error('Packaged application did not report its SQLite runtime version.')
+}
+
+const readDesktopSqliteVersion = async (configRoot, desktopPid) => {
+  if (!Number.isSafeInteger(desktopPid) || desktopPid <= 0) {
+    throw new Error('Packaged desktop process did not provide a valid PID.')
+  }
+  // Desktop redirects Node output to a per-launch log. Never accept a previous smoke cycle's
+  // evidence: a reopen must independently verify the packaged SQLite runtime again.
+  const logs = join(configRoot, 'logs')
+  const pattern = new RegExp(`^desktop-backend-${desktopPid}-\\d+\\.log$`)
+  const entries = (await readdir(logs, { withFileTypes: true })).filter(
+    (entry) => entry.isFile() && pattern.test(entry.name)
+  )
+  if (entries.length !== 1) {
+    throw new Error(
+      `Expected one backend log for desktop PID ${desktopPid}, found ${entries.length}.`
+    )
+  }
+  return parsePackagedSqliteVersion(await readFile(join(logs, entries[0].name), 'utf8'))
 }
 
 const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, checks }) => {
@@ -314,6 +368,7 @@ const writeDatabaseMigrationCertification = async ({ output, sqliteVersions, che
 export {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
+  readDesktopSqliteVersion,
   readDatabaseMigrationLedger,
   seedLegacyDatabase,
   verifyDatabaseMigrationLedger,

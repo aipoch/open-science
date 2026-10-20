@@ -15,6 +15,23 @@ const fsMock = vi.hoisted(() => ({
 }))
 
 vi.mock('node:fs/promises', () => fsMock)
+vi.mock('@aipoch/durable-files', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/durable-files')>()
+  const durability = actual.createFileDurability({ openHandle: fsMock.open })
+  return {
+    ...actual,
+    defaultFileDurability: durability,
+    writeDurableJsonFile: (path, contents, dependencies) =>
+      actual.writeDurableJsonFile(path, contents, {
+        mkdir: fsMock.mkdir,
+        writeFile: fsMock.writeFile,
+        rename: fsMock.rename,
+        remove: fsMock.rm,
+        ...durability,
+        ...dependencies
+      })
+  } satisfies typeof actual
+})
 // Session encode/decode falls back to resolveDataRoot(), which reads electron's app.getPath.
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true }

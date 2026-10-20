@@ -20,7 +20,7 @@ const codexPath = resolve('managed-codex', process.platform === 'win32' ? 'codex
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 const commandDeps = (runCodex = vi.fn()) => ({
   connect: vi.fn().mockResolvedValue({ bootstrap: vi.fn().mockResolvedValue({ ok: true }) }),
-  locateApp: vi.fn().mockResolvedValue({ packaged: false }),
+  locateBackend: vi.fn().mockResolvedValue({ development: true }),
   resolveConfigRoot: vi.fn().mockReturnValue(configRoot),
   resolveConfiguration: vi.fn().mockResolvedValue({ codexPath }),
   mkdir: vi.fn().mockResolvedValue(undefined),
@@ -304,18 +304,13 @@ describe('Codex CLI login', () => {
     )
   })
 
-  it('rejects config-root overrides for packaged profiles', async () => {
+  it('uses the selected config root for an installed backend', async () => {
     const deps = {
-      ...commandDeps(),
-      locateApp: vi.fn().mockResolvedValue({ packaged: true })
+      ...commandDeps(vi.fn().mockResolvedValue({ code: 0 })),
+      locateBackend: vi.fn().mockResolvedValue({ development: false })
     }
-
-    await expect(codexLoginCommand({ configRoot, force: false }, deps)).rejects.toEqual(
-      expect.objectContaining({
-        code: 'invalid_cli_usage',
-        exitCode: 2
-      })
-    )
+    await codexLoginCommand({ configRoot, force: false }, deps)
+    expect(deps.resolveConfigRoot).toHaveBeenCalledWith({ packaged: true, override: configRoot })
   })
 
   it('uses a typed error contract for callers', () => {

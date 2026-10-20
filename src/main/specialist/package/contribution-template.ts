@@ -1,14 +1,8 @@
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-
-import { strToU8, zipSync, type Zippable } from 'fflate'
-
-import {
-  SPECIALIST_PACKAGE_SCHEMA_VERSION,
-  type ContributionTemplateExportResult
-} from '../../../shared/specialist-package'
+import { buildContributionTemplateZip } from '@aipoch/specialists/node'
+import { type ContributionTemplateExportResult } from '../../../shared/specialist'
 import { englishNativeTranslator, type NativeTranslator } from '../../locale/main-process-messages'
-import { publishUserFile } from '../../user-file-publisher'
 
 export const CONTRIBUTION_TEMPLATE_FILENAME = 'open-science-specialist-template.zip'
 
@@ -27,53 +21,12 @@ type ContributionTemplateExporterDependencies = {
   }) => Promise<{ canceled: boolean; filePath?: string }>
   readReadme: () => Promise<string>
   writeFile: (filePath: string, bytes: Uint8Array) => Promise<void>
-  publishUserFile?: typeof publishUserFile
+  publishUserFile: (
+    destinationPath: string,
+    write: (temporaryPath: string) => Promise<unknown>
+  ) => Promise<void>
   generatePackageId?: () => string
   translate?: NativeTranslator
-}
-
-const assertValidAppVersion = (appVersion: string): void => {
-  const match = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)/.exec(appVersion)
-  if (!match) throw new Error('Application version must be SemVer.')
-}
-
-export const buildDeterministicSpecialistZip = (
-  files: Readonly<Record<string, Uint8Array>>
-): Uint8Array => {
-  const zipOptions = { mtime: new Date(1980, 0, 1) }
-  const entries: Zippable = {}
-  for (const [path, bytes] of Object.entries(files).sort(([left], [right]) =>
-    left.localeCompare(right)
-  )) {
-    entries[path] = [bytes, zipOptions]
-  }
-  return zipSync(entries, { level: 6 })
-}
-
-export const buildContributionTemplateZip = (input: {
-  appVersion: string
-  readme: string
-  packageId?: string
-}): Uint8Array => {
-  assertValidAppVersion(input.appVersion)
-  const manifest = {
-    schema_version: SPECIALIST_PACKAGE_SCHEMA_VERSION,
-    id: input.packageId ?? randomUUID(),
-    version: '0.1.0',
-    exported_with_app_version: input.appVersion
-  }
-  const specialist = {
-    name: '',
-    description: '',
-    system_prompt: '',
-    skill_ids: [],
-    connector_ids: []
-  }
-  return buildDeterministicSpecialistZip({
-    'manifest.json': strToU8(`${JSON.stringify(manifest, null, 2)}\n`),
-    'specialist.json': strToU8(`${JSON.stringify(specialist, null, 2)}\n`),
-    'README.txt': strToU8(input.readme)
-  })
 }
 
 export const createContributionTemplateExporter =
@@ -100,9 +53,8 @@ export const createContributionTemplateExporter =
         readme,
         packageId: (dependencies.generatePackageId ?? randomUUID)()
       })
-      await (dependencies.publishUserFile ?? publishUserFile)(
-        destination.filePath,
-        (temporaryPath) => dependencies.writeFile(temporaryPath, archive)
+      await dependencies.publishUserFile(destination.filePath, (temporaryPath) =>
+        dependencies.writeFile(temporaryPath, archive)
       )
       return { saved: true }
     } catch {

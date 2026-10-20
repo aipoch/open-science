@@ -107,6 +107,7 @@ describe('Project Files repository architecture', () => {
         'value:ManagedFileIndexRepository',
         'value:ProjectFilesReconciliationError',
         'type:LegacyArtifactVersionAdopter',
+        'type:HostArtifactVersionRecord',
         'type:LegacyUploadVersionUpgrader',
         'type:ManagedFileSoftDeleteToken',
         'type:ProjectFilesClient',

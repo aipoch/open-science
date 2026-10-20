@@ -1,23 +1,24 @@
-import { setImmediate } from 'node:timers/promises'
-import { tmpdir } from 'node:os'
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import type { AcpRuntimeOptions } from '../acp/runtime'
-import { createAcpRuntime, type AcpRuntimeCompositionOptions } from '../acp/runtime-composition'
+import type { LiteratureItemInput } from '@aipoch/literature-library/item'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { setImmediate } from 'node:timers/promises'
 import { expect, it, vi } from 'vitest'
+import { buildLiteratureLibraryToolSummary } from '../../renderer/src/pages/workspace/literature-tool-presentation'
+import type { AcpRuntimeOptions } from '../acp/runtime'
+import { createAcpRuntime, type AcpRuntimeCompositionOptions } from '../acp/runtime-composition'
+import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
+import { LiteratureCatalog } from './catalog'
 import type {
+  LiteratureLibraryDiscovery,
   LiteratureLibraryMcpHandler,
-  LiteratureLibrarySaveResult,
-  LiteratureLibraryDiscovery
+  LiteratureLibrarySaveResult
 } from './library-mcp-server'
 import { createLiteratureLibraryMcpServer } from './library-mcp-server'
-import { LiteratureCatalog } from './catalog'
-import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import type { LiteratureItemInput, LiteratureItemView } from '../../shared/literature'
-import { literatureItemInputSchema } from '../../shared/literature'
-import { buildLiteratureLibraryToolSummary } from '../../renderer/src/pages/workspace/literature-tool-presentation'
 // Capture the real composition's options at the existing runtime-owner boundary.
 // No provider process, network host, or runtime session is started.
 const capture = vi.hoisted(() => ({ options: undefined as AcpRuntimeOptions | undefined }))

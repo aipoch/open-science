@@ -1250,6 +1250,23 @@ describe('workspace tool activity details', () => {
     expect(details?.sections[1]?.kind === 'code' && details.sections[1].text).toContain('"pmids"')
   })
 
+  it.each(['powershell', 'bash'])('renders the actual %s runtime from the run summary', (kind) => {
+    const details = buildToolActivityDetails(
+      createActivity({
+        providerToolName: 'mcp__open-science-notebook__bash_execute',
+        toolKind: 'other',
+        rawInput: { command: 'Get-Item ./temporary.txt', shellRuntime: { kind: 'powershell' } },
+        rawOutput: { kernelKind: 'bash', shellRuntime: { kind }, status: 'completed' }
+      })
+    )
+    expect(details?.displayName).toBe('Shell')
+    expect(details?.sections[0]).toMatchObject({
+      label: 'Command',
+      language: kind,
+      showLineNumbers: true
+    })
+  })
+
   it('renders a bash_execute run as a Shell command plus output', () => {
     const runSummary = {
       status: 'completed',

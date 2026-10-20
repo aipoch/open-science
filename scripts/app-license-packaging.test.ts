@@ -1,11 +1,15 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 
-import type { Configuration } from 'app-builder-lib'
-import { copyFiles, getFileMatchers } from 'app-builder-lib/out/fileMatcher'
+import type { Configuration } from 'electron-builder'
 import { load } from 'js-yaml'
 import { expect, it } from 'vitest'
+
+const require = createRequire(import.meta.url)
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const { copyFiles, getFileMatchers } = builderRequire('app-builder-lib/out/fileMatcher')
 
 it.each(['mac', 'win', 'linux'] as const)(
   'copies the original license outside app.asar for %s',
@@ -21,7 +25,9 @@ it.each(['mac', 'win', 'linux'] as const)(
         customBuildOptions: config[platform] ?? {},
         globalOutDir: join(root, 'dist')
       })
-      const licenses = matchers?.filter((matcher) => matcher.from === join(root, 'LICENSE'))
+      const licenses = matchers?.filter(
+        (matcher: { from: string }) => matcher.from === join(root, 'LICENSE')
+      )
       expect(licenses).toHaveLength(1)
       await copyFiles(licenses)
       expect(await readFile(join(destination, 'LICENSE.txt'), 'utf8')).toBe(

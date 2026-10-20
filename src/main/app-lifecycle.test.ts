@@ -153,15 +153,20 @@ const setup = (
   overrides: Partial<
     Pick<
       AppLifecycleDeps,
+      | 'refreshQuitState'
+      | 'requireCleanBackendShutdown'
+      | 'onQuitError'
       | 'shutdownBackends'
       | 'beforeExit'
       | 'prepareForQuit'
       | 'abortQuitPreparation'
       | 'flushSessionPersistence'
+      | 'rendererPersistencePreparedForUpdate'
       | 'log'
       | 'flushLogs'
       | 'logFlushTimeoutMs'
       | 'rendererFlushTimeoutMs'
+      | 'systemShutdownTimeoutMs'
       | 'shutdownTrigger'
       | 'isMigrationInProgress'
       | 'platform'
@@ -216,16 +221,21 @@ const setup = (
         trayHandlers = handlers
         return tray as unknown as import('electron').Tray | undefined
       },
+      refreshQuitState: overrides.refreshQuitState,
+      requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
+      onQuitError: overrides.onQuitError,
       shutdownBackends,
       prepareForQuit,
       holdSettingsInstallAdmission:
         overrides.holdSettingsInstallAdmission ?? (() => () => undefined),
       abortQuitPreparation,
       flushSessionPersistence,
+      rendererPersistencePreparedForUpdate: overrides.rendererPersistencePreparedForUpdate,
       log: overrides.log,
       flushLogs: overrides.flushLogs,
       logFlushTimeoutMs: overrides.logFlushTimeoutMs,
       rendererFlushTimeoutMs: overrides.rendererFlushTimeoutMs,
+      systemShutdownTimeoutMs: overrides.systemShutdownTimeoutMs,
       shutdownTrigger: overrides.shutdownTrigger,
       isMigrationInProgress: overrides.isMigrationInProgress ?? ((): boolean => false),
       quit,
@@ -925,6 +935,26 @@ describe('installAppLifecycle', () => {
     expect(app.exit).not.toHaveBeenCalled()
     expect(windows[0].visible).toBe(true)
     expect(windows[0].focused).toBe(true)
+  })
+
+  it('exits on a system-latched quit even when the renderer persistence flush fails', async () => {
+    // Owned-backend clean exits (web /api/shutdown) latch the system trigger: the backend is
+    // already gone, so the renderer flush cannot succeed and must not block the exit.
+    markApplicationShutdownTrigger('system')
+    const flushSessionPersistence = vi.fn(async () => 'renderer-failed' as const)
+    const { app, closeOpts, prepareForQuit, abortQuitPreparation, shutdownBackends, windows } =
+      setup({ flushSessionPersistence })
+    closeOpts[0].requestQuit()
+
+    app.emit('before-quit')
+    await flush()
+
+    expect(flushSessionPersistence).toHaveBeenCalled()
+    expect(prepareForQuit).toHaveBeenCalledOnce()
+    expect(shutdownBackends).toHaveBeenCalledOnce()
+    expect(abortQuitPreparation).not.toHaveBeenCalled()
+    expect(app.exit).toHaveBeenCalledExactlyOnceWith(0)
+    expect(windows[0].visible).toBe(true)
   })
 
   it.each(['send-failed', 'timeout', 'renderer-failed'] as const)(
@@ -1826,4 +1856,277 @@ describe('installAppLifecycle', () => {
     await expect(resolveCloseActionPromise).resolves.toBe('minimize')
     await flush()
   })
+})
+
+// A desktop client cannot treat remote preparation errors as a successful local best-effort quit.
+it.each(['timeout', 'failed', 'degraded'] as const)(
+  'keeps the remote backend connected after %s preparation and allows a clean retry',
+  async (outcome) => {
+    const onQuitError = vi.fn()
+    const prepareForQuit = vi
+      .fn<() => Promise<ShutdownStepOutcome>>()
+      .mockResolvedValueOnce(outcome)
+      .mockResolvedValueOnce('completed')
+    const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(h.shutdownBackends).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+    // Only preflight ran: no final flush may depend on a disconnected backend.
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(1)
+
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.shutdownBackends).toHaveBeenCalledOnce()
+    expect(h.flushSessionPersistence).toHaveBeenCalledTimes(3)
+  }
+)
+
+it.each(['prepare', 'shutdown'] as const)(
+  'retains the desktop and rolls back admission after remote %s failure',
+  async (kind) => {
+    const error = new Error('remote runtime still owns work'),
+      onQuitError = vi.fn()
+    const failure = vi.fn(async () => {
+      throw error
+    })
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      ...(kind === 'prepare' ? { prepareForQuit: failure } : { shutdownBackends: failure })
+    })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledWith(error))
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(h.app.exit).not.toHaveBeenCalled()
+    if (kind === 'prepare') expect(h.shutdownBackends).not.toHaveBeenCalled()
+  }
+)
+it('awaits authoritative work before the confirmation and refuses a failed inspection', async () => {
+  let inspect!: (changed: boolean) => void
+  const refreshQuitState = vi.fn(
+    () =>
+      new Promise<boolean>((resolve) => {
+        inspect = resolve
+      })
+  )
+  const h = setup({ refreshQuitState })
+  const event = h.app.emit('before-quit')
+  expect(event.defaultPrevented).toBe(true)
+  expect(h.confirmClose).not.toHaveBeenCalled()
+  expect(h.prepareForQuit).not.toHaveBeenCalled()
+  inspect(true)
+  await vi.waitFor(() => expect(h.quit).toHaveBeenCalledOnce())
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.confirmClose).toHaveBeenCalledOnce())
+})
+
+const replayQuitSynchronously = (h: Harness): void => {
+  h.quit.mockImplementation(() => {
+    // Reproduce Electron's synchronous reentry, with a cap so a regression fails without hanging.
+    if (h.quit.mock.calls.length <= 4) h.app.emit('before-quit')
+  })
+}
+
+it.each(['timeout', 'failed', 'degraded', 'rejected', 'stop'] as const)(
+  'finishes system shutdown once after remote %s failure without a modal or retry',
+  async (failure) => {
+    const onQuitError = vi.fn()
+    const prepareForQuit = vi.fn(async (): Promise<ShutdownStepOutcome> => {
+      if (failure === 'rejected') throw new Error('unreachable runtime')
+      return failure === 'stop' ? 'completed' : failure
+    })
+    const shutdownBackends = vi.fn(async () => {
+      throw new Error('stop refused')
+    })
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      prepareForQuit,
+      shutdownBackends
+    })
+    replayQuitSynchronously(h)
+    h.onSystemShutdown()
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.quit).toHaveBeenCalledOnce()
+    expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+    expect(onQuitError).not.toHaveBeenCalled()
+    expect(h.confirmClose).not.toHaveBeenCalled()
+    expect(shutdownBackends).toHaveBeenCalledTimes(failure === 'stop' ? 1 : 0)
+  }
+)
+
+it('replays an ordinary remote failure at most once after a system request', async () => {
+  let rejectPrepare!: (error: Error) => void
+  const prepareForQuit = vi
+    .fn<() => Promise<void>>()
+    .mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectPrepare = reject
+        })
+    )
+    .mockRejectedValue(new Error('system prepare refused'))
+  const onQuitError = vi.fn()
+  const h = setup({ requireCleanBackendShutdown: true, prepareForQuit, onQuitError })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(prepareForQuit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  rejectPrepare(new Error('ordinary preparation refused'))
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+  expect(prepareForQuit).toHaveBeenCalledTimes(2)
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it('exits after unreachable quit inspection for system shutdown', async () => {
+  const refreshQuitState = vi.fn(async () => {
+    throw new Error('unreachable backend')
+  })
+  const onQuitError = vi.fn()
+  const h = setup({ refreshQuitState, onQuitError })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(refreshQuitState).toHaveBeenCalledOnce()
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it('finishes system shutdown while an ordinary inspection is unreachable', async () => {
+  let rejectRefresh!: (error: Error) => void
+  const refreshQuitState = vi.fn(
+    () =>
+      new Promise<boolean>((_resolve, reject) => {
+        rejectRefresh = reject
+      })
+  )
+  const onQuitError = vi.fn()
+  const h = setup({ refreshQuitState, onQuitError })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  h.onSystemShutdown()
+  rejectRefresh(new Error('unreachable backend'))
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  await flush()
+  expect(h.quit).toHaveBeenCalledTimes(2)
+  expect(onQuitError).not.toHaveBeenCalled()
+})
+
+it.each(['prepare', 'stop', 'rollback', 'handoff', 'renderer'] as const)(
+  'bounds a hung system shutdown %s boundary',
+  async (step) => {
+    const never = (): Promise<never> => new Promise(() => {})
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      rendererFlushTimeoutMs: 10,
+      systemShutdownTimeoutMs: 20,
+      ...(step === 'prepare' ? { prepareForQuit: never } : {}),
+      ...(step === 'stop' ? { shutdownBackends: never } : {}),
+      ...(step === 'rollback'
+        ? { prepareForQuit: async () => 'failed' as const, abortQuitPreparation: never }
+        : {}),
+      ...(step === 'handoff' ? { beforeExit: never } : {}),
+      ...(step === 'renderer' ? { flushSessionPersistence: never } : {})
+    })
+    replayQuitSynchronously(h)
+    h.onSystemShutdown()
+    await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+    expect(h.quit).toHaveBeenCalledOnce()
+  }
+)
+
+it('keeps an ordinary refused quit alive and permits a later synchronous retry', async () => {
+  const onQuitError = vi.fn()
+  const prepareForQuit = vi
+    .fn<() => Promise<ShutdownStepOutcome>>()
+    .mockResolvedValueOnce('timeout')
+    .mockResolvedValueOnce('completed')
+  const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
+  expect(h.app.exit).not.toHaveBeenCalled()
+  expect(h.quit).toHaveBeenCalledOnce()
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds an ordinary preparation already in flight when system shutdown arrives', async () => {
+  const prepareForQuit = vi.fn(() => new Promise<never>(() => {}))
+  const h = setup({
+    requireCleanBackendShutdown: true,
+    prepareForQuit,
+    systemShutdownTimeoutMs: 20
+  })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(prepareForQuit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds an ordinary exit handoff already in flight when system shutdown arrives', async () => {
+  const beforeExit = vi.fn(() => new Promise<never>(() => {}))
+  const h = setup({ beforeExit, systemShutdownTimeoutMs: 20 })
+  replayQuitSynchronously(h)
+  h.closeOpts[0].requestQuit(true)
+  await vi.waitFor(() => expect(beforeExit).toHaveBeenCalledOnce())
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.quit).toHaveBeenCalledOnce()
+})
+
+it('refreshes authoritative work before preparing system shutdown', async () => {
+  const refreshQuitState = vi.fn(async () => true)
+  const prepareForQuit = vi.fn(async () => {
+    expect(refreshQuitState).toHaveBeenCalledOnce()
+    return 'completed' as const
+  })
+  const h = setup({ refreshQuitState, prepareForQuit })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(prepareForQuit).toHaveBeenCalledOnce()
+  expect(h.quit).toHaveBeenCalledTimes(2)
+})
+
+it('bounds unreachable system quit inspection and exits without a modal', async () => {
+  const onQuitError = vi.fn()
+  const h = setup({
+    refreshQuitState: () => new Promise(() => {}),
+    onQuitError,
+    systemShutdownTimeoutMs: 20
+  })
+  replayQuitSynchronously(h)
+  h.onSystemShutdown()
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledOnce())
+  expect(h.prepareForQuit).not.toHaveBeenCalled()
+  expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
+  expect(onQuitError).not.toHaveBeenCalled()
+  expect(h.quit).toHaveBeenCalledOnce()
+})
+
+it('does not request saves from windows already closed by the native updater after preparation', async () => {
+  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  markApplicationShutdownTrigger('update')
+  h.windows[0].destroyed = true
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+  expect(h.flushSessionPersistence).not.toHaveBeenCalled()
+  expect(h.shutdownBackends).toHaveBeenCalledOnce()
+})
+
+it('still flushes an ordinary quit even if an old update preparation flag remains', async () => {
+  const h = setup({ rendererPersistencePreparedForUpdate: () => true })
+  h.closeOpts[0].requestQuit(true)
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+  expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2)
 })

@@ -1,70 +1,25 @@
-import { SessionReproducibilityStore } from '../artifacts/session-reproducibility-store'
-import { sessionReproducibilityBatchSchema } from '../../shared/session-reproducibility'
-import { sha256 } from '../artifacts/provenance-canonical'
-import { parseNotebookEnvironmentLock } from '../notebook/environment-lock'
-import { assertPackageSourcePath } from './archive'
-import { isDeepStrictEqual } from 'node:util'
+import { parseNotebookEnvironmentLock } from '@aipoch/environment'
 import { mkdir, writeFile } from 'node:fs/promises'
 import { join, posix } from 'node:path'
-import { z } from 'zod'
-import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
-import {
-  REPRODUCIBILITY_SOURCE_FILE,
-  reproducibilitySourceSchema,
-  readReproducibilityEnvironmentLock
-} from '../artifacts/reproducibility-source'
-import { resolveStorageKey } from '../artifacts/provenance-storage'
+import { isDeepStrictEqual } from 'node:util'
 import type { ArtifactReproducibilityReceiptScope } from '../../shared/artifact-reproducibility'
-import type { NativeRow, PackageRecords } from './native-snapshot'
 import type { PackageExcludedFile, SessionPackageManifest } from '../../shared/session-package'
-
-const path = z.string().min(1).max(2048)
-const output = z
-  .object({
-    storageKey: path,
-    filename: z.string().min(1).max(1000),
-    sizeBytes: z.number().int().nonnegative(),
-    checksum: z.string().regex(/^[a-f0-9]{64}$/)
-  })
-  .strict()
-export const packageReproducibilitySchema = z
-  .object({
-    sourceSessionCheck: sessionReproducibilityBatchSchema
-      .refine(
-        (batch) => ['completed', 'cancelled'].includes(batch.status),
-        'Only terminal Session checks can be packaged.'
-      )
-      .optional(),
-    versions: z
-      .array(
-        z
-          .object({
-            versionId: z.string().min(1).max(200),
-            sourceScope: reproducibilitySourceSchema.shape.sourceScope,
-            entityIds: reproducibilitySourceSchema.shape.entityIds,
-            omittedOutputChecksums: reproducibilitySourceSchema.shape.omittedOutputChecksums,
-            metadataKeys: z.array(path).max(10000),
-            outputs: z.array(output).max(10000),
-            environmentLocks: z
-              .array(
-                z
-                  .object({
-                    checksum: z.string().regex(/^[a-f0-9]{64}$/),
-                    serialized: z
-                      .string()
-                      .max(4 * 1024 * 1024)
-                      .optional()
-                  })
-                  .strict()
-              )
-              .max(10000)
-          })
-          .strict()
-      )
-      .max(10000)
-  })
-  .strict()
-export type PackageReproducibility = z.infer<typeof packageReproducibilitySchema>
+import { ArtifactReproducibilityReceiptStore } from '../artifacts/artifact-reproducibility-receipts'
+import { sha256 } from '../artifacts/provenance-canonical'
+import { resolveStorageKey } from '../artifacts/provenance-storage'
+import {
+  readReproducibilityEnvironmentLock,
+  REPRODUCIBILITY_SOURCE_FILE
+} from '../artifacts/reproducibility-source'
+import { SessionReproducibilityStore } from '../artifacts/session-reproducibility-store'
+import { assertPackageSourcePath } from './archive'
+import type { NativeRow, PackageRecords } from './records-contract'
+import type { PackageReproducibility } from './reproducibility-contract'
+import { packageReproducibilitySchema } from './reproducibility-contract'
+export {
+  packageReproducibilitySchema,
+  type PackageReproducibility
+} from './reproducibility-contract'
 
 const versionOwner = (
   records: PackageRecords,

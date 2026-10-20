@@ -1,4 +1,4 @@
-import type { PdfAnnotation } from '../../../shared/pdf-annotations'
+import type { PdfAnnotation, PdfAnnotationSource } from '../../../shared/pdf-annotations'
 import { create } from 'zustand'
 
 import { recordLastOpenedProject } from '@/lib/last-opened-project'
@@ -88,6 +88,10 @@ type NavigationStore = {
   // and opens its detail without encoding transient UI selection into a route or persisted state.
   pendingLiteratureItemId: string | undefined
   pendingLiteratureAnnotation: PdfAnnotation | undefined
+  pendingLiteraturePdfImport: PdfAnnotationSource | undefined
+  // One explicit user-level Literature section selected outside the Library. Library consumes this
+  // once after routing so a user-level open can land on All references instead of the Inbox.
+  pendingLiteratureLibrarySection: 'library' | undefined
   // One explicit Project scope selected outside the Library. Library consumes this once instead of
   // inferring scope from the retained activeProjectId, which also survives user-level Library opens.
   pendingLiteratureProjectId: string | undefined
@@ -99,14 +103,18 @@ type NavigationStore = {
   recordUserNavigation: () => void
   goHome: (origin: NavigationOrigin) => void
   returnFromLibrary: (origin: NavigationOrigin) => void
-  openLibrary: (origin: NavigationOrigin) => void
+  openLibrary: (origin: NavigationOrigin, options?: { section?: 'library' }) => void
   openLiteratureItem: (
     itemId: string,
     origin: NavigationOrigin,
     annotation?: PdfAnnotation,
     afterNavigate?: () => void
   ) => void
-  openProjectLiterature: (projectId: string, origin: NavigationOrigin) => boolean
+  openProjectLiterature: (
+    projectId: string,
+    origin: NavigationOrigin,
+    options?: { pdf: PdfAnnotationSource }
+  ) => boolean
   openCollectionLiterature: (collectionId: string, origin: NavigationOrigin) => boolean
   openProject: (projectId: string, origin: NavigationOrigin, afterNavigate?: () => void) => boolean
   openSession: (
@@ -160,8 +168,10 @@ type NavigationStore = {
   requestArtifactMention: (file: ProjectFileItem) => void
   consumeArtifactMention: () => ProjectFileItem | undefined
   consumeLiteratureItem: (expectedItemId?: string) => string | undefined
+  consumeLiteratureLibrarySection: () => 'library' | undefined
   consumeLiteratureProject: (expectedProjectId?: string) => string | undefined
   consumeLiteratureCollection: (expectedCollectionId?: string) => string | undefined
+  consumeLiteraturePdfImport: (source: PdfAnnotationSource) => PdfAnnotationSource | undefined
   setArtifactMentionAvailability: (availability: ArtifactMentionAvailability | undefined) => void
 }
 
@@ -171,9 +181,14 @@ const navigationState = (
   next: Pick<NavigationStore, 'view'> & Partial<Pick<NavigationStore, 'activeProjectId'>>
 ): Pick<
   NavigationStore,
-  'view' | 'activeProjectId' | 'userNavigationRevision' | 'explicitNavigationRevision'
+  | 'view'
+  | 'activeProjectId'
+  | 'userNavigationRevision'
+  | 'explicitNavigationRevision'
+  | 'pendingLiteraturePdfImport'
 > => ({
   view: next.view,
+  pendingLiteraturePdfImport: undefined,
   activeProjectId:
     next.view === 'home' ? undefined : (next.activeProjectId ?? state.activeProjectId),
   userNavigationRevision:
@@ -242,6 +257,8 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
   pendingArtifactMention: undefined,
   pendingLiteratureItemId: undefined,
   pendingLiteratureAnnotation: undefined,
+  pendingLiteraturePdfImport: undefined,
+  pendingLiteratureLibrarySection: undefined,
   pendingLiteratureProjectId: undefined,
   pendingLiteratureCollectionId: undefined,
   artifactMentionAvailability: undefined,
@@ -277,10 +294,11 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     usePreviewWorkbenchStore.getState().activateProject(activeProjectId, undefined, true)
   },
 
-  openLibrary: (origin) =>
+  openLibrary: (origin, options) =>
     requestPreviewLeaveForNavigation({ view: 'library' }, () =>
       set((state) => ({
         ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureLibrarySection: options?.section === 'library' ? 'library' : undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: undefined
       }))
@@ -292,22 +310,26 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
         ...navigationState(state, origin, { view: 'library' }),
         pendingLiteratureItemId: itemId,
         pendingLiteratureAnnotation: annotation,
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: undefined
       }))
       afterNavigate?.()
     }),
 
-  openProjectLiterature: (projectId, origin) => {
-    if (!isActiveProject(projectId)) return false
+  openProjectLiterature: (projectId, origin, options) => {
+    if (!isActiveProject(projectId) || (options && options.pdf.projectId !== projectId))
+      return false
     return requestPreviewLeaveForNavigation({ view: 'library' }, () =>
       set((state) => ({
         ...navigationState(state, origin, {
           view: 'library',
           activeProjectId: projectId
         }),
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: projectId,
-        pendingLiteratureCollectionId: undefined
+        pendingLiteratureCollectionId: undefined,
+        pendingLiteraturePdfImport: options?.pdf
       }))
     )
   },
@@ -316,6 +338,7 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     requestPreviewLeaveForNavigation({ view: 'library' }, () =>
       set((state) => ({
         ...navigationState(state, origin, { view: 'library' }),
+        pendingLiteratureLibrarySection: undefined,
         pendingLiteratureProjectId: undefined,
         pendingLiteratureCollectionId: collectionId
       }))
@@ -557,11 +580,23 @@ export const useNavigationStore = create<NavigationStore>((set, get) => ({
     return itemId
   },
 
+  consumeLiteratureLibrarySection: () => {
+    const section = get().pendingLiteratureLibrarySection
+    set({ pendingLiteratureLibrarySection: undefined })
+    return section
+  },
+
   consumeLiteratureProject: (expectedProjectId) => {
     const projectId = get().pendingLiteratureProjectId
     if (expectedProjectId !== undefined && projectId !== expectedProjectId) return undefined
     set({ pendingLiteratureProjectId: undefined })
     return projectId
+  },
+
+  consumeLiteraturePdfImport: (source) => {
+    if (get().pendingLiteraturePdfImport !== source) return undefined
+    set({ pendingLiteraturePdfImport: undefined })
+    return source
   },
 
   consumeLiteratureCollection: (expectedCollectionId) => {

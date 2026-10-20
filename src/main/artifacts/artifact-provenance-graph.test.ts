@@ -1,3 +1,5 @@
+import { createNotebookDependencyAnalyzer } from '../notebook/dependency-analysis-adapter'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -14,7 +16,7 @@ import type {
   ScientificOutputEvidence
 } from '../../shared/execution-file-evidence'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from '../notebook/dependency-analysis'
+
 import { NotebookRunRepository } from '../notebook/repository'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { ArtifactProvenanceProducerCapture } from './provenance-producer-capture'
@@ -26,16 +28,14 @@ import {
   type ArtifactProvenanceNotebookActivityInput,
   type SealArtifactProvenanceGraphInput
 } from './artifact-provenance-graph'
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from './artifact-reproducibility-recipe'
+import { reproductionRecipes } from './reproducibility-host'
+
 import { sha256 } from './provenance-canonical'
 import {
   buildBoundedExecutionSnapshot,
   validateArtifactExecutionSnapshot
 } from './provenance-execution-evidence'
-import { projectArtifactReproducibility } from './provenance-reproducibility-projection'
+import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 
 const checksum = (character: string): string => character.repeat(64)
 
@@ -186,6 +186,190 @@ const recipeRun = (
 })
 
 describe('artifact provenance graph', () => {
+  it('retains advisory cross-language file dependencies from notebook projection', () => {
+    const graph = sealArtifactProvenanceGraph({
+      target: target(),
+      notebookActivities: [
+        notebookActivity('run-1', 1, []),
+        notebookActivity('run-2', 2, [
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ])
+      ],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: {
+          'run-1': { state: 'clear' },
+          'run-2': { state: 'clear' }
+        },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-1': [], 'run-2': [] },
+        fileDependenciesByRunId: {
+          'run-2': [
+            {
+              producerRunId: 'run-1',
+              path: 'outputs/intermediate.csv',
+              checksum: checksum('a'),
+              confidence: 'verified'
+            }
+          ]
+        }
+      }
+    })
+    expect(graph.edges).toContainEqual({
+      kind: 'depends-on',
+      activityId: 'run-2',
+      dependencyActivityId: 'run-1',
+      authority: 'advisory',
+      evidenceSource: 'dependency-analysis'
+    })
+  })
+
+  it('marks a missing file producer as truncated provenance history', () => {
+    const graph = sealArtifactProvenanceGraph({
+      target: target(),
+      notebookActivities: [
+        notebookActivity('run-2', 2, [
+          {
+            relation: 'created',
+            relativePath: 'result.csv',
+            pathPortability: 'relative',
+            authority: 'advisory',
+            generation: generation('g-target', 'result.csv', checksum('b'))
+          }
+        ])
+      ],
+      computeActivities: [],
+      notebookDependencies: {
+        stalenessByRunId: { 'run-2': { state: 'clear' } },
+        invalidatedByRunId: {},
+        dependenciesByRunId: { 'run-2': [] },
+        fileDependenciesByRunId: {
+          'run-2': [
+            {
+              producerRunId: 'run-missing',
+              path: 'outputs/intermediate.csv',
+              checksum: checksum('a'),
+              confidence: 'verified'
+            }
+          ]
+        }
+      }
+    })
+    expect(graph.completeness).toBe('incomplete')
+    expect(graph.reasonCodes).toContain('history-truncated')
+    expect(graph.edges).not.toContainEqual(
+      expect.objectContaining({
+        kind: 'depends-on',
+        activityId: 'run-2',
+        dependencyActivityId: 'run-missing'
+      })
+    )
+  })
+
+  it('preserves unresolved file reads through analysis restart and target closure', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'unresolved-file-lineage-'))
+    const scripts = [
+      'from pathlib import Path\nPath("intermediate.csv").write_text("old")',
+      'from pathlib import Path\nPath("intermediate.csv").write_text("new")',
+      'from pathlib import Path\nvalue = Path("intermediate.csv").read_text()\nPath("result.csv").write_text(value)'
+    ]
+    const activities = scripts.map((script, index) =>
+      notebookActivity(
+        `run-${index}`,
+        index,
+        index === 2
+          ? [
+              {
+                relation: 'created',
+                relativePath: 'result.csv',
+                pathPortability: 'relative',
+                authority: 'advisory',
+                generation: generation('g-target', 'result.csv', checksum('b'))
+              }
+            ]
+          : [],
+        {
+          script,
+          cwdBefore: root,
+          cwdAfter: root,
+          kernelEpochId: `epoch-${index}`,
+          workingFiles:
+            index === 0
+              ? [
+                  {
+                    path: join(root, 'intermediate.csv'),
+                    relativePath: 'intermediate.csv',
+                    kind: 'other',
+                    createdByRunId: 'run-0',
+                    change: 'created',
+                    checksum: checksum('a')
+                  }
+                ]
+              : []
+        }
+      )
+    )
+    try {
+      const options = {
+        storageRoot: root,
+        repository: { readSessionRuns: async () => activities.map(({ run }) => run) }
+      }
+      const request = { projectId: 'p', sessionId: 's', throughRunId: 'run-2' }
+      const projection = await createNotebookDependencyAnalyzer(options).project(request)
+      expect(projection.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
+      expect(projection.unresolvedFileReadRunIds).toEqual(['run-2'])
+      expect(projection.fileDependenciesByRunId?.['run-2']).toBeUndefined()
+      const reloaded = await createNotebookDependencyAnalyzer(options).project(request)
+      expect(reloaded.unresolvedFileReadRunIds).toEqual(['run-2'])
+      const graph = sealArtifactProvenanceGraph({
+        target: target(),
+        notebookActivities: activities,
+        computeActivities: [],
+        notebookDependencies: reloaded
+      })
+      expect(graph.completeness).toBe('incomplete')
+      expect(graph.reasonCodes).toContain('history-truncated')
+      expect(graph.edges).not.toContainEqual(
+        expect.objectContaining({
+          kind: 'depends-on',
+          activityId: 'run-2',
+          dependencyActivityId: 'run-0'
+        })
+      )
+      const unrelated = sealArtifactProvenanceGraph({
+        target: { ...target(), producerRunId: 'run-3' },
+        notebookActivities: [
+          ...activities,
+          notebookActivity('run-3', 3, [
+            {
+              relation: 'created',
+              relativePath: 'result.csv',
+              pathPortability: 'relative',
+              authority: 'advisory',
+              generation: generation('g-target', 'result.csv', checksum('b'))
+            }
+          ])
+        ],
+        computeActivities: [],
+        notebookDependencies: {
+          ...reloaded,
+          stalenessByRunId: { ...reloaded.stalenessByRunId, 'run-3': { state: 'clear' } },
+          dependenciesByRunId: { ...reloaded.dependenciesByRunId, 'run-3': [] }
+        }
+      })
+      expect(unrelated.completeness).toBe('complete')
+      expect(unrelated.reasonCodes).not.toContain('history-truncated')
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it.each(['proportional_venn_5sets.png', 'proportional_venn_5sets_hires.png'])(
     'reconstructs %s without discarded font probes and failed theme setup',
     async (filename) => {
@@ -238,7 +422,7 @@ describe('artifact provenance graph', () => {
             { script, kernelKind: 'r', status: index === 4 ? 'failed' : 'completed' }
           )
         )
-        const dependencies = await new NotebookDependencyAnalyzer({
+        const dependencies = await createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => activities.map((a) => a.run) }
         }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-6' })
@@ -256,7 +440,7 @@ describe('artifact provenance graph', () => {
           notebookDependencies: dependencies
         })
         expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-        const recipe = sealArtifactReproducibilityRecipe({
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
           runs: activities.map((a) =>
@@ -268,7 +452,9 @@ describe('artifact provenance graph', () => {
           )
         })
         expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-6'])
-        expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        ).toBeDefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -306,7 +492,7 @@ describe('artifact provenance graph', () => {
           { script, kernelKind: 'r' }
         )
       )
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-3' })
@@ -324,7 +510,7 @@ describe('artifact provenance graph', () => {
         notebookDependencies: dependencies
       })
       expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((a) =>
@@ -332,7 +518,9 @@ describe('artifact provenance graph', () => {
         )
       })
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2', 'run-3'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -396,7 +584,7 @@ describe('artifact provenance graph', () => {
         await mkdir(dirname(path), { recursive: true })
         await writeFile(path, activity.evidenceJson!)
       }
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'r-read' })
@@ -414,7 +602,7 @@ describe('artifact provenance graph', () => {
         notebookDependencies: dependencies
       })
       expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((a) =>
@@ -426,7 +614,9 @@ describe('artifact provenance graph', () => {
         'python-transform',
         'r-read'
       ])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -480,7 +670,7 @@ describe('artifact provenance graph', () => {
         await mkdir(dirname(path), { recursive: true })
         await writeFile(path, activity.evidenceJson!)
       }
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'plot' })
@@ -498,7 +688,7 @@ describe('artifact provenance graph', () => {
         notebookDependencies: dependencies
       })
       expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((a) =>
@@ -506,12 +696,14 @@ describe('artifact provenance graph', () => {
         )
       })
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['producer', 'plot'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
-  it('reconstructs the contrast plot through four memory-dependent R cells', async () => {
+  it('retains contrast plot source without certifying unproven memory-dependent R cells', async () => {
     const cells = JSON.parse(
       await readFile(join(__dirname, '../notebook/reported-contrasts-volcano.fixture.json'), 'utf8')
     ) as Array<{ index: number; script: string }>
@@ -551,7 +743,7 @@ describe('artifact provenance graph', () => {
           { script: c.script, kernelKind: 'r' }
         )
       )
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-6' })
@@ -569,22 +761,30 @@ describe('artifact provenance graph', () => {
           computeActivities: [],
           notebookDependencies: dependencies
         })
-        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-        const recipe = sealArtifactReproducibilityRecipe({
+        expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+        expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
           runs: activities.map((a) =>
             recipeRun(a.run.runId, a.runIndex, { script: a.run.script, kernelKind: 'r' })
           )
         })
-        expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-3', 'run-4', 'run-5', 'run-6'])
-        expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+        expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-6'])
+        expect(recipe.steps[0]).toMatchObject({
+          sourceChecksum: sha256(cells.find((cell) => cell.index === 6)!.script)
+        })
+        expect(recipe.capture.state).toBe('blocked')
+        expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        ).toBeUndefined()
       }
     } finally {
       await rm(root, { recursive: true, force: true })
     }
   })
-  it('keeps a rejected R plot out of the final standalone recipe', async () => {
+  it('keeps a rejected R plot out of an incomplete standalone recipe', async () => {
     const cells = JSON.parse(
       await readFile(join(__dirname, '../notebook/reported-layered-volcano.fixture.json'), 'utf8')
     ) as Array<{ index: number; script: string; language: string; status: string }>
@@ -625,7 +825,7 @@ describe('artifact provenance graph', () => {
             }
           )
         )
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-11' })
@@ -642,8 +842,9 @@ describe('artifact provenance graph', () => {
         computeActivities: [],
         notebookDependencies: dependencies
       })
-      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-      const recipe = sealArtifactReproducibilityRecipe({
+      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+      expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((a) =>
@@ -656,7 +857,14 @@ describe('artifact provenance graph', () => {
         )
       })
       expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-11'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(recipe.steps[0]).toMatchObject({
+        sourceChecksum: sha256(cells.find((cell) => cell.index === 11)!.script)
+      })
+      expect(recipe.capture.state).toBe('blocked')
+      expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeUndefined()
     } finally {
       await rm(root, { recursive: true, force: true })
     }
@@ -701,7 +909,7 @@ describe('artifact provenance graph', () => {
             { script, kernelKind: language, kernelEpochId: `epoch-${index}` }
           )
         })
-        const dependencies = await new NotebookDependencyAnalyzer({
+        const dependencies = await createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => activities.map((a) => a.run) }
         }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-2' })
@@ -724,7 +932,7 @@ describe('artifact provenance graph', () => {
           notebookDependencies: dependencies
         })
         expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
-        const recipe = sealArtifactReproducibilityRecipe({
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
           runs: activities.map((a) =>
@@ -738,7 +946,9 @@ describe('artifact provenance graph', () => {
         expect(
           recipe.steps.map((s) => (s.kind === 'notebook-run' ? s.kernelKind : undefined))
         ).toEqual(languages)
-        expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        ).toBeDefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
@@ -807,7 +1017,7 @@ describe('artifact provenance graph', () => {
             { script: c.script, kernelKind: c.language, kernelEpochId: `${c.language}-epoch` }
           )
         )
-        const dependencies = await new NotebookDependencyAnalyzer({
+        const dependencies = await createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => activities.map((a) => a.run) }
         }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-8' })
@@ -832,7 +1042,7 @@ describe('artifact provenance graph', () => {
           graph.activities.filter((a) => a.kind === 'notebook-run').map((a) => a.activityId),
           JSON.stringify(dependencies)
         ).toEqual(['run-5', 'run-8'])
-        const recipe = sealArtifactReproducibilityRecipe({
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: [],
           runs: activities.map((a) =>
@@ -843,14 +1053,16 @@ describe('artifact provenance graph', () => {
           )
         })
         expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-5', 'run-8'])
-        expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+        expect(
+          reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        ).toBeDefined()
       } finally {
         await rm(root, { recursive: true, force: true })
       }
     }
   )
 
-  it('rebuilds an RDS plot from both inputs without replaying failed or replaced images', async () => {
+  it('retains the RDS input bridge without certifying a complete plot replay', async () => {
     const cells = JSON.parse(
       await readFile(
         join(__dirname, '../notebook/reported-rds-envelope-volcano.fixture.json'),
@@ -911,7 +1123,7 @@ describe('artifact provenance graph', () => {
             }
           )
         )
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => activities.map((a) => a.run) }
       }).project({ projectId: 'p', sessionId: 's', throughRunId: 'run-8' })
@@ -928,11 +1140,12 @@ describe('artifact provenance graph', () => {
         computeActivities: [],
         notebookDependencies: dependencies
       })
-      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('complete')
+      expect(graph.completeness, JSON.stringify(graph.reasonCodes)).toBe('incomplete')
+      expect(graph.reasonCodes).toContain('kernel-dependencies-unavailable')
       expect(
         graph.activities.filter((a) => a.kind === 'notebook-run').map((a) => a.activityId)
       ).toEqual(['run-4', 'run-8'])
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((a) =>
@@ -945,7 +1158,25 @@ describe('artifact provenance graph', () => {
         )
       })
       expect(recipe.steps.map((s) => s.activityId)).toEqual(['run-4', 'run-8'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        recipe.steps.flatMap((step) => (step.kind === 'notebook-run' ? [step.sourceChecksum] : []))
+      ).toEqual([4, 8].map((index) => sha256(cells.find((cell) => cell.index === index)!.script)))
+      expect(
+        graph.entities.flatMap((entity) =>
+          entity.kind === 'file-generation' ? [entity.relativePath] : []
+        )
+      ).toEqual(
+        expect.arrayContaining([
+          'data/inputs/expression-matrix-444444444444.csv',
+          'data/inputs/differential-results-333333333333.xlsx',
+          'data/merged_diff_expr.rds'
+        ])
+      )
+      expect(recipe.capture.state).toBe('blocked')
+      expect(recipe.capture.reasonCodes).toContain('target-graph-incomplete')
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeUndefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -991,7 +1222,7 @@ describe('artifact provenance graph', () => {
           { script }
         )
       )
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => activities.map((activity) => activity.run) }
       }).project({ projectId: 'project', sessionId: 'session', throughRunId: 'run-2' })
@@ -1016,7 +1247,7 @@ describe('artifact provenance graph', () => {
           .filter((activity) => activity.kind === 'notebook-run')
           .map((activity) => activity.activityId)
       ).toEqual(['run-2'])
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: activities.map((activity) =>
@@ -1024,7 +1255,9 @@ describe('artifact provenance graph', () => {
         )
       })
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -1709,14 +1942,16 @@ describe('artifact provenance graph', () => {
 
     const runs = [recipeRun('run-1', 1), recipeRun('run-2', 2)]
     const projection = projectArtifactReproducibility(graph, runs)
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs
     })
     expect(projection.includedNotebookRunCount).toBe(2)
     expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-1', 'run-2'])
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toBeDefined()
   })
 
   it('keeps an unrelated completed run out of the executable target lineage', () => {
@@ -1749,7 +1984,7 @@ describe('artifact provenance graph', () => {
         dependenciesByRunId: { 'run-1': [], 'run-2': [] }
       }
     })
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs
@@ -1757,7 +1992,9 @@ describe('artifact provenance graph', () => {
 
     expect(graph.activities.map((activity) => activity.activityId)).not.toContain('run-1')
     expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2'])
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toBeDefined()
   })
 
   it('keeps an isolated conditional loop binding out of the target recipe', async () => {
@@ -1801,7 +2038,7 @@ describe('artifact provenance graph', () => {
     const notebookRuns = [unrelated.run, producer.run]
 
     try {
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => notebookRuns }
       }).project({
@@ -1818,7 +2055,7 @@ describe('artifact provenance graph', () => {
         computeActivities: [],
         notebookDependencies: dependencies
       })
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: [
@@ -1829,7 +2066,9 @@ describe('artifact provenance graph', () => {
 
       expect(graph.activities.map((activity) => activity.activityId)).not.toContain('run-1')
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -1865,7 +2104,7 @@ describe('artifact provenance graph', () => {
     const notebookRuns = [failed.run, producer.run]
 
     try {
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => notebookRuns }
       }).project({
@@ -1882,7 +2121,7 @@ describe('artifact provenance graph', () => {
         computeActivities: [],
         notebookDependencies: dependencies
       })
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs: [
@@ -1893,7 +2132,9 @@ describe('artifact provenance graph', () => {
 
       expect(graph.activities.map((activity) => activity.activityId)).not.toContain('run-1')
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -1927,7 +2168,7 @@ describe('artifact provenance graph', () => {
     const notebookRuns = [first.run, second.run]
 
     try {
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => notebookRuns }
       }).project({
@@ -1948,7 +2189,7 @@ describe('artifact provenance graph', () => {
         recipeRun('run-2', 1, { script: second.run.script })
       ]
       const projection = projectArtifactReproducibility(graph, runs)
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs
@@ -1956,7 +2197,9 @@ describe('artifact provenance graph', () => {
 
       expect(projection.includedNotebookRunCount).toBe(2)
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-1', 'run-2'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -2005,7 +2248,7 @@ describe('artifact provenance graph', () => {
     const notebookRuns = [pythonRun.run, rRun.run]
 
     try {
-      const dependencies = await new NotebookDependencyAnalyzer({
+      const dependencies = await createNotebookDependencyAnalyzer({
         storageRoot,
         repository: { readSessionRuns: async () => notebookRuns }
       }).project({
@@ -2030,7 +2273,7 @@ describe('artifact provenance graph', () => {
         })
       ]
       const projection = projectArtifactReproducibility(graph, runs)
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: [],
         runs
@@ -2039,7 +2282,9 @@ describe('artifact provenance graph', () => {
       expect(graph.activities.map((activity) => activity.activityId)).not.toContain('run-1')
       expect(projection.includedNotebookRunCount).toBe(1)
       expect(recipe.steps.map((step) => step.activityId)).toEqual(['run-2'])
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
     } finally {
       await rm(storageRoot, { recursive: true, force: true })
     }
@@ -2262,7 +2507,7 @@ describe('artifact provenance graph', () => {
       notebookActivities: [producer],
       computeActivities: []
     })
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: producer.run.inputFiles ?? [],
       runs: [recipeRun('run-2', 2, { script: producer.run.script })]
@@ -2295,7 +2540,9 @@ describe('artifact provenance graph', () => {
       })
     )
     expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toBeDefined()
     expect(snapshot.inputFiles).toEqual([])
     expect(snapshot.runs[0]?.inputFileVersionKeys).toEqual([])
     expect(snapshot.runs[0]).not.toHaveProperty('hasOmittedInputs')
@@ -2364,7 +2611,7 @@ describe('artifact provenance graph', () => {
       notebookActivities: [producer],
       computeActivities: []
     })
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: producer.run.inputFiles ?? [],
       runs: [recipeRun('run-2', 2, { script: producer.run.script })]
@@ -2401,7 +2648,9 @@ describe('artifact provenance graph', () => {
       })
     )
     expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toBeDefined()
     expect(snapshot.inputFiles).toEqual([
       expect.objectContaining({ inputFileVersionId: 'upload-version-1' })
     ])
@@ -2475,13 +2724,15 @@ describe('artifact provenance graph', () => {
           authority: 'authoritative'
         })
       )
-      const recipe = sealArtifactReproducibilityRecipe({
+      const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
         provenanceGraph: graph,
         inputFiles: producer.run.inputFiles ?? [],
         runs: [recipeRun('run-2', 2, { kernelKind, script: producer.run.script })]
       })
       expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
-      expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toBeDefined()
+      expect(
+        reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+      ).toBeDefined()
       expect(
         recipe.frontiers.find((frontier) => frontier.frontierId === 'original-inputs')
           ?.crossingFiles
@@ -2831,3 +3082,5 @@ describe('artifact provenance graph', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

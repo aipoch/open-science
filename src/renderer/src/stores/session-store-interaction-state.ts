@@ -1,11 +1,12 @@
-import type { ChatSession, SessionStatus } from './session-store-persistence-owner'
-import type { SessionWaitReason } from '../../../shared/session-persistence'
-
-export type SessionInteractionState = Readonly<{
-  permission: boolean
-  elicitation: boolean
-  plan: boolean
-}>
+import {
+  deriveSessionAttention,
+  projectSessionAttention
+} from '../../../shared/session-persistence'
+import type { SessionAttention } from '../../../shared/session-attention-contract'
+import type { PersistedChatSession, SessionWaitReason } from '../../../shared/session-persistence'
+import type { SessionInteractionState } from './session-interaction-contract'
+import type { ChatSession, SessionStatus } from './session-store-contract'
+export type { SessionInteractionState } from './session-interaction-contract'
 
 export type { SessionWaitReason } from '../../../shared/session-persistence'
 
@@ -36,6 +37,7 @@ export type SessionActionabilityFacts = Readonly<{
 
 export type SessionActionabilityProjection = Readonly<{
   presentedStatus: SessionStatus
+  attention?: SessionAttention
   activity: 'inactive' | 'running' | 'waiting'
   attentionOwner: 'none' | 'agent' | 'user'
   waitReason?: SessionWaitReason
@@ -56,6 +58,7 @@ type SessionInteractionSource = Readonly<{
   packageOrigin?: ChatSession['packageOrigin']
   status: SessionStatus
   interactionState?: SessionInteractionState
+  liveInteractionState?: ChatSession['liveInteractionState']
   runtimeContext?: ChatSession['runtimeContext']
   activities?: readonly {
     elicitation?: {
@@ -67,6 +70,12 @@ type SessionInteractionSource = Readonly<{
   agentPromptInFlight?: boolean
   isPending?: boolean
   pendingHistoryReplay?: unknown
+  attention?: SessionAttention
+  messages?: PersistedChatSession['messages']
+  conversationGraph?: PersistedChatSession['conversationGraph']
+  recordProblems?: PersistedChatSession['recordProblems']
+  contentLoaded?: boolean
+  conversationGraphSyncBlocked?: boolean
 }>
 
 type SessionPermissionRequest = Readonly<{
@@ -119,10 +128,12 @@ export const inferSessionInteractionState = (
 
 export const resolveSessionInteractionStatus = (
   session: SessionInteractionSource,
-  interactionState: SessionInteractionState = inferSessionInteractionState(session)
+  interactionState: SessionInteractionState = inferSessionInteractionState(session),
+  includeLiveInteractions = true
 ): SessionStatus => {
-  if (interactionState.permission) return 'waiting-permission'
-  if (interactionState.elicitation) return 'waiting-for-user'
+  const liveInteractionState = includeLiveInteractions ? session.liveInteractionState : undefined
+  if (interactionState.permission || liveInteractionState?.permission) return 'waiting-permission'
+  if (interactionState.elicitation || liveInteractionState?.elicitation) return 'waiting-for-user'
   if (interactionState.plan) return 'waiting-plan-approval'
   if (!isSessionWaitReason(session.status)) return session.status
   return session.activeRun || session.agentPromptInFlight ? 'running' : 'idle'
@@ -147,19 +158,35 @@ export const projectSessionActionability = (
   session: SessionInteractionSource,
   facts: SessionActionabilityFacts = {}
 ): SessionActionabilityProjection => {
+  const isImported = Boolean(session.packageOrigin)
   const interactionState = inferSessionInteractionState(session)
   const status = resolveSessionInteractionStatus(session, interactionState)
-  const waitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
+  const statusWaitReason = isSessionWaitReason(status) ? status : facts.presentedWaitReason
+  const waitReason =
+    facts.rootPermissionPending === true
+      ? 'waiting-permission'
+      : statusWaitReason === 'waiting-permission'
+        ? statusWaitReason
+        : facts.credentialPending === true || facts.elicitationPending === true
+          ? 'waiting-for-user'
+          : (statusWaitReason ?? (facts.planPending === true ? 'waiting-plan-approval' : undefined))
   // Durable transcript updates can lag Main's live prompt ownership. Keep foreground actions
   // locked until that ownership settles, while preserving actionable user waits above it.
   const running =
     !waitReason &&
-    (status === 'running' || session.agentPromptInFlight === true || facts.hasRunningWork === true)
+    (status === 'running' ||
+      Boolean(session.activeRun) ||
+      session.agentPromptInFlight === true ||
+      facts.hasRunningWork === true)
   const durableRootPermissionPending = session.runtimeContext?.permission?.state === 'pending'
   const permissionPending =
-    durableRootPermissionPending || (facts.rootPermissionPending ?? interactionState.permission)
+    durableRootPermissionPending ||
+    (facts.rootPermissionPending ??
+      (interactionState.permission || session.liveInteractionState?.permission === true))
   const credentialPending = facts.credentialPending === true
-  const elicitationPending = facts.elicitationPending ?? interactionState.elicitation
+  const elicitationPending =
+    facts.elicitationPending ??
+    (interactionState.elicitation || session.liveInteractionState?.elicitation === true)
   const planPending = facts.planPending ?? interactionState.plan
   const blockingInteraction: SessionBlockingInteraction | undefined = permissionPending
     ? 'permission'
@@ -172,9 +199,12 @@ export const projectSessionActionability = (
           : undefined
   const interactionDisabledReason = disabledReasonForInteraction(blockingInteraction)
   const historyReplayPending = Boolean(session.pendingHistoryReplay)
-  const sessionPending = Boolean(session.isPending) || historyReplayPending
+  // A failed creation keeps isPending until retry binds the provider. It no longer owns
+  // initialization: allow the user to repair its configuration and submit that retry.
+  const creationPending = Boolean(session.isPending) && session.status !== 'error'
+  const sessionPending = creationPending || historyReplayPending
   const turnDisabledReason =
-    session.isPending && !facts.allowPendingSessionRetry
+    creationPending && !facts.allowPendingSessionRetry
       ? 'session-pending'
       : running
         ? 'session-running'
@@ -190,23 +220,44 @@ export const projectSessionActionability = (
           : 'plan-approval-pending'
       : undefined)
   const replayOrPendingReason = sessionPending ? 'session-pending' : undefined
+  // These settings can persist or reset runtime context; keep transient Session IDs
+  // out of those paths even after creation fails.
   const replayIndependentChangeDisabledReason = session.isPending
     ? 'session-pending'
     : running
       ? 'session-running'
       : (attentionDisabledReason ?? interactionDisabledReason)
   const activity = waitReason ? 'waiting' : running ? 'running' : 'inactive'
+  const durableAttention =
+    session.contentLoaded === false || !session.messages
+      ? session.attention
+      : deriveSessionAttention(session as PersistedChatSession)
+  const attention =
+    projectSessionAttention({
+      latestVisibleTurn: durableAttention?.turn,
+      recordProblems: [
+        ...(session.recordProblems ?? durableAttention?.recordProblems ?? []),
+        ...(session.conversationGraphSyncBlocked ? (['conversation-graph-sync'] as const) : [])
+      ]
+    }) ?? (session.contentLoaded === false ? durableAttention : undefined)
   const executionAvailability = (
     reason: SessionActionDisabledReason | undefined
   ): SessionActionAvailability =>
     session.packageOrigin ? { allowed: false } : actionAvailability(reason)
 
   return {
-    presentedStatus: waitReason ?? (running ? 'running' : status),
-    activity,
-    attentionOwner: waitReason ? 'user' : running ? 'agent' : 'none',
-    waitReason,
-    blockingInteraction,
+    presentedStatus: isImported
+      ? attention
+        ? 'error'
+        : 'idle'
+      : (waitReason ??
+        (running ? 'running' : attention ? 'error' : !session.messages ? status : 'idle')),
+    attention,
+    // Package runtime fields describe recorded work and never own current UI interaction.
+    activity: isImported ? 'inactive' : activity,
+    attentionOwner: isImported ? 'none' : waitReason ? 'user' : running ? 'agent' : 'none',
+    waitReason: isImported ? undefined : waitReason,
+    blockingInteraction: isImported ? undefined : blockingInteraction,
     actions: {
       startTurn: executionAvailability(turnDisabledReason),
       revise: executionAvailability(revisionDisabledReason),
@@ -225,7 +276,9 @@ export const projectSessionActionability = (
       changeAutoReview: executionAvailability(replayIndependentChangeDisabledReason),
       changeSpecialist: executionAvailability(replayIndependentChangeDisabledReason),
       changeMemory: executionAvailability(replayIndependentChangeDisabledReason),
-      archive: actionAvailability(running ? 'session-running' : attentionDisabledReason)
+      archive: actionAvailability(
+        isImported ? undefined : running ? 'session-running' : attentionDisabledReason
+      )
     }
   }
 }
@@ -236,7 +289,11 @@ export const projectSessionInteractionState = (
 ): ChatSession => {
   const current = inferSessionInteractionState(session)
   const interactionState = { ...current, ...patch }
-  const status = resolveSessionInteractionStatus(session, interactionState)
+  const status = resolveSessionInteractionStatus(
+    session,
+    interactionState,
+    session.liveInteractionState?.presentationOnly !== true
+  )
   if (
     current.permission === interactionState.permission &&
     current.elicitation === interactionState.elicitation &&
@@ -247,4 +304,43 @@ export const projectSessionInteractionState = (
     return session
   }
   return { ...session, interactionState, status, updatedAt: Date.now() }
+}
+
+export const projectLiveSessionInteractionState = (
+  session: ChatSession,
+  patch: Partial<
+    Pick<NonNullable<ChatSession['liveInteractionState']>, 'permission' | 'elicitation'>
+  >,
+  presentationOnly = false
+): ChatSession => {
+  const liveInteractionState = {
+    permission: patch.permission ?? session.liveInteractionState?.permission ?? false,
+    elicitation: patch.elicitation ?? session.liveInteractionState?.elicitation ?? false,
+    ...(presentationOnly ? { presentationOnly: true as const } : {})
+  }
+  const liveSession =
+    session.liveInteractionState?.permission === liveInteractionState.permission &&
+    session.liveInteractionState?.elicitation === liveInteractionState.elicitation &&
+    session.liveInteractionState?.presentationOnly === liveInteractionState.presentationOnly
+      ? session
+      : { ...session, liveInteractionState }
+  if (presentationOnly) return liveSession
+  const aggregatePatch: Partial<SessionInteractionState> = {
+    ...(patch.permission !== undefined
+      ? {
+          permission:
+            liveInteractionState.permission ||
+            session.runtimeContext?.permission?.state === 'pending'
+        }
+      : {}),
+    ...(patch.elicitation !== undefined
+      ? {
+          elicitation:
+            liveInteractionState.elicitation ||
+            (session.interactionState?.elicitation !== false &&
+              hasPendingDurableElicitation(session))
+        }
+      : {})
+  }
+  return projectSessionInteractionState(liveSession, aggregatePatch)
 }

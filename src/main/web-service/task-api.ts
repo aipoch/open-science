@@ -1,54 +1,57 @@
-import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
-import type { CliLauncherStatus } from '../../shared/cli'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { randomUUID } from 'node:crypto'
+import type { BootstrapRequest, BootstrapResult } from '../../shared/bootstrap'
+import type { CliLauncherStatus } from '../../shared/cli'
 
-import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { ArtifactVersionDescriptor } from '../../shared/artifact-provenance'
 import type {
   FinalizeRunArtifactsRequest,
   FinalizeRunArtifactsResult
 } from '../../shared/artifacts'
 import type { Project } from '../../shared/projects'
 import type { ReviewRunResult, ReviewWithChecks } from '../../shared/reviewer'
+import type {
+  UpdateProjectSessionDefaultsRequest,
+  UpdateSessionConfigurationRequest
+} from '../../shared/session-configuration'
+import type { PersistedArtifact } from '../../shared/session-message-contract'
+import type { PersistedChatSession } from '../../shared/session-persistence'
 import type { ActivePlanProjection, PlanResponseCommand } from '../../shared/session-plan/contract'
-import type { PersistedArtifact, PersistedChatSession } from '../../shared/session-persistence'
 import type {
   AddCustomServerRequest,
-  UpdateCustomServerRequest,
-  ConnectorsSnapshot,
   ConnectorDetailView,
-  CustomServerView,
+  ConnectorsSnapshot,
   CreateDeviceCredentialRequest,
-  UpdateDeviceCredentialRequest,
-  DeviceCredentialsSnapshot,
   CreateDeviceCredentialResult,
+  CustomServerView,
+  DeviceCredentialsSnapshot,
   ReadinessPreflight,
+  SettingsSnapshot,
   SkillView,
-  SettingsSnapshot
+  UpdateCustomServerRequest,
+  UpdateDeviceCredentialRequest
 } from '../../shared/settings'
 import type {
   AcquiredTaskArtifact,
   CreateTaskProjectRequest,
   StartTaskRunRequest,
-  TaskProject,
   TaskAgentRouting,
   TaskAgentRuntime,
   TaskDoctorReport,
-  TaskProjectSessionDefaults,
   TaskPlanResponseRequest,
+  TaskProject,
+  TaskProjectSessionDefaults,
   TaskRun,
   TaskRunProgressEvent,
   TaskRunReview,
-  TaskSessionSummary,
   TaskSessionConfiguration,
-  UpdateProjectSessionDefaultsRequest,
-  UpdateSessionConfigurationRequest,
+  TaskSessionSummary,
   UpdateTaskAgentRoutingRequest,
   UpdateTaskProjectRequest
 } from '../../shared/task-api'
 import { createApplicationCommandClient } from '../application-command-client'
-import type { ApplicationCommandByNameDispatcher } from '../application-command-composition'
+import type { ApplicationCommandByNameDispatcher } from '../application-command-composition-contract'
 import { createTaskCallerContext, type CallerContext } from '../caller-context'
 import type { PlanResponseResult } from '../session-plan/plan-service'
 import type { TaskControlPorts } from '../tasks/task-control-ports'

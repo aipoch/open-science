@@ -13,7 +13,7 @@
     "  for s in osx-arm64 osx-64 linux-64 linux-aarch64 win-64; do",
     "    curl -fsSL \"https://github.com/mamba-org/micromamba-releases/releases/download/$tag/micromamba-$s.tar.bz2\" | shasum -a 256 | awk -v s=$s '{print s, $1}'",
     "  done",
-    "The sha256 covers the downloaded .tar.bz2 archive (before extraction). binarySha256 covers the extracted executable used by runtime preflight.",
+    "The sha256 covers the downloaded .tar.bz2 archive (before extraction). binarySha256 covers the extracted executable before Windows release signing; the signed installed executable is checked with Authenticode at runtime.",
     "compatibility is a separately pinned final-1.x Windows runner, bundled so recovery never downloads executable code at runtime.",
     "To repin compatibility, update its version/releaseTag, hash the official win-64 tarball, extract Library/bin/micromamba.exe, and hash that executable independently.",
     "Before accepting a micromamba bump, revalidate the Windows managed-runtime fixtures for multi-cache search, URL-derived cache layout, and flat-cache fallback with LongPathsEnabled=0."

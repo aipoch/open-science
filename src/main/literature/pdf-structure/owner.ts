@@ -3,7 +3,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, mkdtemp, rmdir } from 'node:fs/promises'
 import { join } from 'node:path'
 
-import type { LocalModelOwner, LocalModelUse } from '../../local-models/owner'
+import type { LocalModelOwner } from '../../local-models/owner'
 import { acquireDataRootWriter } from '../../storage/migration-state'
 import { resolveDataRoot } from '../../storage-root'
 import type { ResolvedSessionPdfVersion } from '../session-pdf-source-resolver'
@@ -11,7 +11,7 @@ import {
   parsePdfStructureResult,
   type PdfStructureIdentity,
   type PdfStructureResult
-} from './result'
+} from '@aipoch/pdf-structure/result'
 import { PdfStructureSourceAuthority, type PdfStructureSourceRequest } from './source'
 import { PdfStructureCache, type PdfStructureCacheClearResult } from './cache'
 
@@ -22,22 +22,7 @@ export type PdfStructureProgress = Readonly<{
   processedPages: readonly number[]
 }>
 
-// start must return the handle synchronously, before asynchronous startup. stop resolves only
-// after the owned worker and its descendants are gone; a rejection retains files and model use.
-export type PdfStructureEngine = {
-  describe(): Promise<{ fingerprint: string; modelRevision: string }>
-  start(request: {
-    inputPath: string
-    model: Omit<LocalModelUse, 'release'>
-    identity: PdfStructureIdentity
-    signal: AbortSignal
-    onProgress: (progress: { phase: string; processedPages: number[] }) => void
-  }): {
-    result: Promise<unknown>
-    thumbnails: ReadonlyMap<string, Uint8Array>
-    stop(): Promise<void>
-  }
-}
+import type { PdfStructureEngine } from '@aipoch/pdf-structure'
 
 type Dependencies = {
   sources: PdfStructureSourceAuthority
@@ -91,7 +76,7 @@ export type PdfStructureOwner = {
   ): Promise<Buffer | undefined>
 }
 
-// One concrete FIFO owner. Pending work deduplicates, authorization and cancellation never do.
+// One bounded FIFO owner shared by previews and Agents. Cancellation remains consumer-local.
 export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructureOwner => {
   const acquireWriter = dependencies.acquireWriter ?? acquireDataRootWriter
   const root = dependencies.dataRoot ?? resolveDataRoot
@@ -101,7 +86,7 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
   const requests = new Map<AbortController, Promise<void>>()
   const retained = new Set<() => Promise<void>>()
   const reads = new Set<Promise<void>>()
-  let running = false
+  let running = 0
   let closed = false
   let closing: Promise<void> | undefined
   let clearing: Promise<PdfStructureCacheClearResult> | undefined
@@ -286,12 +271,12 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         })
     }
   }
-  const pump = async (): Promise<void> => {
-    if (running) return
-    running = true
-    try {
-      while (queue.length) {
-        const job = queue.shift()!
+  const pump = (): void => {
+    // Per-job RSS watchdogs remain in the engine; never multiply this limit per view.
+    while (running < 4 && queue.length) {
+      const job = queue.shift()!
+      running++
+      void (async () => {
         try {
           if (retained.size) throw new Error(PDF_CLEANUP_PENDING)
           job.controller.signal.throwIfAborted()
@@ -303,10 +288,10 @@ export const createPdfStructureOwner = (dependencies: Dependencies): PdfStructur
         } finally {
           jobs.delete(job.key)
           job.finish()
+          running--
+          pump()
         }
-      }
-    } finally {
-      running = false
+      })()
     }
   }
   const acquire = (

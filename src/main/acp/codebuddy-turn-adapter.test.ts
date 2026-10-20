@@ -82,6 +82,34 @@ describe('CodeBuddy turn adapter', () => {
     })
   })
 
+  it('counts cache writes once in the latest request without including output tokens', async () => {
+    const probe = await codeBuddyTurnAdapter.begin({
+      providerSessionId: 'provider-session-1',
+      cwd: '/workspace'
+    })
+    probe.observe?.(
+      usageUpdate('cache-heavy', {
+        prompt_tokens: 190_100,
+        prompt_tokens_details: { cached_tokens: 40_000 },
+        cache_creation_input_tokens: 150_000,
+        completion_tokens: 5_000
+      })
+    )
+
+    expect(
+      probe.finalize({ response: { stopReason: 'end_turn' } as PromptResponse })
+    ).toMatchObject({
+      contextUsedTokens: 190_100,
+      lastModelStepUsage: {
+        inputTokens: 100,
+        cacheTokens: 190_000,
+        cachedReadTokens: 40_000,
+        cachedWriteTokens: 150_000,
+        outputTokens: 5_000
+      }
+    })
+  })
+
   it('replaces duplicate message snapshots and ignores unrelated or malformed usage', async () => {
     const probe = await codeBuddyTurnAdapter.begin({
       providerSessionId: 'provider-session-1',

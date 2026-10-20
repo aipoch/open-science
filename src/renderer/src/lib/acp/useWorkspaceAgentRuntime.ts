@@ -1,5 +1,3 @@
-import { isRuntimeWriter } from './runtime-writer-client'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   createContext,
   createElement,
@@ -7,23 +5,23 @@ import {
   useContext,
   useEffect,
   useMemo,
-  useRef,
   useState,
   useSyncExternalStore,
   type PropsWithChildren,
   type ReactElement
 } from 'react'
 import {
-  type AcpAgentRuntimeUpdate,
-  type AcpContextUsage,
-  type AcpPermissionGrant,
-  type AcpPermissionRequest,
   type AcpPermissionResponse,
   type AcpSaveAsSkillRequest,
   type AcpSteerFollowUpRequest,
   type AcpSteerFollowUpResult,
   type DelegatedWorkUnavailableReason
 } from '../../../../shared/acp'
+import type {
+  AcpPermissionGrant,
+  AcpPermissionRequest
+} from '../../../../shared/acp-permission-contract'
+import type { AcpContextUsage } from '../../../../shared/acp-usage-contract'
 import {
   DEFAULT_PERMISSION_PROFILE,
   type PermissionProfileId,
@@ -33,31 +31,25 @@ import {
   isSessionSizeLimitError,
   type MessagePdfContextSnapshot
 } from '../../../../shared/session-persistence'
-import { useSessionStore, type ChatSession } from '../../stores/session-store'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
+import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
-  usePreviewWorkbenchStore,
   pendingPdfContextSelections,
+  usePreviewWorkbenchStore,
   type PendingPdfContext
 } from '../../stores/preview-workbench-store'
+import { useSessionStore, type ChatSession } from '../../stores/session-store'
 import { selectVisionRelayAvailable, useSettingsStore } from '../../stores/settings-store'
+import { isRuntimeWriter } from './runtime-writer-client'
 import { useAcpRuntime } from './useAcpRuntime'
 import {
-  createWorkspaceRuntimeEventProcessor,
-  drainWorkspaceRuntimeEventsForPersistence,
-  markRunningSessionsDisconnectedOnDrop,
-  processVisibleWorkspaceRuntimeEvents,
-  processWorkspaceRuntimeEvents,
-  refreshDelegatedWorkSessions,
-  subscribeWorkspacePermissionLifecycle,
-  syncWorkspaceContextUsage,
-  syncWorkspaceElicitationState,
-  syncWorkspaceInteractionState,
-  syncWorkspaceInteractionStateFromSnapshot,
-  syncWorkspacePermissionState,
-  useWorkspaceRuntimeEventDrain,
-  useWorkspaceRuntimeEventIngest
-} from './workspace-runtime-event-owner'
-import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
+  clearWorkspaceOperationError,
+  reportWorkspaceOperationError
+} from './workspace-operation-error'
+import {
+  createPermissionResponseAttemptOwner,
+  pendingWorkspacePermissions
+} from './workspace-permission-response-attempt-owner'
 import {
   resendEditedWorkspaceMessage,
   sendWorkspaceMessage,
@@ -65,24 +57,36 @@ import {
   type SendWorkspaceMessageIntent,
   type SendWorkspaceMessageResult
 } from './workspace-runtime-command-owner'
-import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
-import { useSubagentRuntimePresentation } from './workspace-subagent-runtime-presentation'
-import { createPreviewFileItemFromPdfContext } from '../../pages/workspace/preview-file-item'
 import {
-  createPermissionResponseAttemptOwner,
-  pendingWorkspacePermissions
-} from './workspace-permission-response-attempt-owner'
+  createWorkspaceRuntimeEventProcessor,
+  drainWorkspaceRuntimeEventsForPersistence,
+  processVisibleWorkspaceRuntimeEvents,
+  processWorkspaceRuntimeEvents,
+  refreshDelegatedWorkSessions,
+  subscribeWorkspacePermissionLifecycle,
+  syncWorkspaceContextUsage,
+  syncWorkspaceInteractionState,
+  syncWorkspaceInteractionStateFromSnapshot,
+  useWorkspaceRuntimeEventDrain,
+  useWorkspaceRuntimeEventIngest
+} from './workspace-runtime-event-owner'
+import { getResumeFailureMessage } from './workspace-runtime-prompt-preparation-owner'
 import { useWorkspaceRuntimeSaveAsSkillOwner } from './workspace-runtime-save-as-skill-owner'
 import {
   useWorkspaceRuntimeSelectionOwner,
   type WorkspaceSessionRuntimeSelection
 } from './workspace-runtime-selection-owner'
+import { createWorkspaceRuntimeSessionLifecycleOwner } from './workspace-runtime-session-lifecycle-owner'
+import {
+  createSubagentTranscriptOwner,
+  useSubagentRuntimePresentation,
+  type SubagentTranscriptOwner
+} from './workspace-subagent-runtime-presentation'
 type SendPreparationStateChange = (sessionId: string, inFlight: boolean) => void
 type WorkspacePermissionProfileRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
   'state' | 'setPermissionProfile'
 >
-type SubagentRuntimeListener = (update: AcpAgentRuntimeUpdate) => void
 const getErrorMessage = (error: unknown): string =>
   error instanceof Error ? error.message : String(error)
 export const revealLinkedPdfContext = (
@@ -140,7 +144,7 @@ type WorkspaceAgentRuntime = {
   sendPreparationInFlightSessionIds: string[]
   saveAsSkillInFlightSessionIds: string[]
   nativeContextCompactionSessionIds: string[]
-  subscribeToSubagentRuntimeUpdates: (listener: SubagentRuntimeListener) => () => void
+  subagentTranscripts: SubagentTranscriptOwner
   compactContext: (sessionId: string) => Promise<boolean>
   ensureSessionReady: (sessionId: string) => Promise<void>
   saveAsSkill: (
@@ -174,14 +178,7 @@ const useOwnedWorkspaceAgentRuntime = (
   onSessionSizeLimit?: (sessionId: string) => void
 ): WorkspaceAgentRuntime => {
   const runtime = useAcpRuntime()
-  const subagentRuntimeUpdateListeners = useRef(new Set<SubagentRuntimeListener>())
-  const subscribeToSubagentRuntimeUpdates = useCallback(
-    (listener: SubagentRuntimeListener): (() => void) => {
-      subagentRuntimeUpdateListeners.current.add(listener)
-      return () => subagentRuntimeUpdateListeners.current.delete(listener)
-    },
-    []
-  )
+  const [subagentTranscripts] = useState(createSubagentTranscriptOwner)
   const restoredPermissionProjectionKey = useSessionStore((state) =>
     JSON.stringify(
       state.sessions.map((session) => {
@@ -248,36 +245,17 @@ const useOwnedWorkspaceAgentRuntime = (
     []
   )
   const drainRuntimeEvents = useWorkspaceRuntimeEventDrain(runtime.reconcileSnapshot)
-  const previousStatusRef = useRef(runtime.state.status)
-  const previousSessionStatusesRef = useRef(runtime.state.sessionConnectionStatuses)
-  const previousDurablePermissionSessionIdsRef = useRef<ReadonlySet<string>>(new Set())
-  const durablePermissionSessionIdsKey = JSON.stringify(
-    Array.from(
-      new Set([
-        ...runtime.state.pendingPermissions
-          .filter((request) => request.durable)
-          .map((request) => request.sessionId),
-        ...restoredPermissionSessions
-          .filter(
-            (session) =>
-              (session.status === 'waiting-permission' || session.status === 'error') &&
-              session.runtimeContext?.permission?.state === 'pending'
-          )
-          .map((session) => session.id)
-      ])
-    ).sort()
-  )
-  const durablePermissionSessionIds = useMemo<ReadonlySet<string>>(
-    () => new Set(JSON.parse(durablePermissionSessionIdsKey) as string[]),
-    [durablePermissionSessionIdsKey]
-  )
   useEffect(() => {
-    const subscribe = window.api?.acp?.onAgentRuntimeUpdate
-    if (!subscribe) return
-    return subscribe((update) => {
-      for (const listener of subagentRuntimeUpdateListeners.current) listener(update)
+    subagentTranscripts.reconcileSessions(useSessionStore.getState().sessions)
+    const unsubscribeSessions = useSessionStore.subscribe((state) => {
+      subagentTranscripts.reconcileSessions(state.sessions)
     })
-  }, [])
+    const unsubscribeRuntime = window.api?.acp?.onAgentRuntimeUpdate?.(subagentTranscripts.ingest)
+    return () => {
+      unsubscribeRuntime?.()
+      unsubscribeSessions()
+    }
+  }, [subagentTranscripts])
 
   useEffect(
     () =>
@@ -316,9 +294,8 @@ const useOwnedWorkspaceAgentRuntime = (
   ])
 
   useEffect(() => {
-    syncWorkspaceElicitationState(runtime.state.pendingElicitations ?? [])
-    syncWorkspacePermissionState(pendingPermissions)
-  }, [pendingPermissions, runtime.state.pendingElicitations])
+    syncWorkspaceInteractionStateFromSnapshot(runtime.state)
+  }, [restoredPermissionProjectionKey, runtime.state])
 
   useEffect(() => {
     syncWorkspaceContextUsage(runtime.state.sessionIds, runtime.state.contextUsageBySession)
@@ -336,22 +313,6 @@ const useOwnedWorkspaceAgentRuntime = (
       cancelled = true
     }
   }, [delegatedWorkSessionKey, runtime.state.delegatedWorkRevision])
-
-  useEffect(() => {
-    const previousStatus = previousStatusRef.current
-    const previousSessionStatuses = previousSessionStatusesRef.current
-    const previousDurablePermissionSessionIds = previousDurablePermissionSessionIdsRef.current
-    previousStatusRef.current = runtime.state.status
-    previousSessionStatusesRef.current = runtime.state.sessionConnectionStatuses
-    previousDurablePermissionSessionIdsRef.current = durablePermissionSessionIds
-    markRunningSessionsDisconnectedOnDrop(
-      previousStatus,
-      runtime.state.status,
-      previousSessionStatuses,
-      runtime.state.sessionConnectionStatuses,
-      new Set([...previousDurablePermissionSessionIds, ...durablePermissionSessionIds])
-    )
-  }, [durablePermissionSessionIds, runtime.state.status, runtime.state.sessionConnectionStatuses])
 
   const sendMessage = useCallback(
     (input: SendWorkspaceMessageIntent): Promise<SendWorkspaceMessageResult | undefined> => {
@@ -529,6 +490,7 @@ const useOwnedWorkspaceAgentRuntime = (
         )
         attempt.restored = isRestoredRequest
         attempt.sessionId = request?.sessionId
+        if (request) clearWorkspaceOperationError(request.sessionId)
         try {
           let restored: AcpPermissionResponse['restored']
           if (request && isRestoredRequest) {
@@ -602,8 +564,9 @@ const useOwnedWorkspaceAgentRuntime = (
           if (request && isSessionSizeLimitError(error)) {
             onSessionSizeLimit?.(request.sessionId)
           } else if (request && isRestoredRequest) {
-            // The main-owned authority is still valid. Keep the card actionable; useAcpRuntime retains
-            // the transient action error separately for the active Session to display.
+            // The main-owned authority is still valid. Keep the card actionable and scope the
+            // failure to this Session; runtime.actionError is global and never shown with an active Session.
+            reportWorkspaceOperationError(request.sessionId, getErrorMessage(error))
             const permission = useSessionStore
               .getState()
               .sessions.find((session) => session.id === request.sessionId)
@@ -612,7 +575,7 @@ const useOwnedWorkspaceAgentRuntime = (
               useSessionStore.getState().setPermissionPending(request.sessionId)
             }
           } else if (request) {
-            useSessionStore.getState().failRun(request.sessionId, getErrorMessage(error))
+            reportWorkspaceOperationError(request.sessionId, getErrorMessage(error))
           }
         }
       })()
@@ -639,8 +602,9 @@ const useOwnedWorkspaceAgentRuntime = (
   )
   const revokePermissionGrant = useCallback(
     async (sessionId: string, categoryKey: string): Promise<void> => {
+      clearWorkspaceOperationError(sessionId)
       const snapshot = await runtime.revokePermissionGrant(sessionId, categoryKey)
-      if (!snapshot) useSessionStore.getState().failRun(sessionId, 'Permission revoke failed')
+      if (!snapshot) reportWorkspaceOperationError(sessionId, 'Permission revoke failed')
     },
     [runtime]
   )
@@ -657,7 +621,7 @@ const useOwnedWorkspaceAgentRuntime = (
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
     nativeContextCompactionSessionIds: runtime.state.nativeContextCompactionSessionIds ?? [],
-    subscribeToSubagentRuntimeUpdates,
+    subagentTranscripts,
     compactContext,
     ensureSessionReady,
     setMemoryEnabled,
@@ -699,22 +663,24 @@ const useWorkspaceSubagentRuntimeSession = (
   detail: Parameters<typeof useSubagentRuntimePresentation>[2]
 ): ChatSession => {
   const runtime = useWorkspaceAgentRuntime()
-  return useSubagentRuntimePresentation(runtime.subscribeToSubagentRuntimeUpdates, session, detail)
+  return useSubagentRuntimePresentation(runtime.subagentTranscripts, session, detail)
 }
 
 export {
-  WorkspaceAgentRuntimeProvider,
   createWorkspaceRuntimeEventProcessor,
   drainWorkspaceRuntimeEventsForPersistence,
   getResumeFailureMessage,
-  markRunningSessionsDisconnectedOnDrop,
+  pendingWorkspacePermissions,
   processVisibleWorkspaceRuntimeEvents,
   setWorkspacePermissionProfile,
-  pendingWorkspacePermissions,
   syncWorkspaceContextUsage,
   syncWorkspaceInteractionState,
   syncWorkspaceInteractionStateFromSnapshot,
+  useWorkspaceAgentRuntime,
   useWorkspaceSubagentRuntimeSession,
-  useWorkspaceAgentRuntime
+  WorkspaceAgentRuntimeProvider
 }
 export type { WorkspaceAgentRuntime, WorkspaceSessionRuntimeSelection }
+
+// Public command types for feature adapters; runtime owners remain private implementation details.
+export type { SendWorkspaceMessageIntent, SendWorkspaceMessageResult }

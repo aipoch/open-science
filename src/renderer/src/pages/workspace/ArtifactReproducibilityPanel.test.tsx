@@ -13,7 +13,7 @@ import { ArtifactReproducibilityPanel } from './ArtifactReproducibilityPanel'
 import { ReproducibilityOutput } from './ReproducibilityOutput'
 import { ReproducibilityOutputStorage } from './ReproducibilityOutputStorage'
 import * as dependencyGraph from './artifact-reproducibility-graph'
-import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '../../../../shared/output-comparison'
+import { DEFAULT_OUTPUT_COMPARISON_POLICY } from '@aipoch/reproducibility/comparison'
 
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? ((): void => {})
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
@@ -898,6 +898,11 @@ describe('ArtifactReproducibilityPanel', () => {
       })
       const detailsContent = document.body.querySelector('[data-capture-issue-details]')
       expect(detailsContent?.textContent).toContain('Areas needing attention')
+      const descriptions = detailsContent?.querySelectorAll('li p + p')
+      expect(descriptions?.length).toBeGreaterThan(0)
+      descriptions?.forEach((description) => {
+        expect(description.className).toContain('text-muted-foreground')
+      })
       expect(detailsContent?.textContent).toContain(
         'Execution recordSome execution details were not fully captured.'
       )

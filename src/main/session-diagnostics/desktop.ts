@@ -1,7 +1,7 @@
 import { constants } from 'node:fs'
-import { copyFile, link, lstat, mkdtemp, realpath, rm, writeFile } from 'node:fs/promises'
+import { copyFile, link, lstat, mkdtemp, realpath, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Worker, WorkerOptions } from 'node:worker_threads'
 import type {
   SessionDiagnosticExportRequest,
@@ -16,12 +16,12 @@ import type {
 
 type Sources = Pick<
   SessionDiagnosticWorkerInput,
-  'dataRoot' | 'configRoot' | 'logPath' | 'appVersion'
+  'dataRoot' | 'configRoot' | 'logPath' | 'desktopLogPath' | 'legacyDesktopLogPath' | 'appVersion'
 > & {
   sensitiveContent?: SensitiveContentFailure
   sensitiveContentSources?: SensitiveContentSource[]
 }
-type Options = {
+export type SessionDiagnosticsOptions = {
   createWorker: (options: WorkerOptions) => Worker
   resolveSources: (identity: SessionDiagnosticRequest) => Sources
   chooseDestination: (defaultName: string) => Promise<string | undefined>
@@ -29,6 +29,7 @@ type Options = {
   timeoutMs?: number
 }
 type Operation = { controller: AbortController; settled: Promise<void>; finish: () => void }
+const DIAGNOSTIC_ARCHIVE_SUFFIX = '.tar.gz'
 export type SessionDiagnosticsDesktop = {
   inspect(request: SessionDiagnosticRequest): Promise<SessionDiagnosticInspection>
   export(request: SessionDiagnosticExportRequest): Promise<SessionDiagnosticExportResult>
@@ -90,7 +91,9 @@ const assertOutsideSources = async (path: string, sources: Sources): Promise<voi
   const roots = [
     sources.dataRoot,
     sources.configRoot,
-    ...(sources.logPath ? [dirname(sources.logPath)] : [])
+    ...(sources.logPath ? [dirname(sources.logPath)] : []),
+    ...(sources.desktopLogPath ? [dirname(sources.desktopLogPath)] : []),
+    ...(sources.legacyDesktopLogPath ? [dirname(sources.legacyDesktopLogPath)] : [])
   ]
   for (const root of roots) {
     if (within(await canonical(root), destination)) {
@@ -99,8 +102,13 @@ const assertOutsideSources = async (path: string, sources: Sources): Promise<voi
   }
 }
 
+const normalizeDestination = (path: string): string => {
+  if (!path || path.toLowerCase().endsWith(DIAGNOSTIC_ARCHIVE_SUFFIX)) return path
+  return extname(path) === '' ? `${path}${DIAGNOSTIC_ARCHIVE_SUFFIX}` : path
+}
+
 const assertNewDestination = async (path: string, sources: Sources): Promise<void> => {
-  if (!isAbsolute(path) || !path.endsWith('.tar.gz'))
+  if (!isAbsolute(path) || !path.toLowerCase().endsWith(DIAGNOSTIC_ARCHIVE_SUFFIX))
     throw new DiagnosticError('Choose a new .tar.gz file.')
   await assertOutsideSources(path, sources)
   const parent = await lstat(await realpath(dirname(path)))
@@ -138,7 +146,9 @@ const abortableDestination = async (
 }
 
 /** A task-local owner. No repository, runtime, logger queue or application write gate is involved. */
-export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagnosticsDesktop => {
+export const createSessionDiagnosticsDesktop = (
+  options: SessionDiagnosticsOptions
+): SessionDiagnosticsDesktop => {
   const operations = new Map<string, Operation>()
   const waiting = new Map<string, AbortController>()
   let closed = false
@@ -242,7 +252,9 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         if (
           !Array.isArray(selected) ||
           selected.length > 100 ||
-          selected.some((id) => typeof id !== 'string' || id.length > 240)
+          selected.some((id) => typeof id !== 'string' || id.length > 240) ||
+          ((request as SessionDiagnosticExportRequest).includeExecutionCode !== undefined &&
+            typeof (request as SessionDiagnosticExportRequest).includeExecutionCode !== 'boolean')
         ) {
           throw new DiagnosticError('Invalid diagnostic selection.')
         }
@@ -250,6 +262,7 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         target = await abortableDestination(options.chooseDestination(filename(request)), signal)
         signal.throwIfAborted()
         if (!target) return { status: 'cancelled' }
+        target = normalizeDestination(target)
         await assertNewDestination(target, sources)
       }
       const temporaryRoot = options.temporaryRoot ?? tmpdir()
@@ -266,7 +279,11 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
           action,
           directory,
           ...(action === 'export'
-            ? { selectedItems: (request as SessionDiagnosticExportRequest).selectedItems }
+            ? {
+                selectedItems: (request as SessionDiagnosticExportRequest).selectedItems,
+                includeExecutionCode:
+                  (request as SessionDiagnosticExportRequest).includeExecutionCode === true
+              }
             : {})
         },
         signal
@@ -291,7 +308,11 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         await assertNewDestination(target, sources)
         signal.throwIfAborted()
         await link(staged, target)
-        result = { status: workerResult.partial ? 'partial' : 'exported', path: target }
+        result = {
+          status: workerResult.partial ? 'partial' : 'exported',
+          path: target,
+          ...(workerResult.partial ? { report } : {})
+        }
       } else {
         throw new DiagnosticError('Unexpected diagnostic worker result.')
       }
@@ -304,7 +325,7 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
         result = cancelled ? { status: 'cancelled' } : { status: 'failed', error: message, report }
       }
     } finally {
-      // Remove only this operation’s export staging; a sanitized failure report is optional.
+      // Remove only this operation’s export staging; return failure reports in memory.
       for (const [stage, temporary] of [
         ['collection staging', directory],
         ['publication staging', publicationDirectory]
@@ -328,19 +349,8 @@ export const createSessionDiagnosticsDesktop = (options: Options): SessionDiagno
     }
     if ('status' in result && (result.status === 'failed' || cleanupFailed)) {
       result.report = report
-      let reportFolder: string | undefined
-      try {
-        const root = options.temporaryRoot ?? tmpdir()
-        if (sources) await assertOutsideSources(root, sources)
-        reportFolder = await mkdtemp(join(root, 'open-science-diagnostic-report-'))
-        const path = join(reportFolder, 'export.log')
-        await writeFile(path, report, { flag: 'wx', mode: 0o600 })
-        result.reportPath = path
-      } catch {
-        // The copyable report is still returned when every disk write is unavailable.
-        if (reportFolder)
-          await rm(reportFolder, { recursive: true, force: true }).catch(() => undefined)
-      }
+      // Keep failure evidence copyable without leaving unmanaged temporary report folders.
+      // Only the archive explicitly chosen by the user is retained on disk.
     }
     return result
   }

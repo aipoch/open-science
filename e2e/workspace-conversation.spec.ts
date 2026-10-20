@@ -4,8 +4,10 @@ import { readFile, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve } from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import type { Page } from 'playwright'
+import type { JSHandle, Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi, homeNewProjectButton } from './fixtures/project'
+import { activatePermissionDecisionViaDom, submitPromptViaUi } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Agent journey project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -22,8 +24,7 @@ test('preserves an unavailable saved model until an explicit replacement is sele
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: false })).toBeVisible()
   const saved = await page.evaluate(async () => {
     const loaded = await window.api.sessions.loadAll()
@@ -34,7 +35,7 @@ test('preserves an unavailable saved model until an explicit replacement is sele
     const snapshot = await window.api.settings.upsertProvider({
       type: 'custom',
       name: 'Replacement provider',
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       baseUrl: 'http://127.0.0.1:9/v1',
       model: 'replacement-model',
       key: 'e2e-key',
@@ -81,10 +82,7 @@ test('keeps source icons inside table cells after expanding a message table', as
     })
   )
   await createProject(page)
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Expand a table with source links.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Expand a table with source links.')
 
   const table = page.getByRole('region', { name: 'Conversation' }).locator('table')
   await expect(table).toBeVisible()
@@ -131,6 +129,38 @@ test('keeps source icons inside table cells after expanding a message table', as
   await expect(fullscreen).toHaveCount(0)
 })
 
+test('expands the selected table across repeated portal lifecycles @pr-mainline-conversation', async ({
+  app
+}) => {
+  await app.completeOnboarding()
+  const page = await app.configureFakeAgent()
+  await createProject(page)
+  await submitPromptViaUi(page, 'Expand distinct tables.')
+  const wrappers = page
+    .getByRole('region', { name: 'Conversation' })
+    .locator('[data-streamdown="table-wrapper"]')
+  await expect(wrappers).toHaveCount(2)
+  const inline = await wrappers.locator('table').allTextContents()
+  for (const index of [1, 0, 1]) {
+    await wrappers.nth(index).hover()
+    await wrappers.nth(index).getByTitle('View fullscreen', { exact: true }).click()
+    const fullscreen = page.locator('[data-streamdown="table-fullscreen"]')
+    await expect(fullscreen).toBeVisible()
+    // The regression happens after portal insertion, not on the first React commit.
+    await page.evaluate(
+      () =>
+        new Promise<void>((resolve) =>
+          requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        )
+    )
+    await expect(fullscreen.locator('table')).toHaveText(inline[index])
+    expect(await wrappers.locator('table').allTextContents()).toEqual(inline)
+    if (index === 0) await page.keyboard.press('Escape')
+    else await fullscreen.getByTitle('Exit fullscreen', { exact: true }).click()
+    await expect(fullscreen).toHaveCount(0)
+  }
+})
+
 const persistedMemoryState = async (
   page: Page
 ): Promise<{
@@ -151,10 +181,7 @@ const persistedMemoryState = async (
   }, USER_MESSAGE)
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -183,6 +210,9 @@ test('returns from Library to the originating conversation and New Conversation 
   const draft = 'Compare these findings with the references in our library.'
   await composer.fill(draft)
   await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Library preview' })).toBeVisible()
+  await expect(composer).toBeVisible()
+  await page.getByRole('button', { name: 'Open in Literature', exact: true }).click()
   const back = page.getByRole('button', { name: 'Back to Project', exact: true })
   await expect(back).toBeVisible()
   await expect(page.getByRole('button', { name: 'Back to Home', exact: true })).toHaveCount(0)
@@ -201,6 +231,9 @@ test('returns from Library to the originating conversation and New Conversation 
   await page.getByRole('button', { name: 'New', exact: true }).click()
   await composer.fill('Unsent new conversation draft')
   await page.getByRole('button', { name: 'Library', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Library preview' })).toBeVisible()
+  await expect(composer).toBeVisible()
+  await page.getByRole('button', { name: 'Open in Literature', exact: true }).click()
   await back.click()
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
   await expect(composer).toHaveText('Unsent new conversation draft')
@@ -208,7 +241,7 @@ test('returns from Library to the originating conversation and New Conversation 
   await page.getByRole('button', { name: 'All projects', exact: true }).click()
   await page.getByRole('button', { name: 'Library', exact: true }).click()
   await page.getByRole('button', { name: 'Back to Home', exact: true }).click()
-  await expect(page.getByRole('button', { name: 'New project', exact: true })).toBeVisible()
+  await expect(homeNewProjectButton(page)).toBeVisible()
 })
 
 const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
@@ -220,20 +253,6 @@ const allowCitationPreviewDomain = async (page: Page): Promise<void> => {
     })
   })
   await page.reload({ waitUntil: 'domcontentloaded' })
-}
-
-const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
-  const button = page
-    .getByTestId('permission-actions')
-    .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
-  await expect(button).toBeEnabled()
-  // Windows E2E can raise a session-persistence conflict toast over the sticky
-  // Allow/Deny row. A pointer click, even with force, still hits that overlay;
-  // Retry would reload the Session and drop the prompt. Activate the button
-  // through its DOM click handler instead.
-  await button.evaluate((element: HTMLButtonElement) => {
-    element.click()
-  })
 }
 
 test('explains disabled revision navigation while a turn is running', async ({ app }, testInfo) => {
@@ -260,10 +279,10 @@ test('explains disabled revision navigation while a turn is running', async ({ a
   const previous = conversation.getByRole('button', { name: 'Previous message revision' })
   await expect(previous).toBeEnabled()
   const releaseFile = resolve(await app.createTestDirectory('revision-hint'), 'release')
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill(`Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(
+    page,
+    `Hold the queue until the reveal finishes. Release file: ${JSON.stringify(releaseFile)}`
+  )
   try {
     await expect(page.getByTestId('composer-queue-submit')).toBeVisible()
     await expect(previous).toBeDisabled()
@@ -383,8 +402,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
   await page.evaluate(async () => window.api.memory.setEnabled({ enabled: true }))
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   await page.getByRole('button', { name: /Agent controls:/ }).click()
@@ -422,7 +440,7 @@ test('keeps Memory reversible while the replacement session awaits history repla
     })
 })
 
-test('resolves Agent permission requests through both Allow and Deny decisions', async ({
+test('resolves Agent permission requests through both Allow and Deny decisions @pr-mainline-conversation', async ({
   app
 }) => {
   await app.completeOnboarding()
@@ -464,7 +482,7 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
     await page.mouse.up()
   }
   await page.mouse.move(8, 8)
-  await clickPermissionDecision(page, 'allow')
+  await activatePermissionDecisionViaDom(page, 'allow')
   await expect(page.getByText('Fixture permission allowed.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 
@@ -474,7 +492,7 @@ test('resolves Agent permission requests through both Allow and Deny decisions',
   await expect(page.getByText('Write fixture output', { exact: true })).toBeVisible()
   await expect(page.getByTestId('permission-composer')).toBeVisible()
   await expect(composer).toBeHidden()
-  await clickPermissionDecision(page, 'deny')
+  await activatePermissionDecisionViaDom(page, 'deny')
   await expect(page.getByText('Fixture permission denied.', { exact: true })).toBeVisible()
   await expect(composer).toBeVisible()
 })
@@ -486,8 +504,7 @@ test('shows context compaction loading and completion inside the Session transcr
   const page = await app.configureFakeAgent()
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CONTEXT_COMPACTION_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CONTEXT_COMPACTION_PROMPT)
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
   const compaction = conversation.getByTestId('context-compaction-activity')
@@ -516,22 +533,18 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await allowCitationPreviewDomain(page)
+  await app.showMainWindow()
   let sourceDocumentRequestCount = 0
-  let releaseSourceDocument: (() => void) | undefined
-  const sourceDocumentGate = new Promise<void>((resolve) => {
-    releaseSourceDocument = resolve
-  })
-  await page.route('https://citation.example/paper', async (route) => {
-    sourceDocumentRequestCount += 1
-    await sourceDocumentGate
+  let replicationDocumentRequestCount = 0
+  await page.context().route('https://citation.example/paper', async (route) => {
+    sourceDocumentRequestCount++
     await route.fulfill({
       contentType: 'text/html',
-      body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p></main></body></html>'
+      body: '<!doctype html><html><body><main><h1>Fixture source</h1><p>Peer-reviewed evidence.</p><p data-preview-context-menu-passthrough>Native area</p></main></body></html>'
     })
   })
-  let replicationDocumentRequestCount = 0
-  await page.route('https://citation.example/replication', async (route) => {
-    replicationDocumentRequestCount += 1
+  await page.context().route('https://citation.example/replication', async (route) => {
+    replicationDocumentRequestCount++
     await route.fulfill({
       contentType: 'text/html',
       body: '<!doctype html><html><body><main><h1>Replication source</h1></main></body></html>'
@@ -539,8 +552,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   })
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CITATION_PREVIEW_PROMPT)
 
   const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
   await expect(sourceLink).toBeVisible()
@@ -573,7 +585,7 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   await expect(sourceLink).toBeFocused()
   await sourceLink.evaluate((element) => (element as HTMLElement).blur())
   await expect(sourceLink).not.toBeFocused()
-
+  await page.mouse.move(5, 5)
   await sourceLink.hover()
   const hoverTitle = hoverCard.locator('[data-source-preview-hover-title]')
   await expect(hoverTitle).toHaveText('Fixture study')
@@ -677,22 +689,13 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     'true'
   )
   const sourceFrame = page.locator(
-    '[data-source-preview-frame][src="https://citation.example/paper"]'
+    '[data-source-preview-frame][data-source-url="https://citation.example/paper"]'
   )
-  await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
+  await expect(sourceFrame).toHaveAttribute('data-source-url', 'https://citation.example/paper')
   await expect.poll(() => sourceDocumentRequestCount).toBe(1)
   const sourceProgress = page.locator('[data-source-preview-progress]')
   const sourceSkeleton = page.locator('[data-source-preview-skeleton]')
-  await expect(sourceProgress).toBeVisible()
-  await expect(sourceSkeleton).toBeVisible()
-  expect(await sourceProgress.evaluate((element) => getComputedStyle(element).height)).toBe('2px')
-  await page.screenshot({ path: testInfo.outputPath('source-preview-loading.png') })
-  await expect(sourceFrame).toHaveAttribute(
-    'sandbox',
-    'allow-same-origin allow-scripts allow-forms'
-  )
-  await expect(sourceFrame).toHaveAttribute('referrerpolicy', 'no-referrer')
-  await expect(sourceFrame).toHaveAttribute('name', 'open-science-source-preview')
+  expect(await sourceFrame.evaluate((element) => element.tagName)).toBe('WEBVIEW')
   const sourceHeader = page.locator('[data-source-preview-header]')
   const sourceHeaderTitle = sourceHeader.locator('[data-source-preview-header-title]')
   const sourceHeaderUrl = sourceHeader.locator('[data-source-preview-header-url]')
@@ -767,17 +770,213 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
   expect(sourceIslandVisuals.rightInset).toBeCloseTo(4, 0)
   expect(sourceIslandVisuals.borderRadius).toBeGreaterThan(0)
   expect(sourceIslandVisuals.boxShadow).not.toBe('none')
-  releaseSourceDocument?.()
-  await expect(
-    page.frameLocator('[data-source-preview-frame]').getByRole('heading', {
-      name: 'Fixture source'
-    })
-  ).toBeVisible()
+  await expect
+    .poll(() => sourceFrame.evaluate((element) => (element as Electron.WebviewTag).getURL()))
+    .toBe('https://citation.example/paper')
+  await expect
+    .poll(() =>
+      page
+        .context()
+        .pages()
+        .some((candidate) => candidate.url() === 'https://citation.example/paper')
+    )
+    .toBe(true)
+  const nativePage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url() === 'https://citation.example/paper')!
+  await expect(nativePage.getByRole('heading', { name: 'Fixture source' })).toBeVisible()
   await expect(sourceProgress).toHaveCount(0)
   await expect(sourceSkeleton).toHaveCount(0)
+  await app.showMainWindow()
+  const guestId = await sourceFrame.evaluate((element) =>
+    (element as Electron.WebviewTag).getWebContentsId()
+  )
+  await nativePage.evaluate(() => {
+    sessionStorage.setItem('overlay-session', 'retained')
+    const form = document.createElement('input')
+    form.id = 'overlay-form'
+    form.value = '页面表单保留'
+    document.body.append(form)
+    const canvas = document.createElement('canvas')
+    canvas.id = 'overlay-animation'
+    canvas.width = 240
+    canvas.height = 80
+    canvas.style.cssText = 'display:block;width:240px;height:80px'
+    document.body.append(canvas)
+    const state = { frames: 0, marker: crypto.randomUUID() }
+    Object.assign(window, { overlayState: state })
+    const draw = (): void => {
+      state.frames++
+      const context = canvas.getContext('2d')!
+      context.fillStyle = Math.floor(state.frames / 20) % 2 ? '#008080' : '#ff8000'
+      context.fillRect(0, 0, 240, 80)
+      context.fillStyle = 'white'
+      context.font = '24px sans-serif'
+      context.fillText(String(state.frames), 20, 48)
+      requestAnimationFrame(draw)
+    }
+    requestAnimationFrame(draw)
+  })
+  const readSourceState = (): Promise<{
+    frames: number
+    marker: string
+    session: string | null
+    form: string
+  }> =>
+    nativePage.evaluate(() => ({
+      ...(window as unknown as { overlayState: { frames: number; marker: string } }).overlayState,
+      session: sessionStorage.getItem('overlay-session'),
+      form: (document.getElementById('overlay-form') as HTMLInputElement).value
+    }))
+  const initialState = await readSourceState()
+  for (let iteration = 0; iteration < 3; iteration++) {
+    await page.getByRole('button', { name: PROJECT_NAME, exact: true }).click()
+    await page.getByRole('menuitem', { name: 'New project', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'New project' })
+    await expect(dialog).toBeVisible()
+    await expect
+      .poll(() => dialog.evaluate((element) => element.contains(document.activeElement)))
+      .toBe(true)
+    const before = await readSourceState()
+    await expect
+      .poll(async () => (await readSourceState()).frames)
+      .toBeGreaterThan(before.frames + 5)
+    await expect(sourceFrame).toBeVisible()
+    expect(
+      await sourceFrame.evaluate((element) => (element as Electron.WebviewTag).getWebContentsId())
+    ).toBe(guestId)
+    await page.screenshot({ path: testInfo.outputPath(`source-under-dialog-${iteration}.png`) })
+    await page.keyboard.press('Escape')
+    await expect(dialog).toHaveCount(0)
+    await expect
+      .poll(() => page.evaluate(() => document.activeElement?.tagName !== 'WEBVIEW'))
+      .toBe(true)
+  }
+  expect(await readSourceState()).toMatchObject({
+    marker: initialState.marker,
+    session: 'retained',
+    form: '页面表单保留'
+  })
+  expect(sourceDocumentRequestCount).toBe(1)
+  await app.setMainWindowSize(1400, 950)
+  await app.setMainWindowZoomFactor(1.25)
+  await expect(sourceFrame).toBeVisible()
+  const rightClickTarget = nativePage.getByRole('heading', { name: 'Fixture source' })
+  // Capture the real guest click: resize/zoom can invalidate bounds read before input dispatch.
+  await rightClickTarget.evaluate((element) => {
+    element.addEventListener(
+      'contextmenu',
+      (event) => {
+        const pointer = event as MouseEvent
+        element.setAttribute(
+          'data-e2e-context-pointer',
+          JSON.stringify({ x: pointer.clientX, y: pointer.clientY })
+        )
+      },
+      { once: true }
+    )
+  })
+  await rightClickTarget.click({ button: 'right', position: { x: 8, y: 10 } })
+  const sourceMenu = page.getByRole('menu')
+  await expect(sourceMenu.getByText('Copy link', { exact: true })).toBeVisible()
+  const sourceBounds = (await sourceFrame.boundingBox())!
+  const clickPointer = JSON.parse(
+    (await rightClickTarget.getAttribute('data-e2e-context-pointer'))!
+  )
+  await expect
+    .poll(async () => {
+      const sourceBounds = (await sourceFrame.boundingBox())!
+      const menuBounds = (await sourceMenu.boundingBox())!
+      return Math.max(
+        Math.abs(menuBounds.x - (sourceBounds.x + clickPointer.x)),
+        Math.abs(menuBounds.y - (sourceBounds.y + clickPointer.y))
+      )
+    })
+    .toBeLessThan(5)
+  await page.screenshot({ path: testInfo.outputPath('source-context-menu-zoom.png') })
+  await page.keyboard.press('Escape')
+  await expect(sourceMenu).toHaveCount(0)
+  await expect.poll(() => nativePage.evaluate(() => document.hasFocus())).toBe(true)
+  await nativePage.getByText('Native area', { exact: true }).click({ button: 'right' })
+  await expect(sourceMenu).toHaveCount(0)
+  await nativePage.locator('#overlay-form').click({ button: 'right' })
+  await expect(sourceMenu).toHaveCount(0)
+  await page.context().route('https://nested.citation.example/frame', (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: '<h2>Nested source</h2><p data-preview-context-menu-passthrough>Nested native area</p>'
+    })
+  )
+  await nativePage.evaluate(() => {
+    const frame = document.createElement('iframe')
+    frame.id = 'nested-source'
+    frame.src = 'https://nested.citation.example/frame'
+    frame.style.cssText = 'display:block;width:260px;height:130px'
+    document.body.prepend(frame)
+  })
+  const nested = nativePage.frameLocator('#nested-source')
+  const nestedHeading = nested.getByRole('heading', { name: 'Nested source' })
+  await expect(nestedHeading).toBeVisible()
+  const nestedBounds = (await nestedHeading.boundingBox())!
+  await nestedHeading.click({ button: 'right', position: { x: 8, y: 10 } })
+  await expect(sourceMenu.getByText('Copy link', { exact: true })).toBeVisible()
+  const nestedMenuBounds = (await sourceMenu.boundingBox())!
+  expect(Math.abs(nestedMenuBounds.x - (sourceBounds.x + nestedBounds.x + 8))).toBeLessThan(5)
+  expect(Math.abs(nestedMenuBounds.y - (sourceBounds.y + nestedBounds.y + 10))).toBeLessThan(5)
+  await page.keyboard.press('Escape')
+  await expect(sourceMenu).toHaveCount(0)
+  await nested.getByText('Nested native area').click({ button: 'right' })
+  await expect(sourceMenu).toHaveCount(0)
+  await nativePage.locator('#nested-source').evaluate((element) => element.remove())
+  await app.setMainWindowZoomFactor(1)
+  // Exercise Chromium composition events without changing the operating system's input source.
+  const composition = await page.context().newCDPSession(nativePage)
+  await nativePage.locator('#overlay-form').fill('')
+  await composition.send('Input.imeSetComposition', {
+    text: '中文输入',
+    selectionStart: 4,
+    selectionEnd: 4
+  })
+  await composition.send('Input.insertText', { text: '中文输入' })
+  await expect(nativePage.locator('#overlay-form')).toHaveValue('中文输入')
+  await composition.detach()
+
+  await app.showMainWindow()
+  // Native content must forward window shortcuts and search its own document when focused.
+  await nativePage.getByRole('heading', { name: 'Fixture source' }).click()
+  await app.pressSourcePreviewShortcut(
+    nativePage.url(),
+    'F',
+    process.platform === 'darwin' ? ['meta'] : ['control']
+  )
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  const findPage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/find-overlay/'))!
+  await findPage.getByRole('textbox').fill('Peer-reviewed evidence')
+  await expect(findPage.locator('#find-overlay-count')).toHaveText('1 / 1')
+  await findPage.getByRole('textbox').press('Escape')
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await expect.poll(() => nativePage.evaluate(() => document.hasFocus())).toBe(true)
+  await app.pressSourcePreviewShortcut(
+    nativePage.url(),
+    'F',
+    process.platform === 'darwin' ? ['meta'] : ['control']
+  )
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  const reopenedFindPage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/find-overlay/'))!
+  await reopenedFindPage.getByRole('textbox').fill('Fixture source')
+  await expect(reopenedFindPage.locator('#find-overlay-count')).toHaveText('1 / 1')
+  await reopenedFindPage.getByRole('textbox').press('Escape')
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
 
   // Use real Chromium same-document navigations; IPC injection cannot verify this adapter.
-  const sourceDocument = sourceFrame.contentFrame().locator('body')
+  const sourceDocument = nativePage.locator('body')
   for (const operation of ['anchor', 'push', 'replace', 'back', 'forward']) {
     const previousUrl = await sourceHeaderUrl.textContent()
     await sourceDocument.evaluate((_body, action) => {
@@ -791,20 +990,23 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
     await expect(sourceHeaderUrl).toHaveText(await sourceDocument.evaluate(() => location.href))
     await expect(sourceSkeleton).toHaveCount(0)
     await expect(sourceProgress).toHaveCount(0)
-    await expect(sourceFrame).toHaveAttribute('src', 'https://citation.example/paper')
+    await expect(sourceFrame).toHaveAttribute('data-source-url', 'https://citation.example/paper')
   }
 
   await page.screenshot({ path: testInfo.outputPath('citation-source-preview.png') })
 
   const replicationLink = page.getByRole('link', { name: 'Chen et al. 2026' })
-  await replicationLink.hover()
-  await page.locator('[data-source-preview-hover-url]').click()
+  await replicationLink.focus()
+  await page.keyboard.press('Tab')
+  await expect(page.locator('[data-source-preview-hover-url]')).toBeFocused()
+  await page.keyboard.press('Enter')
   await expect(page.getByRole('tab', { name: 'Replication study' })).toHaveAttribute(
     'aria-selected',
     'true'
   )
   await expect.poll(() => replicationDocumentRequestCount).toBe(1)
   await expect(page.locator('[data-source-preview-frame]')).toHaveCount(2)
+  await expect(sourceFrame).toBeHidden()
 
   const fixtureTab = page.getByRole('tab', { name: 'Fixture study' })
   await fixtureTab.click()
@@ -814,9 +1016,57 @@ test('previews and opens an Agent HTTPS source link in the isolated preview tab'
 
   await sourcePanel.locator('[data-source-preview-header-close]').click()
   await expect(sourceFrame).toHaveCount(0)
-  await sourceLink.hover()
-  await page.locator('[data-source-preview-hover-url]').click()
+  await expect.poll(() => nativePage.isClosed()).toBe(true)
+  await sourceLink.focus()
+  await page.keyboard.press('Tab')
+  await expect(page.locator('[data-source-preview-hover-url]')).toBeFocused()
+  await page.keyboard.press('Enter')
   await expect.poll(() => sourceDocumentRequestCount).toBe(2)
+
+  // Close the searched source while the native find overlay is still open. The overlay must not
+  // restore focus to the destroyed guest when Escape dismisses it.
+  const reopenedSourceFrame = page.locator(
+    '[data-source-preview-frame][data-source-url="https://citation.example/paper"]'
+  )
+  await expect(reopenedSourceFrame).toBeVisible()
+  await expect
+    .poll(() =>
+      page
+        .context()
+        .pages()
+        .some((candidate) => candidate.url() === 'https://citation.example/paper')
+    )
+    .toBe(true)
+  const reopenedNativePage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url() === 'https://citation.example/paper')!
+  await reopenedNativePage.getByRole('heading', { name: 'Fixture source' }).click()
+  await app.pressSourcePreviewShortcut(
+    reopenedNativePage.url(),
+    'F',
+    process.platform === 'darwin' ? ['meta'] : ['control']
+  )
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  const closingFindPage = page
+    .context()
+    .pages()
+    .find((candidate) => candidate.url().includes('/find-overlay/'))!
+  await closingFindPage.getByRole('textbox').fill('Peer-reviewed evidence')
+  await expect(closingFindPage.locator('#find-overlay-count')).toHaveText('1 / 1')
+  await page
+    .getByRole('tabpanel')
+    .filter({ has: reopenedSourceFrame })
+    .locator('[data-source-preview-header-close]')
+    .click()
+  await expect(reopenedSourceFrame).toHaveCount(0)
+  await expect.poll(() => reopenedNativePage.isClosed()).toBe(true)
+  await closingFindPage.getByRole('textbox').press('Escape')
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+  await expect(page.getByRole('tab', { name: 'Replication study' })).toHaveAttribute(
+    'aria-selected',
+    'true'
+  )
 })
 
 test('shows the Electron failure reason when a source request fails', async ({ app }, testInfo) => {
@@ -825,11 +1075,11 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   await allowCitationPreviewDomain(page)
   app.allowRendererConsoleError('Failed to load resource: net::ERR_CONNECTION_REFUSED')
   let sourceDocumentRequestCount = 0
-  await page.route('https://citation.example/paper', async (route) => {
+  await page.context().route('https://citation.example/paper', async (route) => {
     sourceDocumentRequestCount += 1
     await route.abort('connectionrefused')
   })
-  await page.route('https://citation.example/replication', async (route) => {
+  await page.context().route('https://citation.example/replication', async (route) => {
     await route.fulfill({
       contentType: 'text/html',
       body: '<!doctype html><html><body><main><h1>Replication source</h1></main></body></html>'
@@ -837,8 +1087,7 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   })
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(CITATION_PREVIEW_PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, CITATION_PREVIEW_PROMPT)
 
   const sourceLink = page.getByRole('link', { name: 'Torre et al. 2026' })
   await sourceLink.hover()
@@ -876,6 +1125,16 @@ test('shows the Electron failure reason when a source request fails', async ({ a
   await sourceError.getByRole('button', { name: 'Try again' }).click()
   await expect.poll(() => sourceDocumentRequestCount).toBe(2)
   await expect(sourceError).toContainText('ERR_CONNECTION_REFUSED (-102)')
+  await page.context().route('https://citation.example/paper', (route) =>
+    route.fulfill({
+      status: 302,
+      headers: { location: 'http://blocked.example/paper' }
+    })
+  )
+  await sourceError.getByRole('button', { name: 'Try again' }).click()
+  await expect(sourceError).toContainText('This source does not allow embedded previews.')
+  await expect(page.locator('[data-source-preview-skeleton]')).toHaveCount(0)
+  await expect(page.locator('[data-source-preview-progress]')).toHaveCount(0)
 })
 
 test('archives a completed session from its mobile sidebar actions', async ({ app }, testInfo) => {
@@ -883,8 +1142,7 @@ test('archives a completed session from its mobile sidebar actions', async ({ ap
   const page = await app.configureFakeAgent()
   await createProject(page)
 
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   const advanceRevision = async (): Promise<void> => {
@@ -964,8 +1222,7 @@ test('identifies the Project before deleting a workspace Session', async ({ app 
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
 
   await page.setViewportSize({ width: 375, height: 900 })
@@ -988,8 +1245,7 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
   await createProject(page)
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(USER_MESSAGE)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, USER_MESSAGE)
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toBeVisible()
   const projectId = await page.evaluate(
     async () =>
@@ -1036,6 +1292,20 @@ test('exports a CLI conversation first opened after completion', async ({ app },
     .locator('button[data-slot="session-open-button"]')
     .filter({ hasText: saved!.title })
     .click()
+  await expect(
+    page
+      .getByRole('region', { name: 'Conversation' })
+      .getByText('CLI export completed before opening.', { exact: true })
+  ).toBeVisible()
+  // The first visible message does not mean the throttled renderer has finished presenting the
+  // completed transcript. Open the menu only after its existing export prerequisite is visible.
+  await expect(
+    page
+      .getByRole('navigation', { name: 'Sessions' })
+      .locator('button[data-slot="session-open-button"]')
+      .filter({ hasText: saved!.title })
+      .getByText('Session status: Idle', { exact: true })
+  ).toBeVisible()
   await page.getByRole('button', { name: `Open actions for ${saved!.title}` }).click()
   await page.getByRole('menuitem', { name: 'Export', exact: true }).hover()
   await page.getByRole('menuitem', { name: 'Export conversation…' }).click()
@@ -1055,7 +1325,127 @@ test('exports a CLI conversation first opened after completion', async ({ app },
   expect(markdown).toContain('CLI export completed before opening.')
   expect(markdown).toContain(AGENT_REPLY)
   await page.screenshot({ path: testInfo.outputPath('cli-export-completed.png') })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Continue after export.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Continue after export.')
   await expect(page.getByText(AGENT_REPLY, { exact: true })).toHaveCount(2)
+})
+
+test.describe('New conversation transition', () => {
+  test.use({ windowMode: 'normal' })
+  test('keeps new conversation starters stable and docks the same editor after sending', async ({
+    app
+  }, testInfo) => {
+    await app.completeOnboarding()
+    const page = await app.configureFakeAgent()
+    await page.setViewportSize({ width: 1270, height: 925 })
+    await createProject(page)
+    const capture = async (name: string): Promise<void> => {
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'zh-Hans' }))
+      await expect(page.locator('html')).toHaveAttribute('lang', 'zh-Hans')
+      await page.screenshot({ path: testInfo.outputPath(name) })
+      await page.evaluate(() => window.api.locale.setPreference({ preference: 'en' }))
+      await expect(page.locator('html')).toHaveAttribute('lang', 'en')
+    }
+    const dock = page.getByTestId('conversation-composer-dock')
+    const start = page.getByTestId('new-conversation-start')
+    const composer = page.getByRole('textbox', { name: 'Ask anything' })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    const originalEditor = await composer.elementHandle()
+    // Observe every DOM commit, including the brief seed notification before pending binding.
+    const sidebarRows = await page.evaluateHandle(() => {
+      const samples: number[] = []
+      const sidebar = document.querySelector('aside[aria-label="Workspace navigation"]')!
+      const observer = new MutationObserver(() => {
+        samples.push(sidebar.querySelectorAll('[data-session-id]').length)
+      })
+      observer.observe(sidebar, { childList: true, subtree: true })
+      return { samples, observer }
+    })
+    const observeDockMotion = (): Promise<JSHandle<number[]>> =>
+      page.evaluateHandle(() => {
+        const result: number[] = []
+        const dock = document.querySelector('[data-testid="conversation-composer-dock"]')!
+        const observer = new MutationObserver(() => {
+          if (dock.getAttribute('data-placement') !== 'bottom') return
+          const form = dock.querySelector('form')!
+          result.push(
+            ...form
+              .getAnimations()
+              .map((animation) => Number(animation.effect?.getTiming().duration))
+          )
+          observer.disconnect()
+        })
+        observer.observe(dock, { attributes: true, attributeFilter: ['data-placement'] })
+        return result
+      })
+    await expect(dock).toHaveAttribute('data-placement', 'start')
+    await capture('01-new-conversation.png')
+    const initialTop = (await composer.boundingBox())!.y
+    await composer.fill('Study the relationship between dose and response.')
+    await expect(start).toBeVisible()
+    expect(Math.abs((await composer.boundingBox())!.y - initialTop)).toBeLessThan(2)
+    await page.getByRole('button', { name: 'Analyze data', exact: true }).click()
+    await expect(composer).toContainText('Study the relationship between dose and response.')
+    await expect(composer).toContainText('Analyze my data and explain the main findings.')
+    await expect(composer).toBeFocused()
+    await composer.press(process.platform === 'darwin' ? 'Meta+z' : 'Control+z')
+    await expect(composer).toHaveText('Study the relationship between dose and response.')
+    await composer.press(process.platform === 'darwin' ? 'Meta+Shift+z' : 'Control+Shift+z')
+    await expect(composer).toContainText('Analyze my data and explain the main findings.')
+    await expect(dock).toHaveAttribute('data-placement', 'start')
+    await capture('02-draft-and-starters.png')
+    const rail = page.getByTestId('research-scenario-rail')
+    await expect(page.getByRole('button', { name: 'Previous research ideas' })).toBeHidden()
+    await page.getByRole('button', { name: 'Next research ideas' }).click()
+    await expect.poll(() => rail.evaluate((node) => node.scrollLeft)).toBeGreaterThan(0)
+    await expect(page.getByRole('button', { name: 'Previous research ideas' })).toBeVisible()
+    await capture('05-scenario-rail-scrolled.png')
+    // Reset the pointer scenario: Next may already be hidden at the scroll boundary.
+    await page.getByRole('button', { name: 'Previous research ideas' }).click()
+    await expect(page.getByRole('button', { name: 'Previous research ideas' })).toBeHidden()
+    // A keyboard-activated arrow remains focusable at the boundary until the user leaves it.
+    await page.keyboard.press('Tab')
+    const nextIdeas = page.getByRole('button', { name: 'Next research ideas' })
+    await nextIdeas.focus()
+    await nextIdeas.press('Enter')
+    await expect(nextIdeas).toHaveAttribute('aria-disabled', 'true')
+    await expect(nextIdeas).toBeFocused()
+    await expect(nextIdeas).toBeVisible()
+    await page.getByRole('button', { name: 'Draft a report', exact: true }).focus()
+    expect(
+      await rail.evaluate((node) => {
+        const last = node.lastElementChild!.getBoundingClientRect()
+        const viewport = node.getBoundingClientRect()
+        return last.left >= viewport.left && last.right <= viewport.right + 1
+      })
+    ).toBe(true)
+    await expect(page.getByRole('button', { name: 'Next research ideas' })).toBeHidden()
+    const scrollBeforeTyping = await rail.evaluate((node) => node.scrollLeft)
+    await composer.fill(USER_MESSAGE)
+    expect(await rail.evaluate((node) => node.scrollLeft)).toBe(scrollBeforeTyping)
+    const motion = await observeDockMotion()
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(dock).toHaveAttribute('data-placement', 'bottom')
+    await expect(page.getByText(AGENT_REPLY, { exact: false })).toBeVisible()
+    expect(await originalEditor!.evaluate((node) => node.isConnected)).toBe(true)
+    await expect(start).toHaveCount(0)
+    expect(await motion.jsonValue()).toEqual([200])
+    expect((await composer.boundingBox())!.y).toBeGreaterThan(initialTop + 100)
+    expect(await sidebarRows.evaluate(({ samples }) => Math.max(...samples))).toBe(1)
+    await capture('03-conversation-bottom.png')
+    await page.getByRole('button', { name: 'New', exact: true }).click()
+    await expect(dock).toHaveAttribute('data-placement', 'start')
+    await expect(start).toBeVisible()
+    await page.setViewportSize({ width: 820, height: 760 })
+    await capture('04-narrow-new-conversation.png')
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    const reducedMotion = await observeDockMotion()
+    await composer.fill('Check reduced motion.')
+    await page.getByRole('button', { name: 'Send message' }).click()
+    await expect(dock).toHaveAttribute('data-placement', 'bottom')
+    await expect(page.getByText(AGENT_REPLY, { exact: false })).toBeVisible()
+    expect(await reducedMotion.jsonValue()).toEqual([])
+    expect(await sidebarRows.evaluate(({ samples }) => Math.max(...samples))).toBe(2)
+    await sidebarRows.evaluate(({ observer }) => observer.disconnect())
+    await capture('06-sidebar-after-new-session.png')
+  })
 })

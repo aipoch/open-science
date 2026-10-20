@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import {
   spawn,
   type ChildProcessWithoutNullStreams,
@@ -13,8 +14,8 @@ import {
 } from '../acp/permission-profile-controller'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import { augmentedPathEnv } from '../settings/shell-path'
-import type { ModelReasoningEffort } from '../../shared/reasoning-effort'
-import type { OfficialVendorId } from '../../shared/provider-registry'
+import type { ModelReasoningEffort, OfficialVendorId } from '@aipoch/providers'
+
 import {
   CODEX_ACP_CONFIGURABLE_PROVIDER_ID,
   type AgentFramework,
@@ -33,6 +34,7 @@ import { CODEX_SUBSCRIPTION_PROVIDER_ID, isCodexSubscriptionProvider } from '../
 import { prepareCodexRuntimeHomeAuthentication } from '../settings/codex-auth'
 import { codexStorageDir, codexSubscriptionStorageDir } from '../settings/codex-paths'
 import { CODEX_VERSION, spawnCodexWithInstallAdmission } from '../settings/managed-codex'
+import type { GrantedLocalRoot } from '../../shared/local-fs'
 import { clearSystemProxyEnvironment } from '../settings/system-proxy'
 import { registerOwnedPosixProcessGroup } from '../process-tree'
 import codexNativeModelInstructions from './codex-native-model-instructions.md?raw'
@@ -94,9 +96,14 @@ const CODEX_MODE_IDS = {
 // contract. This must live in CODEX_CONFIG (rather than only custom model metadata), because trusted
 // bundled models intentionally do not receive an app-authored model catalog.
 const CODEX_DISABLED_NATIVE_FEATURES = Object.freeze({
+  // Open-Science owns the Skill projection and MCP surface. Native Codex plugin/app discovery can
+  // advertise provider-installed, plugin-qualified Skills that the app runtime cannot load.
+  apps: false,
   memories: false,
   multi_agent: false,
   multi_agent_v2: false,
+  plugins: false,
+  remote_plugin: false,
   // The bounded Skill loader must remain callable without deferred tool discovery.
   code_mode: { direct_only_tool_namespaces: ['mcp__skills'] },
   // Disabling unified_exec alone falls back to shell_command. shell_tool disables both generations
@@ -159,25 +166,47 @@ const isolatedCodexHomeEnv = (codexHome: string, platform: NodeJS.Platform): Nod
   CODEX_HOME: codexHome
 })
 
-const normalizeResponsesBaseUrl = (value: string | undefined): string | undefined => {
+const normalizeResponsesBaseUrl = (
+  value: string | undefined,
+  options: { appendVersionPath?: boolean } = {}
+): string | undefined => {
   const normalized = value
     ?.trim()
     .replace(/\/+$/, '')
     .replace(/\/responses$/i, '')
   if (!normalized) return undefined
 
-  // Codex posts to `{base_url}/responses`, so a bare origin (e.g. the official
-  // `https://api.openai.com`) would target `.../responses` and miss the `/v1` version segment.
-  // Append `/v1` only when the input carries no path at all; gateways that already include `/v1`
-  // or a custom path are left untouched.
+  // Codex posts to `{base_url}/responses`. Explicit native/OpenAI bases preserve their published
+  // path; a custom provider's baseUrl is a root, so add `/v1` even when that root has a path prefix.
   try {
     const { pathname } = new URL(normalized)
-    if (pathname === '' || pathname === '/') return `${normalized}/v1`
+    const appendVersionPath =
+      options.appendVersionPath === true ||
+      (options.appendVersionPath === undefined && (pathname === '' || pathname === '/'))
+    if (appendVersionPath) {
+      if (/\/v1$/i.test(pathname)) return normalized
+      return `${normalized}/v1`
+    }
   } catch {
     // Non-URL inputs pass through unchanged.
   }
 
   return normalized
+}
+
+const resolveResponsesBaseUrl = (provider: {
+  responsesBaseUrl?: string
+  chatCompletionsBaseUrl?: string
+  baseUrl?: string
+}): string | undefined => {
+  const exactBase = provider.responsesBaseUrl?.trim()
+  const chatCompletionsBase = provider.chatCompletionsBaseUrl?.trim()
+  const base = exactBase || chatCompletionsBase || provider.baseUrl
+  return normalizeResponsesBaseUrl(base, {
+    // A custom provider's baseUrl is a root even when it has a path prefix (`/proxy`); only an
+    // explicitly projected OpenAI base is already versioned. A native Responses base is exact.
+    appendVersionPath: !exactBase && !chatCompletionsBase
+  })
 }
 
 const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
@@ -203,19 +232,42 @@ const buildCodexModelOptions = (input: {
   }
 }
 
+const codexSandboxWriteConfig = (
+  grantedLocalRoots: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[] | undefined
+): Record<string, unknown> => {
+  const writableRoots = [
+    ...new Set(
+      (grantedLocalRoots ?? [])
+        .filter((root) => root.access === 'rw')
+        .map((root) => root.path.trim())
+        .filter(Boolean)
+    )
+  ]
+  return writableRoots.length > 0
+    ? { sandbox_workspace_write: { writable_roots: writableRoots } }
+    : {}
+}
+
 const buildCodexConfig = (provider: {
   baseUrl?: string
+  preserveBaseUrl?: boolean
   model?: string
   contextWindow?: number
   key?: string
   reasoningEffort?: ModelReasoningEffort
+  grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
 }): Record<string, unknown> => {
-  const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl)
+  const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl, {
+    appendVersionPath: !provider.preserveBaseUrl
+  })
   const contextWindow =
     provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : undefined
 
   return {
     ...buildCodexModelOptions(provider),
+    // Model metadata can enable native delegation even when both feature flags are off.
+    // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+    agents: { enabled: false },
     features: CODEX_DISABLED_NATIVE_FEATURES,
     memories: CODEX_DISABLED_NATIVE_MEMORY,
     ...(contextWindow
@@ -226,6 +278,7 @@ const buildCodexConfig = (provider: {
           )
         }
       : {}),
+    ...codexSandboxWriteConfig(provider.grantedLocalRoots),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
       [CODEX_PROVIDER_ID]: {
@@ -242,7 +295,8 @@ type CodexNativeModelCatalogInput = {
   model?: string
   vendorId?: OfficialVendorId
   baseUrl?: string
-  openaiBaseUrl?: string
+  chatCompletionsBaseUrl?: string
+  responsesBaseUrl?: string
   nativeVersion?: string
   contextWindow?: number
   supportsImageInput?: boolean
@@ -264,7 +318,7 @@ const buildCodexNativeModelCatalogEntry = (provider: CodexNativeModelCatalogInpu
       : undefined
   const hasTrustedBundledMetadata =
     (provider.vendorId === 'openai' ||
-      isOfficialOpenAiResponsesBase(provider.openaiBaseUrl ?? provider.baseUrl)) &&
+      isOfficialOpenAiResponsesBase(provider.chatCompletionsBaseUrl ?? provider.baseUrl)) &&
     bundledModelIds?.includes(model ?? '') === true
   if (!model || hasTrustedBundledMetadata) return undefined
 
@@ -382,7 +436,7 @@ const buildSpawnEnvironment = (
   return {
     ...env,
     ...input.env,
-    ELECTRON_RUN_AS_NODE: '1'
+    ...nodeRuntimeEnvironment()
   }
 }
 
@@ -516,8 +570,12 @@ export const createCodexFramework = ({
       })
       const codexConfig = {
         ...modelOptions,
+        // Model metadata can enable native delegation even when both feature flags are off.
+        // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
+        agents: { enabled: false },
         features: CODEX_DISABLED_NATIVE_FEATURES,
         memories: CODEX_DISABLED_NATIVE_MEMORY,
+        ...codexSandboxWriteConfig(ctx.grantedLocalRoots),
         ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
       }
       const codexConfigJson =
@@ -532,7 +590,7 @@ export const createCodexFramework = ({
       }
     }
 
-    const bridge = ctx.responsesBridge
+    const bridge = ctx.responsesConnection
     const useChatBridge =
       bridge !== undefined &&
       bridge.kind !== 'responses-compatibility' &&
@@ -542,13 +600,13 @@ export const createCodexFramework = ({
       (provider.apiEndpoints?.includes('responses') ?? false)
     const useLocalResponsesEndpoint = useChatBridge || useNativeCompatibility
     const codexModel = useChatBridge ? CODEX_BRIDGE_MODEL : provider.model
-    // A dual-endpoint vendor keeps its Anthropic route in
-    // `baseUrl` and its OpenAI/Responses `/v1` root in `openaiBaseUrl`, so post to the latter; a
-    // Responses-only provider (e.g. OpenAI) carries its base in `baseUrl`. The Chat bridge and the
-    // protocol-preserving native compatibility endpoint both expose a local Responses URL.
+    // A dual-endpoint vendor keeps its Anthropic route in `baseUrl` and its OpenAI Chat base in
+    // `chatCompletionsBaseUrl`. Native Responses may use a separate base, so prefer that when supplied.
+    // The Chat bridge and the protocol-preserving native compatibility endpoint both expose a local
+    // Responses URL.
     const responsesBaseUrl = useLocalResponsesEndpoint
       ? bridge.baseUrl
-      : (provider.openaiBaseUrl ?? provider.baseUrl)
+      : resolveResponsesBaseUrl(provider)
     const authentication: AgentAuthentication | undefined =
       provider.key && !useLocalResponsesEndpoint
         ? {
@@ -586,8 +644,10 @@ export const createCodexFramework = ({
         model: codexModel,
         contextWindow: provider.contextWindow,
         baseUrl: responsesBaseUrl,
+        preserveBaseUrl: Boolean(provider.responsesBaseUrl?.trim()) && !useLocalResponsesEndpoint,
         key: useLocalResponsesEndpoint ? undefined : provider.key,
-        reasoningEffort: ctx.reasoningEffort
+        reasoningEffort: ctx.reasoningEffort,
+        grantedLocalRoots: ctx.grantedLocalRoots
       }),
       ...(useChatBridge ? { features: CODEX_CHAT_BRIDGE_FEATURES } : {}),
       ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {}),
@@ -684,5 +744,6 @@ export {
   codexSubscriptionStorageDir,
   isOfficialOpenAiResponsesBase,
   mapCodexPermissionProfile,
-  normalizeResponsesBaseUrl
+  normalizeResponsesBaseUrl,
+  resolveResponsesBaseUrl
 }

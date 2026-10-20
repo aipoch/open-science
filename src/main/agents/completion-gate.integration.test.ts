@@ -1,3 +1,4 @@
+import { projectConnectorsFromStored } from '../connectors/read-model'
 import { describe, expect, it, vi } from 'vitest'
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
@@ -40,7 +41,7 @@ import {
 const specialist: SpecialistView = approvedSpecialist()
 const catalog: AgentsCatalogSource = {
   listSkillCatalog: async () => [],
-  getConnectors: async () => ({ enabledIds: [], autoAllowIds: [] })
+  getConnectors: async () => projectConnectorsFromStored({ enabledIds: [], autoAllowIds: [] })
 }
 
 const completionContext = {

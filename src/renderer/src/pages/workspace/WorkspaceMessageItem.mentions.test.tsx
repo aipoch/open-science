@@ -1,16 +1,22 @@
 // @vitest-environment jsdom
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
 import { act, StrictMode } from 'react'
 import { fireEvent } from '@testing-library/react'
-import { createRoot, type Root } from 'react-dom/client'
+import { type Root } from 'react-dom/client'
 import type { JSX, PropsWithChildren } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import type { ChatMessage } from '@/stores/session-store'
-
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { WorkspaceMessageItem as MessageItem } from './WorkspaceMessageItem'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 const WorkspaceMessageItem = (
   props: React.ComponentProps<typeof MessageItem>
@@ -297,13 +303,8 @@ describe('WorkspaceMessageItem mention pills', () => {
     expect(useNavigationStore.getState().view).toBe('home')
   })
 
-  it('opens Project and Collection Library scopes', () => {
-    const openProjectLiterature = vi
-      .spyOn(useNavigationStore.getState(), 'openProjectLiterature')
-      .mockReturnValue(true)
-    const openCollectionLiterature = vi
-      .spyOn(useNavigationStore.getState(), 'openCollectionLiterature')
-      .mockReturnValue(true)
+  it('opens Project and Collection Library scopes in the preview sidebar', () => {
+    const onOpenLibraryMention = vi.fn()
     const message = createMessage({
       content: '@Library @TP53 evidence',
       parts: [
@@ -323,6 +324,7 @@ describe('WorkspaceMessageItem mention pills', () => {
         <WorkspaceMessageItem
           message={message}
           projectId="project-1"
+          onOpenLibraryMention={onOpenLibraryMention}
           onPreviewArtifact={noop}
           onPreviewUploadAttachment={noop}
           onOpenSkillMention={noop}
@@ -334,9 +336,12 @@ describe('WorkspaceMessageItem mention pills', () => {
     expect(container.textContent).toContain('@Library')
     expect(container.textContent).toContain('@TP53 evidence')
     clickButton("Open this project's Library")
-    expect(openProjectLiterature).toHaveBeenCalledWith('project-1', 'user')
+    expect(onOpenLibraryMention).toHaveBeenLastCalledWith({})
     clickButton('Open TP53 evidence')
-    expect(openCollectionLiterature).toHaveBeenCalledWith('collection-1', 'user')
+    expect(onOpenLibraryMention).toHaveBeenLastCalledWith({
+      collectionId: 'collection-1',
+      collectionName: 'TP53 evidence'
+    })
     expect(container.querySelector('[title="TP53 evidence"]')?.tagName).toBe('BUTTON')
     expect(container.querySelector('button[aria-label^="Preview"]')).toBeNull()
   })
@@ -614,8 +619,7 @@ describe('WorkspaceMessageItem turn token usage', () => {
     expect(usageTrigger?.getAttribute('aria-label')).toBe('Token usage for this response')
     expect(usageTrigger?.querySelector('[data-slot="turn-token-usage-icon"]')).not.toBeNull()
     expect(usageTrigger?.className).toContain('border-dashed')
-    expect(usageTrigger?.className).toContain('focus-visible:ring-[3px]')
-    expect(usageTrigger?.className).toContain('focus-visible:ring-ring/50')
+    expect(usageTrigger?.className).toContain('focus-visible:keyboard-focus')
     expect(usageTrigger?.className).toContain('motion-reduce:transition-none')
     expect(footer?.className).toContain('whitespace-nowrap')
     expect(footer?.textContent).toContain('Elapsed 2m 5s')

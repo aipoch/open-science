@@ -89,3 +89,6 @@ describe('github IPC handler', () => {
     expect(fetch).toHaveBeenCalledTimes(2)
   })
 })
+
+const { configureIpcHandlerRegistry } = await import('./ipc-handler-registry')
+configureIpcHandlerRegistry((await import('electron')).ipcMain)

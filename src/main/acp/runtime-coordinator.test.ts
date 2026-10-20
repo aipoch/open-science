@@ -1,4 +1,6 @@
 import { readFileSync } from 'node:fs'
+import { spawn } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import ts from 'typescript'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -24,6 +26,10 @@ import { ArchiveCoordinator } from '../archive/coordinator'
 import { ArchiveAvailabilityError } from '../archive/availability-error'
 import type { Project } from '../../shared/projects'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { ApplicationEventHub } from '../application-events'
+import { connectDesktopRuntime } from '../desktop-runtime-client'
+import { createDesktopRuntimeLifecycle } from '../desktop-runtime-lifecycle'
+import { startDesktopRuntimeTransport } from '../desktop-runtime-transport'
 
 const createDeferred = <Value = void>(): {
   promise: Promise<Value>
@@ -265,17 +271,11 @@ const createFakeRuntime = (options: {
     }
   )
   const sendAppContinuation = vi.fn(runPrompt)
-  const sessionEfforts = new Map<
-    string,
-    import('../../shared/reasoning-effort').ResolvedReasoningEffort
-  >()
+  const sessionEfforts = new Map<string, import('@aipoch/providers').ResolvedReasoningEffort>()
   const runtime = {
     getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
     applySessionReasoningEffortChange: vi.fn(
-      async (
-        id: string,
-        effort: import('../../shared/reasoning-effort').ResolvedReasoningEffort
-      ) => {
+      async (id: string, effort: import('@aipoch/providers').ResolvedReasoningEffort) => {
         sessionEfforts.set(id, effort)
         return true
       }
@@ -293,6 +293,7 @@ const createFakeRuntime = (options: {
     createSession,
     resumeSession,
     resetSessionContext,
+    captureHandoffSessionResume: () => async () => undefined,
     switchSpecialist,
     compactSession,
     cancelPrompt,
@@ -1273,47 +1274,79 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created[1].requestRetirement).toHaveBeenCalledOnce()
   })
 
-  it('refreshes Shell capabilities across default and explicit targets before the next prompt', async () => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
-      const fake = createFakeRuntime({
-        frameworkId: target?.frameworkId ?? 'claude-code',
-        sessionIds: [`session-${created.length}`],
-        callbacks
+  it.each(['claude-code', 'opencode', 'codex', 'codebuddy'] as const)(
+    'refreshes Shell capabilities in both directions for %s conversations',
+    async (frameworkId) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
+        const fake = createFakeRuntime({
+          frameworkId: target?.frameworkId ?? frameworkId,
+          sessionIds: [`session-${created.length}`],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
-    const explicitTarget: AcpSessionAgentTarget = {
-      frameworkId: 'opencode',
-      providerId: 'provider-explicit',
-      model: 'model-explicit',
-      reasoningEffort: 'high'
+      const explicitTarget: AcpSessionAgentTarget = {
+        frameworkId,
+        providerId: 'provider-explicit',
+        model: 'model-explicit',
+        reasoningEffort: 'high'
+      }
+      const defaultSession = await coordinator.createSession()
+      const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
+
+      await coordinator.requestShellCapabilityRefresh()
+
+      expect(created[0].requestRetirement).toHaveBeenCalledOnce()
+      expect(created[1].requestRetirement).toHaveBeenCalledOnce()
+      await coordinator.resumeSession({
+        sessionId: defaultSession.sessionId,
+        cwd: '/workspace'
+      })
+      await coordinator.resumeSession({
+        sessionId: explicitSession.sessionId,
+        cwd: '/workspace',
+        agentTarget: explicitTarget
+      })
+      await coordinator.sendPrompt({
+        sessionId: defaultSession.sessionId,
+        text: 'next default turn'
+      })
+      await coordinator.sendPrompt({
+        sessionId: explicitSession.sessionId,
+        text: 'next pinned turn'
+      })
+
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
+      expect(created[1].sendPrompt).not.toHaveBeenCalled()
+      expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[3].sendPrompt).toHaveBeenCalledOnce()
+
+      // Switching back refreshes the same conversations again rather than restoring a stale owner.
+      await coordinator.requestShellCapabilityRefresh()
+      expect(created[2].requestRetirement).toHaveBeenCalledOnce()
+      expect(created[3].requestRetirement).toHaveBeenCalledOnce()
+      await coordinator.resumeSession({ sessionId: defaultSession.sessionId, cwd: '/workspace' })
+      await coordinator.resumeSession({
+        sessionId: explicitSession.sessionId,
+        cwd: '/workspace',
+        agentTarget: explicitTarget
+      })
+      await coordinator.sendPrompt({
+        sessionId: defaultSession.sessionId,
+        text: 'after switching back'
+      })
+      await coordinator.sendPrompt({
+        sessionId: explicitSession.sessionId,
+        text: 'pinned after switching back'
+      })
+      expect(created[2].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[3].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[4].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[5].sendPrompt).toHaveBeenCalledOnce()
     }
-    const defaultSession = await coordinator.createSession()
-    const explicitSession = await coordinator.createSession({ agentTarget: explicitTarget })
-
-    await coordinator.requestShellCapabilityRefresh()
-
-    expect(created[0].requestRetirement).toHaveBeenCalledOnce()
-    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
-    await coordinator.resumeSession({
-      sessionId: defaultSession.sessionId,
-      cwd: '/workspace'
-    })
-    await coordinator.resumeSession({
-      sessionId: explicitSession.sessionId,
-      cwd: '/workspace',
-      agentTarget: explicitTarget
-    })
-    await coordinator.sendPrompt({ sessionId: defaultSession.sessionId, text: 'next default turn' })
-    await coordinator.sendPrompt({ sessionId: explicitSession.sessionId, text: 'next pinned turn' })
-
-    expect(created[0].sendPrompt).not.toHaveBeenCalled()
-    expect(created[1].sendPrompt).not.toHaveBeenCalled()
-    expect(created[2].sendPrompt).toHaveBeenCalledOnce()
-    expect(created[3].sendPrompt).toHaveBeenCalledOnce()
-  })
+  )
 
   it('retires a generation admitted while an earlier Shell refresh is still rejecting', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
@@ -2412,6 +2445,16 @@ describe('AcpRuntimeCoordinator', () => {
     })
     await coordinator.sendAppContinuation({
       sessionId,
+      text: 'Child follow-up',
+      provenanceContext: { promptMessageId: 'child' }
+    })
+    await coordinator.continueApprovedHandoff(sessionId, 'Continue the original task')
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+    await coordinator.sendAppContinuation({
+      sessionId,
       text: 'Other branch',
       provenanceContext: { promptMessageId: 'other' }
     })
@@ -2428,6 +2471,29 @@ describe('AcpRuntimeCoordinator', () => {
       provenanceContext: { promptMessageId: 'next' }
     })
     expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0].permissionPrompts).toBeUndefined()
+  })
+
+  it('preserves originating policy after startContinuation and an approved handoff', async () => {
+    let fake!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      fake = createFakeRuntime({ frameworkId: 'claude-code', sessionIds: ['session-1'], callbacks })
+      return fake.runtime
+    })
+    const { sessionId } = await coordinator.createSession()
+    await coordinator.sendPrompt({
+      sessionId,
+      text: 'Unattended',
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
+
+    await coordinator.startContinuation({ sessionId, text: 'App continuation' })
+    await coordinator.continueApprovedHandoff(sessionId, 'Continue original task')
+
+    expect(fake.sendAppContinuation.mock.calls.at(-1)?.[0]).toMatchObject({
+      permissionPrompts: 'none',
+      provenanceContext: { promptMessageId: 'original' }
+    })
   })
 
   it('routes app-owned continuations through the dedicated runtime operation', async () => {
@@ -2485,6 +2551,7 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('reports completed user and application-owned root turns to delegated settlement watching', async () => {
     const rootTurnEnded = vi.fn(async () => undefined)
+    const rootExecutionStarted = vi.fn()
     let settlementLease = 0
     const rootTurnStarted = vi.fn(async () => `settlement-lease-${++settlementLease}`)
     const delegatedWork: RootDelegatedWorkControl = {
@@ -2499,6 +2566,7 @@ describe('AcpRuntimeCoordinator', () => {
       shutdownForUpdateGate: async () => undefined,
       deleteSession: async () => undefined,
       deleteProject: async () => undefined,
+      rootExecutionStarted,
       rootTurnStarted,
       rootTurnEnded
     }
@@ -2564,6 +2632,16 @@ describe('AcpRuntimeCoordinator', () => {
       leaseId: 'settlement-lease-3'
     })
     expect(rootTurnStarted).toHaveBeenCalledTimes(3)
+    expect(rootExecutionStarted).toHaveBeenCalledTimes(3)
+    expect(rootExecutionStarted.mock.calls[0].slice(0, 2)).toEqual([
+      session.sessionId,
+      'root-prompt'
+    ])
+    expect(rootExecutionStarted.mock.calls[1].slice(0, 2)).toEqual([
+      session.sessionId,
+      'root-prompt'
+    ])
+    expect(new Set(rootExecutionStarted.mock.calls.map((call) => call[2])).size).toBe(3)
   })
 
   it.each(['cancel', 'handoff', 'delete'] as const)(
@@ -3156,6 +3234,394 @@ describe('AcpRuntimeCoordinator', () => {
     expect(created.sendPrompt).toHaveBeenCalledOnce()
   })
 
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'admits an upward message without reversing the root and Project lock order for %s',
+    async (frameworkId) => {
+      let created!: ReturnType<typeof createFakeRuntime>
+      const userFinished = createDeferred<unknown>()
+      const parentFinished = createDeferred<unknown>()
+      const parentAtProvider = createDeferred()
+      const allowParentAcceptance = createDeferred()
+      let promptIndex = 0
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        created = createFakeRuntime({
+          frameworkId,
+          sessionIds: ['session-1'],
+          callbacks,
+          beforeProviderPromptAccepted: async () => {
+            if (promptIndex === 2) {
+              parentAtProvider.resolve()
+              await allowParentAcceptance.promise
+            }
+          },
+          prompt: () => (promptIndex++ === 0 ? userFinished.promise : parentFinished.promise)
+        })
+        return created.runtime
+      })
+      const session = await coordinator.createSession({ cwd: '/workspace', projectId: 'project-1' })
+      const archive = new ArchiveCoordinator(
+        { get: vi.fn(), updateArchive: vi.fn() },
+        {
+          sessionProjectId: async () => 'project-1',
+          assertProjectArchivable: vi.fn(),
+          assertSessionAvailable: vi.fn(),
+          updateArchive: vi.fn()
+        },
+        {
+          isSessionBusy: () => false,
+          isProjectBusy: () => false,
+          liveSessionProjectId: () => 'project-1'
+        }
+      )
+      const userAtDispatch = createDeferred()
+      const allowUserDispatch = createDeferred()
+      coordinator.setPromptDispatchAdmissionGuard(async (sessionId, dispatch) => {
+        userAtDispatch.resolve()
+        await allowUserDispatch.promise
+        return archive.withSessionDeletionAdmissionById(sessionId, dispatch)
+      })
+      const user = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'concurrent user' })
+      await userAtDispatch.promise
+      const parentAtProject = createDeferred()
+      const parentQueued = createDeferred()
+      const upward = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'upward message' },
+        async () => undefined,
+        'message-1',
+        () => parentQueued.resolve(),
+        (operation) =>
+          archive.withProjectDeletionAdmission('project-1', async () => {
+            parentAtProject.resolve()
+            await operation()
+          })
+      )
+      await parentQueued.promise
+      allowUserDispatch.resolve()
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+      userFinished.resolve({ stopReason: 'end_turn' })
+      await user
+      await parentAtProject.promise
+      await parentAtProvider.promise
+      const nextProjectOperation = vi.fn(async () => 'available')
+      const projectAvailable = archive.withProjectDeletionAdmission(
+        'project-1',
+        nextProjectOperation
+      )
+      await Promise.resolve()
+      expect(nextProjectOperation).not.toHaveBeenCalled()
+      allowParentAcceptance.resolve()
+      await expect(upward).resolves.toBe('provider_prompt_accepted')
+      // Acceptance releases the Project gate even while the provider turn is still running.
+      await expect(projectAvailable).resolves.toBe('available')
+      const laterUser = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'later user' })
+      await Promise.resolve()
+      expect(created.sendPrompt).toHaveBeenCalledOnce()
+      parentFinished.resolve({ stopReason: 'end_turn' })
+      await laterUser
+      expect(created.sendPrompt).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it.each(['admission', 'validation', 'provider'] as const)(
+    'releases parent-message deletion admission after a %s failure',
+    async (failurePhase) => {
+      const failure = new Error('parent delivery failed')
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({
+            frameworkId: 'opencode',
+            sessionIds: ['session-1'],
+            callbacks,
+            beforeProviderPromptAccepted: async () => {
+              if (failurePhase === 'provider') throw failure
+            }
+          }).runtime
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      let held = false
+      const released = createDeferred()
+      const upward = coordinator.startContinuationWhenDispatchAdmitted(
+        { sessionId: session.sessionId, text: 'upward message' },
+        async () => {
+          expect(held).toBe(true)
+          if (failurePhase === 'validation') throw failure
+        },
+        'message-1',
+        undefined,
+        async (operation) => {
+          held = true
+          try {
+            if (failurePhase === 'admission') throw failure
+            await operation()
+          } finally {
+            held = false
+            released.resolve()
+          }
+        }
+      )
+      await expect(upward).rejects.toThrow('parent delivery failed')
+      await released.promise
+      expect(held).toBe(false)
+    }
+  )
+
+  it.each(['claude-code', 'opencode', 'codex'] as const)(
+    'keeps %s busy while an upward continuation validates between provider turns',
+    async (frameworkId) => {
+      const firstTurn = createDeferred<unknown>()
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      let created!: ReturnType<typeof createFakeRuntime>
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          created = createFakeRuntime({
+            frameworkId,
+            sessionIds: ['session-1'],
+            callbacks,
+            prompt: vi
+              .fn()
+              .mockImplementationOnce(() => firstTurn.promise)
+              .mockResolvedValue({ stopReason: 'end_turn' })
+          })
+          return created.runtime
+        },
+        { onStateChanged: (state) => states.push(state) }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const user = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'user' })
+      await vi.waitFor(() => expect(created.sendPrompt).toHaveBeenCalledOnce())
+      const validate = vi.fn(() => validation.promise)
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'child message' },
+        validate
+      )
+      states.length = 0
+      firstTurn.resolve({ stopReason: 'end_turn' })
+      await user
+      await vi.waitFor(() => expect(validate).toHaveBeenCalledOnce())
+      try {
+        expect(created.sendAppContinuation).not.toHaveBeenCalled()
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+        expect(
+          states.every((state) => state.promptInFlightSessionIds.includes(session.sessionId))
+        ).toBe(true)
+      } finally {
+        validation.resolve()
+        await upward
+      }
+      await vi.waitFor(() =>
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+      )
+    }
+  )
+
+  it.each(['delete', 'disconnect', 'shutdown'] as const)(
+    'removes pending admission from visible busy state after %s',
+    async (teardown) => {
+      const validation = createDeferred()
+      const states: AcpStateUpdate[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({ frameworkId: 'codex', sessionIds: ['session-1'], callbacks }).runtime,
+        { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'pending child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch((error: unknown) => error)
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(session.sessionId)
+      try {
+        if (teardown === 'delete') await coordinator.deleteSession({ sessionId: session.sessionId })
+        else if (teardown === 'disconnect') await coordinator.disconnect()
+        else coordinator.shutdown()
+        expect(coordinator.getSnapshot().sessionIds).not.toContain(session.sessionId)
+        expect(coordinator.getSnapshot().promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+        expect(states.at(-1)?.promptInFlight).toBe(false)
+      } finally {
+        validation.reject(new DelegateMessageParkedError('session was removed'))
+        await settled
+      }
+    }
+  )
+
+  it.each(['disconnect', 'shutdown'] as const)(
+    'allows a resumed Session to send after %s cancels its queued admission',
+    async (teardown) => {
+      const firstTurn = createDeferred<unknown>()
+      const validation = createDeferred()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['session-1'],
+          callbacks,
+          prompt: vi
+            .fn()
+            .mockImplementationOnce(() => firstTurn.promise)
+            .mockResolvedValue({
+              stopReason: 'end_turn'
+            })
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const session = await coordinator.createSession()
+      const firstPrompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'active user message'
+      })
+      await vi.waitFor(() => expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce())
+      const upward = coordinator.startContinuationWhen(
+        { sessionId: session.sessionId, text: 'stale child message' },
+        () => validation.promise
+      )
+      const settled = upward.catch(() => undefined)
+      if (teardown === 'disconnect') await coordinator.disconnect().catch(() => undefined)
+      else {
+        try {
+          coordinator.shutdown()
+        } catch {
+          // The active prompt is intentionally interrupted by teardown.
+        }
+      }
+      firstTurn.resolve({ stopReason: 'end_turn' })
+      await firstPrompt.catch(() => undefined)
+      await settled
+      await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+      const prompt = coordinator.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'new user message'
+      })
+      await prompt
+      expect(created.at(-1)?.sendPrompt).toHaveBeenCalledTimes(2)
+      validation.resolve()
+    }
+  )
+
+  it('does not dispatch a continuation when teardown races after validation', async () => {
+    const dispatchGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptDispatchAdmissionGuard(async (_sessionId, dispatch) => {
+      guardEntered.resolve()
+      await dispatchGate.promise
+      return dispatch()
+    })
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'validated child message' },
+      async () => undefined
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(continuation).rejects.toThrow('superseded before provider dispatch')
+    dispatchGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
+  it('retains the root lease until a started provider dispatch settles', async () => {
+    const providerStarted = createDeferred<void>()
+    const firstTurn = createDeferred<unknown>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks,
+        prompt: vi.fn(async () => {
+          providerStarted.resolve()
+          return firstTurn.promise
+        })
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    const first = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'first prompt' })
+    const firstSettled = first.catch(() => undefined)
+    await providerStarted.promise
+
+    await coordinator.disconnect().catch(() => undefined)
+    await coordinator.resumeSession({ sessionId: session.sessionId, cwd: '/workspace' })
+    const next = coordinator.sendPrompt({ sessionId: session.sessionId, text: 'next prompt' })
+    await Promise.resolve()
+    expect(created[0].sendPrompt).toHaveBeenCalledOnce()
+    expect(created.at(-1)?.sendPrompt).not.toHaveBeenCalled()
+
+    firstTurn.resolve({ stopReason: 'end_turn' })
+    await firstSettled
+    await next
+    expect(created.at(-1)?.sendPrompt).toHaveBeenCalledOnce()
+  })
+
+  it('does not dispatch an activity prompt when teardown races its admission guard', async () => {
+    const guardGate = createDeferred<void>()
+    const guardEntered = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    coordinator.setPromptAdmissionGuard(async () => {
+      guardEntered.resolve()
+      await guardGate.promise
+    })
+    const prompt = coordinator.withActivity(
+      { session: { sessionId: session.sessionId, cwd: '/workspace' } },
+      (runtime) =>
+        runtime.sendPrompt({ sessionId: session.sessionId, text: 'stale activity prompt' })
+    )
+    await guardEntered.promise
+
+    await coordinator.disconnect()
+    await expect(prompt).rejects.toThrow('superseded before provider dispatch')
+    guardGate.resolve()
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(created.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it('cancels queued root admissions before update-gate shutdown', async () => {
+    const validation = createDeferred<void>()
+    let created!: ReturnType<typeof createFakeRuntime>
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      created = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['session-1'],
+        callbacks
+      })
+      return created.runtime
+    })
+    const session = await coordinator.createSession()
+    const continuation = coordinator.startContinuationWhen(
+      { sessionId: session.sessionId, text: 'stale update-gate prompt' },
+      () => validation.promise
+    )
+    const settled = continuation.catch(() => undefined)
+
+    await coordinator.shutdownForUpdateGate()
+    validation.resolve()
+    await settled
+    expect(created.sendAppContinuation).not.toHaveBeenCalled()
+  })
+
   it('linearizes real user prompts and upward continuations through one root admission lock', async () => {
     const prompts = [
       createDeferred<unknown>(),
@@ -3264,14 +3730,18 @@ describe('AcpRuntimeCoordinator', () => {
 
   it('revalidates a parked upward branch inside the root lock before any provider call', async () => {
     let created!: ReturnType<typeof createFakeRuntime>
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      created = createFakeRuntime({
-        frameworkId: 'opencode',
-        sessionIds: ['session-1'],
-        callbacks
-      })
-      return created.runtime
-    })
+    const states: AcpStateUpdate[] = []
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        created = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: ['session-1'],
+          callbacks
+        })
+        return created.runtime
+      },
+      { onStateChanged: (state) => states.push(state), onEvent: vi.fn() }
+    )
     const session = await coordinator.createSession({ cwd: '/workspace' })
 
     await expect(
@@ -3286,27 +3756,44 @@ describe('AcpRuntimeCoordinator', () => {
       message: 'branch A is inactive'
     })
     expect(created.sendAppContinuation).not.toHaveBeenCalled()
-  })
-
-  it('returns completion evidence when an upward continuation completes without an acceptance callback', async () => {
-    const coordinator = new AcpRuntimeCoordinator(
-      (callbacks) =>
-        createFakeRuntime({
-          frameworkId: 'codex',
-          sessionIds: ['session-1'],
-          callbacks,
-          skipProviderPromptAccepted: true
-        }).runtime
+    expect(states.some((state) => state.promptInFlightSessionIds.includes(session.sessionId))).toBe(
+      true
     )
-    const session = await coordinator.createSession({ cwd: '/workspace' })
-
-    await expect(
-      coordinator.startContinuationWhen(
-        { sessionId: session.sessionId, text: 'completion fallback' },
-        async () => undefined
-      )
-    ).resolves.toBe('provider_prompt_completed')
+    await vi.waitFor(() =>
+      expect(states.at(-1)?.promptInFlightSessionIds).not.toContain(session.sessionId)
+    )
   })
+
+  it.each([false, true])(
+    'returns completion evidence without an acceptance callback (guarded=%s)',
+    async (guarded) => {
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          createFakeRuntime({
+            frameworkId: 'codex',
+            sessionIds: ['session-1'],
+            callbacks,
+            skipProviderPromptAccepted: true
+          }).runtime
+      )
+      const session = await coordinator.createSession({ cwd: '/workspace' })
+
+      await expect(
+        guarded
+          ? coordinator.startContinuationWhenDispatchAdmitted(
+              { sessionId: session.sessionId, text: 'completion fallback' },
+              async () => undefined,
+              undefined,
+              undefined,
+              (operation) => operation()
+            )
+          : coordinator.startContinuationWhen(
+              { sessionId: session.sessionId, text: 'completion fallback' },
+              async () => undefined
+            )
+      ).resolves.toBe('provider_prompt_completed')
+    }
+  )
 
   it('rejects a user prompt still waiting on admission when quit begins', async () => {
     const admission = createDeferred<void>()
@@ -3462,7 +3949,7 @@ describe('AcpRuntimeCoordinator', () => {
     // coordinator-contract tests do for archive activity wiring, without a production seam.
     const source = ts.createSourceFile(
       'ipc.ts',
-      readFileSync(new URL('../ipc.ts', import.meta.url), 'utf8'),
+      readFileSync(new URL('../composition/agent-completion.ts', import.meta.url), 'utf8'),
       ts.ScriptTarget.Latest,
       true
     )
@@ -5880,4 +6367,607 @@ it('queries Side chat interaction authority on the session owner after framework
   expect(checks[1]).toHaveBeenCalledWith(current.sessionId)
   oldPrompt.resolve({ stopReason: 'end_turn' })
   await turn
+})
+
+it.each(['timeout', 'thrown preparation', 'rejected cancellation'] as const)(
+  'resumes ACP prompts through desktop transport after aborting %s with late cancellation',
+  async (outcome) => {
+    const { hasPendingLifecycleSettlement, waitForLifecycleSettlement } =
+      await import('../lifecycle-settlement')
+    const prompt = createDeferred<{ stopReason: string }>()
+    const cancellation = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        callbacks,
+        frameworkId: 'opencode',
+        sessionIds: ['desktop-existing', 'desktop-new'],
+        prompt: () => prompt.promise
+      })
+      fake.cancelPrompt.mockImplementation(async () => {
+        try {
+          await cancellation.promise
+          return fake.runtime.getSnapshot()
+        } finally {
+          prompt.resolve({ stopReason: 'cancelled' })
+        }
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const session = await coordinator.createSession()
+    const releaseAdmission = vi.fn()
+    const abortPreparation = vi.fn(() => coordinator.abortQuitPreparation())
+    const host = await startDesktopRuntimeTransport({
+      version: 'test',
+      launch: 'desktop',
+      events: new ApplicationEventHub(),
+      commands: {
+        commandNames: () => ['acp:send-prompt'],
+        invoke: async (_name, invocation) =>
+          coordinator.sendPrompt(invocation.args[0] as AcpPromptRequest)
+      },
+      createLifecycle: () =>
+        createDesktopRuntimeLifecycle({
+          detectActiveSessions: () => [],
+          hasActiveReviewerWork: () => false,
+          getActiveSettingsInstallId: () => undefined,
+          isMigrationInProgress: () => false,
+          hasActivePackageTransfer: () => false,
+          holdSettingsInstallAdmission: () => releaseAdmission,
+          prepareForQuit: async () => {
+            const result = await coordinator.prepareForQuit(10)
+            if (outcome === 'thrown preparation') throw new Error('quit persistence failed')
+            return result
+          },
+          abortQuitPreparation: abortPreparation
+        })
+    })
+    let client: Awaited<ReturnType<typeof connectDesktopRuntime>> | undefined
+    let turn: Promise<unknown> | undefined
+    try {
+      client = await connectDesktopRuntime({
+        endpoint: host.endpoint,
+        onEvent: vi.fn(),
+        onDisconnect: vi.fn()
+      })
+      const clientId = randomUUID()
+      const send = (text: string): Promise<unknown> =>
+        client!.invoke(clientId, 'acp:send-prompt', [{ sessionId: session.sessionId, text }])
+      turn = send('work before quit')
+      await vi.waitFor(() => expect(created[0].sendPrompt).toHaveBeenCalledOnce())
+      await client.lifecycle({ operation: 'hold' })
+      const work = (await client.lifecycle({ operation: 'inspect' })) as { fingerprint: string }
+      const preparation = client.lifecycle({ operation: 'prepare', fingerprint: work.fingerprint })
+      if (outcome !== 'thrown preparation') await expect(preparation).resolves.toBe('timeout')
+      else await expect(preparation).rejects.toThrow('quit persistence failed')
+      expect(hasPendingLifecycleSettlement()).toBe(true)
+      await expect(client.lifecycle({ operation: 'abort' })).resolves.toBeNull()
+      expect(abortPreparation).toHaveBeenCalledOnce()
+      expect(releaseAdmission).not.toHaveBeenCalled()
+      await expect(send('blocked during late cancellation')).rejects.toThrow('quitting')
+      expect(created[0].sendPrompt).toHaveBeenCalledOnce()
+      if (outcome === 'rejected cancellation') cancellation.reject(new Error('late cancel failed'))
+      else cancellation.resolve()
+      await turn
+      await waitForLifecycleSettlement()
+      await vi.waitFor(() => expect(releaseAdmission).toHaveBeenCalledOnce())
+      await expect(send('continue after cancelled quit')).resolves.toMatchObject({
+        stopReason: 'cancelled'
+      })
+      expect(created[0].sendPrompt).toHaveBeenCalledTimes(2)
+      expect(coordinator.getSnapshot().sessionIds).toContain(session.sessionId)
+      await expect(coordinator.createSession()).resolves.toMatchObject({ sessionId: 'desktop-new' })
+    } finally {
+      cancellation.resolve()
+      prompt.resolve({ stopReason: 'cancelled' })
+      await turn?.catch(() => undefined)
+      await waitForLifecycleSettlement()
+      client?.close()
+      await host.close()
+    }
+  }
+)
+
+it('does not reopen a newer quit when an older cancelled cleanup settles', async () => {
+  const { trackLifecycleSettlement, waitForLifecycleSettlement } =
+    await import('../lifecycle-settlement')
+  const cleanup = createDeferred<void>()
+  const coordinator = new AcpRuntimeCoordinator(
+    (callbacks) =>
+      createFakeRuntime({ callbacks, frameworkId: 'opencode', sessionIds: ['after-cancel'] })
+        .runtime
+  )
+  await coordinator.prepareForQuit()
+  trackLifecycleSettlement(cleanup.promise)
+  coordinator.abortQuitPreparation()
+  await expect(coordinator.createSession()).rejects.toThrow('quitting')
+  await coordinator.prepareForQuit()
+  cleanup.resolve()
+  await waitForLifecycleSettlement()
+  await Promise.resolve()
+  await expect(coordinator.createSession()).rejects.toThrow('quitting')
+  coordinator.abortQuitPreparation()
+  await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+})
+
+it('defers cancelled quit admission until late cleanup settles', async () => {
+  const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
+    await import('../lifecycle-shutdown')
+  vi.useFakeTimers()
+  const cleanup = createDeferred<{ reaped: boolean }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({
+      frameworkId: 'opencode',
+      sessionIds: [`new-${created.length}`],
+      callbacks
+    })
+    created.push(fake)
+    return fake.runtime
+  })
+  try {
+    const target: AcpSessionAgentTarget = {
+      frameworkId: 'opencode',
+      providerId: 'provider',
+      reasoningEffort: 'default'
+    }
+    await coordinator.createSession({ agentTarget: target })
+    vi.mocked(created.at(-1)!.runtime.shutdownForUpdateGate).mockReturnValue(cleanup.promise)
+    const shutdown = new BackendShutdownCoordinator({
+      runtime: coordinator,
+      notebook: {
+        shutdownAll: async () => ({ reaped: true }),
+        dispose: async () => ({ reaped: true })
+      },
+      sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+    })
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+    const preparation = shutdown.runForQuitPreparation()
+    await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
+    await expect(preparation).resolves.toBe('timeout')
+    coordinator.abortQuitPreparation()
+    await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    const next = await coordinator.createSession({ agentTarget: target })
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+    await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
+    expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+  } finally {
+    cleanup.resolve({ reaped: true })
+    vi.useRealTimers()
+  }
+})
+
+it.each(['reaped', 'unreaped', 'rejected'] as const)(
+  'keeps new session routing and its next quit owner after late %s cleanup',
+  async (outcome) => {
+    const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
+      await import('../lifecycle-shutdown')
+    const child = spawn(process.execPath, ['-e', 'process.on("message", () => process.exit(0))'], {
+      stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+      windowsHide: true
+    })
+    const exited = new Promise<number | null>((resolve, reject) => {
+      child.once('exit', resolve)
+      child.once('error', reject)
+    })
+    const stopChild = async (): Promise<{ reaped: boolean }> => {
+      if (child.connected) child.send('stop')
+      expect(await exited).toBe(0)
+      return { reaped: true }
+    }
+    vi.useFakeTimers()
+    const cleanup = createDeferred<{ reaped: boolean }>()
+    const prompt = createDeferred<{ stopReason: string }>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const onDisconnected = vi.fn()
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'opencode',
+          sessionIds: [`late-${created.length}`],
+          callbacks,
+          prompt: () => prompt.promise
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      {},
+      '',
+      undefined,
+      onDisconnected
+    )
+    try {
+      const target: AcpSessionAgentTarget = {
+        frameworkId: 'opencode',
+        providerId: 'provider',
+        reasoningEffort: 'default'
+      }
+      const old = await coordinator.createSession({ agentTarget: target })
+      const oldRuntime = created.at(-1)!
+      vi.mocked(oldRuntime.runtime.shutdownForUpdateGate).mockReturnValueOnce(cleanup.promise)
+      const shutdown = new BackendShutdownCoordinator({
+        runtime: coordinator,
+        notebook: {
+          shutdownAll: async () => ({ reaped: true }),
+          dispose: async () => ({ reaped: true })
+        },
+        sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+      })
+      await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+      const preparation = shutdown.runForQuitPreparation()
+      await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
+      await expect(preparation).resolves.toBe('timeout')
+      coordinator.abortQuitPreparation()
+      await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+      await expect(
+        coordinator.sendPrompt({ sessionId: old.sessionId, text: 'blocked during cleanup' })
+      ).rejects.toThrow('quitting')
+      if (outcome === 'rejected') cleanup.reject(new Error('old cleanup rejected'))
+      else cleanup.resolve({ reaped: outcome === 'reaped' })
+      await vi.advanceTimersByTimeAsync(0)
+      onDisconnected.mockClear()
+      const next = await coordinator.createSession({ agentTarget: target })
+      const nextRuntime = created.at(-1)!
+      expect(nextRuntime).not.toBe(oldRuntime)
+      vi.mocked(nextRuntime.runtime.shutdownForQuit).mockImplementationOnce(stopChild)
+      nextRuntime.cancelPrompt.mockImplementationOnce(async () => {
+        prompt.resolve({ stopReason: 'cancelled' })
+        return nextRuntime.runtime.getSnapshot()
+      })
+      const turn = coordinator.sendPrompt({
+        sessionId: next.sessionId,
+        text: 'work during old cleanup'
+      })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(next.sessionId)
+      if (outcome === 'rejected') cleanup.reject(new Error('old cleanup rejected'))
+      else cleanup.resolve({ reaped: outcome === 'reaped' })
+      await vi.advanceTimersByTimeAsync(0)
+      expect(onDisconnected).not.toHaveBeenCalled()
+      expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+      expect(coordinator.getSnapshot().sessionIds.includes(old.sessionId)).toBe(
+        outcome !== 'reaped'
+      )
+      await coordinator.cancelPrompt({ sessionId: next.sessionId })
+      expect(nextRuntime.cancelPrompt).toHaveBeenCalledWith({ sessionId: next.sessionId })
+      await turn
+      await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'send after late cleanup' })
+      expect(nextRuntime.sendPrompt).toHaveBeenCalledTimes(2)
+      expect(child.exitCode).toBeNull()
+      await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+      expect(nextRuntime.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+      expect(oldRuntime.runtime.shutdownForQuit).toHaveBeenCalledTimes(outcome === 'reaped' ? 0 : 1)
+      expect(child.exitCode).toBe(0)
+      expect(coordinator.getSnapshot().sessionIds).toEqual([])
+      expect(onDisconnected).toHaveBeenCalledOnce()
+      await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+      expect(nextRuntime.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+    } finally {
+      cleanup.resolve({ reaped: true })
+      prompt.resolve({ stopReason: 'cancelled' })
+      vi.useRealTimers()
+      await stopChild()
+    }
+  }
+)
+
+describe('bounded ACP admission fences', () => {
+  const makeCoordinator = (
+    options: { prompt?: () => Promise<{ stopReason: string }>; neverCancel?: boolean } = {}
+  ): { coordinator: AcpRuntimeCoordinator; fakes: ReturnType<typeof createFakeRuntime>[] } => {
+    const fakes: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        callbacks,
+        frameworkId: 'opencode',
+        sessionIds: [`s-${fakes.length}-a`, `s-${fakes.length}-b`, `s-${fakes.length}-c`],
+        ...(options.prompt ? { prompt: options.prompt } : {})
+      })
+      if (options.neverCancel) fake.cancelPrompt.mockImplementation(() => new Promise(() => {}))
+      fakes.push(fake)
+      return fake.runtime
+    })
+    return { coordinator, fakes }
+  }
+
+  it('reopens admission after an update gate teardown never settles', async () => {
+    const { BackendShutdownCoordinator } = await import('../lifecycle-shutdown')
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const session = await coordinator.createSession()
+      const shutdown = new BackendShutdownCoordinator({
+        runtime: coordinator,
+        notebook: {
+          shutdownAll: () => new Promise(() => {}),
+          dispose: async () => ({ reaped: true })
+        },
+        sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+      })
+      const gate = shutdown.runForUpdateGate(20)
+      await vi.advanceTimersByTimeAsync(20)
+      await expect(gate).resolves.toMatchObject({ completed: false })
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+      await expect(
+        coordinator.sendPrompt({ sessionId: session.sessionId, text: 'after abandoned gate' })
+      ).resolves.toBeDefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('blocks new sessions while an update gate is still within its budget', async () => {
+    const { BackendShutdownCoordinator } = await import('../lifecycle-shutdown')
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const shutdown = new BackendShutdownCoordinator({
+        runtime: coordinator,
+        notebook: {
+          shutdownAll: () => new Promise(() => {}),
+          dispose: async () => ({ reaped: true })
+        },
+        sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+      })
+      void shutdown.runForUpdateGate(10_000)
+      await vi.advanceTimersByTimeAsync(5_000)
+      await expect(coordinator.createSession()).rejects.toThrow('finishing a background cleanup')
+    } finally {
+      await vi.advanceTimersByTimeAsync(60_000)
+      vi.useRealTimers()
+    }
+  })
+
+  it('reopens admission after a cancelled quit whose cancellation never settles', async () => {
+    vi.useFakeTimers()
+    try {
+      const prompt = createDeferred<{ stopReason: string }>()
+      const { coordinator, fakes } = makeCoordinator({
+        prompt: () => prompt.promise,
+        neverCancel: true
+      })
+      const session = await coordinator.createSession()
+      void coordinator
+        .sendPrompt({ sessionId: session.sessionId, text: 'long work' })
+        .catch(() => undefined)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(fakes[0].sendPrompt).toHaveBeenCalledOnce()
+      const preparation = coordinator.prepareForQuit(10)
+      await vi.advanceTimersByTimeAsync(10)
+      await expect(preparation).resolves.toBe('timeout')
+      coordinator.abortQuitPreparation()
+      await expect(coordinator.createSession()).rejects.toThrow('quitting')
+      await vi.advanceTimersByTimeAsync(30_000)
+      await expect(coordinator.createSession()).resolves.toHaveProperty('sessionId')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps rejecting prompts after a committed quit', async () => {
+    vi.useFakeTimers()
+    try {
+      const { coordinator } = makeCoordinator()
+      const session = await coordinator.createSession()
+      await coordinator.prepareForQuit()
+      await coordinator.shutdownForQuit()
+      await vi.advanceTimersByTimeAsync(60_000)
+      await expect(coordinator.createSession()).rejects.toThrow('quitting')
+      await expect(
+        coordinator.sendPrompt({ sessionId: session.sessionId, text: 'after quit' })
+      ).rejects.toThrow('quitting')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+it('admits a new Codex runtime after cancelled quit cleanup settles', async () => {
+  const { BackendShutdownCoordinator, UPDATE_SHUTDOWN_BUDGET_MS } =
+    await import('../lifecycle-shutdown')
+  vi.useFakeTimers()
+  const cleanup = createDeferred<{ reaped: boolean }>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({
+      frameworkId: 'codex',
+      sessionIds: [`old-${created.length}`, `new-${created.length}`],
+      callbacks
+    })
+    created.push(fake)
+    return fake.runtime
+  })
+  try {
+    const target: AcpSessionAgentTarget = {
+      frameworkId: 'codex',
+      providerId: 'provider',
+      reasoningEffort: 'default'
+    }
+    await coordinator.createSession({ agentTarget: target })
+    vi.mocked(created.at(-1)!.runtime.shutdownForUpdateGate).mockReturnValue(cleanup.promise)
+    const shutdown = new BackendShutdownCoordinator({
+      runtime: coordinator,
+      notebook: {
+        shutdownAll: async () => ({ reaped: true }),
+        dispose: async () => ({ reaped: true })
+      },
+      sideChat: { suspendAll: async () => {}, shutdown: async () => {} }
+    })
+    await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+    const preparation = shutdown.runForQuitPreparation()
+    await vi.advanceTimersByTimeAsync(UPDATE_SHUTDOWN_BUDGET_MS)
+    await expect(preparation).resolves.toBe('timeout')
+    coordinator.abortQuitPreparation()
+    await expect(coordinator.createSession({ agentTarget: target })).rejects.toThrow('quitting')
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    const countBeforeNewSession = created.length
+    const next = await coordinator.createSession({ agentTarget: target })
+    expect(created.length).toBe(countBeforeNewSession + 1)
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+    await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'continue after refused quit' })
+    expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
+    cleanup.resolve({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+  } finally {
+    cleanup.resolve({ reaped: true })
+    vi.useRealTimers()
+  }
+})
+
+describe.each([
+  { path: 'claude-code', frameworkId: 'claude-code' },
+  { path: 'opencode', frameworkId: 'opencode' },
+  { path: 'codex-response', frameworkId: 'codex' },
+  { path: 'codex-bridge', frameworkId: 'codex' }
+] as const)('$path coordinator admission ownership', ({ path, frameworkId }) => {
+  it.each(['reaped', 'unreaped', 'rejected'] as const)(
+    'retains send, events, cancellation and next-quit process ownership after late %s cleanup',
+    async (outcome) => {
+      const child = spawn(
+        process.execPath,
+        ['-e', 'process.on("message", () => process.exit(0))'],
+        {
+          stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
+          windowsHide: true
+        }
+      )
+      const exited = new Promise<number | null>((resolve, reject) => {
+        child.once('exit', resolve)
+        child.once('error', reject)
+      })
+      const stopChild = async (): Promise<{ reaped: boolean }> => {
+        if (child.connected) child.send('stop')
+        expect(await exited).toBe(0)
+        return { reaped: true }
+      }
+      const cleanup = createDeferred<{ reaped: boolean }>()
+      const prompt = createDeferred<{ stopReason: string }>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const onEvent = vi.fn()
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          const fake = createFakeRuntime({
+            frameworkId,
+            sessionIds: [`old-${created.length}`, `new-${created.length}`],
+            callbacks,
+            prompt: () => prompt.promise
+          })
+          created.push(fake)
+          return fake.runtime
+        },
+        { onEvent }
+      )
+      const target: AcpSessionAgentTarget = {
+        frameworkId,
+        providerId: path,
+        reasoningEffort: 'default'
+      }
+      try {
+        await coordinator.createSession({ agentTarget: target })
+        const oldRuntime = created.at(-1)!
+        vi.mocked(oldRuntime.runtime.shutdownForUpdateGate).mockReturnValueOnce(cleanup.promise)
+        const teardown = coordinator.shutdownForUpdateGate()
+        const observed = teardown.catch((error) => error)
+        const next = await coordinator.createSession({ agentTarget: target })
+        const nextRuntime = created.at(-1)!
+        expect(nextRuntime === oldRuntime).toBe(frameworkId !== 'opencode')
+        vi.mocked(nextRuntime.runtime.shutdownForQuit).mockImplementationOnce(stopChild)
+        nextRuntime.cancelPrompt.mockImplementationOnce(async () => {
+          prompt.resolve({ stopReason: 'cancelled' })
+          return nextRuntime.runtime.getSnapshot()
+        })
+        const turn = coordinator.sendPrompt({ sessionId: next.sessionId, text: 'new work' })
+        await vi.waitFor(() =>
+          expect(coordinator.getSnapshot().promptInFlightSessionIds).toContain(next.sessionId)
+        )
+        if (outcome === 'rejected') cleanup.reject(new Error('old cleanup rejected'))
+        else cleanup.resolve({ reaped: outcome === 'reaped' })
+        const settlement = await observed
+        if (outcome === 'rejected') expect(settlement).toBeInstanceOf(Error)
+        else expect(settlement).toEqual({ reaped: false })
+        expect(coordinator.getSnapshot().sessionIds).toContain(next.sessionId)
+        nextRuntime.emitEvent({
+          id: 'new-generation-event',
+          timestamp: 1,
+          kind: 'tool',
+          level: 'info',
+          sessionId: next.sessionId,
+          toolCallId: 'new-tool',
+          status: 'completed'
+        })
+        expect(onEvent).toHaveBeenCalledWith(
+          expect.objectContaining({ sessionId: next.sessionId, toolCallId: 'new-tool' })
+        )
+        expect(coordinator.getSnapshot().events).toContainEqual(
+          expect.objectContaining({ toolCallId: 'new-tool' })
+        )
+        await coordinator.cancelPrompt({ sessionId: next.sessionId })
+        expect(nextRuntime.cancelPrompt).toHaveBeenCalledWith({ sessionId: next.sessionId })
+        await turn
+        await coordinator.sendPrompt({ sessionId: next.sessionId, text: 'still usable' })
+        expect(nextRuntime.sendPrompt).toHaveBeenCalledTimes(2)
+        expect(child.exitCode).toBeNull()
+        await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+        expect(child.exitCode).toBe(0)
+        expect(coordinator.getSnapshot().sessionIds).toEqual([])
+        await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+        expect(nextRuntime.runtime.shutdownForQuit).toHaveBeenCalledOnce()
+      } finally {
+        cleanup.resolve({ reaped: true })
+        prompt.resolve({ stopReason: 'cancelled' })
+        await stopChild()
+      }
+    }
+  )
+})
+
+it('retains a reused runtime while a newly admitted Session is still being created', async () => {
+  const cleanup = createDeferred<{ reaped: boolean }>()
+  const create = createDeferred<void>()
+  const created: ReturnType<typeof createFakeRuntime>[] = []
+  const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+    const fake = createFakeRuntime({ frameworkId: 'codex', sessionIds: ['old', 'new'], callbacks })
+    created.push(fake)
+    return fake.runtime
+  })
+  const target: AcpSessionAgentTarget = {
+    frameworkId: 'codex',
+    providerId: 'provider',
+    reasoningEffort: 'default'
+  }
+  await coordinator.createSession({ agentTarget: target })
+  const owner = created.at(-1)!
+  vi.mocked(owner.runtime.shutdownForUpdateGate).mockReturnValueOnce(cleanup.promise)
+  const teardown = coordinator.shutdownForUpdateGate()
+  const originalCreate = owner.createSession.getMockImplementation() as AcpRuntime['createSession']
+  owner.createSession.mockImplementationOnce(
+    async (...args: Parameters<AcpRuntime['createSession']>) => {
+      await create.promise
+      return originalCreate(...args)
+    }
+  )
+  const next = coordinator.createSession({ agentTarget: target })
+  await vi.waitFor(() => expect(owner.createSession).toHaveBeenCalledTimes(2))
+  cleanup.resolve({ reaped: true })
+  await teardown
+  create.resolve()
+  const session = await next
+  expect(created.at(-1)).toBe(owner)
+  expect(coordinator.getSnapshot().sessionIds).toContain(session.sessionId)
+  await coordinator.sendPrompt({
+    sessionId: session.sessionId,
+    text: 'created after teardown settled'
+  })
+  expect(owner.sendPrompt).toHaveBeenCalledOnce()
+  await expect(coordinator.shutdownForQuit()).resolves.toEqual({ reaped: true })
+  expect(owner.runtime.shutdownForQuit).toHaveBeenCalledOnce()
 })

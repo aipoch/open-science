@@ -1,0 +1,321 @@
+diff --git a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
+index 30a62b9..71bec74 100644
+--- a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
++++ b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet.js
+@@ -5,6 +5,8 @@ import { buildRows, clampWindowStart, collectWindowStarts, createEmptyVirtualSta
+ import { buildColumns, createTableConfig, detectIndexOffset, getDisplayColumns, getSearchColumnLeft, getRowHeight, HEADER_HEIGHT, INDEX_COLUMN_WIDTH, normalizeCellStyle, normalizeRowHeight, RESIZABLE_COLUMN_MIN_WIDTH, RESIZABLE_ROW_MIN_HEIGHT, SPREADSHEET_MAX_ZOOM, SPREADSHEET_MIN_ZOOM, } from './spreadsheet/view.js';
+ const EXCEL_IMAGE_SCROLLBAR_GUARD = 18;
+ const DEFAULT_SPREADSHEET_WORKER_AUTO_THRESHOLD = 1 * 1024 * 1024;
++const MAX_CACHED_WINDOWS = 6;
++const MAX_CACHED_SHEETS = 2;
+ const E_VIRT_TABLE_STYLE_MARKERS = [
+     '.e-virt-table-container',
+     '.e-virt-table-overlayer',
+@@ -652,6 +654,18 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     const sheetStateCache = new Map();
+     const sheetImageCache = new Map();
+     const sheetChartCache = new Map();
++    const cacheSheetState = (sheetId, state) => {
++        sheetStateCache.delete(sheetId);
++        sheetStateCache.set(sheetId, state);
++        while (sheetStateCache.size > MAX_CACHED_SHEETS) {
++            const oldestSheetId = sheetStateCache.keys().next().value;
++            if (oldestSheetId === undefined)
++                break;
++            sheetStateCache.delete(oldestSheetId);
++            sheetImageCache.delete(oldestSheetId);
++            sheetChartCache.delete(oldestSheetId);
++        }
++    };
+     let table = null;
+     let resizeObserver = null;
+     let resizeFrame = 0;
+@@ -659,6 +673,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     let layoutRefreshToken = 0;
+     const layoutRefreshTimers = [];
+     let viewportRange = { start: 0, end: 0 };
++    const pendingWindowRequests = new Map();
++    let queuedInitialWindowRequest = null;
+     let scrollDirection = 1;
+     let lastScrollY = 0;
+     let sheetSessionId = 0;
+@@ -685,9 +701,9 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     const getActiveSheet = () => sheets.find(sheet => sheet.id === sheetIndex);
+     const getSheetTabs = () => {
+         const visible = sheets.filter(sheet => !sheet.hidden);
+-        return visible.length ? visible : sheets;
++        return visible;
+     };
+-    const getActiveSheetId = () => { var _a; return sheetIndex !== null && sheetIndex !== void 0 ? sheetIndex : (_a = sheets[0]) === null || _a === void 0 ? void 0 : _a.id; };
++    const getActiveSheetId = () => { var _a; return sheetIndex !== null && sheetIndex !== void 0 ? sheetIndex : (_a = sheets.find(sheet => !sheet.hidden)) === null || _a === void 0 ? void 0 : _a.id; };
+     const getColumnLabel = (column) => {
+         let value = Math.max(0, column) + 1;
+         let label = '';
+@@ -1202,7 +1218,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+             endRow,
+             direction: scrollDirection,
+             totalRows: virtualState.totalRows,
+-        }).forEach(windowStart => requestWindow(windowStart, true));
++        }).slice(0, MAX_CACHED_WINDOWS).forEach(windowStart => requestWindow(windowStart, true));
+     };
+     const scheduleViewportLoad = () => {
+         if (!table || disposed) {
+@@ -1387,7 +1403,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         }
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         // e-virt-table writes its pixel-width cache after emitting the resize event.
+         // Clear it after that write so our unscaled, per-sheet widths remain authoritative.
+@@ -1416,19 +1432,55 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         virtualState.rowHeightCache.set(rowIndex, baseHeight);
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         syncTableLayout();
+     }
++    const flushQueuedInitialWindowRequest = () => {
++        const queued = queuedInitialWindowRequest;
++        if (!queued || disposed || pendingWindowRequests.size >= MAX_CACHED_WINDOWS) {
++            return;
++        }
++        if (queued.sessionId !== sheetSessionId || queued.sheet !== getActiveSheetId()) {
++            queuedInitialWindowRequest = null;
++            return;
++        }
++        queuedInitialWindowRequest = null;
++        requestWindow(queued.startRow, false);
++    };
+     function requestWindow(startRow = 0, silent = true) {
+         const sheetId = getActiveSheetId();
+         if (sheetId === undefined) {
+             return;
+         }
+         const windowStart = clampWindowStart(startRow, virtualState.totalRows);
+-        if (virtualState.loadedWindows.has(windowStart) || virtualState.loadingWindows.has(windowStart)) {
++        if (virtualState.loadedWindows.has(windowStart)) {
++            virtualState.loadedWindows.delete(windowStart);
++            virtualState.loadedWindows.add(windowStart);
+             return;
+         }
++        if (virtualState.loadingWindows.has(windowStart)) {
++            return;
++        }
++        if (pendingWindowRequests.size >= MAX_CACHED_WINDOWS) {
++            if (!silent) {
++                queuedInitialWindowRequest = {
++                    sessionId: sheetSessionId,
++                    sheet: sheetId,
++                    startRow: windowStart,
++                };
++            }
++            return;
++        }
++        if (!silent && queuedInitialWindowRequest?.sessionId === sheetSessionId) {
++            queuedInitialWindowRequest = null;
++        }
++        const requestKey = `${sheetSessionId}:${sheetId}:${windowStart}`;
++        pendingWindowRequests.set(requestKey, {
++            sessionId: sheetSessionId,
++            sheet: sheetId,
++            startRow: windowStart,
++        });
+         virtualState.loadingWindows.add(windowStart);
+         syncWindowStats();
+         if (virtualState.active) {
+@@ -1540,6 +1592,41 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         });
+         virtualState.windowCells.set(meta.startRow, keys);
+     };
++    const evictWindow = (windowStart) => {
++        const rowIndexes = virtualState.windowRows.get(windowStart) || [];
++        rowIndexes.forEach((absoluteRow) => {
++            const row = virtualState.rows[absoluteRow];
++            if (!row)
++                return;
++            clearVirtualRow(row);
++            row[ROW_STATE_FIELD] = RowState.Placeholder;
++            virtualState.rowHeightCache.delete(absoluteRow);
++            delete row.__baseHeight;
++            delete row._height;
++        });
++        const cellKeys = virtualState.windowCells.get(windowStart) || [];
++        cellKeys.forEach((key) => virtualState.cellCache.delete(key));
++        virtualState.windowRows.delete(windowStart);
++        virtualState.windowCells.delete(windowStart);
++        virtualState.loadedWindows.delete(windowStart);
++    };
++    const trimWindowCache = () => {
++        if (virtualState.loadedWindows.size <= MAX_CACHED_WINDOWS)
++            return;
++        const protectedWindows = new Set(collectWindowStarts({
++            startRow: viewportRange.start,
++            endRow: viewportRange.end,
++            direction: scrollDirection,
++            totalRows: virtualState.totalRows,
++        }).slice(0, MAX_CACHED_WINDOWS));
++        while (virtualState.loadedWindows.size > MAX_CACHED_WINDOWS) {
++            const cachedWindows = Array.from(virtualState.loadedWindows);
++            const candidate = cachedWindows.find((windowStart) => !protectedWindows.has(windowStart));
++            if (candidate === undefined)
++                break;
++            evictWindow(candidate);
++        }
++    };
+     const setSheetMerges = (merges) => {
+         virtualState.mergeStartMap.clear();
+         virtualState.mergeCoveredMap.clear();
+@@ -1605,13 +1692,15 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         applyWindowRows(ws);
+         applyWindowCells(ws);
+         applyDefaultInitialFit();
++        virtualState.loadedWindows.delete(meta.startRow);
+         virtualState.loadedWindows.add(meta.startRow);
+         virtualState.loadingWindows.delete(meta.startRow);
++        trimWindowCache();
+         syncWindowStats();
+         hasInitialWindow = true;
+         const activeSheetId = getActiveSheetId();
+         if (activeSheetId !== undefined) {
+-            sheetStateCache.set(activeSheetId, virtualState);
++            cacheSheetState(activeSheetId, virtualState);
+         }
+         if (isFirstWindow) {
+             renderTable(ensureTable(), virtualState.columns, virtualState.rows, true);
+@@ -1631,9 +1720,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         }
+         requestPendingSearchWindow();
+         flushPendingSearchJump();
+-        const start = viewportRange.start || meta.startRow;
+-        const end = Math.max(viewportRange.end, meta.endRow - 1, meta.startRow);
+-        ensureViewportWindows(start, end);
++        ensureViewportWindows(viewportRange.start, viewportRange.end);
+     };
+     const resetViewState = () => {
+         errorMessage = '';
+@@ -1660,13 +1747,14 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         if (sheetId === undefined || !virtualState.active) {
+             return;
+         }
+-        sheetStateCache.set(sheetId, virtualState);
++        cacheSheetState(sheetId, virtualState);
+     };
+     const restoreCachedSheetState = (sheetId) => {
+         const cached = sheetStateCache.get(sheetId);
+         if (!cached) {
+             return false;
+         }
++        cacheSheetState(sheetId, cached);
+         cached.loadingWindows.clear();
+         virtualState = cached;
+         errorMessage = '';
+@@ -1858,7 +1946,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         sheets = list;
+         resolveWorkbookReady === null || resolveWorkbookReady === void 0 ? void 0 : resolveWorkbookReady();
+         resolveWorkbookReady = null;
+-        const firstSheet = list.find((sheet) => !sheet.hidden) || list[0];
++        const firstSheet = list.find((sheet) => !sheet.hidden);
+         if (firstSheet) {
+             sheetIndex = firstSheet.id;
+             renderChrome();
+@@ -1868,10 +1956,24 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         }
+         sheetInitializing = false;
+         loadingState = false;
++        const empty = documentRef.createElement('p');
++        empty.className = 'spreadsheet-empty';
++        empty.setAttribute('role', 'status');
++        empty.textContent = t(list.length ? 'state.empty.message' : 'state.empty.title');
++        tableHost.replaceChildren(empty);
+         renderChrome();
++        setHidden(toolbar, true);
++        hasNotifiedFirstPaint = true;
++        context?.onProgressiveRender?.();
+     });
+     controller.onWorkerEvent('parseSheet', ({ sessionId, sheet, sheetData: ws }) => {
++        const startRow = ws.meta?.startRow;
++        if (typeof startRow === 'number') {
++            pendingWindowRequests.delete(`${sessionId}:${sheet}:${startRow}`);
++        }
++        flushQueuedInitialWindowRequest();
+         if (sessionId !== sheetSessionId || sheet !== getActiveSheetId()) {
++            ensureViewportWindows(viewportRange.start, viewportRange.end);
+             return;
+         }
+         applyVirtualWindow(ws);
+@@ -1879,7 +1981,16 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     controller.onWorkerEvent('parseError', ({ sessionId, startRow, message }) => {
+         resolveWorkbookReady === null || resolveWorkbookReady === void 0 ? void 0 : resolveWorkbookReady();
+         resolveWorkbookReady = null;
++        if (typeof startRow === 'number') {
++            for (const [requestKey, request] of pendingWindowRequests) {
++                if (request.sessionId === sessionId && request.startRow === startRow) {
++                    pendingWindowRequests.delete(requestKey);
++                }
++            }
++        }
++        flushQueuedInitialWindowRequest();
+         if (sessionId && sessionId !== sheetSessionId) {
++            ensureViewportWindows(viewportRange.start, viewportRange.end);
+             return;
+         }
+         sheetInitializing = false;
+@@ -1900,6 +2011,8 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+         renderChrome();
+     });
+     controller.onWorkerError((event) => {
++        pendingWindowRequests.clear();
++        queuedInitialWindowRequest = null;
+         sheetInitializing = false;
+         loadingState = false;
+         errorMessage = event.message || t('spreadsheet.error.workerFailed');
+@@ -1911,7 +2024,7 @@ const renderFileViewerSpreadsheet = async (buffer, target, type, context) => {
+     });
+     (_k = context === null || context === void 0 ? void 0 : context.registerThumbnailAdapter) === null || _k === void 0 ? void 0 : _k.call(context, {
+         beforeCapture: async ({ signal }) => {
+-            while (!hasInitialWindow && !errorMessage && !disposed) {
++            while (!hasNotifiedFirstPaint && !errorMessage && !disposed) {
+                 if (signal === null || signal === void 0 ? void 0 : signal.aborted) {
+                     throw signal.reason;
+                 }
+diff --git a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
+index 76cd22e..325d175 100644
+--- a/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
++++ b/node_modules/@file-viewer/renderer-spreadsheet/dist/spreadsheet/worker/sheetjs/parser.js
+@@ -247,19 +247,16 @@ const parseSheets = (context) => {
+         var _a;
+         const worksheet = workbook.Sheets[name];
+         const bounds = getWorksheetDisplayBounds(worksheet, context.charts[name]);
+-        if (!(worksheet === null || worksheet === void 0 ? void 0 : worksheet['!ref']) && !bounds.observedRowCount && !bounds.observedColCount) {
+-            return result;
+-        }
+         if (bounds.trimmed) {
+             console.warn(`[file-viewer] Ignored pathological worksheet dimensions for ${name}: `
+                 + `${bounds.declaredRowCount}x${bounds.declaredColCount} -> ${bounds.rowCount}x${bounds.colCount}.`);
+         }
+         result.push({
+-            id: result.length,
++            id: sourceIndex,
+             name,
+             hidden: !!((_a = workbookSheets[sourceIndex]) === null || _a === void 0 ? void 0 : _a.Hidden),
+-            rowCount: bounds.rowCount,
+-            colCount: bounds.colCount,
++            rowCount: Math.max(bounds.rowCount, 1),
++            colCount: Math.max(bounds.colCount, 1),
+         });
+         return result;
+     }, []);
+@@ -396,6 +393,9 @@ export const searchSpreadsheetWorkbook = (context, query, options = {}) => {
+     const expression = createSpreadsheetSearchRegExp(normalizedQuery, options);
+     const matches = [];
+     for (const sheet of context.sheets) {
++        if (sheet.hidden) {
++            continue;
++        }
+         const worksheet = context.workbook.Sheets[sheet.name];
+         if (!worksheet) {
+             continue;

@@ -1,3 +1,4 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { mkdtemp, mkdir, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -62,17 +63,21 @@ describe('PowerShell search admission contract', () => {
     const wrap = vi.fn().mockRejectedValue(new Error('must not reach sandbox'))
     const adapter = new NotebookShellProcessAdapter('win32', { wrap })
     await expect(
-      adapter.prepare({
-        command: 'fixture source',
-        cwd,
-        handoffDir: cwd,
-        runtimeRoot: root,
-        environment: {},
-        sessionId: 's',
-        projectId: 'p'
-      })
-    ).rejects.toThrow(/search scope denied/i)
+      adapter
+        .prepare({
+          command: 'fixture source',
+          runtimeBinding: { kind: 'powershell', version: '5.1' },
+          cwd,
+          handoffDir: cwd,
+          runtimeRoot: root,
+          environment: {},
+          sessionId: 's',
+          projectId: 'p'
+        })
+        .then((prepared) => prepared.execute())
+    ).resolves.toMatchObject({ exitCode: 1, stderr: expect.stringMatching(/search scope denied/i) })
     expect(wrap).not.toHaveBeenCalled()
+    expect(await adapter.shutdown()).toEqual({ reaped: true })
   })
 
   it('checks literal scoped paths and preserves normal commands', async () => {
@@ -90,17 +95,21 @@ describe('PowerShell search admission contract', () => {
     const wrap = vi.fn().mockRejectedValue(sentinel)
     const adapter = new NotebookShellProcessAdapter('win32', { wrap })
     await expect(
-      adapter.prepare({
-        command: 'fixture source',
-        cwd,
-        handoffDir: cwd,
-        runtimeRoot: root,
-        environment: {},
-        sessionId: 's',
-        projectId: 'p'
-      })
-    ).rejects.toBe(sentinel)
+      adapter
+        .prepare({
+          command: 'fixture source',
+          runtimeBinding: { kind: 'powershell', version: '5.1' },
+          cwd,
+          handoffDir: cwd,
+          runtimeRoot: root,
+          environment: {},
+          sessionId: 's',
+          projectId: 'p'
+        })
+        .then((prepared) => prepared.execute())
+    ).resolves.toMatchObject({ exitCode: null, stderr: sentinel.message })
     expect(wrap).toHaveBeenCalledOnce()
+    expect(await adapter.shutdown()).toEqual({ reaped: true })
   })
 })
 
@@ -272,3 +281,5 @@ describe('assertShellSearchScope with granted roots', () => {
     }
   )
 })
+
+configureTestRuntimeMetadata()

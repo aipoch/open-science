@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
+import { fireEvent, within } from '@testing-library/dom'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { JobSummary } from '../../../../shared/compute'
@@ -11,6 +12,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { EMPTY_SNAPSHOT, useNotificationInboxStore } from '@/stores/notification-inbox-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
+import { usePackageOperationStore } from '@/stores/package-operation-store'
 import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
 import {
   createInitialSessionState,
@@ -18,6 +20,8 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
+import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { createInitialSkillImportState, useSkillImportStore } from '@/stores/skill-import-store'
 import { clickRadixMenuItem, openRadixMenu } from '../settings/test-utils'
 import { HomePage } from './HomePage'
 
@@ -369,11 +373,14 @@ beforeEach(() => {
   useSessionJobStore.setState(createInitialSessionJobState())
   useSessionStore.setState(createInitialSessionState())
   useSettingsStore.setState(createInitialSettingsState())
+  useComputeStore.setState(createInitialComputeState())
+  useSkillImportStore.setState(createInitialSkillImportState())
   useNotificationInboxStore.setState({
     ...EMPTY_SNAPSHOT,
     status: 'idle',
     error: undefined
   })
+  usePackageOperationStore.setState({ operation: null, open: false, dismissedId: undefined })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -383,6 +390,35 @@ afterEach(() => {
   act(() => root.unmount())
   container.remove()
   document.body.innerHTML = ''
+})
+
+describe('HomePage package export progress', () => {
+  it('shows background progress before the GitHub action and reopens its detail', () => {
+    usePackageOperationStore.setState({
+      operation: {
+        id: 'export-1',
+        kind: 'export',
+        state: 'running',
+        session: { projectId: 'project-1', sessionId: 'session-1' },
+        progress: { phase: 'copying', completedBytes: 512, totalBytes: 1024 }
+      },
+      open: false
+    })
+    act(() => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+
+    const button = container.querySelector<HTMLButtonElement>(
+      'button[aria-label*="Copying files…"]'
+    )
+    expect(button).not.toBeNull()
+    expect(button?.closest('header')).not.toBeNull()
+    expect(button?.nextElementSibling?.classList.contains('sm:inline-flex')).toBe(true)
+    act(() => button?.click())
+    expect(usePackageOperationStore.getState().open).toBe(true)
+  })
 })
 
 describe('HomePage environment repair notice', () => {
@@ -823,7 +859,7 @@ describe('HomePage activity overview', () => {
     expect(header).not.toBeNull()
     expect(header?.querySelector('[aria-label^="Language:"]')).toBeNull()
     expect(header?.querySelector('[aria-label^="Theme:"]')).toBeNull()
-    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Model settings"]')
+    const settings = header?.querySelector<HTMLButtonElement>('[aria-label="Settings"]')
     expect(settings).not.toBeNull()
     expect(useSettingsStore.getState().isSettingsOpen).toBe(false)
 
@@ -840,11 +876,11 @@ describe('HomePage activity overview', () => {
       )
     )
 
-    const settings = container.querySelector('[aria-label="Model settings"]')
+    const settings = container.querySelector('[aria-label="Settings"]')
     const update = container.querySelector('[data-testid="home-update-capsule"]')
-    const newProject = Array.from(container.querySelectorAll('button')).find((button) =>
-      button.textContent?.includes('New project')
-    )
+    const newProject = within(container.querySelector('header')!).getByRole('button', {
+      name: 'New project'
+    })
 
     expect(settings).not.toBeNull()
     expect(update).not.toBeNull()
@@ -952,6 +988,234 @@ describe('HomePage activity overview', () => {
     expect(container.textContent).toContain('Waiting for your answer')
     expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
     expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+  })
+
+  it('shows an existing remote command approval as waiting on Home until it settles', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({
+      sessions: [session('remote', 'Remote analysis', 'running', 600_000)]
+    })
+    useComputeStore.getState().enqueueApproval({
+      id: 'remote-approval',
+      session_id: 'remote',
+      provider_id: 'ssh:cluster',
+      provider_name: 'Cluster',
+      shape: 'direct_ssh',
+      intent: 'Run remote analysis',
+      operation: 'call_command',
+      command_preview: 'python analysis.py',
+      command_full: 'python analysis.py'
+    })
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    expect(
+      container.querySelector('[aria-label="Open session Remote analysis, waiting for permission"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 running"]')).toBeNull()
+    await act(async () => useComputeStore.getState().dismissApproval('remote-approval'))
+    expect(
+      container.querySelector('[aria-label="Open session Remote analysis, running"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).toBeNull()
+  })
+
+  it('keeps connector approval waiting when the response fails and another request remains', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({
+      sessions: [session('connector', 'Connector analysis', 'running', 600_000)]
+    })
+    const request = {
+      id: 'connector-approval-1',
+      sessionId: 'connector',
+      connector: 'literature',
+      method: 'save_to_inbox',
+      argsPreview: '{}'
+    }
+    useSettingsStore.setState({
+      pendingApprovals: [request, { ...request, id: 'connector-approval-2' }]
+    })
+    Object.assign(window.api, {
+      settings: {
+        respondConnectorApproval: vi.fn().mockRejectedValue(new Error('transport unavailable'))
+      }
+    })
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    const waiting = (): Element | null =>
+      container.querySelector(
+        '[aria-label="Open session Connector analysis, waiting for permission"]'
+      )
+    expect(waiting()).not.toBeNull()
+    await act(async () => {
+      await expect(useSettingsStore.getState().respondApproval(request.id, 'once')).rejects.toThrow(
+        'transport unavailable'
+      )
+    })
+    expect(waiting()).not.toBeNull()
+    await act(async () => useSettingsStore.getState().dismissApproval(request.id))
+    expect(waiting()).not.toBeNull()
+    await act(async () => useSettingsStore.getState().dismissApproval('connector-approval-2'))
+    expect(waiting()).toBeNull()
+    expect(
+      container.querySelector('[aria-label="Open session Connector analysis, running"]')
+    ).not.toBeNull()
+  })
+
+  it('shows an existing skill import approval without changing its preview or answered content', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    const existing = session('skill', 'Skill import', 'running', 600_000)
+    existing.messages = [
+      {
+        id: 'answer-1',
+        role: 'user',
+        content: 'Use the narrow scope',
+        status: 'complete',
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    useSessionStore.setState({ sessions: [existing] })
+    const request = {
+      id: 'skill-approval',
+      sessionId: 'skill',
+      source: { kind: 'attachment' as const, label: 'analysis.skill' },
+      previews: [
+        {
+          subPath: 'analysis',
+          name: 'Analysis',
+          description: '',
+          metadata: {},
+          body: '',
+          files: ['SKILL.md'],
+          alreadyImported: false
+        }
+      ],
+      skipped: []
+    }
+    const originalRequest = structuredClone(request)
+    useSkillImportStore.getState().enqueue(request)
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    expect(
+      container.querySelector('[aria-label="Open session Skill import, waiting for permission"]')
+    ).not.toBeNull()
+    expect(useSkillImportStore.getState().pending).toEqual([originalRequest])
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Use the narrow scope')
+    await act(async () => useSkillImportStore.getState().dismiss(request.id))
+    expect(
+      container.querySelector('[aria-label="Open session Skill import, running"]')
+    ).not.toBeNull()
+    expect(useSessionStore.getState().sessions[0].messages[0].content).toBe('Use the narrow scope')
+  })
+
+  it('keeps other waits after an approval settles and shows input before plan review', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({
+      sessions: [session('combined', 'Combined waits', 'waiting-plan-approval', 600_000)]
+    })
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'approval',
+          sessionId: 'combined',
+          connector: 'literature',
+          method: 'save_to_inbox',
+          argsPreview: '{}'
+        }
+      ],
+      pendingCredentialRequests: [
+        {
+          id: 'credential',
+          sessionId: 'combined',
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works'
+        }
+      ]
+    })
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    expect(
+      container.querySelector('[aria-label="Open session Combined waits, waiting for permission"]')
+    ).not.toBeNull()
+    await act(async () => useSettingsStore.getState().dismissApproval('approval'))
+    expect(
+      container.querySelector('[aria-label="Open session Combined waits, waiting for your answer"]')
+    ).not.toBeNull()
+    await act(async () => useSettingsStore.setState({ pendingCredentialRequests: [] }))
+    expect(
+      container.querySelector(
+        '[aria-label="Open session Combined waits, waiting for plan approval"]'
+      )
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).not.toBeNull()
+  })
+
+  it('does not present global or closed requests as actionable Session waits', async () => {
+    useProjectStore.setState({ projects: [project], isLoaded: true })
+    useSessionStore.setState({
+      sessions: [session('closed', 'Continuing analysis', 'running', 600_000)]
+    })
+    useSettingsStore.setState({
+      pendingApprovals: [
+        {
+          id: 'global-approval',
+          connector: 'literature',
+          method: 'save_to_inbox',
+          argsPreview: '{}'
+        },
+        {
+          id: 'closed-approval',
+          sessionId: 'closed',
+          closed: true,
+          responseFailed: true,
+          connector: 'literature',
+          method: 'save_to_inbox',
+          argsPreview: '{}'
+        }
+      ],
+      pendingCredentialRequests: [
+        {
+          id: 'global-credential',
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works'
+        },
+        {
+          id: 'closed-credential',
+          sessionId: 'closed',
+          closed: true,
+          responseFailed: true,
+          credentialId: 'openalex',
+          connector: 'literature',
+          method: 'openalex_search_works'
+        }
+      ]
+    })
+    await act(async () =>
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    )
+    expect(
+      container.querySelector('[aria-label="Open session Continuing analysis, running"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[aria-label="1 waiting on you"]')).toBeNull()
+    expect(useSettingsStore.getState().pendingCredentialRequests).toHaveLength(2)
   })
 
   it('shows Session credential recovery as waiting for an answer on Home', async () => {
@@ -1398,7 +1662,15 @@ describe('HomePage activity overview', () => {
       reason: 'the question belongs to an inactive root Branch',
       mutate: (candidate: ChatSession) => {
         const rootFrame = candidate.conversationGraph?.frames.find(({ id }) => id === 'root')
-        if (rootFrame) rootFrame.activeBranchId = 'inactive-root-branch'
+        if (rootFrame && candidate.conversationGraph) {
+          candidate.conversationGraph.branches.push({
+            id: 'inactive-root-branch',
+            agentFrameId: rootFrame.id,
+            createdAt: 1,
+            updatedAt: 1
+          })
+          rootFrame.activeBranchId = 'inactive-root-branch'
+        }
       }
     },
     {
@@ -1752,16 +2024,69 @@ describe('HomePage activity overview', () => {
         <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
       )
     )
-    const section = container.querySelector('[aria-label="Projects"]')!
-    expect.soft(section.textContent).not.toContain('No projects yet.')
+    const section = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+    expect.soft(section.textContent).not.toContain('Create a project, start a conversation')
+    expect
+      .soft(section.textContent)
+      .not.toContain('Keep your files and conversations together in a project.')
+    expect.soft(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
     expect.soft(section.querySelector('[role="status"]')?.textContent).toBe('Loading…')
     await act(async () => {
       resolve([])
       await load
     })
-    expect(section.textContent).toContain('No projects yet. Create one to get started.')
+    expect(section.textContent).toContain('Create a project, start a conversation')
+    expect(section.textContent).toContain(
+      'Keep your files and conversations together in a project.'
+    )
+    expect(within(section).getByRole('button', { name: 'New project' })).toBeDefined()
     expect(section.querySelector('[role="status"]')).toBeNull()
+
+    await act(async () => useProjectStore.setState({ projects: [project] }))
+
+    expect(section.textContent).toContain(project.name)
+    expect(section.textContent).not.toContain('Create a project, start a conversation')
+    expect(section.textContent).not.toContain(
+      'Keep your files and conversations together in a project.'
+    )
+    expect(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
   })
+
+  it.each(['project empty state', 'header'] as const)(
+    'opens the existing project form from the %s creation button',
+    async (entry) => {
+      useProjectStore.setState({ ...createInitialProjectState(), isLoaded: true })
+
+      await act(async () =>
+        root.render(
+          <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+        )
+      )
+
+      const projectSection = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+      const scope =
+        entry === 'project empty state' ? projectSection : container.querySelector('header')!
+      const createButton = within(scope).getByRole('button', {
+        name: 'New project'
+      })
+
+      await act(async () =>
+        within(projectSection).getByText('Create a project, start a conversation').click()
+      )
+      expect(within(document.body).queryByRole('dialog')).toBeNull()
+
+      await act(async () => createButton.click())
+
+      const dialog = within(document.body).getByRole('dialog', { name: 'New project' })
+      expect(within(dialog).getByText(/Group related sessions under a project\./)).toBeDefined()
+      expect(within(dialog).getByRole('textbox', { name: 'Name' })).toBeDefined()
+
+      await act(async () => within(dialog).getByRole('button', { name: 'Cancel' }).click())
+
+      expect(within(document.body).queryByRole('dialog')).toBeNull()
+      expect(within(projectSection).getByRole('button', { name: 'New project' })).toBeDefined()
+    }
+  )
 
   it('offers a Retry action when loading Projects fails', async () => {
     const loadProjects = vi.fn().mockResolvedValue(undefined)
@@ -1786,6 +2111,9 @@ describe('HomePage activity overview', () => {
       'Open-Science could not load projects. Retry to continue.'
     )
     expect(container.textContent).not.toContain('database is locked')
+    const section = container.querySelector<HTMLElement>('[aria-label="Projects"]')!
+    expect(section.textContent).not.toContain('Create a project, start a conversation')
+    expect(within(section).queryByRole('button', { name: 'New project' })).toBeNull()
 
     await act(async () => retry?.click())
     expect(loadProjects).toHaveBeenCalledOnce()
@@ -1933,5 +2261,54 @@ describe('HomePage recent session ordering', () => {
     await setSessions([first, { ...second, updatedAt: 300 }])
     await renderHome()
     expect(titles()).toEqual(['First analysis', 'Second analysis'])
+  })
+})
+
+describe('HomePage package drop', () => {
+  it('accepts a package without using the previously active Project and clears its overlay', async () => {
+    const importPackage = vi.fn(async () => null)
+    Object.defineProperty(window.api, 'sessions', { value: { importPackage } })
+    useNavigationStore.setState({ activeProjectId: project.id })
+    await act(async () => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+    const home = within(container).getByRole('main')
+    const file = new File(['fixture'], 'research.science')
+    const dataTransfer = { types: ['Files'], files: [file], dropEffect: 'none' }
+    act(() => {
+      fireEvent.dragEnter(home, { dataTransfer })
+      fireEvent.dragOver(home, { dataTransfer })
+    })
+    expect(dataTransfer.dropEffect).toBe('copy')
+    expect(within(container).getByText('Drop a .science file to import')).toBeTruthy()
+    await act(async () => {
+      fireEvent.drop(home, { dataTransfer })
+    })
+    expect(importPackage).toHaveBeenCalledExactlyOnceWith({}, file)
+    expect(within(container).queryByText('Drop a .science file to import')).toBeNull()
+  })
+
+  it('rejects a mixed batch on Home without starting a partial import', async () => {
+    const importPackage = vi.fn(async () => null)
+    Object.defineProperty(window.api, 'sessions', { value: { importPackage } })
+    await act(async () => {
+      root.render(
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={vi.fn()} />
+      )
+    })
+    act(() => {
+      fireEvent.drop(within(container).getByRole('main'), {
+        dataTransfer: {
+          types: ['Files'],
+          files: [new File([''], 'research.science'), new File([''], 'data.csv')]
+        }
+      })
+    })
+    expect(importPackage).not.toHaveBeenCalled()
+    expect(
+      within(container).getByText('Drop one .science file at a time. No files were added.')
+    ).toBeTruthy()
   })
 })

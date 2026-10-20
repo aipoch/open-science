@@ -1,7 +1,7 @@
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto'
 import { join } from 'node:path'
 
-import { readDurableJsonFile, writeDurableJsonFile } from '../storage/durable-json-file'
+import { readDurableJsonFile, writeDurableJsonFile } from '@aipoch/durable-files'
 
 const FILE_NAME = 'wsl-setup-sessions.json'
 const TOKEN_TTL_MS = 30 * 60_000

@@ -1,0 +1,19 @@
+{"name":"leading-reasoning-wrapper","output":"<think>private reasoning</think>ATP 增加。","answer":"ATP 增加。"}
+{"name":"bom-and-uppercase-reasoning","output":"﻿ \n<THINK>private\nreasoning</THINK>\n\nATP 增加。","answer":"ATP 增加。"}
+{"name":"consecutive-reasoning-wrappers","output":"<think>one</think>\n<thinking>two</thinking>ATP 增加。","answer":"ATP 增加。"}
+{"name":"nested-reasoning-wrappers","output":"<think>outer<think>inner</think>outer</think>ATP 增加。","answer":"ATP 增加。"}
+{"name":"reasoning-wrapper-attribute","output":"<thinking mode=\"analysis\">private</thinking>ATP 增加。","answer":"ATP 增加。"}
+{"name":"final-answer-paragraph-breaks","output":"<think>reasoning</think>第一段。\n\n第二段。","answer":"第一段。\n\n第二段。"}
+{"name":"inline-code-is-not-reasoning","output":"使用 `<think>` 标签。","answer":"使用 `<think>` 标签。"}
+{"name":"code-fence-is-not-reasoning","output":"```xml\n<think>示例</think>\n```","answer":"```xml\n<think>示例</think>\n```"}
+{"name":"similar-tag-is-not-reasoning","output":"<thinker>示例</thinker>","answer":"<thinker>示例</thinker>"}
+{"name":"less-than-comparison-is-not-reasoning","output":"P < 0.05; n = 12.","answer":"P < 0.05; n = 12."}
+{"name":"unclosed-reasoning","output":"<think>private reasoning","answer":null}
+{"name":"truncated-closing-tag","output":"<think>private reasoning</thi","answer":null}
+{"name":"reasoning-with-no-answer","output":"<think>private reasoning</think>","answer":null}
+{"name":"unfinished-second-reasoning","output":"<think>one</think><thinking>unfinished","answer":null}
+{"name":"unfinished-nested-reasoning","output":"<think>outer<think>inner</think>unfinished","answer":null}
+{"name":"mismatched-reasoning-tags","output":"<think>reasoning</thinking>ATP 增加。","answer":null}
+{"name":"truncated-opening-attribute","output":"<think mode=\"analysis\"","answer":null}
+{"name":"unexpected-closing-tag","output":"</think>ATP 增加。","answer":null}
+{"name":"truncated-tag-prefix","output":"<thi","answer":null}

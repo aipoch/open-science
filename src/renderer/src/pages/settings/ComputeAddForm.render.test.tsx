@@ -3,7 +3,8 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
 import { ComputeAddForm } from './ComputeAddForm'
 
@@ -310,5 +311,73 @@ describe('ComputeAddForm password authentication', () => {
 
     expect(container.querySelector('[role="alert"]')?.textContent).toBe('Could not add host.')
     expect(container.textContent).not.toContain('ssh helper leaked a private path')
+  })
+})
+
+describe('ComputeAddForm completion navigation', () => {
+  it.each(['current', 'left', 'returned'] as const)(
+    'keeps creation and probing but navigates only from the current form (%s)',
+    async (location) => {
+      let resolve!: (host: ComputeHost) => void
+      const createHost = vi.fn().mockReturnValue(
+        new Promise<ComputeHost>((done) => {
+          resolve = done
+        })
+      )
+      useComputeStore.setState({ createHost })
+      const onCreated = vi.fn()
+      const returnedCreated = vi.fn()
+      await act(async () =>
+        root.render(<ComputeAddForm onCreated={onCreated} onCancel={vi.fn()} />)
+      )
+      act(() => enter('compute-alias', 'cluster'))
+      const add = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Add'
+      )!
+      await act(async () => add.click())
+      expect(createHost).toHaveBeenCalledOnce()
+      if (location !== 'current') act(() => root.render(null))
+      if (location === 'returned') {
+        await act(async () =>
+          root.render(<ComputeAddForm onCreated={returnedCreated} onCancel={vi.fn()} />)
+        )
+        act(() => enter('compute-alias', 'new-draft'))
+      }
+      await act(async () => resolve(createdHost))
+      expect(useComputeStore.getState().probeHost).toHaveBeenCalledOnce()
+      expect(useComputeStore.getState().probeHost).toHaveBeenCalledWith(createdHost.providerId)
+      if (location === 'current')
+        expect(onCreated).toHaveBeenCalledExactlyOnceWith(createdHost.providerId)
+      else expect(onCreated).not.toHaveBeenCalled()
+      expect(returnedCreated).not.toHaveBeenCalled()
+      if (location === 'returned') {
+        expect(container.querySelector<HTMLInputElement>('#compute-alias')?.value).toBe('new-draft')
+      }
+    }
+  )
+
+  it('does not apply an old creation failure to a returned form', async () => {
+    let reject!: (error: Error) => void
+    useComputeStore.setState({
+      createHost: vi.fn().mockReturnValue(
+        new Promise<ComputeHost>((_, no) => {
+          reject = no
+        })
+      )
+    })
+    const onCreated = vi.fn()
+    await act(async () => root.render(<ComputeAddForm onCreated={onCreated} onCancel={vi.fn()} />))
+    act(() => enter('compute-alias', 'cluster'))
+    await act(async () =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Add')!
+        .click()
+    )
+    act(() => root.render(null))
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    await act(async () => reject(new Error('Old creation failed')))
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(onCreated).not.toHaveBeenCalled()
+    expect(useComputeStore.getState().probeHost).not.toHaveBeenCalled()
   })
 })

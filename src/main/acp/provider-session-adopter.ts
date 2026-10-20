@@ -1,13 +1,12 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
-
 import type { AcpCreateSessionResponse } from '../../shared/acp'
 import {
   normalizePermissionProfile,
   type PermissionProfileId
 } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { startDiagnosticOperation } from '../diagnostics/operation'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
   type AcpSessionCapabilityOwner,
@@ -58,7 +57,6 @@ type AcpProviderSessionAdopterDependencies = Readonly<{
   // session adoption.
   resolveProjectAgentContext?: (projectId: string) => Promise<string | undefined>
   peekClaudeReplay: (sessionId: string) => string | undefined
-  commitClaudeReplay: (sessionId: string) => void
   updateCwd: (cwd: string) => void
   emitState: () => void
   diagnosticContext: () => Readonly<Record<string, unknown>>
@@ -212,7 +210,6 @@ export class AcpProviderSessionAdopter {
         if (hasAuthoritativeSpecialistBinding) aggregate.setSpecialistId(specialistId)
         capability.commit(stableAppSessionId)
         capability.registerBridgeMcpSession?.(stableAppSessionId, provisionalSession.sessionId)
-        this.deps.commitClaudeReplay(stableAppSessionId)
         provisionalSession = undefined
         capability = undefined
         identity.release()

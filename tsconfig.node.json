@@ -3,14 +3,12 @@
   "include": [
     "electron.vite.config.*",
     "playwright.config.ts",
-    "playwright.accessibility.config.ts",
     "e2e/**/*",
     "vite.web.config.*",
     "src/main/**/*",
     "src/preload/**/*",
     "src/shared/**/*",
-    "playwright.browser.config.ts",
-    "vite.browser-test.config.ts"
+    "test/config/electron.vite.config.test.ts"
   ],
   "compilerOptions": {
     "composite": true,

@@ -1,8 +1,9 @@
+import { desktopShellInteraction } from '../desktop-interaction'
 import {
   captureProvenanceRead,
   type ProvenanceReadResult
 } from '../../shared/provenance-read-result'
-import { shell } from 'electron'
+
 import { basename, dirname } from 'node:path'
 
 import { ipcMainHandle } from '../ipc-handler-registry'
@@ -35,7 +36,7 @@ import type {
   GenerateArtifactCodeReconstructionRequest,
   GetArtifactCodeReconstructionRequest
 } from '../../shared/artifact-code-reconstruction'
-import { parseArtifactVersionLocator } from '../../shared/artifact-provenance'
+import { parseArtifactVersionLocator } from '../../shared/artifact-version-locator'
 import { resolveProjectId } from '../../shared/project-scope'
 import type {
   FinalizeRunArtifactsRequest,
@@ -51,7 +52,7 @@ import {
   type ManagedFilePreviewReadLease,
   waitForManagedFilePublication
 } from '../managed-file-preview'
-import { createLogger, type Logger } from '../logger'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import { ArtifactRepository } from './repository'
 import { ArtifactRunRegistry } from './run-registry'
 import {
@@ -137,6 +138,10 @@ type ArtifactHandlerDependencies = {
     sessionId: string,
     mutation: () => Promise<Result>
   ) => Promise<Result>
+  commitRecoveredArtifacts?: (
+    request: ReconcilePendingArtifactsRequest,
+    artifacts: ArtifactFile[]
+  ) => Promise<void>
   recoverPendingArtifacts?: (
     request: ReconcilePendingArtifactsRequest
   ) => Promise<{ artifacts: ArtifactFile[]; nativeRunIds: string[] } | undefined>
@@ -200,7 +205,8 @@ const createArtifactHandlers = (
 ): ArtifactHandlers => {
   const finalizeLocks = new Map<string, Promise<void>>()
   const openPath =
-    dependencies.openPath ?? ((filePath: string): Promise<string> => shell.openPath(filePath))
+    dependencies.openPath ??
+    ((filePath: string): Promise<string> => desktopShellInteraction().openPath(filePath))
   return {
     finalizeRunArtifacts: (request) =>
       withDataRootWrite(() =>
@@ -255,16 +261,20 @@ const createArtifactHandlers = (
 
             const compatibilityArtifacts = await reconcileCompatibility(compatibilityPaths)
             const nativePaths = new Set(recovered.artifacts.map((artifact) => artifact.path))
-            return [
+            const result = [
               ...recovered.artifacts,
               ...compatibilityArtifacts.filter((artifact) => !nativePaths.has(artifact.path))
             ]
+            await dependencies.commitRecoveredArtifacts?.(request, result)
+            return result
           }
         }
-        return reconcileCompatibility(request.pendingPaths)
+        const result = await reconcileCompatibility(request.pendingPaths)
+        await dependencies.commitRecoveredArtifacts?.(request, result)
+        return result
       }),
     openFile: async (request) => {
-      // Resolve through the repository first so shell.openPath never sees unmanaged locations.
+      // Resolve through the repository first so desktopShellInteraction().openPath never sees unmanaged locations.
       const versionIdentity = parseArtifactVersionLocator(request.path)
       if (!versionIdentity) {
         const openError = await openPath(await repository.resolveManagedFilePath(request))

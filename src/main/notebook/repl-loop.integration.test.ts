@@ -1,3 +1,6 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
+import { projectConnectorsFromStored } from '../connectors/read-model'
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import { execFile, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -9,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { randomUUID } from 'node:crypto'
 import { createServer, type Server } from 'node:http'
 import { framePythonRequest, parseLoopResponse, type KernelLoopResponse } from './kernel-protocol'
+import { prepareReplCellBindings } from './repl-cell-bindings'
 import { listenForLocalRpc } from '../local-rpc-transport'
 import { hostSdkHelp } from '../host-sdk/help'
 import { HostLineageService } from './host-lineage-service'
@@ -22,7 +26,7 @@ import { createSpecialistService } from '../specialist/service'
 import { createDeterministicDelegateExecution } from '../delegation/deterministic-execution'
 import { createInMemoryDelegatedWorkRecords } from '../delegation/durable-delegated-work'
 import { createTestDurableDelegatedWork as createDurableDelegatedWork } from '../delegation/durable-delegated-work-test-fixture'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { startWorkingFileObservation } from './working-file-observer'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
 import type { NotebookRunRecord } from '../../shared/notebook'
@@ -64,12 +68,23 @@ const startLoop = (
       w(msg)
     }
   })
-  const send = (code: string): Promise<KernelLoopResponse> =>
-    new Promise((resolve) => {
+  const send = async (code: string): Promise<KernelLoopResponse> => {
+    const prepared = await prepareReplCellBindings(code)
+    return new Promise((resolve) => {
       const reqId = randomUUID()
       waiters.set(reqId, resolve)
-      child.stdin.write(framePythonRequest(reqId, code))
+      child.stdin.write(
+        framePythonRequest(
+          reqId,
+          prepared.source,
+          undefined,
+          undefined,
+          undefined,
+          prepared.publisher
+        )
+      )
     })
+  }
   return { child, send }
 }
 
@@ -85,7 +100,7 @@ it.skipIf(!process.env.OPEN_SCIENCE_TEST_PYTHON)(
     const { child, send } = startLoop({ OPEN_SCIENCE_HANDOFF_DIR: handoff })
     const runs: NotebookRunRecord[] = []
     const activities: Parameters<typeof sealArtifactProvenanceGraph>[0]['notebookActivities'] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot,
       repository: { readSessionRuns: async () => runs }
     })
@@ -841,7 +856,7 @@ describe('repl_loop local RPC transport', () => {
       specialistService: profiles,
       catalog: {
         listSkillCatalog: async () => [],
-        getConnectors: async () => undefined
+        getConnectors: async () => projectConnectorsFromStored(undefined)
       }
     })
     const server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
@@ -2498,6 +2513,27 @@ describe('repl_loop local RPC transport', () => {
         'TypeError: host.artifacts options unknown option: content_type'
       ])
       expect(requests).toHaveLength(3)
+      const selected = await send('return Object.isFrozen(await host.sessions.read())')
+      expect(selected.error).toBeNull()
+      expect(selected.result).toBe('true')
+      expect(requests.at(-1)).toEqual({
+        method: 'sessionsCall',
+        params: { op: 'read', options: {} }
+      })
+      const forgedSource = await send("return await host.sessions.read({ sessionId: 'other' })")
+      expect(forgedSource.error).toContain('unknown option: sessionId')
+      const read = await send(
+        "const linked = await host.sessions.read({branchId: 'branch-a', kind: 'message', id: 'message-a', offset: 4}); return Object.isFrozen(linked)"
+      )
+      expect(read.error).toBeNull()
+      expect(read.result).toBe('true')
+      expect(requests.at(-1)).toEqual({
+        method: 'sessionsCall',
+        params: {
+          op: 'read',
+          options: { branchId: 'branch-a', kind: 'message', id: 'message-a', offset: 4 }
+        }
+      })
     } finally {
       child.kill()
       await new Promise<void>((resolve, reject) =>
@@ -2967,8 +3003,10 @@ describe('repl_loop local RPC transport', () => {
           params: { op: 'delete', name: 'declined-demo', session_id: 'session-1' }
         }
       ])
-      expect(JSON.stringify(result)).not.toContain('old_string')
-      expect(JSON.stringify(result)).not.toContain('body')
+      const serialized = JSON.stringify({ ...result, cwd: undefined })
+      expect(serialized).not.toContain('old_string')
+      expect(serialized).not.toContain('new body')
+      expect(serialized).not.toContain('old body')
 
       const publicError = await send(
         "try { await host.skills.edit('demo', 'SKILL.md', 'new body', '') } " +
@@ -2977,7 +3015,7 @@ describe('repl_loop local RPC transport', () => {
       expect(publicError.result).toBe(
         'host.skills.edit: oldString must be a non-empty string when provided'
       )
-      expect(JSON.stringify(publicError)).not.toContain('old_string')
+      expect(JSON.stringify({ ...publicError, cwd: undefined })).not.toContain('old_string')
       expect(requests).toHaveLength(7)
     } finally {
       child.kill()
@@ -3011,6 +3049,26 @@ gate('repl_loop.js', () => {
     }
   }, 60_000)
 
+  it.each(['const', 'let', 'var'])(
+    'retains a random temporary path declared with %s across cells',
+    async (declaration) => {
+      const { child, send } = startLoop({})
+      try {
+        const first = await send(
+          `${declaration} crossCellTmp = require('node:path').join(require('node:os').tmpdir(), 'cell-' + require('node:crypto').randomUUID()); console.log(crossCellTmp)`
+        )
+        expect(first.error).toBeNull()
+        expect(first.stdout.trim()).not.toBe('')
+
+        const second = await send('console.log(crossCellTmp)')
+        expect(second.error).toBeNull()
+        expect(second.stdout).toBe(first.stdout)
+      } finally {
+        child.kill()
+      }
+    }
+  )
+
   it('captures console.log, keeps a persistent context, and survives a thrown error', async () => {
     const { child, send } = startLoop({})
     try {
@@ -3038,6 +3096,79 @@ gate('repl_loop.js', () => {
       child.kill()
     }
   }, 60_000)
+
+  it('keeps return, repeated declarations, await, destructuring and captured bindings compatible', async () => {
+    const { child, send } = startLoop({})
+    try {
+      expect(await send('const v = await Promise.resolve(41); return v')).toMatchObject({
+        error: null,
+        result: '41'
+      })
+      expect(await send('v')).toMatchObject({ error: null, result: '41' })
+      expect(await send('const v = 42; return v')).toMatchObject({ error: null, result: '42' })
+      expect(
+        await send(
+          'const { nested: [part] } = { nested: [7] }; let count = 1; function next() { return ++count }; return part'
+        )
+      ).toMatchObject({ error: null, result: '7' })
+      expect(await send('count = 10; return [next(), count, part]')).toMatchObject({
+        error: null,
+        result: '[11,11,7]'
+      })
+      expect(await send('v = 0')).toMatchObject({
+        error: expect.stringContaining('constant variable')
+      })
+      expect(await send('{ var hoisted = 9; let hidden = 2; }; return hoisted')).toMatchObject({
+        error: null,
+        result: '9'
+      })
+      expect(await send('[hoisted, typeof hidden]')).toMatchObject({
+        error: null,
+        result: '[9,"undefined"]'
+      })
+    } finally {
+      child.kill()
+    }
+  })
+
+  it('retains commented declarations, Unicode names and function-scoped loop variables', async () => {
+    const { child, send } = startLoop({})
+    try {
+      expect(
+        await send(
+          '// leading comment\n"use strict"; // directive comment\nconst 路径 = "数据"; for (var entry of ["kept"]) {}; class Example { value() { return 路径 } }'
+        )
+      ).toMatchObject({ error: null })
+      expect(await send('JSON.stringify([路径, entry, new Example().value()])')).toMatchObject({
+        error: null,
+        result: expect.stringContaining('数据')
+      })
+      expect(await send('entry')).toMatchObject({
+        error: null,
+        result: expect.stringContaining('kept')
+      })
+    } finally {
+      child.kill()
+    }
+  })
+
+  it('retains initialized declarations after a throw without publishing uninitialized names', async () => {
+    const { child, send } = startLoop({})
+    try {
+      expect(
+        (await send('const keep = 1, never = (()=>{ throw Error("stop") })();')).error
+      ).toContain('stop')
+      expect(await send('[keep, typeof never]')).toMatchObject({
+        error: null,
+        result: '[1,"undefined"]'
+      })
+      expect(await send('"use strict"; accidental = 1')).toMatchObject({
+        error: expect.stringContaining('not defined')
+      })
+    } finally {
+      child.kill()
+    }
+  })
 
   it('blocks dynamically assembled child_process package commands at runtime', async () => {
     const { child, send } = startLoop({})
@@ -3749,3 +3880,5 @@ gate('repl_loop.js host.mcp', () => {
     }
   }, 60_000)
 })
+
+configureTestRuntimeMetadata()

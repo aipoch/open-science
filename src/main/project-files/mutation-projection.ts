@@ -11,7 +11,7 @@ import type {
   AdoptLegacyArtifactRequest
 } from '../managed-file-versions/service'
 import { sha256 } from '../artifacts/provenance-canonical'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { LOCAL_RESOURCE_BUDGETS, assertWithinResourceBudget } from '../resource-budget'
 
 const ARTIFACTS_DIR = 'artifacts'

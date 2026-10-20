@@ -1,17 +1,17 @@
-import type { Project } from '../../../../shared/projects'
-import type { ProjectFileItem } from '../../../../shared/project-files'
-import type { MessageSearchItem } from '../../../../shared/message-search'
-import type {
-  LiteratureCollectionView,
-  LiteratureItemView,
-  LiteratureAnnotationSearchView
-} from '../../../../shared/literature'
-import type { SearchableSession } from './global-search-catalog'
+import { literatureItemToPdfOption } from '@/pages/workspace/literature-pdf-options'
 import {
   createPreviewFileItem,
   LITERATURE_PREVIEW_SESSION_ID
 } from '@/pages/workspace/preview-file-item'
-import { literatureItemToPdfOption } from '@/pages/workspace/literature-pdf-options'
+import type {
+  LiteratureCollectionView,
+  LiteratureItemView
+} from '@aipoch/literature-library/contracts'
+import type { LiteratureAnnotationSearchView } from '../../../../shared/literature'
+import type { MessageSearchItem } from '../../../../shared/message-search'
+import type { ProjectFileItem } from '../../../../shared/project-files'
+import type { Project } from '../../../../shared/projects'
+import type { SearchableSession } from './global-search-catalog'
 
 export type SearchSession = SearchableSession & { activeMessageCount: number }
 export type SearchResult =

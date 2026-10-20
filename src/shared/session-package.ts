@@ -21,12 +21,21 @@ const checksum = z.string().regex(/^[a-f0-9]{64}$/)
 export const PACKAGE_RO_CRATE_METADATA = 'ro-crate-metadata.json'
 export const PACKAGE_MAX_FILE_BYTES = 32 * 1024 ** 3
 export const PACKAGE_MAX_BYTES = 256 * 1024 ** 3
+export const PACKAGE_MIN_IO_BYTES_PER_SECOND = 1024 ** 2
 export const PACKAGE_DEFAULT_IO_BYTES_PER_SECOND = 16 * 1024 ** 2
+export const PACKAGE_MAX_IO_BYTES_PER_SECOND = 256 * 1024 ** 2
+export const PACKAGE_IO_RATE_OPTIONS = [
+  4 * 1024 ** 2,
+  16 * 1024 ** 2,
+  64 * 1024 ** 2,
+  128 * 1024 ** 2,
+  256 * 1024 ** 2
+] as const
 const transferRateSchema = z
   .number()
   .int()
-  .min(1024 ** 2)
-  .max(64 * 1024 ** 2)
+  .min(PACKAGE_MIN_IO_BYTES_PER_SECOND)
+  .max(PACKAGE_MAX_IO_BYTES_PER_SECOND)
 
 export const sessionPackageImportRequestSchema = z
   .object({
@@ -60,7 +69,13 @@ export type PackageSelectableFile = PackageExcludedFile & {
   dependentFiles: string[]
 }
 
+export type PackageFileSelection = {
+  excludedStorageKeys: readonly string[]
+  includePdfNotes: boolean
+}
+
 export type PackageSelectionSummary = {
+  pdfNotesAvailable?: boolean
   retainedFiles: PackageExcludedFile[]
   metadataBytes: number
 }
@@ -84,6 +99,16 @@ export type PackageProgress = {
   currentFile?: string
 }
 
+export type BrowserPackageTransfer = {
+  id: string
+  filename: string
+  state: 'preparing' | 'waiting' | 'receiving' | 'cancelling' | 'cancelled' | 'failed'
+  cleanupPending?: boolean
+  // Received payload high-water mark for display, not the authenticated/written resume offset.
+  completedBytes: number
+  totalBytes: number
+}
+
 export type PackageOperationSnapshot = {
   id: string
   kind: 'export' | 'import' | 'fork'
@@ -95,6 +120,8 @@ export type PackageOperationSnapshot = {
   importPreview?: SessionPackagePreview
   pendingImports?: { id: string; filename: string }[]
   importQueueFull?: boolean
+  browserTransfers?: BrowserPackageTransfer[]
+  browserReceiptOnly?: boolean
   state: 'running' | 'awaiting-selection' | 'cancelling' | 'succeeded' | 'cancelled' | 'failed'
   progress: PackageProgress
   files?: PackageSelectableFile[]
@@ -116,6 +143,13 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('cancel'), operationId: identity }).strict(),
   z
     .object({
+      action: z.literal('cancel-browser-transfer'),
+      operationId: identity,
+      transferId: identity
+    })
+    .strict(),
+  z
+    .object({
       action: z.literal('select-project'),
       operationId: identity,
       target: sessionPackageImportRequestSchema.refine(
@@ -131,20 +165,22 @@ export const packageOperationRequestSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('next-import'), operationId: identity }).strict(),
   z.object({ action: z.literal('dismiss-queue-warning'), operationId: identity }).strict(),
   z.object({ action: z.literal('retry-import'), operationId: identity }).strict(),
+  z.object({ action: z.literal('export-with-sensitive-content'), operationId: identity }).strict(),
   z.object({ action: z.literal('reveal'), operationId: identity }).strict(),
   z.object({ action: z.literal('retry-cleanup'), operationId: identity }).strict(),
   z
     .object({
       action: z.literal('set-speed'),
       operationId: identity,
-      bytesPerSecond: transferRateSchema
+      bytesPerSecond: transferRateSchema.nullable()
     })
     .strict(),
   z
     .object({
       action: z.literal('select'),
       operationId: identity,
-      excludedStorageKeys: z.array(z.string().max(2048)).max(10000)
+      excludedStorageKeys: z.array(z.string().max(2048)).max(10000),
+      includePdfNotes: z.boolean().optional()
     })
     .strict()
 ])
@@ -184,9 +220,10 @@ export const packageInventoryEntrySchema = z
 export const sessionPackageManifestSchema = z
   .object({
     format: z.literal('open-science-session'),
+    // content-dedupe lets logical inventory entries share one content-addressed object path.
     requiredFeatures: z
-      .array(z.enum(['literature', 'ro-crate']))
-      .max(2)
+      .array(z.enum(['literature', 'ro-crate', 'content-dedupe']))
+      .max(3)
       .optional(),
     schemaVersion: z.literal(1),
     createdAt: z.number().int().nonnegative(),
@@ -272,6 +309,29 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
       .max(16)
       .optional(),
     importQueueFull: z.boolean().optional(),
+    browserReceiptOnly: z.boolean().optional(),
+    browserTransfers: z
+      .array(
+        z
+          .object({
+            id: identity,
+            filename: z.string(),
+            state: z.enum([
+              'preparing',
+              'waiting',
+              'receiving',
+              'cancelling',
+              'cancelled',
+              'failed'
+            ]),
+            cleanupPending: z.boolean().optional(),
+            completedBytes: z.number().int().nonnegative(),
+            totalBytes: z.number().int().positive()
+          })
+          .strict()
+      )
+      .max(16)
+      .optional(),
     state: z.enum([
       'running',
       'awaiting-selection',
@@ -316,7 +376,8 @@ const packageOperationSnapshotSchema: z.ZodType<PackageOperationSnapshot> = z
     summary: z
       .object({
         retainedFiles: z.array(packageExcludedFileSchema).max(10000),
-        metadataBytes: z.number().nonnegative()
+        metadataBytes: z.number().nonnegative(),
+        pdfNotesAvailable: z.boolean().optional()
       })
       .strict()
       .optional(),
@@ -398,8 +459,8 @@ export const sessionPackageCommandContracts = {
             .optional()
         ])
         .refine(
-          ([target, sourcePath]) => !sourcePath || Boolean(target?.projectId),
-          'Dropped packages require an existing Project.'
+          ([target, sourcePath]) => !sourcePath || !target?.projectName,
+          'Dropped packages require an existing Project or destination selection.'
         )
     ),
     validationCodec(sessionPackageRequestSchema.nullable())

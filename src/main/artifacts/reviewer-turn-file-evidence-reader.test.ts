@@ -15,84 +15,111 @@ afterEach(async () => {
 })
 
 describe('ReviewerTurnFileEvidenceReader', () => {
-  it('restores directly-read input evidence from the persisted Artifact Version', async () => {
-    storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-turn-file-evidence-'))
-    const source = 'sample,value\na,1\n'
-    const output = 'result,value\na,2\n'
-    const sourceKey = 'uploads/project-1/source-version/content'
-    const outputKey = 'artifacts/project-1/session-1/work-version/content'
-    for (const [key, content] of [
-      [sourceKey, source],
-      [outputKey, output]
-    ]) {
-      const path = join(storageRoot, ...key.split('/'))
-      await mkdir(dirname(path), { recursive: true })
-      await writeFile(path, content)
-    }
-    const checksum = (content: string): string => createHash('sha256').update(content).digest('hex')
-    const findMany = vi.fn(async () => [
-      {
-        id: 'work-version',
-        messageId: 'agent-1',
-        producerRunId: 'producer-run',
-        evidenceJson: JSON.stringify({
-          producer: { state: 'available' },
+  it.each(['visible', 'hidden-output', 'hidden-input'] as const)(
+    'filters reviewer file evidence: %s',
+    async (visibility) => {
+      storageRoot = await mkdtemp(join(tmpdir(), 'reviewer-turn-file-evidence-'))
+      const source = 'sample,value\na,1\n'
+      const output = 'result,value\na,2\n'
+      const sourceKey = 'uploads/project-1/source-version/content'
+      const outputKey = 'artifacts/project-1/session-1/work-version/content'
+      for (const [key, content] of [
+        [sourceKey, source],
+        [outputKey, output]
+      ]) {
+        const path = join(storageRoot, ...key.split('/'))
+        await mkdir(dirname(path), { recursive: true })
+        await writeFile(path, content)
+      }
+      const checksum = (content: string): string =>
+        createHash('sha256').update(content).digest('hex')
+      const findMany = vi.fn(async () => [
+        {
+          id: 'work-version',
+          messageId: 'agent-1',
+          producerRunId: 'producer-run',
+          evidenceJson: JSON.stringify({
+            producer: { state: 'available' },
+            inputs: [
+              {
+                source_kind: 'upload-version',
+                input_file_version_id: 'source-version',
+                access_evidence: 'file-evidence'
+              }
+            ]
+          }),
+          filename: 'result.csv',
+          contentType: 'text/csv',
+          sizeBytes: BigInt(Buffer.byteLength(output)),
+          checksum: checksum(`${output}tampered`),
+          contentStorageKey: outputKey,
           inputs: [
             {
-              source_kind: 'upload-version',
-              input_file_version_id: 'source-version',
-              access_evidence: 'file-evidence'
+              inputFileVersionId: 'source-version',
+              sourceKind: visibility === 'hidden-input' ? 'artifact-version' : 'upload-version',
+              filename: 'source.csv',
+              contentType: 'text/csv',
+              sizeBytes: BigInt(Buffer.byteLength(source)),
+              checksum: checksum(source),
+              storageKey: sourceKey,
+              strongestAssociation: 'turn-attached'
             }
           ]
-        }),
-        filename: 'result.csv',
-        contentType: 'text/csv',
-        sizeBytes: BigInt(Buffer.byteLength(output)),
-        checksum: checksum(`${output}tampered`),
-        contentStorageKey: outputKey,
-        inputs: [
-          {
-            inputFileVersionId: 'source-version',
-            sourceKind: 'upload-version',
-            filename: 'source.csv',
-            contentType: 'text/csv',
-            sizeBytes: BigInt(Buffer.byteLength(source)),
-            checksum: checksum(source),
-            storageKey: sourceKey,
-            strongestAssociation: 'turn-attached'
-          }
-        ]
-      }
-    ])
-    const reader = new ReviewerTurnFileEvidenceReader({
-      storageRoot,
-      getClient: async () => ({ artifactVersion: { findMany } }) as never,
-      notebookRepository: {
-        readSessionDocuments: async () => []
-      }
-    })
-
-    const records = await reader.resolve({
-      projectId: 'project-1',
-      sessionId: 'session-1',
-      artifactVersionIds: ['work-version'],
-      messageIds: ['user-1', 'agent-1']
-    })
-
-    expect(records).toEqual([
-      expect.objectContaining({
-        versionId: 'work-version',
-        role: 'work_product',
-        contentStatus: 'checksum-mismatch'
-      }),
-      expect.objectContaining({
-        versionId: 'source-version',
-        role: 'source_document',
-        scopeReason: 'read-by-turn',
-        executionId: 'producer-run',
-        directlyRead: true,
-        contentStatus: 'available'
+        }
+      ])
+      const reader = new ReviewerTurnFileEvidenceReader({
+        storageRoot,
+        getClient: async () =>
+          ({
+            artifactVersion: { findMany },
+            artifactLineage: {
+              findMany: async () =>
+                visibility === 'visible'
+                  ? []
+                  : [
+                      {
+                        versions: [
+                          { id: visibility === 'hidden-output' ? 'work-version' : 'source-version' }
+                        ]
+                      }
+                    ]
+            }
+          }) as never,
+        notebookRepository: {
+          readSessionDocuments: async () => []
+        }
       })
-    ])
-  })
+
+      const records = await reader.resolve({
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        artifactVersionIds: ['work-version'],
+        messageIds: ['user-1', 'agent-1']
+      })
+
+      if (visibility === 'hidden-output') {
+        expect(records).toEqual([])
+        return
+      }
+      if (visibility === 'hidden-input') {
+        expect(records.map((record) => record.versionId)).toEqual(['work-version'])
+        return
+      }
+      expect(records).toEqual([
+        expect.objectContaining({
+          versionId: 'work-version',
+          role: 'work_product',
+          contentStatus: 'checksum-mismatch'
+        }),
+        expect.objectContaining({
+          versionId: 'source-version',
+          role: 'source_document',
+          scopeReason: 'read-by-turn',
+          executionId: 'producer-run',
+          directlyRead: true,
+          contentStatus: 'available'
+        })
+      ])
+    }
+  )
 })

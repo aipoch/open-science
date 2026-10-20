@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'
 
+import type { AgentFrameworkId } from '../../../../shared/settings'
 import type {
-  AgentFrameworkId,
   AgentHomeSkillRef,
   AgentHomeSkillSource,
   AgentHomeSkillView
-} from '../../../../shared/settings'
+} from '@aipoch/skills/document'
 import { Button } from '@/components/ui/button'
 import { useSettingsStore } from '@/stores/settings-store'
 import { SkillImportCandidatePreview } from './SkillImportCandidatePreview'

@@ -7,10 +7,11 @@ import type { ManagedFileVersionService } from '../managed-file-versions/service
 import type { NotebookInputRegistry } from '../notebook/input-registry'
 import type { NamedElectronSurfaceAdapter } from '../runtime-electron-wiring'
 import { registerWindowFindIpcHandlers } from '../window-find-ipc'
-import { registerWindowIpcHandlers } from '../window-ipc'
+import { registerWindowCloseIpcHandler } from '../window-ipc'
 import { createElectronSurfaceAdapter } from './adapter'
 
 type DesktopUtilitiesOwners = {
+  fileSaveCommands?: import('../file-save').FileSaveCommands
   resolveManagedFilePath: NonNullable<RegisterFileSaveHandlersOptions['resolveManagedFilePath']>
   managedFileVersions: Pick<ManagedFileVersionService, 'openLatest' | 'openVersion'>
   notebookInputs: Pick<NotebookInputRegistry, 'openPreviewKey'>
@@ -22,6 +23,7 @@ type DesktopUtilitiesOwners = {
 }
 
 export const createDesktopUtilitiesElectronSurface = ({
+  fileSaveCommands,
   resolveManagedFilePath,
   managedFileVersions,
   notebookInputs,
@@ -32,22 +34,25 @@ export const createDesktopUtilitiesElectronSurface = ({
   openHiddenArtifactVersion
 }: DesktopUtilitiesOwners): NamedElectronSurfaceAdapter =>
   createElectronSurfaceAdapter('desktop-utilities', () => {
-    registerFileSaveHandlers({
-      resolveManagedFilePath,
-      openHiddenArtifactVersion,
-      openLatestManagedFile: (source, request) =>
-        managedFileVersions.openLatest({ source, ...request }),
-      openManagedFileVersion: (source, request) =>
-        managedFileVersions.openVersion(
-          { source, projectId: request.projectId, fileId: request.fileId },
-          request.versionId
-        ),
-      openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
-      translate
-    })
+    registerFileSaveHandlers(
+      {
+        resolveManagedFilePath,
+        openHiddenArtifactVersion,
+        openLatestManagedFile: (source, request) =>
+          managedFileVersions.openLatest({ source, ...request }),
+        openManagedFileVersion: (source, request) =>
+          managedFileVersions.openVersion(
+            { source, projectId: request.projectId, fileId: request.fileId },
+            request.versionId
+          ),
+        openNotebookInput: (request) => notebookInputs.openPreviewKey(request.path),
+        translate
+      },
+      fileSaveCommands
+    )
     registerLogsIpcHandlers(logs)
     registerGithubIpcHandlers({}, github)
     registerCliInstallIpcHandlers(cli)
-    registerWindowIpcHandlers()
+    registerWindowCloseIpcHandler()
     return registerWindowFindIpcHandlers()
   })

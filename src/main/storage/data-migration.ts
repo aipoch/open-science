@@ -20,8 +20,16 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from 'nod
 import { pipeline } from 'node:stream/promises'
 
 import type { MigrationProgress, MigrationResult } from '../../shared/storage'
+import {
+  needsWslNpmMigration,
+  npmMigrationPath,
+  requireNpmMigration,
+  type NpmMigration,
+  type NpmMigrationEntry
+} from './wsl-npm-migration'
 
 type MigrateOpts = {
+  npmMigration?: NpmMigration
   from: string
   to: string
   dirs: string[]
@@ -106,12 +114,13 @@ type PortableMetadataEntry = {
 export type PortableMetadataSnapshot = {
   files: PortableMetadataEntry[]
   directories: PortableMetadataEntry[]
+  npm?: NpmMigrationEntry[]
 }
 
 // Recursively lists regular files, nested directories, and symbolic links under `root` (empty lists
 // if `root` doesn't exist). Directories are tracked separately so empty nested folders survive the
 // move; symlinks are recreated as links (never followed) so a conda cache's internal links survive.
-const listEntries = async (root: string): Promise<ScanResult> => {
+const listEntries = async (root: string, excluded?: string): Promise<ScanResult> => {
   const files: ScanResult['files'] = []
   const directories: ScanResult['directories'] = []
   const symlinks: string[] = []
@@ -119,6 +128,7 @@ const listEntries = async (root: string): Promise<ScanResult> => {
     const entries = await readdir(join(root, dir), { withFileTypes: true })
     for (const entry of entries) {
       const rel = join(dir, entry.name)
+      if (join(root, rel) === excluded) continue
       // isDirectory/isFile/isSymbolicLink read the dirent WITHOUT following the link, so a symlink to
       // a directory is recorded as a symlink (recreated verbatim) rather than recursed into — no
       // escape out of the tree and no symlink-cycle risk.
@@ -136,6 +146,7 @@ const listEntries = async (root: string): Promise<ScanResult> => {
   // its target. Inner symlinks are handled (copied as links) inside walk(); other special files there
   // are still refused.
   let info
+  if (root === excluded) return { files, directories, symlinks, present: false, rootFile: false }
   try {
     info = await lstat(root)
   } catch (err) {
@@ -184,11 +195,18 @@ const metadataSnapshotFromEntries = (
 
 export const capturePortableMetadata = async (
   root: string,
-  dirs: string[]
+  dirs: string[],
+  npmMigration?: NpmMigration
 ): Promise<PortableMetadataSnapshot> => {
+  const guest = await needsWslNpmMigration(root, dirs)
+  const npm = guest ? await requireNpmMigration(npmMigration).scan(root) : undefined
   const entriesByDir = new Map<string, ScanResult>()
-  for (const dir of dirs) entriesByDir.set(dir, await listEntries(join(root, dir)))
-  return metadataSnapshotFromEntries(dirs, entriesByDir)
+  for (const dir of dirs)
+    entriesByDir.set(
+      dir,
+      await listEntries(join(root, dir), guest ? npmMigrationPath(root) : undefined)
+    )
+  return { ...metadataSnapshotFromEntries(dirs, entriesByDir), ...(npm ? { npm } : {}) }
 }
 
 const restoreTimestamps = async (
@@ -205,8 +223,10 @@ const restoreTimestamps = async (
 
 export const restorePortableMetadata = async (
   root: string,
-  snapshot: PortableMetadataSnapshot
+  snapshot: PortableMetadataSnapshot,
+  npmMigration?: NpmMigration
 ): Promise<void> => {
+  if (snapshot.npm) await requireNpmMigration(npmMigration).restore(root, snapshot.npm)
   for (const file of snapshot.files) {
     const destination = join(root, file.relativePath)
     await chmod(destination, file.mode)
@@ -288,9 +308,12 @@ const migrationSourceError = (error: unknown): string =>
 
 export const validateMigrationSourceLinks = async (
   from: string,
-  dirs: readonly string[]
+  dirs: readonly string[],
+  npmMigration?: NpmMigration
 ): Promise<MigrationResult> => {
   try {
+    const guest = await needsWslNpmMigration(from, dirs)
+    if (guest) await requireNpmMigration(npmMigration).scan(from)
     const normalizedSourceRoot = resolve(from)
     let canonicalSourceRoot: string
     try {
@@ -301,7 +324,7 @@ export const validateMigrationSourceLinks = async (
     }
     for (const dir of dirs) {
       const srcDir = join(from, dir)
-      const entries = await listEntries(srcDir)
+      const entries = await listEntries(srcDir, guest ? npmMigrationPath(from) : undefined)
       for (const rel of entries.symlinks) {
         const sourceLink = join(srcDir, rel)
         const linkTarget = await readlink(sourceLink)
@@ -351,8 +374,9 @@ export const validateMigrationSourceLinks = async (
 // the commit point (persisting the new data root) can happen between verify and delete. On any
 // failure or abort, the partial `to` tree is cleaned up and `from` is left fully intact.
 export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult> => {
-  const { from, to, dirs, signal, onProgress } = opts
+  const { from, to, dirs, signal, onProgress, npmMigration } = opts
   const copiedInto: string[] = [] // `to/<dir>` paths written to, for rollback cleanup on failure
+  let guestCopyStarted = false
 
   const checkAbort = (): void => {
     if (signal.aborted) throw new AbortedError('migration cancelled')
@@ -363,12 +387,14 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 
   try {
     checkAbort()
+    const guest = await needsWslNpmMigration(from, dirs)
+    const npm = guest ? await requireNpmMigration(npmMigration).scan(from) : undefined
     const entriesByDir = new Map<string, ScanResult>()
     const sourceHardLinks = new Set<string>()
     let hasRepeatedHardLink = false
     for (const dir of dirs) {
       const srcDir = join(from, dir)
-      const entries = await listEntries(srcDir)
+      const entries = await listEntries(srcDir, guest ? npmMigrationPath(from) : undefined)
       entriesByDir.set(dir, entries)
       for (const file of entries.files) {
         const identity = hardLinkIdentity(file.stats)
@@ -377,10 +403,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         else sourceHardLinks.add(identity)
       }
     }
-    const sourceMetadata = metadataSnapshotFromEntries(dirs, entriesByDir)
-    const sourceValidation = await validateMigrationSourceLinks(from, dirs)
+    const sourceMetadata = {
+      ...metadataSnapshotFromEntries(dirs, entriesByDir),
+      ...(npm ? { npm } : {})
+    }
+    const sourceValidation = await validateMigrationSourceLinks(from, dirs, npmMigration)
     if (!sourceValidation.ok) {
-      await restorePortableMetadata(from, sourceMetadata).catch(() => undefined)
+      await restorePortableMetadata(from, sourceMetadata, npmMigration).catch(() => undefined)
       return sourceValidation
     }
     checkAbort()
@@ -394,6 +423,9 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
         totalBytes += file.stats.size
       }
     }
+    const npmBytes =
+      npm?.reduce((total, entry) => total + (entry.kind === 'file' ? entry.size : 0), 0) ?? 0
+    totalBytes += npmBytes
     onProgress({ phase: 'scan', copiedBytes, totalBytes })
     checkAbort()
     if ((await destinationAvailableBytes(to)) < totalBytes) {
@@ -403,6 +435,15 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // Copy every existing from/<dir> into `to`, even if empty — an existing source
     // dir must be mirrored at `to`, not silently dropped.
     const copiedHardLinks = new Map<string, string>()
+    if (guest) {
+      checkAbort()
+      await mkdir(dirname(npmMigrationPath(to)), { recursive: true })
+      guestCopyStarted = true
+      await requireNpmMigration(npmMigration).copy(from, to)
+      copiedBytes += npmBytes
+      onProgress({ phase: 'copy', copiedBytes, totalBytes, currentPath: join('runtime', 'npm') })
+      checkAbort()
+    }
     for (const dir of dirs) {
       const srcDir = join(from, dir)
       const entries =
@@ -508,9 +549,13 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
     // service reapplies that snapshot after its own downstream verification reads.
     checkAbort()
     await restoreTimestamps(from, sourceMetadata)
-    await restorePortableMetadata(to, sourceMetadata)
+    await restorePortableMetadata(to, sourceMetadata, npmMigration)
     checkAbort()
   } catch (err) {
+    if (guestCopyStarted)
+      await requireNpmMigration(npmMigration)
+        .remove(to)
+        .catch(() => undefined)
     // Rollback: remove whatever was written under `to`; `from` was never touched.
     for (const destDir of copiedInto) {
       if (await exists(destDir)) {
@@ -539,7 +584,8 @@ export const copyAndVerify = async (opts: MigrateOpts): Promise<MigrationResult>
 export const deleteSources = async (
   from: string,
   dirs: string[],
-  onProgress?: (p: MigrationProgress) => void
+  onProgress?: (p: MigrationProgress) => void,
+  npmMigration?: NpmMigration
 ): Promise<{ deleted: string[]; failed: { dir: string; error: string }[] }> => {
   const deleted: string[] = []
   const failed: { dir: string; error: string }[] = []
@@ -547,6 +593,14 @@ export const deleteSources = async (
   for (const dir of dirs) {
     const srcDir = join(from, dir)
     try {
+      if (await needsWslNpmMigration(from, [dir])) {
+        await requireNpmMigration(npmMigration).remove(from)
+        if (srcDir === npmMigrationPath(from)) {
+          deleted.push(dir)
+          onProgress?.({ phase: 'delete', copiedBytes: 0, totalBytes: 0, currentPath: dir })
+          continue
+        }
+      }
       try {
         await stat(srcDir)
       } catch (err) {

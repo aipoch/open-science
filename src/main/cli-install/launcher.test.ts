@@ -1,5 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import {
+  copyFile,
   link,
   lstat,
   mkdir,
@@ -102,9 +103,9 @@ describe('planCliLauncher', () => {
     expect(plan.mode).toBe(0o755)
     expect(plan.shim).toContain('#!/bin/sh')
     expect(plan.shim).toContain('Format version: 1')
-    expect(plan.shim).toContain('ELECTRON_RUN_AS_NODE=1')
-    // Packaged: pins the app path and single-quotes both paths (they contain a space).
-    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/Open-Science/open-science'")
+    expect(plan.shim).not.toContain('ELECTRON_RUN_AS_NODE=1')
+    // The backend always executes the ordinary Node binary, independently of Electron.
+    expect(plan.shim).toContain("exec '/opt/Open-Science/resources/node-runtime/node'")
     expect(plan.shim).toContain('\'/opt/Open-Science/resources/cli/index.mjs\' "$@"')
   })
 
@@ -117,9 +118,9 @@ describe('planCliLauncher', () => {
     // A path with a space, $, backtick, backslash, and a single quote: none may be interpreted, and
     // the embedded quote must be escaped via the '\'' idiom.
     const nasty = "/opt/科学 café a b/$(x)`y`\\z/o'brien"
-    const plan = planCliLauncher(posixEnv({ appExecPath: nasty, packaged: true }))
+    const plan = planCliLauncher(posixEnv({ nodeExecPath: nasty, packaged: true }))
     // The whole path sits inside single quotes; the embedded ' is closed-escaped-reopened as '\''.
-    expect(plan.shim).toContain("OPEN_SCIENCE_APP_PATH='/opt/科学 café a b/$(x)`y`\\z/o'\\''brien'")
+    expect(plan.shim).toContain("exec '/opt/科学 café a b/$(x)`y`\\z/o'\\''brien'")
   })
 
   it('mounts the stable AppImage without passing Node flags through AppRun', () => {
@@ -133,9 +134,9 @@ describe('planCliLauncher', () => {
 
     expect(plan.shim).toContain("app_image='/home/alice/Open-Science'\\''s build.AppImage'")
     expect(plan.shim).toContain('"$app_image" --appimage-mount')
-    expect(plan.shim).toContain('app_exec="$mount_dir"/\'open-science\'')
+    expect(plan.shim).toContain('app_exec="$mount_dir"/\'resources/node-runtime/node\'')
     expect(plan.shim).toContain('cli_entry="$mount_dir"/\'resources/cli/index.mjs\'')
-    expect(plan.shim).toContain('"$app_exec" "$cli_entry" "$@"')
+    expect(plan.shim).toContain('appimage-launcher.mjs')
     expect(plan.shim).not.toContain(' -e ')
     expect(plan.shim).not.toContain('/tmp/.mount_open-scienceOLD')
   })
@@ -162,7 +163,7 @@ describe('planCliLauncher', () => {
     )
     expect(plan.target.endsWith('open-science.cmd')).toBe(true)
     expect(plan.shim).toContain('@echo off')
-    expect(plan.shim).toContain('set ELECTRON_RUN_AS_NODE=1')
+    expect(plan.shim).toContain('set ELECTRON_RUN_AS_NODE=')
     expect(plan.shim).toContain('%*')
   })
 
@@ -270,7 +271,7 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
 
     const mode = (await stat(status.target)).mode & 0o777
     expect(mode & 0o100).toBe(0o100) // owner-executable
-    expect(await readFile(status.target, 'utf8')).toContain('ELECTRON_RUN_AS_NODE=1')
+    expect(await readFile(status.target, 'utf8')).toContain('node-runtime/node')
   })
 
   it('reports installed via getStatus, then removes the shim on uninstall', async () => {
@@ -357,6 +358,55 @@ pdescribe('installCliLauncher / status / uninstall (POSIX)', () => {
 
 describe.skipIf(process.platform !== 'win32')('C04 native cmd caller environment', () => {
   it.each([
+    [936, 0],
+    [936, 7],
+    [65001, 0],
+    [65001, 7]
+  ])('runs Unicode paths and restores code page %s after exit %s', async (codePage, exitCode) => {
+    const directory = join(home, '安装 目录')
+    await mkdir(directory)
+    const node = join(directory, 'node.exe')
+    await copyFile(process.execPath, node)
+    const entry = join(directory, '命令行.cjs')
+    await writeFile(
+      entry,
+      'console.log(JSON.stringify(process.argv.slice(2))); process.exit(Number(process.argv[3]));'
+    )
+    const plan = planCliLauncher(winEnv({ nodeExecPath: node, cliEntryPath: entry }))
+    await mkdir(plan.binDir, { recursive: true })
+    await writeFile(plan.target, plan.shim)
+    // Keep the caller ASCII: Unicode reaches cmd through its environment, independently of
+    // the encoding of the generated launcher being tested.
+    await writeFile(
+      join(home, 'caller.cmd'),
+      [
+        '@echo off',
+        'for /f "tokens=2 delims=:" %%a in (\'chcp\') do set "CLI_TEST_ORIGINAL_CP=%%a"',
+        `chcp ${codePage} >nul`,
+        `call "%CLI_TEST_LAUNCHER%" "%CLI_TEST_ARGUMENT%" ${exitCode}`,
+        'set "CLI_TEST_EXIT=%errorlevel%"',
+        'chcp',
+        'chcp %CLI_TEST_ORIGINAL_CP% >nul',
+        'exit /b %CLI_TEST_EXIT%',
+        ''
+      ].join('\r\n')
+    )
+    const result = spawnSync('cmd.exe', ['/d', '/c', 'caller.cmd'], {
+      cwd: home,
+      env: { ...process.env, CLI_TEST_LAUNCHER: plan.target, CLI_TEST_ARGUMENT: '中文 argument' },
+      encoding: 'utf8',
+      windowsHide: true,
+      timeout: 10_000
+    })
+    expect(result.error).toBeUndefined()
+    expect(result.stderr).toBe('')
+    expect(result.status).toBe(exitCode)
+    const [argumentsLine, parentCodePage] = result.stdout.trim().split(/\r?\n/)
+    expect(JSON.parse(argumentsLine)).toEqual(['中文 argument', String(exitCode)])
+    expect(parentCodePage).toMatch(new RegExp(`\\b${codePage}\\b`))
+  })
+
+  it.each([
     [true, undefined, 0],
     [true, undefined, 7],
     [true, 'caller-original', 0],
@@ -375,7 +425,12 @@ describe.skipIf(process.platform !== 'win32')('C04 native cmd caller environment
       await writeFile(entry, `${snapshot}; process.exit(Number(process.argv[2]));`)
       await writeFile(probe, snapshot)
       const plan = planCliLauncher(
-        winEnv({ appExecPath: process.execPath, cliEntryPath: entry, packaged })
+        winEnv({
+          appExecPath: process.execPath,
+          nodeExecPath: process.execPath,
+          cliEntryPath: entry,
+          packaged
+        })
       )
       await mkdir(plan.binDir, { recursive: true })
       await writeFile(plan.target, plan.shim)
@@ -412,8 +467,8 @@ describe.skipIf(process.platform !== 'win32')('C04 native cmd caller environment
         .split(/\r?\n/)
         .map((line) => JSON.parse(line))
       expect(child).toEqual({
-        electron: '1',
-        app: packaged ? process.execPath : (original ?? null)
+        electron: null,
+        app: original ?? null
       })
       expect(parent).toEqual({ electron: original ?? null, app: original ?? null })
     }
@@ -847,15 +902,10 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
       ].join('\n'),
       { mode: 0o755 }
     )
+    await mkdir(join(mountDir, 'resources/node-runtime'), { recursive: true })
     await writeFile(
-      join(mountDir, 'open-science'),
-      [
-        '#!/bin/sh',
-        'printf "%s\\n" "$OPEN_SCIENCE_APP_PATH" > "$FAKE_RESULT"',
-        'printf "%s\\n" "$ELECTRON_RUN_AS_NODE" >> "$FAKE_RESULT"',
-        'printf "%s\\n" "$@" >> "$FAKE_RESULT"',
-        'exit 23'
-      ].join('\n'),
+      join(mountDir, 'resources/node-runtime/node'),
+      ['#!/bin/sh', 'printf "%s\\n" "$@" > "$FAKE_RESULT"', 'exit 23'].join('\n'),
       { mode: 0o755 }
     )
     await writeFile(join(cliDir, 'index.mjs'), '')
@@ -879,9 +929,8 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
 
     expect(run).toMatchObject({ status: 23, signal: null })
     expect((await readFile(resultPath, 'utf8')).trim().split('\n')).toEqual([
+      join(mountDir, 'resources', 'cli', 'appimage-launcher.mjs'),
       appImagePath,
-      '1',
-      join(mountDir, 'resources', 'cli', 'index.mjs'),
       '--help',
       'two words'
     ])
@@ -921,11 +970,11 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
   })
 
   it('detects and migrates a legacy shim that pins an old FUSE mount', async () => {
-    await installCliLauncher(
-      posixEnv({
-        appExecPath: join(home, '.mount_old', 'open-science'),
-        cliEntryPath: join(home, '.mount_old', 'resources', 'cli', 'index.mjs')
-      })
+    const legacy = planCliLauncher(posixEnv())
+    await mkdir(legacy.binDir, { recursive: true })
+    await writeFile(
+      legacy.target,
+      `#!/bin/sh\n# Open-Science command-line launcher. Managed by the app. Format version: 1.\nOPEN_SCIENCE_APP_PATH='${join(home, '.mount_old', 'open-science')}' ELECTRON_RUN_AS_NODE=1 exec '/missing' '/missing.mjs' "$@"\n`
     )
     const env = appImageEnv()
 
@@ -956,11 +1005,11 @@ pdescribe('AppImage launcher reconciliation (POSIX)', () => {
   })
 
   it('reports a legacy AppImage shim as not installed until reconciliation succeeds', async () => {
-    await installCliLauncher(
-      posixEnv({
-        appExecPath: join(home, '.mount_old', 'open-science'),
-        cliEntryPath: join(home, '.mount_old', 'resources', 'cli', 'index.mjs')
-      })
+    const legacy = planCliLauncher(posixEnv())
+    await mkdir(legacy.binDir, { recursive: true })
+    await writeFile(
+      legacy.target,
+      `#!/bin/sh\n# Open-Science command-line launcher. Managed by the app. Format version: 1.\nOPEN_SCIENCE_APP_PATH='${join(home, '.mount_old', 'open-science')}' ELECTRON_RUN_AS_NODE=1 exec '/missing' '/missing.mjs' "$@"\n`
     )
     expect(await getCliLauncherStatus(appImageEnv())).toMatchObject({ installed: false })
   })

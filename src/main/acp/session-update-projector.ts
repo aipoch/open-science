@@ -1,9 +1,12 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk'
 
-import type { AcpContextUsage, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpContextUsage } from '../../shared/acp-usage-contract'
 import type { SessionPermissionProfileState } from '../../shared/permission-profiles'
 import type { AgentFrameworkId } from '../../shared/settings'
 import { resolveCanonicalMcpToolIdentity } from '../agent-framework/app-mcp-names'
+import { isRecord } from '../value-guards'
+import { AcpAssistantOutputAdapter } from './assistant-output-adapter'
 import { CodexSkillActivityProjector } from './codex-skill-activity'
 import type { AcpContextUsagePolicy } from './context-usage-policy'
 import type { ContextUsageTracker, SessionUpdateObservation } from './context-usage-tracker'
@@ -15,8 +18,6 @@ import {
   toAcpRuntimeEvent
 } from './runtime-events'
 import type { AcpSessionRegistry } from './session-registry'
-import { isRecord } from '../value-guards'
-import { AcpAssistantOutputAdapter } from './assistant-output-adapter'
 
 const CODEX_COMPACTION_WARNING =
   'Warning: Heads up: Long threads and multiple compactions can cause the model to be less accurate. Start a new thread when possible to keep threads small and targeted.'
@@ -224,6 +225,17 @@ class AcpSessionUpdateProjector {
     const routed = structuredClone(notification)
     if (routing.appSessionId) routed.sessionId = routing.appSessionId
     deepFreeze(routed)
+
+    // Adapter-authored compaction banners can arrive after cancellation. They belong to the
+    // control lifecycle, never to a later user turn's assistant text. Do not match model prose.
+    const meta = routed.update._meta
+    if (
+      routing.framework === 'claude-code' &&
+      routed.update.sessionUpdate === 'agent_message_chunk' &&
+      isRecord(meta?.claudeCode) &&
+      meta.claudeCode.isContextCompaction === true
+    )
+      return Object.freeze([])
 
     const projection = this.codexSkillActivity.projectWithContext(
       toAcpRuntimeEvent(

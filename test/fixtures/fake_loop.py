@@ -37,21 +37,21 @@ def _respond(req_id, code, error=None, interrupt_ack=False, namespace=None):
             handle.write(_PNG)
         figures = [{"mime": "image/png", "path": path}]
     if code == "__WRITE_FILE__":
-        with open("generated.csv", "w", encoding="utf-8") as handle:
+        with open("generated.csv", "w", encoding="utf-8", newline="\n") as handle:
             handle.write("x,y\n1,2\n")
     if code == "__WRITE_HANDOFF_FILE__":
         handoff_dir = os.environ["OPEN_SCIENCE_HANDOFF_DIR"]
-        with open(os.path.join(handoff_dir, "generated.csv"), "w", encoding="utf-8") as handle:
+        with open(os.path.join(handoff_dir, "generated.csv"), "w", encoding="utf-8", newline="\n") as handle:
             handle.write("x,y\n1,2\n")
     if code == "__OVERWRITE_FILE__":
         previous = os.stat("generated.csv")
-        with open("generated.csv", "w", encoding="utf-8") as handle:
+        with open("generated.csv", "w", encoding="utf-8", newline="\n") as handle:
             handle.write("x,y\n3,4\n")
         os.utime("generated.csv", ns=(previous.st_atime_ns, previous.st_mtime_ns))
     if code in ("__WRITE_DELAYED_A__", "__WRITE_DELAYED_B__"):
         time.sleep(0.1)
         suffix = code.removeprefix("__WRITE_DELAYED_").removesuffix("__").lower()
-        with open(f"generated-{suffix}.csv", "w", encoding="utf-8") as handle:
+        with open(f"generated-{suffix}.csv", "w", encoding="utf-8", newline="\n") as handle:
             handle.write("x,y\n1,2\n")
     response = {
         "req_id": req_id,

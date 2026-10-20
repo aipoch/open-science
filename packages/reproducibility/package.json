@@ -1,0 +1,59 @@
+{
+  "name": "@aipoch/reproducibility",
+  "version": "0.1.0",
+  "description": "Immutable replay recipes, isolated attempts and scientific output comparison",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
+    },
+    "./comparison": {
+      "types": "./dist/comparison-contracts.d.ts",
+      "default": "./dist/comparison-contracts.js"
+    },
+    "./execution-context": {
+      "types": "./dist/execution-context.d.ts",
+      "default": "./dist/execution-context.js"
+    },
+    "./helper-identity": {
+      "types": "./dist/helper-identity.d.ts",
+      "default": "./dist/helper-identity.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node tsc.cjs -p tsconfig.json",
+    "typecheck": "node tsc.cjs -p tsconfig.json --noEmit && node tsc.cjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "sharp": "0.35.5",
+    "papaparse": "^5.7.0",
+    "zod": "^4.6.5",
+    "@aipoch/environment": "0.1.0",
+    "@aipoch/diagnostics": "0.1.0",
+    "@aipoch/notebook-analysis": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "@types/papaparse": "^5.5.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

@@ -1,6 +1,14 @@
 import { i18next } from '../../../i18n'
+import type { PptxViewer, SearchHighlightHandle, TextSearchResult } from '@aiden0z/pptx-renderer'
+import type {
+  FileViewerSearchProvider,
+  FileViewerSearchState,
+  FileViewerZoomProvider
+} from '@file-viewer/core'
 
 import type { OfficeFileExtension } from './office-package'
+import { mountDocxOutlineSelect } from './docx-outline-select'
+import { extractPptxNotes, type PptxNotesBySlide } from './pptx-notes'
 
 export type OfficeRenderCleanup = () => void | Promise<void>
 export type OfficeRenderStatus = {
@@ -34,6 +42,33 @@ type RenderTargetedOfficeFileOptions = Omit<
 }
 
 const MAX_TARGETED_DOCX_PAGE = 512
+
+const createOfficeFindButton = (document: Document, className: string): HTMLButtonElement => {
+  const button = document.createElement('button')
+  button.type = 'button'
+  button.className = className
+  button.title = i18next.t('Find')
+  button.setAttribute('aria-label', i18next.t('Find'))
+
+  const icon = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  icon.setAttribute('viewBox', '0 0 24 24')
+  icon.setAttribute('width', '16')
+  icon.setAttribute('height', '16')
+  icon.setAttribute('fill', 'none')
+  icon.setAttribute('stroke', 'currentColor')
+  icon.setAttribute('stroke-width', '2')
+  icon.setAttribute('stroke-linecap', 'round')
+  icon.setAttribute('aria-hidden', 'true')
+  const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle')
+  circle.setAttribute('cx', '11')
+  circle.setAttribute('cy', '11')
+  circle.setAttribute('r', '8')
+  const handle = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  handle.setAttribute('d', 'm21 21-4.35-4.35')
+  icon.append(circle, handle)
+  button.append(icon)
+  return button
+}
 
 const settleTargetImages = async (page: HTMLElement, signal: AbortSignal): Promise<void> => {
   const images = [...page.querySelectorAll('img')]
@@ -93,6 +128,9 @@ const clearContainer = (container: HTMLElement): void => {
 const DOCX_SCALE_PROPERTY = '--open-science-docx-scale'
 const DOCX_MIN_SCALE = 0.25
 const DOCX_MAX_SCALE = 1
+const DOCX_MIN_ZOOM = 0.5
+const DOCX_MAX_ZOOM = 2
+const DOCX_ZOOM_STEP = 0.25
 const DOCX_FIT_STYLE = `
 .docx-wrapper {
   background: transparent;
@@ -108,7 +146,7 @@ const DOCX_FIT_STYLE = `
 `
 
 // Fits the rendered paper width inside the preview viewport without reflowing Word page content.
-const applyDocxFit = (container: HTMLElement, wrapper: HTMLElement): void => {
+const applyDocxFit = (container: HTMLElement, wrapper: HTMLElement, zoomRatio = 1): void => {
   const view = container.ownerDocument.defaultView
   const pages = wrapper.querySelectorAll<HTMLElement>('section.docx')
   if (!view || pages.length === 0) return
@@ -124,28 +162,30 @@ const applyDocxFit = (container: HTMLElement, wrapper: HTMLElement): void => {
   if (!Number.isFinite(availableWidth) || availableWidth <= 0 || !Number.isFinite(pageWidth)) return
 
   const requestedScale = availableWidth / pageWidth
-  const scale = Math.min(DOCX_MAX_SCALE, Math.max(DOCX_MIN_SCALE, requestedScale))
-  // Center fitted pages, but keep the left edge reachable when minimum zoom still overflows.
-  wrapper.style.alignItems = requestedScale < DOCX_MIN_SCALE ? 'flex-start' : 'center'
+  const scale = Math.min(DOCX_MAX_SCALE, Math.max(DOCX_MIN_SCALE, requestedScale)) * zoomRatio
+  wrapper.style.alignItems = pageWidth * scale > availableWidth ? 'flex-start' : 'center'
   wrapper.style.setProperty(DOCX_SCALE_PROPERTY, String(scale))
 }
 
-// Installs responsive paper fitting after docx-preview has populated its generated wrapper.
-const installDocxFit = (container: HTMLElement, wrapper: HTMLElement): OfficeRenderCleanup => {
+const installDocxFit = (
+  container: HTMLElement,
+  wrapper: HTMLElement,
+  getZoomRatio: () => number = () => 1
+): OfficeRenderCleanup => {
   const view = container.ownerDocument.defaultView
   const style = container.ownerDocument.createElement('style')
   style.dataset.openScienceDocxFit = 'true'
   style.textContent = DOCX_FIT_STYLE
   container.appendChild(style)
   wrapper.style.alignItems = 'center'
-  applyDocxFit(container, wrapper)
+  applyDocxFit(container, wrapper, getZoomRatio())
 
-  let animationFrame: number | undefined
+  let fitFrame: number | undefined
   const scheduleFit = (): void => {
-    if (!view || animationFrame !== undefined) return
-    animationFrame = view.requestAnimationFrame(() => {
-      animationFrame = undefined
-      applyDocxFit(container, wrapper)
+    if (!view || fitFrame !== undefined) return
+    fitFrame = view.requestAnimationFrame(() => {
+      fitFrame = undefined
+      applyDocxFit(container, wrapper, getZoomRatio())
     })
   }
   const ResizeObserverCtor = view?.ResizeObserver
@@ -154,22 +194,965 @@ const installDocxFit = (container: HTMLElement, wrapper: HTMLElement): OfficeRen
 
   return () => {
     resizeObserver?.disconnect()
-    if (animationFrame !== undefined) view?.cancelAnimationFrame(animationFrame)
+    if (fitFrame !== undefined) view?.cancelAnimationFrame(fitFrame)
     wrapper.style.removeProperty(DOCX_SCALE_PROPERTY)
     wrapper.style.removeProperty('align-items')
     style.remove()
   }
 }
 
+const installDocxReviewControls = (
+  container: HTMLElement,
+  wrapper: HTMLElement,
+  model?: {
+    stylesPart?: {
+      styles?: Array<{
+        id?: string
+        target?: string
+        paragraphProps?: { outlineLevel?: number }
+      }>
+    }
+  }
+): OfficeRenderCleanup => {
+  const view = container.ownerDocument.defaultView
+  const document = container.ownerDocument
+  const pages = [...wrapper.querySelectorAll<HTMLElement>('section.docx')]
+  const headingStyles = new Map<string, number>()
+  for (const style of model?.stylesPart?.styles ?? []) {
+    const level = style.paragraphProps?.outlineLevel
+    if (style.target !== 'p' || !style.id || level === undefined || level < 0 || level > 8) continue
+    headingStyles.set(
+      `docx_${style.id.replace(/[ .]+/g, '-').replace(/&+/g, 'and').toLowerCase()}`,
+      level
+    )
+  }
+  const headings = [...wrapper.querySelectorAll<HTMLParagraphElement>('section.docx p')]
+    .map((paragraph) => ({
+      paragraph,
+      level: [...paragraph.classList]
+        .map((name) => headingStyles.get(name))
+        .find((level) => level !== undefined),
+      text: paragraph.textContent?.trim()
+    }))
+    .filter(
+      (item): item is { paragraph: HTMLParagraphElement; level: number; text: string } =>
+        item.level !== undefined && Boolean(item.text)
+    )
+    .slice(0, 256)
+  let zoomRatio = 1
+  const disposeFit = installDocxFit(container, wrapper, () => zoomRatio)
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'docx-review-toolbar'
+  const button = (
+    label: 'Previous' | 'Next' | 'Zoom out' | 'Reset zoom' | 'Zoom in',
+    text: string
+  ): HTMLButtonElement => {
+    const control = document.createElement('button')
+    control.type = 'button'
+    control.className = 'docx-review-button'
+    control.textContent = text
+    control.title = i18next.t(label)
+    control.setAttribute('aria-label', i18next.t(label))
+    return control
+  }
+  const previous = button('Previous', '‹')
+  const next = button('Next', '›')
+  const zoomOut = button('Zoom out', '−')
+  const zoomReset = button('Reset zoom', '100%')
+  zoomReset.classList.add('docx-review-zoom-reset')
+  const zoomIn = button('Zoom in', '+')
+  const counter = document.createElement('span')
+  counter.className = 'docx-review-counter'
+  counter.setAttribute('aria-live', 'polite')
+  const zoomControls = document.createElement('div')
+  zoomControls.className = 'docx-review-zoom'
+  zoomControls.append(zoomOut, zoomReset, zoomIn)
+  const outlineHost = document.createElement('span')
+  outlineHost.className = 'docx-review-outline'
+  toolbar.append(previous, counter, next)
+  if (headings.length > 0) toolbar.append(outlineHost)
+  toolbar.append(zoomControls)
+  if (pages.length > 0) container.prepend(toolbar)
+
+  let currentPage = 0
+  const setCurrentPage = (index: number): void => {
+    currentPage = index
+    counter.textContent = `${index + 1} / ${pages.length}`
+    counter.setAttribute('aria-label', `${i18next.t('Page')} ${index + 1} / ${pages.length}`)
+    previous.disabled = index === 0
+    next.disabled = index === pages.length - 1
+  }
+  if (pages.length > 0) setCurrentPage(0)
+
+  const goToPage = (index: number): void => {
+    const page = pages[index]
+    if (!page) return
+    const scrollTop =
+      container.scrollTop +
+      page.getBoundingClientRect().top -
+      container.getBoundingClientRect().top -
+      toolbar.getBoundingClientRect().height
+    container.scrollTo({ top: Math.max(0, scrollTop), behavior: 'auto' })
+    setCurrentPage(index)
+  }
+  const onPrevious = (): void => goToPage(currentPage - 1)
+  const onNext = (): void => goToPage(currentPage + 1)
+  previous.addEventListener('click', onPrevious)
+  next.addEventListener('click', onNext)
+  const onOutlineChange = (index: number): void => {
+    const target = headings[index]?.paragraph
+    if (!target) return
+    const scrollTop =
+      container.scrollTop +
+      target.getBoundingClientRect().top -
+      container.getBoundingClientRect().top -
+      toolbar.getBoundingClientRect().height
+    container.scrollTo({ top: Math.max(0, scrollTop), behavior: 'auto' })
+    const page = target.closest('section.docx')
+    const pageIndex = pages.indexOf(page as HTMLElement)
+    if (pageIndex >= 0) setCurrentPage(pageIndex)
+  }
+  const outline =
+    headings.length > 0
+      ? mountDocxOutlineSelect(outlineHost, i18next.t('Outline'), headings, onOutlineChange)
+      : undefined
+
+  const updateZoom = (): void => {
+    zoomOut.disabled = zoomRatio <= DOCX_MIN_ZOOM
+    zoomIn.disabled = zoomRatio >= DOCX_MAX_ZOOM
+    zoomReset.disabled = zoomRatio === 1
+    zoomReset.textContent = `${Math.round(zoomRatio * 100)}%`
+    applyDocxFit(container, wrapper, zoomRatio)
+  }
+  const changeZoom = (delta: number): void => {
+    zoomRatio = Math.min(DOCX_MAX_ZOOM, Math.max(DOCX_MIN_ZOOM, zoomRatio + delta))
+    updateZoom()
+  }
+  const onZoomOut = (): void => changeZoom(-DOCX_ZOOM_STEP)
+  const onZoomReset = (): void => {
+    zoomRatio = 1
+    updateZoom()
+  }
+  const onZoomIn = (): void => changeZoom(DOCX_ZOOM_STEP)
+  zoomOut.addEventListener('click', onZoomOut)
+  zoomReset.addEventListener('click', onZoomReset)
+  zoomIn.addEventListener('click', onZoomIn)
+  updateZoom()
+
+  let scrollFrame: number | undefined
+  const updatePageFromScroll = (): void => {
+    scrollFrame = undefined
+    if (headings.length > 0) {
+      const edge =
+        container.getBoundingClientRect().top + toolbar.getBoundingClientRect().height + 1
+      let activeHeading: number | undefined
+      for (const [index, heading] of headings.entries()) {
+        if (heading.paragraph.getBoundingClientRect().top > edge) break
+        activeHeading = index
+      }
+      outline?.setActiveIndex(activeHeading)
+    }
+    if (
+      container.scrollTop > 0 &&
+      container.scrollTop + container.clientHeight >= container.scrollHeight - 1
+    ) {
+      setCurrentPage(pages.length - 1)
+      return
+    }
+    const edge = container.getBoundingClientRect().top + toolbar.getBoundingClientRect().height + 1
+    let low = 0
+    let high = pages.length
+    while (low < high) {
+      const middle = (low + high) >>> 1
+      if (pages[middle].getBoundingClientRect().top <= edge) low = middle + 1
+      else high = middle
+    }
+    setCurrentPage(Math.max(0, low - 1))
+  }
+  const onScroll = (): void => {
+    if (!view || scrollFrame !== undefined) return
+    scrollFrame = view.requestAnimationFrame(updatePageFromScroll)
+  }
+  if (pages.length > 0) container.addEventListener('scroll', onScroll, { passive: true })
+
+  return () => {
+    container.removeEventListener('scroll', onScroll)
+    if (scrollFrame !== undefined) view?.cancelAnimationFrame(scrollFrame)
+    previous.removeEventListener('click', onPrevious)
+    next.removeEventListener('click', onNext)
+    outline?.dispose()
+    zoomOut.removeEventListener('click', onZoomOut)
+    zoomReset.removeEventListener('click', onZoomReset)
+    zoomIn.removeEventListener('click', onZoomIn)
+    toolbar.remove()
+    disposeFit()
+  }
+}
+
 type PptxViewerDimensions = {
   slideWidth: number
   slideHeight: number
+  zoomPercent?: number
 }
 
 type PptxFitMetrics = {
   scale: number
   displayWidth: number
   displayHeight: number
+}
+
+type PptxReviewSurface = {
+  root: HTMLDivElement
+  toolbar: HTMLDivElement
+  thumbnails: HTMLDivElement
+  stage: HTMLDivElement
+  previous: HTMLButtonElement
+  next: HTMLButtonElement
+  toggleNavigation: HTMLButtonElement
+  zoomOut: HTMLButtonElement
+  zoomReset: HTMLButtonElement
+  zoomIn: HTMLButtonElement
+  counter: HTMLSpanElement
+  notes: HTMLElement
+  notesBody: HTMLParagraphElement
+}
+
+type PptxSlideHandle = {
+  dispose: () => void
+}
+
+type PptxThumbnailHandle = PptxSlideHandle & {
+  element?: HTMLElement
+  ready: Promise<void>
+}
+
+const createPptxReviewSurface = (container: HTMLDivElement): PptxReviewSurface => {
+  const document = container.ownerDocument
+  const root = document.createElement('div')
+  root.className = 'pptx-review'
+
+  const toolbar = document.createElement('div')
+  toolbar.className = 'pptx-review-toolbar'
+
+  const toggleNavigation = document.createElement('button')
+  toggleNavigation.className = 'pptx-review-button'
+  toggleNavigation.type = 'button'
+  toggleNavigation.textContent = '☰'
+  toggleNavigation.setAttribute('aria-pressed', 'true')
+  toggleNavigation.title = i18next.t('Hide navigation')
+  toggleNavigation.setAttribute('aria-label', i18next.t('Hide navigation'))
+
+  const previous = document.createElement('button')
+  previous.className = 'pptx-review-button'
+  previous.type = 'button'
+  previous.textContent = '‹'
+  previous.title = i18next.t('Previous')
+  previous.setAttribute('aria-label', i18next.t('Previous'))
+
+  const counter = document.createElement('span')
+  counter.className = 'pptx-review-counter'
+  counter.setAttribute('aria-live', 'polite')
+
+  const next = document.createElement('button')
+  next.className = 'pptx-review-button pptx-review-next'
+  next.type = 'button'
+  next.textContent = '›'
+  next.title = i18next.t('Next')
+  next.setAttribute('aria-label', i18next.t('Next'))
+
+  const zoomControls = document.createElement('div')
+  zoomControls.className = 'pptx-review-zoom'
+
+  const zoomOut = document.createElement('button')
+  zoomOut.className = 'pptx-review-button'
+  zoomOut.type = 'button'
+  zoomOut.textContent = '−'
+  zoomOut.title = i18next.t('Zoom out')
+  zoomOut.setAttribute('aria-label', i18next.t('Zoom out'))
+
+  const zoomReset = document.createElement('button')
+  zoomReset.className = 'pptx-review-button pptx-review-zoom-reset'
+  zoomReset.type = 'button'
+  zoomReset.title = i18next.t('Reset zoom')
+  zoomReset.setAttribute('aria-label', i18next.t('Reset zoom'))
+
+  const zoomIn = document.createElement('button')
+  zoomIn.className = 'pptx-review-button'
+  zoomIn.type = 'button'
+  zoomIn.textContent = '+'
+  zoomIn.title = i18next.t('Zoom in')
+  zoomIn.setAttribute('aria-label', i18next.t('Zoom in'))
+
+  zoomControls.append(zoomOut, zoomReset, zoomIn)
+  toolbar.append(toggleNavigation, previous, counter, next, zoomControls)
+
+  const body = document.createElement('div')
+  body.className = 'pptx-review-body'
+
+  const thumbnails = document.createElement('div')
+  thumbnails.className = 'pptx-review-thumbnails'
+  thumbnails.setAttribute('aria-label', i18next.t('Pages'))
+
+  const stage = document.createElement('div')
+  stage.className = 'pptx-review-stage'
+  stage.tabIndex = 0
+  stage.setAttribute('role', 'document')
+  stage.setAttribute('aria-label', i18next.t('Preview'))
+
+  const content = document.createElement('div')
+  content.className = 'pptx-review-content'
+
+  const notes = document.createElement('aside')
+  notes.className = 'pptx-review-notes'
+  notes.hidden = false
+  notes.setAttribute('aria-label', i18next.t('Notes'))
+  const notesHeading = document.createElement('h2')
+  notesHeading.className = 'pptx-review-notes-heading'
+  notesHeading.textContent = i18next.t('Notes')
+  const notesBody = document.createElement('p')
+  notesBody.className = 'pptx-review-notes-body'
+  notesBody.setAttribute('aria-live', 'polite')
+  notesBody.setAttribute('aria-atomic', 'true')
+  notes.append(notesHeading, notesBody)
+  content.append(stage, notes)
+
+  body.append(thumbnails, content)
+  root.append(toolbar, body)
+  container.replaceChildren(root)
+
+  return {
+    root,
+    toolbar,
+    thumbnails,
+    stage,
+    previous,
+    next,
+    toggleNavigation,
+    zoomOut,
+    zoomReset,
+    zoomIn,
+    counter,
+    notes,
+    notesBody
+  }
+}
+
+const PPTX_MIN_ZOOM = 50
+const PPTX_MAX_ZOOM = 200
+const PPTX_ZOOM_STEP = 25
+// Ctrl/Cmd + trackpad pinch arrives as a stream of wheel events. Accumulate it once per frame
+// so a single gesture produces one smooth zoom update instead of re-rendering for every event.
+const PPTX_WHEEL_ZOOM_SENSITIVITY = 0.25
+const PPTX_WHEEL_ZOOM_STEP = 5
+const PPTX_PAN_THRESHOLD = 4
+
+const installPptxReviewControls = (
+  surface: PptxReviewSurface,
+  viewer: PptxViewer,
+  onSlideSettled?: () => void,
+  notesPromise?: Promise<PptxNotesBySlide>,
+  zoomController?: { get: () => number; set: (percent: number) => void },
+  onThumbnailDisposed?: () => void
+): OfficeRenderCleanup => {
+  const document = surface.root.ownerDocument
+  let disposed = false
+  let panStart:
+    | {
+        pointerId: number
+        x: number
+        y: number
+        scrollLeft: number
+        scrollTop: number
+        dragging: boolean
+      }
+    | undefined
+  let pendingPan: { scrollLeft: number; scrollTop: number } | undefined
+  let panFrame: number | undefined
+  let pendingWheelDelta = 0
+  let wheelZoomRemainder = 0
+  let wheelZoomPercent: number | undefined
+  let wheelZoomFrame: number | undefined
+  let activeThumbnail: HTMLButtonElement | undefined
+  let thumbnailFrame: number | undefined
+  let notesBySlide: PptxNotesBySlide = new Map()
+  let searchQuery = ''
+  let searchHighlight: SearchHighlightHandle | null = null
+  let searchHighlightVersion = 0
+  const bodyMatches = new Map<number, TextSearchResult>()
+  const noteMatch = (note: string): RegExpExecArray | null =>
+    searchQuery
+      ? new RegExp(searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i').exec(note)
+      : null
+  const updateNotes = (index: number): void => {
+    const note = notesBySlide.get(index) ?? ''
+    const match = noteMatch(note)
+    if (!match) {
+      surface.notesBody.textContent = note
+      return
+    }
+    const mark = document.createElement('mark')
+    mark.textContent = match[0]
+    surface.notesBody.replaceChildren(
+      note.slice(0, match.index),
+      mark,
+      note.slice(match.index + match[0].length)
+    )
+  }
+  const updateSearchHighlight = (): void => {
+    const version = ++searchHighlightVersion
+    searchHighlight?.dispose()
+    searchHighlight = null
+    const result = bodyMatches.get(viewer.currentSlideIndex)
+    if (!result) return
+    void viewer.highlightSearchResult(result, { scrollIntoView: false }).then(
+      (handle) => {
+        if (
+          disposed ||
+          version !== searchHighlightVersion ||
+          viewer.currentSlideIndex !== result.slideIndex
+        ) {
+          handle?.dispose()
+          return
+        }
+        searchHighlight = handle
+      },
+      (error) => console.error('Failed to highlight slide search result', error)
+    )
+  }
+  const thumbnailHandles = new Map<number, PptxThumbnailHandle>()
+  const thumbnailItems = new Map<number, HTMLButtonElement>()
+  const thumbnailQueue = new Set<number>()
+  const updateThumbnailLayout = (index: number): void => {
+    const handle = thumbnailHandles.get(index)
+    const item = thumbnailItems.get(index)
+    const host = item?.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    if (!handle || !host) return
+    const width = Math.max(1, Math.floor(host.clientWidth || 142))
+    const thumbnail = handle.element ?? host.firstElementChild
+    const slide = thumbnail?.firstElementChild
+    if (thumbnail instanceof HTMLElement) {
+      thumbnail.style.width = `${width}px`
+      thumbnail.style.height = `${width * (viewer.slideHeight / viewer.slideWidth)}px`
+      thumbnail.style.flex = '0 0 auto'
+    }
+    if (slide instanceof HTMLElement && viewer.slideWidth > 0) {
+      slide.style.transform = `scale(${width / viewer.slideWidth})`
+      slide.style.transformOrigin = 'top left'
+    }
+  }
+  const disposeThumbnail = (index: number): void => {
+    thumbnailQueue.delete(index)
+    const handle = thumbnailHandles.get(index)
+    if (!handle) return
+    handle.dispose()
+    thumbnailHandles.delete(index)
+    onThumbnailDisposed?.()
+  }
+  const thumbnailObserver =
+    typeof IntersectionObserver === 'function'
+      ? new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              const index = Number(entry.target.getAttribute('data-slide'))
+              if (entry.isIntersecting) scheduleThumbnail(index)
+              else if (index !== viewer.currentSlideIndex) disposeThumbnail(index)
+            }
+          },
+          { root: surface.thumbnails, rootMargin: '320px 0px' }
+        )
+      : undefined
+  const thumbnailResizeObserver =
+    typeof ResizeObserver === 'function'
+      ? new ResizeObserver(() => {
+          for (const index of thumbnailHandles.keys()) updateThumbnailLayout(index)
+        })
+      : undefined
+  thumbnailResizeObserver?.observe(surface.thumbnails)
+
+  const updateActiveSlide = (index: number): void => {
+    const count = viewer.slideCount
+    surface.counter.textContent = `${index + 1} / ${count}`
+    surface.previous.disabled = index <= 0
+    surface.next.disabled = index >= count - 1
+    const activeItem = thumbnailItems.get(index)
+    if (activeItem !== activeThumbnail) {
+      activeThumbnail?.removeAttribute('data-active')
+      activeThumbnail?.removeAttribute('aria-current')
+      activeItem?.setAttribute('data-active', 'true')
+      activeItem?.setAttribute('aria-current', 'true')
+      activeThumbnail = activeItem
+      if (activeItem && typeof activeItem.scrollIntoView === 'function') {
+        activeItem.scrollIntoView({ block: 'nearest' })
+      }
+    }
+    scheduleThumbnail(index)
+    updateNotes(index)
+    surface.notes.hidden = false
+  }
+
+  const mountThumbnail = (index: number): void => {
+    if (thumbnailHandles.has(index)) return
+    const item = thumbnailItems.get(index)
+    const host = item?.querySelector<HTMLElement>('.pptx-review-thumbnail-host')
+    if (!host) return
+    // Match the renderer's intrinsic width to the slot after padding/borders have been applied.
+    // A fixed width leaves the right edge of a thumbnail outside its host at narrow panel sizes.
+    const width = Math.max(1, Math.floor(host.clientWidth || 142))
+    const handle = viewer.renderThumbnailToContainer(index, host, {
+      width
+    }) as PptxThumbnailHandle | null
+    if (!handle) return
+
+    thumbnailHandles.set(index, handle)
+    void handle.ready.catch(() => {
+      // A retired thumbnail may finish after this page has acquired a replacement handle.
+      if (disposed || thumbnailHandles.get(index) !== handle) return
+      disposeThumbnail(index)
+      host.replaceChildren()
+    })
+    // The vendor thumbnail API owns the DOM shape, but older renderer builds can leave the
+    // returned slide at intrinsic size. Reapply the same scale to the returned slide so a
+    // narrow rail cannot expose only the left edge of the slide.
+    updateThumbnailLayout(index)
+  }
+
+  const flushThumbnailQueue = (): void => {
+    thumbnailFrame = undefined
+    const [index] = thumbnailQueue
+    if (index === undefined) return
+    thumbnailQueue.delete(index)
+    mountThumbnail(index)
+    if (thumbnailQueue.size > 0) scheduleThumbnailFrame()
+  }
+
+  const scheduleThumbnailFrame = (): void => {
+    if (thumbnailFrame !== undefined) return
+    const view = document.defaultView
+    if (!view) {
+      flushThumbnailQueue()
+      return
+    }
+    thumbnailFrame = view.requestAnimationFrame(flushThumbnailQueue)
+  }
+
+  const scheduleThumbnail = (index: number): void => {
+    if (thumbnailHandles.has(index)) return
+    thumbnailQueue.add(index)
+    scheduleThumbnailFrame()
+  }
+
+  const focusStage = (): void => {
+    if (document.activeElement !== surface.stage) surface.stage.focus({ preventScroll: true })
+  }
+
+  const goToSlide = (index: number, focus = true): void => {
+    // Keep keyboard navigation on the review surface after a toolbar or thumbnail click. Without
+    // this, the clicked button retains focus and the stage intentionally ignores arrow keys.
+    if (focus) focusStage()
+    void Promise.resolve(viewer.goToSlide(index)).then(() => {
+      if (!disposed) onSlideSettled?.()
+    })
+  }
+
+  const updateZoomControls = (): void => {
+    const zoom = Math.round(zoomController?.get() ?? viewer.zoomPercent)
+    surface.zoomOut.disabled = zoom <= PPTX_MIN_ZOOM
+    surface.zoomIn.disabled = zoom >= PPTX_MAX_ZOOM
+    surface.zoomReset.disabled = zoom === 100
+    surface.zoomReset.textContent = `${zoom}%`
+  }
+
+  const cancelPendingWheelZoom = (): void => {
+    pendingWheelDelta = 0
+    wheelZoomRemainder = 0
+    if (wheelZoomFrame === undefined) return
+    ;(document.defaultView ?? window).cancelAnimationFrame(wheelZoomFrame)
+    wheelZoomFrame = undefined
+  }
+
+  const setZoom = (percent: number): void => {
+    cancelPendingWheelZoom()
+    wheelZoomPercent = undefined
+    const update = zoomController ? zoomController.set(percent) : viewer.setZoom(percent)
+    void Promise.resolve(update).then(() => {
+      if (disposed) return
+      updateZoomControls()
+      onSlideSettled?.()
+    })
+  }
+
+  const changeZoom = (delta: number): void => {
+    const next = Math.min(
+      PPTX_MAX_ZOOM,
+      Math.max(
+        PPTX_MIN_ZOOM,
+        Math.round((zoomController?.get() ?? viewer.zoomPercent) / PPTX_ZOOM_STEP) *
+          PPTX_ZOOM_STEP +
+          delta
+      )
+    )
+    setZoom(next)
+  }
+
+  const onZoomOut = (): void => changeZoom(-PPTX_ZOOM_STEP)
+  const onZoomReset = (): void => setZoom(100)
+  const onZoomIn = (): void => changeZoom(PPTX_ZOOM_STEP)
+
+  const flushWheelZoom = (): void => {
+    wheelZoomFrame = undefined
+    const delta = pendingWheelDelta
+    pendingWheelDelta = 0
+    if (delta === 0) return
+    wheelZoomRemainder -= delta * PPTX_WHEEL_ZOOM_SENSITIVITY
+    const step =
+      wheelZoomRemainder >= 0
+        ? Math.floor(wheelZoomRemainder / PPTX_WHEEL_ZOOM_STEP) * PPTX_WHEEL_ZOOM_STEP
+        : Math.ceil(wheelZoomRemainder / PPTX_WHEEL_ZOOM_STEP) * PPTX_WHEEL_ZOOM_STEP
+    if (step === 0) return
+    wheelZoomRemainder -= step
+    const current = wheelZoomPercent ?? zoomController?.get() ?? viewer.zoomPercent
+    const next = Math.min(PPTX_MAX_ZOOM, Math.max(PPTX_MIN_ZOOM, current + step))
+    if (next === current) {
+      wheelZoomRemainder = 0
+      return
+    }
+    wheelZoomPercent = next
+    const update = zoomController ? zoomController.set(next) : viewer.setZoom(next)
+    void Promise.resolve(update).then(() => {
+      if (disposed || wheelZoomPercent !== next) return
+      wheelZoomPercent = undefined
+      updateZoomControls()
+      onSlideSettled?.()
+    })
+  }
+
+  const onWheel = (event: WheelEvent): void => {
+    if (!event.ctrlKey && !event.metaKey) return
+    event.preventDefault()
+    pendingWheelDelta += event.deltaY
+    wheelZoomFrame ??= (document.defaultView ?? window).requestAnimationFrame(flushWheelZoom)
+  }
+
+  const onPointerDown = (event: PointerEvent): void => {
+    if (event.button !== 0) return
+    if (
+      event.target instanceof Element &&
+      event.target.closest(
+        'a, button, input, textarea, select, [contenteditable="true"], [role="button"], [role="link"]'
+      )
+    ) {
+      return
+    }
+    focusStage()
+    panStart = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      scrollLeft: surface.stage.scrollLeft,
+      scrollTop: surface.stage.scrollTop,
+      dragging: false
+    }
+  }
+
+  const onPointerMove = (event: PointerEvent): void => {
+    if (!panStart || event.pointerId !== panStart.pointerId) return
+    const deltaX = event.clientX - panStart.x
+    const deltaY = event.clientY - panStart.y
+    if (!panStart.dragging) {
+      if (Math.hypot(deltaX, deltaY) < PPTX_PAN_THRESHOLD) return
+      panStart.dragging = true
+      surface.stage.setPointerCapture?.(event.pointerId)
+      surface.stage.classList.add('pptx-review-stage--panning')
+    }
+    pendingPan = {
+      scrollLeft: panStart.scrollLeft - deltaX,
+      scrollTop: panStart.scrollTop - deltaY
+    }
+    if (panFrame === undefined) {
+      const view = document.defaultView
+      if (view) {
+        panFrame = view.requestAnimationFrame(() => {
+          panFrame = undefined
+          if (!pendingPan) return
+          surface.stage.scrollLeft = pendingPan.scrollLeft
+          surface.stage.scrollTop = pendingPan.scrollTop
+          pendingPan = undefined
+        })
+      }
+    }
+    event.preventDefault()
+  }
+
+  const stopPanning = (event?: PointerEvent): void => {
+    if (!panStart || (event && event.pointerId !== panStart.pointerId)) return
+    if (event && panStart.dragging) surface.stage.releasePointerCapture?.(event.pointerId)
+    if (panFrame !== undefined) {
+      document.defaultView?.cancelAnimationFrame(panFrame)
+      panFrame = undefined
+    }
+    if (pendingPan) {
+      surface.stage.scrollLeft = pendingPan.scrollLeft
+      surface.stage.scrollTop = pendingPan.scrollTop
+      pendingPan = undefined
+    }
+    panStart = undefined
+    surface.stage.classList.remove('pptx-review-stage--panning')
+  }
+
+  for (let index = 0; index < viewer.slideCount; index += 1) {
+    const item = document.createElement('button')
+    item.className = 'pptx-review-thumbnail'
+    item.type = 'button'
+    item.setAttribute('data-slide', String(index))
+    item.setAttribute('aria-label', `${i18next.t('Page')} ${index + 1}`)
+    const host = document.createElement('span')
+    host.className = 'pptx-review-thumbnail-host'
+    const label = document.createElement('span')
+    label.className = 'pptx-review-thumbnail-label'
+    label.textContent = String(index + 1)
+    item.append(host, label)
+    item.addEventListener('click', () => goToSlide(index))
+    surface.thumbnails.appendChild(item)
+    thumbnailItems.set(index, item)
+    if (thumbnailObserver) thumbnailObserver.observe(item)
+    else if (index < 12) mountThumbnail(index)
+  }
+
+  const onSlideChange = (event: Event): void => {
+    const index = (event as CustomEvent<{ index: number }>).detail.index
+    updateActiveSlide(index)
+    updateSearchCount()
+    updateSearchHighlight()
+  }
+  viewer.addEventListener('slidechange', onSlideChange)
+
+  const onPrevious = (): void => goToSlide(viewer.currentSlideIndex - 1)
+  const onNext = (): void => goToSlide(viewer.currentSlideIndex + 1)
+  const onToggleNavigation = (): void => {
+    const hidden = surface.root.classList.toggle('pptx-review--nav-hidden')
+    const label = i18next.t(hidden ? 'Show navigation' : 'Hide navigation')
+    surface.toggleNavigation.setAttribute('aria-pressed', String(!hidden))
+    surface.toggleNavigation.title = label
+    surface.toggleNavigation.setAttribute('aria-label', label)
+  }
+  const searchOpen = createOfficeFindButton(document, 'pptx-review-button pptx-review-find-open')
+  const searchControls = document.createElement('div')
+  searchControls.className = 'pptx-review-find'
+  searchControls.hidden = true
+  const searchInput = document.createElement('input')
+  searchInput.type = 'search'
+  searchInput.maxLength = 200
+  searchInput.className = 'pptx-review-find-input'
+  searchInput.placeholder = i18next.t('Find')
+  searchInput.setAttribute('aria-label', i18next.t('Find'))
+  const searchCount = document.createElement('span')
+  searchCount.className = 'pptx-review-find-count'
+  searchCount.setAttribute('aria-live', 'polite')
+  const searchContext = document.createElement('span')
+  searchContext.className = 'pptx-review-find-context'
+  const searchButton = (
+    label: 'Previous match' | 'Next match' | 'Close search',
+    text: string
+  ): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'pptx-review-button'
+    button.textContent = text
+    button.title = i18next.t(label)
+    button.setAttribute('aria-label', i18next.t(label))
+    return button
+  }
+  const searchPrevious = searchButton('Previous match', '↑')
+  const searchNext = searchButton('Next match', '↓')
+  const searchClose = searchButton('Close search', '×')
+  searchControls.append(
+    searchInput,
+    searchCount,
+    searchContext,
+    searchPrevious,
+    searchNext,
+    searchClose
+  )
+  surface.toolbar.append(searchOpen, searchControls)
+  let matchingSlides: number[] = []
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+  const updateSearchCount = (): void => {
+    const index = matchingSlides.indexOf(viewer.currentSlideIndex)
+    searchCount.textContent = `${index < 0 ? 0 : index + 1} / ${matchingSlides.length}`
+    searchPrevious.disabled = matchingSlides.length === 0
+    searchNext.disabled = matchingSlides.length === 0
+    const body = bodyMatches.get(viewer.currentSlideIndex)
+    const note = notesBySlide.get(viewer.currentSlideIndex) ?? ''
+    const noteResult = noteMatch(note)
+    const noteSnippet = noteResult
+      ? note.slice(Math.max(0, noteResult.index - 24), noteResult.index + noteResult[0].length + 24)
+      : ''
+    searchContext.textContent =
+      body?.snippet ?? (noteSnippet ? `${i18next.t('Notes')}: ${noteSnippet}` : '')
+    searchContext.title = searchContext.textContent
+  }
+  const runSearch = (): void => {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = undefined
+    const query = searchInput.value.trim()
+    searchQuery = query
+    const matches = new Set<number>()
+    bodyMatches.clear()
+    if (query) {
+      try {
+        for (const result of viewer.searchText(query)) {
+          matches.add(result.slideIndex)
+          if (!bodyMatches.has(result.slideIndex)) bodyMatches.set(result.slideIndex, result)
+        }
+      } catch (error) {
+        console.error('Failed to search slide text', error)
+      }
+      for (const [index, note] of notesBySlide) {
+        if (noteMatch(note)) matches.add(index)
+      }
+    }
+    matchingSlides = [...matches]
+      .filter((index) => index >= 0 && index < viewer.slideCount)
+      .sort((a, b) => a - b)
+    updateSearchCount()
+    updateNotes(viewer.currentSlideIndex)
+    if (matchingSlides.length > 0 && !matches.has(viewer.currentSlideIndex)) {
+      goToSlide(matchingSlides[0], false)
+    } else {
+      updateSearchHighlight()
+    }
+  }
+  const navigateSearch = (direction: -1 | 1): void => {
+    if (searchTimer) runSearch()
+    if (matchingSlides.length === 0) return
+    const current = matchingSlides.indexOf(viewer.currentSlideIndex)
+    const nextIndex =
+      current < 0
+        ? direction > 0
+          ? 0
+          : matchingSlides.length - 1
+        : (current + direction + matchingSlides.length) % matchingSlides.length
+    goToSlide(matchingSlides[nextIndex], false)
+  }
+  const closeSearch = (): void => {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = undefined
+    searchInput.value = ''
+    searchQuery = ''
+    bodyMatches.clear()
+    matchingSlides = []
+    updateSearchCount()
+    updateNotes(viewer.currentSlideIndex)
+    updateSearchHighlight()
+    searchControls.hidden = true
+    searchOpen.hidden = false
+    searchOpen.focus()
+  }
+  const onSearchKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      closeSearch()
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      navigateSearch(event.shiftKey ? -1 : 1)
+    }
+  }
+  searchOpen.addEventListener('click', () => {
+    searchOpen.hidden = true
+    searchControls.hidden = false
+    searchInput.focus()
+  })
+  searchInput.addEventListener('input', () => {
+    if (searchTimer) clearTimeout(searchTimer)
+    searchTimer = setTimeout(runSearch, 150)
+  })
+  searchInput.addEventListener('keydown', onSearchKeyDown)
+  searchPrevious.addEventListener('click', () => navigateSearch(-1))
+  searchNext.addEventListener('click', () => navigateSearch(1))
+  searchClose.addEventListener('click', closeSearch)
+  updateSearchCount()
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (
+      event.target instanceof Element &&
+      event.target.closest('button, input, textarea, select, [contenteditable="true"]')
+    ) {
+      return
+    }
+    const last = viewer.slideCount - 1
+    const nextIndex =
+      event.key === 'ArrowLeft' || event.key === 'ArrowUp' || event.key === 'PageUp'
+        ? viewer.currentSlideIndex - 1
+        : event.key === 'ArrowRight' ||
+            event.key === 'ArrowDown' ||
+            event.key === 'PageDown' ||
+            event.key === ' '
+          ? viewer.currentSlideIndex + 1
+          : event.key === 'Home'
+            ? 0
+            : event.key === 'End'
+              ? last
+              : undefined
+    if (nextIndex === undefined || nextIndex < 0 || nextIndex > last) return
+    event.preventDefault()
+    goToSlide(nextIndex)
+  }
+
+  surface.previous.addEventListener('click', onPrevious)
+  surface.next.addEventListener('click', onNext)
+  surface.toggleNavigation.addEventListener('click', onToggleNavigation)
+  surface.zoomOut.addEventListener('click', onZoomOut)
+  surface.zoomReset.addEventListener('click', onZoomReset)
+  surface.zoomIn.addEventListener('click', onZoomIn)
+  surface.stage.addEventListener('keydown', onKeyDown)
+  surface.stage.addEventListener('wheel', onWheel, { passive: false })
+  surface.stage.addEventListener('pointerdown', onPointerDown)
+  surface.stage.addEventListener('pointermove', onPointerMove)
+  surface.stage.addEventListener('pointerup', stopPanning)
+  surface.stage.addEventListener('pointercancel', stopPanning)
+  updateZoomControls()
+  updateActiveSlide(viewer.currentSlideIndex)
+  void notesPromise?.then((notes) => {
+    if (disposed) return
+    notesBySlide = notes
+    updateActiveSlide(viewer.currentSlideIndex)
+    if (searchInput.value.trim()) runSearch()
+  })
+
+  return () => {
+    disposed = true
+    searchHighlightVersion++
+    searchHighlight?.dispose()
+    if (searchTimer) clearTimeout(searchTimer)
+    searchOpen.remove()
+    searchControls.remove()
+    viewer.removeEventListener('slidechange', onSlideChange)
+    surface.previous.removeEventListener('click', onPrevious)
+    surface.next.removeEventListener('click', onNext)
+    surface.toggleNavigation.removeEventListener('click', onToggleNavigation)
+    surface.zoomOut.removeEventListener('click', onZoomOut)
+    surface.zoomReset.removeEventListener('click', onZoomReset)
+    surface.zoomIn.removeEventListener('click', onZoomIn)
+    surface.stage.removeEventListener('keydown', onKeyDown)
+    surface.stage.removeEventListener('wheel', onWheel)
+    surface.stage.removeEventListener('pointerdown', onPointerDown)
+    surface.stage.removeEventListener('pointermove', onPointerMove)
+    surface.stage.removeEventListener('pointerup', stopPanning)
+    surface.stage.removeEventListener('pointercancel', stopPanning)
+    stopPanning()
+    if (panFrame !== undefined) document.defaultView?.cancelAnimationFrame(panFrame)
+    panFrame = undefined
+    pendingPan = undefined
+    cancelPendingWheelZoom()
+    if (thumbnailFrame !== undefined) document.defaultView?.cancelAnimationFrame(thumbnailFrame)
+    thumbnailFrame = undefined
+    thumbnailQueue.clear()
+    thumbnailObserver?.disconnect()
+    thumbnailResizeObserver?.disconnect()
+    thumbnailHandles.forEach((handle) => handle.dispose())
+    thumbnailHandles.clear()
+    activeThumbnail = undefined
+  }
 }
 
 const PPTX_FALLBACK_WIDTH = 960
@@ -240,6 +1223,14 @@ class BoundedBlobUrlCache extends Map<string, string> {
     return this
   }
 
+  override clear(): void {
+    for (const [key, url] of this) {
+      URL.revokeObjectURL(url)
+      this.onEvict?.(key)
+    }
+    super.clear()
+  }
+
   trim(protectedUrls: ReadonlySet<string> = new Set()): void {
     while (this.size > MAX_PPTX_MEDIA_URLS) {
       const candidate = [...this.entries()].find(([, url]) => !protectedUrls.has(url))
@@ -271,9 +1262,17 @@ const collectReferencedPptxMediaUrls = (
 
 const getPptxFitMetrics = (
   container: HTMLElement,
-  viewer: PptxViewerDimensions
+  viewer: PptxViewerDimensions,
+  zoomPercent = viewer.zoomPercent ?? 100
 ): PptxFitMetrics | undefined => {
-  const availableWidth = container.clientWidth
+  const view = container.ownerDocument.defaultView
+  const computedStyle = view?.getComputedStyle(container)
+  const paddingLeft = Number.parseFloat(computedStyle?.paddingLeft ?? '') || 0
+  const paddingRight = Number.parseFloat(computedStyle?.paddingRight ?? '') || 0
+  const paddingTop = Number.parseFloat(computedStyle?.paddingTop ?? '') || 0
+  const paddingBottom = Number.parseFloat(computedStyle?.paddingBottom ?? '') || 0
+  const availableWidth = container.clientWidth - paddingLeft - paddingRight
+  const availableHeight = container.clientHeight - paddingTop - paddingBottom
   const { slideWidth, slideHeight } = viewer
   if (
     !Number.isFinite(availableWidth) ||
@@ -286,7 +1285,10 @@ const getPptxFitMetrics = (
     return undefined
   }
 
-  const scale = availableWidth / slideWidth
+  const zoomScale = Number.isFinite(zoomPercent) ? Math.max(0.1, zoomPercent / 100) : 1
+  const widthScale = (availableWidth / slideWidth) * zoomScale
+  const heightScale = availableHeight > 0 ? (availableHeight / slideHeight) * zoomScale : widthScale
+  const scale = Math.min(widthScale, heightScale)
   return {
     scale,
     displayWidth: slideWidth * scale,
@@ -307,12 +1309,29 @@ const applyPptxSlideFit = (slide: HTMLElement, metrics: PptxFitMetrics): void =>
 // Updates the vendor-owned slide wrappers without rebuilding parsed presentation content.
 const applyPptxFit = (
   container: HTMLElement,
-  viewer: PptxViewerDimensions
+  viewer: PptxViewerDimensions,
+  zoomPercent = viewer.zoomPercent ?? 100
 ): PptxFitMetrics | undefined => {
-  const metrics = getPptxFitMetrics(container, viewer)
+  const metrics = getPptxFitMetrics(container, viewer, zoomPercent)
   if (!metrics) return undefined
 
-  for (const item of container.querySelectorAll<HTMLElement>('[data-slide-index]')) {
+  const items = container.querySelectorAll<HTMLElement>('[data-slide-index]')
+  if (items.length === 0) {
+    const wrapper = container.firstElementChild
+    if (wrapper instanceof HTMLElement) {
+      wrapper.style.width = `${metrics.displayWidth}px`
+      wrapper.style.height = `${metrics.displayHeight}px`
+      wrapper.style.flex = '0 0 auto'
+      const slide = wrapper.firstElementChild
+      if (slide instanceof HTMLElement) applyPptxSlideFit(slide, metrics)
+    }
+    return metrics
+  }
+
+  for (const item of items) {
+    item.style.width = `${metrics.displayWidth}px`
+    item.style.height = `${metrics.displayHeight}px`
+    item.style.flex = '0 0 auto'
     const wrapper = item.firstElementChild
     if (!(wrapper instanceof HTMLElement)) continue
 
@@ -329,16 +1348,31 @@ const applyPptxFit = (
 const installPptxFit = (
   container: HTMLElement,
   viewer: PptxViewerDimensions,
-  onFit: (metrics: PptxFitMetrics) => void
+  onFit: (metrics: PptxFitMetrics) => void,
+  getZoomPercent: () => number = () => viewer.zoomPercent ?? 100
 ): OfficeRenderCleanup => {
   const view = container.ownerDocument.defaultView
   const applyFit = (): void => {
-    const metrics = applyPptxFit(container, viewer)
+    const metrics = applyPptxFit(container, viewer, getZoomPercent())
     if (metrics) onFit(metrics)
   }
   applyFit()
 
   let animationFrame: number | undefined
+  let initialLayoutFrames = 0
+  const settleInitialLayout = (): void => {
+    if (!view || initialLayoutFrames >= 8) return
+    initialLayoutFrames += 1
+    animationFrame = view.requestAnimationFrame(() => {
+      animationFrame = undefined
+      applyFit()
+      settleInitialLayout()
+    })
+  }
+  // The iframe can acquire its final width after the first slide mounts (scrollbars and flex
+  // parents settle asynchronously). Refit for a short burst so opening or changing slides never
+  // requires a manual panel drag to reveal the complete slide.
+  settleInitialLayout()
   const scheduleFit = (): void => {
     if (!view || animationFrame !== undefined) return
     animationFrame = view.requestAnimationFrame(() => {
@@ -349,6 +1383,7 @@ const installPptxFit = (
   const ResizeObserverCtor = view?.ResizeObserver
   const resizeObserver = ResizeObserverCtor ? new ResizeObserverCtor(scheduleFit) : undefined
   resizeObserver?.observe(container)
+  if (container.parentElement) resizeObserver?.observe(container.parentElement)
 
   return () => {
     resizeObserver?.disconnect()
@@ -462,6 +1497,226 @@ const installSpreadsheetStatusStyle = (container: HTMLElement): OfficeRenderClea
   return () => {
     style.remove()
     container.removeAttribute(SPREADSHEET_STATUS_SCOPE_ATTRIBUTE)
+  }
+}
+
+const installSpreadsheetZoomControls = (
+  wrapper: HTMLElement,
+  provider: FileViewerZoomProvider
+): OfficeRenderCleanup => {
+  const document = wrapper.ownerDocument
+  const toolbar = document.createElement('div')
+  toolbar.className = 'spreadsheet-review-toolbar'
+  const button = (
+    label: 'Zoom out' | 'Reset zoom' | 'Zoom in',
+    text: string
+  ): HTMLButtonElement => {
+    const control = document.createElement('button')
+    control.type = 'button'
+    control.className = 'spreadsheet-review-button'
+    control.textContent = text
+    control.title = i18next.t(label)
+    control.setAttribute('aria-label', i18next.t(label))
+    return control
+  }
+  const zoomOut = button('Zoom out', '−')
+  const zoomReset = button('Reset zoom', '100%')
+  zoomReset.classList.add('spreadsheet-review-zoom-reset')
+  const zoomIn = button('Zoom in', '+')
+  toolbar.append(zoomOut, zoomReset, zoomIn)
+  wrapper.prepend(toolbar)
+
+  let active = true
+  const update = (): void => {
+    if (!active) return
+    const state = provider.getState()
+    zoomOut.disabled = !state.canZoomOut
+    zoomReset.disabled = !state.canReset
+    zoomIn.disabled = !state.canZoomIn
+    zoomReset.textContent = state.label
+  }
+  const run = (operation: () => unknown): void => {
+    try {
+      void Promise.resolve(operation()).then(update, (error) =>
+        console.error('Failed to zoom spreadsheet preview', error)
+      )
+    } catch (error) {
+      console.error('Failed to zoom spreadsheet preview', error)
+    }
+  }
+  const onZoomOut = (): void => run(() => provider.zoomOut())
+  const onZoomReset = (): void => run(() => provider.resetZoom())
+  const onZoomIn = (): void => run(() => provider.zoomIn())
+  zoomOut.addEventListener('click', onZoomOut)
+  zoomReset.addEventListener('click', onZoomReset)
+  zoomIn.addEventListener('click', onZoomIn)
+  const unsubscribe = provider.subscribe?.(update)
+  update()
+
+  return () => {
+    active = false
+    unsubscribe?.()
+    zoomOut.removeEventListener('click', onZoomOut)
+    zoomReset.removeEventListener('click', onZoomReset)
+    zoomIn.removeEventListener('click', onZoomIn)
+    toolbar.remove()
+  }
+}
+
+const installSpreadsheetFindControls = (
+  wrapper: HTMLElement,
+  provider: FileViewerSearchProvider
+): OfficeRenderCleanup => {
+  const document = wrapper.ownerDocument
+  const toolbar = wrapper.querySelector<HTMLElement>('.spreadsheet-review-toolbar')
+  if (!toolbar) return () => undefined
+
+  const open = createOfficeFindButton(
+    document,
+    'spreadsheet-review-button spreadsheet-review-find-open'
+  )
+
+  const controls = document.createElement('div')
+  controls.className = 'spreadsheet-review-find'
+  controls.hidden = true
+  const input = document.createElement('input')
+  input.className = 'spreadsheet-review-find-input'
+  input.type = 'search'
+  input.placeholder = i18next.t('Find')
+  input.setAttribute('aria-label', i18next.t('Find'))
+  const count = document.createElement('span')
+  count.className = 'spreadsheet-review-find-count'
+  count.setAttribute('aria-live', 'polite')
+  const makeButton = (
+    label: 'Previous match' | 'Next match' | 'Close search',
+    text: string
+  ): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'spreadsheet-review-button'
+    button.textContent = text
+    button.title = i18next.t(label)
+    button.setAttribute('aria-label', i18next.t(label))
+    return button
+  }
+  const previous = makeButton('Previous match', '↑')
+  const next = makeButton('Next match', '↓')
+  const close = makeButton('Close search', '×')
+  const optionButton = (label: 'Match case' | 'Whole word', text: string): HTMLButtonElement => {
+    const button = document.createElement('button')
+    button.type = 'button'
+    button.className = 'spreadsheet-review-button spreadsheet-review-find-option'
+    button.textContent = text
+    button.title = i18next.t(label)
+    button.setAttribute('aria-label', i18next.t(label))
+    button.setAttribute('aria-pressed', 'false')
+    return button
+  }
+  const matchCase = optionButton('Match case', 'Aa')
+  const wholeWord = optionButton('Whole word', 'W')
+  const searchCurrent = (): FileViewerSearchState | Promise<FileViewerSearchState> =>
+    provider.search(input.value, {
+      caseSensitive: matchCase.getAttribute('aria-pressed') === 'true',
+      wholeWord: wholeWord.getAttribute('aria-pressed') === 'true'
+    })
+  controls.append(input, matchCase, wholeWord, count, previous, next, close)
+  toolbar.append(open, controls)
+
+  let active = true
+  let generation = 0
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let pending: Promise<void> = Promise.resolve()
+  const update = (state: FileViewerSearchState): void => {
+    if (!active) return
+    count.textContent = `${state.currentIndex < 0 ? 0 : state.currentIndex + 1} / ${state.total}`
+    previous.disabled = state.total === 0
+    next.disabled = state.total === 0
+  }
+  const run = (operation: () => FileViewerSearchState | Promise<FileViewerSearchState>): void => {
+    const currentGeneration = ++generation
+    pending = pending.then(async () => {
+      if (!active) return
+      try {
+        const state = await operation()
+        if (currentGeneration === generation) update(state)
+      } catch (error) {
+        console.error('Failed to search spreadsheet preview', error)
+      }
+    })
+  }
+  const search = (): void => {
+    if (timer) clearTimeout(timer)
+    if (!input.value.trim()) {
+      run(() => provider.clear?.() ?? provider.search(''))
+      return
+    }
+    timer = setTimeout(() => {
+      timer = undefined
+      run(searchCurrent)
+    }, 150)
+  }
+  const show = (): void => {
+    controls.hidden = false
+    open.hidden = true
+    input.focus()
+    input.select()
+  }
+  const hide = (): void => {
+    if (timer) clearTimeout(timer)
+    timer = undefined
+    generation += 1
+    input.value = ''
+    run(() => provider.clear?.() ?? provider.search(''))
+    controls.hidden = true
+    open.hidden = false
+    open.focus()
+  }
+  const navigate = (direction: 'next' | 'previous'): void => {
+    if (timer) {
+      clearTimeout(timer)
+      timer = undefined
+      run(searchCurrent)
+      return
+    }
+    const operation = provider[direction]
+    if (operation) run(() => operation())
+  }
+  const onKeyDown = (event: KeyboardEvent): void => {
+    if (event.key === 'Escape') {
+      event.preventDefault()
+      hide()
+    } else if (event.key === 'Enter') {
+      event.preventDefault()
+      navigate(event.shiftKey ? 'previous' : 'next')
+    }
+  }
+  open.addEventListener('click', show)
+  const toggleOption = (button: HTMLButtonElement): void => {
+    button.setAttribute('aria-pressed', String(button.getAttribute('aria-pressed') !== 'true'))
+    if (input.value.trim()) {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      run(searchCurrent)
+    }
+  }
+  matchCase.addEventListener('click', () => toggleOption(matchCase))
+  wholeWord.addEventListener('click', () => toggleOption(wholeWord))
+  input.addEventListener('input', search)
+  input.addEventListener('keydown', onKeyDown)
+  previous.addEventListener('click', () => navigate('previous'))
+  next.addEventListener('click', () => navigate('next'))
+  close.addEventListener('click', hide)
+  update(
+    provider.getState?.() ?? { query: '', total: 0, currentIndex: -1, current: null, matches: [] }
+  )
+
+  return () => {
+    active = false
+    generation += 1
+    if (timer) clearTimeout(timer)
+    void provider.clear?.()
+    open.remove()
+    controls.remove()
   }
 }
 
@@ -632,10 +1887,11 @@ export const renderOfficeFile = async ({
   if (extension === 'docx') {
     // Keep active-content features disabled and inline media so detached Blob URLs cannot leak.
     const { renderAsync } = await import('docx-preview')
+    let docxModel: Awaited<ReturnType<typeof renderAsync>>
 
     try {
       onStatus?.(RENDERING_STATUS)
-      await renderAsync(bytes, container, container, {
+      docxModel = await renderAsync(bytes, container, container, {
         breakPages: true,
         ignoreLastRenderedPageBreak: false,
         renderAltChunks: false,
@@ -649,12 +1905,14 @@ export const renderOfficeFile = async ({
     }
     const disposeLinks = installDocxLinks(container)
     const wrapper = container.querySelector<HTMLElement>('.docx-wrapper')
-    const disposeFit = wrapper ? installDocxFit(container, wrapper) : undefined
+    const disposeReview = wrapper
+      ? installDocxReviewControls(container, wrapper, docxModel)
+      : undefined
     const blobUrls = collectBlobUrls(container)
 
     return () => {
       disposeLinks()
-      disposeFit?.()
+      disposeReview?.()
       blobUrls.forEach((url) => URL.revokeObjectURL(url))
       clearContainer(container)
     }
@@ -662,9 +1920,14 @@ export const renderOfficeFile = async ({
 
   if (extension === 'xls' || extension === 'xlsx') {
     // Spreadsheet parsing stays in the bundled Worker; readiness means a real first paint occurred.
-    const [{ renderFileViewerSpreadsheet }, { default: importedWorkerUrl }] = await Promise.all([
+    const [
+      { renderFileViewerSpreadsheet },
+      { default: importedWorkerUrl },
+      { findFileViewerSearchProvider, findFileViewerZoomProvider }
+    ] = await Promise.all([
       import('@file-viewer/renderer-spreadsheet'),
-      import('@file-viewer/renderer-spreadsheet/worker/sheetjs/sheet.worker?worker&url')
+      import('@file-viewer/renderer-spreadsheet/worker/sheetjs/sheet.worker?worker&url'),
+      import('@file-viewer/core')
     ])
     const workerUrl = resolveSpreadsheetWorkerUrl(importedWorkerUrl, container)
     const readyWorker = await createReadySpreadsheetWorker(workerUrl, container, signal)
@@ -718,6 +1981,7 @@ export const renderOfficeFile = async ({
       subtree: true
     })
     const disposeStatusStyle = installSpreadsheetStatusStyle(container)
+    let disposeControls: OfficeRenderCleanup | undefined
     let instance: Awaited<ReturnType<typeof renderFileViewerSpreadsheet>>
     let claimed = false
     try {
@@ -732,6 +1996,7 @@ export const renderOfficeFile = async ({
             signal,
             onProgressiveRender: markFirstPaint,
             options: {
+              fit: 'actual',
               locale: 'en-US',
               messages: {
                 'state.empty.title': i18next.isInitialized
@@ -765,6 +2030,7 @@ export const renderOfficeFile = async ({
       disposed = true
       errorObserver.disconnect()
       try {
+        disposeControls?.()
         if ('unmount' in instance) await instance.unmount()
         else if ('$destroy' in instance) await instance.$destroy()
         else await instance.destroy()
@@ -823,50 +2089,110 @@ export const renderOfficeFile = async ({
       await dispose()
       throw fatalError
     }
+    const wrapper = container.querySelector<HTMLElement>('.excel-wrapper')
+    const zoomProvider = wrapper && findFileViewerZoomProvider(wrapper)
+    const searchProvider = wrapper && findFileViewerSearchProvider(wrapper)
+    if (wrapper && zoomProvider) {
+      const disposeZoom = installSpreadsheetZoomControls(wrapper, zoomProvider)
+      const disposeFind = searchProvider
+        ? installSpreadsheetFindControls(wrapper, searchProvider)
+        : undefined
+      disposeControls = () => {
+        disposeFind?.()
+        disposeZoom()
+      }
+    }
     sessionReady = true
     return dispose
   }
 
   // Construct explicitly so a failed open still leaves an instance that can be destroyed.
   const { PptxViewer, RECOMMENDED_ZIP_LIMITS } = await import('@aiden0z/pptx-renderer')
+  const surface = createPptxReviewSurface(container)
   const viewerDimensionsRef: { current?: PptxViewerDimensions } = {}
   const mediaUrlCache = new BoundedBlobUrlCache()
+  const trimPptxMediaCache = (): void => {
+    mediaUrlCache.trim(collectReferencedPptxMediaUrls(container, mediaUrlCache))
+  }
+  const view = container.ownerDocument.defaultView
+  let pptxZoomPercent = 100
   let currentFit: PptxFitMetrics | undefined
+  let refitFrame: number | undefined
+  let refitPptx: () => void = () => undefined
+  let queueSlideFit: () => void = () => undefined
+  let slideFitQueued = false
+  let viewerDestroyed = false
+  let disposeReview: OfficeRenderCleanup | undefined
   let reportedRendering = false
   const reportRendering = (): void => {
     if (reportedRendering) return
     reportedRendering = true
     onStatus?.(RENDERING_STATUS)
   }
-  const viewer = new PptxViewer(container, {
-    // A fixed width disables the vendor's resize path, which clears and rebuilds every slide.
-    width: container.clientWidth || PPTX_FALLBACK_WIDTH,
+  const viewer = new PptxViewer(surface.stage, {
     zipLimits: RECOMMENDED_ZIP_LIMITS,
     lazySlides: true,
     lazyMedia: true,
-    scrollContainer: container,
+    // The review surface owns fit/zoom through CSS transforms. Disable the vendor's
+    // container-width fitting so panel layout changes do not rebuild the slide DOM.
+    fitMode: 'none',
+    scrollContainer: surface.stage,
     pdfjs: false,
     onRenderStart: reportRendering,
-    onSlideUnmounted: () =>
-      mediaUrlCache.trim(collectReferencedPptxMediaUrls(container, mediaUrlCache)),
+    onSlideUnmounted: trimPptxMediaCache,
     // Windowed slides can mount after a resize, so apply the latest fit before their next paint.
     onSlideRendered: (_index, element) => {
       const viewerDimensions = viewerDimensionsRef.current
-      const metrics = viewerDimensions ? getPptxFitMetrics(container, viewerDimensions) : currentFit
+      const metrics = viewerDimensions
+        ? getPptxFitMetrics(container, viewerDimensions, pptxZoomPercent)
+        : currentFit
       if (!metrics) return
 
       currentFit = metrics
       applyPptxSlideFit(element, metrics)
+      // The renderer dispatches before appending the slide wrapper. Refit in one microtask after
+      // the append, while coalescing bursts of slide mounts into a single layout pass.
+      queueSlideFit()
     }
   })
   viewerDimensionsRef.current = viewer
+  queueSlideFit = (): void => {
+    if (slideFitQueued) return
+    slideFitQueued = true
+    queueMicrotask(() => {
+      slideFitQueued = false
+      if (viewerDestroyed) return
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+    })
+  }
+  refitPptx = (): void => {
+    if (!view) {
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+      return
+    }
+    if (refitFrame !== undefined) return
+    refitFrame = view.requestAnimationFrame(() => {
+      refitFrame = undefined
+      const metrics = applyPptxFit(surface.stage, viewer, pptxZoomPercent)
+      if (metrics) currentFit = metrics
+    })
+  }
   let disposeFit: OfficeRenderCleanup | undefined
   const destroyViewer = (): void => {
+    viewerDestroyed = true
+    slideFitQueued = false
+    if (refitFrame !== undefined) view?.cancelAnimationFrame(refitFrame)
+    refitFrame = undefined
     disposeFit?.()
     disposeFit = undefined
+    disposeReview?.()
+    disposeReview = undefined
     try {
       viewer.destroy()
     } finally {
+      mediaUrlCache.clear()
       clearContainer(container)
     }
   }
@@ -874,18 +2200,41 @@ export const renderOfficeFile = async ({
   try {
     installPptxMediaUrlCache(viewer, mediaUrlCache)
     await viewer.open(toArrayBuffer(bytes), {
-      renderMode: 'list',
-      listOptions: { windowed: true, initialSlides: 4, batchSize: 4 },
+      renderMode: 'slide',
       lazySlides: true,
       lazyMedia: true,
       signal
     })
     reportRendering()
+    const notesPromise = extractPptxNotes(bytes, signal).catch(() => new Map())
     const resolver = requirePptxMediaResolverInternals(viewer.presentationData?.mediaResolver)
     mediaUrlCache.setEvictionHandler((mediaPath) => releaseDecodedPptxMedia(resolver, mediaPath))
-    disposeFit = installPptxFit(container, viewer, (metrics) => {
-      currentFit = metrics
-    })
+    disposeFit = installPptxFit(
+      surface.stage,
+      viewer,
+      (metrics) => {
+        currentFit = metrics
+      },
+      () => pptxZoomPercent
+    )
+    disposeReview = installPptxReviewControls(
+      surface,
+      viewer,
+      () => {
+        trimPptxMediaCache()
+        refitPptx()
+      },
+      notesPromise,
+      {
+        get: () => pptxZoomPercent,
+        set: (percent) => {
+          pptxZoomPercent = percent
+          refitPptx()
+        }
+      },
+      trimPptxMediaCache
+    )
+    trimPptxMediaCache()
   } catch (error) {
     try {
       destroyViewer()

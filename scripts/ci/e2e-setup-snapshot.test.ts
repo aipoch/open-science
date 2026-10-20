@@ -80,6 +80,28 @@ async function fixture(): Promise<{ producer: string; consumer: string; archive:
 }
 
 describe('same-run E2E setup snapshots', { timeout: 30_000 }, () => {
+  it.each(['dependencies', 'setup'] as const)(
+    'transfers ignored vendor runtime assets in the %s snapshot',
+    async (kind) => {
+      const { producer, consumer, archive } = await fixture()
+      const asset = 'packages/native/vendor/runtime/x64/tool.exe'
+      await mkdir(dirname(join(producer, asset)), { recursive: true })
+      await writeFile(join(producer, 'packages/native/.gitignore'), '/vendor/runtime/x64/\n')
+      await writeFile(join(producer, asset), 'runtime fixture')
+      expect(
+        execFileSync('git', ['check-ignore', asset], { cwd: producer, encoding: 'utf8' }).trim()
+      ).toBe(asset)
+      if (kind === 'dependencies') {
+        await packDependencies(producer, archive, environment)
+        await restoreDependencies(consumer, archive, environment)
+      } else {
+        await packSnapshot(producer, archive, environment)
+        await restoreSnapshot(consumer, archive, environment)
+      }
+      expect(await readFile(join(consumer, asset), 'utf8')).toBe('runtime fixture')
+    }
+  )
+
   it('packs and restores dependencies without requiring a build output', async () => {
     const { producer, consumer, archive } = await fixture()
     await rm(join(producer, 'out'), { recursive: true })

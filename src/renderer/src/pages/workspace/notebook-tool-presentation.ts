@@ -1,4 +1,4 @@
-import { matchNotebookControlTool } from './notebook-tool-names'
+import { matchNotebookControlTool, resolveNotebookLanguage } from './notebook-tool-names'
 import { identityTranslate, type TranslateClause } from './workspace-translate-clause'
 
 export type ToolSummary = {
@@ -56,6 +56,57 @@ export const readNotebookToolResult = (
 export const notebookInput = (value: unknown): Record<string, unknown> => {
   const input = record(value) ?? {}
   return record(input.arguments) ?? input
+}
+
+export type NotebookCodeReview = {
+  code: string
+  language: string
+  environment?: string
+  riskCount?: number
+  uncertain?: boolean
+  risks: Array<{ operation: string; source: string; line: number }>
+}
+
+// Callers validate host ownership before projecting the same evidence in approvals and receipts.
+export const readNotebookCodeReview = (rawInput: unknown): NotebookCodeReview | undefined => {
+  const input = notebookInput(rawInput)
+  const risk = notebookInput(input.notebookCodeRisk)
+  if (
+    typeof input.code !== 'string' ||
+    typeof risk.language !== 'string' ||
+    !['python', 'r', 'repl', 'bash'].includes(risk.language) ||
+    !Array.isArray(risk.risks) ||
+    !risk.risks.length ||
+    !risk.risks.every(
+      (finding) =>
+        finding &&
+        typeof finding.operation === 'string' &&
+        typeof finding.source === 'string' &&
+        Number.isInteger(finding.line) &&
+        finding.line > 0
+    )
+  )
+    return undefined
+  return {
+    code: input.code,
+    language: resolveNotebookLanguage(undefined, risk, input.code),
+    environment:
+      [risk.environment, risk.runtimeId]
+        .filter(
+          (value, index, values) => typeof value === 'string' && values.indexOf(value) === index
+        )
+        .join(' · ') || undefined,
+    riskCount:
+      typeof risk.riskCount === 'number' && Number.isSafeInteger(risk.riskCount)
+        ? Math.max(risk.riskCount, risk.risks.length)
+        : risk.risks.length,
+    uncertain: risk.risks.every((finding) =>
+      /\bdynamic\b|\bunresolved\b|analysis (?:limit|unavailable)|^(?:parse-error|parser-unavailable)$|\b(?:script|nested) execution\b/.test(
+        finding.operation.split(': ').at(-1) ?? finding.operation
+      )
+    ),
+    risks: risk.risks
+  }
 }
 
 const statusLabel = (value: unknown, t: TranslateClause): string | undefined => {

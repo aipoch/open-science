@@ -9,6 +9,13 @@
   # Updates run the old uninstaller with isUpdated set and must retain the durable profile. Only a
   # real product uninstall removes the AppContainer resources.
   ${ifNot} ${isUpdated}
+    nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-update-handoff-uninstall.ps1" -InstallPath "$INSTDIR"'
+    Pop $0
+    StrCmp $0 "0" updatePresentationCleanupComplete
+    DetailPrint `Open-Science update presentation cleanup failure code=$0`
+    MessageBox MB_OK|MB_ICONSTOP "An Open-Science update may still be active. Finish the update and close its update window, then retry uninstall."
+    Abort
+    updatePresentationCleanupComplete:
     nsExec::ExecToLog '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\resources\windows-notebook-sandbox-uninstall.ps1" -SandboxRoot "$INSTDIR\resources\notebook-network-sandbox\windows"'
     Pop $0
     StrCmp $0 "0" notebookSandboxCleanupComplete
@@ -22,6 +29,18 @@
 
 !ifndef BUILD_UNINSTALLER
 !define MUI_CUSTOMFUNCTION_ABORT restorePreservedOnAbort
+!include "${BUILD_RESOURCES_DIR}\windows-update-handoff.nsh"
+!include "${BUILD_RESOURCES_DIR}\windows-install-publication.nsh"
+
+# Quit bypasses .onInstFailed and every other NSIS callback. Publish the existing failure
+# receipt at each explicit failure exit so the detached presentation can become dismissible.
+!macro quitFailedUpdate
+  Call cleanupInstallPublication
+  Push "failed"
+  Call writeUpdateReceipt
+  SetErrorLevel 2
+  Quit
+!macroend
 
 Var perMachineInstallDirCache
 Var perUserInstallDirCache
@@ -65,7 +84,24 @@ FunctionEnd
   StrCpy ${BACKUP} ""
   ${if} "${DIR}" != ""
     ClearErrors
-    GetFullPathName $R2 "${DIR}\.."
+    # NSIS GetFullPathName requires the parent to exist. A stale InstallLocation may outlive
+    # that directory after a manual move/delete. Resolve lexically with the Windows API so
+    # absent data is a no-op, while existing data and interrupted backups still use the guards.
+    System::Call 'kernel32::GetFullPathName(t "${DIR}\..", i ${NSIS_MAX_STRLEN}, t .R2, p 0) i.R3'
+    ${if} $R3 == 0
+    ${orIf} $R3 >= ${NSIS_MAX_STRLEN}
+      SetErrors
+    ${else}
+      # Only a missing parent is harmless. Keep refusing paths whose attributes cannot be read
+      # for other reasons (permissions, unavailable drives, invalid paths).
+      System::Call 'kernel32::GetFileAttributes(t R2) i.R3 ?e'
+      Pop $R4
+      ${if} $R3 == -1
+      ${andIf} $R4 != 2
+      ${andIf} $R4 != 3
+        SetErrors
+      ${endif}
+    ${endif}
     ${if} ${Errors}
       DetailPrint `Open-Science data protection failure code=parent-path-unresolved path="${DIR}\${FOLDER}"`
       DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; its parent path could not be resolved.`
@@ -154,8 +190,7 @@ FunctionEnd
 
 !macro quitIfDataRestoreFailed
   ${if} $dataRestoreFailed != "0"
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 
@@ -180,8 +215,7 @@ FunctionEnd
   ${if} $dataProtectionFailed != "0"
     # Undo any earlier successful move before refusing to start either old uninstaller.
     !insertmacro restoreAllNestedDataRoots
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
 !macroend
 
@@ -195,7 +229,40 @@ FunctionEnd
   !define MUI_PAGE_CUSTOMFUNCTION_PRE protectNestedDataRootsForInstall
 !macroend
 
+# Interactive updates retain the native instfiles page after Electron exits. The normal setup
+# finish page would strand --force-run at a second confirmation, so update installs complete it
+# automatically. Fresh installations keep the standard finish page and optional Run checkbox.
+!macro customFinishPage
+  Function openScienceStartInstalledApp
+    StrCpy $1 ""
+    ${if} ${isUpdated}
+      StrCpy $1 "--updated"
+      ${if} $updateOperation != ""
+        StrCpy $1 "$1 --open-science-update-operation=$updateOperation"
+      ${endif}
+    ${endif}
+    ${StdUtils.ExecShellAsUser} $0 "$launchLink" "open" "$1"
+  FunctionEnd
+
+  Function openScienceUpdateFinish
+    ${if} ${isUpdated}
+      ${if} ${isForceRun}
+        Call openScienceStartInstalledApp
+      ${endif}
+      Abort
+    ${endif}
+  FunctionEnd
+
+  !ifndef HIDE_RUN_AFTER_FINISH
+    !define MUI_FINISHPAGE_RUN
+    !define MUI_FINISHPAGE_RUN_FUNCTION openScienceStartInstalledApp
+  !endif
+  !define MUI_PAGE_CUSTOMFUNCTION_PRE openScienceUpdateFinish
+  !insertmacro MUI_PAGE_FINISH
+!macroend
+
 !macro customInit
+  Call initializeUpdateReceipts
   # Cache both registered locations before either uninstall pass can delete their registry data.
   # More importantly, move any nested OpenScience data root OUTSIDE the install directory before
   # the first old uninstaller runs. Its /KEEP_APP_DATA flag only protects the normal OS app-data
@@ -262,14 +329,15 @@ FunctionEnd
 
   ${if} $dataProtectionFailed != "0"
     !insertmacro restoreAllNestedDataRoots
-    SetErrorLevel 2
-    Quit
+    !insertmacro quitFailedUpdate
   ${endif}
   # Page callbacks do not run in silent mode. There is no later user choice in that mode, so the
   # installMode selected by initMultiUser is already final and machine protection can run now.
   ${if} ${Silent}
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
+    Push "installing"
+    Call writeUpdateReceipt
   ${endif}
   openScienceCustomInit_done:
 !macroend
@@ -277,6 +345,7 @@ FunctionEnd
 # These callbacks cover cancellation or an installer failure before the post-uninstall hooks run.
 # The normal path restores each directory immediately after its matching old-uninstaller pass.
 !macro customHeader
+  !insertmacro defineUpdateReceiptFunctions
   # NSIS extracts the new uninstaller after the application package. Probe the same write access
   # its File command will request before uninstalling the old app, and again before extraction.
   # Checking only after uninstalling can reject the update with the old executable already gone.
@@ -289,10 +358,10 @@ FunctionEnd
 
     ensureExistingUninstallerIsWritable_retry:
       System::Call 'kernel32::SetLastError(i 0)'
-      System::Call 'kernel32::CreateFile(t "$INSTDIR\${UNINSTALL_FILENAME}", i 0x40000000, i 1, i 0, i 3, i 0x80, i 0) i.rR0 ?e'
+      System::Call 'kernel32::CreateFile(t "$INSTDIR\${UNINSTALL_FILENAME}", i 0x40000000, i 1, i 0, i 3, i 0x80, i 0) p.R0 ?e'
       Pop $R1
       StrCmp $R1 0 0 ensureExistingUninstallerIsWritable_failed
-      System::Call 'kernel32::CloseHandle(i rR0)'
+      System::Call 'kernel32::CloseHandle(p R0)'
       Return
 
     ensureExistingUninstallerIsWritable_failed:
@@ -319,8 +388,7 @@ FunctionEnd
     ensureExistingUninstallerIsWritable_cancel:
       # customInit may already have moved nested user data outside the old installation.
       !insertmacro restoreAllNestedDataRoots
-      SetErrorLevel 2
-      Quit
+      !insertmacro quitFailedUpdate
 
     ensureExistingUninstallerIsWritable_done:
       Return
@@ -328,19 +396,36 @@ FunctionEnd
 
   Function protectNestedDataRootsForInstall
     !ifdef openScienceOriginalInstFilesPre
-      Call ${openScienceOriginalInstFilesPre}
+      # An update must replace the registered installation, including a custom directory that
+      # does not contain APP_FILENAME. The setup-page sanitizer would append a second directory.
+      ${ifNot} ${isUpdated}
+        Call ${openScienceOriginalInstFilesPre}
+      ${endif}
     !endif
     Call ensureExistingUninstallerIsWritable
     !insertmacro protectMachineDataRootForSelectedMode
+    Push "installing"
+    Call writeUpdateReceipt
   FunctionEnd
 
   Function restorePreservedOnAbort
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
+    Push "failed"
+    Call writeUpdateReceipt
   FunctionEnd
 
   Function .onInstFailed
+    Call cleanupInstallPublication
     !insertmacro restoreAllNestedDataRoots
+    Push "failed"
+    Call writeUpdateReceipt
   FunctionEnd
+!macroend
+
+!macro customInstall
+  Push "installed"
+  Call writeUpdateReceipt
 !macroend
 
 # Resilient replacement for handleUninstallResult's default failure handling, installed via
@@ -378,8 +463,7 @@ FunctionEnd
         DetailPrint `Could not safely preserve "${DIR}\${FOLDER}"; leaving the existing installation untouched.`
         MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0$\r$\nAny data already preserved for this retry remains at:$\r$\n$retryLegacyDataBackup$\r$\n$retryBrandedDataBackup"
         !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
+        !insertmacro quitFailedUpdate
       ${endif}
     ${endif}
 
@@ -405,8 +489,7 @@ FunctionEnd
           DetailPrint `The preserved data remains at: ${BACKUP}`
           MessageBox MB_OK|MB_ICONSTOP "Open-Science could not restore its data folder after updating.$\r$\nYour data remains at:$\r$\n${BACKUP}"
           !insertmacro restoreAllNestedDataRoots
-          SetErrorLevel 2
-          Quit
+          !insertmacro quitFailedUpdate
         ${endif}
         StrCpy ${BACKUP} ""
       ${endif}
@@ -471,14 +554,14 @@ FunctionEnd
     ${ifNot} ${Errors}
       ReadEnvStr $R3 "TEMP"
       ReadEnvStr $R4 "TMP"
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R5").rR6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R5").R6'
       ${if} $R6 != 0
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R5").rR6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R5").R6'
       ${endif}
       ${if} $R6 == 0
         # A partial environment update must not leak into the rest of the new installer.
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").rR6'
-        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").rR6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
+        System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
         RMDir /r "$R5"
         StrCpy $R5 ""
       ${endif}
@@ -488,8 +571,8 @@ FunctionEnd
 
     ExecWait '"$PLUGINSDIR\old-uninstaller.exe" /S /KEEP_APP_DATA $0 _?=${DIR}' $R0
     ${if} $R5 != ""
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").rR6'
-      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").rR6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TEMP", "$R3").R6'
+      System::Call 'Kernel32::SetEnvironmentVariable(t, t)i ("TMP", "$R4").R6'
       RMDir /r "$R5"
       ClearErrors
     ${endif}
@@ -502,8 +585,7 @@ FunctionEnd
         MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
         DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
         !insertmacro restoreAllNestedDataRoots
-        SetErrorLevel 2
-        Quit
+        !insertmacro quitFailedUpdate
       ${endif}
     ${endif}
   ${endif}
@@ -553,8 +635,7 @@ FunctionEnd
       MessageBox MB_OK|MB_ICONEXCLAMATION "$(uninstallFailed): $R0"
       DetailPrint `Uninstall was not successful. Uninstaller error code: $R0.`
       !insertmacro restoreAllNestedDataRoots
-      SetErrorLevel 2
-      Quit
+      !insertmacro quitFailedUpdate
     ${endif}
     !insertmacro uninstallFailureRecoveryAt $perUserInstallDirCache $perUserDataBackup $perUserDataBackupBranded
   ${endif}

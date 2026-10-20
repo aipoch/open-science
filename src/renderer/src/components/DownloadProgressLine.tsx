@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next'
-import { formatProgressLine, type DownloadProgress } from '../../../shared/download-progress'
+import { formatProgressLine } from '../../../shared/download-progress'
+import type { DownloadProgress } from '@aipoch/resilient-download'
 
 // Single-line download status reused by the update dialog and the provisioning surface. The bar stays
 // at the current fraction while reconnecting (pulse animation) so a stall reads as "resuming" rather

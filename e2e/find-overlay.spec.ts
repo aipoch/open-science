@@ -1,5 +1,7 @@
+import { writeFile } from 'node:fs/promises'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 test.use({ windowMode: 'normal' })
 
@@ -7,10 +9,10 @@ test('refocuses the open find overlay and follows app language changes', async (
   app
 }, testInfo) => {
   const page = await app.completeOnboarding()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Find overlay project')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await page.evaluate(async () => {
+    await window.api.locale.setPreference({ preference: 'en' })
+  })
+  await createProjectViaUi(page, 'Find overlay project')
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const modifiers = process.platform === 'darwin' ? (['meta'] as const) : (['control'] as const)
@@ -44,14 +46,22 @@ test('refocuses the open find overlay and follows app language changes', async (
   await expect(input).toHaveAttribute('placeholder', '查找')
   await expect(overlay.locator('html')).toHaveAttribute('lang', 'zh-Hans')
   await expect(overlay.getByRole('button', { name: '上一个匹配项', exact: true })).toBeVisible()
-  await overlay.screenshot({ path: testInfo.outputPath('find-overlay-zh-Hans.png') })
+  await writeFile(testInfo.outputPath('find-overlay-zh-Hans.png'), await app.captureFindOverlay())
 
   await page.evaluate(async () => {
     await window.api.locale.setPreference({ preference: 'ja' })
   })
   await expect(input).toHaveAttribute('placeholder', '検索')
   await expect(overlay.locator('html')).toHaveAttribute('lang', 'ja')
-  await overlay.screenshot({ path: testInfo.outputPath('find-overlay-ja.png') })
+  await writeFile(testInfo.outputPath('find-overlay-ja.png'), await app.captureFindOverlay())
+  await input.fill('overlay query')
   await overlay.getByRole('button', { name: '検索を閉じる' }).click()
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
+
+  await app.pressMainWindowShortcut('F', [...modifiers])
+  await expect.poll(() => app.findOverlayIsVisible()).toBe(true)
+  await expect(input).toBeFocused()
+  await expect(input).toHaveValue('overlay query')
+  await input.press('Escape')
   await expect.poll(() => app.findOverlayIsVisible()).toBe(false)
 })

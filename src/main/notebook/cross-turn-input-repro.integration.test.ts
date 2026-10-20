@@ -1,3 +1,4 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { execFile } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
@@ -7,19 +8,17 @@ import { promisify } from 'node:util'
 import { expect, it } from 'vitest'
 import type { NotebookRunInputFile, NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
+
 import { createRootNotebookLane } from './lane-identity'
-import { analyzePythonFileAccesses } from './dependency-analysis-python'
+import { analyzePythonFileAccesses } from '@aipoch/notebook-analysis'
 import { notebookPromptInputPath } from './prompt-input-materialization'
 import { NotebookRunRepository } from './repository'
 import { NotebookRunTerminalizationOwner } from './run-terminalization'
-import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
+import { analyzeNotebookSourceFileAccess } from '@aipoch/notebook-analysis'
 import { startWorkingFileObservation } from './working-file-observer'
 import { reportedPythonPlots } from './reported-python-plots.fixture'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { reportedSubplots, reportedSubplotsInput } from './reported-python-subplots.fixture'
 import { rBasePlots } from './reported-r-base-plots.fixture'
 
@@ -254,7 +253,7 @@ print("saved group_bar.png")`
         }
         const producer = activities[2]!.run
         if (reportedPlots) {
-          const projection = await new NotebookDependencyAnalyzer({
+          const projection = await createNotebookDependencyAnalyzer({
             storageRoot,
             repository: { readSessionRuns: async () => activities.map(({ run }) => run) }
           }).project({
@@ -299,7 +298,7 @@ print("saved group_bar.png")`
             authority: 'authoritative'
           })
         )
-        const recipe = sealArtifactReproducibilityRecipe({
+        const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
           provenanceGraph: graph,
           inputFiles: producer.inputFiles ?? [],
           runs: activities.map(({ run, runIndex }) => ({
@@ -326,7 +325,10 @@ print("saved group_bar.png")`
             inputFileVersionKeys: []
           }))
         })
-        const plan = resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+        const plan = reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(
+          recipe,
+          'original-inputs'
+        )
         expect(recipe.capture).toEqual({ state: 'sealed', reasonCodes: [] })
         expect(plan?.steps.map((step) => step.activityId)).toEqual([producer.runId])
         expect(plan?.frontier.crossingFiles).toHaveLength(1)

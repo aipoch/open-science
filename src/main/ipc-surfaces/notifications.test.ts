@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import type { IpcMain, IpcMainInvokeEvent, Notification } from 'electron'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -185,3 +186,5 @@ describe('notification Electron production surface', () => {
     }
   )
 })
+
+await configureTestElectronHost(await import('electron'))

@@ -17,7 +17,8 @@ import {
 import { SessionRepository } from '../session-persistence/repository'
 import { SessionPackageService } from './service'
 import { createPackageInspector, type InspectionWorkerInput } from './inspection-worker'
-import { inspectSessionPackage } from './inspection'
+import { inspectSessionPackage, readSession } from './inspection'
+import { createSessionFile, type PersistedChatSession } from '../../shared/session-persistence'
 import { PackageCapacityError } from './capacity'
 import { withPackageTransfer } from './transfer'
 
@@ -370,4 +371,48 @@ it('preserves the update-required diagnostic across the bundled inspection worke
   ).rejects.toThrow(PACKAGE_REQUIRES_UPDATE)
   for (const path of validationRoots)
     await expect(stat(path)).rejects.toMatchObject({ code: 'ENOENT' })
+})
+
+it('rejects unsettled source history even when it claims an imported origin', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'forged-import-origin-'))
+  roots.push(root)
+  const session: PersistedChatSession = {
+    id: 'session',
+    projectId: 'project',
+    title: 'Untrusted',
+    cwd: '',
+    status: 'idle',
+    messages: [],
+    createdAt: 1,
+    updatedAt: 1,
+    packageOrigin: {
+      importId: 'claimed',
+      sourceProjectId: 'source',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    },
+    runtimeContext: {
+      version: 1,
+      revision: 1,
+      delegatedWork: {
+        records: [
+          {
+            agentFrameId: 'child',
+            attempts: [
+              {
+                id: 'attempt',
+                status: 'running',
+                resolvedAgent: { kind: 'main' },
+                runtimeSegmentIds: [],
+                startedAt: 1
+              }
+            ]
+          }
+        ]
+      }
+    }
+  }
+  await writeFile(join(root, 'session.json'), JSON.stringify(createSessionFile(session)))
+  await expect(readSession(root)).rejects.toThrow('Wait for the Session')
 })

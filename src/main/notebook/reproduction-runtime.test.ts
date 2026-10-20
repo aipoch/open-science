@@ -1,5 +1,6 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash } from 'node:crypto'
-import type { NotebookExecutionContext } from '../../shared/notebook-execution-context'
+import type { NotebookExecutionContext } from '@aipoch/reproducibility/execution-context'
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
@@ -7,15 +8,15 @@ import { dirname, join } from 'node:path'
 import { afterEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { ArtifactReproducibilityEnvironmentRequirement } from '../../shared/artifact-provenance'
-import type { NotebookEnvironmentLock } from '../../shared/notebook'
-import { micromambaCacheLockKey, selectMicromambaCache } from './micromamba-cache'
-import { withExclusiveCacheLock } from './pkgs-cache-lock'
+import type { NotebookEnvironmentLock } from '@aipoch/environment/contracts'
+import { micromambaCacheLockKey, selectMicromambaCache } from '@aipoch/environment'
+import { withExclusiveCacheLock } from '@aipoch/environment'
 import type { NotebookSessionExecutor } from './session-aggregate'
 import {
   createNotebookReproductionRuntime,
   type CreateNotebookReproductionRuntimeDependencies
 } from './reproduction-runtime'
-import { pythonBin, rScriptBin } from './runtime-paths'
+import { pythonBin, rScriptBin } from '@aipoch/environment'
 
 const serializeLock = (
   platform: string = process.platform,
@@ -949,3 +950,5 @@ describe('Notebook reproduction runtime', () => {
     )
   })
 })
+
+configureTestRuntimeMetadata()

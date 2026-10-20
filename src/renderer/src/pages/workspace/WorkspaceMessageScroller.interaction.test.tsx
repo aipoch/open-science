@@ -1,52 +1,59 @@
 // @vitest-environment jsdom
-import { act, forwardRef, useCallback, useEffect } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent, waitFor } from '@testing-library/react'
-import { literatureItemInputSchema } from '../../../../shared/literature'
-import { BookmarksProvider } from './bookmarks/BookmarksProvider'
-import type { PropsWithChildren } from 'react'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import {
+  createInitialGrantedFoldersState,
+  useGrantedFoldersStore
+} from '@/stores/granted-folders-store'
+import {
+  createInitialReviewState,
+  selectProjectSessionReviews,
+  useReviewStore
+} from '@/stores/review-store'
+import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
 import {
   useSessionStore,
   type ChatMessage,
   type ChatSession,
   type ToolActivity
 } from '@/stores/session-store'
-import {
-  createInitialReviewState,
-  selectProjectSessionReviews,
-  useReviewStore
-} from '@/stores/review-store'
-import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { fireEvent, waitFor } from '@testing-library/react'
+import type { PropsWithChildren } from 'react'
+import { act, forwardRef, useCallback, useEffect } from 'react'
+import type { Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ArtifactVersionDescriptor } from '../../../../shared/artifact-provenance'
-import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
-import type {
-  HandoffLifecycleEvent,
-  HandoffLifecycleEventSource
-} from '../../../../shared/handoff-lifecycle'
-import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
-import type {
-  NotebookRunRecord,
-  NotebookSessionReference,
-  NotebookSessionState
-} from '../../../../shared/notebook'
+import type { JobSummary } from '../../../../shared/compute'
 import {
   createLinearConversationGraph,
   projectConversationMessage,
   resolveActiveConversationMessages
 } from '../../../../shared/conversation-graph'
+import type {
+  HandoffLifecycleEvent,
+  HandoffLifecycleEventSource
+} from '../../../../shared/handoff-lifecycle'
+import type {
+  NotebookRunRecord,
+  NotebookSessionReference,
+  NotebookSessionState
+} from '../../../../shared/notebook'
+import type { ManagedPreviewResource } from '../../../../shared/preview-resources'
+import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import { normalizeSessionFile } from '../../../../shared/session-persistence'
-import {
-  createInitialGrantedFoldersState,
-  useGrantedFoldersStore
-} from '@/stores/granted-folders-store'
-import { createInitialSessionJobState, useSessionJobStore } from '@/stores/session-job-store'
-import type { JobSummary } from '../../../../shared/compute'
+import type { ActivePlanProjection } from '../../../../shared/session-plan/contract'
+import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
+import { BookmarksProvider } from './bookmarks/BookmarksProvider'
+import type { ComposerDoc } from './composer/composer-doc'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
-
-import type { ComposerDoc } from './composer/composer-doc'
 
 // pdfjs-dist references DOMMatrix at module load, which jsdom does not provide. This suite exercises
 // click/scroll behavior, not PDF rendering, so stub the library to keep the import graph loadable.
@@ -67,11 +74,13 @@ vi.mock('pdfjs-dist', () => {
   }
 })
 
-const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock } = vi.hoisted(() => ({
-  agentMarkdownRenderMock: vi.fn(),
-  endScrollTargetMock: vi.fn(),
-  scrollToEndMock: vi.fn()
-}))
+const { agentMarkdownRenderMock, endScrollTargetMock, scrollToEndMock, scrollableMock } =
+  vi.hoisted(() => ({
+    agentMarkdownRenderMock: vi.fn(),
+    endScrollTargetMock: vi.fn(),
+    scrollToEndMock: vi.fn(),
+    scrollableMock: { end: false }
+  }))
 const { flushSessionPersistenceMock } = vi.hoisted(() => ({
   flushSessionPersistenceMock: vi.fn(async (): Promise<void> => undefined)
 }))
@@ -219,7 +228,8 @@ vi.mock('@/components/ui/message-scroller', () => {
       scrollToEnd: scrollToEndMock,
       scrollToMessage: vi.fn(),
       scrollToStart: vi.fn()
-    })
+    }),
+    useMessageScrollerScrollable: () => scrollableMock
   }
 })
 
@@ -408,6 +418,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   let root: Root
 
   beforeEach(() => {
+    scrollableMock.end = false
     upsertAndActivateItem.mockClear()
     openFileDialog.mockClear()
     listGrantedRoots.mockReset().mockResolvedValue([])
@@ -474,6 +485,194 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     vi.unstubAllGlobals()
     container.remove()
   })
+
+  it('resolves current candidate states only in original local sessions across session switches', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const getCandidateStates = vi.fn(async () => ({
+      candidates: [{ candidateId: 'candidate-1', state: 'pending' }]
+    }))
+    const unsubscribe = vi.fn()
+    Object.assign(window.api, {
+      literature: { getCandidateStates, onChanged: vi.fn(() => unsubscribe) }
+    })
+    const original = createSession({
+      status: 'idle',
+      messages: [createMessage({ id: 'prompt-1' })],
+      activities: [
+        createActivity({
+          providerToolName: 'mcp__open-science-library__save_to_inbox',
+          title: 'save_to_inbox',
+          rawInput: { candidates: [{ item: { title: 'Paper' } }] },
+          rawOutput: { results: [{ kind: 'candidate', id: 'candidate-1', state: 'pending' }] }
+        })
+      ]
+    })
+    const origin = {
+      importId: 'import-1',
+      sourceProjectId: 'source-project',
+      sourceSessionId: 'source-session',
+      importedAt: 1,
+      manifestChecksum: 'a'.repeat(64)
+    }
+    root = createRoot(container)
+    const show = async (session: ChatSession): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+    }
+    await show(original)
+    expect(getCandidateStates).toHaveBeenCalledWith({ candidateIds: ['candidate-1'] })
+    expect(container.textContent).toContain('Pending review: 1')
+    for (const session of [
+      { ...original, id: 'imported', packageOrigin: origin },
+      { ...original, id: 'forked', forkOrigin: origin }
+    ]) {
+      await show(session)
+      expect(container.textContent).toContain(
+        'Historical result; current library status is unavailable.'
+      )
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(1)
+    }
+    expect(unsubscribe).toHaveBeenCalledTimes(
+      vi.mocked(window.api.literature.onChanged).mock.calls.length
+    )
+    await show({ ...original, id: 'another-local-session' })
+    expect(getCandidateStates).toHaveBeenCalledTimes(2)
+    expect(container.textContent).toContain('Pending review: 1')
+  })
+
+  it.each(['fork', 'nested-fork', 'branch', 'legacy-branch'])(
+    'keeps inherited literature cards historical and refreshes new %s activity',
+    async (kind) => {
+      const sourceSessionId = kind === 'nested-fork' ? 'ancestor-session' : 'source-session'
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const getCandidateStates = vi.fn(async () => ({
+        candidates: [{ candidateId: 'new-candidate', state: 'pending' }]
+      }))
+      const unsubscribe = vi.fn()
+      Object.assign(window.api, {
+        literature: { getCandidateStates, onChanged: vi.fn(() => unsubscribe) }
+      })
+      const oldPrompt = createMessage({
+        id: 'inherited-prompt',
+        sortIndex: 0,
+        usageOrigin:
+          kind === 'legacy-branch'
+            ? undefined
+            : { sessionId: sourceSessionId, messageId: 'source-prompt' }
+      })
+      const newPrompt = createMessage({
+        id: 'local-prompt',
+        sortIndex: 2,
+        createdAt: oldPrompt.createdAt + 2
+      })
+      const graph = createLinearConversationGraph({
+        sessionId: 'forked-session',
+        messages: [oldPrompt, newPrompt],
+        createdAt: oldPrompt.createdAt,
+        updatedAt: newPrompt.createdAt
+      })
+      const activities = [oldPrompt, newPrompt].map((prompt, index) =>
+        createActivity({
+          id: `save-${index}`,
+          status: 'completed',
+          title: 'save_to_inbox',
+          providerToolName: 'mcp__open-science-library__save_to_inbox',
+          sortIndex: index * 2 + 1,
+          createdAt: prompt.createdAt + 1,
+          rawOutput: {
+            results: [
+              { kind: 'candidate', id: index ? 'new-candidate' : 'old-candidate', state: 'pending' }
+            ]
+          }
+        })
+      )
+      graph.activities = activities.map((activity, index) => ({
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.branches[0].id,
+        runtimeSegmentId: graph.runtimeSegments[0].id,
+        promptMessageId: [oldPrompt, newPrompt][index].id
+      }))
+      const session = createSession({
+        id: 'forked-session',
+        status: 'idle',
+        forkOrigin: {
+          importId: 'fork-import',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        },
+        forkHeadMessageId: oldPrompt.id,
+        conversationGraph: graph,
+        messages: [oldPrompt, newPrompt],
+        // Main's flat presentation omits graph ownership: use the canonical activity ID.
+        activities
+      })
+      if (kind.endsWith('branch')) {
+        session.forkOrigin = undefined
+        session.forkHeadMessageId = undefined
+        session.branchSource = { sessionId: 'source-session', headMessageId: oldPrompt.id }
+      }
+      root = createRoot(container)
+      const show = async (value: ChatSession): Promise<void> => {
+        await act(async () => {
+          root.render(
+            <WorkspaceMessageScroller activeSession={value} onSendEditedMessage={vi.fn()} />
+          )
+        })
+      }
+      await show(session)
+      expect(getCandidateStates).toHaveBeenCalledExactlyOnceWith({
+        candidateIds: ['new-candidate']
+      })
+      expect(container.textContent).toContain(
+        'Historical result; current library status is unavailable.'
+      )
+      expect(container.textContent).toContain('Pending review: 1')
+      expect(container.querySelectorAll('[data-testid="literature-tool-card"]')).toHaveLength(2)
+
+      const historicalBranch = structuredClone(graph)
+      historicalBranch.branches.push({
+        ...historicalBranch.branches[0],
+        id: 'historical-branch',
+        headMessageId: oldPrompt.id
+      })
+      historicalBranch.frames[0].activeBranchId = 'historical-branch'
+      await show({
+        ...session,
+        conversationGraph: historicalBranch,
+        messages: [oldPrompt],
+        activities: session.activities?.slice(0, 1)
+      })
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(1)
+      expect(unsubscribe).toHaveBeenCalledTimes(
+        vi.mocked(window.api.literature.onChanged).mock.calls.length
+      )
+      await show(session)
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+      // An unresolvable activity must not acquire live identities from another card.
+      await show({ ...session, conversationGraph: { ...graph, activities: [] } })
+      expect(container.textContent).not.toContain('Pending review:')
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+      await show({
+        ...session,
+        packageOrigin: {
+          importId: 'readonly-import',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      })
+      expect(getCandidateStates).toHaveBeenCalledTimes(2)
+    }
+  )
 
   it.each([false, true])(
     'opens Literature metadata with package=%s independently of bookmark scope',
@@ -3261,6 +3460,67 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(container.querySelector('[aria-label="Preview generated file sin.png"]')).not.toBeNull()
   })
 
+  it.each(['temporary', 'bound'])(
+    'defers copied artifact lookup until branch ownership is durable (%s identity)',
+    async (identity) => {
+      const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+      const resolveVersionDescriptors = vi
+        .fn()
+        .mockRejectedValue(new Error('Session does not belong to the requested Project.'))
+      window.api.artifacts.resolveVersionDescriptors = resolveVersionDescriptors
+      const session = createSession({
+        id: identity === 'temporary' ? 'pending-session-123-1' : 'durable-session',
+        isPending: identity === 'temporary',
+        delegationPolicyAuthorityPending: true,
+        status: 'idle',
+        branchSource: { sessionId: 'source-session' },
+        messages: [
+          createMessage({
+            id: 'reply-1',
+            role: 'agent',
+            content: 'Created the chart',
+            artifactIds: ['artifact-version-1']
+          })
+        ]
+      })
+
+      root = createRoot(container)
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller activeSession={session} onSendEditedMessage={vi.fn()} />
+        )
+      })
+
+      expect(resolveVersionDescriptors).not.toHaveBeenCalled()
+      expect(flushSessionPersistenceMock).not.toHaveBeenCalled()
+
+      resolveVersionDescriptors.mockResolvedValue([])
+      flushSessionPersistenceMock.mockRejectedValue(
+        new Error('Unrelated Session persistence failed')
+      )
+      await act(async () => {
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={{
+              ...session,
+              id: 'durable-session',
+              isPending: false,
+              // A save acknowledgement can arrive before the policy acknowledgement.
+              revision: 1
+            }}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      })
+      expect(resolveVersionDescriptors).toHaveBeenCalledExactlyOnceWith({
+        projectId: 'default',
+        appSessionId: 'durable-session',
+        versionIds: ['artifact-version-1']
+      })
+      expect(flushSessionPersistenceMock).not.toHaveBeenCalled()
+    }
+  )
+
   it('retries copied generated Version metadata after pending Session persistence settles', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const descriptor: ArtifactVersionDescriptor = {
@@ -4636,6 +4896,56 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
     expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
   })
 
+  it('does not force the reader to the end when a transcript window is replaced', async () => {
+    const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
+    const messages = Array.from({ length: 240 }, (_, index) =>
+      createMessage({
+        id: `reading-window-${index}`,
+        content: `Reading window ${index}`,
+        createdAt: 1710000000000 + index,
+        updatedAt: 1710000000000 + index
+      })
+    )
+    const render = async (): Promise<void> => {
+      await act(async () =>
+        root.render(
+          <WorkspaceMessageScroller
+            activeSession={createSession({ status: 'idle', messages: [...messages] })}
+            onSendEditedMessage={vi.fn()}
+          />
+        )
+      )
+    }
+    root = createRoot(container)
+    await render()
+    scrollableMock.end = true
+    scrollToEndMock.mockClear()
+    messages.push(
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `new-reading-window-${index}`,
+          createdAt: 1710000001000 + index,
+          updatedAt: 1710000001000 + index
+        })
+      )
+    )
+    await render()
+    expect(scrollToEndMock).not.toHaveBeenCalled()
+
+    scrollableMock.end = false
+    messages.push(
+      ...Array.from({ length: 80 }, (_, index) =>
+        createMessage({
+          id: `followed-window-${index}`,
+          createdAt: 1710000002000 + index,
+          updatedAt: 1710000002000 + index
+        })
+      )
+    )
+    await render()
+    expect(scrollToEndMock).toHaveBeenCalledWith({ behavior: 'auto' })
+  })
+
   it('retains the run selected during find after closing find', async () => {
     const { WorkspaceMessageScroller } = await import('./WorkspaceMessageScroller')
     const messages = Array.from({ length: 240 }, (_, index) =>
@@ -4998,7 +5308,9 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       )
     })
 
-    expect(graphRoleReads).toBeLessThanOrEqual(itemCount * 4)
+    // Attention reads the latest two role markers in three activity selectors. Those six
+    // constant reads do not grow with history; the traversal budget remains four full passes.
+    expect(graphRoleReads).toBeLessThanOrEqual(itemCount * 4 + 6)
   })
 
   it('prefetches older transcript items before upward scrolling reaches the top edge', async () => {

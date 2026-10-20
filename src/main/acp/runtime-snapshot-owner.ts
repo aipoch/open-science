@@ -4,12 +4,10 @@ import type {
   AcpRuntimeState,
   AcpStateSnapshot
 } from '../../shared/acp'
+import { getAcpRuntimeEventImage, MAX_ACP_RUNTIME_EVENTS } from '../../shared/acp'
+import { MAX_ACP_SESSION_IMAGE_BYTES } from '../../shared/acp-image-contract'
 import {
-  getAcpRuntimeEventImage,
-  MAX_ACP_RUNTIME_EVENTS,
-  MAX_ACP_SESSION_IMAGE_BYTES
-} from '../../shared/acp'
-import {
+  sanitizeNotebookCodeReviewPayload,
   sanitizeRawToolPayload,
   sanitizeToolContent,
   sanitizeToolDetailText
@@ -76,7 +74,13 @@ class AcpRuntimeSnapshotOwner {
     let raw = event.raw
     let text = event.text
     const title = typeof event.title === 'string' ? sanitizeToolDetailText(event.title) : undefined
-    const rawInput = sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
+    const rawInput =
+      event.appOwned === true &&
+      event.toolCallId?.startsWith('app-approval:') &&
+      event.providerToolName === 'Open-Science'
+        ? (sanitizeNotebookCodeReviewPayload(event.rawInput) ??
+          sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS))
+        : sanitizeRawToolPayload(event.rawInput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const rawOutput = sanitizeRawToolPayload(event.rawOutput, MAX_RUNTIME_RAW_PAYLOAD_CHARS)
     const toolContent = sanitizeToolContent(event.toolContent) as
       AcpRuntimeEvent['toolContent'] | undefined

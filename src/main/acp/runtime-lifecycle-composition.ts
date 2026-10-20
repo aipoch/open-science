@@ -1,15 +1,19 @@
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 
-import { ACP_PROMPT_FAILED_EVENT_TITLE, type AcpConnectRequest } from '../../shared/acp'
-import type { AgentFramework } from '../agent-framework'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import {
+  ACP_PROMPT_FAILED_EVENT_TITLE,
+  type AcpConnectRequest,
+  type AcpRuntimeEvent
+} from '../../shared/acp'
+import type { AgentFramework } from '../agent-framework/types'
 import type { AcpAgentConnectionCandidate } from './agent-connection-adapter'
 import { AcpConnectionCloseWorkflow, type CloseState } from './connection-close-workflow'
 import { AcpConnectionLifecycleWorkflow } from './connection-lifecycle-workflow'
 import type { AcpConnectionResourceAttempt } from './connection-resource-owner'
 import { AcpModelChangeWorkflow } from './model-change-workflow'
-import type { AcpRuntimeOptions } from './runtime'
 import type { AcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import type { AcpRuntimeSessionOwners } from './runtime-session-composition'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
 
@@ -31,13 +35,17 @@ type AcpRuntimeLifecycleHost = Readonly<{
     onFrameworkResolved: (framework: AgentFramework['id']) => void
   ) => Promise<AcpAgentConnectionCandidate>
   clearPromptResources?: () => void
+  releasePromptTurns?: () => void
 }>
 
 // Composes the model/connection lifecycle cycle around authoritative base and Session owners.
 // Host callbacks retain only structural facade operations and are never invoked during construction.
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 const composeAcpRuntimeLifecycleOwners = (
-  options: Pick<AcpRuntimeOptions, 'appVersion' | 'defaultCwd' | 'hasReplayableImageHistory'>,
+  options: Pick<
+    AcpRuntimeOptions,
+    'appVersion' | 'defaultCwd' | 'hasReplayableImageHistory' | 'runtimeSessions' | 'callbacks'
+  >,
   base: AcpRuntimeBaseOwners,
   session: AcpRuntimeSessionOwners,
   host: AcpRuntimeLifecycleHost
@@ -68,7 +76,10 @@ const composeAcpRuntimeLifecycleOwners = (
     clearPlanInteractions: () =>
       base.planInteractions.clearAll('The Session Plan interaction was disconnected.'),
     settleActivePrompts: () => base.sessionInteractions.settleActivePrompts(),
-    supersedeInteractions: () => base.sessionInteractions.supersedeAll(),
+    supersedeInteractions: () => {
+      base.sessionInteractions.supersedeAll()
+      host.releasePromptTurns?.()
+    },
     clearContextUsage: () => base.contextUsageTracker.clear(),
     clearAppliedSessionModels: () => session.sessionRegistry.clearAppliedModels(),
     activeSessionIds,
@@ -100,21 +111,34 @@ const composeAcpRuntimeLifecycleOwners = (
     disposeSessionProjection: () => session.sessionUpdateProjector.dispose(),
     clearHttpRoutes: () => base.sessionCapabilities.clearHttpRoutes(),
     selectSession: () => session.sessionRegistry.select(undefined),
-    publishInterruptedPromptFailures: (prompts) => {
+    publishInterruptedPromptFailures: (prompts, cause = 'connection-lost') => {
       for (const { scope, terminal } of prompts as ReturnType<
         AcpSessionInteractionOwner['settleActivePrompts']
       >) {
         try {
-          session.publication.pushEvent({
+          const event: AcpRuntimeEvent = {
+            id: session.publication.nextEventId(),
             kind: 'error',
             level: 'error',
             providerError: false,
+            interruptionCause: cause,
+            errorReportable: false,
             sessionId: scope.sessionId,
+            promptExecutionId: scope.turnToken,
             ...(scope.promptMessageId ? { promptMessageId: scope.promptMessageId } : {}),
             timestamp: terminal.timestamp,
             title: ACP_PROMPT_FAILED_EVENT_TITLE,
-            text: 'ACP connection closed'
-          })
+            text:
+              cause === 'app-restart'
+                ? 'Session was interrupted before the app closed.'
+                : 'ACP connection closed'
+          }
+          if (options.runtimeSessions) {
+            void options.runtimeSessions
+              .commitTerminal(event, (published) => session.publication.pushEvent(published))
+              .then(() => options.runtimeSessions!.retryTerminalCommits(scope.sessionId))
+              .catch((error) => safeLogError('connection-close terminal commit failed', error))
+          } else session.publication.pushEvent(event)
         } catch (error) {
           safeLogError('connection-close prompt event failed', errorLogFields(error))
         }

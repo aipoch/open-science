@@ -31,8 +31,16 @@ vi.mock('../lib/session-persistence/session-persistence', () => ({
 }))
 
 import { completeQuitPersistenceFlush, useQuitPersistenceFlush } from './useQuitPersistenceFlush'
+import {
+  configureComposerDraftStorage,
+  registerComposerDraftWriter,
+  revokeComposerDraftStorage,
+  writeComposerDraft
+} from '../pages/workspace/composer-draft-storage'
 
 afterEach(() => {
+  vi.restoreAllMocks()
+  revokeComposerDraftStorage()
   vi.unstubAllGlobals()
   drainWorkspaceRuntimeEventsForPersistence.mockClear()
   flushPreviewPersistence.mockClear()
@@ -41,6 +49,55 @@ afterEach(() => {
 })
 
 describe('completeQuitPersistenceFlush', () => {
+  it('refuses the update handoff if the live composer draft cannot be saved', async () => {
+    configureComposerDraftStorage('desktop-profile', 'profile')
+    const unregister = registerComposerDraftWriter(() => {
+      writeComposerDraft('project', 'session', {
+        doc: { nodes: [{ type: 'text', text: 'unsent at update' }] },
+        annotations: [],
+        attachments: [],
+        attachmentTransfers: [],
+        automaticReadingEnabled: true
+      })
+    })
+    vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new Error('quota')
+    })
+    const acknowledge = vi.fn()
+    try {
+      await expect(
+        completeQuitPersistenceFlush(
+          { requestId: 'draft-save' },
+          {
+            suppressAutoReviews: vi.fn(),
+            drainRuntimeEvents: async () => undefined,
+            flushPersistence: async () => undefined,
+            flushPreviewPersistence: async () => undefined,
+            acknowledge
+          }
+        )
+      ).rejects.toThrow('Draft storage is unavailable')
+      expect(acknowledge).toHaveBeenCalledWith({ requestId: 'draft-save', status: 'failed' })
+      vi.restoreAllMocks()
+      await completeQuitPersistenceFlush(
+        { requestId: 'draft-retry' },
+        {
+          suppressAutoReviews: vi.fn(),
+          drainRuntimeEvents: async () => undefined,
+          flushPersistence: async () => undefined,
+          flushPreviewPersistence: async () => undefined,
+          acknowledge
+        }
+      )
+      expect(localStorage.getItem('open-science-composer-drafts-v1')).toContain('unsent at update')
+      expect(acknowledge).toHaveBeenLastCalledWith({
+        requestId: 'draft-retry',
+        status: 'completed'
+      })
+    } finally {
+      unregister()
+    }
+  })
   it('resumes renderer quit preparation and exposes the blocking conflict', () => {
     let notifyAborted: (event: { reason: 'conflict' }) => void = () => undefined
     const removeAborted = vi.fn()

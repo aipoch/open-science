@@ -109,6 +109,7 @@ const configureUnavailableRegistries = async (
   }
   useSettingsStore.setState({
     agentFrameworkId: selected,
+    codex: { version: '1.6.2', nativeVersion: '0.157.1' },
     environmentCheck,
     agentFrameworks: frameworks.map(({ id, label }) => ({
       id,
@@ -154,12 +155,37 @@ describe('Onboarding navigation regressions', () => {
     }
   )
 
-  it('does not select an unsupported Codex adapter as an installed alternative', async () => {
+  it.each([
+    ['adapter', { version: '0.0.1', nativeVersion: '0.157.1' }],
+    ['native CLI', { version: '1.6.2', nativeVersion: '0.157.0' }],
+    ['unknown native CLI', { version: '1.6.2' }],
+    ['prerelease native CLI', { version: '1.6.2', nativeVersion: '0.157.1-alpha.1' }]
+  ])(
+    'does not select an unsupported Codex %s despite stale preflight readiness',
+    async (_, codex) => {
+      await configureUnavailableRegistries(undefined, 'codex')
+      useSettingsStore.setState({ codex })
+      await renderWizard()
+      expect(useSettingsStore.getState().setAgentFramework).not.toHaveBeenCalled()
+      expect(findButton(/^continue$/i)?.disabled).toBe(true)
+    }
+  )
+
+  it('rechecks the installed alternative when only its native CLI version changes', async () => {
     await configureUnavailableRegistries(undefined, 'codex')
-    useSettingsStore.setState({ codex: { version: '0.0.1' } })
+    useSettingsStore.setState({ codex: { version: '1.6.2', nativeVersion: '0.157.0' } })
     await renderWizard()
     expect(useSettingsStore.getState().setAgentFramework).not.toHaveBeenCalled()
-    expect(findButton(/^continue$/i)?.disabled).toBe(true)
+
+    await act(async () => {
+      useSettingsStore.setState({ codex: { version: '1.6.2', nativeVersion: '0.157.1' } })
+    })
+    expect(useSettingsStore.getState().setAgentFramework).toHaveBeenCalledWith('codex')
+    expect(useSettingsStore.getState().environmentCheck).toMatchObject({
+      ready: true,
+      agentFrameworkId: 'codex'
+    })
+    expect(findButton(/^continue$/i)?.disabled).toBe(false)
   })
 
   it('waits for the selected alternative check and preserves the selection on Back', async () => {

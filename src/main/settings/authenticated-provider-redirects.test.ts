@@ -3,9 +3,9 @@ import type { AddressInfo } from 'node:net'
 
 import { describe, expect, it } from 'vitest'
 
-import { listProviderModels } from './list-models'
+import { createProvider } from '@aipoch/providers/client'
 import { NativeResponsesCompatibilityProxy } from './native-responses-compatibility'
-import { ResponsesBridge } from './responses-bridge'
+import { ResponsesToChatCompletionsBridge } from './responses-to-chat-completions-bridge'
 import { validateProvider } from './validate'
 
 type CapturedRequest = Readonly<{
@@ -92,10 +92,11 @@ describe('authenticated provider redirect policy', () => {
     const sourceUrl = await listen(source)
 
     try {
-      const result = await listProviderModels({
-        url: `${sourceUrl}/v1/models`,
+      const result = await createProvider({
+        id: 'custom',
+        discovery: { url: `${sourceUrl}/v1/models` },
         key: 'model-list-secret'
-      })
+      }).listModels()
 
       expect(redirected).toEqual([])
       expect(result).toMatchObject({ ok: false, status: 307 })
@@ -118,7 +119,7 @@ describe('authenticated provider redirect policy', () => {
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }))
     })
     const upstreamUrl = await listen(upstream)
-    const bridge = new ResponsesBridge({
+    const bridge = new ResponsesToChatCompletionsBridge({
       baseUrl: `${upstreamUrl}/v1`,
       key: 'responses-bridge-secret',
       model: 'model-a'

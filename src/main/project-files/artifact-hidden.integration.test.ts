@@ -1,3 +1,5 @@
+import { PdfAnnotationRepository } from '../pdf-annotations/repository'
+import { SessionReplayRepository } from '../session-replay/repository'
 import { ArtifactProvenanceDependencyReader } from '../artifacts/provenance-dependency-reader'
 import { ManagedPreviewResources } from '../managed-preview-resources'
 import { ImmutableInputAuthority } from '../immutable-input-authority'
@@ -59,6 +61,134 @@ describe('hidden artifacts (isolated SQLite and files)', () => {
   afterEach(async () => {
     await client?.$disconnect()
     if (root) await rm(root, { recursive: true, force: true })
+  })
+
+  it('hides PDF note sources and excerpts while retaining a separately visible duplicate', async () => {
+    const notes = new PdfAnnotationRepository(async () => client)
+    const version = await client.artifactVersion.findUniqueOrThrow({ where: { id: versionId } })
+    await notes.create({
+      projectId: 'project-a',
+      sessionId: 'session-a',
+      id: 'private-note',
+      kind: 'document-note',
+      note: 'private result',
+      tagIds: [],
+      target: {
+        source: {
+          kind: 'artifact-version',
+          projectId: 'project-a',
+          sessionId: 'session-a',
+          sourceFileId: fileId,
+          versionId,
+          checksum: version.checksum,
+          name: 'secret.pdf',
+          path: 'artifact-version:' + versionId
+        },
+        selector: { kind: 'document-note', coordinateVersion: 1 }
+      }
+    })
+    expect((await notes.list({ projectId: 'project-a' })).total).toBe(1)
+    await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })
+    expect(await notes.list({ projectId: 'project-a' })).toMatchObject({ total: 0, items: [] })
+    const binding = await client.pdfAnnotationSourceBinding.findFirstOrThrow()
+    await client.pdfAnnotationSourceBinding.create({
+      data: {
+        ...binding,
+        id: 'visible-copy',
+        sourceKind: 'upload-version',
+        sourceFileId: 'visible-upload',
+        versionId: 'visible-version',
+        name: 'visible.pdf',
+        path: 'upload-version:visible-version'
+      }
+    })
+    const visible = await notes.list({ projectId: 'project-a' })
+    expect(visible.total).toBe(1)
+    expect(visible.items[0].target.source.name).toBe('visible.pdf')
+    expect(JSON.stringify(visible)).not.toContain('secret.pdf')
+    expect(
+      await notes.list({ projectId: 'project-a', sourceFileId: fileId, versionId })
+    ).toMatchObject({ total: 0, items: [] })
+  })
+
+  it('revokes captured discussion content while hidden and restores it after unhide', async () => {
+    const replay = new SessionReplayRepository(async () => client)
+    const snapshot = {
+      projectId: 'project-a',
+      sourceSessionId: 'session-a',
+      id: 'saved-selection',
+      sourceTitle: 'Research',
+      fingerprint: 'v1',
+      branchId: 'main',
+      stepId: 'artifact',
+      excerpt: 'private result',
+      evidence: [
+        {
+          kind: 'artifact-version' as const,
+          id: versionId,
+          versionId,
+          fileId,
+          projectId: 'project-a',
+          sessionId: 'session-a'
+        }
+      ],
+      records: [
+        {
+          id: `artifact-version:${versionId}`,
+          scope: 'step' as const,
+          title: 'secret.txt',
+          text: 'private result',
+          status: 'recorded' as const,
+          truncated: false
+        }
+      ]
+    }
+    await replay.saveSelectionSnapshot(snapshot)
+    expect(await replay.getSelectionSnapshot({ projectId: 'project-a', id: snapshot.id })).toEqual(
+      snapshot
+    )
+    await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })
+    expect(
+      await replay.getSelectionSnapshot({ projectId: 'project-a', id: snapshot.id })
+    ).toBeUndefined()
+    expect(
+      await replay.listSelectionSnapshots({ projectId: 'project-a', sourceSessionId: 'session-a' })
+    ).toEqual([])
+    await expect(replay.saveSelectionSnapshot({ ...snapshot, id: 'hidden-copy' })).rejects.toThrow(
+      'unavailable'
+    )
+    await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: false })
+    expect(
+      await replay.listSelectionSnapshots({ projectId: 'project-a', sourceSessionId: 'session-a' })
+    ).toEqual([snapshot])
+  })
+
+  it('revokes reviewer batch records and held exact-content leases when an artifact is hidden', async () => {
+    const version = await client.artifactVersion.findUniqueOrThrow({ where: { id: versionId } })
+    const record = {
+      contentStorageKey: version.contentStorageKey,
+      sizeBytes: Number(version.sizeBytes),
+      checksum: version.checksum,
+      filename: version.filename
+    }
+    const lease = await versions.openExactVersionContent(record)
+    try {
+      expect(Buffer.from(await lease.readRange(0, lease.size)).toString()).toBe('private result')
+      await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: true })
+      expect(
+        await files.readHostArtifactVersionRecords({
+          projectId: 'project-a',
+          versionIds: [versionId]
+        })
+      ).toEqual([])
+      await expect(versions.openExactVersionContent(record)).rejects.toBeDefined()
+      await expect(lease.readRange(0, lease.size)).rejects.toBeDefined()
+      await expect(lease.verifyUnchanged()).rejects.toBeDefined()
+      await files.setArtifactHidden({ projectId: 'project-a', fileId, hidden: false })
+      await expect(lease.verifyUnchanged()).resolves.toBeUndefined()
+    } finally {
+      await lease.close()
+    }
   })
 
   it.each(['nonempty secret', ''])(

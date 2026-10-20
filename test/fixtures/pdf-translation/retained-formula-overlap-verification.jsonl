@@ -1,0 +1,8 @@
+{"name": "retained-overlap-unchanged", "kind": "unchanged", "expected": "ready"}
+{"name": "retained-overlap-fallback", "kind": "fallback", "expected": "ready"}
+{"name": "translated-prose-preserves-independently-owned-native-superscript", "kind": "translated", "expected": "ready"}
+{"name": "retained-overlap-missing", "kind": "missing", "expected": "error"}
+{"name": "retained-overlap-misplaced", "kind": "misplaced", "expected": "error"}
+{"name": "retained-overlap-shared-source", "kind": "shared-source", "expected": "error"}
+{"name": "retained-overlap-wrong-source", "kind": "wrong-source", "expected": "error"}
+{"name": "retained-overlap-normalized-formula", "kind": "normalized-formula", "expected": "ready"}

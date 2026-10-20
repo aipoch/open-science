@@ -2,8 +2,6 @@
   "ownerPaths": [
     "src/main/session-plan/adversarial-session-plan.test.ts",
     "src/main/session-plan/guidance.ts",
-    "src/main/session-plan/plan-delivery.test.ts",
-    "src/main/session-plan/plan-delivery.ts",
     "src/main/session-plan/plan-mcp-server.test.ts",
     "src/main/session-plan/plan-mcp-server.ts",
     "src/main/session-plan/plan-service.test.ts",
@@ -17,7 +15,8 @@
     "src/main/session-plan/plan-context-file.test.ts",
     "src/main/session-plan/plan-context-file.ts",
     "src/main/session-plan/plan-context-guidance.ts",
-    "src/main/session-plan/plan-legacy-compatibility.test.ts"
+    "src/main/session-plan/plan-legacy-compatibility.test.ts",
+    "src/main/session-plan/session-plan-turn-outcome.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-plan/guidance.ts",
@@ -33,14 +32,14 @@
   "testFiles": {
     "owner": [
       "src/main/session-plan/adversarial-session-plan.test.ts",
-      "src/main/session-plan/plan-delivery.test.ts",
       "src/main/session-plan/plan-mcp-server.test.ts",
       "src/main/session-plan/plan-service.test.ts",
       "src/main/session-plan/production-plan-service.test.ts",
       "src/main/session-plan/session-plan-interaction-owner.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/session-plan/plan-context-file.test.ts",
-      "src/main/session-plan/plan-legacy-compatibility.test.ts"
+      "src/main/session-plan/plan-legacy-compatibility.test.ts",
+      "src/main/session-plan/session-plan-turn-outcome.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -48,6 +47,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/composition/reviewer.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/codex-completion-handoff.integration.test.ts",
@@ -173,6 +175,7 @@
       "src/main/reviewer/reviewer-fix-loop-owner.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/runtime-state-ownership.architecture.test.ts",
+      "src/main/session-persistence/runtime-resume-recovery.test.ts",
       "src/main/session-persistence/runtime-session-owner.test.ts",
       "src/main/settings/backend-resolver.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
@@ -188,10 +191,47 @@
       "src/renderer/src/lib/acp/useWorkspaceAgentRuntime.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/main/settings/skill-catalog.test.ts",
+      "src/main/skills/catalog.test.ts",
       "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
       "src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts",
-      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts"
+      "src/main/session-persistence/resumed-artifact-publication.integration.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
+      "src/renderer/src/lib/acp/workspace-runtime-save-admission.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/session-persistence/missing-runtime-session-repro.test.ts",
+      "src/main/session-persistence/prompt-preparation-restart.test.ts",
+      "src/main/session-persistence/terminal-commit-recovery.test.ts",
+      "src/main/session-persistence/terminal-commit-scheduler.test.ts",
+      "src/renderer/src/lib/compute/useJobAnalysisEffect.render.test.tsx",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/node-process-host.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/acp/auto-operation-adapter.test.ts",
+      "src/main/acp/auto-operation-broker.test.ts",
+      "src/main/acp/auto-operation-inventory.test.ts",
+      "src/main/acp/auto-operation-policy.test.ts",
+      "src/main/acp/client-interaction-owner.test.ts",
+      "src/main/acp/library-auto-policy.test.ts",
+      "src/main/acp/permission-broker.test.ts",
+      "src/main/acp/permission-context.test.ts",
+      "src/main/acp/permission-frequency.test.ts",
+      "src/main/acp/permission-policy.test.ts",
+      "src/main/acp/permission-wait-owner.test.ts",
+      "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/session-plan/plan-delivery.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

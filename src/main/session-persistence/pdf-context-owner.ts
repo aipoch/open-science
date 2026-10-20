@@ -12,7 +12,7 @@ import {
   type SessionRuntimeContext,
   type UnlinkSessionPdfContextRequest
 } from '../../shared/session-persistence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type {
   ResolvedSessionPdfVersion,
   SessionPdfSourceResolver

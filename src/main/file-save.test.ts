@@ -1,8 +1,25 @@
+import { createFileSaveCommands } from './file-save'
+import { createElectronCallerContext, createWebCallerContext } from './caller-context'
+import type { ApplicationInvocation } from './application-command-router'
+import { configureTestElectronHost } from '../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { unzipSync } from 'fflate'
 import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
-import { copyFile, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from 'node:fs/promises'
+import {
+  copyFile,
+  link,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  stat,
+  writeFile
+} from 'node:fs/promises'
+import type { FileHandle } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -32,11 +49,30 @@ vi.mock('electron', () => ({
   dialog: { showOpenDialog, showSaveDialog },
   ipcMain: {
     handle: (channel: string, handler: (event: unknown, payload?: unknown) => unknown) => {
-      handlers.set(channel, handler)
+      handlers.set(channel, (event, request) =>
+        handler(
+          {
+            ...(event as object),
+            sender: { id: 4301, once: vi.fn(), isDestroyed: () => false }
+          },
+          request
+        )
+      )
     }
   }
 }))
 
+const { configureDesktopFileInteraction } = await import('./desktop-interaction')
+configureDesktopFileInteraction({
+  chooseFiles: (options) => showOpenDialog(options),
+  chooseSavePath: (options) => showSaveDialog(options),
+  confirm: async () => {
+    throw new Error('Unexpected confirmation')
+  },
+  printConversationPdf: async () => {
+    throw new Error('Unexpected printing')
+  }
+})
 const { registerFileSaveHandlers: registerProductionFileSaveHandlers } = await import('./file-save')
 const { publishUserFile: productionPublishUserFile } = await import('./user-file-publisher')
 const publishDirectly: typeof productionPublishUserFile = async (
@@ -818,27 +854,73 @@ describe('file save IPC handlers', () => {
     }
   })
 
-  it('does not truncate a managed file when Save As selects the source itself', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'open-science-save-source-'))
-    const sourcePath = join(root, 'report.csv')
-    await writeFile(sourcePath, 'source must survive')
-    showSaveDialog.mockResolvedValue({ canceled: false, filePath: sourcePath })
-    registerFileSaveHandlers({
-      resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
-    })
+  it.each(['new', 'existing'] as const)(
+    'distinguishes the %s destination when numeric inode values collide',
+    async (destination) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-save-inode-'))
+      const sourcePath = join(root, 'source.csv')
+      const destinationPath = join(root, 'download.csv')
+      await writeFile(sourcePath, 'source bytes')
+      if (destination === 'existing') await writeFile(destinationPath, 'previous download')
+      const probe = await open(sourcePath, 'r')
+      const prototype = Object.getPrototypeOf(probe) as FileHandle
+      const originalStat = prototype.stat
+      await probe.close()
+      // Windows file IDs can exceed Number.MAX_SAFE_INTEGER. Emulate two distinct IDs
+      // collapsing to one number while retaining real handle identities in bigint mode.
+      const statSpy = vi.spyOn(prototype, 'stat').mockImplementation(async function (
+        this: FileHandle,
+        options
+      ) {
+        const result = await originalStat.call(this, options)
+        if (!options?.bigint) Object.assign(result, { ino: Number(1n << 60n) })
+        return result
+      })
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+      registerFileSaveHandlers({
+        resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
+      })
 
-    try {
-      await expect(
-        handlers.get('file:save-managed')!(
+      try {
+        await handlers.get('file:save-managed')!(
           { sender: {} },
           { source: 'local', path: sourcePath, suggestedName: 'report.csv' }
         )
-      ).rejects.toThrow('Cannot save a managed file over its source.')
-      await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source must survive')
-    } finally {
-      await rm(root, { recursive: true, force: true })
+        await expect(readFile(destinationPath, 'utf8')).resolves.toBe('source bytes')
+        await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source bytes')
+      } finally {
+        statSpy.mockRestore()
+        await rm(root, { recursive: true, force: true })
+      }
     }
-  })
+  )
+
+  it.each(['source', 'hard link'] as const)(
+    'does not truncate a managed file when Save As selects its %s',
+    async (destination) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-save-source-'))
+      const sourcePath = join(root, 'report.csv')
+      const destinationPath = destination === 'source' ? sourcePath : join(root, 'alias.csv')
+      await writeFile(sourcePath, 'source must survive')
+      if (destination === 'hard link') await link(sourcePath, destinationPath)
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destinationPath })
+      registerFileSaveHandlers({
+        resolveManagedFilePath: vi.fn().mockResolvedValue(sourcePath)
+      })
+
+      try {
+        await expect(
+          handlers.get('file:save-managed')!(
+            { sender: {} },
+            { source: 'local', path: sourcePath, suggestedName: 'report.csv' }
+          )
+        ).rejects.toThrow('Cannot save a managed file over its source.')
+        await expect(readFile(sourcePath, 'utf8')).resolves.toBe('source must survive')
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
 
   it('keeps traversal-only suggested names inside Downloads', async () => {
     const resolveManagedFilePath = vi.fn().mockResolvedValue('/managed/source-report.csv')
@@ -2751,5 +2833,117 @@ describe('assertSaveSessionArtifactsRequest logical identity validation', () => 
     ).rejects.toThrow('Invalid Session Artifact save request.')
     expect(showSaveDialog).not.toHaveBeenCalled()
     expect(showOpenDialog).not.toHaveBeenCalled()
+  })
+})
+
+await configureTestElectronHost(await import('electron'))
+
+describe('shared file export document lifetime', () => {
+  const call = <const Args extends readonly unknown[]>(
+    args: Args,
+    controller: AbortController
+  ): ApplicationInvocation<Args> => ({
+    args,
+    callerContext: createElectronCallerContext(4321),
+    callerLease: {
+      leaseId: createElectronCallerContext(4321).leaseId,
+      generation: 1,
+      signal: controller.signal,
+      isCurrent: () => !controller.signal.aborted
+    }
+  })
+
+  it('rejects Web authority before native selection or opening a managed Version', async () => {
+    const controller = new AbortController()
+    const openLatestManagedFile = vi.fn()
+    const owner = createFileSaveCommands({ openLatestManagedFile })
+    await expect(
+      owner['file:save-managed']({
+        ...call(
+          [{ source: 'artifact', projectId: 'p', fileId: 'f', suggestedName: 'result.csv' }],
+          controller
+        ),
+        callerContext: createWebCallerContext('browser')
+      })
+    ).rejects.toThrow('desktop app')
+    expect(openLatestManagedFile).not.toHaveBeenCalled()
+    expect(showSaveDialog).not.toHaveBeenCalled()
+  })
+
+  it('revokes an in-flight copy before publication and closes the Version lease', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'file-export-revoked-'))
+    try {
+      const destination = join(directory, 'result.txt')
+      await writeFile(destination, 'original')
+      const controller = new AbortController()
+      const lease = managedVersionHandle('replacement', {
+        copyTo: async (path) => {
+          await writeFile(path, 'replacement')
+          controller.abort()
+        }
+      })
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+      const owner = createFileSaveCommands({ openLatestManagedFile: async () => lease })
+      await expect(
+        owner['file:save-managed'](
+          call(
+            [{ source: 'artifact', projectId: 'p', fileId: 'f', suggestedName: 'result.txt' }],
+            controller
+          )
+        )
+      ).rejects.toThrow()
+      expect(await readFile(destination, 'utf8')).toBe('original')
+      expect(lease.close).toHaveBeenCalledOnce()
+      expect(await readdir(directory)).toEqual(['result.txt'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('stops streaming an archive after document release, closes its lease and removes temporary output', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'archive-export-revoked-'))
+    try {
+      const destination = join(directory, 'archive.zip')
+      await writeFile(destination, 'original')
+      const controller = new AbortController()
+      const lease = managedVersionHandle('contents', {
+        readRange: async () => {
+          controller.abort()
+          return new Uint8Array(8)
+        }
+      })
+      showSaveDialog.mockResolvedValue({ canceled: false, filePath: destination })
+      const owner = createFileSaveCommands({
+        openManagedFileVersion: async () => lease,
+        createProjectArtifactTemporaryRoot: () => mkdtemp(join(directory, 'temporary-'))
+      })
+      await expect(
+        owner['file:save-project-artifacts'](
+          call(
+            [
+              {
+                projectId: 'p',
+                suggestedArchiveName: 'result',
+                files: [
+                  {
+                    source: 'artifact',
+                    sessionId: 's',
+                    fileId: 'f',
+                    versionId: 'v',
+                    suggestedName: 'result.txt'
+                  }
+                ]
+              }
+            ],
+            controller
+          )
+        )
+      ).rejects.toThrow()
+      expect(lease.close).toHaveBeenCalledOnce()
+      expect(await readFile(destination, 'utf8')).toBe('original')
+      expect(await readdir(directory)).toEqual(['archive.zip'])
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
   })
 })

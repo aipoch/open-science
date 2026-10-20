@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act } from 'react'
@@ -47,6 +48,26 @@ const changeInput = async (input: HTMLInputElement, value: string): Promise<void
 }
 
 describe('NetworkPanel offline retry', () => {
+  it('refreshes failed local interface details after backend recovery without a link change', async () => {
+    useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
+    const getInfo = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('bridge lost'))
+      .mockResolvedValue({ connectionType: 'wifi', ipAddress: '192.0.2.10' })
+    ;(window as unknown as { api: unknown }).api = { network: { getInfo } }
+    await act(async () =>
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    )
+    expect(container.textContent).toContain('Could not load local network details.')
+    await act(async () =>
+      useDesktopRuntimeRecoveryStore.setState({
+        epoch: useDesktopRuntimeRecoveryStore.getState().epoch + 1
+      })
+    )
+    expect(container.textContent).toContain('192.0.2.10')
+    expect(container.textContent).not.toContain('Could not load local network details.')
+  })
+
   it('allows checking again after a successful reachability probe', async () => {
     Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
     useNetworkStore.setState({ isOnline: true, connectivity: 'reachable' })
@@ -192,7 +213,7 @@ describe('NetworkPanel offline retry', () => {
       )
     })
 
-    expect(container.querySelector('[aria-label="Allowed domains"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Custom public domains"]')).toBeNull()
     expect(container.querySelector('[aria-label="Network status"]')).not.toBeNull()
     expect(onNavigate).not.toHaveBeenCalled()
   })
@@ -234,7 +255,7 @@ describe('NetworkPanel offline retry', () => {
     expect(container.textContent).toContain('This machine is offline.')
   })
 
-  it('restores the last known status when an online retry probe rejects', async () => {
+  it('shows a check failure when an online retry probe rejects', async () => {
     const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
     ;(window as unknown as { api: unknown }).api = {
       network: {
@@ -261,10 +282,41 @@ describe('NetworkPanel offline retry', () => {
       await vi.advanceTimersByTimeAsync(500)
     })
     expect(container.textContent).toContain(
-      'The network link is up, but package registries are unreachable.'
+      'Could not check whether package registries are reachable.'
     )
     expect(buttonWithText('Check again')).not.toBeUndefined()
     expect(checkConnectivity).toHaveBeenCalledOnce()
+  })
+
+  it('reports an unavailable probe after retry instead of presenting a cached registry failure as current', async () => {
+    const checkConnectivity = vi.fn().mockRejectedValue(new Error('bridge gone'))
+    ;(window as unknown as { api: unknown }).api = {
+      network: {
+        getInfo: vi.fn().mockRejectedValue(new Error('bridge gone')),
+        checkConnectivity
+      }
+    }
+    Object.defineProperty(window.navigator, 'onLine', { value: true, configurable: true })
+    useNetworkStore.setState({ isOnline: true, connectivity: 'unreachable' })
+
+    await act(async () => {
+      root.render(<NetworkPanel view={{ kind: 'list' }} onNavigate={() => {}} />)
+    })
+    // This reproduces both lines in the report without requiring an external network outage.
+    expect(container.textContent).toContain('Could not load local network details.')
+    expect(container.textContent).toContain(
+      'The network link is up, but package registries are unreachable.'
+    )
+    await act(async () => {
+      buttonWithText('Check again').click()
+      await vi.advanceTimersByTimeAsync(500)
+    })
+
+    expect(checkConnectivity).toHaveBeenCalledOnce()
+    expect(container.textContent).toContain(
+      'Could not check whether package registries are reachable.'
+    )
+    expect(container.textContent).not.toContain('package registries are unreachable')
   })
 
   it('shows an explicit error when local network info cannot be loaded', async () => {

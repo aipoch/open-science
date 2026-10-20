@@ -82,10 +82,16 @@ describe('Project Session defaults migration', () => {
         '0042_classification_usage',
         '0043_pdf_annotations',
         '0044_literature_smart_collections',
-        '0045_artifact_hidden'
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation',
+        '0051_artifact_hidden'
       ],
       from: '0026_compute_job_remote_cleanup',
-      to: '0045_artifact_hidden'
+      to: '0051_artifact_hidden'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ sessionDefaults: string }>>(

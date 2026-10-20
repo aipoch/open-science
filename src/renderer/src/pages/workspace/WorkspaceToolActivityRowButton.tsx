@@ -62,7 +62,7 @@ const WorkspaceToolActivityRowButton = ({
           <WorkspaceActivityIcon activity={activity} phase={phase} />
         </span>
         <span className="min-w-0 flex-1 text-left md:flex md:items-center md:gap-2">
-          <span className="block shrink-0 text-text-000">{label}</span>
+          <span className="block min-w-0 truncate text-text-000">{label}</span>
           {subtitle ? (
             <>
               <span className="hidden shrink-0 text-text-300 md:inline">·</span>

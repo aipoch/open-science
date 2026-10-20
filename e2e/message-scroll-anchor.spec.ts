@@ -1,6 +1,7 @@
 import { expect } from '@playwright/test'
 
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
 
 const PROJECT_NAME = 'Scroll anchor project'
 const USER_MESSAGE = 'Summarize the deterministic fixture.'
@@ -14,10 +15,7 @@ test('anchors a newly sent user message near the top of the viewport', async ({
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -57,10 +55,7 @@ test('keeps the prompt fixed while a blocking panel covers and leaves the transc
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
 
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(`${PROJECT_NAME} permission`)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, `${PROJECT_NAME} permission`)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 
   const conversation = page.getByRole('region', { name: 'Conversation' })
@@ -69,6 +64,7 @@ test('keeps the prompt fixed while a blocking panel covers and leaves the transc
 
   for (let turn = 0; turn < 5; turn += 1) {
     await textbox.fill(`Turn ${turn}: ${USER_MESSAGE}`)
+    await expect(sendButton).toBeEnabled()
     await sendButton.click()
     await expect(conversation.getByText(AGENT_REPLY, { exact: true })).toHaveCount(turn + 1)
   }

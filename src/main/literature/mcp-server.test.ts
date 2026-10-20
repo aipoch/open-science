@@ -8,6 +8,8 @@ import {
   createLiteratureMcpServer
 } from './mcp-server'
 
+const proseRegions = [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
+
 describe('Literature MCP server', () => {
   it('exposes one linked-document read tool and forwards bounded retrieval input', async () => {
     const readDocument = vi.fn().mockResolvedValue({
@@ -23,6 +25,14 @@ describe('Literature MCP server', () => {
       const tools = (await client.listTools()).tools
       expect(tools.map(({ name }) => name)).toEqual([LITERATURE_READ_DOCUMENT_TOOL_NAME])
       expect(tools[0]?.description).toContain('instead of Notebook')
+      expect(tools[0]?.description).toContain('Desktop-confirmed')
+      expect(tools[0]?.description).toContain('current message snapshot')
+      expect(tools[0]?.description).toContain('search and cursor continuation')
+      expect(tools[0]?.description).not.toContain('proseRegions')
+      expect(tools[0]?.inputSchema.properties).not.toHaveProperty('proseRegions')
+      expect(tools[0]?.inputSchema.additionalProperties).toBe(false)
+      expect(tools[0]?.description).toContain('text outside regions')
+      expect(tools[0]?.description).toContain('apply automatically to each linked PDF Version')
       const result = await client.callTool({
         name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
         arguments: { query: 'retrieval evaluator' }
@@ -69,6 +79,7 @@ describe('Literature MCP server', () => {
 
   it.each([
     {},
+    { documentId: 'binding-1', cursor: 'a'.repeat(2048) },
     { documentId: 'binding-1' },
     { cursor: 'cursor' },
     { documentId: 'binding-1', cursor: 'cursor' },
@@ -87,6 +98,33 @@ describe('Literature MCP server', () => {
       })
       expect(result.isError).not.toBe(true)
       expect(readDocument).toHaveBeenCalledExactlyOnceWith(input)
+    } finally {
+      await client.close()
+      await server.close()
+    }
+  })
+
+  it.each([
+    { proseRegions },
+    { documentId: 'binding-1', proseRegions },
+    { documentId: 'binding-1', proseRegions, cursor: 'returned-cursor' },
+    { query: 'needle', documentIds: ['binding-1'], proseRegions },
+    { proseRegions: [] },
+    { manualCoordinates: proseRegions }
+  ])('rejects retired region parameters and unknown fields before dispatch: %j', async (input) => {
+    const readDocument = vi.fn()
+    const server = createLiteratureMcpServer({ readDocument })
+    const client = new Client({ name: 'desktop-region-boundary-test', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await Promise.all([server.connect(serverTransport), client.connect(clientTransport)])
+    try {
+      const result = await client.callTool({
+        name: LITERATURE_READ_DOCUMENT_TOOL_NAME,
+        arguments: input
+      })
+      expect(result.isError).toBe(true)
+      expect(readDocument).not.toHaveBeenCalled()
+      expect(JSON.stringify(result.content)).toContain('Unrecognized')
     } finally {
       await client.close()
       await server.close()

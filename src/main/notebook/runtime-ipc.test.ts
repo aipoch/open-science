@@ -1,16 +1,18 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { NotebookLanguage } from '../../shared/notebook'
-import type { EnvPackage, RuntimeEnablement } from '../../shared/notebook-runtime'
-import type { DiscoveredInterpreter } from './environment-discovery'
+import type { EnvPackage } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment'
 import { createRuntimeWorkflows, type RuntimeWorkflowDeps } from './runtime-workflows'
 
 const handlers = new Map<string, (event: unknown, payload?: unknown) => unknown>()
 const showOpenDialog = vi.fn()
 const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => log
 }))
 
@@ -28,7 +30,7 @@ const discoveryState = vi.hoisted(() => ({
   r: [] as DiscoveredInterpreter[]
 }))
 
-vi.mock('./environment-discovery', () => ({
+vi.mock('@aipoch/environment', () => ({
   defaultDiscoveryDeps: () => ({}),
   discoverInterpreters: async (language: NotebookLanguage) => discoveryState[language]
 }))
@@ -272,3 +274,5 @@ describe('runtime IPC adapter', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

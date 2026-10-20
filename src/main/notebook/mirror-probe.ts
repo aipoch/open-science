@@ -3,7 +3,7 @@ import {
   type AutomaticPackageMirrorCandidate,
   type PackageMirror
 } from '../../shared/mirror'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 
 // A candidate mirror bundle + cheap URLs to measure both required conda channels. Public endpoints
 // only (no secrets). The repodata URLs are HEAD-ed so no body is downloaded.

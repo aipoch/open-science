@@ -1,7 +1,4 @@
-import type {
-  PackageDiagnostic,
-  SpecialistPackageInstallResult
-} from '../../../shared/specialist-package'
+import type { PackageDiagnostic, SpecialistPackageInstallResult } from '@aipoch/specialists'
 import { formatDisplayNumber } from './locale-format'
 
 // Maps raw validation codes (zip-adapter.ts, package/validator.ts) to user-facing

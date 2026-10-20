@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { fireEvent, screen } from '@testing-library/react'
 import { utils, write } from 'styled-exceljs'
 import { zipSync, strToU8, unzipSync, strFromU8 } from 'fflate'
 import { renderAsync } from 'docx-preview'
@@ -75,6 +76,20 @@ const bookmarkDocx = (): Uint8Array =>
     },
     { level: 0 }
   )
+
+const headingDocx = (): Uint8Array => {
+  const entries = unzipSync(bookmarkDocx())
+  entries['word/document.xml'] = strToU8(
+    '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:pPr><w:pStyle w:val="Heading1"/></w:pPr><w:r><w:t>Introduction</w:t></w:r></w:p><w:p><w:r><w:t>Ordinary paragraph</w:t></w:r></w:p><w:sectPr/></w:body></w:document>'
+  )
+  entries['word/_rels/document.xml.rels'] = strToU8(
+    '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/></Relationships>'
+  )
+  entries['word/styles.xml'] = strToU8(
+    '<w:styles xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:style w:type="paragraph" w:styleId="Heading1"><w:name w:val="heading 1"/><w:pPr><w:outlineLvl w:val="0"/></w:pPr></w:style></w:styles>'
+  )
+  return zipSync(entries, { level: 0 })
+}
 
 describe('Office behavior through real parsers and adapters', () => {
   let container: HTMLDivElement
@@ -407,5 +422,29 @@ describe('Office behavior through real parsers and adapters', () => {
     expect(target.hasAttribute('tabindex')).toBe(false)
     link.click()
     expect(scroll).toHaveBeenCalledTimes(2)
+  })
+
+  it('builds a DOCX outline from real heading styles', async () => {
+    const bytes = headingDocx()
+    await validateOfficePackage(bytes, 'docx', controller.signal)
+    cleanup = await renderOfficeFile({
+      bytes,
+      extension: 'docx',
+      name: 'headings.docx',
+      container,
+      signal: controller.signal
+    })
+    expect(container.querySelector<HTMLParagraphElement>('p.docx_heading1')?.textContent).toBe(
+      'Introduction'
+    )
+    const outline = container.querySelector<HTMLButtonElement>(
+      '.docx-review-outline [data-slot="select-trigger"]'
+    )!
+    expect(outline.textContent).toContain('Outline')
+    expect(container.querySelector('.docx-review-outline select')).toBeNull()
+    fireEvent.keyDown(outline, { key: 'ArrowDown' })
+    expect(screen.getByRole('option', { name: 'Introduction' })).toBeTruthy()
+    await cleanup?.()
+    expect(document.querySelector('[role="listbox"]')).toBeNull()
   })
 })

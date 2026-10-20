@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 const PROMPT = 'Stream the long scroll journey.'
 const COMPLETED = 'Segment 3 paragraph 7.'
@@ -10,12 +12,8 @@ test('continues a restored in-flight snapshot through the real Resume action', a
   test.setTimeout(180_000)
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill('Interrupted turn recovery')
-  await dialog.getByRole('button', { name: 'Create project' }).click()
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill(PROMPT)
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await createProjectViaUi(page, 'Interrupted turn recovery')
+  await submitPromptViaUi(page, PROMPT)
 
   // Capture an actual Main-owned in-flight Session, then restore that snapshot through the
   // isolated fixture. This avoids child-first process-tree shutdown recording an ACP error.
@@ -48,10 +46,25 @@ test('continues a restored in-flight snapshot through the real Resume action', a
   expect(restored.resumeRecovery?.promptMessageId).toBe(
     interrupted.messages.find((message) => message.role === 'user')?.id
   )
+  expect(restored.messages.find((message) => message.role === 'user')?.turnOutcome).toMatchObject({
+    kind: 'interrupted',
+    cause: 'app-restart',
+    recovery: 'resume'
+  })
   await page
     .getByRole('region', { name: 'Recent sessions' })
     .getByRole('button', { name: PROMPT })
     .click()
+  await expect(page.getByRole('button', { name: 'Resume session', exact: true })).toBeVisible()
+  await expect(
+    page
+      .locator(`[data-session-id="${restored.id}"]`)
+      .getByText('Session status: Error', { exact: true })
+  ).toBeVisible()
+  await page.screenshot({
+    path: testInfo.outputPath('turn-outcome-app-restart.png'),
+    animations: 'disabled'
+  })
   await page.getByRole('button', { name: 'Resume session', exact: true }).click()
 
   try {
@@ -89,6 +102,19 @@ test('continues a restored in-flight snapshot through the real Resume action', a
       )
     )
     .toEqual({ userMessages: 1, completed: true })
+  const completedOutcome = await page.evaluate(async (prompt) => {
+    const session = (await window.api.sessions.loadAll()).sessions.find((candidate) =>
+      candidate.messages.some((message) => message.role === 'user' && message.content === prompt)
+    )
+    return session?.messages.find(
+      (message) => message.role === 'user' && message.content === prompt
+    )?.turnOutcome
+  }, PROMPT)
+  expect(completedOutcome?.kind).toBe('completed')
+  await page.screenshot({
+    path: testInfo.outputPath('turn-outcome-resumed-completed.png'),
+    animations: 'disabled'
+  })
   expect(
     (await app.readFakeAgentPrompts()).filter(({ prompt }) => prompt.trimEnd().endsWith(PROMPT))
   ).toHaveLength(2)

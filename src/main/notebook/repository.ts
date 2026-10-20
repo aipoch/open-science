@@ -1,3 +1,4 @@
+import { indexReplayRun, type ReplayRunIndex } from '../../shared/replay'
 import { mkdir, readdir, rm, stat } from 'node:fs/promises'
 import type { Dirent } from 'node:fs'
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
@@ -15,12 +16,13 @@ import type {
 import { parseOwnedExecutionFileEvidenceSummary } from '../../shared/execution-file-evidence'
 import { NOTEBOOK_RUN_FILE, NOTEBOOKS_DIR } from '../../shared/notebook'
 import type { NotebookRuntimeBindings } from '../../shared/notebook-runtime'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
+  recoverDurableJsonDirectory,
   writeDurableJsonFile
-} from '../storage/durable-json-file'
+} from '@aipoch/durable-files'
 import { decodeVersionedJson } from '../storage/versioned-json-decoder'
 import {
   decodeRunDocumentDataPaths,
@@ -238,7 +240,10 @@ const notebookRunCandidate = (value: unknown): boolean => {
       (!Number.isSafeInteger(value.exitCode) || Number(value.exitCode) < 0)) ||
     (value.kernelEpochId !== undefined &&
       (typeof value.kernelEpochId !== 'string' || value.kernelEpochId.length === 0)) ||
+    (value.executionStarted !== undefined && typeof value.executionStarted !== 'boolean') ||
     (value.kernelDispatched !== undefined && typeof value.kernelDispatched !== 'boolean') ||
+    (value.replPersistentBindings !== undefined &&
+      (value.replPersistentBindings !== true || value.kernelKind !== 'repl')) ||
     (value.runtimeId !== undefined && typeof value.runtimeId !== 'string') ||
     (value.kernelKind !== undefined &&
       value.kernelKind !== 'python' &&
@@ -658,6 +663,45 @@ class NotebookRunRepository {
     { mtimeMs: number; size: number; ino: number; document: NotebookRunDocument }
   >()
   private documentCacheBytes = 0
+  // ponytail: reuse the bounded document cache; cold/oversized JSON still needs a full read.
+  // A durable per-run index is the next step if archives routinely exceed that cache budget.
+  private readonly runIndexes = new WeakMap<
+    NotebookRunDocument,
+    { rows: ReplayRunIndex[]; byId: Map<string, NotebookRunRecord> }
+  >()
+
+  private runIndex(document: NotebookRunDocument): {
+    rows: ReplayRunIndex[]
+    byId: Map<string, NotebookRunRecord>
+  } {
+    let index = this.runIndexes.get(document)
+    if (!index) {
+      index = {
+        rows: document.runs.map(indexReplayRun),
+        byId: new Map(document.runs.map((run) => [run.runId, run]))
+      }
+      this.runIndexes.set(document, index)
+    }
+    return index
+  }
+
+  async readSessionRunIndex(projectId: string, sessionId: string): Promise<ReplayRunIndex[]> {
+    return (await this.readSessionDocuments(projectId, sessionId))
+      .flatMap((document) => this.runIndex(document).rows)
+      .sort((a, b) => a.startedAt - b.startedAt || a.runId.localeCompare(b.runId))
+  }
+
+  async readSessionRun(
+    projectId: string,
+    sessionId: string,
+    runId: string
+  ): Promise<NotebookRunRecord | undefined> {
+    for (const document of await this.readSessionDocuments(projectId, sessionId)) {
+      const run = this.runIndex(document).byId.get(runId)
+      if (run) return run
+    }
+    return undefined
+  }
 
   constructor(private readonly storageRoot: string) {}
 
@@ -946,7 +990,7 @@ class NotebookRunRepository {
         const sessionRoot = join(projectRoot, session.name)
         if (await this.pathExists(join(sessionRoot, NOTEBOOK_RUN_FILE))) {
           recovered.push(
-            ...(await this.recoverLane(
+            ...(await this.recoverLaneIfReadable(
               project.name,
               session.name,
               createRootNotebookLane(project.name, session.name, `root-frame-${session.name}`)
@@ -965,7 +1009,7 @@ class NotebookRunRepository {
           if (!frame.isDirectory() || !SAFE_SEGMENT_PATTERN.test(frame.name)) continue
           if (!(await this.pathExists(join(framesRoot, frame.name, NOTEBOOK_RUN_FILE)))) continue
           recovered.push(
-            ...(await this.recoverLane(
+            ...(await this.recoverLaneIfReadable(
               project.name,
               session.name,
               createFrameNotebookLane(project.name, session.name, frame.name)
@@ -1400,6 +1444,9 @@ class NotebookRunRepository {
       getNotebookSessionRoot(this.storageRoot, projectId, sessionId, lane),
       RUN_TERMINAL_OUTBOX_DIR
     )
+    await recoverDurableJsonDirectory(outboxRoot, (_targetPath, contents) =>
+      parseNotebookRunTerminalFact(contents)
+    )
     let facts: Dirent[]
     try {
       facts = await readdir(outboxRoot, { withFileTypes: true })
@@ -1447,6 +1494,27 @@ class NotebookRunRepository {
       }
     }
     return [...recovered.values()].map((run) => ({ projectId, sessionId, run }))
+  }
+
+  private async recoverLaneIfReadable(
+    projectId: string,
+    sessionId: string,
+    lane: NotebookLaneIdentity
+  ): Promise<RecoveredBackgroundRun[]> {
+    try {
+      return await this.recoverLane(projectId, sessionId, lane)
+    } catch (error) {
+      if (!(error instanceof CorruptNotebookDocumentError)) throw error
+
+      log.warn('skipping unreadable Notebook document', {
+        projectId,
+        sessionId,
+        lane: notebookLaneScope(lane).kind,
+        status: 'corrupt',
+        phase: 'startup-recovery'
+      })
+      return []
+    }
   }
 
   private async pathExists(path: string): Promise<boolean> {

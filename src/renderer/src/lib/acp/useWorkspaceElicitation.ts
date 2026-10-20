@@ -20,7 +20,7 @@ import {
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
 ): PendingElicitationRequest[] =>
-  (session?.activities ?? []).flatMap((activity) => {
+  (session?.packageOrigin ? [] : (session?.activities ?? [])).flatMap((activity) => {
     const elicitation = activity.elicitation
     return elicitation?.state === 'pending' && elicitation.durable
       ? [

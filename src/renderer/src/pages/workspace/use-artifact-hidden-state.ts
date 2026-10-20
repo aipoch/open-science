@@ -5,7 +5,8 @@ const EMPTY_IDS: ReadonlySet<string> = new Set()
 // Hidden IDs are denial metadata only. Keep them separate from persisted Session evidence so
 // visibility changes cannot delete history, and discard reads begun before the latest event.
 export const useArtifactHiddenState = (
-  projectId: string | undefined
+  projectId: string | undefined,
+  visibilityChangesOnly = false
 ): {
   ready: boolean
   ids: ReadonlySet<string>
@@ -41,13 +42,17 @@ export const useArtifactHiddenState = (
     }
     refresh()
     const unsubscribe = window.api.projectFiles.onChanged((event) => {
-      if (event.projectId === projectId) refresh()
+      if (
+        event.projectId === projectId &&
+        (!visibilityChangesOnly || event.artifactVisibilityChanged)
+      )
+        refresh()
     })
     return () => {
       active = false
       unsubscribe()
     }
-  }, [projectId, supported])
+  }, [projectId, supported, visibilityChangesOnly])
   if (!projectId || !supported) return { ready: true, ids: EMPTY_IDS }
   return state.projectId === projectId ? state : { ready: false, ids: EMPTY_IDS }
 }

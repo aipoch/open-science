@@ -158,8 +158,7 @@ type PreloadApi = {
     reportState: (sessionId: string, state: unknown) => void
   }
   sourcePreview: {
-    release: (sourceUrl: string) => void
-    onLoadState: (listener: (state: unknown) => void) => () => void
+    onContextMenu: (listener: (state: unknown) => void) => () => void
   }
   uploads: {
     stageLocalFile: (file: File, request: unknown) => Promise<unknown>
@@ -169,6 +168,7 @@ type PreloadApi = {
     findInPage?: (request: unknown) => void
     clearFind?: () => void
     closeFind?: () => void
+    onFindInOffice?: (listener: (sessionId: string) => void) => unknown
     onShowWindowFind?: (
       listener: (appearance: { theme: 'light' | 'dark'; followsSystem: boolean }) => void
     ) => unknown
@@ -365,6 +365,11 @@ describe('preload bridge — public surface inventory', () => {
       'databaseStartup.onStateChanged',
       'databaseStartup.quit',
       'databaseStartup.retry',
+      'desktopRuntime.getState',
+      'desktopRuntime.onStateChanged',
+      'desktopRuntime.quit',
+      'desktopRuntime.reconciled',
+      'desktopRuntime.reconnect',
       'diagnostics.reportRendererFailure',
       'getRuntimeVersions',
       'github.getStars',
@@ -373,6 +378,7 @@ describe('preload bridge — public surface inventory', () => {
       'handoff.retry',
       'lifecycle.claimRuntimeWriter',
       'lifecycle.getClientId',
+      'literature.addPdf',
       'literature.cancelPdfImport',
       'literature.citationStyles',
       'literature.completeMetadata',
@@ -381,9 +387,11 @@ describe('preload bridge — public surface inventory', () => {
       'literature.formatReferences',
       'literature.fullText',
       'literature.get',
+      'literature.getCandidateStates',
       'literature.importPdf',
       'literature.importRecords',
       'literature.jobs',
+      'literature.journals',
       'literature.lookupMetadata',
       'literature.onChanged',
       'literature.search',
@@ -425,6 +433,7 @@ describe('preload bridge — public surface inventory', () => {
       'memory.updateEntry',
       'network.checkConnectivity',
       'network.getInfo',
+      'network.onSystemResumed',
       'notebook.abortCodeCell',
       'notebook.appendCodeCell',
       'notebook.beginCodeCell',
@@ -442,6 +451,7 @@ describe('preload bridge — public surface inventory', () => {
       'notebook.readInputPreview',
       'notebook.restart',
       'notebook.runCell',
+      'notebook.runIndex',
       'notebook.shutdown',
       'notebook.state',
       'notebookEnv.cancel',
@@ -466,6 +476,9 @@ describe('preload bridge — public surface inventory', () => {
       'officePreview.onState',
       'officePreview.open',
       'officePreview.reportState',
+      'packagePresentation.cancelTransfer',
+      'packagePresentation.getState',
+      'packagePresentation.onStateChanged',
       'pdfAnnotations.cancelImport',
       'pdfAnnotations.create',
       'pdfAnnotations.delete',
@@ -473,12 +486,25 @@ describe('preload bridge — public surface inventory', () => {
       'pdfAnnotations.list',
       'pdfAnnotations.onChanged',
       'pdfAnnotations.onImportProgress',
+      'pdfAnnotations.reconcile',
       'pdfAnnotations.update',
       'pdfStructure.cancel',
       'pdfStructure.clearCache',
       'pdfStructure.parse',
       'pdfStructure.readCached',
       'pdfStructure.readThumbnail',
+      'pdfTranslation.begin',
+      'pdfTranslation.cancelPdf',
+      'pdfTranslation.close',
+      'pdfTranslation.deleteEdition',
+      'pdfTranslation.generatePdf',
+      'pdfTranslation.listEditions',
+      'pdfTranslation.readCheckpoint',
+      'pdfTranslation.recordLayout',
+      'pdfTranslation.saveSnapshot',
+      'pdfTranslation.selectEdition',
+      'pdfTranslation.skip',
+      'pdfTranslation.translate',
       'permissions.extendUndo',
       'permissions.list',
       'permissions.onChanged',
@@ -527,6 +553,7 @@ describe('preload bridge — public surface inventory', () => {
       'remoteAccess.setMode',
       'reviewer.abortFixLoop',
       'reviewer.getForSession',
+      'reviewer.getReviewLog',
       'reviewer.onFixLoopEnd',
       'reviewer.onFixLoopStart',
       'reviewer.onSuppressNextAutoReview',
@@ -546,10 +573,22 @@ describe('preload bridge — public surface inventory', () => {
       'runtime.setInstallAuthorized',
       'runtime.setSandboxAccess',
       'runtime.unregisterInterpreter',
+      'runtimeStartup.getState',
+      'runtimeStartup.onStateChanged',
+      'runtimeStartup.quit',
+      'runtimeStartup.recover',
+      'runtimeStartup.stopAndContinue',
       'saveBlobFile',
       'saveManagedFile',
       'saveProjectArtifacts',
       'saveSessionArtifacts',
+      'sessionReplay.get',
+      'sessionReplay.getSelectionSnapshot',
+      'sessionReplay.list',
+      'sessionReplay.listSelectionSnapshots',
+      'sessionReplay.saveSelectionSnapshot',
+      'sessionReplay.saveView',
+      'sessionReplay.unlinkSession',
       'sessions.cancelDiagnostics',
       'sessions.deleteSession',
       'sessions.editDetails',
@@ -562,6 +601,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.inspectDiagnostics',
       'sessions.linkPdfContext',
       'sessions.list',
+      'sessions.listRuntimeTerminalFailures',
       'sessions.loadAll',
       'sessions.loadOne',
       'sessions.loadUsage',
@@ -573,6 +613,7 @@ describe('preload bridge — public surface inventory', () => {
       'sessions.onUpdated',
       'sessions.openRecoveryFolder',
       'sessions.packageOperation',
+      'sessions.retryRuntimeTerminalCommit',
       'sessions.saveManifest',
       'sessions.saveSession',
       'sessions.searchMessages',
@@ -589,6 +630,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.cancelCustomServerAuthentication',
       'settings.cancelDeviceCredentialAuthentication',
       'settings.cancelIsolatedClaudeLogin',
+      'settings.cancelNotebookNetworkSetup',
       'settings.cancelXaiOAuthLogin',
       'settings.checkEnvironment',
       'settings.createDeviceCredential',
@@ -679,6 +721,7 @@ describe('preload bridge — public surface inventory', () => {
       'settings.respondSkillImportApproval',
       'settings.retryConnectorProjection',
       'settings.retryCustomServer',
+      'settings.reviewNotebookPrivateDestination',
       'settings.saveGitHubToken',
       'settings.saveValidatedProvider',
       'settings.scanRepoSkills',
@@ -733,8 +776,8 @@ describe('preload bridge — public surface inventory', () => {
       'sideChat.onRelayDelivered',
       'sideChat.send',
       'sideChat.start',
-      'sourcePreview.onLoadState',
-      'sourcePreview.release',
+      'sourcePreview.onContextMenu',
+      'sourcePreview.onNavigationBlocked',
       'specialist.abortPackageUpload',
       'specialist.addMarketplaceSource',
       'specialist.beginPackageUpload',
@@ -800,6 +843,8 @@ describe('preload bridge — public surface inventory', () => {
       'update.getStatus',
       'update.onProgress',
       'update.onStatus',
+      'update.recheck',
+      'update.recover',
       'uploads.abortTransfer',
       'uploads.appendTransfer',
       'uploads.beginTransfer',
@@ -820,14 +865,21 @@ describe('preload bridge — public surface inventory', () => {
       'window.close',
       'window.closeFind',
       'window.findInPage',
+      'window.isFullScreen',
       'window.onCloseActivePane',
       'window.onCloseConfirmDismiss',
       'window.onCloseConfirmRequest',
+      'window.onFindInOffice',
       'window.onFindInPageResult',
+      'window.onFullScreenChanged',
       'window.onHideWindowFind',
+      'window.onInterfaceScaleShortcut',
       'window.onShowWindowFind',
       'window.onWindowFindAppearance',
-      'window.sendCloseConfirmResponse'
+      'window.sendCloseConfirmResponse',
+      'window.setZoomFactor',
+      'window.showTitleBarMenu',
+      'window.updateTitleBar'
     ])
   })
 })
@@ -919,6 +971,8 @@ describe('preload bridge — core renderer contract catalog', () => {
       'artifacts',
       'cli',
       'database-startup',
+      'runtime-startup',
+      'desktop-runtime',
       'diagnostics',
       'github',
       'lifecycle',
@@ -1239,11 +1293,13 @@ describe('preload bridge — window find IPC channels', () => {
     const appearanceListener = vi.fn()
     api.window.closeFind?.()
     api.window.onShowWindowFind?.(showListener)
+    api.window.onFindInOffice?.(vi.fn())
     api.window.onHideWindowFind?.(hideListener)
     api.window.onWindowFindAppearance?.(appearanceListener)
 
     expect(sendMock).toHaveBeenCalledWith('window:find-close')
     expect(onMock).toHaveBeenCalledWith('window:find-show', expect.any(Function))
+    expect(onMock).toHaveBeenCalledWith('window:find-office', expect.any(Function))
     expect(onMock).toHaveBeenCalledWith('window:find-hide', expect.any(Function))
     expect(onMock).toHaveBeenCalledWith('window:find-appearance', expect.any(Function))
 
@@ -1814,33 +1870,14 @@ describe('preload bridge — sessions + agent-framework IPC channels', () => {
     })
   })
 
-  it('exposes source loading as a read-only renderer event', () => {
+  it('exposes guest context menus as read-only events', () => {
     const listener = vi.fn()
-    const state = {
-      navigationId: 1,
-      sourceUrl: 'https://example.com/paper',
-      currentUrl: 'https://example.com/paper',
-      phase: 'loaded'
-    }
-
-    api.sourcePreview.onLoadState(listener)
-
-    expect(onMock).toHaveBeenCalledWith('source-preview:load-state', expect.any(Function))
-    const wrappedListener = onMock.mock.calls.at(-1)?.[1] as
-      ((_event: unknown, payload: unknown) => void) | undefined
-    wrappedListener?.({}, state)
-    expect(listener).toHaveBeenCalledWith(state)
-  })
-
-  it('releases source-preview tracking through a one-way renderer message', () => {
-    const sourcePreview = api.sourcePreview as typeof api.sourcePreview & {
-      release?: (sourceUrl: string) => void
-    }
-
-    expect(sourcePreview.release).toBeTypeOf('function')
-    sourcePreview.release?.('https://example.com/paper')
-
-    expect(sendMock).toHaveBeenCalledWith('source-preview:release', 'https://example.com/paper')
+    const request = { guestId: 12, x: 100, y: 200 }
+    api.sourcePreview.onContextMenu(listener)
+    expect(onMock).toHaveBeenCalledWith('source-preview:context-menu', expect.any(Function))
+    const wrapped = onMock.mock.calls.at(-1)?.[1] as (_event: unknown, payload: unknown) => void
+    wrapped({}, request)
+    expect(listener).toHaveBeenCalledWith(request)
   })
 
   it('resolves native upload paths in preload and sends only metadata to main', async () => {

@@ -9,8 +9,14 @@ import {
   useSessionStore
 } from '@/stores/session-store'
 import type { TextAnnotation } from '../../../../shared/annotations'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 
 import type { ComposerDoc } from './composer/composer-doc'
+import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { WorkspaceComposerDraftsProvider } from './workspace-composer-drafts'
 import {
   useWorkspaceConversationController,
   type WorkspaceConversationController,
@@ -79,7 +85,11 @@ const runningSession = (): ChatSession =>
           updatedAt: 1
         }
       ],
-      messages: [],
+      messages: session().messages.map((message) => ({
+        ...message,
+        agentFrameId: 'root',
+        introducedOnBranchId: 'branch-a'
+      })),
       activities: [],
       activityGroups: [],
       runtimeSegments: []
@@ -124,6 +134,7 @@ const options = (
           bindings: [],
           pendingBindingId: undefined,
           isPending: false,
+          automaticAttachments: [],
           automaticAttachmentCount: 0
         }
       },
@@ -136,6 +147,9 @@ const options = (
           annotations: [],
           attachments: []
         })),
+        preserveAdmissionContext: vi.fn(),
+        consumePdfProseReading: vi.fn(),
+        bindAdmissionContext: vi.fn(),
         captureRevision: vi.fn((revisionDoc, annotations) => ({
           draftKey: 'session-a',
           version: 1,
@@ -215,12 +229,282 @@ const renderController = (initial: WorkspaceConversationControllerOptions): Hook
 
 const mounted: Hook[] = []
 
+const renderWithComposer = (
+  input: WorkspaceConversationControllerOptions
+): Hook & { composer: { current: ReturnType<typeof useWorkspaceComposerController> } } => {
+  let current = input
+  const root = createRoot(document.createElement('div'))
+  const composer = {
+    current: undefined as unknown as ReturnType<typeof useWorkspaceComposerController>
+  }
+  const result = { current: undefined as unknown as WorkspaceConversationController }
+  const Harness = (): null => {
+    composer.current = useWorkspaceComposerController({
+      currentDraftKey: current.currentDraftKey,
+      newConversationDraftKey: 'new:project-a',
+      activeProjectId: current.projectId,
+      activeSession: current.activeSession,
+      pendingCustomizePrefill: undefined,
+      onCustomizePrefillApplied: vi.fn(),
+      historyEntries: [],
+      historyPolicy: {
+        catalogSkillIds: new Set(),
+        allowedSkillIds: undefined,
+        skillCatalogReady: true,
+        refreshSkillCatalog: false,
+        specialistCatalogReady: true,
+        specialistId: undefined,
+        loadSkills: vi.fn(),
+        loadSpecialists: vi.fn()
+      },
+      canStageAttachments: true,
+      supportsImageInput: true,
+      uploads: {
+        stageLocalFile: vi.fn(),
+        beginTransfer: vi.fn(),
+        appendTransfer: vi.fn(),
+        getTransferStatus: vi.fn(),
+        finishTransfer: vi.fn(),
+        abortTransfer: vi.fn().mockResolvedValue(undefined),
+        deleteUpload: vi.fn(),
+        onTransferProgress: vi.fn(() => () => undefined)
+      }
+    })
+    result.current = useWorkspaceConversationController({ ...current, composer: composer.current })
+    return null
+  }
+  const render = (): void =>
+    act(() =>
+      root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+    )
+  render()
+  return {
+    result,
+    composer,
+    rerender: (next): void => {
+      current = next
+      render()
+    },
+    unmount: (): void => act(() => root.unmount())
+  }
+}
+
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
+  sessionStorage.clear()
   vi.restoreAllMocks()
 })
 
 describe('workspace conversation controller', () => {
+  it.each(['direct', 'queued'] as const)(
+    'consumes an existing Session body selection after %s admission and keeps the next message native',
+    async (path) => {
+      const binding = {
+        version: 1 as const,
+        bindingId: 'reading-binding',
+        sourceKind: 'artifact-version' as const,
+        sourceFileId: 'paper',
+        sourceVersionId: 'paper-version',
+        sourceSessionId: 'source',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        linkedAt: 1
+      }
+      const activeSession = {
+        ...(path === 'queued' ? runningSession() : session()),
+        runtimeContext: {
+          version: 1 as const,
+          revision: 1,
+          pdfContext: { version: 1 as const, bindings: [binding] }
+        }
+      }
+      const input = options({
+        activeSession,
+        getSession: () => activeSession,
+        promptInFlightSessionIds: path === 'queued' ? [activeSession.id] : []
+      })
+      const hook = renderWithComposer(input)
+      mounted.push(hook)
+      const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
+      act(() => {
+        hook.composer.current.actions.changeDoc(textDoc('First question'))
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+      })
+      const first = hook.composer.current.lifecycle.captureSend()
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(
+        usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+      ).toBeUndefined()
+      act(() => hook.composer.current.actions.changeDoc(textDoc('Next question')))
+      expect(
+        hook.composer.current.lifecycle.captureSend().pdfProseReadingSelections
+      ).toBeUndefined()
+      expect(first.pdfProseReadingSelections?.[0].proseRegions).toEqual([region])
+      if (path === 'queued') {
+        expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+        expect(hook.result.current.queue.items).toHaveLength(1)
+        // This identical redraw belongs to a later message; draining must not consume it again.
+        act(() =>
+          usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+        )
+        const settled = { ...activeSession, status: 'idle' as const }
+        hook.rerender({
+          ...input,
+          activeSession: settled,
+          promptInFlightSessionIds: [],
+          getSession: () => settled
+        })
+        await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+        expect(
+          usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+        ).toEqual([region])
+      } else {
+        expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+          expect.objectContaining({
+            pdfProseReadingSelections: first.pdfProseReadingSelections
+          })
+        )
+      }
+    }
+  )
+
+  it.each(['before-result', 'after-result'] as const)(
+    'restores the admitted body selection when preparation fails %s',
+    async (timing) => {
+      const binding = {
+        version: 1 as const,
+        bindingId: 'reading-binding',
+        sourceKind: 'artifact-version' as const,
+        sourceFileId: 'paper',
+        sourceVersionId: 'paper-version',
+        sourceSessionId: 'source',
+        name: 'paper.pdf',
+        mimeType: 'application/pdf' as const,
+        sizeBytes: 42,
+        checksum: 'a'.repeat(64),
+        linkedAt: 1
+      }
+      const activeSession = session({
+        runtimeContext: { version: 1, revision: 1, pdfContext: { version: 1, bindings: [binding] } }
+      })
+      const input = options({ activeSession, getSession: () => activeSession })
+      let rejected: (() => void) | undefined
+      input.runtime.sendMessage = vi.fn(async (request) => {
+        request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+        rejected = () => request.onPreparationRejected?.('Preparation failed', 'session-a')
+        if (timing === 'before-result') rejected()
+        return { sessionId: 'session-a', messageId: 'message-a' }
+      })
+      const hook = renderWithComposer(input)
+      mounted.push(hook)
+      const region = { page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }
+      act(() => {
+        hook.composer.current.actions.changeDoc(textDoc('First question'))
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(binding.bindingId, [region])
+      })
+      const snapshot = hook.composer.current.lifecycle.captureSend()
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      if (timing === 'after-result') {
+        expect(
+          usePreviewWorkbenchStore.getState().pdfProseRegionsByBindingId[binding.bindingId]
+        ).toBeUndefined()
+        act(() => rejected?.())
+      }
+      expect(hook.composer.current.lifecycle.captureSend().pdfProseReadingSelections).toEqual(
+        snapshot.pdfProseReadingSelections
+      )
+      expect(hook.composer.current.view.doc).toEqual(textDoc('First question'))
+    }
+  )
+
+  it.each(['callback-first', 'result-first'] as const)(
+    'consumes direct admission only once when the %s completes',
+    async (order) => {
+      const input = options()
+      let appended: (() => void) | undefined
+      let finish!: (value: { sessionId: string; messageId: string }) => void
+      input.runtime.sendMessage = vi.fn((request) => {
+        appended = () =>
+          request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'message-a' })
+        if (order === 'callback-first') appended()
+        return new Promise<{ sessionId: string; messageId: string }>((resolve) => {
+          finish = resolve
+        })
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      if (order === 'callback-first')
+        expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledOnce()
+      else expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+      await act(async () => finish({ sessionId: 'session-a', messageId: 'message-a' }))
+      act(() => appended?.())
+      expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledExactlyOnceWith(
+        vi.mocked(input.composer.lifecycle.captureSend).mock.results[0].value
+      )
+    }
+  )
+
+  it('keeps the captured policy when direct admission returns no message', async () => {
+    const input = options()
+    vi.mocked(input.runtime.sendMessage).mockResolvedValue(undefined)
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+  })
+
+  it('keeps the captured policy when the queue rejects a missing branch identity', () => {
+    const running = session({ status: 'running' })
+    const input = options({
+      activeSession: running,
+      promptInFlightSessionIds: [running.id],
+      getSession: () => running
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.composer.lifecycle.captureSend).toHaveBeenCalledOnce()
+    expect(hook.result.current.queue.items).toEqual([])
+    expect(input.composer.lifecycle.consumePdfProseReading).not.toHaveBeenCalled()
+    expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['claude-code', 'claude-code', 'claude-code:anthropic'],
+    ['opencode', 'opencode', 'opencode:provider-1'],
+    ['codebuddy', 'codebuddy', 'codebuddy:provider-1'],
+    ['codex-response', 'codex', 'codex:responses-provider'],
+    ['codex-bridge', 'codex', 'codex:bridge-provider']
+  ] as const)(
+    'allows a new message after a failed initial session connection (%s)',
+    async (_path, agentFrameworkId, agentBackendId) => {
+      const failedSession = session({
+        status: 'error',
+        isPending: true,
+        agentFrameworkId,
+        agentBackendId,
+        error: 'Agent startup failed'
+      })
+      const input = options({
+        activeSession: failedSession,
+        actionability: projectSessionActionability(failedSession)
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+
+      expect(hook.result.current.availability.submit).toBe(true)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+        expect.objectContaining({ sessionId: failedSession.id, text: 'hello' })
+      )
+    }
+  )
+
   it('admits and sends a structured annotation without message text', async () => {
     const annotation = {
       id: 'annotation-1',
@@ -360,6 +644,296 @@ describe('workspace conversation controller', () => {
     )
   })
 
+  it.each(['success', 'undefined', 'rejection'])(
+    'admits a distinct new draft and keeps its guard after the earlier send settles with %s',
+    async (outcome) => {
+      const first = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      first.composer.lifecycle.captureSend = vi.fn(() => ({
+        draftKey: 'new:project-a',
+        version: 1,
+        doc: textDoc('first'),
+        annotations: [],
+        attachments: []
+      }))
+      let finish!: (value: { sessionId: string; messageId: string } | undefined) => void
+      let fail!: (error: Error) => void
+      first.runtime.sendMessage = vi.fn<
+        WorkspaceConversationControllerOptions['runtime']['sendMessage']
+      >(
+        () =>
+          new Promise((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const hook = renderController(first)
+      mounted.push(hook)
+      act(() => {
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+        hook.result.current.actions.submit.draft({ forcedSkillIds: [] })
+      })
+      expect(first.runtime.sendMessage).toHaveBeenCalledOnce()
+      const second = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      second.composer.lifecycle.captureSend = vi.fn(() => ({
+        draftKey: 'new:project-a',
+        version: 2,
+        doc: textDoc('second'),
+        annotations: [],
+        attachments: []
+      }))
+      second.runtime.sendMessage = vi.fn<
+        WorkspaceConversationControllerOptions['runtime']['sendMessage']
+      >(() => new Promise(() => undefined))
+      hook.rerender(second)
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(second.runtime.sendMessage).toHaveBeenCalledOnce()
+      await act(async () => {
+        if (outcome === 'rejection') fail(new Error('preparation failed'))
+        else
+          finish(
+            outcome === 'success'
+              ? { sessionId: 'first-session', messageId: 'first-message' }
+              : undefined
+          )
+      })
+      act(() => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(second.runtime.sendMessage).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('restores an inactive failed Session draft without showing its error on another Session', async () => {
+    const input = options()
+    let rejected:
+      | NonNullable<Parameters<typeof input.runtime.sendMessage>[0]['onPreparationRejected']>
+      | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      return { sessionId: 'session-a', messageId: 'prompt-a' }
+    })
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    const render = (): void =>
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+    try {
+      render()
+      act(() => composer.actions.changeDoc(textDoc('Session A rejected draft')))
+      await act(async () => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      input.currentDraftKey = 'session-b'
+      input.activeSession = session({ id: 'session-b' })
+      render()
+      act(() => rejected?.('Session A operation failed', 'session-a'))
+      expect(composer.view.error).toBeNull()
+      expect(composer.view.doc).toEqual({ nodes: [] })
+      input.currentDraftKey = 'session-a'
+      input.activeSession = session()
+      render()
+      expect(composer.view.doc).toEqual(textDoc('Session A rejected draft'))
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it('retries a restored new-conversation snapshot only in its exact existing Session owner', async () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    const snapshot = input.composer.lifecycle.captureSend()
+    snapshot.retrySessionOwner = { sessionId: 'bound-session', projectId: 'project-a' }
+    vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+    input.getSession = vi.fn(() => session({ id: 'bound-session' }))
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionId: 'bound-session' })
+    )
+  })
+
+  it.each(['missing', 'wrong-project', 'archived', 'busy'] as const)(
+    'keeps a retry snapshot when its exact owner is %s',
+    async (condition) => {
+      const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+      const snapshot = input.composer.lifecycle.captureSend()
+      snapshot.retrySessionOwner = { sessionId: 'bound-session', projectId: 'project-a' }
+      vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+      input.getSession = vi.fn(() =>
+        condition === 'missing'
+          ? undefined
+          : session({
+              id: 'bound-session',
+              ...(condition === 'wrong-project' ? { projectId: 'other-project' } : {}),
+              ...(condition === 'archived' ? { archivedAt: 10 } : {}),
+              ...(condition === 'busy'
+                ? { activeRun: { promptMessageId: 'other', startedAt: 2 }, status: 'running' }
+                : {})
+            })
+      )
+      const hook = renderController(input)
+      mounted.push(hook)
+      await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.composer.lifecycle.clearDraft).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps the original operation error after receipt rejection restores the real composer', async () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onPreparationRejected?.('Synthetic submission write failure')
+      return undefined
+    })
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    try {
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+      act(() => composer.actions.changeDoc(textDoc('Rejected message')))
+      await act(async () => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(composer.view.doc).toEqual(textDoc('Rejected message'))
+      expect(composer.view.error).toBe('Synthetic submission write failure')
+      expect(composer.view.errorDetail).toBeUndefined()
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
+  it('suppresses synchronous duplicate clicks after the real composer clears a new draft', () => {
+    const input = options({ activeSession: undefined, currentDraftKey: 'new:project-a' })
+    input.runtime.sendMessage = vi.fn<
+      WorkspaceConversationControllerOptions['runtime']['sendMessage']
+    >(() => new Promise(() => undefined))
+    let composer!: ReturnType<typeof useWorkspaceComposerController>
+    let controller!: WorkspaceConversationController
+    const root = createRoot(document.createElement('div'))
+    const Harness = (): null => {
+      composer = useWorkspaceComposerController({
+        currentDraftKey: input.currentDraftKey,
+        newConversationDraftKey: input.currentDraftKey,
+        activeProjectId: input.projectId,
+        activeSession: undefined,
+        pendingCustomizePrefill: undefined,
+        onCustomizePrefillApplied: vi.fn(),
+        historyEntries: [],
+        historyPolicy: {
+          catalogSkillIds: new Set(),
+          allowedSkillIds: undefined,
+          skillCatalogReady: true,
+          refreshSkillCatalog: false,
+          specialistCatalogReady: true,
+          specialistId: undefined,
+          loadSkills: vi.fn(),
+          loadSpecialists: vi.fn()
+        },
+        canStageAttachments: true,
+        supportsImageInput: true,
+        uploads: {
+          stageLocalFile: vi.fn(),
+          beginTransfer: vi.fn(),
+          appendTransfer: vi.fn(),
+          getTransferStatus: vi.fn(),
+          finishTransfer: vi.fn(),
+          abortTransfer: vi.fn().mockResolvedValue(undefined),
+          deleteUpload: vi.fn(),
+          onTransferProgress: vi.fn(() => () => undefined)
+        }
+      })
+      controller = useWorkspaceConversationController({ ...input, composer })
+      return null
+    }
+    try {
+      act(() =>
+        root.render(createElement(WorkspaceComposerDraftsProvider, null, createElement(Harness)))
+      )
+      act(() => composer.actions.changeDoc(textDoc('same text')))
+      const firstVersion = composer.lifecycle.captureSend().version
+      act(() => {
+        controller.actions.submit.draft({ forcedSkillIds: [] })
+        controller.actions.submit.draft({ forcedSkillIds: [] })
+      })
+      expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+      expect(composer.lifecycle.captureSend().version).toBe(firstVersion)
+      act(() => composer.actions.changeDoc(textDoc('same text')))
+      expect(composer.lifecycle.captureSend().version).toBeGreaterThan(firstVersion)
+      act(() => controller.actions.submit.draft({ forcedSkillIds: [] }))
+      expect(input.runtime.sendMessage).toHaveBeenCalledTimes(2)
+    } finally {
+      act(() => root.unmount())
+    }
+  })
+
   it('exposes the submitted draft immediately while runtime admission is pending', async () => {
     let resolveAdmission!: (value: { sessionId: string; messageId: string }) => void
     const admission = new Promise<{ sessionId: string; messageId: string }>((resolve) => {
@@ -433,6 +1007,82 @@ describe('workspace conversation controller', () => {
     await act(async () => rejectAdmission(new Error('save failed')))
     expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
     expect(input.composer.actions.setError).toHaveBeenCalledWith('save failed')
+  })
+
+  it('restores the complete captured draft after an asynchronous pre-admission rejection', async () => {
+    const input = options()
+    const snapshot = input.composer.lifecycle.captureSend()
+    snapshot.attachments = [
+      {
+        id: 'original-upload',
+        sessionId: '.pending',
+        name: 'research.pdf',
+        originalName: 'research.pdf',
+        path: '/data/.pending/research.pdf',
+        mimeType: 'application/pdf',
+        size: 123
+      }
+    ]
+    snapshot.pendingPdfContextAttachmentIds = ['original-upload']
+    snapshot.pendingPdfContextVersions = [
+      { sourceKind: 'artifact-version', sourceFileId: 'paper', sourceVersionId: 'paper-version' }
+    ]
+    snapshot.pdfProseReadingSelections = [
+      {
+        source: { attachmentId: 'original-upload' },
+        proseRegions: [{ page: 1, left: 0.1, top: 0.2, right: 0.9, bottom: 0.8, split: 0.5 }]
+      }
+    ]
+    vi.mocked(input.composer.lifecycle.captureSend).mockReturnValue(snapshot)
+    let rejected: ((message: string) => void) | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      request.onMessageAppended?.({ sessionId: 'session-a', messageId: 'optimistic-prompt' })
+      return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    expect(input.runtime.sendMessage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        pdfProseReadingSelections: snapshot.pdfProseReadingSelections
+      })
+    )
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    act(() => rejected?.('Provider admission failed'))
+    expect(input.composer.lifecycle.restoreFailedSend).toHaveBeenCalledExactlyOnceWith(
+      snapshot,
+      true,
+      undefined,
+      true
+    )
+    expect(snapshot.attachments[0].id).toBe('original-upload')
+    expect(snapshot.pendingPdfContextAttachmentIds).toEqual(['original-upload'])
+    expect(snapshot.pendingPdfContextVersions?.[0].sourceVersionId).toBe('paper-version')
+    expect(input.composer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
+  })
+
+  it('restores through the composer that is current when the preparation is rejected', async () => {
+    const input = options()
+    let rejected: ((message: string) => void) | undefined
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      rejected = request.onPreparationRejected
+      return { sessionId: 'session-a', messageId: 'optimistic-prompt' }
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    await act(async () => hook.result.current.actions.submit.draft({ forcedSkillIds: [] }))
+    const latestComposer = {
+      ...input.composer,
+      actions: { setError: vi.fn() },
+      lifecycle: { ...input.composer.lifecycle, restoreFailedSend: vi.fn(() => true) }
+    }
+    hook.rerender({ ...input, composer: latestComposer })
+    act(() => rejected?.('Provider admission failed'))
+    expect(input.composer.lifecycle.restoreFailedSend).not.toHaveBeenCalled()
+    expect(input.composer.actions.setError).not.toHaveBeenCalled()
+    expect(latestComposer.lifecycle.restoreFailedSend).toHaveBeenCalledOnce()
+    expect(latestComposer.actions.setError).toHaveBeenCalledWith('Provider admission failed')
   })
 
   it('branches from a completed Agent Message without consuming the composer draft', async () => {
@@ -848,6 +1498,9 @@ describe('workspace conversation controller', () => {
     expect(hook.result.current.queue.items).toEqual([
       expect.objectContaining({ text: 'hello', phase: 'queued' })
     ])
+    expect(input.composer.lifecycle.consumePdfProseReading).toHaveBeenCalledExactlyOnceWith(
+      vi.mocked(input.composer.lifecycle.captureSend).mock.results[0].value
+    )
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
   })
 
@@ -947,6 +1600,16 @@ describe('workspace conversation controller', () => {
     mounted.push(runningHook)
 
     expect(runningHook.result.current.availability.submit).toBe(false)
+
+    idleInput.composer.view.readingContext.isPending = false
+    idleHook.rerender(idleInput)
+    expect(idleHook.result.current.availability.submit).toBe(true)
+    expect(idleHook.result.current.availability.submitMode).toBe('send')
+
+    runningInput.composer.view.readingContext.isPending = false
+    runningHook.rerender(runningInput)
+    expect(runningHook.result.current.availability.submit).toBe(true)
+    expect(runningHook.result.current.availability.submitMode).toBe('queue')
   })
 
   it('queues without dispatching while the selected Specialist is not ready', () => {
@@ -1597,6 +2260,32 @@ describe('workspace conversation controller', () => {
     expect(order).toEqual(['review', 'runtime'])
   })
 
+  it.each(['configuration', 'prompt', 'preparation', 'permission', 'graph', 'compaction'] as const)(
+    'keeps interrupted recovery blocked by current %s ownership',
+    async (blocker) => {
+      const activeSession = session({
+        status: 'error',
+        interrupted: true,
+        conversationGraphSyncBlocked: blocker === 'graph' || undefined,
+        compacting: blocker === 'compaction' || undefined
+      })
+      const input = options({
+        activeSession,
+        agentConfigurationReady: blocker !== 'configuration',
+        promptInFlightSessionIds: blocker === 'prompt' ? ['session-a'] : [],
+        sendPreparationInFlightSessionIds: blocker === 'preparation' ? ['session-a'] : [],
+        actionability: projectSessionActionability(activeSession, {
+          rootPermissionPending: blocker === 'permission'
+        })
+      })
+      const hook = renderController(input)
+      mounted.push(hook)
+      expect(hook.result.current.availability.resume).toBe(false)
+      await act(async () => hook.result.current.actions.resume())
+      expect(input.runtime.resumeInterruptedSession).not.toHaveBeenCalled()
+    }
+  )
+
   it('gates resume and delegates deletion to the Session transaction owner', async () => {
     const input = options({ isPersistenceReady: false })
     const hook = renderController(input)
@@ -1613,3 +2302,169 @@ describe('workspace conversation controller', () => {
     expect(input.session.actions.confirmDelete).toHaveBeenCalledOnce()
   })
 })
+
+it('keeps persistent Plan read failures in one background retry chain and stops on unmount', async () => {
+  vi.useFakeTimers()
+  const activeSession = session({ status: 'waiting-plan-approval' })
+  const ports = {
+    getProjection: vi.fn().mockRejectedValue(new Error('Offline')),
+    getSession: () => activeSession,
+    setProjection: vi.fn(),
+    finishRun: vi.fn()
+  }
+  const input = options({ activeSession, planProjectionRecovery: ports })
+  const hook = renderController(input)
+  try {
+    await act(async () => {
+      await Promise.resolve()
+    })
+    expect(hook.result.current.planProjectionRecoveryError).toBe(true)
+    for (const delay of [1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+      expect(vi.getTimerCount()).toBe(1)
+      await act(async () => vi.advanceTimersByTimeAsync(delay))
+    }
+    expect(ports.getProjection).toHaveBeenCalledTimes(8)
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(input.composer.actions.setError).not.toHaveBeenCalled()
+    expect(ports.finishRun).not.toHaveBeenCalled()
+    hook.unmount()
+    await act(async () => vi.advanceTimersByTimeAsync(120000))
+    expect(ports.getProjection).toHaveBeenCalledTimes(8)
+    expect(vi.getTimerCount()).toBe(0)
+  } finally {
+    hook.unmount()
+    vi.useRealTimers()
+  }
+})
+
+it('does not overlap a hanging Plan read or apply its result after leaving the Session', async () => {
+  vi.useFakeTimers()
+  let reject!: (error: Error) => void
+  const activeSession = session({ status: 'waiting-plan-approval' })
+  const ports = {
+    getProjection: vi.fn(
+      () =>
+        new Promise<null>((_, fail) => {
+          reject = fail
+        })
+    ),
+    getSession: () => activeSession,
+    setProjection: vi.fn(),
+    finishRun: vi.fn()
+  }
+  const input = options({ activeSession, planProjectionRecovery: ports })
+  const hook = renderController(input)
+  try {
+    await act(async () => vi.advanceTimersByTimeAsync(120000))
+    expect(ports.getProjection).toHaveBeenCalledTimes(1)
+    expect(vi.getTimerCount()).toBe(0)
+    hook.rerender(
+      options({ activeSession: session({ id: 'other-session' }), planProjectionRecovery: ports })
+    )
+    await act(async () => reject(new Error('Late failure')))
+    expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+    expect(vi.getTimerCount()).toBe(0)
+    expect(ports.setProjection).not.toHaveBeenCalled()
+    expect(ports.finishRun).not.toHaveBeenCalled()
+  } finally {
+    hook.unmount()
+    vi.useRealTimers()
+  }
+})
+
+it.each(['idle', 'waiting-plan-approval'] as const)(
+  'does not recover a runtime Plan or show its blocking notice for %s imported research',
+  async (status) => {
+    vi.useFakeTimers()
+    const activeSession = session({
+      status,
+      packageOrigin: {
+        importId: 'import-1',
+        sourceProjectId: 'source-project',
+        sourceSessionId: 'source-session',
+        importedAt: 1,
+        manifestChecksum: 'a'.repeat(64)
+      },
+      runtimeContext: {
+        version: 1,
+        revision: 12,
+        plan: {
+          artifactId: 'artifact-1',
+          artifactVersionId: 'version-1',
+          artifactChecksum: 'a'.repeat(64),
+          originatingPromptMessageId: 'message-user-a',
+          approval: 'approved',
+          stepStatuses: {}
+        }
+      }
+    })
+    const ports = {
+      getProjection: vi.fn().mockRejectedValue(new Error('Imported Session is read-only')),
+      getSession: () => activeSession,
+      setProjection: vi.fn(),
+      finishRun: vi.fn()
+    }
+    const hook = renderController(options({ activeSession, planProjectionRecovery: ports }))
+    try {
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+      expect(hook.result.current.availability.planResponse).toBe(false)
+      expect(ports.getProjection).not.toHaveBeenCalled()
+      expect(ports.setProjection).not.toHaveBeenCalled()
+      expect(ports.finishRun).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      hook.unmount()
+      vi.useRealTimers()
+    }
+  }
+)
+
+it.each(['retrying', 'pending'] as const)(
+  'cancels %s Plan recovery when the same Session becomes imported',
+  async (phase) => {
+    vi.useFakeTimers()
+    let reject!: (error: Error) => void
+    let activeSession = session({ status: 'waiting-plan-approval' })
+    const ports = {
+      getProjection: vi.fn(
+        () =>
+          new Promise<null>((_resolve, fail) => {
+            reject = fail
+          })
+      ),
+      getSession: () => activeSession,
+      setProjection: vi.fn(),
+      finishRun: vi.fn()
+    }
+    const hook = renderController(options({ activeSession, planProjectionRecovery: ports }))
+    try {
+      if (phase === 'retrying') {
+        await act(async () => reject(new Error('Unavailable Plan')))
+        expect(hook.result.current.planProjectionRecoveryError).toBe(true)
+        expect(vi.getTimerCount()).toBe(1)
+      }
+      activeSession = {
+        ...activeSession,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 1,
+          manifestChecksum: 'a'.repeat(64)
+        }
+      }
+      hook.rerender(options({ activeSession, planProjectionRecovery: ports }))
+      if (phase === 'pending') await act(async () => reject(new Error('Late failure')))
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(hook.result.current.planProjectionRecoveryError).toBe(false)
+      expect(ports.getProjection).toHaveBeenCalledTimes(1)
+      expect(ports.setProjection).not.toHaveBeenCalled()
+      expect(ports.finishRun).not.toHaveBeenCalled()
+      expect(vi.getTimerCount()).toBe(0)
+    } finally {
+      hook.unmount()
+      vi.useRealTimers()
+    }
+  }
+)

@@ -10,11 +10,66 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   closeElectronApplicationForCleanup,
+  launchEnvironment,
   installRestartPersistenceRetry,
-  observeElectronFlushDiagnostics,
-  STAR_NUDGE_LAST_SHOWN_STORAGE_KEY,
-  suppressWorkspaceStarNudge
+  observeElectronFlushDiagnostics
 } from '../e2e/fixtures/electron-app'
+
+it('keeps the Linux test desktop session while isolating home and provider credentials', () => {
+  const environment = launchEnvironment(resolve('fixture/storage'), undefined, {
+    OPEN_SCIENCE_E2E_ISOLATE_HOME: '1',
+    HOME: '/operator',
+    OPENAI_API_KEY: 'operator-secret',
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-display/Xauthority',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
+    XDG_CURRENT_DESKTOP: 'GNOME'
+  })
+  expect(environment).toMatchObject({
+    DISPLAY: ':99',
+    XAUTHORITY: '/tmp/test-display/Xauthority',
+    DBUS_SESSION_BUS_ADDRESS: 'unix:path=/tmp/test-bus',
+    XDG_RUNTIME_DIR: '/tmp/test-runtime',
+    XDG_CURRENT_DESKTOP: 'GNOME',
+    HOME: resolve('fixture/isolated home'),
+    OPEN_SCIENCE_CONFIG_ROOT: resolve('fixture/storage')
+  })
+  expect(environment.OPENAI_API_KEY).toBeUndefined()
+})
+
+it.each([true, false])(
+  'requires an explicit Linux test vault before restoring it: %s',
+  async (explicit) => {
+    const source = await readFile('e2e/fixtures/node-runtime-preload.cjs', 'utf8')
+    const appendSwitch = vi.fn()
+    const load = (name: string): unknown => {
+      if (name === 'electron') return { app: { isPackaged: false, commandLine: { appendSwitch } } }
+      if (name === 'node:path') return { join: resolve }
+      if (name === 'node:fs') return { readFileSync: vi.fn() }
+      if (name === 'node:module') return { _load: vi.fn() }
+      throw new Error(`Unexpected module: ${name}`)
+    }
+    const run = (): void =>
+      runInNewContext(source, {
+        require: load,
+        process: {
+          platform: 'linux',
+          versions: { electron: 'test' },
+          argv: explicit ? ['--password-store=gnome-libsecret'] : [],
+          env: { OPEN_SCIENCE_E2E_STORAGE_ROOT: resolve('fixture/storage') }
+        },
+        __dirname: resolve('e2e/fixtures')
+      })
+    if (explicit) {
+      run()
+      expect(appendSwitch).toHaveBeenCalledExactlyOnceWith('password-store', 'gnome-libsecret')
+    } else {
+      expect(run).toThrow('requires an explicit Secret Service backend')
+      expect(appendSwitch).not.toHaveBeenCalled()
+    }
+  }
+)
 
 describe('source macOS mock Keychain metadata', () => {
   it('replaces only the native probe path for an explicit source mock launch', async () => {
@@ -29,7 +84,7 @@ describe('source macOS mock Keychain metadata', () => {
     })
     runInNewContext(source, {
       require: load,
-      process: { platform: 'darwin' },
+      process: { platform: 'darwin', env: {} },
       __dirname: resolve('e2e/fixtures')
     })
     expect(probe.executablePath).toBe(resolve('e2e/fixtures/mock-credential-identity.sh'))
@@ -89,21 +144,6 @@ const deferred = (): {
     resolve = settle
   })
   return { promise, resolve }
-}
-
-const runWithPageLocalStorage = (
-  script: (key: string) => void,
-  key: string,
-  localStorage: Pick<Storage, 'setItem'>
-): void => {
-  const previousWindow = (globalThis as { window?: unknown }).window
-  ;(globalThis as { window: { localStorage: Pick<Storage, 'setItem'> } }).window = { localStorage }
-  try {
-    script(key)
-  } finally {
-    if (previousWindow === undefined) delete (globalThis as { window?: unknown }).window
-    else (globalThis as { window: unknown }).window = previousWindow
-  }
 }
 
 describe('Electron E2E cleanup', () => {
@@ -358,63 +398,5 @@ describe('Electron E2E flush diagnostics', () => {
       stop()
       stdout.destroy()
     }
-  })
-})
-
-describe('Electron E2E GitHub star nudge suppression', () => {
-  afterEach(() => {
-    vi.restoreAllMocks()
-  })
-
-  it('uses the same cooldown key as GitHubStarBadge', async () => {
-    const badgeSource = await readFile(
-      resolve('src/renderer/src/components/GitHubStarBadge.tsx'),
-      'utf8'
-    )
-    expect(badgeSource).toContain(`'${STAR_NUDGE_LAST_SHOWN_STORAGE_KEY}'`)
-  })
-
-  it('suppresses the workspace star nudge on every E2E platform', async () => {
-    const fixtureSource = await readFile(resolve('e2e/fixtures/electron-app.ts'), 'utf8')
-    expect(fixtureSource).toContain('await suppressWorkspaceStarNudge(page)')
-    expect(fixtureSource).toContain("await page.reload({ waitUntil: 'domcontentloaded' })")
-    expect(fixtureSource).not.toContain('addInitScript')
-    expect(fixtureSource).not.toMatch(
-      /if \(process\.platform === 'win32'\) \{\s*\/\/ The workspace GitHub star nudge/
-    )
-  })
-
-  it('records the cooldown on the current page', async () => {
-    const now = 1_700_000_000_000
-    const store = new Map<string, string>()
-    vi.spyOn(Date, 'now').mockReturnValue(now)
-
-    await suppressWorkspaceStarNudge({
-      evaluate: async (script, arg) => {
-        runWithPageLocalStorage(script, arg, {
-          setItem: (name, value) => {
-            store.set(name, value)
-          }
-        })
-      }
-    })
-
-    expect(store.get(STAR_NUDGE_LAST_SHOWN_STORAGE_KEY)).toBe(String(now))
-  })
-
-  it('does not throw when the document denies localStorage', async () => {
-    await expect(
-      suppressWorkspaceStarNudge({
-        evaluate: async (script, arg) => {
-          runWithPageLocalStorage(script, arg, {
-            setItem: () => {
-              throw new Error(
-                "Failed to read the 'localStorage' property from 'Window': Access is denied for this document."
-              )
-            }
-          })
-        }
-      })
-    ).resolves.toBeUndefined()
   })
 })

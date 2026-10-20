@@ -205,7 +205,7 @@ const SkillUsageAgents = ({
         align="start"
         sideOffset={8}
         collisionPadding={12}
-        className="w-max min-w-40 max-w-[min(15rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
+        className="hover-bubble w-max min-w-40 max-w-[min(15rem,calc(100vw-1.5rem))] rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-menu"
         onPointerEnter={() => {
           cancelClose()
           setSpread(true)

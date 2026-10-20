@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
@@ -443,7 +444,7 @@ const createArtifactMcpServerConfig = (request: ArtifactMcpServerConfigRequest):
     command: request.command,
     args: [request.entryPath, ARTIFACT_MCP_SERVER_ARG],
     env: [
-      { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+      ...nodeRuntimeEnvironmentEntries(),
       { name: 'OPEN_SCIENCE_ARTIFACT_STORAGE_ROOT', value: request.storageRoot },
       { name: 'OPEN_SCIENCE_ARTIFACT_PROJECT_ID', value: projectId },
       { name: 'OPEN_SCIENCE_ARTIFACT_SESSION_ID', value: request.sessionId },

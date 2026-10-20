@@ -1,4 +1,4 @@
-import type { PdfStructureResult } from './pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 
 type Table = NonNullable<PdfStructureResult['elements'][number]['table']>
 type Cell = Table['cells'][number]

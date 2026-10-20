@@ -32,7 +32,7 @@ import {
   readBoundedJsonBody
 } from '../resource-budget'
 import { toErrorMessage } from '../error-message'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { extractPdfTextPages } from '../uploads/attachment-media'
 import {
   readBoundedPptx,
@@ -838,7 +838,7 @@ export class ReviewerHostServer {
             ) {
               throw error instanceof ArtifactTargetRangeError
                 ? error
-                : new ReviewerRequestError(error.message, { cause: error })
+                : new ReviewerRequestError(toErrorMessage(error), { cause: error })
             }
             structured = {
               id,

@@ -4,19 +4,19 @@ import { isDeepStrictEqual } from 'node:util'
 import type { AcpPromptRequest } from '../../shared/acp'
 import {
   getActiveConversationContext,
-  type PersistedConversationGraph,
   resolveActiveConversationActivities,
-  resolveMessageBranchPath
+  resolveMessageBranchPath,
+  type PersistedConversationGraph
 } from '../../shared/conversation-graph'
 import type { ElicitationAnswer, PendingElicitationRequest } from '../../shared/elicitation'
-import type { HistoryReplayDescriptor } from '../../shared/history-preamble'
+import type { HistoryReplayDescriptor } from '../../shared/history-replay-contract'
 import {
   buildSessionHistoryReplay,
   type SessionHistoryReplay
 } from '../../shared/session-history-replay'
 import {
-  sanitizeSessionReferences,
   rearmUnacceptedElicitationContinuations,
+  sanitizeSessionReferences,
   type PersistedChatSession
 } from '../../shared/session-persistence'
 import type { SessionCatalog, SessionMutation } from '../session-persistence/coordinator'
@@ -363,7 +363,9 @@ class AcpDurableContinuationContextOwner {
       return 'The user revised the previous structured answer by declining it.'
     const fields = new Map(request.fields.map((field) => [field.id, field]))
     const lines = (answers ?? []).map((answer) => {
-      const value = Array.isArray(answer.value) ? answer.value.join(', ') : String(answer.value)
+      const value = Array.isArray(answer.value)
+        ? JSON.stringify(answer.value)
+        : String(answer.value)
       return `${fields.get(answer.fieldId)?.label ?? answer.fieldId}: ${value}`
     })
     return ['The user revised the previous structured answer:', ...lines].join('\n')

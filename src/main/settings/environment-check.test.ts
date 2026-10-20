@@ -370,7 +370,7 @@ describe('runEnvironmentCheck', () => {
 
   it('uses diagnostic message when runtime detection provides one', async () => {
     const diagnosticMessage =
-      'Native Codex 0.144.2 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
+      'Native Codex 0.157.1 is installed at /Applications/ChatGPT.app/Contents/Resources/codex, but the Codex ACP adapter required by Open-Science is missing.'
 
     const result = await runEnvironmentCheck({
       storageRoot: '/data',
@@ -426,7 +426,7 @@ describe('runEnvironmentCheck', () => {
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.144.2',
+              nativeCliVersion: '0.157.1',
               adapterFound: false,
               adapterPath: undefined,
               adapterVersion: undefined
@@ -445,7 +445,7 @@ describe('runEnvironmentCheck', () => {
       id: 'agent',
       label: 'Codex native CLI',
       status: 'passed',
-      summary: 'Codex CLI 0.144.2 is installed.',
+      summary: 'Codex CLI 0.157.1 is installed.',
       detail: '/Applications/ChatGPT.app/Contents/Resources/codex'
     })
 
@@ -458,38 +458,42 @@ describe('runEnvironmentCheck', () => {
     })
   })
 
-  it('omits the version when a paired native CLI has no resolvable version', async () => {
-    // Regression (spec P2): a paired external adapter can set nativeCliFound=true without a version
-    // (the path probe missed the binary but the handshake proved it works). The summary must not
-    // render "Codex CLI undefined is installed."
-    const result = await runEnvironmentCheck({
-      storageRoot: '/data',
-      agentFrameworkId: 'codex',
-      frameworks: [
-        {
-          id: 'codex',
-          label: 'Codex',
-          runtime: {
-            found: true,
-            codexComponents: {
-              nativeCliFound: true,
-              nativeCliPath: undefined,
-              nativeCliVersion: undefined,
-              adapterFound: true,
-              adapterPath: '/opt/tools/codex-acp',
-              adapterVersion: '1.6.2'
+  it.each([undefined, '0.153.4', '0.157.1-alpha.1'])(
+    'requires repair when a paired native CLI version is unsupported (%s)',
+    async (nativeVersion) => {
+      // Regression (spec P2): a paired external adapter can set nativeCliFound=true without a version
+      // (the path probe missed the binary but the handshake proved it works). The summary must not
+      // render "Codex CLI undefined is installed."
+      const result = await runEnvironmentCheck({
+        storageRoot: '/data',
+        agentFrameworkId: 'codex',
+        frameworks: [
+          {
+            id: 'codex',
+            label: 'Codex',
+            runtime: {
+              found: true,
+              codexComponents: {
+                nativeCliFound: true,
+                nativeCliPath: undefined,
+                nativeCliVersion: nativeVersion,
+                adapterFound: true,
+                adapterPath: '/opt/tools/codex-acp',
+                adapterVersion: '1.6.2'
+              }
             }
           }
-        }
-      ],
-      encryptionAvailable: true,
-      deps: baseDeps()
-    })
+        ],
+        encryptionAvailable: true,
+        deps: baseDeps()
+      })
 
-    const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
-    expect(nativeCheck?.status).toBe('passed')
-    expect(nativeCheck?.summary).toBe('Codex CLI is installed.')
-  })
+      const nativeCheck = result.checks.find((check) => check.label === 'Codex native CLI')
+      expect(nativeCheck?.status).toBe('failed')
+      expect(nativeCheck?.summary).toContain('0.157.1 or later')
+      expect(result.ready).toBe(false)
+    }
+  )
 
   it('shows both Codex components as passed when both are found', async () => {
     const result = await runEnvironmentCheck({
@@ -506,7 +510,7 @@ describe('runEnvironmentCheck', () => {
             codexComponents: {
               nativeCliFound: true,
               nativeCliPath: '/Applications/ChatGPT.app/Contents/Resources/codex',
-              nativeCliVersion: '0.144.2',
+              nativeCliVersion: '0.157.1',
               adapterFound: true,
               adapterPath: '/usr/local/bin/codex-acp',
               adapterVersion: '1.6.2'
@@ -523,7 +527,7 @@ describe('runEnvironmentCheck', () => {
 
     expect(nativeCheck).toMatchObject({
       status: 'passed',
-      summary: 'Codex CLI 0.144.2 is installed.'
+      summary: 'Codex CLI 0.157.1 is installed.'
     })
 
     expect(adapterCheck).toMatchObject({
@@ -544,7 +548,7 @@ describe('runEnvironmentCheck', () => {
             found: false,
             codexComponents: {
               nativeCliFound: true,
-              nativeCliVersion: '0.144.6',
+              nativeCliVersion: '0.157.1',
               adapterFound: true,
               adapterPath: '/data/codex-acp',
               adapterVersion: '1.1.4',

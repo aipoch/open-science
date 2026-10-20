@@ -1,0 +1,6 @@
+{"name":"link-reorders-between-fragments-of-one-paragraph","change":"none","accepted":true}
+{"name":"link-cannot-reorder-into-another-paragraph","change":"foreign-owner","accepted":false}
+{"name":"link-cannot-land-between-admitted-fragments","change":"outside-region","accepted":false}
+{"name":"reordered-link-cannot-change-destination","change":"changed-action","accepted":false}
+{"name":"reordered-link-cannot-change-label","change":"changed-label","accepted":false}
+{"name":"reordered-link-cannot-duplicate-annotation","change":"duplicate-link","accepted":false}

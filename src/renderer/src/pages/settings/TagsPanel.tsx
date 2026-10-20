@@ -1,15 +1,16 @@
-import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
+import type { TagsView } from '../../lib/settings-navigation'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { TooltipProvider } from '@/components/ui/tooltip'
+import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V5 */
 /* Hallmark · component: Tag master-detail + reorder · genre: modern-minimal · tone: technical/utilitarian
  * states: default · hover · focus · active · disabled · loading · error · success
  * theme: project tokens · contrast: pass · slop: pass
  */
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
-  ChevronDown,
   BookOpenText,
+  ChevronDown,
   GripVertical,
   LockKeyhole,
   Pencil,
@@ -20,8 +21,8 @@ import {
   X
 } from 'lucide-react'
 import {
-  useEffect,
   useCallback,
+  useEffect,
   useLayoutEffect,
   useMemo,
   useRef,
@@ -30,19 +31,8 @@ import {
 } from 'react'
 import { useTranslation } from 'react-i18next'
 
-import {
-  TAG_COLOR_KEYS,
-  TAG_ICON_KEYS,
-  type TagColorKey,
-  type TagIconKey,
-  type TagResourceRef,
-  type TagResourceType,
-  type TagView
-} from '../../../../shared/tags'
-import type { LiteratureItemView } from '../../../../shared/literature'
-import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
-import { Button } from '@/components/ui/button'
 import { ErrorNotice } from '@/components/error-notice'
+import { Button } from '@/components/ui/button'
 import {
   dialogBodyClassName,
   dialogCancelButtonClassName,
@@ -58,14 +48,25 @@ import { cn } from '@/lib/utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { useTagStore } from '@/stores/tag-store'
-import { ConnectorsNavIcon } from './connector-icons'
-import { SettingsIconAction } from './SettingsLayout'
-import { SettingsSearchInput } from './SettingsSearchInput'
-import { SettingsPanelHeader } from './SettingsPanelHeader'
-import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
-import { TagBadge } from './tag-visuals'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import type { ArtifactLiteratureReference } from '../../../../shared/artifact-literature'
+import {
+  TAG_COLOR_KEYS,
+  TAG_ICON_KEYS,
+  type TagColorKey,
+  type TagIconKey,
+  type TagResourceRef,
+  type TagResourceType,
+  type TagView
+} from '../../../../shared/tags'
 import { ArtifactLiteratureDetailDialog } from '../workspace/ArtifactLiteratureDetailDialog'
 import { connectorDescription } from './connector-copy'
+import { ConnectorsNavIcon } from './connector-icons'
+import { SettingsIconAction } from './SettingsLayout'
+import { SettingsPanelHeader } from './SettingsPanelHeader'
+import { SettingsSearchInput } from './SettingsSearchInput'
+import { TAG_COLORS, TAG_ICONS, tagPresentation } from './tag-presentation'
+import { TagBadge } from './tag-visuals'
 
 type TagResourceRow = TagResourceRef & {
   title: string
@@ -76,8 +77,7 @@ type TagResourceRow = TagResourceRef & {
 
 type TagDraft = { name: string; iconKey: TagIconKey; colorKey: TagColorKey }
 type CustomTagView = Extract<TagView, { name: string }>
-export type TagsView =
-  { kind: 'list'; tagId?: string } | { kind: 'create' } | { kind: 'edit'; tagId: string }
+export type { TagsView } from '../../lib/settings-navigation'
 type TagDropTarget = { tagId: string; edge: 'before' | 'after' }
 type TagDropZone = { tagId: string; top: number; bottom: number }
 type TagPointerDrag = {
@@ -1040,12 +1040,12 @@ const TagsList = ({
                                 return (
                                   <li
                                     key={key}
-                                    className="group -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
+                                    className="group relative -mx-2 flex items-center gap-1 rounded-lg px-2 hover:bg-muted/50 focus-within:bg-muted/50"
                                   >
                                     <button
                                       type="button"
                                       data-slot="tag-resource-row"
-                                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary"
+                                      className="flex min-w-0 flex-1 cursor-pointer items-center gap-3 py-3 text-left hover:text-primary after:absolute after:inset-0 after:rounded-[inherit]"
                                       onClick={() => {
                                         if (resource.literatureReference) {
                                           setSelectedLiteratureReference(
@@ -1077,7 +1077,7 @@ const TagsList = ({
                                       })}
                                       icon={X}
                                       disabled={removingResourceKey === key}
-                                      className="pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
+                                      className="relative z-10 pointer-events-auto disabled:pointer-events-auto shrink-0 opacity-100 transition-opacity focus-visible:pointer-events-auto focus-visible:opacity-100 sm:pointer-events-none sm:opacity-0 sm:group-hover:pointer-events-auto sm:group-hover:opacity-100 sm:group-focus-within:pointer-events-auto sm:group-focus-within:opacity-100"
                                       onClick={() => void removeResource(resource)}
                                     />
                                   </li>

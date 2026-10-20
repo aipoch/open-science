@@ -5,6 +5,7 @@
 import { MAX_COMPOSER_ATTACHMENTS } from '../../../../../shared/uploads'
 
 import { getExtensionPreservingFileNameParts } from '../extension-preserving-file-name'
+import { splitReplayReferenceText } from '../replay-reference-text'
 
 import type { FileReference } from '../../../../../shared/artifacts'
 import {
@@ -241,19 +242,15 @@ export const docToArtifactRefs = (doc: ComposerDoc): FileReference[] => {
   return refs
 }
 
-// `@`-mentioned immutable PDF Versions become send-time Reading candidates. Main verifies the
-// actual page count; this renderer pass only removes obvious non-PDF and compatibility references.
+// Explicit PDF file mentions become send-time Reading candidates. Bibliographic Literature
+// mentions remain message references; Library tools can read their PDFs without a Session binding.
+// Main verifies the actual page count of the explicit file candidates.
 export const docToPdfContextSources = (doc: ComposerDoc): SessionPdfContextSource[] => {
   const sources: SessionPdfContextSource[] = []
   const seen = new Set<string>()
   for (const node of doc.nodes) {
     let source: SessionPdfContextSource | undefined
-    if (node.type === 'literature' && node.attachmentVersionId) {
-      source = {
-        sourceKind: 'literature-attachment-version',
-        sourceVersionId: node.attachmentVersionId
-      }
-    } else if (
+    if (
       node.type === 'artifact' &&
       node.source !== 'linked-folder' &&
       node.versionId &&
@@ -314,6 +311,32 @@ export const appendArtifactMention = (doc: ComposerDoc, reference: FileReference
       { type: 'artifact', ...reference }
     ]
   }
+}
+
+// Append a batch atomically: preserve existing snapshots and reject overflow without a partial add.
+export const appendLiteratureMentions = (
+  doc: ComposerDoc,
+  references: readonly LiteratureReference[]
+): ComposerDoc | undefined => {
+  const seen = new Set(
+    doc.nodes.flatMap((node) => (node.type === 'literature' ? [node.itemId] : []))
+  )
+  const additions = references.filter((reference) => {
+    if (seen.has(reference.itemId)) return false
+    seen.add(reference.itemId)
+    return true
+  })
+  if (additions.length === 0) return doc
+  if (docArtifactCount(doc) + additions.length > MAX_COMPOSER_ARTIFACT_MENTIONS) return undefined
+  const nodes = [...doc.nodes]
+  for (const reference of additions) {
+    const previous = nodes.at(-1)
+    if (previous && (previous.type !== 'text' || !/\s$/.test(previous.text))) {
+      nodes.push({ type: 'text', text: ' ' })
+    }
+    nodes.push(reference)
+  }
+  return { nodes }
 }
 
 // Hydrate a plain-text draft into a single text node; empty text yields the empty doc.
@@ -487,6 +510,11 @@ const readDom = (
     }
     if (child.nodeType === Node.ELEMENT_NODE) {
       const el = child as HTMLElement
+      const replayText = el.getAttribute('data-replay-reference-text')
+      if (replayText !== null) {
+        appendText(replayText)
+        return
+      }
       if (el.tagName === 'BR') {
         appendText('\n')
         return
@@ -711,8 +739,19 @@ export const syncPastedTextAnchors = (root: HTMLElement, doc: ComposerDoc): void
 export const applyDocToDom = (root: HTMLElement, doc: ComposerDoc): void => {
   root.textContent = ''
   for (const node of doc.nodes) {
-    if (node.type === 'text') root.appendChild(document.createTextNode(node.text))
-    else if (node.type === 'skill') root.appendChild(createSkillChip(node))
+    if (node.type === 'text') {
+      for (const part of splitReplayReferenceText(node.text)) {
+        if (part.kind === 'text') root.appendChild(document.createTextNode(part.text))
+        else {
+          const chip = document.createElement('span')
+          chip.setAttribute('contenteditable', 'false')
+          chip.setAttribute('data-replay-reference-text', part.text)
+          chip.textContent = part.label
+          chip.className = 'rounded-md bg-accent px-1.5 text-accent-foreground'
+          root.appendChild(chip)
+        }
+      }
+    } else if (node.type === 'skill') root.appendChild(createSkillChip(node))
     else if (node.type === 'artifact') root.appendChild(createArtifactChip(node))
     else if (node.type === 'literature') root.appendChild(createLiteratureChip(node))
     else if (node.type === 'literature-scope') root.appendChild(createLiteratureScopeChip(node))

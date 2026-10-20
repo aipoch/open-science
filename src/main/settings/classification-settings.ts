@@ -22,10 +22,15 @@ import type {
 } from '../../shared/classification'
 import { encryptKey, hardenKeyMask, maskKey, tryDecryptKey } from './crypto'
 import type { SettingsRepository } from './repository'
-import { fetchProviderRequest } from './provider-fetch'
-import { readBoundedResponseText } from './bounded-response'
-import { netFetchStandard } from '../skills/net-fetch'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import {
+  createProvider,
+  ClassificationHttpError,
+  ClassificationResponseError
+} from '@aipoch/providers/client'
+
+import { prepareClassificationImages } from './classification-images'
+import { netFetchStandard } from '../network-fetch'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import {
   boundedSkillSelectorCatalog,
   selectExplicitConnectorSkills
@@ -36,13 +41,14 @@ import {
   classificationServiceSchema,
   classificationMutationSchema
 } from './classification-config'
-import { CLASSIFICATION_MODELS, classificationModelsForService } from '../../shared/classification'
+import { getProviderModels } from '@aipoch/providers'
+import { classificationModelsForService } from '../../shared/classification'
 import type { ValidateProviderResult } from '../../shared/settings'
 import { classifyFetchError, classifyStatus, extractProviderErrorMessage } from './validate'
 import {
   customProviderRequiresKey,
   getCustomProviderBaseUrlError
-} from '../../shared/provider-base-url'
+} from '../../shared/provider-url-policy'
 const log = createLogger('classification')
 
 class ClassificationRequestError extends Error {
@@ -50,6 +56,7 @@ class ClassificationRequestError extends Error {
     super('Classification request failed.')
   }
 }
+class EmptyClassificationInputError extends Error {}
 const empty = (): StoredClassificationSettings => ({ revision: 0, services: [] })
 type Service = z.infer<typeof classificationServiceSchema>
 const bindingFor = (state: StoredClassificationSettings): ClassificationBinding | undefined => {
@@ -68,13 +75,14 @@ const credentialsFor = (
   settings: StoredSettings
 ): { keyRef?: string; keyMask?: string } => {
   if (!service.providerId) return { keyRef: service.keyRef, keyMask: service.keyMask }
+  if (service.adapter !== 'openrouter' && service.adapter !== 'opencode') return {}
   const provider = settings.providers.find(
     (item) =>
-      item.id === service.providerId && item.type === 'official' && item.vendorId === 'openrouter'
+      item.id === service.providerId &&
+      item.type === 'official' &&
+      item.vendorId === service.adapter
   )
-  return service.adapter === 'openrouter'
-    ? { keyRef: provider?.keyRef, keyMask: provider?.keyMask }
-    : {}
+  return { keyRef: provider?.keyRef, keyMask: provider?.keyMask }
 }
 const displayKey = (keyRef?: string, keyMask?: string): string | undefined => {
   if (!keyRef) return undefined
@@ -86,6 +94,14 @@ const modelOptionsFor = (service: Service): ReturnType<typeof classificationMode
   classificationModelsForService({ adapter: service.adapter, models: service.models })
 const modelIdsFor = (service: Service): readonly string[] =>
   modelOptionsFor(service).map((model) => model.id)
+const preferredModelIdFor = (service: Service, state: StoredClassificationSettings): string => {
+  const models = modelIdsFor(service)
+  const binding = [bindingFor(state), state.smartCollections].find(
+    (binding) =>
+      binding?.serviceId === service.id && (!binding.modelId || models.includes(binding.modelId))
+  )
+  return binding?.modelId ?? models[0]
+}
 const view = (settings: StoredSettings): ClassificationSnapshot => {
   const state = settings.classification ?? empty()
   const binding = bindingFor(state)
@@ -103,6 +119,7 @@ const view = (settings: StoredSettings): ClassificationSnapshot => {
         ...(service.adapter === 'custom'
           ? { baseUrl: service.baseUrl, modelId: service.models[0] }
           : {}),
+        ...(service.adapter === 'opencode' ? { modelId: modelIdsFor(service)[0] } : {}),
         providerId: service.providerId,
         configured:
           Boolean(keyRef) ||
@@ -124,11 +141,14 @@ const view = (settings: StoredSettings): ClassificationSnapshot => {
     availableProviders: settings.providers
       .filter(
         (provider) =>
-          provider.type === 'official' && provider.vendorId === 'openrouter' && provider.keyRef
+          provider.type === 'official' &&
+          (provider.vendorId === 'openrouter' || provider.vendorId === 'opencode') &&
+          provider.keyRef
       )
-      .map(({ id, name, keyRef, keyMask }) => ({
+      .map(({ id, name, vendorId, keyRef, keyMask }) => ({
         id,
         name,
+        vendorId: vendorId as 'openrouter' | 'opencode',
         maskedKey: displayKey(keyRef, keyMask)
       }))
   }
@@ -147,7 +167,7 @@ export class ClassificationSettingsOwner {
   constructor(
     private readonly repository: SettingsRepository,
     private readonly fetchImpl: typeof fetch = netFetchStandard,
-    private readonly timeoutMs = 3000,
+    private readonly timeoutMs?: number,
     private readonly usageRecorder?: ClassificationUsageRecorder
   ) {}
   async flushUsage(recover = true): Promise<void> {
@@ -169,16 +189,25 @@ export class ClassificationSettingsOwner {
         throw new Error('Custom classification endpoint is invalid.')
       if (!update.modelId) throw new Error('A classification model is required.')
     }
+    if (
+      update.kind === 'save' &&
+      update.adapter === 'opencode' &&
+      update.modelId &&
+      !getProviderModels('opencode', 'classification').some(
+        (model) => model.modelId === update.modelId
+      )
+    )
+      throw new Error('Classification model is unavailable.')
     if (update.kind === 'save' && update.providerId) {
       const provider = settings.providers.find((item) => item.id === update.providerId)
       if (
-        update.adapter !== 'openrouter' ||
+        (update.adapter !== 'openrouter' && update.adapter !== 'opencode') ||
         update.apiKey ||
         provider?.type !== 'official' ||
-        provider.vendorId !== 'openrouter' ||
+        provider.vendorId !== update.adapter ||
         !provider.keyRef
       )
-        throw new Error('OpenRouter account is unavailable.')
+        throw new Error('Classification provider account is unavailable.')
     }
     let draft: Service | undefined
     let validatedCredential: string | undefined
@@ -202,7 +231,15 @@ export class ClassificationSettingsOwner {
         models:
           update.adapter === 'custom'
             ? [update.modelId!]
-            : CLASSIFICATION_MODELS[update.adapter].map((model) => model.id),
+            : classificationModelsForService({
+                adapter: update.adapter,
+                modelId:
+                  update.modelId ??
+                  (update.adapter === 'opencode' && previous?.adapter === update.adapter
+                    ? preferredModelIdFor(previous, original)
+                    : undefined),
+                models: previous?.adapter === update.adapter ? previous.models : undefined
+              }).map((model) => model.id),
         ...(update.adapter === 'custom' ? { baseUrl: update.baseUrl } : {}),
         providerId: update.providerId,
         keyRef,
@@ -215,11 +252,8 @@ export class ClassificationSettingsOwner {
               : undefined
       }
       validatedCredential = credentialsFor(draft, settings).keyRef
-      const binding = bindingFor(original)
       const modelId =
-        binding?.serviceId === draft.id
-          ? (binding.modelId ?? modelIdsFor(draft)[0])
-          : modelIdsFor(draft)[0]
+        draft.adapter === 'opencode' ? modelIdsFor(draft)[0] : preferredModelIdFor(draft, original)
       const validation = await this.validate(draft, modelId, original.revision, 'save-validation')
       if (!validation.ok) return { ...(await this.snapshot()), validation }
     }
@@ -234,6 +268,11 @@ export class ClassificationSettingsOwner {
         if (!draft || credentialsFor(draft, latest).keyRef !== validatedCredential)
           throw new Error('Provider configuration changed. Your draft has not been saved.')
         services = [...services.filter((entry) => entry.id !== update.id), draft]
+        if (state.services.length === 0) {
+          const binding = { serviceId: draft.id, modelId: modelIdsFor(draft)[0] }
+          capabilitySelection = binding
+          smartCollections = binding
+        }
       } else if (update.kind === 'remove') {
         services = services.filter((entry) => entry.id !== update.id)
       } else {
@@ -297,9 +336,7 @@ export class ClassificationSettingsOwner {
     if (!target) return { ok: false }
     const validation = await this.validate(
       target,
-      bindingFor(state)?.serviceId === target.id
-        ? (bindingFor(state)?.modelId ?? modelIdsFor(target)[0])
-        : modelIdsFor(target)[0],
+      preferredModelIdFor(target, state),
       state.revision,
       'probe'
     )
@@ -330,7 +367,9 @@ export class ClassificationSettingsOwner {
       return {
         ok: false,
         category:
-          error instanceof z.ZodError || error instanceof SyntaxError
+          error instanceof z.ZodError ||
+          error instanceof SyntaxError ||
+          error instanceof ClassificationResponseError
             ? 'unknown'
             : classifyFetchError(error)
       }
@@ -338,6 +377,7 @@ export class ClassificationSettingsOwner {
   }
   readonly selectSkills: ClassifySkills = async ({
     text,
+    loadImages,
     catalog,
     signal,
     observeUsage,
@@ -368,7 +408,7 @@ export class ClassificationSettingsOwner {
       return undefined
     }
     const candidates = boundedSkillSelectorCatalog(catalog)
-    if (!text.trim() || !candidates.length) {
+    if ((!text.trim() && !loadImages) || !candidates.length) {
       log.info('classification selection skipped', { reason: 'empty-input' })
       return []
     }
@@ -380,7 +420,8 @@ export class ClassificationSettingsOwner {
       signal,
       observeUsage,
       state.revision,
-      usageContext
+      usageContext,
+      loadImages
     )
   }
   readonly selectReadingRoute: ClassifyReadingRoute = async ({
@@ -434,7 +475,7 @@ export class ClassificationSettingsOwner {
         text,
         questions,
         signal,
-        this.timeoutMs,
+        this.timeoutMs ?? 3000,
         state.revision,
         'reading-route',
         undefined,
@@ -556,7 +597,8 @@ export class ClassificationSettingsOwner {
         }
       },
       input.signal,
-      this.timeoutMs,
+      // Background screening must tolerate provider latency beyond the fast routing budget.
+      this.timeoutMs ?? 30_000,
       state.revision,
       'smart-collections',
       async (event) => {
@@ -614,7 +656,8 @@ export class ClassificationSettingsOwner {
     signal: AbortSignal,
     observeUsage: ((value: ClassificationUsage) => void) | undefined,
     revision: number | undefined,
-    usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>
+    usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>,
+    loadImages?: Parameters<ClassifySkills>[0]['loadImages']
   ): Promise<{ name: string; path: string }[] | undefined> {
     if (revision === undefined) return undefined
     // Conservative byte budget stays below TypeSafe's context budget even for CJK input.
@@ -647,11 +690,12 @@ export class ClassificationSettingsOwner {
         text,
         questions,
         signal,
-        this.timeoutMs,
+        this.timeoutMs ?? 3000,
         revision,
         'capability-selection',
         undefined,
-        { ...usageContext, scenario: 'capability-selection' }
+        { ...usageContext, scenario: 'capability-selection' },
+        loadImages
       )
       observeUsage?.({
         eventId: randomUUID(),
@@ -703,6 +747,10 @@ export class ClassificationSettingsOwner {
         .slice(0, 3)
         .map(({ candidate }) => ({ name: candidate.name, path: candidate.path }))
     } catch (error) {
+      if (error instanceof EmptyClassificationInputError) {
+        log.info('classification selection skipped', { reason: 'empty-input' })
+        return []
+      }
       log.warn('classification selection failed', {
         reason: signal.aborted ? 'cancelled' : 'unavailable-decision',
         ...diagnosticErrorFields(error)
@@ -721,7 +769,8 @@ export class ClassificationSettingsOwner {
     purpose:
       'save-validation' | 'probe' | 'capability-selection' | 'reading-route' | 'smart-collections',
     observeRequest?: (event: ClassificationRequestUsage) => Promise<void>,
-    usageContext?: ClassificationUsageContext
+    usageContext?: ClassificationUsageContext,
+    loadImages?: Parameters<ClassifySkills>[0]['loadImages']
   ): Promise<{
     result: {
       model: string
@@ -769,10 +818,27 @@ export class ClassificationSettingsOwner {
         throw new ClassificationRequestError({ ok: false, category: 'auth' })
       phase = 'configuration'
       controller.signal.throwIfAborted()
-      const body = JSON.stringify({ model: modelId, state, questions })
+      if ((initial.classification?.revision ?? 0) !== revision)
+        throw new Error('Classification settings changed.')
+      const assets = loadImages
+        ? await prepareClassificationImages(await loadImages(controller.signal), controller.signal)
+        : undefined
+      controller.signal.throwIfAborted()
+      const hasImages = assets !== undefined && Object.keys(assets).length > 0
+      if (loadImages && !state.trim() && !hasImages)
+        throw new EmptyClassificationInputError('Classification input is empty.')
+      const model = createProvider({
+        id: target.adapter,
+        key,
+        fetch: this.fetchImpl,
+        classification: {
+          ...(target.adapter === 'custom' ? { url: target.baseUrl! } : {}),
+          maxRequestBytes: 16 * 1024 * 1024
+        }
+      }).classificationModel(modelId)
       for (let attempt = 0; attempt < 2; attempt += 1) {
         phase = 'settings'
-        const current = attempt === 0 ? initial : await this.repository.getSettings()
+        const current = attempt === 0 && !loadImages ? initial : await this.repository.getSettings()
         phase = 'configuration'
         if ((current.classification?.revision ?? 0) !== revision)
           throw new Error('Classification settings changed.')
@@ -787,8 +853,6 @@ export class ClassificationSettingsOwner {
           attempt: attemptCount,
           questionCount: Object.keys(questions).length
         })
-        const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-        if (key) headers.Authorization = `Bearer ${key}`
         const event = {
           eventId: randomUUID(),
           providerId: target.providerId ?? `classification:${target.id}`,
@@ -802,75 +866,27 @@ export class ClassificationSettingsOwner {
         await observeRequest?.(event)
         try {
           controller.signal.throwIfAborted()
-          const response = await fetchProviderRequest(
-            this.fetchImpl,
-            target.adapter === 'custom'
-              ? target.baseUrl!
-              : target.adapter === 'openrouter'
-                ? 'https://openrouter.ai/api/alpha/decisions'
-                : 'https://api.typesafe.ai/v1/systemone',
-            {
-              method: 'POST',
-              headers,
-              body,
-              signal: controller.signal
-            }
-          )
-          status = response.status
-          phase = 'response'
-          if (
-            !recordRequest &&
-            !observeRequest &&
-            attempt === 0 &&
-            (status === 429 || status === 529)
-          ) {
-            await response.body?.cancel()
-            log.info('classification request retrying', {
-              ...context,
-              status,
-              attempt: attemptCount
-            })
-            await delay(100, undefined, { signal: controller.signal })
-            continue
-          }
-          // Capture a valid usage envelope before validating answers, status, or cancellation.
-          const responseText = await readBoundedResponseText(
-            response,
-            128 * 1024,
-            'Classification response'
-          )
           let payload: unknown
           try {
-            payload = JSON.parse(responseText)
-          } catch {
-            /* Invalid answers may lack JSON. */
-          }
-          const measured = z
-            .object({
-              model: z.string().trim().min(1).optional(),
-              usage: z.object({
-                input_tokens: z.number().int().nonnegative().safe(),
-                output_tokens: z.number().int().nonnegative().safe()
-              })
-            })
-            .safeParse(payload)
-          if (measured.success)
-            reported = {
-              model: measured.data.model ?? modelId,
-              inputTokens: measured.data.usage.input_tokens,
-              outputTokens: measured.data.usage.output_tokens
-            }
-
-          log.info('classification response received', {
-            ...context,
-            attempt: attemptCount,
-            status,
-            durationMs: Math.max(0, Date.now() - startedAt)
-          })
-          phase = 'response'
-          if (!response.ok) {
-            const retryable = response.status === 429 || response.status === 529
-            if (retryable && attempt === 0) {
+            const classified = await model.classify(
+              { state, images: assets, questions, signal: controller.signal },
+              {
+                onUsage:
+                  recordRequest || observeRequest
+                    ? (measurement) => {
+                        reported = measurement
+                      }
+                    : undefined,
+                retryableErrors: attempt === 0 ? 'discard' : 'read'
+              }
+            )
+            status = classified.responseStatus
+            payload = classified
+          } catch (error) {
+            if (error instanceof ClassificationResponseError) phase = 'response'
+            if (!(error instanceof ClassificationHttpError)) throw error
+            status = error.status
+            if ((status === 429 || status === 529) && attempt === 0) {
               log.info('classification request retrying', {
                 ...context,
                 status,
@@ -879,14 +895,19 @@ export class ClassificationSettingsOwner {
               await delay(100, undefined, { signal: controller.signal })
               continue
             }
-            const message = extractProviderErrorMessage(responseText, key)
             throw new ClassificationRequestError({
               ok: false,
-              category: classifyStatus(response.status),
-              status: response.status,
-              message
+              category: classifyStatus(status),
+              status,
+              message: extractProviderErrorMessage(error.responseText, key)
             })
           }
+          phase = 'response'
+          log.info('classification response received', {
+            ...context,
+            attempt: attemptCount,
+            durationMs: Math.max(0, Date.now() - startedAt)
+          })
           const result = (
             purpose === 'smart-collections' ? literatureResponseSchema : responseSchema
           ).parse(payload)

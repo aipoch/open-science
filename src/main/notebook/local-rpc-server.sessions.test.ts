@@ -28,9 +28,10 @@ describe('sessionsCall RPC', () => {
   it('uses only the Main control token identity for list and inspect operations', async () => {
     const list = vi.fn(async () => ({ sessions: [] }))
     const inspect = vi.fn(async () => ({ session_id: 'target-session' }))
+    const read = vi.fn(async () => ({ sessionId: 'target-session', records: [] }))
     server = new NotebookLocalRpcServer({ execute: async () => ({}) } as never, {
       transport: 'tcp',
-      hostSessions: { list, inspect }
+      hostSessions: { list, inspect, read }
     })
     const control = await server.issueControlConnection(
       'trusted-session',
@@ -64,6 +65,27 @@ describe('sessionsCall RPC', () => {
       sessionId: 'trusted-session',
       callerRole: 'main'
     })
+    await expect(
+      callSessions(control, control.token, {
+        op: 'read',
+        session_id: 'target-session',
+        options: { kind: 'message', id: 'm' },
+        projectId: 'forged'
+      })
+    ).resolves.toMatchObject({ response: { status: 200 } })
+    expect(read).toHaveBeenCalledWith(
+      'target-session',
+      { kind: 'message', id: 'm' },
+      { projectId: 'trusted-project', sessionId: 'trusted-session', callerRole: 'main' }
+    )
+    await expect(
+      callSessions(control, control.token, { op: 'read', options: {} })
+    ).resolves.toMatchObject({ response: { status: 200 } })
+    expect(read).toHaveBeenLastCalledWith(
+      undefined,
+      {},
+      { projectId: 'trusted-project', sessionId: 'trusted-session', callerRole: 'main' }
+    )
   })
 
   it('rejects bootstrap, ordinary Session, delegate control, and released capabilities', async () => {

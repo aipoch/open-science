@@ -13,7 +13,7 @@ import {
 } from '../../../shared/settings'
 import type { AgentFrameworkId } from '../../agent-framework'
 import type { SettingsService } from '../service'
-import { createLogger, diagnosticErrorFields } from '../../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 const log = createLogger('settings')
 

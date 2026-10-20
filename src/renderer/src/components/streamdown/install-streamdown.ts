@@ -570,27 +570,18 @@ const installTableActions = (): (() => void) => {
 
 /* --- Fullscreen dialog adapter --- */
 
-let lastTableWrapper: HTMLElement | null = null
-
-const syncFullscreenTable = (overlay: HTMLElement): void => {
+const syncFullscreenTable = (overlay: HTMLElement, sourceTable: HTMLTableElement): void => {
   const fullscreenTable = overlay.querySelector<HTMLTableElement>('[data-streamdown="table"]')
   if (!fullscreenTable) return
 
-  const sourceTable =
-    (lastTableWrapper?.querySelector<HTMLTableElement>('[data-streamdown="table"]') ??
-      [...document.querySelectorAll<HTMLElement>('[data-streamdown="table-wrapper"]')]
-        .filter((wrapper) => !overlay.contains(wrapper))
-        .map((wrapper) => wrapper.querySelector<HTMLTableElement>('[data-streamdown="table"]'))
-        .find((table) => table && table.rows.length > 0)) ||
-    null
-
-  if (!sourceTable || sourceTable.rows.length === 0) return
+  if (!overlay.isConnected || !sourceTable.isConnected || sourceTable.rows.length === 0) return
   if (fullscreenTable.innerHTML === sourceTable.innerHTML) return
 
   fullscreenTable.innerHTML = sourceTable.innerHTML
 }
 
 const installTableFullscreenFix = (): (() => void) => {
+  let pendingTable: HTMLTableElement | null = null
   const onToolbarClick = (event: Event): void => {
     const target = event.target
     if (!(target instanceof Element)) return
@@ -601,12 +592,11 @@ const installTableFullscreenFix = (): (() => void) => {
     const toolbar = wrapper.querySelector(':scope > div:first-child')
     const button = target.closest('button')
     if (!toolbar || !button || !toolbar.contains(button)) return
-    if (button.closest('.relative')) return
-
+    // Only toolbar-local structure matters: conversation ancestors can also be positioned.
     const topLevelButtons = [...toolbar.querySelectorAll(':scope > button')]
     if (topLevelButtons.at(-1) !== button) return
 
-    lastTableWrapper = wrapper
+    pendingTable = wrapper.querySelector<HTMLTableElement>('[data-streamdown="table"]')
   }
 
   const onOverlayAdded = (node: Node): void => {
@@ -618,9 +608,13 @@ const installTableFullscreenFix = (): (() => void) => {
 
     if (!overlay) return
 
-    syncFullscreenTable(overlay)
+    const sourceTable = pendingTable
+    pendingTable = null
+    // Never guess a source from document order (or reuse a previous dialog's source).
+    if (!sourceTable) return
+    syncFullscreenTable(overlay, sourceTable)
     requestAnimationFrame(() => {
-      syncFullscreenTable(overlay)
+      syncFullscreenTable(overlay, sourceTable)
     })
   }
 
@@ -637,7 +631,7 @@ const installTableFullscreenFix = (): (() => void) => {
   return () => {
     overlayObserver.disconnect()
     document.removeEventListener('click', onToolbarClick, true)
-    lastTableWrapper = null
+    pendingTable = null
   }
 }
 
@@ -750,7 +744,12 @@ const installFullscreenDialogAdapter = (): (() => void) => {
       return
     }
 
-    if (event.key !== 'Escape' || !closeAfterAnimation(overlay)) return
+    if (event.key !== 'Escape') return
+    const closeButton = findFullscreenCloseButton(overlay)
+    if (!closeButton) return
+
+    // Streamdown's panel stops key bubbling, so reduced motion must close here too.
+    if (!closeAfterAnimation(overlay)) closeButton.click()
 
     event.preventDefault()
     event.stopImmediatePropagation()

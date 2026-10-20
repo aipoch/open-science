@@ -26,10 +26,10 @@ const WorkspaceToolSummaryCard = ({
     <section
       data-testid="tool-summary-card"
       aria-label={summary.title}
-      className="min-w-0 overflow-hidden rounded-xl border border-border-200 bg-bg-000"
+      className="min-w-0 overflow-hidden rounded-lg border border-border-200 bg-bg-000"
     >
-      <div className="flex items-center gap-3 border-b border-border-200/70 px-4 py-3">
-        <span className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
+      <div className="flex items-center gap-2 border-b border-border-200/70 px-2.5 py-2">
+        <span className="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
           <Icon className="size-4" aria-hidden="true" />
         </span>
         <div className="min-w-0">
@@ -40,7 +40,7 @@ const WorkspaceToolSummaryCard = ({
         </div>
       </div>
       {summary.fields.length ? (
-        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-5 gap-y-2 px-4 py-3 text-xs">
+        <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-4 gap-y-1.5 px-2.5 py-2 text-xs">
           {summary.fields.map((field, index) => (
             <div key={index} className="contents">
               <dt className="text-text-300">{field.label}</dt>
@@ -63,7 +63,7 @@ const WorkspaceToolSummaryCard = ({
       {summary.rows?.length ? (
         <div className="divide-y divide-border-200/70 border-t border-border-200/70">
           {summary.rows.map((row, index) => (
-            <div key={index} className="px-4 py-2.5">
+            <div key={index} className="px-2.5 py-2">
               <div className="flex items-start justify-between gap-3">
                 <span className="min-w-0 break-all text-xs font-medium text-text-100">
                   {row.title}
@@ -84,7 +84,7 @@ const WorkspaceToolSummaryCard = ({
       ) : null}
       {summary.error ? <div className="m-3">{renderError(summary.error)}</div> : null}
       {summary.note ? (
-        <div className="flex items-start gap-2 border-t border-border-200/70 bg-bg-100 px-4 py-3 text-[11px] leading-5 text-text-200">
+        <div className="flex items-start gap-2 border-t border-border-200/70 bg-bg-100 px-2.5 py-2 text-[11px] leading-5 text-text-200">
           <Info className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
           <p>{summary.note}</p>
         </div>

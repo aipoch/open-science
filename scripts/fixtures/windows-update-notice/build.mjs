@@ -4,6 +4,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { build, Platform, Arch } from 'electron-builder'
+import stageWindowsExtractor from '../../../build/stage-windows-extractor.cjs'
 
 const root = resolve(process.argv[2])
 const compiler = process.env.OPEN_SCIENCE_MAKENSIS
@@ -57,11 +58,26 @@ for (const [directory, version, code, hook] of [
   execFileSync(compiler, ['/V2', join(projectDir, 'payload.nsi')], { windowsHide: true })
   for (const script of [
     'windows-runtime-cache-uninstall.ps1',
+    'windows-update-handoff-uninstall.ps1',
     'windows-notebook-sandbox-uninstall.ps1'
   ]) {
     await writeFile(join(packed, 'resources', script), 'exit 0\r\n')
   }
   await writeFile(join(projectDir, 'installer.nsh'), hook)
+  for (const file of ['windows-install-publication.nsh', 'windows-install-publication.ps1']) {
+    await writeFile(join(projectDir, file), await readFile(`build/${file}`))
+  }
+  // prepackaged intentionally bypasses afterSign; stage the same verified installer tool.
+  await stageWindowsExtractor({
+    electronPlatformName: 'win32',
+    arch: Arch.x64,
+    appOutDir: packed,
+    packager: { projectDir, signIf: async () => false }
+  })
+  await writeFile(
+    join(projectDir, 'windows-update-handoff.nsh'),
+    await readFile('build/windows-update-handoff.nsh')
+  )
   await build({
     projectDir,
     prepackaged: packed,
@@ -72,7 +88,7 @@ for (const [directory, version, code, hook] of [
       productName: name,
       electronVersion: '39.8.10',
       npmRebuild: false,
-      directories: { output: join(projectDir, 'dist') },
+      directories: { output: join(projectDir, 'dist'), buildResources: projectDir },
       win: { executableName: name, signAndEditExecutable: false },
       nsis: {
         guid,

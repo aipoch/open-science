@@ -1,5 +1,7 @@
 import { expect } from '@playwright/test'
-import { suppressWorkspaceStarNudge, test } from './fixtures/electron-app'
+import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { submitPromptViaUi } from './fixtures/conversation'
 
 test('refreshes global search when another renderer edits a Library collection', async ({
   app
@@ -46,7 +48,6 @@ test('opens a Library PDF from search without leaving the current results', asyn
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.evaluate(async () => {
     const { id } = await window.api.literature.transact({
       kind: 'create-item',
@@ -146,7 +147,6 @@ test('searches projects, sessions, message bodies and Library with paged disclos
 }, testInfo) => {
   await app.completeOnboarding()
   let page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   const projectId = await page.evaluate(async () => {
     const project = await window.api.projects.create({
       name: 'Search research',
@@ -392,18 +392,13 @@ test('opens uploaded files from search using the existing file preview dialog', 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search files')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Search files')
   await page.locator('input[type="file"][multiple]').setInputFiles({
     name: 'search-notes.md',
     mimeType: 'text/markdown',
     buffer: Buffer.from('# Search findings\n\nVerified file preview content.')
   })
-  await page.getByRole('textbox', { name: 'Ask anything' }).fill('Read the attached notes.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Read the attached notes.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
   const dialog = page.getByRole('dialog', { name: 'Global search' })
@@ -500,11 +495,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Search preview formats')
-  await create.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, 'Search preview formats')
   const notebook = JSON.stringify({
     nbformat: 4,
     nbformat_minor: 5,
@@ -537,10 +528,7 @@ test('keeps saved Notebook output and structured file previews visible inside se
       buffer: Buffer.from('CCO')
     }
   ])
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Inspect the attached search files.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await submitPromptViaUi(page, 'Inspect the attached search files.')
   await expect(page.getByText('Deterministic reply:', { exact: false })).toBeVisible()
   await page.keyboard.press('ControlOrMeta+k')
   const dialog = page.getByRole('dialog', { name: 'Global search' })
@@ -585,7 +573,6 @@ test('toggles the advanced filter island column from the toolbar toggle', async 
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
   await page.getByRole('button', { name: 'Search', exact: true }).click()
   const dialog = page.getByRole('dialog', { name: 'Global search' })
   const toggle = dialog.getByRole('button', { name: 'Advanced filters' })
@@ -699,15 +686,8 @@ test('uses the same preview and information tabs for generated files', async ({
 }, testInfo) => {
   await app.completeOnboarding()
   const page = await app.configureFakeAgent()
-  await suppressWorkspaceStarNudge(page)
-  await page.getByRole('button', { name: 'New project', exact: true }).click()
-  const create = page.getByRole('dialog', { name: 'New project' })
-  await create.getByLabel('Name').fill('Generated search previews')
-  await create.getByRole('button', { name: 'Create project' }).click()
-  await page
-    .getByRole('textbox', { name: 'Ask anything' })
-    .fill('Create preview context menu artifacts.')
-  await page.getByRole('button', { name: 'Send message' }).click()
+  await createProjectViaUi(page, 'Generated search previews')
+  await submitPromptViaUi(page, 'Create preview context menu artifacts.')
   await expect(
     page.getByText('Preview context menu artifacts created.', { exact: true })
   ).toBeVisible({ timeout: 90_000 })

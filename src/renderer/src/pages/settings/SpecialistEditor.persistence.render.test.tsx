@@ -1,3 +1,5 @@
+import { createSpecialistService } from '../../../../main/specialist/service'
+
 // @vitest-environment jsdom
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -10,10 +12,9 @@ import { SpecialistEditor } from './SpecialistEditor'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { ConnectorService } from '../../../../main/connectors/service'
-import { SpecialistRepository } from '../../../../main/specialist/repository'
+import { builtinConnectorRegistry } from '../../../../main/connectors/registry'
 import { SpecialistService } from '../../../../main/specialist/service'
-import type { CreateSpecialistInput, UpdateSpecialistInput } from '../../../../shared/specialist'
-
+import type { CreateSpecialistInput, UpdateSpecialistInput } from '@aipoch/specialists'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 let directory: string
@@ -23,7 +24,7 @@ let root: Root
 
 beforeEach(async () => {
   directory = await mkdtemp(join(tmpdir(), 'specialist-editor-regression-'))
-  service = new SpecialistService(new SpecialistRepository(directory))
+  service = createSpecialistService(directory)
   useSpecialistStore.setState({ editorDrafts: {} })
   useSettingsStore.setState({
     skills: [
@@ -187,6 +188,7 @@ describe('Specialist editor durable behavior regressions', () => {
       expect(document.specialists).toHaveLength(2)
       const dispatch = vi.fn().mockResolvedValue({ ok: true })
       const gate = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: {
           call: dispatch,
           listTools: vi.fn().mockResolvedValue([{ name: 'read' }, { name: 'danger' }])

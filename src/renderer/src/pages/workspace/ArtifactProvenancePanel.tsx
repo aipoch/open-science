@@ -58,7 +58,9 @@ import type {
 } from '../../../../shared/artifact-reproducibility'
 import type {
   NotebookEnvironmentLockDiagnostic,
-  NotebookEnvironmentLockPartialReason,
+  NotebookEnvironmentLockPartialReason
+} from '@aipoch/environment/contracts'
+import type {
   NotebookInputFileSummary,
   NotebookOutput,
   NotebookRunRecord
@@ -627,7 +629,8 @@ const ProvenanceMessagesTimeline = ({
                   if (
                     conversationItem.type === 'handoff' ||
                     conversationItem.type === 'subagent-message' ||
-                    conversationItem.type === 'session-config-change'
+                    conversationItem.type === 'session-config-change' ||
+                    conversationItem.type === 'turn-outcome'
                   )
                     return null
 
@@ -1624,7 +1627,7 @@ const ArtifactProvenancePanel = ({
               value={tab.id}
               title={t(tab.label)}
               onClick={() => setActiveTab(tab.id)}
-              className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
+              className={`min-w-0 truncate whitespace-nowrap rounded px-2 py-1 text-xs focus-visible:keyboard-focus focus-visible:-outline-offset-2 ${isUserEdit || activeTab === tab.id ? 'bg-bg-300 text-text-000' : 'text-text-200 hover:text-text-100'}`}
             >
               {t(tab.label)}
             </Tabs.Trigger>

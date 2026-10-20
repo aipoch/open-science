@@ -1,3 +1,4 @@
+import { CredentialRequestBroker } from '../connectors/credential-request-broker'
 import { describe, expect, it, vi } from 'vitest'
 
 import { RENDERER_CONTRACT_GROUPS } from '../../shared/renderer-contract-catalog'
@@ -44,10 +45,14 @@ const expectedSkillChannels = [
   'settings:import-skill-zip',
   'settings:install-skill-marketplace',
   'settings:start-skill-marketplace-batch',
-  'settings:import-skill-zip-batch'
+  'settings:import-skill-zip-batch',
+  'settings:import-agent-home-skills',
+  'settings:export-skill'
 ] as const
 
 const expectedConnectorChannels = [
+  'settings:select-custom-server-template',
+  'settings:export-custom-server-template',
   'settings:test-custom-server',
   'settings:list-device-credentials',
   'settings:create-device-credential',
@@ -74,6 +79,8 @@ const expectedConnectorChannels = [
 ] as const
 
 const expectedApprovalChannels = [
+  'connectors:credential-respond',
+  'connectors:credential-replay-pending',
   'connectors:approval-respond',
   'connectors:approval-replay',
   'connectors:approval-replay-pending',
@@ -139,8 +146,10 @@ const createDependencies = (): Readonly<{
   return {
     dependencies: {
       skills: skills.port,
+      files: { exportSkill: vi.fn(), selectTemplate: vi.fn(), exportTemplate: vi.fn() },
       connectors: connectors.port,
       snapshotCommits: passThroughSnapshotCommits,
+      connectorCredentials: { respond: vi.fn(), replayPending: vi.fn() },
       connectorApprovals: {
         getPending: vi.fn(() => null),
         replayPending: vi.fn(),
@@ -174,7 +183,7 @@ describe('Settings integration application commands', () => {
     }
     expect(skillMethod('startSkillMarketplaceBatch')).toHaveBeenCalledWith(request)
   })
-  it('defines the exact 39-command Skill, Connector, and approval inventory', () => {
+  it('defines the exact 45-command Skill, Connector, and approval inventory', () => {
     const groups = [
       settingsSkillApplicationCommandGroup,
       settingsConnectorApplicationCommandGroup,
@@ -208,7 +217,7 @@ describe('Settings integration application commands', () => {
     expect(settingsApprovalApplicationCommandGroup.commands.map((command) => command.name)).toEqual(
       expectedApprovalChannels
     )
-    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(39)
+    expect(groups.reduce((count, group) => count + group.commands.length, 0)).toBe(45)
     expect(router.dispatcher.commandNames()).toEqual([...expectedChannels].sort())
     expect(settingsChannels).toEqual(
       expect.arrayContaining([
@@ -217,11 +226,17 @@ describe('Settings integration application commands', () => {
         ...expectedApprovalChannels
       ])
     )
-    expect(integrationContracts).toHaveLength(38)
+    expect(integrationContracts).toHaveLength(44)
     expect(
       integrationContracts
         ?.filter(
           (contract) =>
+            contract.channel !== 'settings:export-skill' &&
+            contract.channel !== 'settings:select-custom-server-template' &&
+            contract.channel !== 'settings:export-custom-server-template' &&
+            contract.channel !== 'settings:import-agent-home-skills' &&
+            contract.channel !== 'connectors:credential-respond' &&
+            contract.channel !== 'connectors:credential-replay-pending' &&
             contract.channel !== 'settings:authenticate-custom-server' &&
             contract.channel !== 'settings:cancel-custom-server-authentication' &&
             contract.channel !== 'settings:disconnect-custom-server' &&
@@ -836,4 +851,89 @@ describe('Settings integration application commands', () => {
     await expect(secondSkillResponse).resolves.toEqual({ id: 'skill-2', cancelled: true })
     expect(settledIds).toEqual(['skill-1', 'skill-2'])
   })
+})
+
+it('reuses the credential broker for desktop replay and validated human responses', async () => {
+  const { dependencies } = createDependencies()
+  const replay = vi.fn()
+  const broker = new CredentialRequestBroker({
+    generateId: () => 'credential-1',
+    broadcast: vi.fn(),
+    replay
+  })
+  const pending = broker.request({
+    credentialId: 'openalex',
+    connector: 'literature',
+    method: 'search',
+    sessionId: 'session-1'
+  })
+  const router = createApplicationCommandRouter()
+  registerIntegrationSettingsApplicationCommands(router.registrar, {
+    ...dependencies,
+    connectorCredentials: broker
+  })
+  const desktop = createElectronCallerContext(1)
+  try {
+    for (const caller of [
+      createWebCallerContext('local'),
+      createWebCallerContext('remote', { location: 'remote' }),
+      createTaskCallerContext(),
+      { ...desktop, isAuthorizationCurrent: () => false }
+    ]) {
+      await expect(
+        router.dispatcher.invoke(
+          settingsIntegrationApplicationCommands.respondConnectorCredential,
+          invocation([{ id: 'credential-1', configured: true }], caller)
+        )
+      ).rejects.toThrow()
+      await expect(
+        router.dispatcher.invoke(
+          settingsIntegrationApplicationCommands.replayPendingConnectorCredentials,
+          invocation([], caller)
+        )
+      ).rejects.toThrow()
+    }
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.replayPendingConnectorCredentials,
+      invocation([], desktop)
+    )
+    expect(replay).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ id: 'credential-1', sessionId: 'session-1' })
+    )
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.respondConnectorCredential,
+        invocation([{ id: 'credential-1', configured: 'true' } as never], desktop)
+      )
+    ).rejects.toThrow('Invalid Connector credential response')
+    expect(broker.getPending('credential-1')).not.toBeNull()
+    await router.dispatcher.invoke(
+      settingsIntegrationApplicationCommands.respondConnectorCredential,
+      invocation([{ id: 'credential-1', configured: true }], desktop)
+    )
+    await expect(pending).resolves.toBe(true)
+    expect(broker.getPending('credential-1')).toBeNull()
+  } finally {
+    broker.cancelAll()
+  }
+})
+
+it('imports selected Agent-home Skill sources through the existing desktop workflow', async () => {
+  const { dependencies, skillMethod } = createDependencies()
+  const router = createApplicationCommandRouter()
+  registerIntegrationSettingsApplicationCommands(router.registrar, dependencies)
+  const request = { skills: [{ source: 'agents' as const, slug: 'analysis' }] }
+  for (const caller of [createWebCallerContext('browser'), createTaskCallerContext()]) {
+    await expect(
+      router.dispatcher.invoke(
+        settingsIntegrationApplicationCommands.importAgentHomeSkills,
+        invocation([request], caller)
+      )
+    ).rejects.toThrow('desktop app')
+  }
+  await router.dispatcher.invoke(
+    settingsIntegrationApplicationCommands.importAgentHomeSkills,
+    invocation([request], createElectronCallerContext(1))
+  )
+  expect(skillMethod('importAgentHomeSkills')).toHaveBeenCalledExactlyOnceWith(request)
 })

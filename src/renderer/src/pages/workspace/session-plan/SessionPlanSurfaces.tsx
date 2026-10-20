@@ -135,6 +135,8 @@ const WorkspacePlanCard = ({
   }>): React.JSX.Element => {
   const { t } = useTranslation()
   const contentId = useId()
+  const composingResponseRef = useRef(false)
+  const submitKeyLabel = window.api?.platform === 'darwin' ? t('Return') : t('Enter')
 
   const decisionPending = projection.approval === 'pending' && !stale && enabled
   const [responseText, setResponseText] = useState('')
@@ -244,37 +246,81 @@ const WorkspacePlanCard = ({
               <label className="sr-only" htmlFor={`plan-response-${projection.artifactVersionId}`}>
                 {t('Respond to Plan')}
               </label>
-              <div className="flex items-start gap-2">
-                <span
-                  className="grid size-9 shrink-0 place-items-center rounded-lg bg-bg-100 text-text-300"
-                  aria-hidden="true"
-                >
-                  <Pencil className="size-4" strokeWidth={1.75} />
-                </span>
-                <Textarea
-                  id={`plan-response-${projection.artifactVersionId}`}
-                  rows={1}
-                  aria-invalid={decisionError ? true : undefined}
-                  aria-describedby={
-                    decisionError
-                      ? `plan-response-error-${projection.artifactVersionId}`
-                      : undefined
-                  }
-                  className="max-h-40 min-h-9 min-w-0 flex-1 resize-none border-0 bg-transparent px-0 py-1.5 text-[15px] leading-6 shadow-none focus-visible:border-transparent dark:bg-transparent"
-                  placeholder={t('Describe changes to the Plan…')}
-                  value={responseText}
-                  disabled={decisionBusy}
-                  onChange={(event) => setResponseText(event.target.value)}
-                />
-                <Button
-                  type="submit"
-                  variant="outline"
-                  size="icon-lg"
-                  aria-label={t('Send Plan feedback')}
-                  disabled={decisionBusy || responseText.trim().length === 0}
-                >
-                  <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
-                </Button>
+              <div className="min-w-0 rounded-lg border border-input bg-bg-000 px-3 py-2 transition-colors focus-within:border-ring focus-within:ring-3 focus-within:ring-ring/50">
+                <div className="flex items-start gap-2">
+                  <Pencil
+                    className="mt-1 size-3.5 shrink-0 text-muted-foreground"
+                    strokeWidth={1.75}
+                    aria-hidden="true"
+                  />
+                  <Textarea
+                    id={`plan-response-${projection.artifactVersionId}`}
+                    rows={1}
+                    aria-invalid={decisionError ? true : undefined}
+                    aria-describedby={`plan-response-shortcuts-${projection.artifactVersionId}${decisionError ? ` plan-response-error-${projection.artifactVersionId}` : ''}`}
+                    className="max-h-40 min-h-6 min-w-0 flex-1 resize-none rounded-none border-0 bg-transparent px-0 py-0 text-[15px] leading-6 shadow-none focus-visible:border-transparent focus-visible:ring-0 dark:bg-transparent"
+                    placeholder={t('Describe changes to the Plan…')}
+                    value={responseText}
+                    disabled={decisionBusy}
+                    onChange={(event) => setResponseText(event.target.value)}
+                    onCompositionStart={() => {
+                      composingResponseRef.current = true
+                    }}
+                    onCompositionEnd={() => {
+                      composingResponseRef.current = false
+                    }}
+                    onKeyDown={(event) => {
+                      if (
+                        event.key !== 'Enter' ||
+                        event.shiftKey ||
+                        event.altKey ||
+                        event.ctrlKey ||
+                        event.metaKey ||
+                        event.nativeEvent.isComposing ||
+                        event.nativeEvent.keyCode === 229 ||
+                        composingResponseRef.current
+                      ) {
+                        return
+                      }
+                      event.preventDefault()
+                      if (!event.repeat && responseText.trim() && !decisionBusy)
+                        event.currentTarget.form?.requestSubmit()
+                    }}
+                  />
+                </div>
+                <div className="mt-2 flex flex-wrap items-end justify-between gap-x-3 gap-y-2 border-t border-border/70 pt-2">
+                  <p
+                    id={`plan-response-shortcuts-${projection.artifactVersionId}`}
+                    className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground"
+                  >
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {submitKeyLabel}
+                      </kbd>
+                      <span>{t('Send')}</span>
+                    </span>
+                    <span className="inline-flex items-center gap-1 whitespace-nowrap">
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {t('Shift')}
+                      </kbd>
+                      <span>{'+'}</span>
+                      <kbd className="rounded border border-border bg-muted px-1.5 py-0.5 font-sans text-[10px] font-medium leading-none">
+                        {submitKeyLabel}
+                      </kbd>
+                      <span>{t('New line')}</span>
+                    </span>
+                  </p>
+                  <Button
+                    type="submit"
+                    variant="outline"
+                    size="icon-lg"
+                    aria-label={t('Send Plan feedback')}
+                    disabled={decisionBusy || responseText.trim().length === 0}
+                    className="[@media(pointer:coarse)]:size-11"
+                  >
+                    <CornerDownLeft className="size-4" strokeWidth={1.75} aria-hidden="true" />
+                  </Button>
+                </div>
               </div>
             </form>
           ) : null}
@@ -283,7 +329,7 @@ const WorkspacePlanCard = ({
           <p
             id={`plan-response-error-${projection.artifactVersionId}`}
             role="alert"
-            className="mt-1 pl-11 text-xs text-destructive"
+            className="mt-1 text-xs text-destructive"
           >
             {decisionError}
           </p>

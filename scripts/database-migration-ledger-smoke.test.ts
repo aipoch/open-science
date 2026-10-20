@@ -1,4 +1,5 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises'
+import { createDatabaseAtReleasedManifest } from '../test/fixtures/application-database'
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -11,6 +12,7 @@ import {
 import {
   assertApplicationMigrationLedger,
   parsePackagedSqliteVersion,
+  readDesktopSqliteVersion,
   seedLegacyDatabase,
   verifyLegacyProjectPreserved,
   writeDatabaseMigrationCertification
@@ -76,10 +78,16 @@ const rebuildComputeJobWithoutAnalysisConstraints = async (
 }
 
 const removeArchiveAndLiteratureSchema = async (client: PrismaClient): Promise<void> => {
+  for (const table of ['SessionSelectionSnapshot', 'SessionReplayState']) {
+    await client.$executeRawUnsafe(`DROP TABLE IF EXISTS "${table}"`)
+  }
   await client.$executeRawUnsafe('DROP TABLE "bookmarks"')
   await client.$executeRawUnsafe('ALTER TABLE "PermissionGrant" DROP COLUMN "approvalSummary"')
   await client.$executeRawUnsafe('ALTER TABLE "Project" DROP COLUMN "archiveRevision"')
   for (const table of [
+    'PdfTranslationUsage',
+    'PdfTranslationBlock',
+    'PdfTranslation',
     'ClassificationUsage',
     'LiteratureSmartRunItem',
     'LiteratureSmartRun',
@@ -103,7 +111,7 @@ const removeArchiveAndLiteratureSchema = async (client: PrismaClient): Promise<v
     'LiteratureAttachment',
     'LiteratureItem'
   ]) {
-    await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
+    await client.$executeRawUnsafe(`DROP TABLE IF EXISTS "${table}"`)
   }
   await client.$executeRawUnsafe('DROP INDEX "UploadVersion_contentBlobId_idx"')
   await client.$executeRawUnsafe('DROP INDEX "ArtifactVersion_contentBlobId_idx"')
@@ -204,8 +212,32 @@ describe('packaged database migration ledger smoke', () => {
         checksum: '70145960069e95e1c7894bf18e5bbbd7d96bb51cf192d61c9f85688e0af2fdf3'
       },
       {
-        id: '0045_artifact_hidden',
-        checksum: '8fcef6b6dd92b13bd6179e462447480976120e8da50293f7a62651b95a948439'
+        id: '0045_literature_smart_pause_run',
+        checksum: '04e286e7cfb90cf3cdb1045bb5f8191b7b4edee0fc272c4b042910314485de68'
+      },
+      {
+        id: '0046_journal_attributes',
+        checksum: '6faaa28accbf9297ba56586f0fa647adfca287a92d2bed7b08218323142d0992'
+      },
+      {
+        id: '0047_session_replay',
+        checksum: 'f76aff6bd97c42cabd744f87f0c37241259ffb1c45c5feef2a3643babcef2f91'
+      },
+      {
+        id: '0048_pdf_annotation_sharing',
+        checksum: '4d346933fd6779e0e7b15e1c51bb97043690230b40d29fb2d7c9dacc19f25e52'
+      },
+      {
+        id: '0049_pascalcase_table_names',
+        checksum: 'ed46c378adfcd3e7f0f0d434797a4e775121fa6fce021a4c89b19f2c383b91ad'
+      },
+      {
+        id: '0050_literature_translation',
+        checksum: 'ae3a17741c698765b69e4d651dffea6b46e3e06d5e7e6dce92aefa96a1d6337f'
+      },
+      {
+        id: '0051_artifact_hidden',
+        checksum: '76948e44445dc6527b2181908b6ac1b6c0df58ce2d3cb26f2a5e440c247638c9'
       }
     ])
     expect(() => assertApplicationMigrationLedger(MIGRATION_MANIFEST)).not.toThrow()
@@ -222,7 +254,7 @@ describe('packaged database migration ledger smoke', () => {
     })
 
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       for (const [id, consumed] of [
         ['legacy-pending', false],
         ['legacy-consumed', true]
@@ -246,7 +278,7 @@ describe('packaged database migration ledger smoke', () => {
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
       await removeArchiveAndLiteratureSchema(client)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0050_literature_translation', '0051_artifact_hidden')`
       )
 
       await migrateApplicationDatabase(client)
@@ -281,10 +313,10 @@ describe('packaged database migration ledger smoke', () => {
     })
 
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       await rebuildComputeJobWithoutAnalysisConstraints(client, false)
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0050_literature_translation', '0051_artifact_hidden')`
       )
       await client.$executeRawUnsafe(`INSERT INTO "ComputeJob" (
         "id", "providerId", "shape", "sessionId", "projectId", "status", "intent",
@@ -317,10 +349,10 @@ describe('packaged database migration ledger smoke', () => {
     })
 
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       await client.$executeRawUnsafe('DROP INDEX "MemoryEntry_global_contentKey_key"')
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0050_literature_translation', '0051_artifact_hidden')`
       )
       await client.memoryEntry.createMany({
         data: [
@@ -361,7 +393,7 @@ describe('packaged database migration ledger smoke', () => {
     })
 
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       await client.project.create({
         data: { id: 'legacy-project', name: 'Legacy project' }
       })
@@ -420,7 +452,7 @@ describe('packaged database migration ledger smoke', () => {
         'ALTER TABLE "SessionAuxiliaryTurnUsage" DROP COLUMN "providerId"'
       )
       await client.$executeRawUnsafe(
-        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden')`
+        `DELETE FROM "_open_science_migrations" WHERE "id" IN ('0019_session_usage_attribution', '0020_compute_job_analysis_state', '0021_compute_job_analysis_constraints', '0022_memory_global_content_unique', '0023_compute_job_operation', '0024_compute_job_file_evidence', '0025_managed_file_version_foundation', '0026_compute_job_remote_cleanup', '0027_project_session_defaults', '0028_database_numeric_and_null_constraints', '0029_compute_host_execution_mode', '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing', '0050_literature_translation', '0051_artifact_hidden')`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
       await removeArchiveAndLiteratureSchema(client)
@@ -469,7 +501,7 @@ describe('packaged database migration ledger smoke', () => {
     })
 
     try {
-      await migrateApplicationDatabase(client)
+      await createDatabaseAtReleasedManifest(client)
       const review = await client.review.create({
         data: {
           id: 'legacy-review',
@@ -503,7 +535,9 @@ describe('packaged database migration ledger smoke', () => {
            '0027_project_session_defaults',
            '0028_database_numeric_and_null_constraints',
            '0029_compute_host_execution_mode',
-           '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_artifact_hidden'
+           '0030_literature_foundation', '0031_project_archive_revision', '0032_permission_approval_summary', '0033_compute_job_harvest_retry', '0034_background_result_delivery', '0035_literature_pdf_provenance', '0036_content_verification_observation', '0037_literature_inbox_integrity', '0038_literature_search_text', '0039_literature_metadata_commit_receipt', '0040_literature_collection_revision', '0041_bookmarks', '0042_classification_usage', '0043_pdf_annotations', '0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay',
+           '0048_pdf_annotation_sharing',
+           '0050_literature_translation'
          )`
       )
       await rebuildComputeJobWithoutAnalysisConstraints(client, true)
@@ -622,6 +656,61 @@ describe('packaged database migration ledger smoke', () => {
       ).toThrow(/migration count is outside the supported application ledger/)
     }
   )
+
+  it('reads SQLite evidence from only the current desktop launch backend log', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'open-science-desktop-sqlite-'))
+    const logs = join(root, 'logs')
+    const current = join(logs, 'desktop-backend-42-1791680000000.log')
+    try {
+      await mkdir(logs)
+      await writeFile(
+        join(logs, 'desktop-backend-41-1791670000000.log'),
+        '[main] database runtime verified: sqlite_version=3.40.0'
+      )
+      await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/backend log/)
+      await writeFile(current, 'Open-Science Web: ready\n')
+      await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/SQLite runtime version/)
+      await writeFile(
+        current,
+        JSON.stringify({ scope: 'main', msg: 'database runtime verified: sqlite_version=3.46.0' }) +
+          '\n'
+      )
+      await expect(readDesktopSqliteVersion(root, 42)).resolves.toBe('3.46.0')
+      await writeFile(join(logs, 'desktop-backend-42-1791680000001.log'), '')
+      await expect(readDesktopSqliteVersion(root, 42)).rejects.toThrow(/backend log/)
+    } finally {
+      await rm(root, { force: true, recursive: true })
+    }
+  })
+
+  it('reads structured SQLite evidence alongside raw stderr and CRLF text', () => {
+    const record = JSON.stringify({
+      scope: 'main',
+      msg: 'database runtime verified: sqlite_version=3.46.0'
+    })
+    expect(parsePackagedSqliteVersion(`Node warning\n{broken json\n${record}\n`)).toBe('3.46.0')
+    expect(
+      parsePackagedSqliteVersion('[main] database runtime verified: sqlite_version=3.46.0 \r\n')
+    ).toBe('3.46.0')
+  })
+
+  it.each([
+    JSON.stringify({ scope: 'other', msg: 'database runtime verified: sqlite_version=3.46.0' }),
+    JSON.stringify({
+      scope: 'other',
+      msg: '[main] database runtime verified: sqlite_version=3.46.0'
+    }),
+    JSON.stringify({ scope: 'main', msg: { sqliteVersion: '3.46.0' } }),
+    JSON.stringify({
+      scope: 'main',
+      msg: 'database runtime verified: sqlite_version=3.46.0-invalid'
+    }),
+    'null',
+    '{broken json',
+    '[other] database runtime verified: sqlite_version=3.46.0'
+  ])('rejects unrelated or invalid SQLite evidence: %s', (output) => {
+    expect(() => parsePackagedSqliteVersion(output)).toThrow(/SQLite runtime version/)
+  })
 
   it('records the packaged SQLite compatibility floor and certified matrix', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-ledger-smoke-evidence-'))

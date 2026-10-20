@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 import { mirrorStatusText } from '../../renderer/src/pages/settings/mirror-view'
 import { i18next } from '../../renderer/src/i18n'
 
@@ -17,7 +17,7 @@ import {
   resetAutoMirrorCache
 } from './mirror-probe'
 
-vi.mock('../skills/net-fetch', () => ({ netFetchStandard: vi.fn() }))
+vi.mock('../network-fetch', () => ({ netFetchStandard: vi.fn() }))
 
 const candidates: MirrorCandidate[] = [
   {

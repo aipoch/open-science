@@ -1,0 +1,45 @@
+{
+  "name": "@aipoch/specialists",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Portable Specialist profiles, archives and recoverable transactions",
+  "license": "Apache-2.0",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "default": "./dist/node.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "node scripts/typescript.mjs -p tsconfig.json",
+    "typecheck": "node scripts/typescript.mjs -p tsconfig.test.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build",
+    "verify:package": "node scripts/verify-package.mjs"
+  },
+  "dependencies": {
+    "fflate": "0.8.3",
+    "@aipoch/durable-files": "0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11",
+    "esbuild": "^0.28.2"
+  }
+}

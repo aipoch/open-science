@@ -5,6 +5,28 @@ Node.js SDK and command-line client for an Open-Science daemon running on the lo
 ## Documentation
 
 - [CLI guide](./CLI.md) - installation, daemon lifecycle, task automation, artifacts, and exit codes
+- [Release compatibility](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md) - stable interfaces, versioning, and data upgrades
+- [Intended use](https://github.com/aipoch/open-science/blob/main/docs/usage-scope.md) and [known limitations](https://github.com/aipoch/open-science/blob/main/docs/known-limitations.md) - workflow precautions, data disclosure, and execution boundaries
+
+## Safety and integration
+
+- **Scope:** Authenticated control of a local Open-Science service; the client does not provide an
+  independent execution sandbox or isolate the service's Agents and tools.
+- **Controls:** Requests use the service's permission profiles, existing grants, and host-owned
+  runtime controls. Disabling interactive permission prompts denies requests needing a human; it
+  does not erase previously granted authority.
+- **Remaining risks:** A successful automated run can modify allowed files, contact configured
+  services, or start remote jobs. A timeout or aborted wait stops observation, not the underlying run.
+  Research outputs still need scientific review.
+- **Safe integration:** Protect local service credentials, review the effective profile/grants and
+  recipients, and use isolated test data before unattended operation. Cancel explicitly and confirm
+  the resulting task/job state. Inspect downloaded or exported artifacts before sharing.
+
+## Browser-held package import
+
+Use `@aipoch/open-science/browser-import` to send a downloaded `.science` Blob to the desktop app.
+See the [browser integration guide](./BROWSER_IMPORT.md) for the click flow, API, security contract,
+limits, and browser requirements. The desktop never downloads the online package URL.
 
 ## SDK quick start
 
@@ -13,7 +35,7 @@ import { connectToOpenScience } from '@aipoch/open-science'
 
 const client = await connectToOpenScience()
 const run = await client.startRun({
-  project: 'systematic-review',
+  project: '<project-id-or-exact-name>',
   prompt: 'Summarize the evidence.',
   cwd: '/absolute/path/to/research',
   permissionProfile: 'auto',
@@ -120,7 +142,7 @@ const progress = (async () => {
 })()
 
 const observedRun = await client.startRun({
-  project: 'systematic-review',
+  project: '<project-id-or-exact-name>',
   prompt: 'Summarize the evidence.',
   permissionProfile: 'auto'
 })
@@ -161,7 +183,9 @@ console.log(cancelled.status) // cancelled
 ```
 
 The client discovers the local daemon and reads its authentication token from the Open-Science config
-directory. Tokens are sent in request headers and are never included in normal command output.
+directory. HTTP calls send the token in request headers. `events()` authenticates its WebSocket using
+a `token` URL query parameter; treat WebSocket URLs and request logs as sensitive. Tokens are
+not included in normal command output.
 
 ### Automation new-session defaults
 

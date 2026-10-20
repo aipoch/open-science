@@ -6,6 +6,7 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { resetSessionConversationIntentsForTests } from '@/stores/session-conversation-intents'
 import { ConversationExportDialog } from './ConversationExportDialog'
 import {
   materializeSessionConversationGraph,
@@ -96,6 +97,7 @@ describe('ConversationExportDialog', () => {
   let root: Root
 
   beforeEach(() => {
+    resetSessionConversationIntentsForTests()
     container = document.createElement('div')
     document.body.appendChild(container)
     root = createRoot(container)

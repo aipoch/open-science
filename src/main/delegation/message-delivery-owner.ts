@@ -28,6 +28,7 @@ type PreparedContinuation = Readonly<{
 }>
 
 type MessageDeliveryOwnerOptions = Readonly<{
+  assertCaller?: (caller: AuthenticatedDelegateCaller) => Promise<void>
   records: DelegatedWorkDurableRecords
   now: () => number
   admission: <Result>(operation: () => Promise<Result>) => Promise<Result>
@@ -267,6 +268,7 @@ export class ReliableMessageDeliveryOwner {
       throw new DurableDelegatedWorkError('admission_rejection', 'request_id is invalid')
     }
     return this.options.admission(async () => {
+      await this.options.assertCaller?.(caller)
       if (typeof message !== 'string' || !message.trim()) {
         throw new DurableDelegatedWorkError('admission_rejection', 'message cannot be empty')
       }

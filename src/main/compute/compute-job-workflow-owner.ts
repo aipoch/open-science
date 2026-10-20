@@ -1,40 +1,47 @@
 import { randomUUID } from 'node:crypto'
-import { assertResearchSessionWritable } from '../storage/session-package-state'
 import { readdir, realpath } from 'node:fs/promises'
 import { basename, isAbsolute, join, relative, resolve } from 'node:path'
+import { assertResearchSessionWritable } from '../storage/session-package-state'
 
-import type {
-  ComputeCallError,
-  ComputeJob,
-  JobResult,
-  JobStatusResult,
-  SubmitJobResult
-} from '../../shared/compute'
-import { ComputeHostUnavailableError } from '../../shared/compute'
+import type { JobStatusResult, SubmitJobResult } from '@aipoch/compute'
+import type { ComputeCallError, ComputeJob, JobResult } from '../../shared/compute'
+
+import { ComputeHostUnavailableError } from '@aipoch/compute'
+
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import { resolveNotebookStagedInputPath } from '../notebook/input-staging'
 import { getNotebookSessionRoot } from '../notebook/repository'
-import { encodeDataPath } from '../storage/data-path'
 import {
   beginComputeJobFileEvidence,
   cleanupComputeJobFileEvidence
 } from '../notebook/working-file-observer'
+import { encodeDataPath } from '../storage/data-path'
 import type { ComputeApprovalBroker } from './compute-approval-broker'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { isComputeJobResultFinal, projectJobStatus } from './compute-job-status'
-import type { ConcurrencyManager, SessionStatus } from './concurrency-manager'
-import { validateComputeEnvironmentName } from './compute-environment'
-import { parseSlurmSchedulerJobId } from './remote-job-handle'
-import { sharedDispatchTracker } from './dispatch-tracker'
-import { computeRemoteWorkdir, dispatchJob, hashCommand } from './job-dispatcher'
-import type { StagedInputEntry } from './job-dispatcher'
+
+import type { ConcurrencyManager, SessionStatus, StagedInputEntry } from '@aipoch/compute/node'
 import {
-  type ComputeJobRepository,
-  UnencryptedComputeJobPersistenceApprovalRequiredError
+  assertSafeInputDestination,
+  computeRemoteWorkdir,
+  createComputeExecution,
+  GLOB_CHARS,
+  hashCommand,
+  hasLeadingSlurmDirective,
+  isComputeJobResultFinal,
+  parseSlurmSchedulerJobId,
+  projectJobStatus,
+  SHELL_UNSAFE_CHARS,
+  SlurmDriverError,
+  validateComputeEnvironmentName,
+  validateHarvestConfig,
+  validateSlurmCommand,
+  type ComputeExecution
+} from '@aipoch/compute/node'
+import { dispatchComputeJob as dispatchJob } from './dispatch-evidence'
+import {
+  UnencryptedComputeJobPersistenceApprovalRequiredError,
+  type ComputeJobRepository
 } from './job-repository'
-import { assertSafeInputDestination, validateHarvestConfig } from './harvest-classifier'
-import { hasLeadingSlurmDirective, SlurmDriverError, validateSlurmCommand } from './slurm-driver'
 import type { ComputeHostRepository } from './repository'
-import { GLOB_CHARS, SHELL_UNSAFE_CHARS } from './remote-path-security'
 import { getJobHarvestDir, workspaceRelativePath } from './workspace-path'
 
 const COMMAND_PREVIEW_MAX_LEN = 120
@@ -195,7 +202,8 @@ export class ComputeJobWorkflowOwner {
     private readonly artifactResolver: ArtifactResolver | undefined,
     private readonly storageRoot: string | undefined,
     private readonly concurrencyManager: ConcurrencyManager | undefined,
-    private readonly observeBackgroundDispatch?: (dispatch: Promise<void>) => void
+    private readonly observeBackgroundDispatch?: (dispatch: Promise<void>) => void,
+    private readonly execution: ComputeExecution = createComputeExecution()
   ) {}
 
   async submitJob(
@@ -421,13 +429,12 @@ export class ComputeJobWorkflowOwner {
     const commandHash = hashCommand(command)
     const inputManifest = stagedEntries.length > 0 ? JSON.stringify(stagedEntries) : undefined
     const jobRepository = this.jobRepository
-    let dispatchHandoffHeld = false
+    let releaseDispatchHandoff: (() => void) | undefined
     let rowCreated = false
     const createRow = async (initialStatus: 'submitted' | 'queued'): Promise<void> => {
       signal?.throwIfAborted()
       if (initialStatus === 'submitted') {
-        sharedDispatchTracker.begin(jobId)
-        dispatchHandoffHeld = true
+        releaseDispatchHandoff = this.execution.holdDispatch(jobId)
       }
       const created = await jobRepository.create({
         id: jobId,
@@ -494,6 +501,7 @@ export class ComputeJobWorkflowOwner {
               hostRepository: this.hostRepository,
               jobRepository: this.jobRepository,
               onJobUpdated: this.handleJobUpdated,
+              execution: this.execution,
               storageRoot: this.storageRoot
             })
             this.observeBackgroundDispatch?.(dispatch)
@@ -510,10 +518,8 @@ export class ComputeJobWorkflowOwner {
           await requestApproval(true)
           allowUnencryptedPersistence = true
         } finally {
-          if (dispatchHandoffHeld) {
-            sharedDispatchTracker.end(jobId)
-            dispatchHandoffHeld = false
-          }
+          releaseDispatchHandoff?.()
+          releaseDispatchHandoff = undefined
         }
       }
     } catch (error) {

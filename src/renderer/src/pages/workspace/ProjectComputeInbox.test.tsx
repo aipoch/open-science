@@ -1,10 +1,11 @@
 // @vitest-environment jsdom
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 
 import { createI18nTestStub } from '../../../../../test/i18n-test-stub'
 import type { JobSummary } from '../../../../shared/compute'
+import type { NotebookProjectActivity } from '../../../../shared/notebook'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
 import { ProjectComputeInbox } from './ProjectComputeInbox'
@@ -48,6 +49,67 @@ const computeJob = (overrides: Partial<JobSummary> = {}): JobSummary => ({
 describe('Project Compute inbox', () => {
   let root: Root | undefined
 
+  type Snapshot = NotebookProjectActivity | JobSummary[]
+  type Listener = (event: { projectId: string; project_id: string }) => void
+  const refreshHarness = async (
+    source: 'notebook' | 'jobs'
+  ): Promise<{
+    read: Mock<() => Promise<Snapshot>>
+    snapshot: (label: string) => Snapshot
+    container: HTMLDivElement
+    emit: (projectId?: string, listener?: Listener) => void
+    listeners: Listener[]
+    unsubscribe: Mock
+  }> => {
+    vi.useFakeTimers()
+    const snapshot = (label: string): Snapshot =>
+      source === 'jobs'
+        ? [computeJob({ intent: label })]
+        : {
+            kernels: [
+              {
+                projectId: 'project-1',
+                sessionId: 'session-current',
+                processKey: 'python:research',
+                kind: 'python',
+                environment: label,
+                status: 'running',
+                lastActivityAt: Date.now()
+              }
+            ],
+            backgroundRuns: []
+          }
+    const read = vi.fn<() => Promise<Snapshot>>().mockResolvedValue(snapshot('initial result'))
+    const listeners: Array<(event: { projectId: string; project_id: string }) => void> = []
+    const unsubscribe = vi.fn()
+    const subscribe = (listener: Listener): (() => void) => {
+      listeners.push(listener)
+      return unsubscribe
+    }
+    Object.assign(window, {
+      api: {
+        notebook: {
+          getProjectActivity:
+            source === 'notebook'
+              ? read
+              : vi.fn().mockResolvedValue({ kernels: [], backgroundRuns: [] }),
+          onChanged: source === 'notebook' ? subscribe : () => () => undefined
+        },
+        compute: {
+          jobsList: source === 'jobs' ? read : vi.fn().mockResolvedValue([]),
+          onJobUpdated: source === 'jobs' ? subscribe : () => () => undefined
+        }
+      }
+    })
+    const container = document.createElement('div')
+    document.body.append(container)
+    root = createRoot(container)
+    await act(async () => root?.render(<ProjectComputeInbox />))
+    const emit = (projectId = 'project-1', listener = listeners.at(-1)!): void =>
+      listener({ projectId, project_id: projectId })
+    return { read, snapshot, container, emit, listeners, unsubscribe }
+  }
+
   beforeEach(() => {
     useNavigationStore.setState({ view: 'workspace', activeProjectId: 'project-1' })
     useSessionStore.setState({
@@ -64,6 +126,83 @@ describe('Project Compute inbox', () => {
     document.body.innerHTML = ''
     vi.unstubAllGlobals()
     vi.useRealTimers()
+  })
+
+  describe.each(['notebook', 'jobs'] as const)('%s event refresh', (source) => {
+    it('coalesces in-flight events and publishes the final snapshot without overlapping reads', async () => {
+      const h = await refreshHarness(source)
+      let resolve!: (value: ReturnType<typeof h.snapshot>) => void
+      h.read.mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      act(() => {
+        for (let i = 0; i < 20; i++) h.emit()
+      })
+      expect(h.read).toHaveBeenCalledTimes(2)
+      h.read.mockResolvedValue(h.snapshot('terminal result'))
+      await act(async () => resolve(h.snapshot('stale result')))
+      expect(h.read).toHaveBeenCalledTimes(3)
+      expect(h.container.textContent).toContain('terminal result')
+      expect(h.container.textContent).not.toContain('stale result')
+    })
+
+    it('retains successful data and retries failed reads without requiring another event', async () => {
+      const h = await refreshHarness(source)
+      h.read
+        .mockRejectedValueOnce(new Error('temporary transport failure'))
+        .mockResolvedValue(h.snapshot('terminal result'))
+      await act(async () => h.emit())
+      expect(h.container.textContent).toContain('initial result')
+      await act(async () => vi.advanceTimersByTimeAsync(1_000))
+      expect(h.container.textContent).toContain('terminal result')
+      expect(h.read).toHaveBeenCalledTimes(3)
+    })
+
+    it('bounds retries and lets a later event restart refresh', async () => {
+      const h = await refreshHarness(source)
+      h.read.mockRejectedValue(new Error('offline'))
+      await act(async () => h.emit())
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(h.read).toHaveBeenCalledTimes(5)
+      h.read.mockResolvedValue(h.snapshot('reconnected result'))
+      await act(async () => h.emit())
+      expect(h.container.textContent).toContain('reconnected result')
+    })
+
+    it('ignores old project responses and callbacks and cancels retries on unmount', async () => {
+      const h = await refreshHarness(source)
+      let resolve!: (value: ReturnType<typeof h.snapshot>) => void
+      h.read.mockImplementationOnce(
+        () =>
+          new Promise((done) => {
+            resolve = done
+          })
+      )
+      act(() => h.emit())
+      const oldListener = h.listeners[0]!
+      h.read.mockResolvedValue(h.snapshot('new project result'))
+      await act(async () => useNavigationStore.setState({ activeProjectId: 'project-2' }))
+      expect(h.unsubscribe).toHaveBeenCalledOnce()
+      await act(async () => {
+        resolve(h.snapshot('old project result'))
+        h.emit('project-1', oldListener)
+      })
+      expect(h.read).toHaveBeenCalledTimes(3)
+      expect(h.container.textContent).toContain('new project result')
+      expect(h.container.textContent).not.toContain('old project result')
+      h.read.mockRejectedValue(new Error('offline'))
+      await act(async () => h.emit('project-2'))
+      act(() => {
+        root?.unmount()
+        root = undefined
+      })
+      await act(async () => vi.advanceTimersByTimeAsync(60_000))
+      expect(h.read).toHaveBeenCalledTimes(4)
+      expect(h.unsubscribe).toHaveBeenCalledTimes(2)
+    })
   })
 
   it('shows only the latest Kernel per Session with its matching active background Run', async () => {

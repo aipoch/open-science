@@ -1,17 +1,54 @@
+import { createConnectorRegistry } from '@aipoch/connector-core'
+import { builtinConnectorRegistry } from './registry'
 import { describe, it, expect, vi } from 'vitest'
+import { configureRuntimeNetwork } from '../runtime-network'
 import type { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { ConnectorService } from './service'
-import { ParserEngine } from './engine'
-import { McpClientManager, McpToolCallError } from './custom-mcp'
+import { ParserEngine } from '@aipoch/connector-core'
+import { McpClientManager, McpToolCallError } from '@aipoch/connector-mcp-client'
 import type { SpecialistView } from '../../shared/specialist'
-import type { CustomMcpServerConfig } from './custom-mcp'
+import type { CustomMcpServerConfig } from '@aipoch/connector-mcp-client'
+import * as connectorNetwork from '../network-fetch'
 
 const internal = { origin: 'internal' as const }
+
+configureRuntimeNetwork({
+  fetch: (...args) => fetch(...args),
+  fetchWithManualRedirect: (...args) => fetch(...args),
+  resolveProxy: vi.fn(),
+  setProxy: vi.fn()
+})
 
 const jsonRes = (body: unknown): Response =>
   ({ ok: true, status: 200, json: async () => body }) as Response
 
 describe('ConnectorService', () => {
+  it('dispatches only the injected descriptor set with the usual argument gate', async () => {
+    const run = vi.fn(async () => ({ value: 42 }))
+    const registry = createConnectorRegistry([
+      {
+        connector: 'isolated',
+        id: 'read',
+        description: 'An independently supplied tool',
+        input: { type: 'object', properties: {}, additionalProperties: false },
+        run
+      }
+    ])
+    const service = new ConnectorService({
+      registry,
+      getConnectors: () => ({ enabledIds: [], autoAllowIds: ['isolated'] }),
+      resolveApiKey: () => undefined
+    })
+    await expect(service.call('isolated', 'read', {}, internal)).resolves.toEqual({ value: 42 })
+    await expect(service.call('isolated', 'read', { extra: true }, internal)).rejects.toThrow(
+      'invalid_arguments'
+    )
+    await expect(service.call('pubmed', 'search', {}, internal)).rejects.toMatchObject({
+      category: 'connector_unavailable'
+    })
+    expect(run).toHaveBeenCalledTimes(1)
+  })
+
   it('routes InterProScan through existing enablement and tool policy without affecting Protein Annotation', async () => {
     const fetchImpl = vi.fn().mockResolvedValue(new Response('RUNNING'))
     const settings = {
@@ -21,6 +58,7 @@ describe('ConnectorService', () => {
       blockedToolIds: [] as string[]
     }
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => settings,
       resolveApiKey: () => undefined
@@ -39,6 +77,52 @@ describe('ConnectorService', () => {
     expect(svc.isEnabled('protein-annotation')).toBe(true)
     expect(fetchImpl).toHaveBeenCalledOnce()
   })
+  it('routes InterProScan submit with configured contact email and honors policy before dispatch', async () => {
+    const job = 'iprscan5-R20260922-123456-0123-12345678-p1m'
+    const fetchImpl = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(job))
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      contactEmail: '',
+      ncbiApiKeyRef: 'key-ref',
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: [] as string[]
+    }
+    const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => 'PRIVATE_KEY'
+    })
+    try {
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow('contact_email_required')
+      settings.contactEmail = 'interpro@example.org'
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 123 }, internal)
+      ).rejects.toThrow()
+      expect(fetchImpl).not.toHaveBeenCalled()
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).resolves.toMatchObject({ job_id: job, sequence_count: 1 })
+      const body = new URLSearchParams(fetchImpl.mock.calls[0][1]!.body as string)
+      expect(body.get('email')).toBe(settings.contactEmail)
+      expect(body.toString()).not.toContain('PRIVATE_KEY')
+      settings.blockedToolIds.push('interproscan/submit')
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow('tool blocked by policy: interproscan/submit')
+      settings.disabledConnectorIds.push('interproscan')
+      await expect(
+        svc.call('interproscan', 'submit', { sequence: 'MKT' }, internal)
+      ).rejects.toThrow(/disabled/)
+      expect(fetchImpl).toHaveBeenCalledOnce()
+    } finally {
+      fetchImpl.mockRestore()
+    }
+  })
+
   it('routes new public literature tools without OpenAlex credentials and respects existing tool blocks', async () => {
     const fetchImpl = vi
       .fn()
@@ -52,6 +136,7 @@ describe('ConnectorService', () => {
     }
     const requestCredential = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => settings,
       resolveApiKey: () => undefined,
@@ -72,6 +157,7 @@ describe('ConnectorService', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
     const requestCredential = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -102,6 +188,7 @@ describe('ConnectorService', () => {
       return true
     })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -139,6 +226,7 @@ describe('ConnectorService', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 429 }))
       .mockResolvedValueOnce(new Response('{}', { status: 429 }))
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -159,6 +247,7 @@ describe('ConnectorService', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 429 }))
     const requestCredential = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [], openAlexApiKeyRef: 'ref' }),
       resolveApiKey: () => 'OPENALEX_KEY',
@@ -191,6 +280,7 @@ describe('ConnectorService', () => {
         })
     )
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -236,6 +326,7 @@ describe('ConnectorService', () => {
         })
     )
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -275,6 +366,7 @@ describe('ConnectorService', () => {
       return true
     })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -296,6 +388,7 @@ describe('ConnectorService', () => {
 
   it('rejects calls to a disabled connector', async () => {
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: [],
         autoAllowIds: [],
@@ -311,6 +404,7 @@ describe('ConnectorService', () => {
   })
   it('treats a bundled connector as enabled by default (opt-out model)', async () => {
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined
     })
@@ -319,6 +413,7 @@ describe('ConnectorService', () => {
   })
   it('rejects an unknown method', async () => {
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['chemistry'], autoAllowIds: [] }),
       resolveApiKey: () => undefined
     })
@@ -331,6 +426,7 @@ describe('ConnectorService', () => {
       .fn()
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: ['chemistry'],
@@ -343,39 +439,12 @@ describe('ConnectorService', () => {
     const out = await svc.call('chemistry', 'pubchem_get_compounds', { cids: [1] }, internal)
     expect(out).toEqual({ n_requested: 1, duplicates: [], records: [{ CID: 1 }], not_found: [] })
   })
-  it('preserves bundled handler support for a single id when the schema recommends a list', async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(
-      jsonRes({
-        status: 'ok',
-        records: [{ 'requested-id': 'PMC9046468', pmcid: 'PMC9046468', pmid: 34713412 }]
-      })
-    )
-    const svc = new ConnectorService({
-      engine: new ParserEngine({ fetchImpl }),
-      getConnectors: () => ({ enabledIds: ['pubmed'], autoAllowIds: [] }),
-      resolveApiKey: () => undefined
-    })
-
-    const out = (await svc.call(
-      'pubmed',
-      'convert_article_ids',
-      { ids: 'PMC9046468', id_type: 'pmcid' },
-      internal
-    )) as { records: Array<Record<string, unknown>> }
-
-    expect(fetchImpl).toHaveBeenCalledOnce()
-    expect(String(fetchImpl.mock.calls[0][0])).toContain('ids=PMC9046468')
-    expect(out.records[0]).toMatchObject({
-      pmcid: 'PMC9046468',
-      pmid: '34713412',
-      'requested-id': 'PMC9046468'
-    })
-  })
   it('rejects bundled tool arguments that do not match the registered JSON Schema', async () => {
     const engine = {
       call: vi.fn().mockResolvedValue({ accepted: true })
     } as unknown as ParserEngine
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine,
       getConnectors: () => ({ enabledIds: ['chemistry'], autoAllowIds: [] }),
       resolveApiKey: () => undefined
@@ -390,6 +459,7 @@ describe('ConnectorService', () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     const engine = { call: vi.fn() } as unknown as ParserEngine
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine,
       getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -411,6 +481,7 @@ describe('ConnectorService', () => {
   it('validates bundled tool arguments before dispatching to a local handler', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
       localToolHandlers: { 'molecule/preview_molecule': localHandler }
@@ -424,6 +495,7 @@ describe('ConnectorService', () => {
   it('passes the caller signal to a bundled local handler', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
       localToolHandlers: { 'molecule/preview_molecule': localHandler }
@@ -446,6 +518,7 @@ describe('ConnectorService', () => {
   })
   it('falls through to the engine when no local handler is registered', async () => {
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: ['molecule'], autoAllowIds: [] }),
       resolveApiKey: () => undefined
     })
@@ -455,6 +528,7 @@ describe('ConnectorService', () => {
   })
   it('rejects a blocked tool', async () => {
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({
         enabledIds: ['chemistry'],
         autoAllowIds: [],
@@ -473,6 +547,7 @@ describe('ConnectorService', () => {
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
     const requestApproval = vi.fn().mockResolvedValue('once')
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -508,6 +583,7 @@ describe('ConnectorService', () => {
         })
     )
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -538,6 +614,7 @@ describe('ConnectorService', () => {
         })
     )
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -575,6 +652,7 @@ describe('ConnectorService', () => {
     const callTool = vi.fn()
     const onCustomServerAvailabilityChanged = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       mcpClientManager: { listTools, call: callTool },
       getConnectors: () => ({
         enabledIds: [],
@@ -619,6 +697,7 @@ describe('ConnectorService', () => {
     const requestApproval = vi.fn()
     const getConnectorsFresh = vi.fn().mockResolvedValue(durable)
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => cached,
       getConnectorsFresh,
@@ -643,6 +722,7 @@ describe('ConnectorService', () => {
     }
     const durable = { ...cached, disabledConnectorIds: [] as string[] }
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => cached,
       getConnectorsFresh: vi.fn().mockResolvedValue(durable),
       resolveApiKey: () => undefined,
@@ -665,6 +745,7 @@ describe('ConnectorService', () => {
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
     const requestApproval = vi.fn().mockResolvedValue('once')
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -698,6 +779,7 @@ describe('ConnectorService', () => {
     const requestApproval = vi.fn().mockResolvedValue('once')
     const resolve = vi.fn().mockResolvedValue({ matchedScope: 'project' })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -731,6 +813,7 @@ describe('ConnectorService', () => {
     const resolve = vi.fn().mockResolvedValue(undefined)
     const remember = vi.fn().mockResolvedValue(undefined)
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -765,6 +848,7 @@ describe('ConnectorService', () => {
     const fetchImpl = vi.fn()
     const requestApproval = vi.fn().mockResolvedValue('deny')
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -783,6 +867,7 @@ describe('ConnectorService', () => {
   it('fails closed when a required approval has no prompt transport', async () => {
     const fetchImpl = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -804,6 +889,7 @@ describe('ConnectorService', () => {
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
     const requestApproval = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -819,6 +905,7 @@ describe('ConnectorService', () => {
       .mockResolvedValue(jsonRes({ PropertyTable: { Properties: [{ CID: 1 }] } }))
     const requestApproval = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => ({
         enabledIds: [],
@@ -855,6 +942,7 @@ describe('ConnectorService', () => {
     it('routes a call to a custom server through mcpClientManager.call', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
@@ -880,7 +968,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-1',
           name: 'example-oauth-e2e',
-          configurationFingerprint: expect.any(String),
+          persistenceGuard: { configurationFingerprint: expect.any(String) },
           transport: 'stdio',
           command: 'npx',
           args: ['-y', '@example/server'],
@@ -897,6 +985,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -931,6 +1020,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -960,6 +1050,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -993,6 +1084,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1023,6 +1115,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1053,6 +1146,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1080,6 +1174,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1140,6 +1235,7 @@ describe('ConnectorService', () => {
           })
       )
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => connectors,
         getConnectorsFresh: async () => connectors,
@@ -1182,6 +1278,7 @@ describe('ConnectorService', () => {
         blockedToolIds: ['myserver/do_thing']
       }
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => cached,
         getConnectorsFresh: vi.fn().mockResolvedValue(durable),
@@ -1214,6 +1311,7 @@ describe('ConnectorService', () => {
         ]
       }
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1232,6 +1330,7 @@ describe('ConnectorService', () => {
     it('routes a call to a remote (streamable_http) custom server with its url/headers', async () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
@@ -1256,7 +1355,7 @@ describe('ConnectorService', () => {
         {
           id: 'srv-remote',
           name: 'remoteserver',
-          configurationFingerprint: expect.any(String),
+          persistenceGuard: { configurationFingerprint: expect.any(String) },
           transport: 'streamable_http',
           command: '',
           args: undefined,
@@ -1272,6 +1371,7 @@ describe('ConnectorService', () => {
     it('rejects a disabled custom server', async () => {
       const call = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
@@ -1301,6 +1401,7 @@ describe('ConnectorService', () => {
       const resolve = vi.fn().mockResolvedValue({ matchedScope: 'global' })
       const requestApproval = vi.fn().mockResolvedValue('once')
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: {
           call: call as never,
           listTools
@@ -1336,6 +1437,7 @@ describe('ConnectorService', () => {
 
     it('rejects a call to an unknown server name (neither bundled nor custom)', async () => {
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         getConnectors: () => ({ enabledIds: [], autoAllowIds: [], customMcpServers: [] }),
         resolveApiKey: () => undefined
       })
@@ -1348,6 +1450,7 @@ describe('ConnectorService', () => {
       const call = vi.fn().mockResolvedValue({ ok: true })
       const requestApproval = vi.fn().mockResolvedValue('once')
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
@@ -1396,6 +1499,7 @@ describe('ConnectorService', () => {
       const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
       const requestApproval = vi.fn().mockResolvedValue('deny')
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: { call: call as never, listTools },
         getConnectors: () => ({
           enabledIds: [],
@@ -1443,6 +1547,7 @@ describe('ConnectorService', () => {
         return { ok: true }
       })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: { call: call as never, listTools },
         getConnectors: () => ({
           enabledIds: [],
@@ -1505,6 +1610,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const listTools = vi.fn().mockResolvedValue([{ name: 'do_thing' }])
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: { call: call as never, listTools },
         getConnectors: () => ({
           enabledIds: [],
@@ -1583,6 +1689,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const listTools = vi.fn().mockResolvedValue([{ name: 'lookup' }])
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: { call: call as never, listTools },
         getConnectors: () => ({
           enabledIds: [],
@@ -1614,6 +1721,7 @@ describe('ConnectorService', () => {
         )
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1691,6 +1799,7 @@ describe('ConnectorService', () => {
       const mcpClientManager = new McpClientManager({ createClient })
       try {
         const svc = new ConnectorService({
+          registry: builtinConnectorRegistry,
           mcpClientManager,
           getConnectors: () => ({
             enabledIds: [],
@@ -1733,6 +1842,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call)
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1763,6 +1873,7 @@ describe('ConnectorService', () => {
       const call = vi.fn().mockRejectedValue(new McpToolCallError('Not logged in. Sign in again.'))
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1802,6 +1913,7 @@ describe('ConnectorService', () => {
       const call = vi.fn()
       const mcpClientManager = manager(call, ['lookup'])
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager,
         getConnectors: () => ({
           enabledIds: [],
@@ -1834,6 +1946,7 @@ describe('ConnectorService', () => {
           )
         )
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1871,6 +1984,7 @@ describe('ConnectorService', () => {
         )
         .mockResolvedValueOnce({ ok: true })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1903,6 +2017,7 @@ describe('ConnectorService', () => {
         .mockRejectedValueOnce(new McpToolCallError('Not logged in. Call login first.'))
         .mockResolvedValueOnce({ authenticated: true })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['status', 'login']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1937,6 +2052,7 @@ describe('ConnectorService', () => {
         .mockResolvedValueOnce({ ok: true })
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -1993,6 +2109,7 @@ describe('ConnectorService', () => {
         )
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['lookup']),
         getConnectors: () => ({
           enabledIds: [],
@@ -2040,6 +2157,7 @@ describe('ConnectorService', () => {
         .mockResolvedValue([{ name: 'lookup' }])
       const call = vi.fn().mockResolvedValue({ ok: true })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: { listTools, call },
         getConnectors: () => ({
           enabledIds: [],
@@ -2077,6 +2195,7 @@ describe('ConnectorService', () => {
       const requestApproval = vi.fn().mockResolvedValue('once')
       const resolve = vi.fn().mockResolvedValue({ matchedScope: 'session' })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call),
         getConnectors: () => ({
           enabledIds: [],
@@ -2121,6 +2240,7 @@ describe('ConnectorService', () => {
       const requestApproval = vi.fn().mockResolvedValue('global')
       const remember = vi.fn()
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         mcpClientManager: manager(call, ['registered_method']),
         getConnectors: () => ({
           enabledIds: [],
@@ -2184,6 +2304,7 @@ describe('ConnectorService specialist capability gate', () => {
     const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ meta: { count: 0 }, results: [] }))
     const current = specialist()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => staleConnectors,
       getConnectorsFresh: async () => currentConnectors,
@@ -2248,6 +2369,7 @@ describe('ConnectorService specialist capability gate', () => {
           })
       )
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         engine: new ParserEngine({ fetchImpl }),
         getConnectors: () => connectors,
         getConnectorsFresh: async () => connectors,
@@ -2299,6 +2421,7 @@ describe('ConnectorService specialist capability gate', () => {
       .mockResolvedValueOnce(new Response('{}', { status: 429 }))
       .mockResolvedValueOnce(new Response('{}', { status: 429 }))
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: new ParserEngine({ fetchImpl }),
       getConnectors: () => connectors,
       getConnectorsFresh: async () => connectors,
@@ -2334,6 +2457,7 @@ describe('ConnectorService specialist capability gate', () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     let current = specialist()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: { call: vi.fn() } as unknown as ParserEngine,
       getConnectors: () => ({
         enabledIds: [],
@@ -2469,6 +2593,7 @@ describe('ConnectorService specialist capability gate', () => {
         }
       })
       const svc = new ConnectorService({
+        registry: builtinConnectorRegistry,
         engine: { call: vi.fn() } as unknown as ParserEngine,
         getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
         resolveApiKey: () => undefined,
@@ -2503,6 +2628,7 @@ describe('ConnectorService specialist capability gate', () => {
       }
     })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       mcpClientManager: { call, listTools },
       getConnectors: () => ({
         enabledIds: [],
@@ -2576,6 +2702,7 @@ describe('ConnectorService specialist capability gate', () => {
       }
     })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       mcpClientManager: { call, listTools },
       getConnectors: () => ({
         enabledIds: [],
@@ -2624,6 +2751,7 @@ describe('ConnectorService specialist capability gate', () => {
   it('fails closed for missing agent session/profile/connector without exposing call data', async () => {
     const localHandler = vi.fn()
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: { call: vi.fn() } as unknown as ParserEngine,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -2676,6 +2804,7 @@ describe('ConnectorService specialist capability gate', () => {
   it('allows only explicitly marked internal calls to bypass the agent session gate', async () => {
     const localHandler = vi.fn().mockResolvedValue({ ok: true })
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       engine: { call: vi.fn() } as unknown as ParserEngine,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [] }),
       resolveApiKey: () => undefined,
@@ -2699,6 +2828,7 @@ describe('ConnectorService specialist capability gate', () => {
       }
     ]
     const svc = new ConnectorService({
+      registry: builtinConnectorRegistry,
       getConnectors: () => ({ enabledIds: [], autoAllowIds: [], customMcpServers }),
       resolveApiKey: () => undefined
     })
@@ -2717,4 +2847,123 @@ describe('ConnectorService specialist capability gate', () => {
       'connector call rejected: connector_runtime_unavailable. The Connector runtime is unavailable. Wait briefly and retry the same call once. If it fails again, ask the user to restart Open-Science before retrying.'
     )
   })
+})
+
+it('enforces ENCORI enablement and download policy before network or filesystem work', async () => {
+  const fetchImpl = vi.fn()
+  const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
+  const directory = vi.spyOn(
+    builtinConnectorRegistry.getDescriptor('encori', 'download_bulk_dataset')!,
+    'run'
+  )
+  try {
+    const settings = {
+      enabledIds: [],
+      autoAllowIds: [],
+      disabledConnectorIds: [] as string[],
+      blockedToolIds: ['encori/download_bulk_dataset']
+    }
+    const service = new ConnectorService({
+      registry: builtinConnectorRegistry,
+      engine: new ParserEngine({ fetchImpl }),
+      getConnectors: () => settings,
+      resolveApiKey: () => undefined
+    })
+    await expect(
+      service.call(
+        'encori',
+        'download_bulk_dataset',
+        { filename: 'hg38.miRNA_sncRNA.tar.gz', destination_dir: '/unused/encori-gate-test' },
+        internal
+      )
+    ).rejects.toThrow('tool blocked by policy')
+    await expect(service.call('encori', 'query_degradome_events', {}, internal)).rejects.toThrow(
+      'unknown tool: encori/query_degradome_events'
+    )
+    settings.disabledConnectorIds.push('encori')
+    await expect(service.call('encori', 'get_reference_tables', {}, internal)).rejects.toThrow(
+      'disabled'
+    )
+    expect(service.isEnabled('rna')).toBe(true)
+    expect(fetchImpl).not.toHaveBeenCalled()
+    expect(network).not.toHaveBeenCalled()
+    expect(directory).not.toHaveBeenCalled()
+  } finally {
+    network.mockRestore()
+    directory.mockRestore()
+  }
+})
+
+it('honors explicit download Ask and rejects denial before network or filesystem work', async () => {
+  const network = vi.spyOn(connectorNetwork, 'netFetchStandard')
+  const directory = vi.spyOn(
+    builtinConnectorRegistry.getDescriptor('encori', 'download_bulk_dataset')!,
+    'run'
+  )
+  const approvalPrompt = vi.fn().mockResolvedValue('deny')
+  try {
+    const service = new ConnectorService({
+      registry: builtinConnectorRegistry,
+      getConnectors: () => ({
+        enabledIds: [],
+        autoAllowIds: [],
+        askToolIds: ['encori/download_bulk_dataset']
+      }),
+      resolveApiKey: () => undefined,
+      requestApproval: approvalPrompt
+    })
+    await expect(
+      service.call(
+        'encori',
+        'download_bulk_dataset',
+        {
+          filename: 'hg38.miRNA_sncRNA.tar.gz',
+          destination_dir: '/unused/encori-approval-test'
+        },
+        internal
+      )
+    ).rejects.toThrow('tool call denied by user')
+    expect(approvalPrompt).toHaveBeenCalledOnce()
+    expect(approvalPrompt.mock.calls[0][0]).toMatchObject({
+      connector: 'encori',
+      method: 'download_bulk_dataset',
+      args: {
+        filename: 'hg38.miRNA_sncRNA.tar.gz',
+        destination_dir: '/unused/encori-approval-test'
+      }
+    })
+    expect(network).not.toHaveBeenCalled()
+    expect(directory).not.toHaveBeenCalled()
+  } finally {
+    network.mockRestore()
+    directory.mockRestore()
+  }
+})
+
+it('keeps a legacy ENCORI configuration intact while rejecting its old method on the bundled route', async () => {
+  const legacy = {
+    id: 'legacy-encori',
+    name: 'encori',
+    displayName: 'ENCORI',
+    transport: 'stdio' as const,
+    command: '/legacy/.venv/Scripts/encori-mcp.exe',
+    args: [],
+    enabled: true
+  }
+  const settings = { enabledIds: [], autoAllowIds: [], customMcpServers: [legacy] }
+  const before = structuredClone(settings)
+  const listTools = vi.fn(),
+    call = vi.fn()
+  const service = new ConnectorService({
+    registry: builtinConnectorRegistry,
+    getConnectors: () => settings,
+    resolveApiKey: () => undefined,
+    mcpClientManager: { listTools, call }
+  })
+  await expect(service.call('encori', 'encori_query_mirna_targets', {}, internal)).rejects.toThrow(
+    'unknown tool: encori/encori_query_mirna_targets'
+  )
+  expect(listTools).not.toHaveBeenCalled()
+  expect(call).not.toHaveBeenCalled()
+  expect(settings).toEqual(before)
 })

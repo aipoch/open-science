@@ -1,6 +1,8 @@
+import { readWithDeadline } from '@/lib/read-with-deadline'
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { InlineNotice } from '@/components/ui/inline-notice'
 import { EthernetPort, Network, RefreshCw, Wifi, WifiOff } from 'lucide-react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type { PackageMirror } from '../../../../shared/mirror'
@@ -16,7 +18,10 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { ExternalTextLink } from '@/components/ExternalTextLink'
 import { isMirrorConfigured, mirrorStatusText, MIRROR_HELP_URL } from './mirror-view'
 import { NetworkProxyForm } from './NetworkProxyForm'
-import { NotebookNetworkDomainsForm } from './NotebookNetworkDomainsForm'
+import {
+  NotebookNetworkDomainsForm,
+  type NetworkEditorLeaveState
+} from './NotebookNetworkDomainsForm'
 import { SettingsSection } from './SettingsLayout'
 
 const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
@@ -26,6 +31,7 @@ const fieldLabelClassName = 'text-xs font-medium text-muted-foreground'
 type NetworkView = { kind: 'list' | 'mirror' | 'proxy' | 'domains' }
 type NetworkPanelProps = {
   view: NetworkView
+  onNetworkLeaveStateChange?: (state: NetworkEditorLeaveState | null) => void
   onNavigate: (view: NetworkView) => void
   notebookNetworkAvailable?: boolean
 }
@@ -52,6 +58,7 @@ const CONNECTION_TYPE_LABELS: Partial<Record<NetworkConnectionType, string>> = {
 const NetworkPanel = ({
   view,
   onNavigate,
+  onNetworkLeaveStateChange,
   notebookNetworkAvailable = true
 }: NetworkPanelProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -64,6 +71,7 @@ const NetworkPanel = ({
   // returning to the window while a previous probe is still failing, and Retry), so this
   // panel and the header/sidebar indicators never disagree. 'unknown' renders as Checking…;
   // 'probe-failed' remains retryable.
+  const runtimeEpoch = useDesktopRuntimeRecoveryStore((state) => state.epoch)
   const connectivity = useNetworkStore((state) => state.connectivity)
   const probeConnectivity = useNetworkStore((state) => state.probeConnectivity)
 
@@ -75,42 +83,34 @@ const NetworkPanel = ({
   const [message, setMessage] = useState<string | undefined>(undefined)
   const [networkInfo, setNetworkInfo] = useState<NetworkInfo | null>(null)
   const [networkInfoError, setNetworkInfoError] = useState(false)
-  const networkInfoRequestRef = useRef(0)
-
-  // Local interface details come from the main process; window.api.network is Electron-only,
-  // so stay with placeholders when the preload bridge is unavailable. A rejected IPC call is
-  // an explicit load failure, not "no interface". Overlapping refreshes (list remount, Retry)
-  // keep only the latest response so a stale rejection cannot wipe a newer success.
-  const refreshNetworkInfo = useCallback((): void => {
+  // A result belongs to the current view and runtime epoch only. Recheck after a network probe
+  // finishes; cleanup also rejects late reads after disconnect, navigation, or unmount.
+  useEffect(() => {
+    if (view.kind !== 'list' || !isOnline || connectivity === 'unknown') return
     const getInfo = window.api?.network?.getInfo
     if (!getInfo) return
-    const request = ++networkInfoRequestRef.current
-
-    void getInfo().then(
+    let active = true
+    void readWithDeadline(getInfo, 10_000).then(
       (info) => {
-        if (request !== networkInfoRequestRef.current) return
+        if (!active) return
         setNetworkInfo(info)
         setNetworkInfoError(false)
       },
       () => {
-        if (request !== networkInfoRequestRef.current) return
+        if (!active) return
         setNetworkInfo(null)
         setNetworkInfoError(true)
       }
     )
-  }, [])
-
-  // Pull local interface details when the list view mounts while online, and re-pull whenever
-  // connectivity comes back; offline rows show placeholders, so a drop has nothing to refresh.
-  useEffect(() => {
-    if (view.kind === 'list' && isOnline) refreshNetworkInfo()
-  }, [view.kind, isOnline, refreshNetworkInfo])
+    return () => {
+      active = false
+    }
+  }, [view.kind, isOnline, connectivity, runtimeEpoch])
 
   const recheckOnline = useNetworkStore((state) => state.recheckOnline)
 
   const handleRetry = (): void => {
     recheckOnline()
-    refreshNetworkInfo()
     // Announced even while offline: the store short-circuits a link-down probe to
     // 'unreachable', but still holds the Checking… state for its minimum delay first.
     void probeConnectivity({ announce: true })
@@ -190,7 +190,7 @@ const NetworkPanel = ({
         .filter((part) => part !== null)
         .join(' · ') || undefined
 
-  const networkLabel = t('Internet connection')
+  const networkLabel = t('Package registry connectivity')
 
   // The Network status row is an EnvironmentCheckItem so it renders with the exact same row
   // component as the onboarding environment step's network check. A live link with unreachable
@@ -241,44 +241,37 @@ const NetworkPanel = ({
         : Network
 
   if (view.kind === 'proxy') return <NetworkProxyForm onDone={() => onNavigate({ kind: 'list' })} />
-  if (view.kind === 'domains' && notebookNetworkAvailable) return <NotebookNetworkDomainsForm />
+  if (view.kind === 'domains' && notebookNetworkAvailable)
+    return <NotebookNetworkDomainsForm onLeaveStateChange={onNetworkLeaveStateChange} />
 
   return (
     <div className="space-y-6 p-5">
       {!isConfiguring ? (
         <SettingsSection
           title={t('Network status')}
-          description={t('Whether this machine can currently reach the package registries.')}
+          description={t(
+            'Checks npmjs and npmmirror. Conda and Python package mirrors are configured separately below.'
+          )}
           aria-label={t('Network status')}
         >
           <div className="rounded-xl border border-border px-4">
-            <ul aria-live="polite">
-              {isChecking ? (
-                <PendingCheckRow
-                  id={NETWORK_CHECK_ID}
-                  label={networkLabel}
-                  pendingText={t('Checking…')}
-                />
-              ) : (
-                <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
-              )}
-            </ul>
-
-            <div className="pb-4">
-              {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
-                <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
-                  <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
-                    {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
-                    <li>{t('Check proxy, VPN, or firewall settings.')}</li>
-                    <li>{t('Check the package mirror configuration below.')}</li>
-                  </ol>
-                </div>
-              ) : null}
+            <div className="flex flex-wrap items-center gap-3 py-4">
+              <ul className="min-w-0 flex-1 basis-64 [&>li]:py-0" aria-live="polite">
+                {isChecking ? (
+                  <PendingCheckRow
+                    id={NETWORK_CHECK_ID}
+                    label={networkLabel}
+                    pendingText={t('Checking…')}
+                  />
+                ) : (
+                  <EnvironmentCheckRow check={networkCheck} icon={networkIcon} />
+                )}
+              </ul>
               <Button
                 type="button"
                 variant="outline"
                 size="sm"
-                className="mt-3"
+                className="ml-auto shrink-0"
                 onClick={handleRetry}
                 disabled={isChecking}
               >
@@ -286,6 +279,23 @@ const NetworkPanel = ({
                 {isChecking ? t('Checking…') : t('Check again')}
               </Button>
             </div>
+            {!isOnline || connectivity === 'unreachable' || connectivity === 'probe-failed' ? (
+              <div className="mb-4 rounded-lg bg-bg-10 px-4 py-4 ring-1 ring-border-200">
+                <ol className="list-decimal space-y-1 pl-5 text-xs leading-relaxed text-muted-foreground">
+                  {!isOnline ? <li>{t('Check your cable or Wi-Fi connection.')}</li> : null}
+                  <li>{t('Check proxy, VPN, or firewall settings.')}</li>
+                  {connectivity !== 'probe-failed' ? (
+                    <li>
+                      {t(
+                        'Check the proxy used by Open-Science. A working browser connection may use different proxy settings.'
+                      )}
+                    </li>
+                  ) : (
+                    <li>{t('Reconnect the backend, then check again.')}</li>
+                  )}
+                </ol>
+              </div>
+            ) : null}
           </div>
         </SettingsSection>
       ) : null}
@@ -294,7 +304,7 @@ const NetworkPanel = ({
         <SettingsSection
           title={t('Notebook network access')}
           description={t(
-            'Control which internet domains Notebook Python, R, REPL, and Bash can reach.'
+            'Manage public domains and trusted private services for protected Notebook and Shell execution.'
           )}
           aria-label={t('Notebook network access')}
           data-settings-anchor="network.domains"
@@ -302,12 +312,18 @@ const NetworkPanel = ({
           <div className="rounded-xl border border-border p-4">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
-                <p className="text-sm text-foreground">{t('Open-Science domains')}</p>
+                <p className="text-sm text-foreground">
+                  {t('Public domains and private services')}
+                </p>
                 <p className="text-xs text-muted-foreground">
                   {t('{{count}} custom domains allowed', {
                     count: notebookNetwork.allowedDomains.length,
                     defaultValue_one: '{{count}} custom domain allowed'
                   })}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('Trusted private services')} ·{' '}
+                  {notebookNetwork.trustedPrivateDestinations?.length ?? 0}
                 </p>
               </div>
               <Button
@@ -315,7 +331,7 @@ const NetworkPanel = ({
                 variant="outline"
                 onClick={() => onNavigate({ kind: 'domains' })}
               >
-                {t('Configure domains')}
+                {t('Manage access')}
               </Button>
             </div>
           </div>
@@ -347,7 +363,7 @@ const NetworkPanel = ({
                   {networkProxy.mode === 'manual'
                     ? networkProxy.server
                     : networkProxy.mode === 'system'
-                      ? t('Follows this device')
+                      ? t('Backend defaults')
                       : t('Connects without a proxy')}
                 </p>
               </div>

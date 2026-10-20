@@ -1,14 +1,21 @@
+import {
+  createApplicationCommandRouter,
+  type ApplicationCommand
+} from '../application-command-router'
+import {
+  registerSpecialistApplicationCommands,
+  specialistApplicationCommandGroup
+} from './application-commands'
+import { specialistDesktopCommandGroup } from './desktop-commands'
 import type { SpecialistApplicationOwner } from './application-commands'
 import { callerContextForEvent } from '../caller-context'
 import { callerLeaseForEvent } from '../caller-lifecycle'
 import { ipcMainHandle } from '../ipc-handler-registry'
-
 import type {
   CreateSpecialistRequest,
   UpdateSpecialistRequest,
   SetSpecialistEnabledRequest,
   DuplicateSpecialistRequest,
-  CreateSpecialistInput,
   SpecialistCatalogSnapshot,
   SpecialistView,
   SetSessionSpecialistRequest,
@@ -16,26 +23,29 @@ import type {
   ResolveSessionSpecialistRequest,
   SessionSpecialistResolution
 } from '../../shared/specialist'
+import type { CreateSpecialistInput } from '@aipoch/specialists'
 import { SPECIALIST_IPC } from '../../shared/specialist'
 import { SpecialistService } from './service'
 import { SessionBindingService } from './session-binding'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { broadcastToRenderers } from '../renderer-broadcast'
 import type {
   ContributionTemplateExportResult,
+  SpecialistPackageReportSaveResult,
+  SpecialistExportSaveResult
+} from '../../shared/specialist'
+import type {
   SpecialistPackageCandidatePreview,
   SpecialistPackageInstallRequest,
   SpecialistPackageInstallResult,
   SpecialistPackageReport,
-  SpecialistPackageReportSaveResult,
   SpecialistExportPreview,
   SpecialistExportRequest,
-  SpecialistExportSaveResult,
   SpecialistDeleteRequest,
   SpecialistDeleteResult,
   SpecialistDeletePreview
-} from '../../shared/specialist-package'
-import type { SpecialistPackageService } from './package/service'
+} from '@aipoch/specialists'
+import type { SpecialistPackageService } from '@aipoch/specialists/node'
 import type { SessionSpecialistReconfiguration } from './session-reconfiguration'
 import {
   SPECIALIST_MARKETPLACE_IPC,
@@ -259,6 +269,26 @@ export const registerSpecialistIpcHandlers = (
   marketplace?: MarketplaceIpc,
   applicationOwner?: SpecialistApplicationOwner
 ): void => {
+  if (applicationOwner?.desktop) {
+    const router = createApplicationCommandRouter()
+    registerSpecialistApplicationCommands(router.registrar, applicationOwner)
+    for (const command of [
+      ...specialistApplicationCommandGroup.commands,
+      ...specialistDesktopCommandGroup.commands
+    ]) {
+      ipcMainHandle(command.name, (event, ...args) =>
+        router.dispatcher.invoke(
+          command as ApplicationCommand<string, readonly unknown[], unknown>,
+          {
+            callerContext: callerContextForEvent(event),
+            callerLease: callerLeaseForEvent(event),
+            args
+          }
+        )
+      )
+    }
+    return
+  }
   if (applicationOwner) {
     for (const [channel, method] of [
       ['specialist:package-upload-begin', 'beginUpload'],

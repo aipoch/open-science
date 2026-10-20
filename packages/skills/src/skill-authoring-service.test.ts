@@ -1,0 +1,613 @@
+import { link, mkdtemp, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+
+import { afterEach, describe, expect, it, vi } from 'vitest'
+
+import type { BundledSkill } from './registry'
+import { SkillAuthoringService, type SkillAuthoringCatalog } from './skill-authoring-service'
+import { UserSkillRepository } from './user-skill-repository'
+
+const cleanupFailure = vi.hoisted(() => ({ path: undefined as string | undefined }))
+vi.mock('node:fs/promises', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs/promises')>()
+  return {
+    ...actual,
+    rm: async (path: Parameters<typeof actual.rm>[0], options: Parameters<typeof actual.rm>[1]) => {
+      if (path === cleanupFailure.path) throw new Error('cleanup failed')
+      return actual.rm(path, options)
+    }
+  }
+})
+
+const roots: string[] = []
+
+afterEach(async () => {
+  cleanupFailure.path = undefined
+  await Promise.all(roots.splice(0).map((root) => rm(root, { recursive: true, force: true })))
+})
+
+const makeFixture = async (): Promise<{
+  service: SkillAuthoringService
+  root: string
+  userSkills: UserSkillRepository
+  catalog: SkillAuthoringCatalog
+}> => {
+  const root = await mkdtemp(join(tmpdir(), 'host-skills-'))
+  roots.push(root)
+  const featuredDir = join(root, 'featured', 'literature-review')
+  await mkdir(featuredDir, { recursive: true })
+  await writeFile(
+    join(featuredDir, 'SKILL.md'),
+    '---\nname: literature-review\ndescription: Review literature.\n---\nFeatured body.\n'
+  )
+  const featured: BundledSkill = {
+    id: 'literature-review',
+    name: 'literature-review',
+    displayName: 'Literature Review',
+    description: 'Review literature.',
+    source: 'featured',
+    updatedAt: '2026-08-09',
+    sourceDir: featuredDir
+  }
+  const userSkills = new UserSkillRepository(root)
+  const catalog: SkillAuthoringCatalog = {
+    list: async () => [featured, ...(await userSkills.list())],
+    withSkillRead: async (id, read) => {
+      if (id === featured.id) return read(featured)
+      return userSkills.withSkillReadLock(id, read)
+    },
+    publishPersonalDirectory: (name, sourcePath, overwrite) =>
+      userSkills.publishPersonalDirectory(name, sourcePath, overwrite),
+    deletePublished: (id) => userSkills.delete(id)
+  }
+  return {
+    root,
+    userSkills,
+    catalog,
+    service: new SkillAuthoringService({
+      storageRoot: root,
+      catalog
+    })
+  }
+}
+
+describe('SkillAuthoringService', () => {
+  it('validates a draft through the same frontmatter contract used by publish', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'analysis-helper',
+      path: 'SKILL.md',
+      content: '---\nname: analysis-helper\ndescription: Analyze data.\n---\nBody.\n'
+    })
+
+    await expect(service.validate({ name: 'analysis-helper' })).resolves.toEqual({
+      valid: true,
+      name: 'analysis-helper',
+      origin: 'draft',
+      errors: [],
+      warnings: []
+    })
+  })
+  it('returns a deterministic recursive file inventory only for SKILL.md reads', async () => {
+    const { service, root } = await makeFixture()
+    await service.edit({
+      name: 'package-reader',
+      path: 'SKILL.md',
+      content: '---\nname: package-reader\ndescription: Read a package.\n---\nBody.\n'
+    })
+    await service.edit({ name: 'package-reader', path: 'z-last.md', content: 'Last.\n' })
+    await service.edit({ name: 'package-reader', path: 'references/guide.md', content: 'Guide.\n' })
+    await service.edit({ name: 'package-reader', path: 'scripts/check.js', content: 'export {}\n' })
+    await service.edit({ name: 'package-reader', path: 'a/nested.md', content: 'Nested.\n' })
+    await service.edit({ name: 'package-reader', path: 'a-file.md', content: 'Sibling.\n' })
+    await writeFile(
+      join(root, 'skills', 'drafts', 'package-reader', '.specialist-package.json'),
+      '{"ownerIds":["internal-id"]}'
+    )
+
+    await expect(service.read({ name: 'package-reader' })).resolves.toEqual({
+      name: 'package-reader',
+      origin: 'draft',
+      path: 'SKILL.md',
+      content: '---\nname: package-reader\ndescription: Read a package.\n---\nBody.\n',
+      files: [
+        'SKILL.md',
+        'a-file.md',
+        'a/nested.md',
+        'references/guide.md',
+        'scripts/check.js',
+        'z-last.md'
+      ]
+    })
+    await expect(
+      service.read({ name: 'package-reader', path: 'references/guide.md' })
+    ).resolves.toEqual({
+      name: 'package-reader',
+      origin: 'draft',
+      path: 'references/guide.md',
+      content: 'Guide.\n'
+    })
+  })
+  it('reads a Skill package that contains an internal VCS metadata file', async () => {
+    const { service, root } = await makeFixture()
+    await writeFile(join(root, 'featured', 'literature-review', '.gitignore'), '*.log\n')
+
+    await expect(service.read({ name: 'literature-review' })).resolves.toMatchObject({
+      name: 'literature-review',
+      path: 'SKILL.md',
+      content: expect.stringContaining('Featured body.'),
+      files: ['SKILL.md']
+    })
+  })
+  it.skipIf(process.platform === 'win32')(
+    'fails closed when SKILL.md inventory contains a symbolic link',
+    async () => {
+      const { service, root } = await makeFixture()
+      await service.edit({
+        name: 'unsafe-package',
+        path: 'SKILL.md',
+        content: '---\nname: unsafe-package\ndescription: Unsafe package.\n---\nBody.\n'
+      })
+      const packageRoot = join(root, 'skills', 'drafts', 'unsafe-package')
+      await symlink(join(root, 'outside.md'), join(packageRoot, 'linked.md'))
+
+      await expect(service.read({ name: 'unsafe-package' })).rejects.toThrow(
+        'Skill package contains a symbolic link.'
+      )
+    }
+  )
+  it('fails closed when SKILL.md inventory contains a hard link', async () => {
+    const { service, root } = await makeFixture()
+    await service.edit({
+      name: 'unsafe-package',
+      path: 'SKILL.md',
+      content: '---\nname: unsafe-package\ndescription: Unsafe package.\n---\nBody.\n'
+    })
+    const packageRoot = join(root, 'skills', 'drafts', 'unsafe-package')
+    await mkdir(join(packageRoot, 'references'))
+    await link(join(packageRoot, 'SKILL.md'), join(packageRoot, 'references', 'shared.md'))
+    await expect(service.read({ name: 'unsafe-package' })).rejects.toThrow(
+      'Skill package contains a hard link.'
+    )
+  })
+  it('reports deterministic frontmatter, body, Markdown link, and evaluation issues', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'report-example',
+      path: 'SKILL.md',
+      content:
+        '---\nname: report-example\ndescription: Report issues.\nlicense: MIT\n---\n\n[missing](references/missing.md)\n'
+    })
+    await service.edit({
+      name: 'report-example',
+      path: 'references/guide.md',
+      content:
+        '[also missing](../assets/missing.txt) [external](https://example.com) [section](#part)\n'
+    })
+    await service.edit({ name: 'report-example', path: 'trigger-evals.json', content: '{not json' })
+    await service.edit({
+      name: 'report-example',
+      path: 'evals/evals.json',
+      content: JSON.stringify({ schema_version: 2, evals: [] })
+    })
+
+    await expect(service.validate({ name: 'report-example' })).resolves.toEqual({
+      valid: false,
+      name: 'report-example',
+      origin: 'draft',
+      errors: [
+        {
+          code: 'invalidFrontmatterFields',
+          path: 'SKILL.md',
+          message: 'SKILL.md frontmatter may only contain name, displayName, and description.'
+        },
+        {
+          code: 'invalidOutputEvals',
+          path: 'evals/evals.json',
+          message: 'evals/evals.json does not match the supported version 1 structure.'
+        },
+        {
+          code: 'invalidJson',
+          path: 'trigger-evals.json',
+          message: 'trigger-evals.json must contain valid JSON.'
+        }
+      ],
+      warnings: [
+        {
+          code: 'missingLocalLink',
+          path: 'SKILL.md',
+          message: 'Local Markdown target does not exist: references/missing.md.'
+        },
+        {
+          code: 'missingLocalLink',
+          path: 'references/guide.md',
+          message: 'Local Markdown target does not exist: assets/missing.txt.'
+        }
+      ]
+    })
+  })
+  it('warns for an empty instruction body without blocking publish', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'empty-body',
+      path: 'SKILL.md',
+      content: '---\nname: empty-body\ndescription: Empty body.\n---\n  \n'
+    })
+
+    await expect(service.validate({ name: 'empty-body' })).resolves.toEqual({
+      valid: true,
+      name: 'empty-body',
+      origin: 'draft',
+      errors: [],
+      warnings: [
+        {
+          code: 'emptyBody',
+          path: 'SKILL.md',
+          message: 'SKILL.md has no instruction body.'
+        }
+      ]
+    })
+    await expect(service.publish({ name: 'empty-body' })).resolves.toMatchObject({
+      status: 'published',
+      name: 'empty-body'
+    })
+  })
+  it.skipIf(process.platform === 'win32')(
+    'returns package safety violations as validation errors and blocks publish',
+    async () => {
+      const { service, root, userSkills } = await makeFixture()
+      await service.edit({
+        name: 'unsafe-validation',
+        path: 'SKILL.md',
+        content: '---\nname: unsafe-validation\ndescription: Unsafe package.\n---\nBody.\n'
+      })
+      await symlink(
+        join(root, 'outside.md'),
+        join(root, 'skills', 'drafts', 'unsafe-validation', 'linked.md')
+      )
+
+      await expect(service.validate({ name: 'unsafe-validation' })).resolves.toEqual({
+        valid: false,
+        name: 'unsafe-validation',
+        origin: 'draft',
+        errors: [
+          {
+            code: 'unsafePackageEntry',
+            path: 'linked.md',
+            message: 'Skill package contains a symbolic link.'
+          }
+        ],
+        warnings: []
+      })
+      await expect(service.publish({ name: 'unsafe-validation' })).rejects.toThrow(
+        'Skill package contains a symbolic link.'
+      )
+      expect(await userSkills.list()).toHaveLength(0)
+      await expect(
+        readFile(join(root, 'skills', 'drafts', 'unsafe-validation', 'SKILL.md'), 'utf8')
+      ).resolves.toContain('name: unsafe-validation')
+    }
+  )
+  it('returns a validation report for a known draft without SKILL.md', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'incomplete-draft',
+      path: 'references/notes.md',
+      content: 'Notes.\n'
+    })
+
+    await expect(service.validate({ name: 'incomplete-draft' })).resolves.toEqual({
+      valid: false,
+      name: 'incomplete-draft',
+      origin: 'draft',
+      errors: [
+        {
+          code: 'missingSkillDocument',
+          path: 'SKILL.md',
+          message: 'Skill package must contain SKILL.md at its root.'
+        }
+      ],
+      warnings: []
+    })
+    await expect(service.publish({ name: 'incomplete-draft' })).rejects.toThrow(
+      'Skill package must contain SKILL.md at its root.'
+    )
+  })
+  it('enforces the documented trigger and output evaluation structures', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'valid-evals',
+      path: 'SKILL.md',
+      content: '---\nname: valid-evals\ndescription: Validate evals.\n---\nBody.\n'
+    })
+    await service.edit({
+      name: 'valid-evals',
+      path: 'trigger-evals.json',
+      content: JSON.stringify({
+        schema_version: 1,
+        kind: 'trigger',
+        cases: [{ id: 'create', query: 'Create a Skill.', should_trigger: true }]
+      })
+    })
+    await service.edit({
+      name: 'valid-evals',
+      path: 'evals/evals.json',
+      content: JSON.stringify({
+        schema_version: 1,
+        skill_id: 'personal-valid-evals',
+        source_revision: 'revision',
+        evals: [
+          {
+            id: 'create',
+            prompt: 'Create a Skill.',
+            expected_output: 'A Skill package.',
+            files: [],
+            expectations: ['The package is valid.']
+          }
+        ]
+      })
+    })
+
+    await expect(service.validate({ name: 'valid-evals' })).resolves.toEqual({
+      valid: true,
+      name: 'valid-evals',
+      origin: 'draft',
+      errors: [],
+      warnings: []
+    })
+  })
+  it('lists drafts and installed Skills without exposing host paths', async () => {
+    const { service } = await makeFixture()
+    await service.edit({
+      name: 'new-skill',
+      path: 'SKILL.md',
+      content: '---\nname: new-skill\ndescription: New skill.\n---\nBody.\n'
+    })
+
+    const result = await service.list()
+    expect(result).toEqual([
+      {
+        id: 'literature-review',
+        name: 'literature-review',
+        displayName: 'Literature Review',
+        description: 'Review literature.',
+        origin: 'featured',
+        editable: false
+      },
+      {
+        id: 'draft-new-skill',
+        name: 'new-skill',
+        displayName: 'new-skill',
+        description: 'New skill.',
+        origin: 'draft',
+        editable: true
+      }
+    ])
+    expect(JSON.stringify(result)).not.toContain('/tmp/')
+  })
+  it('rejects path traversal and ambiguous or non-unique replacements', async () => {
+    const { service } = await makeFixture()
+    await expect(service.edit({ name: 'bad', path: '../outside', content: 'x' })).rejects.toThrow(
+      'unsafe path'
+    )
+
+    await service.edit({ name: 'bad', path: 'SKILL.md', content: 'same same' })
+    await expect(
+      service.edit({ name: 'bad', path: 'SKILL.md', oldString: 'same', content: 'new' })
+    ).rejects.toThrow('exactly once')
+
+    await service.edit({ name: 'overlap', path: 'SKILL.md', content: 'aaa' })
+    await expect(
+      service.edit({ name: 'overlap', path: 'SKILL.md', oldString: 'aa', content: 'new' })
+    ).rejects.toThrow('exactly once')
+  })
+  it('serializes publish and delete across the complete draft mutation', async () => {
+    const { service, catalog, root } = await makeFixture()
+    const second = new SkillAuthoringService({ storageRoot: root, catalog })
+    await service.edit({
+      name: 'concurrent',
+      path: 'SKILL.md',
+      content: '---\nname: concurrent\ndescription: Concurrent draft.\n---\nBody.\n'
+    })
+
+    const publishDirectory = catalog.publishPersonalDirectory
+    let releasePublish!: () => void
+    let publishStarted!: () => void
+    const publishGate = new Promise<void>((resolve) => {
+      releasePublish = resolve
+    })
+    const started = new Promise<void>((resolve) => {
+      publishStarted = resolve
+    })
+    catalog.publishPersonalDirectory = async (...args) => {
+      publishStarted()
+      await publishGate
+      return publishDirectory(...args)
+    }
+
+    const publishing = service.publish({ name: 'concurrent' })
+    await started
+    let deleteSettled = false
+    const deleting = second.delete('draft-concurrent')
+    void deleting.then(
+      () => {
+        deleteSettled = true
+      },
+      () => {
+        deleteSettled = true
+      }
+    )
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    const deleteWaitedForPublish = !deleteSettled
+    releasePublish()
+    const results = await Promise.allSettled([publishing, deleting])
+
+    expect(deleteWaitedForPublish).toBe(true)
+    expect(results[0]).toMatchObject({ status: 'fulfilled' })
+    expect(results[1]).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: expect.stringContaining('Unknown draft') })
+    })
+  })
+  it('rejects extra SKILL.md frontmatter fields before publish', async () => {
+    const { service, userSkills } = await makeFixture()
+    await service.edit({
+      name: 'extra-metadata',
+      path: 'SKILL.md',
+      content:
+        '---\nname: extra-metadata\ndescription: Invalid extra metadata.\nlicense: MIT\n---\nBody.\n'
+    })
+
+    await expect(service.publish({ name: 'extra-metadata' })).rejects.toThrow(
+      'frontmatter may only contain name, displayName, and description'
+    )
+    expect(await userSkills.list()).toHaveLength(0)
+  })
+  it('edits a draft by the stable id returned from list', async () => {
+    const { service, userSkills } = await makeFixture()
+    await userSkills.createPersonal({
+      name: 'editable',
+      description: 'Edit me.',
+      body: 'Published body.'
+    })
+    await service.edit({
+      name: 'personal-editable',
+      path: 'SKILL.md',
+      oldString: 'Published body.',
+      content: 'Draft body.'
+    })
+    const drafts = (await service.list()) as Array<{
+      id: string
+      origin: string
+    }>
+    const draftId = drafts.find(({ origin }) => origin === 'draft')!.id
+
+    await service.edit({
+      name: draftId,
+      path: 'SKILL.md',
+      oldString: 'Draft body.',
+      content: 'Second draft.'
+    })
+
+    await expect(service.read({ name: 'draft-editable' })).resolves.toMatchObject({
+      content: expect.stringContaining('Second draft.')
+    })
+  })
+  it('allows a new Skill name to start with the draft prefix', async () => {
+    const { service } = await makeFixture()
+
+    await expect(
+      service.edit({
+        name: 'draft-review',
+        path: 'SKILL.md',
+        content: '---\nname: draft-review\ndescription: Review drafts.\n---\nBody.\n'
+      })
+    ).resolves.toMatchObject({ status: 'edited', name: 'draft-review' })
+    await expect(service.list()).resolves.toContainEqual(
+      expect.objectContaining({ id: 'draft-draft-review', name: 'draft-review' })
+    )
+  })
+  it('resolves an exact published stable id before a colliding immutable name', async () => {
+    const { service, userSkills } = await makeFixture()
+    await userSkills.createPersonal({ name: 'foo', description: 'Exact id.', body: 'Exact body.' })
+    await userSkills.createPersonal({
+      name: 'personal-foo',
+      description: 'Colliding name.',
+      body: 'Collision body.'
+    })
+
+    await expect(service.read({ name: 'personal-foo' })).resolves.toMatchObject({
+      name: 'foo',
+      content: expect.stringContaining('Exact body.')
+    })
+  })
+  it('rejects reserved Skill names before creating a draft', async () => {
+    const { service } = await makeFixture()
+
+    for (const name of ['os-review', 'mcp-review']) {
+      await expect(
+        service.edit({
+          name,
+          path: 'SKILL.md',
+          content: `---\nname: ${name}\ndescription: Reserved.\n---\nBody.\n`
+        })
+      ).rejects.toThrow('os- or mcp-')
+    }
+    await expect(service.list()).resolves.toHaveLength(1)
+  })
+})
+
+it('reports committed publication if draft cleanup fails without rolling back installed files', async () => {
+  const { service, root, userSkills } = await makeFixture()
+  await service.edit({
+    name: 'committed',
+    path: 'SKILL.md',
+    content: '---\nname: committed\ndescription: Test skill.\n---\nInstructions.'
+  })
+  cleanupFailure.path = join(root, 'skills', 'drafts', 'committed')
+  await expect(service.publish({ name: 'committed' })).rejects.toThrow(/was published.*failed/)
+  expect(await userSkills.list()).toContainEqual(
+    expect.objectContaining({ id: 'personal-committed' })
+  )
+  expect(await service.read({ name: 'personal-committed' })).toMatchObject({ origin: 'personal' })
+})
+
+it('rejects an unqualified delete when a published display name matches a draft name', async () => {
+  const { service, catalog, root } = await makeFixture()
+  await service.edit({
+    name: 'shared-name',
+    path: 'SKILL.md',
+    content: '---\nname: shared-name\ndescription: Draft.\n---\nDraft body.\n'
+  })
+  const listPublished = catalog.list
+  catalog.list = async () => [
+    ...(await listPublished()),
+    {
+      id: 'custom-package-id',
+      name: 'shared-name',
+      displayName: 'Shared name',
+      description: 'Published alias.',
+      source: 'imported',
+      updatedAt: '2026-08-09',
+      sourceDir: root
+    }
+  ]
+
+  await expect(service.resolveDeletion('shared-name')).rejects.toThrow('ambiguous')
+})
+
+it('requires exact replacement for existing draft files and publishes their final bytes', async () => {
+  const { service, root } = await makeFixture()
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'SKILL.md',
+    content: '---\nname: analysis-helper\ndescription: Analyze data.\n---\nBody.'
+  })
+  await expect(
+    service.edit({ name: 'analysis-helper', path: 'SKILL.md', content: 'replacement' })
+  ).rejects.toThrow('already exists')
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'scripts/run.js',
+    content: 'console.log("v1")\n'
+  })
+  await service.edit({
+    name: 'analysis-helper',
+    path: 'scripts/run.js',
+    oldString: 'v1',
+    content: 'v2'
+  })
+  await expect(service.publish({ name: 'analysis-helper' })).resolves.toEqual({
+    status: 'published',
+    id: 'personal-analysis-helper',
+    name: 'analysis-helper',
+    origin: 'personal'
+  })
+  await expect(
+    service.read({ name: 'personal-analysis-helper', path: 'scripts/run.js' })
+  ).resolves.toMatchObject({ content: 'console.log("v2")\n', origin: 'personal' })
+  await expect(
+    readFile(join(root, 'skills', 'drafts', 'analysis-helper', 'SKILL.md'))
+  ).rejects.toMatchObject({ code: 'ENOENT' })
+})

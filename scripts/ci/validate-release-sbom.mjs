@@ -127,7 +127,7 @@ export async function main(argv = process.argv.slice(2)) {
   })
   await writeFile(options.output, `${JSON.stringify(result, null, 2)}\n`)
   process.stdout.write(`${formatCoverageMarkdown(result)}\n`)
-  return 0
+  return result.complete ? 0 : 1
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === resolve(process.argv[1])) {

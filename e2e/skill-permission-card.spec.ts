@@ -3,6 +3,8 @@ import { mkdir } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import type { Page } from 'playwright'
 import { test } from './fixtures/electron-app'
+import { createProjectViaUi } from './fixtures/project'
+import { activatePermissionDecisionViaDom } from './fixtures/conversation'
 
 const PROJECT_NAME = 'Skill permission project'
 const SKILL_PERMISSION_PROMPT = 'Request fixture skill permission.'
@@ -22,10 +24,7 @@ const SKILL_BODY = [
 const SCREENSHOT_ROOT = resolve(process.cwd(), 'test-results')
 
 const createProject = async (page: Page): Promise<void> => {
-  await page.getByRole('button', { name: 'New project' }).click()
-  const dialog = page.getByRole('dialog', { name: 'New project' })
-  await dialog.getByLabel('Name').fill(PROJECT_NAME)
-  await dialog.getByRole('button', { name: 'Create project' }).click()
+  await createProjectViaUi(page, PROJECT_NAME)
   await expect(page.getByRole('heading', { name: 'New conversation' })).toBeVisible()
 }
 
@@ -45,18 +44,6 @@ const seedFixtureSkill = async (page: Page): Promise<void> => {
   )
   await page.reload({ waitUntil: 'domcontentloaded' })
   await page.getByText('Loading settings...').waitFor({ state: 'hidden', timeout: 60_000 })
-}
-
-const clickPermissionDecision = async (page: Page, decision: 'allow' | 'deny'): Promise<void> => {
-  const button = page
-    .getByTestId('permission-actions')
-    .getByTestId(decision === 'allow' ? 'allow-primary' : 'deny-button')
-  await expect(button).toBeEnabled()
-  // Same rationale as workspace-conversation.spec.ts: activate through the DOM click handler so an
-  // overlay can never swallow the pointer click.
-  await button.evaluate((element: HTMLButtonElement) => {
-    element.click()
-  })
 }
 
 const sendSkillPermissionPrompt = async (page: Page): Promise<void> => {
@@ -93,7 +80,7 @@ test('renders the SKILL.md document in the skill load permission card', async ({
   await card.screenshot({ path: join(SCREENSHOT_ROOT, 'skill-permission-card-collapsed.png') })
 
   // The approval flow still completes through the new section, on the Deny path too.
-  await clickPermissionDecision(page, 'deny')
+  await activatePermissionDecisionViaDom(page, 'deny')
   await expect(page.getByText('Fixture skill permission denied.', { exact: true })).toBeVisible()
 
   // Regression guard: a repeated load_skill approval must keep the skill document section rather
@@ -107,6 +94,6 @@ test('renders the SKILL.md document in the skill load permission card', async ({
   ).toBeVisible()
   await expect(page.getByTestId('permission-code-toggle')).toHaveCount(0)
 
-  await clickPermissionDecision(page, 'allow')
+  await activatePermissionDecisionViaDom(page, 'allow')
   await expect(page.getByText('Fixture skill permission allowed.', { exact: true })).toBeVisible()
 })

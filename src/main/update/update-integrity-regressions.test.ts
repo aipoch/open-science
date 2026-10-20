@@ -7,7 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ElectronUpdaterStrategy } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import { downloadInstaller } from './downloader'
-import { resilientDownload } from '../net/resilient-download'
+import { resilientDownload } from '@aipoch/resilient-download'
 vi.mock('electron', () => ({
   app: { getVersion: () => '1.0.0' },
   BrowserWindow: {},
@@ -90,23 +90,27 @@ async function manual(renameImpl?: (a: string, b: string) => Promise<void>): Pro
   const root = await mkdtemp(join(tmpdir(), 'update-audit-probe-'))
   roots.push(root)
   const target = join(root, 'installer.dmg')
-  vi.mocked(downloadInstaller).mockImplementation(async (d, path, deps = {}) =>
-    resilientDownload(d.url, path, {
+  vi.mocked(downloadInstaller).mockImplementation(async (d, path, deps = {}) => {
+    if (renameImpl) {
+      // The host must reject a late completion even when publication wins a cancellation race.
+      // Real downloader rename/stream ordering is covered by the package tests.
+      await writeFile(path + '.part', body)
+      await renameImpl(path + '.part', path)
+      return path
+    }
+    return resilientDownload(d.url, path, {
       expectedSha256: d.sha256,
       expectedSize: d.size,
       expectedOrigin: 'https://cdn.example',
       signal: deps.signal,
       onProgress: deps.onProgress,
-      deps: {
-        renameImpl,
-        fetchImpl: async () => {
-          const response = new Response(body)
-          Object.defineProperty(response, 'url', { value: download.url })
-          return response
-        }
+      fetchImpl: async () => {
+        const response = new Response(body)
+        Object.defineProperty(response, 'url', { value: download.url })
+        return response
       }
     })
-  )
+  })
   const openPath = vi.fn(async () => '')
   const service = new UpdateService({
     platform: 'darwin',

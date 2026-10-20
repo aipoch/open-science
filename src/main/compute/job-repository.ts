@@ -1,22 +1,32 @@
-import type { ComputeJob as PrismaComputeJob, PrismaClient } from '@prisma/client'
+import type {
+  ComputeJobIntegrityIssue,
+  ComputeJobOwner,
+  ComputeJobRemoteCleanupDisposition,
+  ComputeJobSessionOwner,
+  ComputeJobStatus
+} from '@aipoch/compute'
+import type { PrismaClient, ComputeJob as PrismaComputeJob } from '@prisma/client'
 import type {
   ComputeJob,
   ComputeJobAnalysisState,
-  ComputeJobAnalysisTransition,
-  ComputeJobIntegrityIssue,
-  ComputeJobRemoteCleanupDisposition,
-  ComputeJobStatus
+  ComputeJobAnalysisTransition
 } from '../../shared/compute'
-import { classifyComputeJobIntegrity, isKnownComputeJobStatus } from './compute-job-integrity'
+
 import {
-  OptionalSecureStorageStringProtection,
-  type ProtectedJsonContainer
-} from './credential-vault'
+  classifyComputeJobIntegrity,
+  isKnownComputeJobStatus,
+  createCleanupStopEvidence,
+  hasCleanupStopEvidence
+} from '@aipoch/compute/node'
 import {
   hasImmutableExecutionFileEvidenceReference,
   parseOwnedExecutionFileEvidenceSummary,
   type ExecutionFileEvidenceSummary
 } from '../../shared/execution-file-evidence'
+import {
+  OptionalSecureStorageStringProtection,
+  type ProtectedJsonContainer
+} from './credential-vault'
 
 // Only ComputeJob persistence and a transaction wrapper are needed.
 type ComputeJobClient = Pick<PrismaClient, '$transaction' | 'computeJob'>
@@ -28,16 +38,6 @@ type ComputeJobFieldProtection = Pick<
   OptionalSecureStorageStringProtection,
   'isAvailable' | 'protect' | 'protectJson' | 'reveal' | 'revealJson'
 >
-
-export type ComputeJobOwner = Readonly<{
-  projectId: string
-  sessionId?: string
-}>
-
-export type ComputeJobSessionOwner = Readonly<{
-  projectId: string
-  sessionId: string
-}>
 
 export class UnencryptedComputeJobPersistenceApprovalRequiredError extends Error {
   constructor() {
@@ -76,7 +76,7 @@ export type CreateJobRequest = {
   id: string
   providerId: string
   shape: string
-  executionMode?: import('../../shared/compute').ComputeExecutionMode
+  executionMode?: import('@aipoch/compute').ComputeExecutionMode
   sessionId: string
   projectId: string
   intent: string
@@ -95,29 +95,7 @@ export type CreateJobRequest = {
   allowUnencryptedPersistence?: boolean
 }
 
-export type UpdateJobRequest = {
-  status?: ComputeJobStatus
-  remoteHandle?: string
-  remoteWorkdir?: string
-  exitCode?: number | null
-  stdoutTail?: string | null
-  stderrTail?: string | null
-  errorCode?: string | null
-  // lastPollError is set when SSH connectivity fails during polling (not a job failure).
-  lastPollError?: string | null
-  // retryAfterUserAction is an in-memory hint; always true for poll connectivity errors.
-  // It is NOT persisted to the DB but is carried in the update call so callers can surface
-  // the retry_after_user_action semantic without a separate DB column.
-  retryAfterUserAction?: boolean
-  submittedAt?: Date
-  startedAt?: Date
-  finishedAt?: Date
-  // Phase 3b harvest fields (compute-harvest issue 01).
-  harvestedAt?: Date
-  harvestError?: string | null
-  leftOnRemote?: string | null
-  notifiedAt?: Date | null
-  notificationConsumedAt?: Date | null
+export type UpdateJobRequest = import('@aipoch/compute').UpdateJobRequest & {
   fileEvidence?: ExecutionFileEvidenceSummary
 }
 
@@ -365,7 +343,7 @@ export class ComputeJobRepository {
           const row = await transaction.computeJob.update({
             where: { id: jobId },
             data: this.toUpdateData(
-              { ...updates, fileEvidence },
+              this.preserveCleanupStopEvidence(current, { ...updates, fileEvidence }),
               current?.sensitiveDataEncrypted === true
             ),
             include: { operations: { where: { kind: 'cancel' } } }
@@ -374,14 +352,21 @@ export class ComputeJobRepository {
         })
       })
     }
-    const client = await this.getClient()
-    const current = await client.computeJob.findUnique({ where: { id: jobId } })
-    const row = await client.computeJob.update({
-      where: { id: jobId },
-      data: this.toUpdateData(updates, current?.sensitiveDataEncrypted === true),
-      include: { operations: { where: { kind: 'cancel' } } }
+    return this.runMutation(async () => {
+      const client = await this.getClient()
+      return client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: jobId } })
+        const row = await transaction.computeJob.update({
+          where: { id: jobId },
+          data: this.toUpdateData(
+            this.preserveCleanupStopEvidence(current, updates),
+            current?.sensitiveDataEncrypted === true
+          ),
+          include: { operations: { where: { kind: 'cancel' } } }
+        })
+        return this.toJob(row)
+      })
     })
-    return this.toJob(row)
   }
 
   // Atomically claims the right to emit a notification. Stale callers may all hold a projection
@@ -423,7 +408,10 @@ export class ComputeJobRepository {
             status: { in: [...expectedStatuses] },
             operations: { none: { kind: 'cancel' } }
           },
-          data: this.toUpdateData(updates, current.sensitiveDataEncrypted === true)
+          data: this.toUpdateData(
+            this.preserveCleanupStopEvidence(current, updates),
+            current.sensitiveDataEncrypted === true
+          )
         })
         if (applied.count === 0) return null
 
@@ -434,6 +422,117 @@ export class ComputeJobRepository {
         return row ? this.toJob(row) : null
       })
     })
+  }
+
+  // Evidence-only handoff remains writable while deletion waits for dispatch to drain.
+  // It does not grant the dispatcher ownership of status, cancellation, or deleted rows.
+  async recordDispatchNoLaunch(expectedJob: ComputeJob): Promise<void> {
+    if (expectedJob.status !== 'submitted' || expectedJob.remote_handle) return
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({
+          where: { id: expectedJob.job_id }
+        })
+        if (!current) return
+        const projected = this.toJob(current)
+        if (
+          projected.project_id !== expectedJob.project_id ||
+          projected.session_id !== expectedJob.session_id ||
+          projected.provider_id !== expectedJob.provider_id ||
+          projected.created_at !== expectedJob.created_at ||
+          projected.command_hash !== expectedJob.command_hash ||
+          projected.execution_mode !== expectedJob.execution_mode ||
+          projected.remote_workdir !== expectedJob.remote_workdir ||
+          projected.last_poll_error !== expectedJob.last_poll_error
+        )
+          return
+        await transaction.computeJob.updateMany({
+          where: {
+            id: expectedJob.job_id,
+            projectId: current.projectId,
+            sessionId: current.sessionId,
+            providerId: current.providerId,
+            createdAt: current.createdAt,
+            commandHash: current.commandHash,
+            executionMode: current.executionMode,
+            remoteWorkdir: current.remoteWorkdir,
+            status: 'submitted',
+            remoteHandle: null,
+            lastPollError: current.lastPollError,
+            operations: { none: { kind: 'cancel', phase: 'settled' } }
+          },
+          data: this.toUpdateData(
+            { lastPollError: 'dispatch_definitely_not_started' },
+            current.sensitiveDataEncrypted === true
+          )
+        })
+      })
+    })
+  }
+
+  // Stop proof is written before any destructive cleanup. It is allowed under an owner fence,
+  // unlike normal execution transitions, but only for the exact snapshot that was stopped.
+  async recordRemoteCleanupStopped(job: ComputeJob, workdir: string): Promise<void> {
+    await this.runMutation(async () => {
+      const client = await this.getClient()
+      await client.$transaction(async (transaction) => {
+        const current = await transaction.computeJob.findUnique({ where: { id: job.job_id } })
+        if (!current) throw new Error('Compute cleanup snapshot no longer exists.')
+        const projected = this.toJob(current)
+        const evidence = createCleanupStopEvidence(job, workdir)
+        if (
+          createCleanupStopEvidence(projected, workdir) !== evidence ||
+          projected.status !== job.status ||
+          projected.last_poll_error !== job.last_poll_error
+        ) {
+          throw new Error('Compute cleanup snapshot changed before stop evidence persisted.')
+        }
+        const applied = await transaction.computeJob.updateMany({
+          where: {
+            id: current.id,
+            providerId: current.providerId,
+            projectId: current.projectId,
+            sessionId: current.sessionId,
+            status: current.status,
+            remoteHandle: current.remoteHandle,
+            remoteWorkdir: current.remoteWorkdir,
+            lastPollError: current.lastPollError
+          },
+          data: this.toUpdateData(
+            { lastPollError: evidence },
+            current.sensitiveDataEncrypted === true
+          )
+        })
+        if (applied.count !== 1) throw new Error('Compute cleanup stop evidence was not persisted.')
+      })
+    })
+  }
+
+  private preserveCleanupStopEvidence(
+    current: PrismaComputeJob | null,
+    updates: UpdateJobRequest
+  ): UpdateJobRequest {
+    if (!current || updates.lastPollError === undefined) return updates
+    const job = this.toJob(current)
+    if (
+      current.lastPollError !== null &&
+      job.integrity_issues?.some((issue) => issue.code === 'sensitive-fields-unavailable')
+    ) {
+      // A degraded read projection is not proof that durable stop evidence is absent. Fail the
+      // transaction before a null update can destroy ciphertext while the keyring is locked.
+      throw new Error(
+        'Compute Job cleanup evidence is unreadable; refusing to overwrite encrypted diagnostics.'
+      )
+    }
+    if (!hasCleanupStopEvidence(job)) return updates
+    // A new handle or workdir denotes a different execution and invalidates old proof.
+    if (
+      (updates.remoteHandle !== undefined && updates.remoteHandle !== job.remote_handle) ||
+      (updates.remoteWorkdir !== undefined && updates.remoteWorkdir !== job.remote_workdir)
+    )
+      return updates
+    return { ...updates, lastPollError: job.last_poll_error }
   }
 
   // A launch response may arrive after cancellation fenced ordinary lifecycle transitions.

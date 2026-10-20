@@ -1,3 +1,4 @@
+import { useDesktopRuntimeRecoveryStore } from '@/stores/desktop-runtime-recovery-store'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 
 import type { OpenSessionFromNotificationRequest } from '../../../shared/notifications'
@@ -14,6 +15,7 @@ import { useLifecycleSync } from '@/hooks/useLifecycleSync'
 import { useUnreadTaskViewSync } from '@/hooks/useUnreadTaskViewSync'
 import { useWebEventConnection } from '@/hooks/useWebEventConnection'
 import { useWindowFindAppearanceSync } from '@/hooks/useWindowFindAppearanceSync'
+import { useWindowsTitleBarCommands } from '@/components/windows-titlebar-context'
 import type { StartupView } from '@/pages/onboarding/startup-gate'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
@@ -35,9 +37,10 @@ const PENDING_NOTIFICATION_HANDLER_RETRY_MS = 100
 
 const isPendingNotificationCommandUnavailable = (error: unknown): boolean =>
   error instanceof Error &&
-  /(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
+  (/(?:No handler registered for|Unknown application command:|Unknown Web RPC channel:).*notifications:(?:peek|take)-pending-open-session/i.test(
     error.message
-  )
+  ) ||
+    error.message.endsWith('Desktop is recovering. This operation was not submitted.'))
 
 type ApplicationEventBindingsInput = Readonly<{
   startupView: StartupView | undefined
@@ -49,6 +52,7 @@ type ApplicationEventBindingsInput = Readonly<{
   hasDataRootRecovery: boolean
   hasLegacyDataMove: boolean
   closeActiveSettingsPane: () => void
+  requestSettingsLeave: (leave: () => void) => void
 }>
 
 type ApplicationEventProjection = Readonly<{
@@ -67,6 +71,7 @@ type ApplicationEventProjection = Readonly<{
   globalSearch: Readonly<{
     open: () => void
     setOpen: (open: boolean) => void
+    openRecovery: () => void
   }>
   closeConfirmation: Readonly<{
     setOpen: (open: boolean) => void
@@ -85,30 +90,38 @@ const useApplicationEventBindings = ({
   sessionPersistence,
   hasDataRootRecovery,
   hasLegacyDataMove,
-  closeActiveSettingsPane
+  closeActiveSettingsPane,
+  requestSettingsLeave
 }: ApplicationEventBindingsInput): ApplicationEventProjection => {
   const view = useNavigationStore((state) => state.view)
   const isSettingsOpen = useSettingsStore((state) => state.isSettingsOpen)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const openSettingsToPanel = useSettingsStore((state) => state.openSettingsToPanel)
   const closeSettings = useSettingsStore((state) => state.closeSettings)
-  const hasConnectorApproval = useSettingsStore((state) => state.pendingApprovals.length > 0)
+  const hasConnectorApproval = useSettingsStore((state) =>
+    state.pendingApprovals.some((request) => !request.closed)
+  )
   const enqueueConnectorApproval = useSettingsStore((state) => state.enqueueApproval)
   const dismissConnectorApproval = useSettingsStore((state) => state.dismissApproval)
   const hasSessionlessCredentialRequest = useSettingsStore((state) =>
-    state.pendingCredentialRequests.some((request) => !request.sessionId)
+    state.pendingCredentialRequests.some((request) => !request.sessionId && !request.closed)
   )
   const enqueueCredentialRequest = useSettingsStore((state) => state.enqueueCredentialRequest)
   const dismissCredentialRequest = useSettingsStore((state) => state.dismissCredentialRequest)
   const enqueueComputeApproval = useComputeStore((state) => state.enqueueApproval)
   const dismissComputeApproval = useComputeStore((state) => state.dismissApproval)
-  const hasComputeApproval = useComputeStore((state) => state.pendingApprovals.length > 0)
+  const hasComputeApproval = useComputeStore((state) =>
+    state.pendingApprovals.some((request) => !request.closed)
+  )
   const enqueueSkillImport = useSkillImportStore((state) => state.enqueue)
   const dismissSkillImport = useSkillImportStore((state) => state.dismiss)
-  const hasSkillImportApproval = useSkillImportStore((state) => state.pending.length > 0)
+  const hasSkillImportApproval = useSkillImportStore((state) =>
+    state.pending.some((request) => !state.closedIds.includes(request.id))
+  )
   const applyJobUpdate = useSessionJobStore((state) => state.applyUpdate)
   const hydrateNonTerminalJobs = useSessionJobStore((state) => state.hydrateNonTerminal)
   const isUpdateDialogOpen = useUpdateStore((state) => state.isDialogOpen)
+  const isApplyingUpdate = useUpdateStore((state) => state.status.state === 'applying')
   const isFilePreviewOpen = usePreviewWorkbenchStore((state) => state.fileDialogItem !== undefined)
   const isExpandedPreviewOpen = usePreviewWorkbenchStore(
     (state) => state.panelState === 'open' && state.expandedToolItemId === state.activeItemId
@@ -129,8 +142,15 @@ const useApplicationEventBindings = ({
     generation: 0,
     userNavigationRevision: useNavigationStore.getState().userNavigationRevision
   })
+  const desktopRecoveryPhase = useDesktopRuntimeRecoveryStore((state) => state.phase)
+  const desktopClosing = useDesktopRuntimeRecoveryStore((state) => state.closing)
+  const plannedUpdateShutdown = desktopClosing && isApplyingUpdate
   const lifecycle = useLifecycleSync({
-    isSessionPersistenceHydrated: sessionPersistence.isHydrated
+    // Keep incoming changes queued while a catalog reload can still replace the store snapshot.
+    isSessionPersistenceHydrated:
+      sessionPersistence.isHydrated &&
+      !sessionPersistence.isLoading &&
+      desktopRecoveryPhase === 'connected'
   })
   useWindowFindAppearanceSync()
 
@@ -147,7 +167,9 @@ const useApplicationEventBindings = ({
         view,
         presentations: {
           closeConfirmation: isCloseConfirmOpen,
-          webEventRecovery: webEventConnectionPhase !== 'live',
+          webEventRecovery:
+            webEventConnectionPhase !== 'live' ||
+            (desktopRecoveryPhase !== 'connected' && !plannedUpdateShutdown),
           dataRootRecovery: hasDataRootRecovery,
           legacyDataMove: hasLegacyDataMove,
           update: isUpdateDialogOpen,
@@ -176,6 +198,8 @@ const useApplicationEventBindings = ({
       sessionPersistence.isLoading,
       startupView,
       webEventConnectionPhase,
+      desktopRecoveryPhase,
+      plannedUpdateShutdown,
       view
     ]
   )
@@ -215,6 +239,19 @@ const useApplicationEventBindings = ({
     if (presentation.allowsShortcut('globalSearch')) setIsGlobalSearchOpen(true)
   }, [presentation])
   const setGlobalSearchOpen = useCallback((open: boolean): void => setIsGlobalSearchOpen(open), [])
+  const openTitleBarSettings = useCallback((): void => {
+    if (presentation.allowsShortcut('settings')) openSettings()
+  }, [presentation, openSettings])
+  useWindowsTitleBarCommands({
+    settingsEnabled: presentation.allowsShortcut('settings'),
+    searchEnabled: presentation.allowsShortcut('globalSearch'),
+    openSettings: openTitleBarSettings,
+    openSearch: openGlobalSearch
+  })
+  const openSearchRecovery = useCallback((): void => {
+    setIsGlobalSearchOpen(false)
+    openSettingsToPanel('archived')
+  }, [openSettingsToPanel])
   const setCloseConfirmationOpen = useCallback(
     (open: boolean): void => setIsCloseConfirmOpen(open),
     []
@@ -225,16 +262,20 @@ const useApplicationEventBindings = ({
         .getState()
         .sessions.some((session) => session.id === sessionId)
       if (!sessionExists) return
-      let completed = false
-      const completeOpen = (): void => {
-        if (completed) return
-        completed = true
-        closeSettings()
-      }
-      const opened = useNavigationStore.getState().openSessionById(sessionId, 'user', completeOpen)
-      if (opened) completeOpen()
+      requestSettingsLeave(() => {
+        let completed = false
+        const completeOpen = (): void => {
+          if (completed) return
+          completed = true
+          closeSettings()
+        }
+        const opened = useNavigationStore
+          .getState()
+          .openSessionById(sessionId, 'user', completeOpen)
+        if (opened) completeOpen()
+      })
     },
-    [closeSettings]
+    [closeSettings, requestSettingsLeave]
   )
 
   useEffect(() => {
@@ -341,18 +382,56 @@ const useApplicationEventBindings = ({
 
   const openPendingNotificationSession = useCallback(
     (intent: NotificationOpenIntent = notificationOpenIntent.current): Promise<void> => {
+      const retryEpoch = pendingNotificationRetryEpoch.current
       const attempt = async (): Promise<void> => {
+        if (pendingNotificationRetryEpoch.current !== retryEpoch) return
         if (intent.generation !== notificationOpenIntent.current.generation) return
-        const retryEpoch = pendingNotificationRetryEpoch.current
         if (pendingNotificationRetryTimer.current !== undefined) {
           clearTimeout(pendingNotificationRetryTimer.current)
           pendingNotificationRetryTimer.current = undefined
         }
-        let pending: OpenSessionFromNotificationRequest | null
         try {
-          pending = await window.api.notifications.peekPendingOpenSession()
+          const pending = await window.api.notifications.peekPendingOpenSession()
+          if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          if (!pending || intent.generation !== notificationOpenIntent.current.generation) return
+
+          const sessionExists =
+            sessionPersistence.isHydrated &&
+            useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
+          if (!sessionExists && !sessionPersistence.isReady) {
+            if (
+              useNavigationStore.getState().userNavigationRevision === intent.userNavigationRevision
+            ) {
+              const deferred = deferredNotification.current
+              if (!deferred || pending.token > deferred.token)
+                deferredNotification.current = pending
+            } else {
+              await window.api.notifications.takePendingOpenSession(pending.token)
+            }
+            return
+          }
+
+          const consumed = await window.api.notifications.takePendingOpenSession(pending.token)
+          if (pendingNotificationRetryEpoch.current !== retryEpoch) return
+          if (!consumed) return
+          if (deferredNotification.current?.token === consumed.token) {
+            deferredNotification.current = undefined
+          }
+          if (
+            intent.generation !== notificationOpenIntent.current.generation ||
+            useNavigationStore.getState().userNavigationRevision !== intent.userNavigationRevision
+          ) {
+            return
+          }
+          if (!sessionExists) {
+            setUnavailableNotificationToken(consumed.token)
+            return
+          }
+          setUnavailableNotificationToken(undefined)
+          useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
         } catch (error) {
-          // The startup window mounts before full IPC adapters are installed (index.ts).
+          // Startup/recovery can reject commands before submission. Retry the same intent;
+          // generation, navigation revision and cleanup still govern whether it can open.
           if (!isPendingNotificationCommandUnavailable(error)) throw error
           if (pendingNotificationRetryEpoch.current !== retryEpoch) return
           pendingNotificationRetryTimer.current = setTimeout(() => {
@@ -363,40 +442,6 @@ const useApplicationEventBindings = ({
           }, PENDING_NOTIFICATION_HANDLER_RETRY_MS)
           return
         }
-        if (!pending || intent.generation !== notificationOpenIntent.current.generation) return
-
-        const sessionExists =
-          sessionPersistence.isHydrated &&
-          useSessionStore.getState().sessions.some((session) => session.id === pending.sessionId)
-        if (!sessionExists && !sessionPersistence.isReady) {
-          if (
-            useNavigationStore.getState().userNavigationRevision === intent.userNavigationRevision
-          ) {
-            const deferred = deferredNotification.current
-            if (!deferred || pending.token > deferred.token) deferredNotification.current = pending
-          } else {
-            await window.api.notifications.takePendingOpenSession(pending.token)
-          }
-          return
-        }
-
-        const consumed = await window.api.notifications.takePendingOpenSession(pending.token)
-        if (!consumed) return
-        if (deferredNotification.current?.token === consumed.token) {
-          deferredNotification.current = undefined
-        }
-        if (
-          intent.generation !== notificationOpenIntent.current.generation ||
-          useNavigationStore.getState().userNavigationRevision !== intent.userNavigationRevision
-        ) {
-          return
-        }
-        if (!sessionExists) {
-          setUnavailableNotificationToken(consumed.token)
-          return
-        }
-        setUnavailableNotificationToken(undefined)
-        useNavigationStore.getState().openSessionById(consumed.sessionId, 'notification')
       }
 
       pendingNotificationOpenQueue.current = pendingNotificationOpenQueue.current.then(
@@ -435,8 +480,6 @@ const useApplicationEventBindings = ({
   )
   useEffect(() => {
     const epoch = ++pendingNotificationRetryEpoch.current
-    openPendingNotificationSessionRef.current = openPendingNotificationSession
-    void openPendingNotificationSession()
     return () => {
       if (pendingNotificationRetryEpoch.current === epoch)
         pendingNotificationRetryEpoch.current += 1
@@ -445,6 +488,10 @@ const useApplicationEventBindings = ({
         pendingNotificationRetryTimer.current = undefined
       }
     }
+  }, [])
+  useEffect(() => {
+    openPendingNotificationSessionRef.current = openPendingNotificationSession
+    void openPendingNotificationSession()
   }, [openPendingNotificationSession])
 
   useEffect(() => {
@@ -486,7 +533,11 @@ const useApplicationEventBindings = ({
     },
     allowsArchiveUndoShortcut,
     navigation: { view },
-    globalSearch: { open: openGlobalSearch, setOpen: setGlobalSearchOpen },
+    globalSearch: {
+      open: openGlobalSearch,
+      setOpen: setGlobalSearchOpen,
+      openRecovery: openSearchRecovery
+    },
     closeConfirmation: { setOpen: setCloseConfirmationOpen },
     settings: {
       close: closeSettings,

@@ -1,7 +1,7 @@
 import type {
   SpecialistPackageSkillConflictResolution,
   SpecialistPackageSkillPreview
-} from '../../../../shared/specialist-package'
+} from '@aipoch/specialists'
 
 export type SkillConflictResolutionMap = Record<
   string,

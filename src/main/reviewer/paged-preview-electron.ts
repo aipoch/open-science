@@ -7,41 +7,19 @@ import {
   OFFICE_PREVIEW_RUNTIME_ORIGIN
 } from '../office-preview/office-preview-runtime-protocol'
 import { renderPdfPagePreviews } from '../uploads/attachment-media'
-import { createReviewerPagedContentResolver } from './paged-preview-resolver'
+import {
+  createReviewerPagedContentResolver,
+  renderReviewerOfficePreview,
+  type ReviewerOfficeRenderRequest,
+  type ReviewerPagedPreviewDependencies
+} from './paged-preview-resolver'
 import type { ReviewerPagedContentResolver } from './host-sdk'
 
 export const createReviewerElectronPagedContentResolver = (
   previewResources: Pick<ManagedPreviewResources, 'acquireResolvedFile' | 'release'>
 ): ReviewerPagedContentResolver =>
   createReviewerPagedContentResolver({
-    createWindow: () => {
-      const previewWindow = new BrowserWindow({
-        show: false,
-        width: 1_024,
-        height: 1_280,
-        webPreferences: {
-          contextIsolation: true,
-          nodeIntegration: false,
-          sandbox: true,
-          backgroundThrottling: false,
-          partition: 'reviewer-paged-preview'
-        }
-      })
-      previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-      previewWindow.webContents.on('will-navigate', (event, url) => {
-        const target = new URL(url)
-        const runtime = new URL(OFFICE_PREVIEW_RUNTIME_ORIGIN)
-        if (target.protocol !== runtime.protocol || target.hostname !== runtime.hostname) {
-          event.preventDefault()
-        }
-      })
-      previewWindow.webContents.session.setPermissionRequestHandler(
-        (_contents, _permission, callback) => callback(false)
-      )
-      return previewWindow
-    },
-    createSessionId: randomUUID,
-    createRuntimeUrl: createReviewerPagedPreviewRuntimeUrl,
+    ...reviewerWindowDependencies(),
     acquireResource: (
       ownerId,
       resolvedPath,
@@ -66,3 +44,50 @@ export const createReviewerElectronPagedContentResolver = (
     renderPdfPages: renderPdfPagePreviews,
     getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app)
   })
+
+const reviewerWindowDependencies = (): Pick<
+  ReviewerPagedPreviewDependencies,
+  'createWindow' | 'createSessionId' | 'createRuntimeUrl' | 'getProcessMemoryUsageBytes'
+> => ({
+  createWindow: () => {
+    const previewWindow = new BrowserWindow({
+      show: false,
+      width: 1_024,
+      height: 1_280,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+        sandbox: true,
+        backgroundThrottling: false,
+        partition: 'reviewer-paged-preview'
+      }
+    })
+    previewWindow.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
+    previewWindow.webContents.on('will-navigate', (event, url) => {
+      const target = new URL(url)
+      const runtime = new URL(OFFICE_PREVIEW_RUNTIME_ORIGIN)
+      if (target.protocol !== runtime.protocol || target.hostname !== runtime.hostname) {
+        event.preventDefault()
+      }
+    })
+    previewWindow.webContents.session.setPermissionRequestHandler(
+      (_contents, _permission, callback) => callback(false)
+    )
+    return previewWindow
+  },
+  createSessionId: randomUUID,
+  createRuntimeUrl: createReviewerPagedPreviewRuntimeUrl,
+  getProcessMemoryUsageBytes: createOfficePreviewProcessMemoryReader(app)
+})
+
+export function renderReviewerDesktopResource(
+  request: ReviewerOfficeRenderRequest & {
+    resource: import('../../shared/preview-resources').ManagedPreviewResource
+  }
+): ReturnType<ReviewerPagedContentResolver> {
+  return renderReviewerOfficePreview(
+    reviewerWindowDependencies(),
+    request,
+    async () => request.resource
+  )
+}

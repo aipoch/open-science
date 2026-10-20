@@ -26,6 +26,11 @@ describe('Office preview runtime protocol', () => {
     expect(runtimeUrl.protocol).toBe('open-science-office-preview:')
     expect(runtimeUrl.hostname).toBe('runtime')
     expect(runtimeUrl.pathname).toBe('/office-preview.html')
+    expect(
+      new URL(runtimeProtocol.createOfficePreviewRuntimeUrl('session-2', 'xlsx')).searchParams.get(
+        'extension'
+      )
+    ).toBe('xlsx')
     expect(runtimeUrl.searchParams.get('sessionId')).toBe('session / 1')
     const reviewerUrl = new URL(
       runtimeProtocol.createReviewerPagedPreviewRuntimeUrl('review-session')

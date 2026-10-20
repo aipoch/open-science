@@ -1,3 +1,4 @@
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -9,7 +10,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
   const root = await mkdtemp(join(tmpdir(), 'smart-migration-'))
   const client = createProjectDbClient(root)
   try {
-    await migrateApplicationDatabase(client)
+    await createDatabaseAtReleasedManifest(client)
     await client.literatureItem.create({
       data: { id: 'paper', itemType: 'journalArticle', title: 'Existing paper' }
     })
@@ -34,7 +35,7 @@ it('adds empty smart storage while preserving ordinary collections, membership a
     ])
       await client.$executeRawUnsafe(`DROP TABLE "${table}"`)
     await client.$executeRawUnsafe(
-      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_artifact_hidden')"
+      "DELETE FROM \"_open_science_migrations\" WHERE id IN ('0044_literature_smart_collections', '0045_literature_smart_pause_run', '0046_journal_attributes', '0047_session_replay', '0048_pdf_annotation_sharing')"
     )
     await client.sessionAuxiliaryTurnUsage.create({
       data: {
@@ -51,7 +52,16 @@ it('adds empty smart storage while preserving ordinary collections, membership a
       }
     })
     expect(await migrateApplicationDatabase(client)).toMatchObject({
-      applied: ['0044_literature_smart_collections', '0045_artifact_hidden']
+      applied: [
+        '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation',
+        '0051_artifact_hidden'
+      ]
     })
     expect(await client.literatureCollection.findMany({ include: { items: true } })).toEqual(before)
     expect(await client.literatureSmartCollection.count()).toBe(0)
@@ -161,6 +171,76 @@ it('adds empty smart storage while preserving ordinary collections, membership a
         expect.objectContaining({ name: 'usageIncomplete' })
       ])
     )
+  } finally {
+    await client.$disconnect()
+    await rm(root, { recursive: true, force: true })
+  }
+})
+
+it('leaves pre-0045 automatic pause ownership unknown', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'smart-pause-migration-'))
+  const client = createProjectDbClient(root)
+  try {
+    await createDatabaseAtReleasedManifest(client)
+    await client.literatureCollection.create({
+      data: {
+        id: 'paused',
+        name: 'Paused',
+        nameKey: 'paused',
+        smart: {
+          create: {
+            scopeKind: 'library',
+            autoUpdate: true,
+            automaticPauseReason: 'daily-limit'
+          }
+        }
+      }
+    })
+    await client.literatureSmartRuleRevision.create({
+      data: {
+        collectionId: 'paused',
+        revision: 1,
+        description: '',
+        inclusionCriteria: 'Trials',
+        exclusionCriteria: '',
+        scopeKind: 'library',
+        evidenceMode: 'abstract'
+      }
+    })
+    await client.literatureSmartRun.create({
+      data: {
+        id: 'automatic-run',
+        collectionId: 'paused',
+        kind: 'refresh',
+        state: 'interrupted',
+        ruleRevision: 1,
+        policyKey: 'fixture'
+      }
+    })
+    await client.classificationUsage.create({
+      data: {
+        eventId: 'automatic-usage',
+        collectionId: 'paused',
+        runId: 'automatic-run',
+        scenario: 'literature-automatic',
+        providerId: 'fixture',
+        model: 'fixture',
+        occurredAt: new Date(),
+        status: 'completed',
+        inputTokens: 1n,
+        outputTokens: 1n,
+        usageIncomplete: false
+      }
+    })
+    await client.$executeRawUnsafe(
+      `DELETE FROM "_open_science_migrations" WHERE id >= '0045_literature_smart_pause_run'`
+    )
+
+    await migrateApplicationDatabase(client)
+
+    await expect(
+      client.literatureSmartCollection.findUniqueOrThrow({ where: { collectionId: 'paused' } })
+    ).resolves.toMatchObject({ automaticPauseRunId: null })
   } finally {
     await client.$disconnect()
     await rm(root, { recursive: true, force: true })

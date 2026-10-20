@@ -32,179 +32,24 @@ This document records reusable UI/UX rules only. It must not include sample proj
 }
 ```
 
-- Use `cssVariables: true`; expose all colors, radii, rings, and sidebar colors through CSS variables.
+- Use `cssVariables: true`; expose all colors, radii, rings, through CSS variables.
 - Use `neutral` as the `baseColor`; the Open-Science deep green should only appear through semantic tokens such as `--primary` and `--ring`.
 - Use the `.dark` class to override shadcn tokens in dark mode. Components must use tokens from this specification only; do not invent new color variable names outside the shadcn and workspace token sets defined here.
-- Prefer shadcn components for new UI: `Button`, `Dialog`, `DropdownMenu`, `Select`, `Tabs`, `Sidebar`, `Input`, `Textarea`, `Card`, `Separator`, `ScrollArea`, and `Tooltip`.
+- Prefer shadcn components for new UI: `Button`, `Dialog`, `DropdownMenu`, `Select`, `Input`, `Textarea`, `Card`, `Separator`, `ScrollArea`, and `Tooltip`.
 
-### Global CSS Skeleton
+### CSS and theme authority
 
-```css
-@import 'tailwindcss';
-@import 'tw-animate-css';
-
-@custom-variant dark (&:is(.dark *));
-
-@theme inline {
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-mono);
-  --font-serif: var(--font-serif);
-
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --color-card: var(--card);
-  --color-card-foreground: var(--card-foreground);
-  --color-popover: var(--popover);
-  --color-popover-foreground: var(--popover-foreground);
-  --color-primary: var(--primary);
-  --color-primary-foreground: var(--primary-foreground);
-  --color-secondary: var(--secondary);
-  --color-secondary-foreground: var(--secondary-foreground);
-  --color-muted: var(--muted);
-  --color-muted-foreground: var(--muted-foreground);
-  --color-accent: var(--accent);
-  --color-accent-foreground: var(--accent-foreground);
-  --color-destructive: var(--destructive);
-  --color-border: var(--border);
-  --color-input: var(--input);
-  --color-ring: var(--ring);
-  --color-chart-1: var(--chart-1);
-  --color-chart-2: var(--chart-2);
-  --color-chart-3: var(--chart-3);
-  --color-chart-4: var(--chart-4);
-  --color-chart-5: var(--chart-5);
-  --color-sidebar: var(--sidebar);
-  --color-sidebar-foreground: var(--sidebar-foreground);
-  --color-sidebar-primary: var(--sidebar-primary);
-  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-  --color-sidebar-accent: var(--sidebar-accent);
-  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-  --color-sidebar-border: var(--sidebar-border);
-  --color-sidebar-ring: var(--sidebar-ring);
-
-  --radius-sm: calc(var(--radius) - 4px);
-  --radius-md: calc(var(--radius) - 2px);
-  --radius-lg: var(--radius);
-  --radius-xl: calc(var(--radius) + 4px);
-
-  /* Workspace tokens registered for Tailwind */
-  --color-bg-10: var(--bg-10);
-  --color-bg-000: var(--bg-000);
-  --color-text-000: var(--text-000);
-  /* ...remaining workspace tokens in main.css */
-}
-
-@layer base {
-  body {
-    @apply bg-bg-10 text-foreground antialiased;
-  }
-}
-```
+`src/renderer/src/assets/main.css` defines the Tailwind imports, dark variant, `@theme inline`
+registrations, `:root` light palette and `.dark` overrides. Use those definitions directly.
+Workspace sidebar styling uses registered workspace and semantic colors. Register and document
+any new color role before using it.
 
 ## Theme Tokens
 
-### Light Theme
-
-The light theme uses a warm off-white page background, white cards, and a deep-green interaction focus. Values below match `src/renderer/src/assets/main.css`:
-
-```css
-:root {
-  --radius: 0.5rem;
-
-  /* Workspace tokens */
-  --bg-10: hsl(60 14% 99%);
-  --bg-000: hsl(0 0% 100%);
-  --bg-200: hsl(60 11% 95%);
-  --bg-300: hsl(45 12% 93%);
-  --bg-400: hsl(45 10% 88%);
-  --border-ink-channel: 60 2% 12%;
-  --text-000: hsl(0 0% 7%);
-  --text-100: var(--muted-foreground);
-  --text-300: hsl(43 3% 57%);
-  --rail-card-bg: 0 0% 100%;
-  --danger-000: hsl(0 45% 38%);
-  --danger-900: hsl(0 55% 95%);
-  --action-panel-toggle: hsl(0 0% 42%);
-  --surface-control-hover: hsl(38 20% 90%);
-  --message-user-text: hsl(0 0% 12%);
-  --always-black: 0 0% 0%;
-
-  /* shadcn semantic tokens */
-  --background: #fafaf8;
-  --foreground: #202321;
-  --card: #ffffff;
-  --card-foreground: #202321;
-  --popover: #ffffff;
-  --popover-foreground: #202321;
-  --primary: oklch(0.47 0.105 184);
-  --primary-foreground: oklch(0.985 0.008 180);
-  --secondary: #ececea;
-  --secondary-foreground: #202321;
-  --muted: #ececea;
-  --muted-foreground: #646762;
-  --accent: oklch(0.87 0.115 82);
-  --accent-foreground: oklch(0.2 0.03 62);
-  --destructive: oklch(0.58 0.22 25);
-  --chart-1: rgb(109 167 236);
-  --chart-2: rgb(88 176 133);
-  --chart-3: rgb(210 157 56);
-  --chart-4: rgb(178 132 229);
-  --chart-5: rgb(225 113 91);
-  --border: #dededa;
-  --input: #dededa;
-  --ring: oklch(0.58 0.11 184);
-}
-```
-
-### Dark Theme
-
-Target values for dark mode. Apply under `.dark` when dark theme is enabled:
-
-```css
-.dark {
-  --background: hsl(60 2% 12%);
-  --foreground: hsl(60 14% 97%);
-
-  --card: hsl(60 2% 17%);
-  --card-foreground: hsl(60 14% 97%);
-
-  --popover: hsl(60 2% 17%);
-  --popover-foreground: hsl(60 14% 97%);
-
-  --primary: oklch(0.68 0.1 184);
-  --primary-foreground: hsl(60 2% 12%);
-
-  --secondary: hsl(60 2% 9%);
-  --secondary-foreground: hsl(60 14% 97%);
-
-  --muted: hsl(60 2% 9%);
-  --muted-foreground: hsl(48 5% 57%);
-
-  --accent: hsl(0 0% 7%);
-  --accent-foreground: hsl(60 14% 97%);
-
-  --destructive: oklch(0.704 0.191 22.216);
-
-  --border: hsl(53 12% 87% / 0.1);
-  --input: hsl(53 12% 87% / 0.15);
-  --ring: oklch(0.7 0.1 184);
-
-  --chart-1: rgb(109 167 236);
-  --chart-2: rgb(88 176 133);
-  --chart-3: rgb(210 157 56);
-  --chart-4: rgb(178 132 229);
-  --chart-5: rgb(225 113 91);
-
-  --sidebar: hsl(60 2% 12%);
-  --sidebar-foreground: hsl(60 14% 97%);
-  --sidebar-primary: var(--primary);
-  --sidebar-primary-foreground: var(--primary-foreground);
-  --sidebar-accent: hsl(0 0% 7%);
-  --sidebar-accent-foreground: hsl(60 14% 97%);
-  --sidebar-border: hsl(53 12% 87% / 0.1);
-  --sidebar-ring: var(--ring);
-}
-```
+Light surfaces use warm off-white backgrounds, white cards and deep-green primary controls.
+Dark surfaces use the corresponding semantic overrides in `main.css`. `--background`, `--card`,
+`--popover`, `--foreground`, `--muted-foreground`, `--primary` and `--ring` describe roles, not
+interchangeable literal colors. The workspace tokens below describe their surface assignments.
 
 ## Token References
 
@@ -285,11 +130,20 @@ colors communicate a successful or failed probe/migration result.
 
 ### Named Layer Tokens
 
-| Token                     | Tailwind class    | Value | Usage                                                                |
-| ------------------------- | ----------------- | ----- | -------------------------------------------------------------------- |
-| `--z-index-modal`         | `z-modal`         | `50`  | Standard portaled modal layer (e.g. the notification center popover) |
-| `--z-index-toast`         | `z-toast`         | `40`  | Background notices and undo snackbars below modal backdrops          |
-| `--z-index-markdown-menu` | `z-markdown-menu` | `200` | Streamdown Mermaid and table format menus above fullscreen content   |
+| Token                     | Tailwind class    | Value  | Usage                                                                |
+| ------------------------- | ----------------- | ------ | -------------------------------------------------------------------- |
+| `--z-index-modal`         | `z-modal`         | `50`   | Standard portaled modal layer (e.g. the notification center popover) |
+| `--z-index-toast`         | `z-toast`         | `40`   | Background notices and undo snackbars below modal backdrops          |
+| `--z-index-markdown-menu` | `z-markdown-menu` | `200`  | Streamdown Mermaid and table format menus above fullscreen content   |
+| `--z-index-titlebar`      | —                 | `1000` | Windows application menu row above renderer overlays                 |
+
+Shared `Dialog` and `AlertDialog` own modal stacking through `overlay-layer.ts`.
+Their root advances the inherited layer by 20 (the first modal is 60); Select,
+DropdownMenu, Popover and Tooltip use the intermediate +10 layer. React context
+survives portals, so a child confirmation or menu remains above its owning modal.
+Expanded workbench previews provide the same scope without remounting their content.
+Use these shared primitives instead of importing Radix dialogs directly or adding
+surface-specific z-index overrides. Existing standalone floating styles remain unchanged.
 
 Background notices share `z-toast`: action toasts, the notification stack, persistent storage
 recovery alerts, live message notices and their error fallback. Modal backdrops must cover these
@@ -323,16 +177,10 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Key Colors
 
-| Semantic role           | Light value             | Dark value            |
-| ----------------------- | ----------------------- | --------------------- |
-| Page background         | `rgb(250 250 248)`      | `rgb(31 31 30)`       |
-| Primary text            | `rgb(32 35 33)`         | `rgb(248 248 246)`    |
-| Secondary text          | `rgb(55 55 52)`         | `rgb(195 194 183)`    |
-| Weak text / icons       | `rgb(100 103 98)`       | `rgb(148 146 139)`    |
-| Active background       | `rgb(236 236 234)`      | `rgb(18 18 18)`       |
-| Card / menu background  | `rgb(255 255 255)`      | `rgb(44 44 42)`       |
-| Primary actions / links | `oklch(0.47 0.105 184)` | `oklch(0.68 0.1 184)` |
-| Focus ring              | `oklch(0.58 0.11 184)`  | `oklch(0.7 0.1 184)`  |
+Read current light/dark values from `:root` and `.dark` in `main.css`. Page background uses
+`--background`, primary text `--foreground`, secondary/helper text `--muted-foreground`, cards
+`--card`, menus `--popover`, actions `--primary`, and focus feedback `--ring`. Workspace-specific
+roles remain explicit in the tables above.
 
 ## Style Guidelines
 
@@ -344,7 +192,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Dialog title: `text-lg font-semibold`.
 - Form label: `Label` + `text-sm font-medium`.
 - Helper copy: `text-xs text-muted-foreground` or `text-sm text-muted-foreground`.
-- Table small text: `text-[11px] leading-[1.625]`; table headers use `font-semibold`.
+- Table small text: `text-[11px] leading-[1.625]`; identified table headers use `font-semibold`. Parsed PDF table previews follow the source-preserving rules below because extracted cells do not identify headers.
 - Do not use negative letter spacing or viewport-driven font sizing.
 
 ### Radius
@@ -361,7 +209,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 ### Background and Elevation
 
 - Page root: `bg-background text-foreground` on Home and generic shells; workspace shell surfaces use `bg-bg-10`.
-- Standard card: `bg-card text-card-foreground border shadow-sm`.
+- Standard Card uses `bg-card text-card-foreground` and its shared ring treatment; see the Card section.
 - Large viewer panel: `bg-card rounded-lg shadow-sm`; a single ring shadow may replace an explicit border.
 - Shared control hover / open: `bg-muted text-foreground`; content-level active surfaces may use `bg-accent text-accent-foreground` where specified.
 - Weak container: `bg-muted/50`.
@@ -374,44 +222,57 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 ### Shadows
 
-- Dropdown: `shadow-md`; light value is `0 2px 8px rgb(0 0 0 / 0.08)`.
-- Dialog: `shadow-lg`; medium form dialog uses `0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1)`.
-- Large settings dialog: `shadow-md` plus a 1px ring, `0 1px 2px rgb(0 0 0 / 0.06), 0 2px 8px rgb(0 0 0 / 0.08)`.
-- Composer / viewer: `shadow-sm` plus a 1px ring, `0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04)`.
+- Dropdowns use `shadow-menu`; its light/dark values live in `main.css`.
+- Dialogs use the shared `dialog-chrome` elevation (`shadow-dialog`).
+- Settings uses its shared dialog surface and `shadow-dialog`.
+- Composer forms use `shadow-card-opaque`; viewer and card owners select the documented semantic elevation for their surface.
 - Workspace card surfaces use `shadow-card`; composer forms use `shadow-card-opaque`; session menus use `shadow-menu`; rename and delete dialogs use `shadow-dialog`. Borderless in-transcript document sheets use `shadow-sheet` (the ringless card elevation, since a 1px ring shadow reads as a border).
-- Do not stack more than two shadow layers. Prefer background, border opacity, and spacing for hierarchy.
+- Do not stack more than two decorative shadow layers on one surface, including a ring used as a permanent border. Prefer background, border opacity, and spacing for hierarchy. Keyboard-only focus rings are accessibility feedback and are exempt from the decorative-layer count; retain them. The shared shadow tokens in `src/renderer/src/assets/main.css` are authoritative in both themes. A three-layer decorative shadow is an implementation defect, not an exemption.
 
 ### Focus / Disabled
 
-- All focusable controls use `focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50`.
-- Inputs may add `focus-visible:border-ring/50`; the light focus border target is `rgb(134 182 239)`.
+- Use `focus-visible:keyboard-focus` for shared buttons, conversation controls and message actions. It draws a 2px solid `--ring` outline with a 2px offset, appears immediately, and remains visible in forced-colors mode. The global `:focus-visible` fallback uses the same treatment; other composite controls retain their owner-specific focus styling. Do not remove outlines without an equally visible replacement.
+- The composer text editor uses its caret without an additional inner focus outline; retain `outline-none focus-visible:outline-none` and native keyboard traversal. Unmodified Escape from a keyboard-focused control returns to the available message composer; a focused informational tooltip closes and returns to the composer in that same keypress, while menus, dialogs, editable fields, IME composition and other existing Escape handlers keep priority.
+- Preview tab labels and their active close button are separate keyboard targets. Content wrappers with focusable child controls use `tabIndex={-1}`; they must not create an extra Tab stop that paints only a clipped line. Notebook kernel buttons use the inset focus treatment.
+- Inside clipped scrollers or flush expandable rows, add `focus-visible:-outline-offset-2` so the full outline stays inside the control. Do not remove the focus indicator to hide clipping.
+- Horizontal chip/tab rails reveal the entire keyboard-focused control with nearest scrolling and disable their edge fade while a child is `:focus-visible`. Keep real scroll regions and keyboard resize handles focusable; skip only structural content wrappers.
+- Inputs use semantic `ring` feedback from their shared component.
 - Disabled controls use `disabled:pointer-events-none disabled:opacity-50`; shared buttons also use `touch-manipulation`.
 - **Exception — a disabled control that must explain _why_:** a natively `disabled` element receives no pointer events, so a `Tooltip` on it never opens. When the disabled state needs an on-hover explanation (e.g. the agent-framework Uninstall button when the runtime is not app-managed or is the active backend), render it as `aria-disabled` + `opacity-50 cursor-not-allowed` with a neutralized `onClick` instead of the native `disabled` attribute, so it keeps the greyed look yet stays hoverable as the tooltip trigger. Reserve this for standing (non-transient) reasons; transient busy states (in-flight install/detect) still use native `disabled` with no tooltip.
 - Sidebar buttons and icon triggers may use `cursor-pointer`; decorative row wrappers provide hover/active styling only and must not imply a click target outside the nested button.
+- Rows with a primary action must make the entire highlighted area clickable, including padding and metadata. Extend the native button with an absolutely positioned `::after` inside a relative row; keep independent actions above it with `relative z-10` (or existing absolute positioning). Disabled primary actions must not retain an active extension; disabled secondary buttons keep pointer events so clicks cannot pass through to the primary action. Keep editors outside the extended target and preserve native keyboard activation.
 - Hover, focus, and active states must not change width, height, padding, or border width.
 
 ### Motion
 
 - Menu, option, and navigation hover highlights update immediately; do not animate their background or foreground colors.
-- Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible.
+- Inline action reveal: `transition-opacity duration-150`, default `opacity-0`, then `opacity-100` on hover or focus-visible. Keyboard focus reveals the action immediately (`focus-within:transition-none` for an action group).
 - Keep purposeful transforms and dialog entry/exit motion, with reduced-motion support.
 - Session row action reveal uses `transition-opacity duration-200 ease-out`; its hover colors update immediately.
 - Dialog open: `data-[state=open]:animate-in data-[state=open]:fade-in-0 data-[state=open]:zoom-in-95`.
 - Dialog close: `data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95`.
 - Overlay: `fade-in-0 / fade-out-0`; the light scrim is `rgb(0 0 0 / 0.5)`.
-- Transform motion is limited to dialogs, sheets, collapsible content, anchored annotation controls, subtle button feedback, Smart Collection result transfers, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Transform motion is limited to tooltips and opted-in information previews, dialogs, sheets, collapsible content, anchored annotation controls, subtle button feedback, the message-center bell on fresh unread arrivals, Smart Collection result transfers, and the tab selection indicators described below, and must respect `motion-reduce`.
+- Shared Tooltips and information previews marked `hover-bubble` enter from their Radix-computed anchor over 240ms: scale grows smoothly from 0.9 to 1 while opacity increases from 0 to 1, without moving their triggers. Scale must never exceed 100%; do not add overshoot or rebound. Only delayed tooltips animate; immediate openings within the shared skip window appear without entry motion. Session and CSL style previews follow the same rule using their existing group warm windows, and keyboard openings remain immediate. Switching between CSL styles preserves the 320px preview width without replaying scale motion. Tooltips and information previews close immediately, with pointer events disabled while closed, so outgoing hints and cards neither overlap the next preview nor retain a Radix dismissable layer that consumes Escape. Owners that unmount content directly (evaluation details) retain immediate dismissal. Reduced motion disables these animations. Preserve information-preview hover delays, pointer leave grace, focus/keyboard behavior, dimensions and collision handling. Click-only Popovers, hover action menus, annotation panels, native `title` hints and moving run-mark previews retain their own presentation.
 - Annotation controls group navigation, marking, region actions and history with quiet dividers. Their anchored panels enter over 160ms with opacity and a 6px translation away from the trigger, and exit over 100ms without scaling their content. Mark type and color controls use compact square rows under group labels; the disclosure chevron rotates with the open state. The split annotation button applies the current type/color on the left and opens its palette on right-side hover (120ms intent, 180ms leave grace) or click; the disclosure half uses stronger hover shading. Hover opening preserves document focus, while click/keyboard opening retains normal popover focus behavior. Selection actions appear with a 3px offset only on entry; scroll-driven positioning stays immediate. Reduced motion uses a 100ms entry / 75ms exit opacity fade. Hover, selection and focus feedback remains immediate.
-- A user-started Smart Collection update or re-analysis opens the screening view after any required cost confirmation, with a loading state while the start receipt is pending. The running/queued or paused header progress control also opens it without starting or resuming work; Pause remains separate and stops actual analysis. Resume continues the same run and only its pending papers; there is no display-only pause. A top-left Back to results control returns to the preserved results/search controls, including during startup. A late receipt never reopens a view the user has left. Completion stays visible until manual Back. Resume validates the saved rule, model policy, paper digests and completed results before dispatch; changed inputs or incomplete historical checkpoints require explicit re-analysis. Existing run/item states and database fields are reused. Automatic request budgets remain cumulative; reaching the existing per-run automatic cap requires the separately labelled Continue in a new run action. Focus moves to Back on entry and to the results region on manual return.
+- A user-started Smart Collection update or re-analysis opens the screening view after any required cost confirmation, with a loading state while the start receipt is pending. The running/queued or paused header progress control also opens it without starting or resuming work; Pause remains separate and stops actual analysis. Resume and Retry continue the same run and only its pending or failed papers, preserving the original selection, committed successes and cumulative usage; there is no display-only pause. A top-left Back to results control returns to the preserved results/search controls, including during startup. A late receipt never reopens a view the user has left. Completion stays visible until manual Back. Resume validates the saved rule, model policy, paper digests and completed results before dispatch; changed inputs or incomplete historical checkpoints require explicit re-analysis. Existing run/item states and database fields are reused. Automatic request budgets remain cumulative; reaching the existing per-run automatic cap requires the separately labelled Continue in a new run action. Focus moves to Back on entry and to the results region on manual return.
 - Live screening updates stay within the progress subscribers; the Library retains its settled result snapshot until analysis pauses or ends. Unchanged collection counts preserve the sidebar array identity. The Library memoizes its PDF preview with stable callbacks so unrelated parent renders do not descend into the preview; changes to the preview item or reading action dependencies still propagate. This does not suppress PDF resizing, annotation updates, or file changes.
 - The screening view transfers visible candidates to four fixed destination piles: AI matches, Not matched, Needs review, and Failed / unavailable (the full explanation remains on hover). All headings use a fixed single-line height and both empty and populated cards use 118px height. Missing-evidence placeholders go to Failed / unavailable because no model evaluation occurred; they remain Not evaluated in the results table. Each group shows its actual count and latest paper; its heading expands up to four recent papers. Read at most six recent committed items per group (24 total), so a long streak in one group cannot erase another group's preview. No new classification state or persisted data is introduced. Limit candidates to four; 650ms incoming flights remain readable independently of inference throughput; list reordering takes at most 240ms, and counts reconcile immediately without a playback backlog. Committed item results notify the renderer without waiting for the four-result aggregate metadata batch: the first notification is immediate, and a 250ms throttle includes a trailing notification even when peers remain pending. Summary counts use database aggregates rather than materializing full checkpoints; execution and resume still read and validate checkpoints. The process view measures only newly departing candidate cards and memoizes unchanged pile/card content. Every newly observed committed outcome starts its own flight, including concurrent arrivals in the same group. Each group allows up to eight in-flight cards; an overflow retains only the latest pending result instead of an unbounded playback queue. Landed previews are separate from flight overlays and change only on landing, ordered by result arrival so an older landing cannot replace a newer cover. Flights retain the measured candidate width at takeoff, then continuously narrow along a gently lifted path and settle at the receiving width; never switch to the narrow destination size before moving. Card height stays fixed. New outcomes outside the four-card candidate preview also enter from the candidate lane with its width. Opening, reconnecting and resuming hydrate without replay. Reduced motion and narrow layouts use static updates. Each pile has up to three inset sheets in 6px steps, bounded by the real count; an older saved paper covers the stationary receiving slot until the incoming card lands, then its text is replaced. Decorative covers are hidden from assistive technology. The center working robot and directional particles animate only while processing; paused analysis uses a breathing Pause glyph. Reduced motion, hidden pages, disconnected transport, errors and narrow layouts disable indicator animation.
 - Brand loading indicators may use fixed-geometry transform and opacity motion for orbiting or gathering particles; they must become static under `prefers-reduced-motion`, and the full-canvas startup logo is capped at 30 drawn frames per second.
 
 ### PDF reading and annotations
 
-- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels.
+- PDF floating toolbars use 28px fine-pointer buttons, at least 24px-wide split disclosures, compact gaps and 44px coarse-pointer targets. Keep selected states, focus indicators and tooltips. Notes & Annotations uses 32px controls, 12px utility text and 4px vertical toolbar padding, matching Replay density.
+- Completed PDF analysis shows the figures/tables directly, including cached results on reopen, with a screen-reader completion announcement. Keep analysis options (parallel pages and explicit re-analysis) in the result header's overflow popover, or beside the empty-result message. Loading, active progress, cancellation, partial results and failures retain their existing visible feedback and recovery actions.
+
+- Original PDF, Figures & Tables, and Notes & Annotations use distinct leading document, image, and notebook icons with visible labels. Figures & Tables also accepts finalized upload/artifact PDF versions independently of Literature membership, Agent context, or annotation write access. Opening Figures & Tables restores cached results only. New analysis requires an explicit Analyze PDF or Download and continue action; uploading, opening a preview, and switching tabs never start analysis. Cancellation does not automatically restart analysis.
+- Parsed PDF tables in Figures & Tables preserve source row/column spans, use a collapsed border on every cell, and share one neutral theme surface without inferring headers from the first row or merged cells. Text and numbers use the same start alignment, with tabular digits and numeric no-wrap retained. Only the hovered cell is tinted, including when it spans multiple rows; row-spanning content stays vertically centered. Minimum widths apply uniformly because the first DOM cell below a rowspan may belong to a later column. These rules also apply to cached tables and do not change source text or exports.
 - Empty Notes shows a short explanation and a return-to-PDF action; an unavailable source shows a status instead of an empty panel.
-- Literature annotations belong to the exact PDF attachment version and appear in both Library and project previews. Upload/artifact annotations remain conversation-scoped. Both use the shared tag catalog.
+- Notes & Annotations belong to an immutable PDF document within the current user’s personal database. Workspace and Literature sources with the same verified SHA-256 and byte length share one notebook, including independent uploads across Projects. Different PDF bytes remain isolated; names, paths, titles and bibliographic identifiers do not establish PDF identity. Historical groups join only after verification, with reviewed choices for conflicting edits, deletions or missing native-import baselines. Shared edits, Tags and deletions apply to every linked source; removing one source or Project retains notes while another managed copy/reference survives. Session identity records creation context, while Bookmarks retain their independent Session scope. Package notes remain optional, inert read-only snapshots.
+- Uploading a PDF to Workspace does not create a Literature reference. Add to Literature uses the Literature icon and navigates to the current Project’s Literature view with the PDF staged in the existing Add PDFs metadata-review flow. Confirmation imports the verified managed version without re-uploading, links the reference to the Project and makes it visible in All references. The flow reuses existing bibliographic duplicate policies and attachment-error recovery; it does not offer a separate reference/Collection selector, add a Project–Collection relationship or require a Share notes action.
 - Active text marking uses the I-beam cursor across the document; area selection uses a crosshair, and comment buttons retain a pointer. Escape dismisses the inner popup or exits the active tool before closing a containing preview dialog.
+- PDF navigation uses the same 1120px reader-width breakpoint as Notes: docked on wide readers and floating at the left edge on narrow readers, including resized dialogs. Floating navigation does not shrink the PDF, has no backdrop or focus trap, leaves at least 16px on the right, and hides its resize handle. Escape or Close dismisses it and returns focus to the PDF. When both sidebars float, Escape closes Notes if focus is within Notes or its toggle; otherwise it closes navigation first. Resizing preserves its selected mode and preferred docked width. When no readable native outline is available, Outline is visibly disabled with `aria-disabled`, guarded activation, and a reason tooltip on hover or keyboard focus; Pages remains usable.
+- Notes docks beside the PDF when the reader is at least 1120px wide, including the full preview dialog at the default application size. In narrower readers (including a modal after shrinking the application) it floats at the right edge without shrinking the PDF, with no backdrop or focus trap; its width is capped to leave a 16px left margin. Floating notes retain Close and full-view actions, hide the resize handle, and consume Escape after nested controls. Resizing preserves drafts and the preferred docked width.
 - Notes uses shared selects, inputs, tags, and annotation colors. Only the explicit source action navigates to the PDF; clicking the card does not. The source action preserves the draft when returning from the PDF. Filters retain the edited card until Save or Cancel.
 - Search and filters start collapsed. The action toolbar stays on one row at narrow widths by hiding optional labels. Page and mark type lead each card; provenance is secondary, quotes have a line limit, and tags stay within one row with overflow access and removal on hover or keyboard focus.
 - Import progress includes a loading indicator, cancellation, and unsupported-type counts. A durable import receipt prevents deleted native annotations from returning on reopen; preview and export replace only the original objects listed in that receipt, retaining unsupported objects.
@@ -431,7 +292,7 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   Feature stores retain their own requested/open state; they do not coordinate presentation order
   with one another.
 - Root presentation priority is fixed: close confirmation, Web event recovery, missing data-root
-  recovery, legacy data move, update, compute approval, Connector approval, Skill import approval,
+  recovery, legacy data move, update, compute approval, Connector approval, credential request, Skill import approval,
   global search, Settings, preview, then base content. A covered presentation stays requested and
   resumes when higher-priority work clears.
 - Archived Session rows and permanent-delete confirmations show the owning Project name so
@@ -448,11 +309,10 @@ Active-dialog menus and other foreground child layers retain their own ordering.
   contenteditable editors, IME composition, modified chords, and key repeat retain native behavior.
   Expired receipts never consume the shortcut, and Settings -> Archived remains the durable restore
   path after the transient receipt disappears.
-- Undo notices appear immediately in the shared top-center application stack, entering over 400ms with an 8px upward offset
-  and leaving over 280ms with a 6px upward offset. Animate only opacity and transform; reduced-motion
-  uses a 120ms opacity crossfade. Remaining notices reposition over 220ms when the stack changes.
+- Undo notices appear immediately in the shared top-center application stack, entering over 180ms with a 4px upward offset
+  and leaving over 140ms. Animate only opacity and transform; reduced motion skips animation. Remaining Undo notices reposition over 180ms when the stack changes.
   Pause expiry while the notice has pointer hover, keyboard focus, or an in-flight restore. Resume the remaining time after the pause; do not restart a full timeout. Archive shortcut availability and receipt pruning use the same paused deadline. Permission receipt validity continues to use the authoritative renewal API. Use the shared opaque `bg-card`
-  surface with `border-border`, a compact `rounded-3xl` capsule (8px vertical padding), centered content and `shadow-dialog`, and keep the Undo action visually light rather
+  surface with `border-border`, a compact `rounded-3xl` capsule (8px vertical padding), centered content and `shadow-menu`, and keep the Undo action visually light rather
   than presenting it as a filled primary button.
 - Session visibility, App Shell shortcut eligibility, and `Cmd/Ctrl+W` routing must consume that
   projection. Do not rebuild parallel Boolean gate lists in `AppContent` or feature components.
@@ -473,21 +333,21 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Default button: `h-8 px-2.5 rounded-lg text-sm font-medium`.
 - Small button: `h-7 px-2.5 text-[0.8rem]`; large button: `h-9 px-2.5`.
 - Icon button: usually `size-8 rounded-lg`; compact top bars and row actions use `size-7`.
-- Focus is `focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50`; disabled is non-interactive at `opacity-50`. Button feedback uses an explicit transition property list and disables it for reduced motion.
+- Shared Button uses `focus-visible:keyboard-focus`, with semantic outline colors defined in `main.css`; do not substitute the Input ring contract. Disabled buttons remain noninteractive at `opacity-50`.
 - Async command and copy buttons reuse their existing owner state. Wrap their icon/label in `.button-feedback`, keyed to the operation phase, for a 180ms whole-label fade and 3px entry offset. Keep the button itself mounted so focus, Radix triggers and hit targets survive. Do not key to progress percentages or countdown text, animate individual letters, or defer an operation for animation. Existing progress, partial failures and recovery notices remain authoritative. Keep live regions outside keyed content.
 - Loading commands expose `aria-busy` and preserve their existing disabled rules. Reduced motion disables the content animation and nested spinner rotation. Dense navigation, selection, send/stop and cancellation controls retain immediate feedback.
 - The Home update action reveals its label on hover and keyboard focus over 200ms. Touch, download progress and failures keep the label visible. Clicking always opens the existing update dialog once; revealing a label adds no disclosure state. The Session update action retains its persistent label.
 
 ### External Link
 
-- Links that leave the app use the shared `ExternalTextLink` component: an underlined `text-primary` label trailed by a lucide `ArrowUpRight` icon. Do not use a bare `<a>` or a Unicode `↗`.
+- Ordinary external text links use the shared `ExternalTextLink` component: an underlined `text-primary` label trailed by a lucide `ArrowUpRight` icon. Do not use a bare `<a>` or a Unicode `↗` for those links. Specialized branded controls (the GitHub badge), actionable consent flows (startup issue submission), and Agent Markdown links retain their own owners, accessible names, activation checks and navigation policy; their different visual treatment is intentional. This exception does not cover ordinary help, documentation or resource links.
 - Navigation: it renders `<a target="_blank" rel="noreferrer">`; the main process (`setWindowOpenHandler` → `shell.openExternal`) opens these in the system browser, never in an app window.
 - In-app / agent-markdown prose links keep the inline Activity Stream style and do not get the arrow.
 
 ### Card / Panel
 
 - Home list rows do not need a heavy outer card; the row itself uses `rounded-lg hover:bg-accent`.
-- Standard card: `rounded-lg border bg-card p-4 shadow-sm`.
+- Shared Card uses a 12px radius, a 1px foreground-opacity ring, and 16px spacing (12px for `size="sm"`); see `components/ui/card.tsx`. It has no default decorative shadow. Domain panels may specify their own elevation.
 - Workspace viewer: `m-2 rounded-lg bg-card shadow-sm overflow-hidden`.
 - Output resource card: `h-20 w-32 rounded-xl bg-card shadow-sm overflow-hidden`; target size is `128px x 80px` with a `12px` radius.
 - Tool row group: `rounded-xl bg-muted/50 p-1.5`.
@@ -513,8 +373,8 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Scroll viewports containing absolutely positioned descendants (including `sr-only` file inputs) must establish their own containing block with `relative`. Otherwise those descendants can extend an ancestor's scroll range and produce a second scrollbar. Verify actual overflow and access to the final content; hiding the outer scrollbar alone is insufficient.
 - Use `Dialog` for regular form dialogs.
 - Use `AlertDialog` for destructive confirmations, except the dedicated Skill and Connector batch management review described below. Those secondary pages use an explicitly non-modal review in their bottom action dock; ordinary per-resource deletion remains an `AlertDialog`.
-- Medium `DialogContent`: `sm:max-w-[576px] max-h-[85svh] overscroll-contain rounded-xl border bg-background p-0 shadow-lg`; target size is approximately `576px x 612px`.
-- Large settings `DialogContent`: `sm:max-w-[960px] h-[min(688px,calc(100svh-2rem))] overscroll-contain rounded-xl bg-card p-0 shadow-md`.
+- Shared dialog dimensions and placement come from `components/ui/dialog.tsx` and `dialog-chrome.ts`; domain dialogs explicitly choose their width and scroll bounds.
+- Settings owns its restored/maximized dimensions as described in the Settings section.
 - Compact confirmations use the shared `dialog-chrome` frame: `rounded-xl border border-border bg-card shadow-dialog`, a divided header/footer and `p-5` body. Session deletion is 420px wide; Project deletion is 440px. Clamp widths to the viewport.
 - Header: `px-5 py-4`, with `border-b` when needed.
 - Body: `px-5 py-5`; form items use `space-y-4` or `space-y-6`.
@@ -532,14 +392,15 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 
 - Use DropdownMenu for action menus, Popover for lightweight auxiliary layers, and Select for single-value selection.
 - `DropdownMenuContent`: `overscroll-contain rounded-[15px] border border-border bg-popover p-1.5 text-popover-foreground shadow-menu`; `shadow-menu` is `0 2px 8px rgb(0 0 0 / 0.08)`. Popovers may keep their domain-specific layout.
-- Menu header / label: `px-2 pt-1 pb-0.5 text-xs text-muted-foreground`.
-- Item: `h-8 rounded-lg px-2 py-1.5 text-sm`.
+- Shared `PopoverContent` uses `border border-border bg-popover text-popover-foreground shadow-menu`. Nested notices, forms and secondary copy use normal foreground and muted tokens; do not depend on inverse Tooltip colors. Compact Tooltips retain the shared theme-aware inverse treatment; callers must not replace it with fixed black/white colors.
+- Shared menu label: `px-2 py-1 text-xs text-muted-foreground`.
+- Shared menu items have `min-h-8`, 8px horizontal padding and 6px vertical padding; labels may wrap without a forced 32px height.
 - Shared item hover / keyboard highlight: `bg-muted text-foreground`; disabled items are non-interactive at `opacity-50`.
-- Session action menu content: `z-modal min-w-[9rem] rounded-xl border-[0.5px] border-border-200 bg-bg-000 p-1.5 shadow-menu`.
+- Session action menus compose the shared ActionMenu provider/content; styling comes from `components/action-menu/` and `components/ui/dropdown-menu.tsx`.
 - Session action trigger uses `MoreVertical`, stays hidden at rest even on the selected row, reveals on row hover, keyboard focus, or menu-open, and has an `aria-label` that includes the session title. Keep it visible in the mobile navigation drawer so touch users do not depend on hover.
-- Session action items: `flex w-full cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-left text-sm text-text-100 data-[highlighted]:bg-bg-200 data-[highlighted]:text-text-000`.
-- Destructive session item: `text-danger-000 data-[highlighted]:bg-danger-900`.
-- Group the Session action menu as: `Pin`/`Unpin` and `Rename…`; separator; `Download all artifacts` and `View notebook`; separator; destructive `Delete`.
+- Session action items inherit shared ActionMenu keyboard, disabled, focus and pending-action behavior.
+- Destructive Session actions use the shared danger treatment.
+- Session action ordering comes from `SESSION_ACTION_RECIPE` in `pages/workspace/session-action-menu.ts`: Pin/Unpin and Edit; separator; Discuss, View replay, artifact download/check, Notebook, Export submenu, Fork, Archive; separator; Delete. Bindings hide unavailable actions and preserve their admission checks.
 - Select trigger: `h-8 rounded-lg border border-border bg-card px-2.5`; hover and `data-state=open` use `bg-muted`, and keyboard focus uses the shared 3px ring.
 - Select content uses the same overscroll containment, surface, border, radius, and shadow as DropdownMenu. Options are `min-h-8 rounded-lg`; keyboard highlight uses `bg-muted text-foreground`.
 - Menus do not use a page scrim.
@@ -547,25 +408,26 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 ### Tabs / ToggleGroup
 
 - Model settings and Specialist capability tabs move only the selected underline or background between tabs over 220ms with a non-overshooting ease-out. Keep each list's motion independent and relative to the list inside scrolled dialogs. Labels, hit targets, hover colors, content lifecycle, and Radix keyboard activation stay unchanged; reduced motion selects immediately with no slide.
-- Use `Tabs` for files, views, and viewer top bars.
+- Use the existing domain tab owners and Radix tab semantics where applicable. Preview tabs have their own owner.
 - Active tab: `h-8 rounded-md bg-accent px-3 py-1.5 text-sm text-accent-foreground`.
 - Inactive tab: `h-8 rounded-md px-3 py-1.5 text-sm text-muted-foreground hover:bg-accent hover:text-accent-foreground`.
-- Tab container: `h-11 px-2 overflow-x-auto`.
+- Tab container: `h-11 px-2 overflow-x-auto`. The preview tab strip reuses `scrollbar-auto-hide` from the session list for a thin, transparent-track scrollbar revealed on hover or keyboard focus. Preserve horizontal scrolling and selected-tab reveal.
+- Side chat tabs use the same decorative `size-3.5` Lucide icon treatment as other tool tabs.
 - Close icon: `size-4 rounded-sm opacity-0 group-hover:opacity-100 focus-visible:opacity-100`.
 - Use `ToggleGroup type="single"` for grid/list mutually exclusive switches.
 
 ### Sidebar
 
-- Sidebar root: `bg-sidebar text-sidebar-foreground`.
+- Sidebar surfaces use registered workspace and semantic colors.
 - Expanded width should follow content density; the settings dialog left navigation is approximately `192px`.
-- Collapsed state keeps a `size-8` icon rail and provides `Tooltip` for every icon item.
-- Item: `h-8 rounded-lg px-2 text-sm text-muted-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground`.
-- Active item: `bg-sidebar-accent text-sidebar-accent-foreground font-medium`.
+- The workspace sidebar collapses its resizable panel and retains its reopen control. Icon-only navigation actions need tooltips.
+- Shared menu items have `min-h-8`, 8px horizontal padding and 6px vertical padding; labels may wrap without a forced 32px height.
+- Active item: `bg-bg-300 text-foreground font-medium`.
 - Category label: `px-2 pt-3 text-xs text-muted-foreground`.
-- Sidebar border: `border-sidebar-border`.
-- Workspace sidebar outer slot: `z-10 flex h-full w-[220px] min-w-0 shrink-0 flex-col`.
+- Sidebar border: `border-border`.
+- Workspace sidebar uses the resizable panel owner in `workspace-panel-layout.tsx`, with a 16% default/minimum open size.
 - Workspace rail card: `m-2 mr-0 flex min-h-0 flex-1 flex-col rounded-lg bg-rail-card-bg shadow-card`.
-- Workspace brand title uses `text-text-000`; beta and section labels use `text-text-100`.
+- Workspace brand title uses `text-text-000`; section labels use `text-text-100`.
 - `Cmd+B` on macOS and `Ctrl+B` on Windows/Linux toggle the Workspace sidebar. At mobile widths, the same shortcut toggles the navigation drawer.
 - Sessions nav uses `aria-label="Sessions"` and a scroll body `min-h-0 flex-1 overflow-y-auto py-1`.
 - Holding `Cmd` on macOS or `Ctrl` on Windows/Linux reveals numbered shortcut pills beside the first nine Sessions in their current visual order. `Cmd+1`–`Cmd+9` or `Ctrl+1`–`Ctrl+9` opens the matching Session; modal dialogs and modified Alt/Shift chords retain priority.
@@ -581,6 +443,14 @@ Active-dialog menus and other foreground child layers retain their own ordering.
 - Interactive Session previews use non-modal Popover, with explicit ArrowRight entry from the row to rename, Escape dismissal, and focus restoration. Tab retains natural row/action traversal. Finishing a keyboard rename returns focus to its title control; deliberate blur navigation keeps its chosen focus. Editing and pending saves protect the active Session against hover replacement; Enter/blur commits and Escape cancels through the existing rename flow.
 
 ### Session information
+
+- Keep a persistent ellipsis menu immediately after the diagnostics button in the conversation
+  header for an existing Session. Reuse the sidebar action catalog and owner bindings for Edit,
+  Pin/Unpin, Fork, the Export submenu, and Archive, including their existing availability and
+  confirmation rules. Group Edit/Pin, Side chat/Fork, Export, and Archive with separators. Its New side
+  chat action opens an empty side chat and preserves the main composer's draft, annotations and
+  attachments; it never sends the main draft. Retain the existing Side chat availability policy
+  and display the reason on unavailable actions. The composer entry retains its draft-send behavior.
 
 The upper-right pin toggles the current Session through the shared Session controller, moving it into or out of the sidebar’s pinned section. Its pressed state follows the Session store; it stays disabled until Session persistence is ready.
 
@@ -606,6 +476,9 @@ The upper-right pin toggles the current Session through the shared Session contr
   footer, and in the always-visible mobile conversation header when the sidebar is hidden.
 - Show a red dot when unread items exist. Opening the panel does not mark items read; opening one
   item marks that item read, and the header provides an explicit mark-all action.
+- A new unread item after the first ready snapshot briefly swings the bell; the red dot pops only
+  when that arrival changes the unread count from zero to positive. Initial hydration and updates
+  to existing items do not animate. Reduced-motion preference disables both animations.
 - Show authorization lifecycle state separately from read state. Resolving, rejecting, expiring, or
   cancelling a request does not imply that the user has read its notification.
 - Item icons use two-dimensional encoding: the glyph says what happened, the tone says whether it
@@ -635,13 +508,20 @@ The upper-right pin toggles the current Session through the shared Session contr
 ### Input / Textarea / Field
 
 - Use shadcn `Input`, `Textarea`, `Label`, and `Field`.
-- Single-line input: `h-10 rounded-lg border border-input bg-card px-3 py-2 text-base`; compact settings rows may use `h-8 text-sm`.
-- Long text: `min-h-24`; long context input may use `min-h-40`.
+- Shared Input defaults are defined in `components/ui/input.tsx`: 32px height, transparent background (theme-aware dark input fill), 10px horizontal padding, and responsive text size. Domain forms may override dimensions explicitly.
+- Shared Textarea uses content field sizing and a 64px minimum height (`components/ui/textarea.tsx`); longer context forms may override that minimum.
 - Placeholder and helper text use `text-muted-foreground`.
 - A left-emphasis input may use `border-l-2 border-l-primary`, while all other sides still use `border-input`.
 - Error state: set `aria-invalid=true`, use shadcn's default invalid ring/border, and show a `text-destructive` description.
 
 ### Activity Stream
+
+- Message tool cards use compact, flat surfaces: `rounded-lg border border-border-200 bg-bg-000`,
+  10px horizontal insets, 8px section gaps, and 28px icon tiles with 16px glyphs. Literature cards
+  use 10px padding; structured Notebook/Artifact summaries use 8px vertical section padding.
+  Keep document counts in the header metadata row instead of a separate footer. Use 13px
+  medium-weight titles, readable metadata, wrapping badges and small action buttons;
+  preserve all sources, warnings, approval details and existing disclosures.
 
 - Notebook tool details use compact summary cards for runtime discovery, runtime binding/switching, restart,
   and state inspection; Artifact writes show file name, type and size without loading file bytes.
@@ -655,6 +535,33 @@ The upper-right pin toggles the current Session through the shared Session contr
   explain that the selected language kernel loses its memory while other kernels are unaffected. Artifact approvals retain
   source paths and inspectable request metadata while omitting inline content bytes. Keep existing
   Allow/Deny options, scopes, correlation, and submission behavior unchanged.
+- Environment selection and switching belong to the runtime-management flow, independently of
+  code-risk review. `notebookRuntimeSelection` carries the confirmation context; `previousRuntimeId`
+  and `previousLabel` describe the previous binding, not risk evidence. The existing binding and
+  Run records remain the source of runtime identity. Sharing the approval channel does not make
+  environment selection a code risk or authorize later risky code. Hiding code-risk receipts must
+  not hide runtime-management activities or remove their history.
+- Host-owned Notebook code-risk approvals use one warning icon and a short review title; omit
+  the Notebook category badge, duplicate info tooltips, and repeated one-shot scope description.
+  Show the risk source and line number in a warning-tone summary, followed by the verbatim,
+  copyable code with line numbers and warning-highlighted risk lines. Risk line links focus and
+  scroll within the always-visible code block without moving the conversation. Keep the
+  environment in a compact badge at the upper right of the approval header; omit its bottom
+  Execution details disclosure and working-directory metadata from the approval card. Conversation
+  transcript receipts retain their Execution details disclosure. Retain Allow once / Deny; do not offer a conversation grant.
+  Only validated host-owned payloads use this view; unrecognized inputs retain their raw preview.
+- Notebook Message code blocks share the numbered-code presentation across Python, R, REPL and
+  Shell. PowerShell runs and reviews use the recorded shell runtime for their language label and
+  syntax highlighting; a `bash` kernel kind alone does not imply Bash syntax. Historical records
+  without runtime evidence retain Bash display rather than guessing from command text.
+  Preserve leading blank lines and indentation so line references match the original source;
+  output/log sections do not gain source line numbers. Risk highlighting is opt-in and uses the
+  existing warning tokens; copying always returns only the original code.
+- Code-risk review records are hidden from Message activity rows and visible step counts. The
+  Notebook Run remains the source of execution status. Keep review records in the existing
+  history format for approval evidence and timing; waiting time must still be excluded from Run
+  elapsed time. Execution-time approval cards remain visible and interactive. Review-only groups
+  render no empty transcript surface, and no historical records need migration.
 
 - Outer shell: `ScrollArea className="min-w-0 flex-1"`.
 - Message scroller surface uses `bg-bg-10` with a top fade `bg-gradient-to-b from-bg-10 to-bg-10/0`.
@@ -671,11 +578,12 @@ The upper-right pin toggles the current Session through the shared Session contr
   viewport use `bg-text-000`; off-screen segments remain gray. Multiple visible segments may be dark
   at once, including a visible response whose prompt has scrolled off-screen. Scrolling and content
   resizing refresh this highlight independently of pointer hover.
-  Pointer hover or keyboard focus emphasizes one mark and tapers nearby segments by distance; the
-  segments use a 20px pitch for short lists, tightening to a minimum of 12px as the list grows,
-  with 200ms transform easing and reduced-motion support. Colors
+  Pointer position drives a continuous wave across four neighboring marks on each side, using a
+  cosine falloff and 200ms transform easing. Keyboard focus centers the wave on the focused mark.
+  All lists use a dense 8px pitch with fixed hit geometry and reduced-motion support; pointer updates
+  are coalesced to one per animation frame within the rail. Colors
   update immediately. The rail clips overflow at 480px (or the available window height), never
-  compresses marks below 12px, and follows transcript reading progress only when the current mark reaches a
+  compresses marks below 8px, and follows transcript reading progress only when the current mark reaches a
   visible edge. The rail does not scroll independently on wheel or touch input; keyboard focus can
   still reveal a clipped mark. Its outer frame stays fixed at the conversation panel midpoint so
   bottom approval or permission surfaces do not shift it. The current Run remains available through
@@ -687,15 +595,17 @@ The upper-right pin toggles the current Session through the shared Session contr
   opens the same preview and supplies `aria-describedby`. Position is clamped to 12px viewport
   margins, with the preferred side mirrored in RTL. Reduced motion disables transitions and entry
   animation. The preview remains hidden below `md`, like the rail.
-  Activating a mark scrolls that Message to the top with reduced-motion support. The preview shows
+  Activating a mark or its preview card scrolls that Message to the top with reduced-motion support.
+  The preview is a native button outside the Tab sequence; activating it returns focus to its mark
+  and closes the preview. Off-screen Messages use the same transcript reveal path as the marks. The preview shows
   the user Message as a dark single-line excerpt plus up to two muted lines from the first visible
   Agent Message explicitly linked through `responseToMessageId`; historical Agent Messages without
   that link are not inferred and leave the preview user-only. Hidden control Messages never appear
   in the rail or preview. Do not render the rail below `md`.
 - User bubble: `ml-auto max-w-[90%] md:max-w-[min(85%,56rem)] rounded-2xl bg-bg-300 px-3.5 py-2 md:px-4 md:py-2.5 text-sm md:text-[15px] text-message-user-text`.
 - Assistant wrapper: `w-full max-w-[56rem] text-sm md:text-[15px] leading-relaxed text-text-000`.
-- Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. The visible timestamp format is fixed to English `MMM D, h:mm AM/PM`: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Treat the Agent footer as Turn-level metadata: render it after the last visible Message, Tool activity, Plan record, compaction record, handoff, or inline Subagent update explicitly owned by that Prompt, rather than nesting it inside the final Agent Message fragment. Agent footers keep terminal time, elapsed time, and `Calls` on one line without a separator (`Completed ... Elapsed 2m 5s Calls`). `Calls` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-call count, show `1 call` or `N calls` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
-- Agent loading surface is transparent and keeps `px-3 py-2` for stable transcript geometry; elapsed and status text use `text-text-000/70`, while the brand indicator uses `text-text-300`. A silent foreground prompt shows `[indicator] · Thinking` with elapsed time and the existing slow-response hint. Active tools show `[indicator] · Interacting with tools` without a timer. Permission and Plan approval waits show `[indicator] · Waiting for your approval`; pending ask-user elicitation shows `[indicator] · Waiting for your response`. User waits take precedence over visible assistant output and remain untimed until resolved. Outside those waits, visible assistant text or images hide the indicator; when the current tool transitions to a terminal state, Thinking returns with a fresh timer until the next visible output. Runtime stop, failure, disconnect, and compaction clear the transient indicator state. Historical, duplicate, and late tool events must not revive it or reorder the activity timeline.
+- Message metadata uses `text-[11px] text-text-000/70 tabular-nums` below the content so timestamps and elapsed status meet WCAG contrast on workspace surfaces. Visible timestamp formatting follows the selected interface language: User Messages show `Sent ...`, completed Agent Messages show `Completed ...`, and failed Agent Messages show `Failed ...`. Terminal timestamps are persisted separately from mutable record update times. Treat the Agent footer as Turn-level metadata: render it after the last visible Message, Tool activity, Plan record, compaction record, handoff, or inline Subagent update explicitly owned by that Prompt, rather than nesting it inside the final Agent Message fragment. Agent footers keep terminal time, elapsed time, and `Calls` on one line without a separator (`Completed ... Elapsed 2m 5s Calls`). `Calls` uses a dashed underline and reveals a compact Context-window-style popover on pointer hover or keyboard focus. The popover has a proportional color bar above its token rows and a divided `Total` row below them. When an adapter reports a reliable agentic model-call count, show `1 call` or `N calls` as smaller muted text aligned to the right of the popover title; omit it rather than estimating when unavailable. Show Input, Cache, and Output when only aggregate cache data is available; split Cache into Cache read and Cache write, with distinct colors and bar segments, only when the agent reports both categories. The displayed categories are mutually exclusive and `Total` is their sum.
+- Agent loading surface is transparent and keeps `px-3 py-2` for stable transcript geometry; elapsed and status text use `text-text-000/70`, while the brand indicator uses `text-text-300`. A silent foreground prompt shows `[indicator] · Thinking` with elapsed time and the existing slow-response hint. Active tools show `[indicator] · Interacting with tools` without a timer. Permission and Plan approval waits show `[indicator] · Waiting for your approval`; pending credential requests and ask-user elicitation show `[indicator] · Waiting for your response`. User waits take precedence over visible assistant output and remain untimed until resolved. Outside those waits, visible assistant text or images hide the indicator; when the current tool transitions to a terminal state, Thinking returns with a fresh timer until the next visible output. Runtime stop, failure, disconnect, and compaction clear the transient indicator state. Historical, duplicate, and late tool events must not revive it or reorder the activity timeline.
 - User Message copy and edit actions sit immediately left of the bubble and use the standard inline-action opacity transition on row hover or keyboard focus. When editing creates multiple Branches, keep the Branch navigation persistently visible at the right end of the metadata footer below the bubble, after the sent time, with previous/next controls around a Branch icon and the current/total count. Let the footer wrap on narrow surfaces so the navigation remains the final bottom row without colliding with the sent time.
 - Tool row: `h-8 rounded-lg px-2 text-[13px] hover:bg-foreground/[0.04]`.
 - Context compaction is a standalone, non-interactive activity row rather than a generic Tool group.
@@ -763,20 +673,20 @@ The upper-right pin toggles the current Session through the shared Session contr
   cancellation, or edit failures keep
   the row and show a recoverable inline error.
 - Queued messages are transient and Session-scoped. They are not persisted across renderer restart.
-  Bind each item to its admission Message Branch and block branch switching or inline message edits
-  while that Session has queued work so a later dispatch cannot silently retarget it. Pause queue
+  Bind each item to its admission Message Branch and block branch switching
+  while that Session has queued work; inline message edits remain available and enter the queue as revisions so a later dispatch cannot silently retarget it. Pause queue
   dispatch while a visible root or delegated Permission request is pending. Keep the Permission
   Profile selector and other Agent controls read-only until that queue is empty so every item retains
   its captured authorization level and Specialist binding.
-- Blocking interactions own the composer lane in this order: an already-open Side Chat, Permission
-  approval, Ask-User elicitation, Plan approval, then the ordinary composer. Closing Side Chat reveals
-  any still-pending Permission approval instead of interrupting the Side Chat in progress.
-- Side Chat, Permission, Ask User, and Plan surfaces overlay the ordinary composer lane and the
+- Blocking interactions own the composer lane in this order: Permission approval, credential
+  request, Ask-User elicitation, Plan approval, then the ordinary composer. Side Chat lives in a
+  right-hand Preview panel tab and does not take over this lane.
+- Permission, credential, Ask User, and Plan surfaces overlay the ordinary composer lane and the
   transcript above it. Keep the ordinary composer and its status chrome in layout but visually and
   interactively hidden while the overlay is open, so opening, resizing, resolving, or closing a
   blocking surface never changes the message viewport height or the reader's scroll position.
-- Hide both the Notebook-chrome queue disclosure and its expanded composer rows while Side Chat,
-  Permission, Ask User, or Plan owns the lane; keep the transient queue in memory so it reappears when
+- Hide both the Notebook-chrome queue disclosure and its expanded composer rows while Permission,
+  credential, Ask User, or Plan owns the lane; keep the transient queue in memory so it reappears when
   the ordinary composer returns.
 - Permission approval uses the shared bottom resize handle and replaces the ordinary composer while
   pending. Its embedded content uses the panel's single border rather than nesting another card. The
@@ -805,6 +715,18 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Toolbar action buttons are `h-8 w-8`; send uses `bg-primary text-primary-foreground hover:bg-primary/80`, cancel uses `bg-bg-200 text-text-000 hover:bg-bg-300`.
 - Read-only state: apply `opacity-50` to the input content and action area as a whole, but do not shrink the layout.
 - Drag-and-drop state: use `ring-ring/50`, `border-ring/50`, or a semantic success token. Do not hardcode a new green.
+- Native files can be dropped anywhere in the central conversation (header, transcript, empty
+  space, or composer), excluding the left navigation, right preview, and portal dialogs. Use one
+  bounded overlay with neutral attachment/package wording because native hover events may hide
+  filenames. Ordinary files use the existing composer intake and remain draft attachments until
+  submission; one `.science` package opens the existing Project import flow. Reject mixed package
+  batches without partially attaching or importing. Respect blocked composer and Project availability.
+- Project Home also accepts one `.science` package across its content area with the same bounded
+  overlay. Dropping opens the existing destination Project picker, followed by the existing import
+  preview and confirmation; Home does not preselect the previously visited Project.
+- Keep the new-Session `.science` import guide and keyboard-accessible picker visible at rest.
+  Ordinary file drags must not highlight that package-only guide. Clear hover feedback on leave,
+  drop, cancellation, or window blur.
 
 ### Resource Viewer / File Library
 
@@ -919,11 +841,12 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 - Root: `flex h-svh min-w-0 overflow-hidden bg-bg-10 text-foreground`.
 - Root shell: `h-screen overflow-hidden bg-bg-10 p-[10px] text-[13px] leading-normal text-text-000`.
-- Left navigation: collapsed state is an icon rail; expanded state uses `Sidebar`.
+- Left navigation: the resizable panel collapses to `0%` and retains its reopen control; expanded state uses the workspace navigation owner.
 - Top tabs: `h-11 px-2`, active tab `h-8 rounded-md bg-accent`.
 - Activity stream: `ScrollArea className="min-w-0 flex-1"`.
 - Composer: fixed to the bottom of the activity stream and constrained to `max-w-4xl`, with the composer text track aligned to the message content.
 - Right viewer area: `border-l border-border/20`.
+- Side chat headers follow Replay chrome: a compact title/information popover on the left and ghost icon actions for the main Session, full screen, and close on the right. The information popover identifies the owning Session; it does not represent the exact conversation context snapshot. Reuse tool-panel expansion so draft, transcript and running state survive layout changes; returning to the main Session collapses the expanded surface.
 - Desktop side-panel dividers reveal a centered, full-height 2px `text-200` line on hover,
   keyboard focus, and drag. Mouse resize targets extend 10px to either side of the divider;
   collapsed dividers stay hidden and disabled. Keep the one-pixel layout footprint.
@@ -948,9 +871,21 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 ### Settings
 
+- **Network / Notebook network access** retains shared Settings history and breadcrumbs. Explain
+  restricted public HTTPS reads and broad domain grants before the custom-public-domain editor.
+  Built-in services use collapsed groups with explicit expand affordances; switches mean automatic
+  access, while disabled groups require approval and required package services remain locked.
+- Put hostname validation beside the input, distinguish Add to list from Save changes, and report
+  unsaved changes through the shared leave guard. Save blocks concurrent edits; errors retain drafts.
+  Explain that saving resets protected connections. Inactive protection gets an explicit scope notice.
+- Trusted private services have a separate local-only flow: exact hostname and port, DNS review,
+  displayed address set and installation-wide data-sending consequence, then explicit Add and Save.
+  Input edits invalidate prior reviews; late results cannot restore them. Saved rules support review
+  again and removal. DNS review does not claim connectivity. Private trust never admits link previews.
+
 - Use a large `Dialog`; the restored panel is `h-[min(688px,calc(100vh-2rem))] w-[min(960px,calc(100vw-2rem))] rounded-xl border border-border bg-card shadow-dialog`. Maximize uses `inset-4`, filling the viewport with a stable 16px margin and never shrinking the restored panel.
 - Settings consumes the global semantic palette: background `#FAFAF8`, card/popover `#FFFFFF`, muted/secondary `#ECECEA`, border/input `#DEDEDA`, foreground `#202321`, and muted foreground `#646762`. Do not scope token overrides to the dialog or use `body:has(...)`; Radix portals inherit these root tokens directly.
-- Left navigation: `w-48 shrink-0 border-r border-border bg-background`, divided into a `min-h-0 flex-1 overflow-y-auto` destination list and a fixed auxiliary footer. The destination list uses `p-3` and four labeled groups — **Intelligence** (Model, Agent, Skills, Specialists, Memory), **Connections** (Connectors, Network, Remote, Credentials), **Workspace** (Tags, Permissions, Runtimes, Storage, Compute, Usage, Archived), and **System** (General); each group has a `text-xs font-medium text-muted-foreground` heading over its rows. **Archived** is the final Workspace destination rather than a pinned or singleton group. The footer keeps only the external **Feedback** action, separated from destinations by `border-t border-border` and padded with `px-3 py-2`.
+- Left navigation: `w-48 shrink-0 border-r border-border bg-background`, divided into a `min-h-0 flex-1 overflow-y-auto` destination list and a fixed auxiliary footer. The destination list uses `p-3` and four labeled groups — **System** (General), **Intelligence** (Model, Agent, Skills, Specialists, Memory), **Connections** (Connectors, Network, Remote, Credentials), **Workspace** (Tags, Permissions, Runtimes, Storage, Compute, Usage, Archived); each group has a `text-xs font-medium text-muted-foreground` heading over its rows. **Archived** is the final Workspace destination rather than a pinned or singleton group. The footer keeps only the external **Feedback** action, separated from destinations by `border-t border-border` and padded with `px-3 py-2`.
 - Nav item: `h-8 w-full rounded-lg px-2 text-sm gap-2 hover:bg-muted`, with a `size-4` leading icon (`text-muted-foreground`) and a truncating label.
 - Active: `bg-muted text-foreground font-medium`; the neutral selection keeps deep green reserved for primary actions, focus, links, enabled switches, and success.
 - Content header: `h-12 border-b border-border px-3`, a space-between row. Left cluster: back / forward `size-7` icon buttons (`ArrowLeft` / `ArrowRight`, `disabled:opacity-40`), a `h-4 w-px bg-border` divider, then either a breadcrumb or a plain `h2 text-sm font-semibold` title. Center: the settings-wide search field (`min-w-0 flex-1 max-w-xs`), a combobox whose results list deep-links across panels through the dialog's own navigation and briefly rings the landed panel's first content block with `--primary`; it is not mounted below the `md` breakpoint, so the search shortcut never targets an invisible field. Right cluster: a maximize / restore `size-7` toggle (`Maximize2` / `Minimize2`) and a `size-7` close (`X`); both use `hover:bg-muted hover:text-foreground`.
@@ -958,6 +893,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Breadcrumb: a clickable root segment (`text-muted-foreground hover:text-foreground`), a muted `/` separator, and the truncated current page label in `text-foreground`, all at `text-sm font-semibold`.
 - Right content column uses `bg-card`; its content area scrolls independently (`min-h-0 flex-1 overflow-y-auto`). Panels pad with `p-5`, and maximize mode constrains inner content to `max-w-[880px]`.
 - First-level groups use `SettingsSection`: `text-base font-semibold` title, optional `text-[13px] leading-5 text-muted-foreground` description, and a hairline separator between groups. Do not wrap ordinary sections in cards. General and Tags open with `SettingsPanelHeader` — a fixed panel-top layout of title, description, and an optional panel-scoped search plus primary action pinned to the trailing edge.
+- General > Appearance keeps Theme, Interface scale, and Language together. Interface scale is a compact single-select control with 90%, 100%, 110%, and 125% options; it applies immediately to the desktop renderer and persists per device.
 - General begins with **About**, keeping app identity, version/update controls, Help Center, and release history easy to find before the preference flow. The identity/update row uses `SettingsRow`; Help Center and Release notes are full-width, divided `ExternalTextLink` rows with inline lucide icons and a trailing `ArrowUpRight`. On devices with hover support, a fine primary pointer, and no coarse pointer, each resource title rests vertically centered while its supporting description is transparent; pointer hover or keyboard focus reveals the description and changes the leading icon from muted foreground to `primary`, using transform and opacity only. Touch and coarse-pointer surfaces keep the description visible, including hybrid devices that also report hover support and a fine primary pointer. Both resources open in the system browser through the shared external-link policy; Settings never embeds a documentation browser.
 - Preference label/control pairs use `SettingsRow`: a two-column grid with the label and optional description on the left and a stable `12rem` to `20rem` control column on the right. Create and edit forms use one consistent stacked field rhythm instead: a visible `text-sm font-medium` label above a full-width Input, Textarea, or Select, followed by helper or error text. Cards remain for repeated objects, install/status surfaces, paths, errors, and drop zones.
 - Theme and browser-local language preferences synchronize across same-origin tabs through storage events. Invalid or removed preferences return to System; desktop language remains owned by Main. Failed desktop language saves restore the confirmed language across the interface and cache, with a dismissible error at the visible language control; selecting a language retries the save. Late replies do not override newer choices.
@@ -999,7 +935,7 @@ The upper-right pin toggles the current Session through the shared Session contr
   The full Tags editor remains the place to choose a custom name, icon, and color.
 
 - Settings -> Workspace -> Tags is the shared organization surface for catalog resources. V1
-  adapters cover Skills, Connectors, and runnable Specialists; the Reviewer placeholder is excluded.
+  adapters cover Skills, Connectors, runnable Specialists, Literature references and PDF annotations; the Reviewer placeholder is excluded.
   The bordered master-detail frame owns the available content height: its independently scrolling
   left column uses the shared muted panel background, while the right detail column uses the shared
   card background. The left column manages Tags and the right column aggregates assigned resources
@@ -1055,7 +991,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 #### Specialist-scoped resources and Marketplace
 
-- A Skill or Connector's scope is a renderer-derived relationship, never a persisted scope enum. The four displayed states are **Main only**, **Specialist only**, **Shared with Main**, and **Not in use**, computed from the existing Main enablement preference plus durable Specialist capability memberships. Disabled Specialists still count because scope describes configuration, not current runnability.
+- A Skill or Connector's access is derived from Main enablement and Specialist memberships, not a persisted scope enum. Current rows show actual users and a Manage access control; they do not show the historical four-state scope labels.
 - Skill and Connector batch management keep search first, followed by the source/group and status filters in one row. Search takes the remaining width; narrow layouts shrink the controls and hide the decorative search keycaps while retaining the shortcut and accessible labels.
 - Settings -> Skills and Settings -> Connectors combine Main Agent and named Specialists in one **All Agents/Specialists** filter; Main Agent is the first concrete option and filters by the existing enablement preference. Both catalogs omit the redundant scope filter.
 - Skill and Connector rows project actual access as a fixed **Used by** label followed by a compact avatar stack before Tag badges: an avatar exists only when that agent can use the resource. Main Agent occupies the first slot only when enabled; named Specialists otherwise begin the stack, with up to three actual users visible and an exact `+N` overflow slot. Resources with no users render neither the label nor the stack. The stack spreads through transform-only motion on hover/focus and opens a bounded, scrollable non-modal popover on hover, click, or keyboard focus. Its compact continuous list begins with **Used by Agents and Specialists** and contains no status labels, divider, or empty-state row. Scrolling the surrounding Settings surface dismisses the popover before its trigger leaves view, while the bounded usage list remains independently scrollable. Main Agent is informative only; named Specialist rows navigate to their editable or read-only Settings detail and participate in Settings Back history.
@@ -1070,7 +1006,7 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 #### Skills panel
 
-- Panel navigation is breadcrumb-driven: the list, manage, detail, create, edit, import, and upload screens are second-level pages reached through the settings header's back / forward history and maximize control, not separate dialogs.
+- Panel navigation is breadcrumb-driven: the list, detail, create, edit, import, and upload screens are second-level pages reached through the settings header's back / forward history and maximize control, not separate dialogs.
 - The Imported group header keeps a neutral **Import** dropdown visible even when the group is empty or collapsed. It duplicates the existing upload, GitHub, and installed-folder actions from **Add skill** so both entry points remain available and share the same menu items and platform availability rules. The group description is source-neutral: **Skills you imported into Open-Science.**
 - Directly copied Personal and Imported packages at `<configRoot>/skills/<source>/<name>/SKILL.md` use the same central catalog as Settings and every agent framework, where `<source>` is `personal` or `imported` and `<name>` is 1–64 lowercase letters or numbers separated by single hyphens. The shared agent system prompt supplies both absolute source paths: it may author a user-requested package in Personal, while Imported is informational and GitHub, attachment, search, preview, or confirmation sources remain on the application-owned import flow.
 - `storageRoot` is the historical code name for this fixed, non-relocatable `configRoot`; it is not the user-selectable `dataRoot`. Personal and Imported source packages, Settings, and the app-owned agent profiles live below `configRoot`. `dataRoot` holds relocatable artifacts, notebooks, and rebuildable compute/runtime assets and does not participate in user-Skill discovery.
@@ -1079,19 +1015,14 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Before an agent runtime starts, the enabled central catalog is copied into that framework's isolated, rebuildable Skill projection. Claude keeps its private profile at `<configRoot>/claude` and publishes Agent-readable Skills at `<configRoot>/runtime-support/agent-skills/claude/v1/<revision>/.claude/skills/<skill-name>`. Shared, isolated, and custom Claude sessions mount that revision as an additional directory for supporting-file access while keeping the workspace `project` settings source disabled. A primary-session-only, allowlisted loader aliases Claude's native `Skill { skill, args? }` call to the selected immutable package; its short always-loaded tool description points Claude to scoped canonical names and descriptions encoded as described constants in the `skill` input schema, avoiding Claude Code's per-tool-description truncation while keeping Featured, Personal, Imported, Connector, and Compute Skills discoverable without enabling workspace project settings. Discovery metadata is bounded to 256 Skills and 64 KiB per session; overflow packages remain explicitly invocable by canonical name through the schema's string fallback. Its Agent-facing server name is the neutral `skills`, so discovery and invocation expose neither an application plugin namespace nor an `os-` catalog marker. Reviewer, Side chat, and restricted inference sessions do not receive this loader or catalog: Claude gets an isolated empty projection, while OpenCode and Codex skip application Skill and Connector materialization before their restricted profiles are applied. Specialists see only their exact Skill scope. The projection root permits only `.claude/skills`, preventing project settings, hooks, agents, commands, or `CLAUDE.md` from entering through this mount. OpenCode and Codex continue to project primary-session content into `<configRoot>/opencode/config/opencode/skills/os-<catalog-id>`, `<configRoot>/codex/skills/os-<catalog-id>`, or `<configRoot>/codex-subscription/skills/os-<catalog-id>`; for those backends the internal `os-<catalog-id>` directory remains a projection identity, not the user package name. Projections are normalized and made read-only while preserving executable bits; the Personal/Imported source package remains authoritative. Claude revisions are immutable snapshots so a running session never observes a half-updated Skill tree. The single-instance desktop runtime retains every revision published by its current process for active-session safety, then removes those rebuildable revisions on the next process's first provision.
 - Specialist switching follows the provider's identity boundary. Claude replaces its provider Session because Specialist identity and Skill metadata are Session-level, then the renderer replays the bounded visible conversation history on the next turn. Codex and OpenCode retain their provider Session and do not replay history; every Specialist turn declares the current identity and exact scope as superseding all earlier Specialist identities and scopes, while every Main turn carries a compact declaration that revokes any earlier Specialist identity and Specialist-only Skill or Connector scope. If a switch wins while compatible resume is in flight, these turn-prefix routes re-resolve the latest binding locally and publish the already-resumed provider Session without a second resume, disposal, or replay.
 - Names beginning with `os-` or `mcp-`, names matching a bundled Featured/Internal Skill, Specialist sidecar IDs colliding with a bundled ID, and duplicate user sidecar IDs are logged and excluded so app-owned packages and user identities stay authoritative. Unsafe sidecar IDs are ignored. Existing newest-wins behavior remains for out-of-band Personal/Imported name duplicates; normal create/import flows prevent those collisions.
-- List toolbar: the first wrapping row contains source (`w-36`), agent (`w-48`), and Tag `Select` controls followed by a flex-1 search `Input` with a leading `Search` icon (`pl-8`, `type="search"`) and platform `Cmd/Ctrl+K` keycaps. A second row right-aligns the neutral **Manage** and **Add skill** controls.
+- The Skills header shows Installed count, Browse Marketplace and Add skill. Source, Agent, Tag and search filters share the next wrapping row. Each category owns Select multiple / Done; selection happens in the current catalog, not a separate Manage page.
 - "Add skill" is a neutral (not primary) `DropdownMenu` trigger: `h-8 rounded-lg border border-border bg-card px-2.5 text-sm font-medium hover:bg-muted`, with a leading `Plus` and a trailing `ChevronDown` (`opacity-70`). Its items — Write from scratch, Upload a skill, Import from GitHub — use `gap-2.5`, a leading icon, and a stacked label + `text-xs text-muted-foreground` hint.
-- **Manage** opens the breadcrumb-backed **Manage skills** subpage. This focused surface excludes Featured Skills and the ordinary list's group, add, import, edit, export, and per-row switch controls; only Imported and Personal Skills can appear. Source, status, and search filters sit above a separately scrolling list. Full-row labels retain native checkboxes and keyboard focus outlines; selection changes only the checkbox, with no row background or border emphasis. **Select all results** exposes a mixed state and acts on the currently displayed rows. **Show selected** shows every selected resource regardless of filters; changing a filter exits selected-only mode while retaining the selection. **Clear selection** also resets selected-only mode.
-- The bottom batch dock appears for a selection, pending operation, or result. It contains selected count, **Show selected**, **Clear selection**, **Enable**, **Disable**, and **Delete…**. Enable/disable remains immediate and reversible. Selection, filters, and duplicate actions are locked while a write runs. Success and partial failure summaries appear in the dock and can be dismissed with **Done**; clearing selection or starting another operation also clears those summaries. Connector cleanup retry feedback persists separately until retry succeeds, **Done**, or **Clear selection**; dismissing it does not remove the backend cleanup journal. Failed and protected resources remain selected.
-- Completed batch feedback places **Done** at the trailing edge of its summary row. Marketplace groups the completion count and **Done** beside the heading, with progress and **Details** below; an empty action row is omitted. Narrow layouts may wrap without shrinking button labels.
-- Marketplace, Skill management and Connector management share a compact bottom action surface. Display the selection count once next to an icon-only **Clear selection** control with a tooltip and accessible name. Common actions align to the right; wrap groups on narrow containers without wrapping button labels. Skill/Connector use **Show selected**, equally weighted neutral **Enable** / **Disable**, and a quiet destructive **Delete…** entry. Marketplace uses **Install…** or **Update…** as its primary review entry. Final confirmation retains explicit action and target counts. The shared component owns presentation only; existing page owners retain selection, review, writes, queue progress and feedback.
-- The dock remains in normal flex layout, with an `aria-hidden`, pointer-transparent 32px fade above it using Settings `background` tokens in both themes. Reserve scroll-end space and scroll padding so the final row and keyboard focus remain fully visible. Keep primary-button hover at `primary/90` inside the dock so small button text retains AA contrast, and apply focus feedback immediately. Use existing border, radius and `shadow-sm`; no large colored selection surface or new status enum. Default/hover/pressed/focus/disabled use shared controls, and loading/error/success use existing owner feedback.
-- Batch deletion replaces the dock controls with an inline, labelled review section, following the Marketplace batch layout. The destructive description and prominent deletable/protected counts remain visible; **Details** expands names and protection reasons. Deletion requires an explicit button naming the eligible count; zero eligible items disables it. The list and filters are locked during review. Focus moves to the review heading; **Cancel** or **Escape** before submission returns to selection without closing Settings and restores focus to the delete trigger or another enabled control. This review is intentionally non-modal: Settings navigation remains available, there is no additional scrim or nested focus trap, and the section does not claim `alertdialog` or `aria-modal` semantics. Leaving the page discards local selection/review; it does not cancel writes already dispatched or introduce a resumable batch job.
-- Confirmed Skill deletion calls the existing device deletion command sequentially for eligible Skills and never rewrites Specialist relationships: owned/referenced Skills are protected and left on disk. Successful IDs leave the selection; failed IDs remain selected with the standard Settings error summary.
+- Category selection uses native checkboxes and one `ResourceSelectionBar` for selected resources. It offers Add to Specialist and an action menu for unlinking Specialists, stopping Main Agent loading and deleting eligible resources. Hidden-by-filter counts remain visible. The existing assignment and deletion owners retain validation, partial-failure feedback and confirmation; selection does not itself persist access changes.
+- Marketplace batch installation uses its own review/progress owner.
 - Skills group by source (Featured / Imported / Personal). Each group header is a full-width collapse toggle: `text-sm font-semibold` label with a `ChevronDown` that rotates `-rotate-90` when collapsed, over a `text-xs text-muted-foreground` subtitle.
-- Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description is a flex-1 button opening the detail page; the metadata line starts with the agent avatar stack and then Tag badges. Trailing controls are Tag assignment, one `ChevronDown` action menu, and the unlabeled Main switch. The menu orders Export, Edit, separator, Delete and shows only actions valid for that source/platform; a protected Delete item remains visible as a muted, `aria-disabled` row with a trailing information icon, and its reason appears on hover or keyboard focus instead of expanding the menu. Featured Skills expose no action menu.
-- Enable controls use the shared shadcn `Switch`, with `bg-primary` when checked and `bg-input` when unchecked. Skills, Connectors, and their detail pages reuse the same component.
-- Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-base font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured), with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. An **Availability** section owns the labeled Main switch, derived scope, and the same linked agent stack/popover used by list rows. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
+- Skill row: `flex min-h-14 items-center gap-2 py-2.5`, rows separated by `divide-y divide-border`. The name (`text-sm`) over description is a flex-1 button opening the detail page; the metadata line starts with the agent avatar stack and then Tag badges. Trailing controls are Tag assignment, the source-appropriate action menu, a Manage access popover, and a details affordance. The menu orders Export, Edit, separator, Delete and shows only actions valid for that source/platform; a protected Delete item remains visible as a muted, `aria-disabled` row with a trailing information icon, and its reason appears on hover or keyboard focus instead of expanding the menu. Featured Skills expose no action menu.
+- Main Agent and per-Specialist access live in `ResourceAssignmentControls`, shared by list rows and `ResourceAvailability` on detail pages. Use its existing toggles and guarded mutation owner.
+- Skill detail page: header row pairs a `size-6` scroll icon (`ScrollText`, `text-primary`) + `text-base font-semibold` name + a rounded source badge (`bg-muted text-xs text-muted-foreground`, e.g. Featured), with a `text-xs text-muted-foreground` "Updated N days ago" line and a `[text-wrap:pretty]` description below. An **Availability** section owns the shared Manage access popover and linked actual-user stack. A **Files** section (`border-t border-border pt-4`) renders the `SKILL.md` body via `AgentMarkdown`; a **Details** section lists frontmatter Author / License / Third-party as stacked `text-xs` label + `text-sm` value rows, shown only when present.
 - Editor (create / edit) uses the shared stacked field rhythm for Name, Description, and Content. Content offers a Write / Upload toggle where pasting a `SKILL.md` auto-fills the frontmatter. The optional References dropzone, which writes into the skill's `references/`, lives under **Advanced settings** and opens initially when the Skill already has reference files.
 - Import from GitHub is scan-first. Its labeled input accepts either keywords or a direct `owner/repo`, `owner/repo@ref`, or `github.com` URL, with **Find skills** as the main action. Direct references scan immediately; keywords search public GitHub repositories and render at most ten compact rows (`owner/repo`, optional two-line description, star count, neutral **Scan for skills** action). A selected repository keeps the results visible while its row action shows a spinner and **Scanning…**, then collapses the repository results after a successful scan; a full-size **Show repositories** / **Hide repositories** control restores or collapses them. A divider separates repository matches from Skill candidates. Scanned candidates use per-row checkboxes with **Select all** and **Invert selection** in a dedicated selection toolbar; already-imported skills (matched by exact source URL or by the same folder name) show a muted `Imported` pill and are not pre-selected. The neutral batch action shows its own spinner and **Importing…** while importing instead of a page-level loading message, and otherwise reads "Import selected (N)" (`border border-border bg-card hover:bg-muted`), never primary green. Empty searches keep the input as the recovery path; GitHub failures use the shared inline `ErrorNotice`.
 - The import header exposes a neutral **Manage GitHub credential** action that navigates to the centralized **Credentials > GitHub** detail page instead of duplicating secret input inside the import workflow. That detail page owns token inspection, verification, replacement, and explicit removal. Main verifies a candidate against GitHub before replacing the existing credential and stores a reference protected by the selected Settings credential backend plus a masked hint (OS encryption by default). Search, scan, lazy preview, Settings import, and conversation-requested import all reuse the same authenticated request seam; the token is attached only to exact trusted GitHub API/raw-content hosts. Missing or undecryptable credentials fall back to anonymous requests without exposing plaintext to the renderer, and rate-limit errors direct the user to the credential-management entry point.
@@ -1104,8 +1035,8 @@ The upper-right pin toggles the current Session through the shared Session contr
 
 #### Connectors panel
 
-- The catalog follows the Skills toolbar rhythm: group, agent, Tag and search filters on the first row; **Manage** and **Add connector** right-aligned on the second row. Manage opens **Connectors / Manage connectors** through shared Settings history.
-- Manage lists Featured, Directory and Custom Connectors with group/status/search filters and shares the Skill management list, checkbox-only selection, bottom action dock, operation locks, inline non-modal deletion review, result feedback, and focus behavior described above. These actions persist Main Agent availability through the existing settings commands; Specialist assignments and approval policy are unchanged. Unauthenticated or credential-blocked custom Connectors cannot be enabled. Commands run sequentially and report partial completion, keeping failed targets selected for retry.
+- The Connector catalog shows Installed count and Add connector, followed by group, Agent, Tag and search filters. Category selection remains in the list through the shared resource selection controls.
+- Featured, Directory and Custom Connector categories use shared resource selection, assignment and deletion review. Main Agent and Specialist access remain independently controlled.
 - Bulk deletion previews custom Connector configurations only. Bundled Connectors and Connectors used by Specialists are protected. Usage must load successfully from a healthy catalog before preview and is refreshed again before confirmation executes; newly referenced targets are kept. Deletion reuses the existing cleanup workflow and journal, retains shared credentials, and reports failed targets. The preview never expands the set the user reviewed.
 
 - Native web reading in OpenCode and Claude Code offers **Once** and **This conversation**. The
@@ -1142,18 +1073,39 @@ The upper-right pin toggles the current Session through the shared Session contr
 - Credential creation acknowledges its saved ID even when the subsequent list projection fails. The editor remains on that saved identity and shows a retryable list error; Retry never creates another record. The creation result may omit its full list, which must not be treated as an empty or complete one-row snapshot.
 - A saved shared-credential change whose runtime refresh fails reports the completed save explicitly. Connector retries finish the affected in-memory security generation only after client reset and current-configuration validation; this adds no durable recovery state.
 
-- Skills and Connectors start with an Installed count and a wrapping action row. Their second row contains source (`w-36`), agent (`w-48`), and Tag controls followed by a flex-1 search field (`min-w-48`), keeping all filters and search together at the restored 960px dialog width and wrapping at narrower widths. Connectors keeps Manage and Add connector at the right of the header; contact email is configured in Credentials / Literature services.
+- Skills and Connectors use the catalog header/filter and category selection layouts above. Contact email is configured in Credentials / Literature services.
 - Bundled and custom rows retain the leading generic Connector glyph. The name and description open detail for bundled Connectors and edit for custom Connectors; the metadata line begins with Connector-specific status when present, then the shared actual-user avatar stack and Tag badges.
-- Trailing controls retain Connector-specific retry, configure, and sign-in actions, followed by Tag assignment, one `ChevronDown` action menu for custom Connectors, and the unlabeled Main switch. The custom menu orders Export, Edit, separator, Remove; removal continues to use the Specialist impact check and confirmation dialog.
+- Trailing controls retain Connector-specific retry, configure, and sign-in actions, followed by Tag assignment, the custom Connector action menu and shared Manage access popover. The custom menu orders Export, Edit, separator, Remove; removal continues to use the Specialist impact check and confirmation dialog.
 - Creating a custom OAuth Connector saves its configuration first, then immediately starts browser authorization in a cancellable dialog. Cancelling or failing authorization keeps the saved Connector disabled so the user can retry from the same dialog or finish later. Existing Connector rows reuse this dialog for sign-in rather than presenting a separate inline waiting state.
 - When a runtime refresh shows that a previously authenticated OAuth Connector has lost its tokens, the app raises one transient global notice with a shortcut back to Settings. The Connector row remains the persistent source of truth and continues to show that sign-in is required. This notice is session-local UI state: it adds no persisted status field, migration, or shared enum value.
 
 ## Error notices
 
+Web initial open and refresh reuse the desktop particle Logo throughout the HTML bootstrap,
+settings/session loading, and initial event connection. Keep the same centered layout on an opaque
+background until ready; do not expose the unfinished homepage. Reuse the existing animation timeline
+across those stages. Desktop startup, database checks, and onboarding retain their existing behavior.
+After the page has reached `live`, network interruptions instead pause interaction with a translucent
+spinner/status overlay, preserving the visible page context and drafts. Show the detailed recovery dialog only
+after five continuous seconds without reaching `live`; transitions between connecting,
+reconnecting, and replaying do not restart that wait. Explicit authorization or resynchronization
+failures show their recovery dialog immediately. Reaching `live` removes recovery content
+immediately, including any closing animation, so normal refreshes never flash a reload error.
+Retain draft preservation, preview leave confirmation, modal focus containment, and the App Shell
+shortcut gate. This presentation uses a transient timer and a page-local record of having reached `live`; it adds no connection enum or
+persisted state.
+
 See the [page-by-page surface decisions](error-surfaces.md) for placement, lifetime, modal layout,
 intentional exceptions and validation. Cross-panel Settings write failures use a dismissible shared
 notice above the scroll area. Global action feedback uses the top-center stack; background Notebook and recovery notices share the bottom-right stack.
 Local-file failures and Literature undo stay inside their owning content region.
+
+Restrict only the feature or region made unavailable by a failure; use application-wide blocking only
+when the application cannot operate safely. All floating background errors offer dismissal without
+clearing their underlying failure or safety gates. Keep recovery available in the owning surface:
+Session-load failures in Settings / Archived, size limits beside the affected conversation composer,
+and Notebook status/setup failures in Settings / Runtimes. Environment diagnostics start collapsed,
+outside the live summary; Retry shows pending feedback and never disables Close.
 
 Settings region warnings and operation failures, including preference saves, app-icon previews, logs, credentials, connection tests and storage scans, use the shared Notice surface. Keep retry, dismiss and diagnostics inside the owning notice when present, and keep the language rollback explanation available to screen readers. Input-linked validation stays beside its input using fieldErrorClassName (12px text, 20px line height, destructive text color and safe word wrapping), preserving ids and aria-describedby. Do not ellipsize embedded messages. Dense resource-row status labels, validation counters and destructive actions retain their existing compact presentation.
 
@@ -1206,21 +1158,21 @@ alert region excludes the diagnostic payload so opening it does not announce the
 | Settings          | Close                                                | `size-7` icon `button` (`X`)                                                             |
 | Settings          | Select field                                         | `Select`                                                                                 |
 | Skills            | Add skill                                            | Neutral `DropdownMenu` trigger (`border border-border bg-card`) + `Plus` / `ChevronDown` |
-| Skills            | Manage / Enable selected / Disable selected          | Neutral `Button outline`; native row checkboxes on the dedicated management subpage      |
+| Skills            | Select multiple / Manage access                      | Category selection, native row checkboxes and shared assignment popovers                 |
 | Skills            | Delete selected                                      | Neutral delete entry + explicit destructive confirmation in the inline batch review      |
 | Skills            | Group header                                         | Full-width collapse `button` + rotating `ChevronDown`                                    |
 | Skills            | Skill row                                            | Flex-1 `button` → detail; hover reveals no extra chrome                                  |
 | Skills            | Agent usage                                          | Overlapping avatar stack + exact `+N` + scrollable non-modal `Popover`                   |
 | Skills            | Export / edit / delete                               | One `DropdownMenu`; destructive item follows a separator                                 |
-| Skills            | Enable toggle                                        | Shared shadcn `Switch`                                                                   |
+| Skills            | Enable toggle                                        | Shared assignment popover toggles                                                        |
 | Skills            | Import selected                                      | Neutral `button` (`border border-border bg-card`), not primary                           |
 | Connectors        | Add connector                                        | Final neutral `Button outline` in the header action row                                  |
 | Connectors        | Connector row                                        | Leading Connector glyph + flex-1 name/description `button` → detail/edit                 |
 | Connectors        | Agent usage                                          | Shared overlapping avatar stack + scrollable non-modal `Popover`                         |
 | Connectors        | Export / edit / remove                               | One `DropdownMenu`; destructive item follows a separator                                 |
-| Connectors        | Enable toggle                                        | Shared unlabeled shadcn `Switch` with accessible name                                    |
-| Sidebar           | Back / collapse                                      | `Sidebar` + `Button ghost icon`                                                          |
-| Sidebar           | Navigation row                                       | `SidebarMenuButton`                                                                      |
+| Connectors        | Enable toggle                                        | Shared resource assignment access popover                                                |
+| Sidebar           | Back / collapse                                      | Workspace navigation + `Button ghost icon`                                               |
+| Sidebar           | Navigation row                                       | Workspace navigation button                                                              |
 | Workspace sidebar | New conversation                                     | `button` + `hover:bg-bg-300 cursor-pointer`                                              |
 | Workspace sidebar | Session row                                          | Nested `button`; wrapper owns hover/active only                                          |
 | Workspace sidebar | Session actions                                      | Icon `button` + opacity reveal + `DropdownMenu`                                          |
@@ -1238,6 +1190,21 @@ alert region excludes the diagnostic payload so opening it does not announce the
 | File library      | Grid/list switch                                     | `ToggleGroup type="single"`; hover `bg-muted`, selected `bg-bg-400`                      |
 | File library      | File card / file row                                 | `Card` / button row + neutral hover `bg-bg-100` / `bg-bg-200`                            |
 
+## Windows application menu row
+
+Windows desktop main windows place File, Edit, View and Help next to the Open-Science brand in a
+36px title-bar row. Electron `titleBarOverlay` retains native caption controls, window resizing and
+system window behavior. Reserve those controls with the `titlebar-area-*` CSS environment variables;
+only the menu buttons use `app-region: no-drag`, leaving the rest of the row draggable. Native popups
+preserve the editing target and use the existing command owners for settings, search, interface scale,
+close and quit. Alt/F10 focus the menu row; arrows move between menus and open them; Escape returns
+focus to the previous control. Scale and theme changes synchronize the native overlay from the existing
+renderer preferences and color tokens. Account for the row in full-height application layouts.
+Native fullscreen hides the row and removes its layout offset; leaving fullscreen restores both.
+Fullscreen state comes from the native window, including a fresh snapshot after renderer reload;
+Alt/F10 menu entry is inactive while the row is hidden. This state is not persisted.
+macOS and Linux keep their existing native window/menu presentation, and Web clients add no desktop row.
+
 ## Language Guidelines
 
 - Product naming is consistently `Open-Science` in visible app surfaces such as window titles, sidebars, app menus, about information, and help entry points.
@@ -1246,15 +1213,16 @@ alert region excludes the diagnostic payload so opening it does not announce the
 - Settings for model, font, licensing, theme, and related preferences should use functional names and should not bind explanatory copy to a specific vendor brand.
 - Reasoning or response explanations should use neutral wording, such as "the time the system spends preparing a response", and should avoid personified or brand-specific language.
 - Technical terms such as shadcn, Radix, Tailwind, token, class, hover, focus, and active may remain in English. User-facing interface copy should use a consistent language style within the same page.
-- Every icon button must provide a localizable `aria-label` and `Tooltip`; do not rely on the icon alone to communicate meaning.
+- Every icon-only action must have a localizable accessible name and a shared `Tooltip`; do not rely on the icon alone to communicate meaning. A conventional Close control in a dialog or sheet header may omit the tooltip when it has a translated accessible name, visible close glyph, and the overlay retains Escape dismissal and focus return. This narrow exception avoids a redundant overlay over modal chrome; it does not exempt toolbar, preview, tab, toast or content actions. Controls with persistent visible text, native form controls and noninteractive decorative icons do not require a redundant tooltip. Native-disabled transient busy controls cannot expose a hover tooltip; use the disabled-state guidance above when a standing reason needs explanation.
 
 ### Hover content and numeric stability
 
-- Mount one TooltipProvider per coherent toolbar, list, or action group. The first hint waits 200–300ms; subsequent hints within a 300ms skip window open immediately. Do not mount a new provider for every adjacent icon. Keep explicit longer explanatory delays and immediate chart inspection separate.
+- Usage's **Daily token usage** chart owns one continuous inspection tooltip. Full-height date columns, including zero days and gaps, select immediately with matching values and highlight; bar geometry stays fixed. Pointer-driven tooltip movement alone eases over 120ms, without replaying entry scaling. First opening, keyboard/touch selection and reduced motion position immediately. The surface stays readable while hovered, supports Escape and outside dismissal, fits the viewport, and closes on scroll, resize or panel exit. This chart-only moving information preview does not change ordinary Tooltip timing or the heatmap.
+- Mount one TooltipProvider per coherent toolbar, list, or action group. Ordinary button hints inherit the shared 200ms delay; subsequent hints within a 300ms skip window open immediately. Do not add local timing overrides for ordinary controls. Do not mount a new provider for every adjacent icon. Reusable Home header controls opt out of their standalone provider so the whole row shares hover intent, including the GitHub badge, message bell, network status and update action. Explicit `200ms` values match the default but should be removed from ordinary call sites in favor of the shared group provider. Local `0ms`, `150ms` or `300ms` delays on ordinary controls are not justified by their current presence. The documented 300ms Session/CSL preview browsing behavior and immediate chart inspection have separate interaction owners. The truncated Plan summary may retain its 1200ms explanatory preview delay: it expands readable content rather than labeling an action. Other exceptions require a documented content-preview purpose and preserved keyboard behavior; tests may use zero delay to exercise behavior deterministically.
 - Text hints remain hoverable, dismissible with Escape, and bounded by the viewport. Long content gets internal scrolling. Preserve primary reference, attachment, and run-jump clicks.
 - CSL examples use a focusable preview button and a non-modal Popover: hover/focus discovers, click/tap pins, Escape/outside interaction dismisses, and internal scrolling preserves the panel. Show the complete style title, lazy-load and deduplicate per style, retain cached examples, and offer Retry after failure. The formatter's plain-text contract and content-addressed style identities stay unchanged.
 - Root canvas, body, and application root share the current theme background so exposed scrolling regions remain continuous; document canvases retain their own surface.
-- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns and reserve a minimum duration width where appropriate; retain existing formats and units.
+- Use tabular digits for comparable numeric columns and changing counts/durations. Right-align numeric columns by default; parsed PDF table previews use the uniform start alignment specified above. Reserve a minimum duration width where appropriate; retain existing formats and units.
 
 ## File version comparisons
 
@@ -1284,3 +1252,22 @@ Malformed or oversized patches fall back to selectable raw text; absent patches 
 explanation. Muted separators count omitted unchanged lines before and between hunks; they have no expansion
 control because the patch does not contain those lines. Do not infer a trailing omission count. Horizontal scrolling stays inside the viewer. Semantic Markdown version comparison
 continues to use its existing specialized presentation.
+
+### Skill editor leave protection
+
+Settings owns navigation requests; the mounted Skill editor reports only transient dirty/busy
+state. Back, Forward, breadcrumbs, panel selection, search, external route intents, Cancel, Close
+and the close-active-pane shortcut consult that state before unmounting the editor. Host-driven
+session navigation also calls the Settings handle’s `requestLeave` before changing the workspace
+or closing Settings. A dirty draft
+requires **Keep editing** or **Discard changes**. An in-flight save/import must settle before
+discard becomes available; dismissal does not cancel or roll back a write. A successful Create/Save
+returns to the Skills list without a discard prompt, while a failed or conflicting write retains the
+draft. Search clears its query and highlights the destination only after navigation is accepted.
+This protection does not add cross-restart autosave, a persisted draft format or a domain enum.
+
+### New conversation start
+
+- Group the heading, research starters and composer in one bounded start surface without a separate logo. Keep it visible while editing or staging files; place package import below as a secondary action.
+- Research starters use a native horizontal rail with circular arrows over faded edges, without reserving side columns. Hide each arrow at its boundary; a keyboard-focused arrow remains visible and aria-disabled until focus leaves. Use scroll padding to reveal focused items clear of the overlays. They prepare or append an editable prompt, never submit it. Preserve references, attachments and Reading context.
+- The first user message creates the active conversation and docks the same mounted editor at the bottom. Animate its position with a 200ms transform only; reduced motion docks immediately. Existing conversations remain docked. File staging and failed validation do not change the layout.

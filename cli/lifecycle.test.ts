@@ -12,7 +12,7 @@ vi.mock('node:os', async (importOriginal) => {
 })
 
 import {
-  buildAppLaunchArgs,
+  buildBackendLaunchArgs,
   formatStartupFailure,
   isProcessAlive,
   openLaunchLog,
@@ -191,7 +191,7 @@ describe('C01 automatic service discovery', () => {
   it.each(['dead', 'unhealthy'] as const)(
     'stops only the selected authenticated target past a %s candidate',
     async (preferred) => {
-      await withCandidates(preferred, async ({ deps, devRoot, prodRoot }) => {
+      await withCandidates(preferred, async ({ deps, devRoot }) => {
         await stopCommand({}, deps)
         expect(deps.fetch.mock.calls.filter(([url]) => url.endsWith('/api/shutdown'))).toEqual([
           [
@@ -202,7 +202,7 @@ describe('C01 automatic service discovery', () => {
             })
           ]
         ])
-        expect(deps.removeState).toHaveBeenCalledWith(prodRoot)
+        expect(deps.removeState).not.toHaveBeenCalled()
         if (preferred === 'unhealthy') expect(deps.removeState).not.toHaveBeenCalledWith(devRoot)
         expect(deps.forceKill).not.toHaveBeenCalled()
       })
@@ -255,7 +255,7 @@ describe('C01 automatic service discovery', () => {
         .soft(JSON.parse(deps.log.mock.calls[0][0]))
         .toMatchObject({ running: true, configRoot: prodRoot })
       await expect.soft(readFile(join(prodRoot, STATE_FILE), 'utf8')).resolves.toContain('4242')
-      expect(deps.removeState).toHaveBeenCalledWith(devRoot)
+      expect(deps.removeState).not.toHaveBeenCalled()
     })
   })
 
@@ -383,15 +383,17 @@ describe('terminateDaemon', () => {
 })
 
 describe('headless startup', () => {
-  it('starts each launch with an empty diagnostic log', async () => {
+  it('refuses to overwrite another launch diagnostic log', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'open-science-cli-log-'))
     const logPath = join(directory, 'cli-daemon.log')
     try {
       await writeFile(logPath, 'stale SUID sandbox failure')
 
-      closeSync(openLaunchLog(logPath))
-
-      await expect(readFile(logPath, 'utf8')).resolves.toBe('')
+      expect(() => openLaunchLog(logPath)).toThrow()
+      await expect(readFile(logPath, 'utf8')).resolves.toBe('stale SUID sandbox failure')
+      const fresh = join(directory, 'unique-launch.log')
+      closeSync(openLaunchLog(fresh))
+      await expect(readFile(fresh, 'utf8')).resolves.toBe('')
     } finally {
       await rm(directory, { recursive: true })
     }
@@ -422,36 +424,22 @@ describe('headless startup', () => {
       parseCliArgs(['start', '--credential-store=file', '--credential-store', 'os'])
     ).toThrow()
     expect(
-      buildAppLaunchArgs(['app-root'], { credentialStore: 'file' }, 44100, { platform: 'darwin' })
-    ).toEqual(['app-root', '--credential-store=file', '--open-science-headless', '--serve=44100'])
-    expect(buildAppLaunchArgs([], {}, 44100).join(' ')).not.toContain('credential-store')
+      buildBackendLaunchArgs({ entry: 'backend.cjs' }, { credentialStore: 'file' }, 44100)
+    ).toEqual(['backend.cjs', '--credential-store=file', '--serve=44100'])
+    expect(buildBackendLaunchArgs({ entry: 'backend.cjs' }, {}, 44100).join(' ')).not.toContain(
+      'credential-store'
+    )
   })
 
-  it('places the no-sandbox runtime switch before the development app path', () => {
+  it('uses the same Node entry with explicit development and vault settings', () => {
     expect(
-      buildAppLaunchArgs(['app-root'], { noSandbox: true }, 44100, { platform: 'darwin' })
-    ).toEqual(['--no-sandbox', 'app-root', '--open-science-headless', '--serve=44100'])
-    expect(buildAppLaunchArgs(['app-root'], {}, 44100)).not.toContain('--no-sandbox')
+      buildBackendLaunchArgs(
+        { entry: 'backend.cjs', development: true },
+        { passwordStore: 'gnome-libsecret' },
+        44100
+      )
+    ).toEqual(['backend.cjs', '--development', '--password-store=gnome-libsecret', '--serve=44100'])
   })
-
-  it.each([
-    ['linux', {}, true],
-    ['linux', { DISPLAY: ':0' }, false],
-    ['linux', { WAYLAND_DISPLAY: 'wayland-0' }, false],
-    ['darwin', {}, false],
-    ['win32', {}, false]
-  ] as const)(
-    'selects display-free Ozone only for Linux without a display: %s %j',
-    (platform, env, expected) => {
-      const args = buildAppLaunchArgs(['app-root'], {}, 44100, { platform, env })
-      expect(args.includes('--ozone-platform=headless')).toBe(expected)
-      expect(args).not.toContain('--no-sandbox')
-      expect(args).not.toContain('--headless')
-      expect(args).toContain('--open-science-headless')
-      if (expected)
-        expect(args.indexOf('--ozone-platform=headless')).toBeLessThan(args.indexOf('app-root'))
-    }
-  )
 
   it('stops waiting as soon as the packaged app exits', async () => {
     const child = new EventEmitter()
@@ -470,12 +458,12 @@ describe('headless startup', () => {
     expect(deps.sleep).not.toHaveBeenCalled()
   })
 
-  it('keeps waiting after a successful second-instance handoff', async () => {
+  it('waits for the winner of concurrent directory ownership', async () => {
     const child = new EventEmitter()
     const findServiceState = vi
       .fn()
       .mockImplementationOnce(() => {
-        child.emit('exit', 0, null)
+        child.emit('exit', 75, null)
         return Promise.resolve(undefined)
       })
       .mockResolvedValue(RUNNING_STATE)
@@ -488,16 +476,13 @@ describe('headless startup', () => {
     expect(findServiceState).toHaveBeenCalledTimes(2)
   })
 
-  it('explains the AppImage sandbox failure and the explicit security trade-off', () => {
+  it('reports the actual Node startup error without Chromium workaround advice', () => {
     const message = formatStartupFailure(
       { kind: 'exit', code: 1, signal: null },
-      'FATAL:sandbox/linux/suid/client/setuid_sandbox_host.cc:166\nThe SUID sandbox helper binary was found, but is not configured correctly.',
-      { noSandbox: false }
+      'OS vault is locked'
     )
-
-    expect(message).toContain('open-science start --no-sandbox')
-    expect(message).toContain('reduces security')
-    expect(message).toContain('AppImage')
+    expect(message).toContain('OS vault is locked')
+    expect(message).not.toContain('--no-sandbox')
   })
 })
 
@@ -521,7 +506,7 @@ describe('stopCommand', () => {
       expect.objectContaining({ method: 'POST' })
     )
     expect(deps.forceKill).not.toHaveBeenCalled()
-    expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
+    expect(deps.removeState).not.toHaveBeenCalled()
     expect(deps.log).toHaveBeenCalledWith('Open-Science stopped.')
   })
 
@@ -605,7 +590,7 @@ describe('stopCommand', () => {
     )
     // The pid is the user's app — it must never be signalled.
     expect(deps.forceKill).not.toHaveBeenCalled()
-    expect(deps.removeState).toHaveBeenCalledWith(RUNNING_STATE.configRoot)
+    expect(deps.removeState).not.toHaveBeenCalled()
     expect(deps.log).toHaveBeenCalledWith(
       'Open-Science web service stopped; the app is still running.'
     )

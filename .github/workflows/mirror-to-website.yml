@@ -16,6 +16,11 @@ on:
         type: choice
         options: [backfill, promote]
         default: backfill
+      bootstrap_linux_arm64:
+        description: 'First ARM64 promotion only: allow a confirmed missing ARM64 feed (requires promote)'
+        required: false
+        type: boolean
+        default: false
       dry_run:
         description: 'Run local release transforms without AWS credentials or uploads'
         required: false
@@ -60,7 +65,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.ref.outputs.tag }}
-        run: gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
+        run: |
+          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --dir dist-assets
+          # Standalone CLI runtime archives and CLI distribution packages distribute via
+          # npm/GitHub release downloads, not the website CDN — keep them out of the mirrored
+          # asset set (their names also fail the desktop-installer manifest validation).
+          rm -f dist-assets/open-science-*-darwin-*.tar.gz \
+            dist-assets/open-science-*-linux-*-gnu.tar.gz \
+            dist-assets/open-science-*-win32-x64.zip \
+            dist-assets/open-science-cli_*.deb \
+            dist-assets/open-science-cli-*.rpm
 
       # A dry-run exercises the real manifest/feed transforms without downloading every installer.
       # SHA256SUMS and updater feeds are small; sparse files reproduce each installer's published name
@@ -79,7 +93,10 @@ jobs:
             --jq '.assets[] | [.name, (.size | tostring)] | @tsv' |
           while IFS=$'\t' read -r name size; do
             case "$name" in
-              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*_amd64.deb|*-mac-arm64.zip|*-mac-x64.zip)
+              # CLI distribution packages stay on GitHub Releases, not the website CDN.
+              open-science-cli_*.deb|open-science-cli-*.rpm)
+                ;;
+              *-mac-arm64.dmg|*-mac-x64.dmg|*-win-x64-setup.exe|*-linux-x64.AppImage|*-linux-x86_64.AppImage|*-linux-arm64.AppImage|*_amd64.deb|*_arm64.deb|*-mac-arm64.zip|*-mac-x64.zip)
                 [ "$name" = "$(basename "$name")" ] || { echo "Unsafe asset name: $name" >&2; exit 1; }
                 truncate -s "$size" "dist-assets/$name"
                 ;;
@@ -120,9 +137,9 @@ jobs:
           done < "$blockmap_index"
 
       - name: Set up Node
-        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
-          node-version: 22
+          node-version: 24
 
       - name: Install manifest dependencies
         run: npm ci --ignore-scripts --omit=dev --omit=optional --no-audit --no-fund
@@ -168,7 +185,7 @@ jobs:
           VERSION: ${{ steps.ref.outputs.version }}
         run: |
           shopt -s nullglob
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/latest-linux-arm64.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] || continue
             node -e '
               const fs = require("fs");
@@ -193,7 +210,7 @@ jobs:
         run: |
           shopt -s nullglob
           feeds=()
-          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/*-mac.yml; do
+          for yml in dist-assets/latest.yml dist-assets/latest-linux.yml dist-assets/latest-linux-arm64.yml dist-assets/*-mac.yml; do
             [ -f "$yml" ] && feeds+=("$yml")
           done
           if [ ${#feeds[@]} -eq 0 ]; then
@@ -246,4 +263,5 @@ jobs:
           S3_PREFIX: ${{ vars.S3_PREFIX }}
           VERSION: ${{ steps.ref.outputs.version }}
           MODE: ${{ inputs.mode }}
+          BOOTSTRAP_LINUX_ARM64: ${{ inputs.bootstrap_linux_arm64 }}
         run: node scripts/publish-update-channel.mjs

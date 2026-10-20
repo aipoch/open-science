@@ -1,12 +1,14 @@
+import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { createHash, randomUUID } from 'node:crypto'
 import { existsSync } from 'node:fs'
 import { chmod, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { delimiter, dirname, join, posix, win32 } from 'node:path'
-import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, describe, expect, it, vi, type Mock } from 'vitest'
 import { NotebookBackgroundRunError } from '../../shared/notebook'
 import { NotebookExecutionStopError } from '../../shared/notebook-execution-error'
-import { EnvironmentLeaseManager } from './environment-lease-manager'
+import { EnvironmentLeaseManager } from '@aipoch/environment'
+import { markTrustedNotebookBindingPermissionPrompts } from './runtime-binding-admission'
 
 import type {
   NotebookExecutionRequest,
@@ -27,36 +29,33 @@ import {
   RuntimeOperationJournal,
   operationJournalPath,
   recordSpawnIntentSync
-} from './operation-journal'
-import { DefaultRuntimeProvisioner } from './provisioner'
-import * as environmentDiscovery from './environment-discovery'
+} from '@aipoch/environment'
+import { DefaultRuntimeProvisioner } from '@aipoch/environment'
+import * as environmentDiscovery from '@aipoch/environment'
 import {
   EnvironmentManifestPublicationError,
   type EnvironmentStateTracker
-} from './environment-state-tracker'
-import { CHILD_UNCONFIRMED } from './provisioner-runtime'
+} from '@aipoch/environment'
+import { CHILD_UNCONFIRMED } from '@aipoch/environment'
 import type {
   InstallDeps as InstallDepsForTest,
-  InstallRequest as InstallRequestForTest,
   InstallResult as InstallResultForTest
-} from './package-manager'
-import type { EnvironmentInfo, ProvisionProgress } from '../../shared/notebook-env'
+} from '@aipoch/environment'
+import type { InstallRequest as InstallRequestForTest } from '../../shared/notebook-env'
+import type { EnvironmentInfo, ProvisionProgress } from '@aipoch/environment/contracts'
+import { type NotebookEnvironmentPackageChange } from '@aipoch/environment/contracts'
+import { type NotebookEnvironmentManifest } from '../../shared/notebook'
 import {
   NOTEBOOK_STATE_HISTORY_FRAME_ID_LIMIT_BYTES,
   NOTEBOOK_STATE_HISTORY_PAGE_LIMIT,
   NOTEBOOK_STATE_TARGET_RUN_LIMIT,
-  type NotebookEnvironmentPackageChange,
-  type NotebookEnvironmentManifest,
   type NotebookEnvironmentStatus,
   type NotebookLanguage,
   type NotebookRunInputFile,
   type NotebookRunProvenanceContext
 } from '../../shared/notebook'
-import type {
-  DiscoveredInterpreter,
-  RuntimeEnablement,
-  RuntimeTargetReceipt
-} from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
+import type { RuntimeEnablement, RuntimeTargetReceipt } from '../../shared/notebook-runtime'
 import {
   CompletionGateCoordinator,
   createCompletionGatedControlToolInterceptor
@@ -76,15 +75,17 @@ import {
   repairRegistryPath,
   writeReadyMarker,
   writeRReadyMarker
-} from './runtime-paths'
+} from '@aipoch/environment'
 import type { NotebookShellProcess } from './shell-process'
+import * as windowsNotebookRuntime from './windows-notebook-runtime'
 import { NOTEBOOK_CODE_LIMIT_BYTES } from './content-limits'
-import type { RuntimeDiagnosticLogger } from './runtime-diagnostics'
-import { projectNotebookDependencies, type AnalyzedNotebookRun } from './dependency-analysis'
+import type { RuntimeDiagnosticLogger } from '@aipoch/diagnostics/node'
+import { projectNotebookDependencies, type AnalyzedNotebookRun } from '@aipoch/notebook-analysis'
 import { NotebookRuntimeBindingOwner } from './runtime-binding'
 import type { NotebookEnvironmentManager } from './environment-management'
 
 let storageRoot: string | undefined
+const liveShellServices: NotebookRuntimeService[] = []
 
 const helperDigest = (source: string): string => createHash('sha256').update(source).digest('hex')
 
@@ -106,6 +107,9 @@ const createDeferred = <Value>(): {
 
 afterEach(async () => {
   vi.unstubAllEnvs()
+  for (const service of liveShellServices.splice(0)) {
+    expect(await service.shutdownAll()).toMatchObject({ reaped: true })
+  }
   if (storageRoot) {
     await rm(storageRoot, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 })
     storageRoot = undefined
@@ -902,6 +906,7 @@ describe('notebook runtime service', () => {
 
   it('keeps Session deletion fenced when a persistent process tree cannot be proven reaped', async () => {
     const root = await createStorageRoot()
+    const activityKernelCounts: number[] = []
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -918,7 +923,14 @@ describe('notebook runtime service', () => {
           outputs: []
         }),
         shutdown: async () => ({ reaped: false })
-      })
+      }),
+      callbacks: {
+        onNotebookChanged: () => {
+          activityKernelCounts.push(
+            service.getProjectActivity({ projectId: 'project-1' }).kernels.length
+          )
+        }
+      }
     })
     const request = {
       projectId: 'project-1',
@@ -927,6 +939,9 @@ describe('notebook runtime service', () => {
     }
     await service.execute({ ...request, code: '1' })
 
+    expect(service.getProjectActivity({ projectId: 'project-1' }).kernels).toHaveLength(1)
+    activityKernelCounts.length = 0
+
     const cleanupError = await service.shutdownSession('session-1').catch((error: unknown) => error)
     expect(cleanupError).toBeInstanceOf(AggregateError)
     expect((cleanupError as AggregateError).errors).toEqual([
@@ -934,6 +949,7 @@ describe('notebook runtime service', () => {
         message: expect.stringContaining('persistent process tree was not reaped')
       })
     ])
+    expect(activityKernelCounts).toEqual([0])
     await expect(service.state(request)).rejects.toThrow('Session is being deleted.')
   })
 
@@ -1736,6 +1752,12 @@ describe('notebook runtime service', () => {
     expect(execute).toHaveBeenCalledWith(expect.objectContaining({ kind: 'repl', code: '1 + 1' }))
     expect(execute.mock.calls[0]?.[0].sourceFileAccessContext).toBeUndefined()
     expect(result).toMatchObject({ status: 'completed', stdout: 'ran' })
+    expect(
+      (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs[0]
+    ).toMatchObject({
+      kernelKind: 'repl',
+      replPersistentBindings: true
+    })
   })
 
   it('streams agent code into a locked cell and runs it through the shared executor', async () => {
@@ -3951,8 +3973,32 @@ describe('notebook runtime service', () => {
   })
 
   describe('executeShell', () => {
-    const createShellService = (root: string): NotebookRuntimeService =>
-      new NotebookRuntimeService({
+    const restoreWindowsRuntimeMocks: Array<() => void> = []
+    afterEach(() => {
+      for (const restore of restoreWindowsRuntimeMocks.splice(0)) restore()
+    })
+
+    const mockWindowsShellRuntime = (): void => {
+      // These policy/admission tests inject the Shell process. Keep the Windows launch adapter
+      // independent of the host's files and path format; native isolation has its own suite.
+      const resolve = vi
+        .spyOn(windowsNotebookRuntime, 'resolveWindowsNotebookRuntime')
+        .mockReturnValue({
+          root: 'C:\\fixture-runtime',
+          node: 'C:\\fixture-runtime\\node\\node.exe',
+          powershell: 'C:\\fixture-runtime\\powershell\\pwsh.exe'
+        })
+      const environment = vi
+        .spyOn(windowsNotebookRuntime, 'windowsNotebookRuntimeEnvironment')
+        .mockImplementation((environment) => ({ ...environment }))
+      restoreWindowsRuntimeMocks.push(() => {
+        environment.mockRestore()
+        resolve.mockRestore()
+      })
+    }
+
+    const createShellService = (root: string): NotebookRuntimeService => {
+      const service = new NotebookRuntimeService({
         configRoot: root,
         dataRoot: root,
         projectId: 'default-project',
@@ -3961,8 +4007,11 @@ describe('notebook runtime service', () => {
         // semantic-policy path here; managed-runtime-guard.test.ts verifies the Seatbelt wrapper.
         platform: process.platform === 'darwin' ? 'linux' : process.platform
       })
+      liveShellServices.push(service)
+      return service
+    }
 
-    it('runs a command in a fresh sh process and captures stdout/exitCode', async () => {
+    it('runs a command in the session shell and captures stdout/exitCode', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
@@ -4044,6 +4093,7 @@ describe('notebook runtime service', () => {
     it.each(['linux', 'win32'] as const)(
       'keeps background Shell Runs in bounded FIFO order and cancels a queued Run idempotently on %s',
       async (platform) => {
+        if (platform === 'win32') mockWindowsShellRuntime()
         const root = await createStorageRoot()
         const entered: string[] = []
         const releaseFirst = createDeferred<void>()
@@ -4116,6 +4166,7 @@ describe('notebook runtime service', () => {
     ] as const)(
       'recovers a lost background Shell receipt and idempotently cancels running work on $platform after $dispatchDelayMs ms dispatch delay',
       async ({ platform, dispatchDelayMs }) => {
+        if (platform === 'win32') mockWindowsShellRuntime()
         const root = await createStorageRoot()
         const executionStarted = createDeferred<void>()
         const dispatchAllowed = createDeferred<void>()
@@ -4172,7 +4223,9 @@ describe('notebook runtime service', () => {
           expect(executions).toBe(1)
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
-          ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+          ).resolves.toMatchObject({
+            run: { status: 'cancelled', cancellationRequestedAt: expect.any(Number) }
+          })
           await expect(
             service.cancelBackgroundRun({ ...request, runId: first.runId })
           ).resolves.toMatchObject({ run: { status: 'cancelled' } })
@@ -4186,6 +4239,52 @@ describe('notebook runtime service', () => {
         }
       }
     )
+
+    it('still stops an explicitly cancelled background Shell when saving intent fails', async () => {
+      const root = await createStorageRoot()
+      const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        shellProcess: {
+          execute: async (request) => {
+            started.resolve()
+            await new Promise<void>((resolve) =>
+              request.signal?.addEventListener('abort', () => resolve(), { once: true })
+            )
+            return { stdout: '', stderr: 'cancelled', exitCode: null, cancelled: true }
+          }
+        }
+      })
+      const input = {
+        sessionId: 'shell-cancel-write-failure',
+        workspaceCwd: root,
+        command: 'wait-for-cancel',
+        background: true,
+        executionInvocationId: 'cancel-write-failure'
+      }
+      const receipt = await service.executeShellBackground(input)
+      await started.promise
+      const write = vi
+        .spyOn(repository, 'requestRunCancellation')
+        .mockRejectedValueOnce(new Error('disk unavailable'))
+      try {
+        await expect(
+          service.cancelBackgroundRun({ ...input, runId: receipt.runId })
+        ).rejects.toThrow('Shell cancellation intent could not be persisted')
+        await service.waitForBackgroundRun(receipt.runId)
+        expect(
+          (await service.getBackgroundRun({ ...input, runId: receipt.runId })).run.status
+        ).toBe('cancelled')
+      } finally {
+        write.mockRestore()
+        await service.dispose()
+      }
+    })
 
     it('keeps a background Shell Run retryable when its durable result is temporarily unreadable', async () => {
       const root = await createStorageRoot()
@@ -4281,6 +4380,7 @@ describe('notebook runtime service', () => {
 
       expect(execute).toHaveBeenCalledWith({
         command: 'opaque command',
+        laneKey: expect.any(String),
         runId: expect.any(String),
         cwd: join(root, 'notebooks', 'default-project', 'session-1', 'data'),
         executionReference: expect.any(String),
@@ -5227,6 +5327,8 @@ describe('notebook runtime service', () => {
       const first = service.executeShell({ ...scope, command: 'first' })
       // Filesystem preparation can exceed waitFor's default 1s under CI coverage.
       await firstStarted.promise
+      const admittedPath = observedPaths[0]
+      expect(admittedPath).toContain(originalPath)
       const second = service.executeShell({ ...scope, command: 'second' })
       await vi.waitFor(
         async () => {
@@ -5243,7 +5345,7 @@ describe('notebook runtime service', () => {
         process.env.PATH = originalPath
       }
 
-      expect(observedPaths).toEqual([originalPath, originalPath])
+      expect(observedPaths).toEqual([admittedPath, admittedPath])
     })
 
     it('prepares queued Shell sandbox permissions before durable admission', async () => {
@@ -5404,6 +5506,8 @@ describe('notebook runtime service', () => {
     it('persists running Shell cancellation intent before Stop reaches the process', async () => {
       const root = await createStorageRoot()
       const repository = new NotebookRunRepository(root)
+      const started = createDeferred<void>()
+      const cancellation = new AbortController()
       let observedAbort = false
       let finishCancellation!: () => void
       const cancellationGate = new Promise<void>((resolve) => {
@@ -5429,32 +5533,47 @@ describe('notebook runtime service', () => {
               }
               if (request.signal?.aborted) void cancel()
               else request.signal?.addEventListener('abort', () => void cancel(), { once: true })
+              started.resolve()
             })
         }
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       const cancellationWrite = vi.spyOn(repository, 'requestRunCancellation')
-      const execution = service.executeShell({ ...scope, command: 'long-running' })
-      await vi.waitFor(async () => {
+      const execution = service.executeShell(
+        { ...scope, command: 'long-running' },
+        cancellation.signal
+      )
+      const settled = execution.catch(() => undefined)
+      let shutdown: ReturnType<typeof service.shutdown> | undefined
+      try {
+        // The process starts only after durable admission; avoid a one-second polling budget
+        // for filesystem work on a contended CI runner.
+        await Promise.race([started.promise, execution])
         expect((await service.state(scope)).runs[0]?.status).toBe('running')
-      })
-      const shutdown = service.shutdown(scope)
-      await vi.waitFor(() => expect(cancellationWrite).toHaveBeenCalledOnce())
-      await vi.waitFor(() => expect(observedAbort).toBe(true), { timeout: 5_000 })
-      const durable = await repository.loadOrCreate({
-        projectId: 'default-project',
-        sessionId: scope.sessionId,
-        workspaceCwd: root,
-        lane: createRootNotebookLane('default-project', scope.sessionId, 'root-frame-session-1')
-      })
-      expect(durable.runs[0]).toMatchObject({
-        status: 'running',
-        cancellationRequestedAt: expect.any(Number),
-        cancellationReason: 'Notebook Session is shutting down.'
-      })
-      finishCancellation()
-      await execution
-      await shutdown
+        shutdown = service.shutdown(scope)
+        await vi.waitFor(() => expect(observedAbort).toBe(true), { timeout: 5_000 })
+        expect(cancellationWrite).toHaveBeenCalledOnce()
+        const durable = await repository.loadOrCreate({
+          projectId: 'default-project',
+          sessionId: scope.sessionId,
+          workspaceCwd: root,
+          lane: createRootNotebookLane('default-project', scope.sessionId, 'root-frame-session-1')
+        })
+        expect(durable.runs[0]).toMatchObject({
+          status: 'running',
+          cancellationRequestedAt: expect.any(Number),
+          cancellationReason: 'Notebook Session is shutting down.'
+        })
+        finishCancellation()
+        await execution
+        await shutdown
+      } finally {
+        cancellation.abort()
+        finishCancellation()
+        await settled
+        await shutdown
+        await service.dispose()
+      }
     })
 
     it('rejects a direct micromamba install before spawning the shell command', async () => {
@@ -5518,6 +5637,7 @@ describe('notebook runtime service', () => {
       'Set-Location $env:OPEN_SCIENCE_RUNTIME_DIR; New-Item conda-meta\\pwn.json',
       'Remove-Item "$env:OPEN_SCIENCE_RUNTIME_DIR\\conda-meta\\history"'
     ])('uses the PowerShell runtime-write policy on Windows: %s', async (command) => {
+      mockWindowsShellRuntime()
       const root = await createStorageRoot()
       // This portable unit test owns runtime-write policy, not OS parsing or process launch.
       const execute = vi.fn<NotebookShellProcess['execute']>()
@@ -5644,7 +5764,7 @@ describe('notebook runtime service', () => {
       })
     })
 
-    it('spawns a fresh process per call instead of reusing a persistent shell', async () => {
+    it('retains shell variables across calls while keeping distinct run records', async () => {
       const root = await createStorageRoot()
       const service = createShellService(root)
 
@@ -5653,20 +5773,36 @@ describe('notebook runtime service', () => {
         workspaceCwd: root,
         command: process.platform === 'win32' ? "$env:FOO='bar'" : 'FOO=bar'
       })
-      // A persistent shell would remember FOO from the previous call; a fresh process never does.
       const result = await service.executeShell({
         sessionId: 'session-1',
         workspaceCwd: root,
         command: process.platform === 'win32' ? 'Write-Output "[$env:FOO]"' : 'echo "[$FOO]"'
       })
 
-      expect(result.stdout).toContain('[]')
+      expect(result.stdout).toContain('[bar]')
 
       const state = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       // Each executeShell call produces its own record: two calls, two distinct runIds.
       expect(state.runs).toHaveLength(2)
       expect(state.runs.every((run) => run.kernelKind === 'bash')).toBe(true)
       expect(new Set(state.runs.map((run) => run.runId)).size).toBe(2)
+    })
+
+    it('resets only the restarted lane shell and preserves targeted kernel restart isolation', async () => {
+      const root = await createStorageRoot()
+      const service = createShellService(root)
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const other = { ...request, sessionId: 'session-2' }
+      const set = process.platform === 'win32' ? '$value="kept"' : 'value=kept'
+      const read =
+        process.platform === 'win32' ? '[Console]::Write("[$value]")' : 'printf "[%s]" "${value-}"'
+      await service.executeShell({ ...request, command: set })
+      await service.executeShell({ ...other, command: set })
+      await service.restart({ ...request, kernel: 'repl' })
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[kept]')
+      await service.restart(request)
+      expect((await service.executeShell({ ...request, command: read })).stdout).toBe('[]')
+      expect((await service.executeShell({ ...other, command: read })).stdout).toBe('[kept]')
     })
 
     // POSIX-only: relies on process-group signals and signal-0 process probes. Windows semantics
@@ -6872,6 +7008,86 @@ describe('notebook runtime service', () => {
     })
   })
 
+  it.each(['rpc', 'file-context'] as const)(
+    'cancels a background REPL during %s preparation without dispatching or losing the lane',
+    async (preparation) => {
+      const root = await createStorageRoot()
+      const preparing = createDeferred<void>()
+      const release = createDeferred<void>()
+      const prepare = async (): Promise<undefined> => {
+        preparing.resolve()
+        await release.promise
+        return undefined
+      }
+      const execute = vi.fn(async (request: NotebookExecutionRequest) => ({
+        status: 'completed' as const,
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }))
+      const repository = new NotebookRunRepository(root)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository,
+        backgroundExecutionEnabled: true,
+        ...(preparation === 'rpc'
+          ? {
+              getMcpRpcConnection: async () => {
+                await prepare()
+                return { endpoint: 'http://127.0.0.1:1', token: 'test-token' }
+              }
+            }
+          : {
+              dependencyAnalyzer: {
+                project: async () => ({ stalenessByRunId: {}, invalidatedByRunId: {} }),
+                sourceFileAccessContext: prepare
+              }
+            }),
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const request = { sessionId: 'session-repl-preparation', workspaceCwd: root }
+      const receipt = await service.executeControlBackground({
+        ...request,
+        code: 'must not execute',
+        background: true
+      })
+      await preparing.promise
+      const abort = vi.spyOn(AbortController.prototype, 'abort')
+      const cancelled = service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      // Wait for the public cancel path to deliver its signal before releasing preparation.
+      try {
+        await vi.waitFor(() => expect(abort).toHaveBeenCalled())
+      } finally {
+        abort.mockRestore()
+        release.resolve()
+      }
+      await expect(cancelled).resolves.toMatchObject({
+        run: { status: 'cancelled', kernelDispatched: false }
+      })
+      expect(execute).not.toHaveBeenCalled()
+      expect(service.getProjectActivity({ projectId: 'default-project' }).kernels).toEqual([
+        expect.objectContaining({ kind: 'repl', status: 'idle' })
+      ])
+      await expect(
+        service.cancelBackgroundRun({ ...request, runId: receipt.runId })
+      ).resolves.toMatchObject({ run: { status: 'cancelled' } })
+      expect(
+        (await repository.findExisting('default-project', request.sessionId))?.runs[0]
+      ).toMatchObject({ status: 'cancelled', kernelDispatched: false })
+      await expect(
+        service.executeControl({ ...request, code: 'return 42' })
+      ).resolves.toMatchObject({
+        status: 'completed',
+        stdout: 'return 42'
+      })
+      expect(execute).toHaveBeenCalledOnce()
+    }
+  )
+
   it('cancels a background REPL idempotently and reports persistent namespace loss', async () => {
     const root = await createStorageRoot()
     const dispatched = createDeferred<void>()
@@ -8021,6 +8237,52 @@ describe('notebook runtime service', () => {
     expect(state.runs[0].kernelKind).toBe('r')
   })
 
+  it.each([false, true])(
+    'waits for shell cleanup on restart and requires proof (%s)',
+    async (reaped) => {
+      const root = await createStorageRoot()
+      const cleanup = Promise.withResolvers<{ reaped: boolean }>()
+      const shutdownStarted = Promise.withResolvers<void>()
+      const shutdown = vi.fn(() => {
+        shutdownStarted.resolve()
+        return cleanup.promise
+      })
+      const restart = vi.fn(async () => undefined)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        shellProcess: {
+          execute: vi.fn(async () => ({ stdout: '', stderr: '', exitCode: 0 })),
+          shutdown
+        },
+        executorFactory: () => ({
+          execute: vi.fn(),
+          shutdown: async () => ({ reaped: true }),
+          restart
+        })
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+      const restarting = service.restart(request)
+      await shutdownStarted.promise
+      expect(shutdown).toHaveBeenCalledOnce()
+      expect(restart).not.toHaveBeenCalled()
+      await expect(service.executeShell({ ...request, command: 'echo blocked' })).rejects.toThrow(
+        'admission is closed'
+      )
+      cleanup.resolve({ reaped })
+      if (reaped) {
+        await restarting
+        expect(restart).toHaveBeenCalledOnce()
+      } else {
+        await expect(restarting).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+        expect(restart).not.toHaveBeenCalled()
+      }
+      await service.dispose()
+    }
+  )
+
   it('restart calls executor.restart when the executor supports it', async () => {
     const root = await createStorageRoot()
     let restarts = 0
@@ -8112,6 +8374,52 @@ describe('notebook runtime service', () => {
     }
     expect(restarts).toBe(0)
     expect(terminated).toEqual([['r', DEFAULT_R_ENV]])
+  })
+
+  it('preserves Python and R state across a targeted REPL restart', async () => {
+    const root = await createStorageRoot()
+    const values = new Map<string, string>()
+    const terminate = vi.fn(async (kind: string) => {
+      values.delete(kind)
+    })
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async (request): Promise<NotebookExecutionResult> => {
+          const kind = request.language ?? 'repl'
+          if (request.code !== 'read') values.set(kind, request.code)
+          return {
+            status: 'completed',
+            stdout: values.get(kind) ?? 'undefined',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }
+        },
+        terminate,
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const request = { sessionId: 'session-1', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: 'python sentinel' })
+    await service.execute({ ...request, language: 'r', code: 'r sentinel' })
+    await service.executeControl({ ...request, code: 'repl sentinel' })
+    await service.restart({ ...request, kernel: 'repl' })
+    expect(terminate).toHaveBeenCalledExactlyOnceWith('repl', '')
+    expect(await service.execute({ ...request, language: 'python', code: 'read' })).toMatchObject({
+      text: { stdout: 'python sentinel' }
+    })
+    expect(await service.execute({ ...request, language: 'r', code: 'read' })).toMatchObject({
+      text: { stdout: 'r sentinel' }
+    })
+    expect(await service.executeControl({ ...request, code: 'read' })).toMatchObject({
+      stdout: 'undefined'
+    })
+    await service.shutdownAll()
   })
 
   it('persists default Python idle after reload when a targeted restart recovers a coarse error', async () => {
@@ -8853,7 +9161,8 @@ describe('notebook runtime service', () => {
     await teardown
 
     expect(shutdownExecutor).toHaveBeenCalledTimes(1)
-    expect(changedSessions).toHaveLength(changedCountBefore + 1)
+    // The drained persistence callback and the completed lane removal each invalidate activity.
+    expect(changedSessions).toHaveLength(changedCountBefore + 2)
   })
 
   it('clears a stale terminated status once a run completes on the transparently respawned kernel', async () => {
@@ -9258,19 +9567,31 @@ describe('notebook runtime service', () => {
     it('writes a running kernel status during a live run, then settles to idle (G4)', async () => {
       const root = await createStorageRoot()
       let release: (() => void) | undefined
+      let signalStarted!: () => void
+      const started = new Promise<void>((resolve) => {
+        signalStarted = resolve
+      })
       const service = holdingService(root, (_request, resolve) => {
         release = resolve
+        signalStarted()
       })
 
       const run = service.execute({ sessionId: 'session-1', workspaceCwd: root, code: '1' })
-      await vi.waitFor(() => expect(release).toBeDefined())
-
-      // The kernel reads 'running' while the run is in flight (G4: the union member is now written).
-      const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
-      expect(midFlight.kernelStatus).toBe('running')
-
-      release?.()
-      await run
+      try {
+        // Use the execution boundary, not a one-second polling budget under load.
+        await Promise.race([
+          started,
+          run.then(() => {
+            throw new Error('Run settled before the holding executor started')
+          })
+        ])
+        const midFlight = await service.state({ sessionId: 'session-1', workspaceCwd: root })
+        expect(midFlight.kernelStatus).toBe('running')
+      } finally {
+        // Settle before fixture deletion, including if the mid-flight assertion fails.
+        release?.()
+        await run
+      }
       const settled = await service.state({ sessionId: 'session-1', workspaceCwd: root })
       expect(settled.kernelStatus).toBe('idle')
     })
@@ -9401,6 +9722,7 @@ describe('notebook runtime service', () => {
     it('blocks a package install on the same language until an in-flight run finishes (G2)', async () => {
       const root = await createStorageRoot()
       const events: string[] = []
+      const runStarted = Promise.withResolvers<void>()
       let releaseRun: (() => void) | undefined
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -9423,6 +9745,7 @@ describe('notebook runtime service', () => {
             events.push('run:start')
             await new Promise<void>((resolve) => {
               releaseRun = resolve
+              runStarted.resolve()
             })
             events.push('run:end')
             return {
@@ -9448,7 +9771,7 @@ describe('notebook runtime service', () => {
         code: '1',
         language: 'python'
       })
-      await vi.waitFor(() => expect(releaseRun).toBeDefined())
+      await runStarted.promise
 
       const install = service.managePackages({ language: 'python', packages: ['numpy'] })
       // The install (exclusive writer) must not start while the run holds the python env read lock.
@@ -11909,6 +12232,530 @@ describe('v4 runtime bindings & agent tools', () => {
       })
     })
   }
+
+  describe.each(['python', 'r'] as const)('%s host-owned default binding admission', (language) => {
+    const makeApprovalHarness = async (
+      multiple = false
+    ): Promise<{
+      root: string
+      service: NotebookRuntimeService
+      repository: NotebookRunRepository
+      managed: DiscoveredInterpreter
+      external: DiscoveredInterpreter
+      discovered: DiscoveredInterpreter[]
+      enablement: RuntimeEnablement
+      executions: NotebookExecutionRequest[]
+      terminations: string[]
+      request: {
+        projectId: string
+        sessionId: string
+        workspaceCwd: string
+        language: NotebookLanguage
+        runtimeId: string
+      }
+      code: string
+      discovery: Mock<(language: NotebookLanguage) => Promise<DiscoveredInterpreter[]>>
+    }> => {
+      const root = await createStorageRoot()
+      const managed = { ...(language === 'r' ? managedR : managedPy) }
+      const external = { ...(language === 'r' ? userR : userPyA) }
+      const discovered = multiple ? [managed, external] : [managed]
+      const enablement: RuntimeEnablement = {
+        enabled: { [external.envId]: true },
+        installAuthorized: {}
+      }
+      const executions: NotebookExecutionRequest[] = []
+      const terminations: string[] = []
+      const repository = new NotebookRunRepository(root)
+      const discovery = vi.fn(async (language: NotebookLanguage) =>
+        discovered.filter((runtime) => runtime.language === language)
+      )
+      const service = bindingService(root, {
+        discovered,
+        enablement,
+        executions,
+        terminations,
+        repository,
+        discoverRuntimes: discovery
+      })
+      const request = {
+        projectId: 'default-project',
+        sessionId: 'admission',
+        workspaceCwd: root,
+        language,
+        runtimeId: managed.envId
+      }
+      const code = language === 'r' ? 'print(1)' : 'print(1)'
+      return {
+        root,
+        service,
+        repository,
+        managed,
+        external,
+        discovered,
+        enablement,
+        executions,
+        terminations,
+        request,
+        code,
+        discovery
+      }
+    }
+    const waitingApproval = (): {
+      approve: Mock<() => Promise<boolean>>
+      requested: Promise<void>
+      respond: (approved: boolean) => void
+    } => {
+      let markRequested!: () => void
+      const requested = new Promise<void>((resolve) => {
+        markRequested = resolve
+      })
+      let respond!: (approved: boolean) => void
+      const decision = new Promise<boolean>((resolve) => {
+        respond = resolve
+      })
+      const approve = vi.fn(() => {
+        markRequested()
+        return decision
+      })
+      return { approve, requested, respond }
+    }
+
+    it('does not probe the other language before first execution', async () => {
+      const h = await makeApprovalHarness()
+      const pending = waitingApproval()
+      h.service.setRuntimeBindingApproval(pending.approve)
+      const operation = h.service.execute({ ...h.request, code: h.code })
+      await pending.requested
+      const probedLanguages = h.discovery.mock.calls.map(([language]) => language)
+      pending.respond(false)
+      await operation.catch(() => undefined)
+      const beforeRun = await h.service.state(h.request)
+      expect(beforeRun.cells.some((cell) => cell.code === h.code)).toBe(true)
+      expect(probedLanguages).not.toContain(language === 'python' ? 'r' : 'python')
+    })
+
+    it.each([false, true])(
+      'Auto admits the verified default with multiple=%s and preserves the other binding',
+      async (multiple) => {
+        const h = await makeApprovalHarness(multiple)
+        const approval = vi.fn(async (request) => request.defaultManagedFirstBinding)
+        h.service.setRuntimeBindingApproval(approval)
+        const other = language === 'r' ? managedPy : managedR
+        h.discovered.push(other)
+        await h.service.bindRuntime({
+          ...h.request,
+          language: other.language,
+          runtimeId: other.envId
+        })
+        approval.mockClear()
+        const write = vi.spyOn(h.repository, 'setRuntimeBindings')
+        expect(await h.service.canOwnRuntimeBindingDecision(h.request)).toBe(true)
+        expect(write).not.toHaveBeenCalled()
+        expect(
+          await h.service.bindRuntime(h.request, undefined, { requireHostDecision: true })
+        ).toHaveProperty('bound.runtimeId', h.managed.envId)
+        expect(approval).toHaveBeenCalledTimes(1)
+        expect(approval).toHaveBeenCalledWith(
+          expect.objectContaining({ defaultManagedFirstBinding: true })
+        )
+        const bindings = (await h.service.listRuntimes(h.request)).bindings
+        expect(bindings[other.language]?.runtimeId).toBe(other.envId)
+        expect(h.terminations).toEqual([])
+      }
+    )
+
+    it.each(['explicit', 'implicit'] as const)(
+      'Ask waits once before %s binding and resumes without another environment approval',
+      async (entry) => {
+        const h = await makeApprovalHarness()
+        const pending = waitingApproval()
+        h.service.setRuntimeBindingApproval(pending.approve)
+        const codeApproval = vi.fn(async () => false)
+        h.service.setExecutionApproval(codeApproval)
+        const operation =
+          entry === 'implicit'
+            ? h.service.execute({ ...h.request, code: h.code })
+            : h.service.bindRuntime(h.request, undefined, { requireHostDecision: true })
+        await pending.requested
+        expect(pending.approve).toHaveBeenCalledTimes(1)
+        expect(
+          (await h.repository.findExisting(h.request.projectId, h.request.sessionId))
+            ?.runtimeBindings?.[language]
+        ).toBeUndefined()
+        expect(h.executions).toEqual([])
+        pending.respond(true)
+        await operation
+        await h.service.execute({ ...h.request, code: h.code })
+        expect(pending.approve).toHaveBeenCalledTimes(1)
+        expect(codeApproval).not.toHaveBeenCalled()
+        expect((await h.service.listRuntimes(h.request)).bindings[language]?.runtimeId).toBe(
+          h.managed.envId
+        )
+        expect(h.executions.length).toBe(entry === 'implicit' ? 2 : 1)
+        expect(h.terminations).toEqual([])
+      }
+    )
+
+    it('Ask asks once for an explicit default even with another enabled candidate', async () => {
+      const h = await makeApprovalHarness(true)
+      const approval = vi.fn(async () => true)
+      const legacy = vi.fn(async () => true)
+      h.service.setRuntimeBindingApproval(approval)
+      h.service.setExecutionApproval(legacy)
+      await h.service.bindRuntime(h.request)
+      expect(approval).toHaveBeenCalledTimes(1)
+      expect(legacy).not.toHaveBeenCalled()
+    })
+
+    it('reuses a live and persisted binding without persistence, approval or kernel stop', async () => {
+      const h = await makeApprovalHarness()
+      const approval = vi.fn(async () => true)
+      h.service.setRuntimeBindingApproval(approval)
+      await h.service.bindRuntime(h.request)
+      await h.service.execute({ ...h.request, code: h.code })
+      approval.mockClear()
+      const write = vi.spyOn(h.repository, 'setRuntimeBindings')
+      await h.service.bindRuntime(h.request)
+      expect(write).not.toHaveBeenCalled()
+      expect(approval).not.toHaveBeenCalled()
+      const restored = bindingService(h.root, {
+        discovered: h.discovered,
+        enablement: h.enablement,
+        repository: h.repository,
+        terminations: h.terminations
+      })
+      restored.setRuntimeBindingApproval(approval)
+      expect(await restored.canOwnRuntimeBindingDecision(h.request)).toBe(true)
+      await restored.bindRuntime(h.request, undefined, { requireHostDecision: true })
+      expect(approval).not.toHaveBeenCalled()
+      expect(h.terminations).toEqual([])
+      await h.service.shutdownAll()
+      await restored.shutdownAll()
+    })
+
+    it.each(['deny', 'cancel', 'delete'] as const)(
+      'does not commit or execute after Ask %s, even after late Allow',
+      async (action) => {
+        const h = await makeApprovalHarness()
+        const pending = waitingApproval()
+        const controller = new AbortController()
+        h.service.setRuntimeBindingApproval(pending.approve)
+        const operation = h.service.execute({ ...h.request, code: h.code }, controller.signal)
+        const rejected = expect(operation).rejects.toThrow(
+          action === 'deny' ? 'declined' : action === 'cancel' ? 'cancelled approval' : 'deleted'
+        )
+        await pending.requested
+        expect(pending.approve).toHaveBeenCalledTimes(1)
+        if (action === 'deny') pending.respond(false)
+        if (action === 'cancel') controller.abort(new Error('cancelled approval'))
+        if (action === 'delete') await h.service.shutdownSession(h.request.sessionId)
+        await rejected
+        pending.respond(true)
+        expect(
+          (await h.repository.findExisting(h.request.projectId, h.request.sessionId))
+            ?.runtimeBindings?.[language]
+        ).toBeUndefined()
+        expect(h.executions).toEqual([])
+        expect(h.terminations).toEqual([])
+      }
+    )
+
+    it.each(['disable', 'remove', 'provenance', 'path', 'default-name', 'unrunnable'] as const)(
+      'rejects old approval after target %s changes',
+      async (change) => {
+        const h = await makeApprovalHarness()
+        const pending = waitingApproval()
+        h.service.setRuntimeBindingApproval(pending.approve)
+        const operation = h.service.bindRuntime(h.request)
+        await pending.requested
+        expect(pending.approve).toHaveBeenCalledTimes(1)
+        if (change === 'disable') h.enablement.enabled[h.managed.envId] = false
+        if (change === 'remove') h.discovered.splice(0)
+        if (change === 'provenance') h.managed.provenance = 'agent-created'
+        if (change === 'path') h.managed.interpreterPath += '-replacement'
+        if (change === 'default-name') h.managed.condaEnv = undefined
+        if (change === 'unrunnable') h.managed.runnable = false
+        pending.respond(true)
+        expect(await operation).toMatchObject({ ok: false, bindingChanged: false })
+        expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+        expect(h.terminations).toEqual([])
+      }
+    )
+
+    it('rejects a correlated handoff if default ownership changes before actual bind', async () => {
+      const h = await makeApprovalHarness()
+      const approval = vi.fn(async () => true)
+      h.service.setRuntimeBindingApproval(approval)
+      expect(await h.service.canOwnRuntimeBindingDecision(h.request)).toBe(true)
+      h.managed.provenance = 'user-own'
+      h.enablement.enabled[h.managed.envId] = true
+      expect(
+        await h.service.bindRuntime(h.request, undefined, { requireHostDecision: true })
+      ).toMatchObject({ ok: false, bindingChanged: false })
+      expect(approval).not.toHaveBeenCalled()
+      expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+    })
+
+    it('serializes concurrent identical binds and does not repeat approval or commit', async () => {
+      const h = await makeApprovalHarness()
+      const pending = waitingApproval()
+      h.service.setRuntimeBindingApproval(pending.approve)
+      const write = vi.spyOn(h.repository, 'setRuntimeBindings')
+      const first = h.service.bindRuntime(h.request)
+      const second = h.service.bindRuntime(h.request)
+      await pending.requested
+      expect(pending.approve).toHaveBeenCalledTimes(1)
+      pending.respond(true)
+      expect(await first).toHaveProperty('bound.runtimeId', h.managed.envId)
+      expect(await second).toHaveProperty('bound.runtimeId', h.managed.envId)
+      expect(pending.approve).toHaveBeenCalledTimes(1)
+      expect(write).toHaveBeenCalledTimes(1)
+      expect(h.terminations).toEqual([])
+    })
+
+    it('cancels one binding and makes the next request require its own decision', async () => {
+      const h = await makeApprovalHarness()
+      const firstApproval = waitingApproval()
+      const nextApproval = waitingApproval()
+      h.service.setRuntimeBindingApproval(
+        vi
+          .fn()
+          .mockImplementationOnce(firstApproval.approve)
+          .mockImplementationOnce(nextApproval.approve)
+      )
+      const controller = new AbortController()
+      const first = h.service.bindRuntime(h.request, controller.signal)
+      await firstApproval.requested
+      expect(firstApproval.approve).toHaveBeenCalledTimes(1)
+      controller.abort(new Error('cancelled first binding'))
+      expect(await first).toMatchObject({ ok: false, bindingChanged: false })
+      const second = h.service.bindRuntime(h.request)
+      await nextApproval.requested
+      expect(nextApproval.approve).toHaveBeenCalledTimes(1)
+      firstApproval.respond(true)
+      expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+      nextApproval.respond(false)
+      expect(await second).toMatchObject({ ok: false, bindingChanged: false })
+    })
+
+    it('leaves dangerous code under a separate approval after Auto binding', async () => {
+      const h = await makeApprovalHarness()
+      h.service.setRuntimeBindingApproval(async (request) => request.defaultManagedFirstBinding)
+      const codeApproval = vi.fn(async () => false)
+      h.service.setExecutionApproval(codeApproval)
+      await h.service.bindRuntime(h.request)
+      const code =
+        language === 'r' ? 'unlink("sentinel.txt")' : 'import os\nos.unlink("sentinel.txt")'
+      await expect(h.service.execute({ ...h.request, code })).rejects.toThrow('one-time approval')
+      expect(codeApproval).toHaveBeenCalledTimes(1)
+      expect(h.executions).toEqual([])
+      expect((await h.service.listRuntimes(h.request)).bindings[language]?.runtimeId).toBe(
+        h.managed.envId
+      )
+    })
+
+    it('does not add an environment decision to manual execution', async () => {
+      const h = await makeApprovalHarness()
+      const approval = vi.fn(async () => false)
+      h.service.setRuntimeBindingApproval(approval)
+      await h.service.execute({ ...h.request, code: h.code, source: 'user' })
+      expect(approval).not.toHaveBeenCalled()
+      expect(h.executions).toHaveLength(1)
+    })
+
+    it.each(['explicit', 'implicit', 'background'] as const)(
+      'carries trusted no-interaction policy to %s binding and ends Ask without waiting',
+      async (entry) => {
+        const h = await makeApprovalHarness()
+        const approval = vi.fn(async (request) => request.permissionPrompts !== 'none')
+        h.service.setRuntimeBindingApproval(approval)
+        const request = markTrustedNotebookBindingPermissionPrompts(
+          { ...h.request, code: h.code },
+          'none'
+        )
+        if (entry === 'explicit') {
+          expect(await h.service.bindRuntime(request)).toMatchObject({
+            ok: false,
+            bindingChanged: false
+          })
+        } else if (entry === 'implicit') {
+          await expect(h.service.execute(request)).rejects.toThrow('declined')
+        } else {
+          await expect(h.service.executeBackground(request)).rejects.toThrow('declined')
+        }
+        expect(approval).toHaveBeenCalledTimes(1)
+        expect(approval).toHaveBeenCalledWith(
+          expect.objectContaining({ permissionPrompts: 'none', defaultManagedFirstBinding: true })
+        )
+        expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+        expect(h.executions).toEqual([])
+      }
+    )
+
+    it('keeps missing-default creation disabled even when the host Auto decision is installed', async () => {
+      const root = await createStorageRoot()
+      const execute = vi.fn(
+        async (request: NotebookExecutionRequest): Promise<NotebookExecutionResult> => ({
+          status: 'completed',
+          stdout: '',
+          stderr: '',
+          traceback: '',
+          cwdAfter: request.cwd,
+          outputs: []
+        })
+      )
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        discoverRuntimes: async () => [],
+        getAgentEnvironmentCreationEnabled: async () => false,
+        executorFactory: () => ({ execute, shutdown: async () => ({ reaped: true }) })
+      })
+      const approval = vi.fn(async () => true)
+      const provision = vi.fn(async () => undefined)
+      service.setRuntimeBindingApproval(approval)
+      service.setDefaultEnvProvisioner({ provisionPython: provision, provisionR: provision })
+      const run = await service.execute({
+        sessionId: 'missing',
+        workspaceCwd: root,
+        language,
+        code: 'print(1)'
+      })
+      expect(run).toMatchObject({ status: 'failed', kernelDispatched: false })
+      expect(run.text.stderr).toContain('AGENT_ENVIRONMENT_CREATION_DISABLED')
+      expect(approval).not.toHaveBeenCalled()
+      expect(provision).not.toHaveBeenCalled()
+      expect(execute).not.toHaveBeenCalled()
+      await service.shutdownAll()
+    })
+
+    it('forwards no-interaction legacy binding decisions so Full can keep its existing bypass', async () => {
+      const h = await makeApprovalHarness(true)
+      const legacyApproval = vi.fn(async () => true)
+      h.service.setRuntimeBindingApproval(async () => true)
+      h.service.setExecutionApproval(legacyApproval)
+      const externalRequest = markTrustedNotebookBindingPermissionPrompts(
+        { ...h.request, runtimeId: h.external.envId },
+        'none'
+      )
+      expect(await h.service.bindRuntime(externalRequest)).toHaveProperty(
+        'bound.runtimeId',
+        h.external.envId
+      )
+      expect(legacyApproval).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionPrompts: 'none' })
+      )
+      const switchRequest = markTrustedNotebookBindingPermissionPrompts({ ...h.request }, 'none')
+      expect(await h.service.switchRuntime(switchRequest)).toHaveProperty(
+        'bound.runtimeId',
+        h.managed.envId
+      )
+      expect(legacyApproval).toHaveBeenCalledTimes(2)
+    })
+
+    it('lets Auto use a ready default with trusted no-interaction policy', async () => {
+      const h = await makeApprovalHarness()
+      const approval = vi.fn(async (request) => request.defaultManagedFirstBinding)
+      h.service.setRuntimeBindingApproval(approval)
+      const request = markTrustedNotebookBindingPermissionPrompts(
+        { ...h.request, code: h.code },
+        'none'
+      )
+      await h.service.execute(request)
+      expect(approval).toHaveBeenCalledWith(
+        expect.objectContaining({ permissionPrompts: 'none', defaultManagedFirstBinding: true })
+      )
+      expect(h.executions).toHaveLength(1)
+    })
+
+    it('reads Auto to Ask at the final decision and keeps the displayed Ask pending after Auto', async () => {
+      const h = await makeApprovalHarness()
+      const pending = waitingApproval()
+      let mode: 'auto' | 'ask' = 'auto'
+      h.service.setRuntimeBindingApproval((request) => {
+        if (mode === 'auto' && request.defaultManagedFirstBinding) return Promise.resolve(true)
+        return pending.approve()
+      })
+      let releaseDiscovery!: () => void
+      let markDiscoveryEntered!: () => void
+      const discoveryEntered = new Promise<void>((resolve) => {
+        markDiscoveryEntered = resolve
+      })
+      const discoveryBarrier = new Promise<void>((resolve) => {
+        releaseDiscovery = resolve
+      })
+      h.discovery.mockImplementationOnce(async () => {
+        markDiscoveryEntered()
+        await discoveryBarrier
+        return h.discovered
+      })
+      const operation = h.service.bindRuntime(h.request)
+      await discoveryEntered
+      expect(h.discovery).toHaveBeenCalledTimes(1)
+      mode = 'ask'
+      releaseDiscovery()
+      await pending.requested
+      expect(pending.approve).toHaveBeenCalledTimes(1)
+      mode = 'auto'
+      expect((await h.service.listRuntimes(h.request)).bindings[language]).toBeUndefined()
+      pending.respond(true)
+      expect(await operation).toHaveProperty('bound.runtimeId', h.managed.envId)
+      await h.service.bindRuntime({ ...h.request, sessionId: 'later-session' })
+      expect(pending.approve).toHaveBeenCalledTimes(1)
+    })
+
+    it('refuses default repair and unavailable persisted binding without replacing the target', async () => {
+      const h = await makeApprovalHarness()
+      const approval = vi.fn(async () => true)
+      h.service.setRuntimeBindingApproval(approval)
+      await h.service.bindRuntime(h.request)
+      h.enablement.enabled[h.managed.envId] = false
+      await h.service.revokeRuntime(language, h.managed.envId)
+      h.enablement.enabled[h.managed.envId] = true
+      expect(await h.service.canOwnRuntimeBindingDecision(h.request)).toBe(false)
+      approval.mockClear()
+      expect(
+        await h.service.bindRuntime(h.request, undefined, { requireHostDecision: true })
+      ).toMatchObject({ ok: false, bindingChanged: false })
+      expect(approval).not.toHaveBeenCalled()
+      expect((await h.service.listRuntimes(h.request)).bindings[language]?.status).toBe(
+        'unavailable'
+      )
+      addRepairRequired(
+        getRuntimeRoot(h.root),
+        language === 'r' ? DEFAULT_R_ENV : DEFAULT_PY_ENV,
+        'protected-identity-change'
+      )
+      const repairRequest = { ...h.request, sessionId: 'repair-session' }
+      expect(await h.service.canOwnRuntimeBindingDecision(repairRequest)).toBe(false)
+      expect(await h.service.bindRuntime(repairRequest)).toMatchObject({
+        ok: false,
+        bindingChanged: false
+      })
+      expect(approval).not.toHaveBeenCalled()
+    })
+
+    it.each(['external', 'agent-created', 'nondefault', 'missing-default-name'] as const)(
+      'does not delegate first %s identity or grant it the default exception',
+      async (kind) => {
+        const h = await makeApprovalHarness()
+        const approval = vi.fn(async () => true)
+        h.service.setRuntimeBindingApproval(approval)
+        if (kind === 'external') h.managed.provenance = 'user-own'
+        if (kind === 'agent-created') h.managed.provenance = 'agent-created'
+        if (kind === 'nondefault') h.managed.condaEnv = 'custom-environment'
+        if (kind === 'missing-default-name') h.managed.condaEnv = undefined
+        h.enablement.enabled[h.managed.envId] = true
+        expect(await h.service.canOwnRuntimeBindingDecision(h.request)).toBe(false)
+        expect(
+          await h.service.bindRuntime(h.request, undefined, { requireHostDecision: true })
+        ).toMatchObject({ ok: false, bindingChanged: false })
+        expect(approval).not.toHaveBeenCalled()
+      }
+    )
+  })
 
   it.each(
     [
@@ -15398,6 +16245,21 @@ describe('v4 runtime bindings & agent tools', () => {
     })
   })
 
+  it('notifies Project activity consumers after a Kernel lane is removed by shutdown', async () => {
+    const root = await createStorageRoot()
+    const { service, changedSessions } = lifecycleCallbackHarness(root)
+    const request = { projectId: 'project-a', sessionId: 'session-a', workspaceCwd: root }
+    await service.execute({ ...request, language: 'python', code: '1' })
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toHaveLength(1)
+    changedSessions.length = 0
+    await service.shutdown(request)
+    expect(service.getProjectActivity({ projectId: 'project-a' }).kernels).toEqual([])
+    expect(changedSessions).toEqual(['session-a'])
+    // Repeated shutdown of an absent lane must not manufacture additional invalidations.
+    await service.shutdown(request)
+    expect(changedSessions).toEqual(['session-a'])
+  })
+
   it('reports only live Kernels owned by the requested Project without materializing dormant Sessions', async () => {
     const root = await createStorageRoot()
     const { service } = lifecycleCallbackHarness(root)
@@ -15498,6 +16360,7 @@ describe('v4 runtime bindings & agent tools', () => {
     // A blocking executor: execute() stays pending until terminate() rejects it (a killed kernel).
     let rejectRun: ((error: unknown) => void) | undefined
     let executionCount = 0
+    const executionStarted = createDeferred<void>()
     const service = new NotebookRuntimeService({
       configRoot: root,
       dataRoot: root,
@@ -15521,6 +16384,7 @@ describe('v4 runtime bindings & agent tools', () => {
           if (executionCount > 1) return Promise.reject(new Error('ordinary kernel failure'))
           return new Promise<NotebookExecutionResult>((_resolve, reject) => {
             rejectRun = reject
+            executionStarted.resolve()
           })
         },
         shutdown: async () => ({ reaped: true }),
@@ -15543,7 +16407,12 @@ describe('v4 runtime bindings & agent tools', () => {
       language: 'python'
     })
     // Wait until the cell is genuinely in flight (the executor was invoked).
-    await vi.waitFor(() => expect(rejectRun).toBeDefined())
+    await Promise.race([
+      executionStarted.promise,
+      runPromise.then(() => {
+        throw new Error('run settled before executor admission')
+      })
+    ])
 
     // Force-stop: abort the running cell now. The killed run is recorded 'cancelled', not 'failed'.
     await service.revokeRuntime('python', userPyA.envId, { force: true })
@@ -16412,6 +17281,60 @@ it('retries Notebook lifecycle recovery after a transient repository failure', a
   }
 })
 
+it('does not let an unverified R receipt in one lane block a new REPL lane', async () => {
+  const root = await createStorageRoot()
+  const ledger = join(getRuntimeRoot(root), 'kernel-processes')
+  const oldLaneKey = '["project-a","old-session","root",null,null]'
+  const oldProcessKey = 'r:default-r'
+  const receiptPrefix = createHash('sha256').update(`${oldLaneKey}\0${oldProcessKey}`).digest('hex')
+  await mkdir(ledger, { recursive: true })
+  await writeFile(
+    join(ledger, `${receiptPrefix}.old-receipt.json`),
+    `${JSON.stringify({
+      version: 1,
+      receiptId: 'old-receipt',
+      ownerInstanceId: 'old-app',
+      ownerToken: 'old-owner',
+      platform: process.platform,
+      spawnedAt: Date.now(),
+      laneKey: oldLaneKey,
+      processKey: oldProcessKey,
+      kernelEpochId: 'old-r-epoch'
+    })}\n`
+  )
+  const service = new NotebookRuntimeService({
+    configRoot: root,
+    dataRoot: root,
+    projectId: 'project-a',
+    repository: new NotebookRunRepository(root),
+    executorFactory: () => ({
+      execute: async (request): Promise<NotebookExecutionResult> => ({
+        status: 'completed',
+        stdout: request.code,
+        stderr: '',
+        traceback: '',
+        cwdAfter: request.cwd,
+        outputs: []
+      }),
+      shutdown: async () => ({ reaped: true })
+    })
+  })
+
+  try {
+    await expect(service.recoverInterruptedOperations()).resolves.toBeUndefined()
+    await expect(
+      service.executeControl({
+        projectId: 'project-a',
+        sessionId: 'new-session',
+        workspaceCwd: root,
+        code: 'repl-isolated'
+      })
+    ).resolves.toMatchObject({ status: 'completed', stdout: 'repl-isolated' })
+  } finally {
+    await service.dispose()
+  }
+})
+
 it('keeps a failed recovery round joined until its other owners finish', async () => {
   const root = await createStorageRoot()
   const runtimeRoot = getRuntimeRoot(root)
@@ -16718,3 +17641,5 @@ it('AUDIT: removal cannot overtake a managed binding whose durable commit is in 
     lease.mockRestore()
   }
 })
+
+configureTestRuntimeMetadata()

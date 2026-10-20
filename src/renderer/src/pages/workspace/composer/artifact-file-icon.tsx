@@ -4,6 +4,8 @@ import { cn } from '@/lib/utils'
 
 import { FileTypeIcon } from '../file-type-icon'
 import { getFileExtension, getImageMimeTypeForExtension } from '../preview-support'
+import { useNearViewport } from '../previews/useNearViewport'
+import type { ArtifactThumbnailReader } from './artifact-thumbnail-reader'
 
 type ArtifactSource = 'upload' | 'artifact' | 'literature'
 
@@ -13,10 +15,8 @@ type ArtifactFileIconProps = {
   path: string
   source: ArtifactSource
   className?: string
+  readThumbnail: ArtifactThumbnailReader
 }
-
-// Keep the per-row thumbnail read tiny; the popup only needs a small preview image.
-const THUMBNAIL_MAX_BYTES = 256 * 1024
 
 // Mirrors isImageArtifact: an image/* mime type or a known image extension.
 const isImageFile = (name: string, mimeType?: string): boolean =>
@@ -32,9 +32,11 @@ const ArtifactThumbnail = ({
   mimeType,
   path,
   source,
-  className
+  className,
+  readThumbnail
 }: ArtifactFileIconProps): React.JSX.Element => {
   const requestKey = `${source}:${path}`
+  const [setElement, isNearViewport] = useNearViewport<HTMLSpanElement>()
   // State is keyed by the request so a path change reads as loading without a synchronous reset.
   const [state, setState] = useState<{ key: string; dataUrl: string | null; failed: boolean }>({
     key: requestKey,
@@ -43,14 +45,15 @@ const ArtifactThumbnail = ({
   })
 
   useEffect(() => {
+    if (!isNearViewport || (state.key === requestKey && (state.dataUrl || state.failed))) return
     let canceled = false
-
-    const readPreview =
-      source === 'upload' ? window.api.uploads.readPreview : window.api.artifacts.readPreview
-
-    void readPreview({ path, maxBytes: THUMBNAIL_MAX_BYTES, encoding: 'base64' })
+    void readThumbnail({ path, source })
       .then((preview) => {
-        if (canceled) return
+        if (canceled || !preview) return
+        if (preview.truncated) {
+          setState({ key: requestKey, dataUrl: null, failed: true })
+          return
+        }
         const mime = mimeType || getImageMimeTypeForExtension(getFileExtension(name)) || 'image/png'
         setState({
           key: requestKey,
@@ -65,20 +68,25 @@ const ArtifactThumbnail = ({
     return () => {
       canceled = true
     }
-  }, [name, mimeType, path, source, requestKey])
+  }, [name, mimeType, path, source, requestKey, isNearViewport, readThumbnail, state])
 
   const current = state.key === requestKey ? state : { dataUrl: null, failed: false }
 
   if (current.dataUrl && !current.failed) {
     return (
-      <span className={cn(iconSlotClassName, className)}>
-        <img src={current.dataUrl} alt={name} className="h-5 w-5 rounded object-cover" />
+      <span ref={setElement} className={cn(iconSlotClassName, className)}>
+        <img
+          src={current.dataUrl}
+          alt={name}
+          className="h-5 w-5 rounded object-cover"
+          onError={() => setState({ key: requestKey, dataUrl: null, failed: true })}
+        />
       </span>
     )
   }
 
   return (
-    <span className={cn(iconSlotClassName, className)}>
+    <span ref={setElement} className={cn(iconSlotClassName, className)}>
       <FileTypeIcon name={name} mimeType={mimeType} className="size-4" />
     </span>
   )

@@ -1,6 +1,6 @@
 import type { FileReference } from './artifacts'
-import { createArtifactVersionLocator } from './artifact-provenance'
-import { createLiteratureAttachmentVersionReference } from './literature'
+import { createArtifactVersionLocator } from './artifact-version-locator'
+import { createLiteratureAttachmentVersionReference } from './literature-attachment-reference'
 import type {
   MessagePdfContextSnapshot,
   PdfReadingPosition,
@@ -8,9 +8,88 @@ import type {
   SessionPdfContextSource
 } from './session-persistence'
 import { createUploadVersionReference } from './uploads'
+import type { UploadedAttachment } from './uploads'
+import { validatePdfProseRegions, type PdfProseRegion } from './pdf-text'
 
 // Transient send identity; staged uploads resolve to immutable versions before linking.
 export type PdfReadingPositionSource = SessionPdfContextSource | { attachmentId: string }
+
+export type PdfProseReadingSelection = Readonly<{
+  source: PdfReadingPositionSource
+  proseRegions: readonly PdfProseRegion[]
+}>
+
+export const pdfProseReadingSelectionsFromContext = (
+  context: MessagePdfContextSnapshot | undefined
+): PdfProseReadingSelection[] =>
+  context?.bindings.flatMap((binding) => {
+    const map = context.proseRegionsByBindingId
+    return map && Object.hasOwn(map, binding.bindingId)
+      ? [{ source: binding, proseRegions: map[binding.bindingId].map((region) => ({ ...region })) }]
+      : []
+  }) ?? []
+
+// Linking/finalizing can replace binding IDs. Only immutable source identity may transfer
+// a captured reading selection; the live preview store is never consulted during send.
+export const withPdfProseReadingSelections = (
+  context: MessagePdfContextSnapshot | undefined,
+  selections: readonly PdfProseReadingSelection[] | undefined,
+  attachments: readonly UploadedAttachment[]
+): MessagePdfContextSnapshot | undefined => {
+  if (selections === undefined) return context
+  if (selections.length > 3)
+    throw new Error('PDF_READING_REGION_INVALID: Too many PDF reading selections.')
+  if (!context) {
+    if (selections.length)
+      throw new Error('PDF_READING_REGION_INVALID: Selected body areas have no linked PDF.')
+    return undefined
+  }
+  const { proseRegionsByBindingId, ...rest } = context
+  const regionsByBinding = new Map(Object.entries(proseRegionsByBindingId ?? {}))
+  const assigned = new Set<string>()
+  for (const selection of selections) {
+    const selectedSource = selection.source
+    const source =
+      'attachmentId' in selectedSource
+        ? attachments.find((attachment) => attachment.id === selectedSource.attachmentId)
+        : undefined
+    const identity =
+      'attachmentId' in selectedSource
+        ? source?.versionId
+          ? { sourceKind: 'upload-version' as const, sourceVersionId: source.versionId }
+          : undefined
+        : selectedSource
+    const binding =
+      identity &&
+      context.bindings.find(
+        (candidate) =>
+          candidate.sourceKind === identity.sourceKind &&
+          candidate.sourceVersionId === identity.sourceVersionId &&
+          (!('sourceFileId' in identity) ||
+            !identity.sourceFileId ||
+            candidate.sourceFileId === identity.sourceFileId)
+      )
+    if (!binding || assigned.has(binding.bindingId))
+      throw new Error(
+        'PDF_READING_REGION_INVALID: Selected body areas do not match one linked PDF Version.'
+      )
+    assigned.add(binding.bindingId)
+    if (!selection.proseRegions.length) regionsByBinding.delete(binding.bindingId)
+    else {
+      validatePdfProseRegions(selection.proseRegions)
+      regionsByBinding.set(
+        binding.bindingId,
+        selection.proseRegions.map((region) => ({ ...region }))
+      )
+    }
+  }
+  return {
+    ...rest,
+    ...(regionsByBinding.size
+      ? { proseRegionsByBindingId: Object.fromEntries(regionsByBinding) }
+      : {})
+  }
+}
 
 export const sessionPdfBindingToFileReference = (
   projectId: string,

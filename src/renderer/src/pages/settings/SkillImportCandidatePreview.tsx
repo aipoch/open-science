@@ -3,10 +3,8 @@ import { FileText, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 
-import type {
-  SkillImportPreviewContent,
-  SkillReplacementPreview
-} from '../../../../shared/settings'
+import type { SkillImportPreviewContent } from '../../../../shared/settings'
+import type { SkillReplacementPreview } from '@aipoch/skills/document'
 import { ErrorNotice } from '@/components/error-notice'
 import { AgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { Button } from '@/components/ui/button'

@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/no-require-imports */
 
-// electron-builder afterPack hook: apply a valid deep ad-hoc signature on macOS.
+// electron-builder afterPack hook: sign loose resources before the outer application.
 //
 // Without an Apple "Developer ID Application" certificate, electron-builder skips code
 // signing entirely. That leaves the bundle with only Electron's linker-level ad-hoc
@@ -21,10 +21,18 @@
 const { execFileSync } = require('node:child_process')
 const fs = require('node:fs')
 const path = require('node:path')
+const verifyPackagedNativeComponents = require('./verify-native-components.cjs')
 
 /** @param {import('electron-builder').AfterPackContext} context */
 exports.default = async function adhocSign(context) {
-  if (context.electronPlatformName !== 'darwin') return
+  const arch = require('builder-util').Arch[context.arch]
+  if (context.electronPlatformName !== 'darwin') {
+    await verifyPackagedNativeComponents(
+      path.join(context.appOutDir, 'resources'),
+      `${context.electronPlatformName}-${arch}`
+    )
+    return
+  }
 
   let appPath = path.join(context.appOutDir, `${context.packager.appInfo.productFilename}.app`)
   if (!fs.existsSync(appPath)) {
@@ -32,6 +40,11 @@ exports.default = async function adhocSign(context) {
     if (!found) throw new Error(`[adhoc-sign] no .app bundle found in ${context.appOutDir}`)
     appPath = path.join(context.appOutDir, found)
   }
+
+  const preserved = await verifyPackagedNativeComponents(
+    path.join(appPath, 'Contents/Resources'),
+    `darwin-${arch}`
+  )
 
   const entitlements = path.join(__dirname, 'entitlements.mac.plist')
 
@@ -57,26 +70,34 @@ exports.default = async function adhocSign(context) {
     console.log('[adhoc-sign] signed bundled micromamba')
   }
 
-  // Loose executables in Resources are not covered by --deep's nested-code discovery.
-  const credentialHelperDirectory = path.join(
-    appPath,
-    'Contents',
-    'Resources',
-    'app.asar.unpacked',
-    'node_modules',
-    '@aipoch',
-    'credential-identity-probe-native',
-    'build',
-    'Release'
-  )
-  for (const name of ['credential_identity_probe', 'credential_key_validator']) {
-    const executable = path.join(credentialHelperDirectory, name)
-    if (fs.existsSync(executable)) {
-      execFileSync('codesign', ['--force', '--options', 'runtime', '--sign', '-', executable], {
-        stdio: 'inherit'
-      })
+  const macho = new Set(['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca'])
+  // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
+  const signLoose = (directory) => {
+    if (!fs.existsSync(directory)) return
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      const file = path.join(directory, entry.name)
+      if (entry.isDirectory()) {
+        signLoose(file)
+        continue
+      }
+      if (!entry.isFile() || preserved.has(file)) continue
+      const fd = fs.openSync(file, 'r')
+      const magic = Buffer.alloc(4)
+      try {
+        fs.readSync(fd, magic, 0, 4, 0)
+      } finally {
+        fs.closeSync(fd)
+      }
+      if (macho.has(magic.toString('hex')))
+        execFileSync(
+          'codesign',
+          ['--force', '--options', 'runtime', '--sign', '-', '--entitlements', entitlements, file],
+          { stdio: 'inherit' }
+        )
     }
   }
+  signLoose(path.join(appPath, 'Contents/Resources/node-runtime'))
+  signLoose(path.join(appPath, 'Contents/Resources/backend'))
 
   // --deep signs nested frameworks, helpers and the bundled native `claude` binary.
   execFileSync(

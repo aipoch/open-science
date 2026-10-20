@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { cn } from '@/lib/utils'
@@ -17,7 +18,7 @@ type SessionPersistenceAlertProps = {
   actionLabel?: string
 }
 
-const SessionPersistenceAlert = ({
+const SessionPersistenceAlertContent = ({
   title,
   message,
   variant = 'error',
@@ -29,8 +30,13 @@ const SessionPersistenceAlert = ({
   retryLabel,
   onAction,
   actionLabel
-}: SessionPersistenceAlertProps): React.JSX.Element => {
+}: SessionPersistenceAlertProps): React.JSX.Element | null => {
   const { t } = useTranslation()
+  const [dismissed, setDismissed] = useState(false)
+  // A floating warning is not the safety gate. Its owner retains failed targets and local recovery.
+  // Inline failures replace unavailable content and must remain visible until recovery succeeds.
+  if (!inline && dismissed) return null
+  const dismiss = onDismiss ?? (inline ? undefined : () => setDismissed(true))
 
   // Standalone recovery belongs behind modal backdrops, like the page whose actions they block.
   // Inline alerts and alerts inside ActionToastStack retain their owner's stacking context.
@@ -51,10 +57,10 @@ const SessionPersistenceAlert = ({
         title={title}
         description={message}
         dismissButton={
-          onDismiss
+          dismiss
             ? {
                 label: dismissLabel ?? t('Dismiss storage warning'),
-                onClick: onDismiss,
+                onClick: dismiss,
                 testId: 'session-persistence-dismiss'
               }
             : undefined
@@ -77,5 +83,13 @@ const SessionPersistenceAlert = ({
     </div>
   )
 }
+
+// Reset presentation dismissal only for a changed failure; identical refreshes retain it.
+const SessionPersistenceAlert = (props: SessionPersistenceAlertProps): React.JSX.Element => (
+  <SessionPersistenceAlertContent
+    key={JSON.stringify([props.title, props.message, props.variant])}
+    {...props}
+  />
+)
 
 export { SessionPersistenceAlert }

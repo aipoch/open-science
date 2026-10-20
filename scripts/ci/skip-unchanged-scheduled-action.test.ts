@@ -51,6 +51,12 @@ const callers: Array<{
     with: { 'workflow-file': 'windows-full-test.yml' }
   },
   {
+    file: 'windows-e2e-regression.yml',
+    job: 'plan',
+    output: 'should_test',
+    with: { 'workflow-file': 'windows-e2e-regression.yml' }
+  },
+  {
     file: 'runtime-resource-soak.yml',
     job: 'plan',
     output: 'should_test',

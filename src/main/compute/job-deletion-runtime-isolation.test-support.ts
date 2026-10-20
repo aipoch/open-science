@@ -1,11 +1,14 @@
+import { createComputeExecution } from '@aipoch/compute/node'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 import { vi } from 'vitest'
 
-import type { ComputeHost, JobStatusResult } from '../../shared/compute'
-import type { Logger } from '../logger'
+import type { ComputeHost, JobStatusResult } from '@aipoch/compute'
+
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
+import type { Logger } from '@aipoch/diagnostics/node'
 import type { ManagedFileSoftDeleteToken } from '../project-files/repository'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
 import {
@@ -15,12 +18,10 @@ import {
 } from '../session-persistence/coordinator'
 import type { ProjectSessionDeletionState } from '../session-persistence/repository'
 import { ComputeService } from './compute-service'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
-import { createComputeJobDeletionOwner } from './job-deletion-owner'
+
+import type { SshRunner } from '@aipoch/compute/node'
 import { ComputeJobRepository } from './job-repository'
-import { JobPoller } from './job-poller'
 import type { ComputeHostRepository } from './repository'
-import type { SshRunner } from './ssh-runner'
 
 const NONCE = 'DELETION_ISOLATION_'
 const providerId = 'ssh:cluster'
@@ -201,7 +202,8 @@ const createDeletionRuntimeHarness = async (
       }))
     }))
   }
-  const jobDeletionOwner = createComputeJobDeletionOwner({
+  const execution = createComputeExecution()
+  const jobDeletionOwner = execution.createDeletionOwner({
     jobRepository,
     hostRepository,
     connectionBroker
@@ -216,7 +218,7 @@ const createDeletionRuntimeHarness = async (
     initialTick.resolve()
     return jobs
   }
-  const poller = new JobPoller({
+  const poller = execution.createPoller({
     connectionBroker,
     hostRepository,
     jobRepository: pollerRepository,

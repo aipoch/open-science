@@ -1,0 +1,9 @@
+{"name":"translate prose around original numeric fraction","target":"比值为32/8的样本。","rule":true,"accepted":true}
+{"name":"accept whitespace around the same native fraction","target":"比值为32 / 8的样本。","rule":true,"accepted":true}
+{"name":"reject unproven stacked digits without a dividing rule","target":"比值为32/8的样本。","rule":false,"accepted":false}
+{"name": "translate fraction prose when rule precedes glyph objects", "target": "比值为32/8的样本。", "rule": true, "ruleFirst": true, "accepted": true}
+{"name": "translate fraction after a linked citation with the rule painted first", "target": "比值1为32/8的样本。", "rule": true, "ruleFirst": true, "priorLink": true, "accepted": true}
+{"name":"single-letter-ratio-retains-its-native-dividing-rule","target":"比值为n/d的样本。","numerator":"n","denominator":"d","rule":true,"accepted":true}
+{"name":"single-letter-scripts-without-rule-are-not-rewritten-as-fraction","target":"比值为n/d的样本。","numerator":"n","denominator":"d","rule":false,"accepted":false}
+{"name": "fraction-numeric-tiers-tolerate-coordinate-rounding", "target": "比值为2/3的样本。", "numerator": "2", "denominator": "3", "denominatorShift": 0.001, "rule": true, "accepted": true}
+{"name": "spaced-native-index-beside-a-fraction-keeps-prose-translatable", "target": "1 32/8 样本。dq q", "rule": true, "spacedIndex": true, "accepted": true, "priorLink": true}

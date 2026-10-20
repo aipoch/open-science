@@ -1,0 +1,261 @@
+import { describe, expect, it } from 'vitest'
+import { parseSkillDocumentWithStatus } from './skill-frontmatter'
+
+import {
+  frontmatterFieldNames,
+  parseFrontmatter,
+  parseSkillDocument,
+  splitFrontmatter
+} from './frontmatter'
+
+describe('parseSkillDocument', () => {
+  it('separates identity fields from reusable metadata while preserving frontmatter presence', () => {
+    const raw = [
+      '---',
+      'Name: Demo',
+      'DESCRIPTION: Does a thing.',
+      'License: MIT',
+      'tags:',
+      '  - research',
+      '  - writing',
+      '---',
+      '# Body'
+    ].join('\n')
+
+    expect(parseSkillDocument(raw)).toEqual({
+      name: 'Demo',
+      description: 'Does a thing.',
+      metadata: { license: 'MIT', tags: 'research, writing' },
+      body: '# Body',
+      hasFrontmatter: true
+    })
+  })
+})
+
+describe('parseSkillDocumentWithStatus', () => {
+  it.each([
+    ['no header', '# Body', true],
+    ['missing identity', '---\nauthor: Ada\n---\n# Body', true],
+    ['empty map', '---\n{}\n---\n# Body', true],
+    ['scalar header', '---\nplain text\n---\n# Body', true],
+    ['array header', '---\n- name\n- description\n---\n# Body', true],
+    ['null values', '---\nname:\ndescription:\n---\n# Body', true],
+    ['invalid YAML', '---\nname: original\nauthor: "Ada\n---\n# Body', false],
+    ['recovered YAML', '---\nname: original\nauthor: "Ada"\n---\n# Body', true]
+  ] as const)(
+    'distinguishes %s without changing the legacy document view',
+    (_label, raw, valid) => {
+      const { frontmatterValid, ...document } = parseSkillDocumentWithStatus(raw)
+      expect(frontmatterValid).toBe(valid)
+      expect(document).toEqual(parseSkillDocument(raw))
+      expect(parseSkillDocument(raw)).not.toHaveProperty('frontmatterValid')
+      expect(parseFrontmatter(raw)).not.toHaveProperty('frontmatterValid')
+    }
+  )
+
+  it('reports invalid syntax independently of header presence and body extraction', () => {
+    expect(parseSkillDocumentWithStatus('---\nname: original\nauthor: "Ada\n---\n# Body')).toEqual({
+      name: undefined,
+      description: undefined,
+      metadata: {},
+      body: '# Body',
+      hasFrontmatter: true,
+      frontmatterValid: false
+    })
+  })
+})
+
+describe('parseFrontmatter', () => {
+  it('reports every root field name even when its value is structured', () => {
+    expect(frontmatterFieldNames('---\nname: demo\nmetadata:\n  owner: team\n---\nBody')).toEqual([
+      'name',
+      'metadata'
+    ])
+  })
+
+  it('parses every scalar field into a lowercased map and strips the block', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: Does a thing.',
+      'License: MIT',
+      'author: AIPOCH',
+      '---',
+      '',
+      '# Demo'
+    ].join('\n')
+    const { fields, body, hasFrontmatter } = parseFrontmatter(raw)
+    expect(fields).toMatchObject({
+      name: 'demo',
+      description: 'Does a thing.',
+      license: 'MIT',
+      author: 'AIPOCH'
+    })
+    expect(body.startsWith('# Demo')).toBe(true)
+    expect(hasFrontmatter).toBe(true)
+  })
+
+  it('returns empty fields and full text when no frontmatter is present', () => {
+    const { fields, body, hasFrontmatter } = parseFrontmatter('# Just a body')
+    expect(fields).toEqual({})
+    expect(body).toBe('# Just a body')
+    expect(hasFrontmatter).toBe(false)
+  })
+
+  it('joins a folded block scalar (>) into a single spaced line', () => {
+    const raw = [
+      '---',
+      'name: alphafold2',
+      'description: >',
+      '  Predict protein structure for monomers and multimers',
+      '  with AlphaFold2 via the ColabFold runner.',
+      'license: Apache-2.0',
+      '---',
+      '',
+      '# AlphaFold2'
+    ].join('\n')
+    const { fields, body } = parseFrontmatter(raw)
+    // The reader is lossless: a folded block scalar keeps its single trailing newline (YAML clip).
+    expect(fields.description).toBe(
+      'Predict protein structure for monomers and multimers with AlphaFold2 via the ColabFold runner.\n'
+    )
+    expect(fields.license).toBe('Apache-2.0')
+    expect(body.startsWith('# AlphaFold2')).toBe(true)
+  })
+
+  it('preserves newlines for a literal block scalar (|) and stops at the next top-level key', () => {
+    const raw = [
+      '---',
+      'description: |',
+      '  line one',
+      '  line two',
+      'name: demo',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    // Literal block scalar keeps its trailing newline (clip); the reader no longer trims.
+    expect(fields.description).toBe('line one\nline two\n')
+    expect(fields.name).toBe('demo')
+  })
+
+  it('parses a bundle authored with CRLF line endings', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: Does a thing.',
+      'license: MIT',
+      '---',
+      '',
+      '# Demo'
+    ].join('\r\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields).toMatchObject({
+      name: 'demo',
+      description: 'Does a thing.',
+      license: 'MIT'
+    })
+    expect(body.startsWith('# Demo')).toBe(true)
+  })
+
+  it('joins a CRLF folded block scalar (>) into a single spaced line', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: >',
+      '  first line',
+      '  second line',
+      '---',
+      '',
+      '# Demo'
+    ].join('\r\n')
+    const { fields } = parseFrontmatter(raw)
+    // Same value the LF folded test yields: folded to one line, trailing newline kept (YAML clip).
+    expect(fields.description).toBe('first line second line\n')
+  })
+
+  it('ignores nested (indented) keys after a block scalar, as a flat reader', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: >',
+      '  folded text',
+      'metadata:',
+      '  display-name: Demo',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.description).toBe('folded text\n')
+    expect(fields['display-name']).toBeUndefined()
+  })
+
+  it('coerces bare date/number/boolean scalars to strings (no Date, no drop)', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'updated: 2026-07-17',
+      'version: 2',
+      'beta: true',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    // The FAILSAFE schema keeps these as verbatim strings; a Date would be dropped as a non-scalar.
+    expect(fields.updated).toBe('2026-07-17')
+    expect(fields.version).toBe('2')
+    expect(fields.beta).toBe('true')
+  })
+
+  it('flattens a YAML list to a comma-separated string and drops nested maps', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'requirements: [gpu, compute]', // flow sequence
+      'tags:', // block sequence
+      '  - alpha',
+      '  - beta',
+      'meta:', // nested map is dropped by the flat reader
+      '  key: value',
+      '---',
+      'body'
+    ].join('\n')
+    const { fields } = parseFrontmatter(raw)
+    expect(fields.requirements).toBe('gpu, compute')
+    expect(fields.tags).toBe('alpha, beta')
+    expect(fields.meta).toBeUndefined()
+  })
+
+  it('tolerates malformed frontmatter, returning empty fields and the body', () => {
+    // Unbalanced flow map is invalid YAML; the reader must not throw.
+    const raw = ['---', 'name: [oops', 'description: broken', '---', '# Body'].join('\n')
+    const { fields, body } = parseFrontmatter(raw)
+    expect(fields).toEqual({})
+    expect(body.startsWith('# Body')).toBe(true)
+  })
+})
+
+describe('splitFrontmatter', () => {
+  it('extracts description and strips the frontmatter block from the body', () => {
+    const raw = [
+      '---',
+      'name: demo',
+      'description: Does a thing.',
+      'license: MIT',
+      '---',
+      '',
+      '# Demo',
+      'Body text.'
+    ].join('\n')
+    const result = splitFrontmatter(raw)
+    expect(result.description).toBe('Does a thing.')
+    expect(result.body.startsWith('# Demo')).toBe(true)
+    expect(result.body).not.toContain('name: demo')
+  })
+
+  it('returns empty description and full text when no frontmatter is present', () => {
+    const result = splitFrontmatter('# Just a body')
+    expect(result.description).toBe('')
+    expect(result.body).toBe('# Just a body')
+  })
+})

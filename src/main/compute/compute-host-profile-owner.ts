@@ -1,18 +1,17 @@
-import type {
-  ComputeHost,
-  ComputeHostDetails,
-  DetailsAuthor,
-  ProbeResult
-} from '../../shared/compute'
-import { DETAILS_DOC_MAX_LENGTH } from '../../shared/compute'
+import type { ComputeHost, ComputeHostDetails, DetailsAuthor, ProbeResult } from '@aipoch/compute'
+import { parseProbeOutput } from '@aipoch/compute/node'
+
+import { DETAILS_DOC_MAX_LENGTH } from '@aipoch/compute'
+
 import {
-  isConnectionStdoutTruncated,
   classifyConnectionFailure,
   ComputeConnectionError,
+  isConnectionStdoutTruncated,
   type ComputeConnectionBrokerAcquirer
-} from './connection-broker'
+} from '@aipoch/compute/node'
+
+import { assertSafeScratchRoot, quoteRemotePath } from '@aipoch/compute/node'
 import type { ComputeHostRepository } from './repository'
-import { assertSafeScratchRoot, quoteRemotePath } from './remote-path-security'
 
 const PROBE_TIMEOUT_MS = 30_000
 const PROBE_MAX_OUTPUT_BYTES = 4 * 1024
@@ -41,73 +40,6 @@ const healthProbeScript = (host: ComputeHost): string => {
     'if probe_file=$(mktemp "$probe_scratch/.open-science-probe.XXXXXX" 2>/dev/null); then probe_ok=no; if printf test > "$probe_file"; then probe_ok=yes; fi; rm -f -- "$probe_file" || probe_ok=no; echo scratch_writable=$probe_ok; else echo scratch_writable=no; fi',
     'if command -v sbatch >/dev/null 2>&1 && command -v sacct >/dev/null 2>&1 && command -v scancel >/dev/null 2>&1 && squeue --noheader --user="$(id -un)" --format="%i" >/dev/null 2>&1; then echo scheduler_available=yes; else echo scheduler_available=no; fi'
   ].join('\n')
-}
-
-export type ProbeScriptOutput = {
-  os?: string
-  cpus?: number
-  memMib?: number
-  gpus?: Array<{ type: string; count: number }>
-  detectedScheduler?: 'slurm' | 'pbs' | 'lsf' | 'none'
-  scratchEnv?: string
-  scratchPath?: string
-  scratchWritable?: boolean
-  schedulerAvailable?: boolean
-}
-
-const aggregateGpus = (raw: string): Array<{ type: string; count: number }> => {
-  if (!raw.trim()) return []
-  const models = raw
-    .split(';')
-    .map((model) => model.trim())
-    .filter(Boolean)
-  const counts = new Map<string, number>()
-  for (const model of models) counts.set(model, (counts.get(model) ?? 0) + 1)
-  return Array.from(counts.entries()).map(([type, count]) => ({ type, count }))
-}
-
-export const parseProbeOutput = (stdout: string): ProbeScriptOutput => {
-  const values: Record<string, string> = {}
-  for (const line of stdout.split('\n')) {
-    const separator = line.indexOf('=')
-    if (separator === -1) continue
-    values[line.slice(0, separator).trim()] = line.slice(separator + 1).trim()
-  }
-
-  const cpus = Number.parseInt(values['cpus'] ?? '', 10)
-  const memMib = Number.parseInt(values['mem_mib'] ?? '', 10)
-  const detectedScheduler: ProbeScriptOutput['detectedScheduler'] =
-    values['sbatch'] === 'yes'
-      ? 'slurm'
-      : values['qsub'] === 'yes'
-        ? 'pbs'
-        : values['bsub'] === 'yes'
-          ? 'lsf'
-          : ['sbatch', 'qsub', 'bsub'].every((key) => values[key] === 'no')
-            ? 'none'
-            : undefined
-
-  return {
-    os: values['os'] || undefined,
-    cpus: Number.isFinite(cpus) && cpus > 0 ? cpus : undefined,
-    memMib: Number.isFinite(memMib) && memMib > 0 ? memMib : undefined,
-    gpus: aggregateGpus(values['gpus'] ?? ''),
-    detectedScheduler,
-    scratchEnv: values['scratch'] || undefined,
-    scratchPath: values['scratch_path'] || undefined,
-    scratchWritable:
-      values['scratch_writable'] === 'yes'
-        ? true
-        : values['scratch_writable'] === 'no'
-          ? false
-          : undefined,
-    schedulerAvailable:
-      values['scheduler_available'] === 'yes'
-        ? true
-        : values['scheduler_available'] === 'no'
-          ? false
-          : undefined
-  }
 }
 
 const isAbortError = (error: unknown): boolean =>

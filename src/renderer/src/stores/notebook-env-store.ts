@@ -1,13 +1,13 @@
 import { create } from 'zustand'
 
-import type { NotebookLanguage } from '../../../shared/notebook'
+import { deriveProvisionUi, type ProvisionUiState } from '@/lib/notebook-provisioning'
 import {
   isTerminalProvisionPhase,
   type ProvisionProgress,
   type ProvisionScope,
   type ProvisionStatus
-} from '../../../shared/notebook-env'
-import { deriveProvisionUi, type ProvisionUiState } from '../pages/workspace/provisioning-view'
+} from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from '../../../shared/notebook-language-contract'
 
 // Per-language provisioning state, tracked ALONGSIDE the single-slot fields below. The provisioner
 // serializes python and R, but each has its own progress/preparing/error here so the Settings Runtimes
@@ -140,7 +140,7 @@ export const useNotebookEnvStore = create<NotebookEnvStore>((set, get) => {
 
   // Merges a partial update into state, then re-derives `ui` from the resulting status/scope/
   // progress/error so every consumer of `ui` (onboarding step, launch banner, notebook gate) sees a
-  // view that always matches the latest mirrored state (reuses provisioning-view's pure reducer).
+  // view that always matches the latest mirrored state (reuses notebook-provisioning's pure reducer).
   // An authoritative status-read failure takes precedence over an older operation error until a
   // later status snapshot succeeds.
   const applyUi = (partial: Partial<NotebookEnvState>): void =>

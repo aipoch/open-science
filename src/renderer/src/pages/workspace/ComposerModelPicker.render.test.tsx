@@ -20,7 +20,7 @@ import {
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { ComposerModelPicker } from './ComposerModelPicker'
 import { incompatibilityReason } from './composer-model-picker-utils'
-import * as providerRegistry from '../../../../shared/provider-registry'
+import * as bridgePolicy from '../../../../shared/provider-bridge-policy'
 
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
@@ -199,7 +199,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ],
@@ -208,7 +208,7 @@ describe('ComposerModelPicker', () => {
           id: 'mixed',
           type: 'official',
           vendorId: 'opencode',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['kimi-k2.7-code', 'gpt-5.6-sol']
         })
       ],
@@ -231,12 +231,17 @@ describe('ComposerModelPicker', () => {
   it('localizes the provider reason when every model is bridge-unsupported', async () => {
     // The bundled catalog currently has no bridge exclusions. Control its existing policy boundary
     // to exercise the picker branch without changing production state or the catalog model.
-    vi.spyOn(providerRegistry, 'isModelBridgeSupported').mockReturnValue(false)
+    vi.spyOn(bridgePolicy, 'isModelBridgeSupported').mockReturnValue(false)
     await i18next.changeLanguage('zh-Hans')
     useSettingsStore.setState({
       ...codexFramework,
       providers: [
-        provider({ id: 'gateway', name: 'Gateway', apiEndpoints: ['openai'], models: ['model-a'] })
+        provider({
+          id: 'gateway',
+          name: 'Gateway',
+          apiEndpoints: ['chat-completions'],
+          models: ['model-a']
+        })
       ]
     })
     render()
@@ -283,14 +288,14 @@ describe('ComposerModelPicker', () => {
           type: 'claude-shared',
           name: 'Claude subscription',
           models: ['shared-model'],
-          apiEndpoints: ['anthropic']
+          apiEndpoints: ['messages']
         }),
         provider({
           id: CLAUDE_ISOLATED_PROVIDER_ID,
           type: 'claude-isolated',
           name: 'Claude isolated',
           models: ['isolated-model'],
-          apiEndpoints: ['anthropic']
+          apiEndpoints: ['messages']
         })
       ],
       activeProviderId: CLAUDE_SHARED_PROVIDER_ID,
@@ -350,7 +355,7 @@ describe('ComposerModelPicker', () => {
     // Claude Code (anthropic-only) + a lone OpenAI-only provider: the picker must not silently vanish.
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
-      providers: [provider({ id: 'p1', apiEndpoints: ['openai'], models: ['gpt-x'] })]
+      providers: [provider({ id: 'p1', apiEndpoints: ['chat-completions'], models: ['gpt-x'] })]
     })
     render()
 
@@ -375,7 +380,12 @@ describe('ComposerModelPicker', () => {
         }
       ],
       providers: [
-        provider({ id: 'p1', name: 'DeepSeek', apiEndpoints: ['openai'], models: ['ds', 'ds2'] })
+        provider({
+          id: 'p1',
+          name: 'DeepSeek',
+          apiEndpoints: ['chat-completions'],
+          models: ['ds', 'ds2']
+        })
       ]
     })
     render()
@@ -400,7 +410,7 @@ describe('ComposerModelPicker', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ],
@@ -410,7 +420,7 @@ describe('ComposerModelPicker', () => {
           type: 'official',
           vendorId: 'opencode',
           name: 'Mixed catalog',
-          apiEndpoints: ['openai'],
+          apiEndpoints: ['chat-completions'],
           models: ['kimi-k2.7-code', 'gpt-5.6-sol']
         })
       ],
@@ -451,28 +461,31 @@ describe('ComposerModelPicker', () => {
     // provider is unavailable in an item roving focus can reach (not a label or a disabled item, both
     // keyboard-unreachable), keep it unselectable, and still offer a way out to Settings. The reason
     // row now lives inside the "Model" submenu; "Open Settings" stays on the first level.
-    const openSettings = vi.fn()
     useSettingsStore.setState({
       agentFrameworkId: 'claude-code',
       agentFrameworks: [
         {
           id: 'claude-code',
           displayName: 'Claude Code',
-          supportedApiTypes: ['anthropic'],
+          supportedApiTypes: ['messages'],
           supportsSkills: true
         }
       ],
       providers: [
-        provider({ id: 'p1', apiEndpoints: ['openai'], name: 'OpenAI Gateway', models: ['gpt-x'] })
-      ],
-      openSettings
+        provider({
+          id: 'p1',
+          apiEndpoints: ['chat-completions'],
+          name: 'OpenAI Gateway',
+          models: ['gpt-x']
+        })
+      ]
     })
     render()
 
     const expectedReason = incompatibilityReason(
-      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic'],
+      ['messages'],
       i18next.getFixedT('en')
     )
     expect(expectedReason).toContain('/v1/messages')
@@ -533,12 +546,15 @@ describe('ComposerModelPicker', () => {
     const openSettingsItem = menuItems().find((el) => el.textContent?.includes('Open Settings'))
     expect(openSettingsItem, 'expected an "Open Settings" menu item').toBeDefined()
     act(() => openSettingsItem!.click())
-    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
   })
 
-  it('warns and opens settings when no model is configured', () => {
-    const openSettings = vi.fn()
-    useSettingsStore.setState({ providers: [], openSettings })
+  it('warns and opens Model settings when no model is configured', () => {
+    useSettingsStore.setState({ providers: [] })
     render()
 
     // No picker, but a warning affordance the user can click to fix the missing model.
@@ -550,7 +566,11 @@ describe('ComposerModelPicker', () => {
     expect(warning?.textContent).toContain('No model available')
 
     act(() => warning?.click())
-    expect(openSettings).toHaveBeenCalledTimes(1)
+    expect(useSettingsStore.getState().isSettingsOpen).toBe(true)
+    expect(useSettingsStore.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list' }
+    })
   })
 
   it('warns when the only provider has failed validation', () => {
@@ -572,9 +592,9 @@ describe('ComposerModelPicker', () => {
 
   it('explains an endpoint mismatch by route, not by vendor name', () => {
     const reason = incompatibilityReason(
-      { apiEndpoints: ['openai'], type: 'custom', name: 'OpenAI Gateway' },
+      { apiEndpoints: ['chat-completions'], type: 'custom', name: 'OpenAI Gateway' },
       'Claude Code',
-      ['anthropic'],
+      ['messages'],
       i18next.getFixedT('en')
     )
 
@@ -912,7 +932,7 @@ describe('ComposerModelPicker', () => {
           name: 'OpenAI',
           models: ['gpt-5.2', 'gpt-5.5']
         }),
-        provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['openai'], models: ['gm'] })
+        provider({ id: 'gw', name: 'Gateway', apiEndpoints: ['chat-completions'], models: ['gm'] })
       ],
       activeProviderId: 'off',
       activeModel: 'gpt-5.2'

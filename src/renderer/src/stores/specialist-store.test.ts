@@ -1,11 +1,9 @@
+import { createSpecialistService } from '../../../main/specialist/service'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { SpecialistService } from '../../../main/specialist/service'
-import { SpecialistRepository } from '../../../main/specialist/repository'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-
-import type { SpecialistExportPreview } from '../../../shared/specialist-package'
+import type { SpecialistExportPreview } from '@aipoch/specialists'
 import { useSpecialistStore } from './specialist-store'
 
 const setSpecialistApi = (api: Partial<Window['api']['specialist']>): void => {
@@ -461,7 +459,7 @@ describe('S04 and S05 catalog recovery regressions', () => {
 it('S05 a committed create remains successful even when catalog enrichment fails', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'specialist-create-receipt-'))
   try {
-    const service = new SpecialistService(new SpecialistRepository(directory))
+    const service = createSpecialistService(directory)
     setSpecialistApi({
       create: (input) => service.create(input),
       list: vi.fn().mockRejectedValue(new Error('catalog enrichment unavailable'))
@@ -507,4 +505,20 @@ it('keeps the forced snapshot when an older initial load finishes last', async (
   expect(useSpecialistStore.getState().items).toEqual(fresh.items)
   await useSpecialistStore.getState().load()
   expect(list).toHaveBeenCalledTimes(2)
+})
+
+it('retains the conflict and exposes a failed catalog refresh without replaying the write', async () => {
+  const conflict = new Error('Revision conflict: expected 1, found 2.')
+  const items = [{ kind: 'reviewer' as const, id: 'reviewer' as const }]
+  const update = vi.fn().mockRejectedValue(conflict)
+  const list = vi.fn().mockRejectedValue(new Error('Offline'))
+  setSpecialistApi({ update, list })
+  useSpecialistStore.setState({ items, isLoaded: true })
+  await expect(
+    useSpecialistStore.getState().update({ id: 'researcher', revision: 1, iconKey: 'atom' })
+  ).rejects.toBe(conflict)
+  expect(update).toHaveBeenCalledOnce()
+  expect(list).toHaveBeenCalledOnce()
+  expect(useSpecialistStore.getState().items).toEqual(items)
+  expect(useSpecialistStore.getState().loadError).toBeDefined()
 })

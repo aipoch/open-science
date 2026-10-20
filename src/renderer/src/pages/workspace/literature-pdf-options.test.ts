@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import type { LiteratureItemView } from '../../../../shared/literature'
-import { literatureReadingDocument } from '../literature/literature-reading'
-import { createPreviewFileItemFromPdfContext } from './preview-file-item'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { literatureReadingDocument } from '../literature/workflows/literature-reading'
 import { literatureItemToPdfOption } from './literature-pdf-options'
+import { createPreviewFileItemFromPdfContext } from './preview-file-item'
 import { resolvePdfContextTarget } from './use-pdf-context-action'
 
 const literatureItem = {

@@ -10,7 +10,10 @@ import WindowsTestSequencer, {
 describe('Windows module-based test sharding', () => {
   it.each([
     ['src/main/session-package/service.test.ts', 1],
-    ['src/main/database/migration-service.test.ts', 2],
+    ['packages/pdf-structure/test/native-complete-records.test.ts', 1],
+    ['packages/pdf-translation/test/writer.test.ts', 1],
+    ['src/main/database/migration-service.test.ts', 5],
+    ['src/main/database/migration-service-extra.test.ts', 2],
     ['src/main/storage/ipc.test.ts', 2],
     ['src/main/session-persistence/coordinator.test.ts', 3],
     ['src/main/managed-file-versions/service.integration.test.ts', 3],
@@ -21,8 +24,14 @@ describe('Windows module-based test sharding', () => {
     ['src/main/compute/compute-service.test.ts', 6],
     ['src/main/delegation/opencode-runtime-preparation.test.ts', 6],
     ['src/main/notebook/runtime-service.test.ts', 7],
+    ['packages/notebook-syntax/src/index.test.ts', 7],
+    ['packages/notebook-code-risk/src/code-risk-analysis.test.ts', 7],
+    ['packages/notebook-analysis/src/dependency-analysis.test.ts', 7],
     ['packages/notebook-network-sandbox/src/gateway.test.ts', 7],
-    ['src/renderer/src/new.test.tsx', 8],
+    ['src/renderer/src/pages/workspace/new.test.tsx', 4],
+    ['src/renderer/src/pages/literature/new.test.tsx', 4],
+    ['src/renderer/src/components/new.test.tsx', 6],
+    ['src/renderer/src/new.test.tsx', 6],
     ['scripts/new.test.ts', 8],
     ['src/main/new-module/new.test.ts', 8],
     ['src/main/database-other/new.test.ts', 8]
@@ -31,13 +40,13 @@ describe('Windows module-based test sharding', () => {
     expect(windowsTestShard(path.replaceAll('/', '\\'))).toBe(group)
   })
 
-  it('keeps new tests with their module and has no overlapping module prefixes', () => {
-    const prefixes = WINDOWS_TEST_MODULE_GROUPS.flat()
+  it('keeps new tests with their module without shadowing more specific prefixes', () => {
     expect(WINDOWS_TEST_MODULE_GROUPS).toHaveLength(WINDOWS_TEST_SHARD_COUNT - 1)
     for (const [index, group] of WINDOWS_TEST_MODULE_GROUPS.entries()) {
       for (const prefix of group) {
         expect(windowsTestShard(`${prefix}nested/new.integration.test.ts`)).toBe(index + 1)
-        expect(prefixes.filter((other) => prefix.startsWith(other))).toEqual([prefix])
+        const earlier = WINDOWS_TEST_MODULE_GROUPS.slice(0, index).flat()
+        expect(earlier.some((other) => prefix.startsWith(other))).toBe(false)
       }
     }
   })
@@ -46,6 +55,7 @@ describe('Windows module-based test sharding', () => {
     const root = resolve('fixture-root')
     const paths = [
       ...WINDOWS_TEST_MODULE_GROUPS.flat().map((prefix) => `${prefix}new.test.ts`),
+      'src/main/database/migration-service.test.ts',
       'src/main/new-module/new.test.ts'
     ]
     const specs = ['default', 'process', 'database'].flatMap((name) =>

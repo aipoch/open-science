@@ -1,20 +1,30 @@
-import type { StoredClassificationSettings } from './types'
 import { statSync } from 'node:fs'
 import { isAbsolute } from 'node:path'
-import { samePath } from '../storage-root'
 import { isDeepStrictEqual } from 'node:util'
 import { BootstrapError } from '../../shared/bootstrap'
+import type { LanguagePreference } from '../../shared/locale'
+import type { PackageMirror } from '../../shared/mirror'
+import type { ReasoningEffort } from '../../shared/model-preference-contract'
+import {
+  networkProxyValidationMessage,
+  normalizeNetworkProxySettings,
+  type NetworkProxySettings
+} from '../../shared/network-proxy'
+import type { NotebookLanguage } from '../../shared/notebook-language-contract'
+import { normalizeNotebookNetworkSettings } from '../../shared/notebook-network'
+import { type NotebookNetworkSettings } from '../../shared/notebook-network-settings'
+import type { RuntimeEnablement } from '../../shared/notebook-runtime'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type {
   AgentFrameworkId,
   AppIconVariant,
-  ClaudeSubscriptionProviderId,
   ClaudeInfo,
+  ClaudeSubscriptionProviderId,
   ProjectFilesFilterPreference,
   ProviderDeletionScenarioModelHandling,
-  ReasoningEffort,
-  ValidateProviderResult,
   ProviderValidationTarget,
-  SetAgentRoutingRequest
+  SetAgentRoutingRequest,
+  ValidateProviderResult
 } from '../../shared/settings'
 import {
   CLAUDE_ISOLATED_PROVIDER_ID,
@@ -25,35 +35,11 @@ import {
   isClaudeSubscriptionProviderId,
   isCodexSubscriptionProvider
 } from '../../shared/settings'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { PackageMirror } from '../../shared/mirror'
-import {
-  normalizeNotebookNetworkSettings,
-  type NotebookNetworkSettings
-} from '../../shared/notebook-network'
-import {
-  networkProxyValidationMessage,
-  normalizeNetworkProxySettings,
-  type NetworkProxySettings
-} from '../../shared/network-proxy'
-import type { NotebookLanguage } from '../../shared/notebook'
-import type { RuntimeEnablement } from '../../shared/notebook-runtime'
 import type { CloseActionPreference } from '../../shared/window-controls'
-import type { LanguagePreference } from '../../shared/locale'
 import type { LocalShellRuntimePreference, WslSelection } from '../../shared/wsl-setup'
-import {
-  type StoredComputeGrant,
-  type StoredConnectors,
-  type StoredCodexInfo,
-  type StoredCustomMcpServer,
-  type StoredProvider,
-  type StoredSettings
-} from './types'
-import { buildProviderValidationPatch } from './provider-validation-state'
-import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
-import { sanitizePackageMirror } from './record-codec'
-import { sanitizeSettings } from './document-codec'
-import { SettingsDocumentStore } from './document-store'
+import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
+import { isApplicationRequiredSkillId } from '../skills/activation-policy'
+import { samePath } from '../storage-root'
 import { assertCustomServerCapacity } from './connector-resource-limits'
 import {
   appendCustomServer,
@@ -61,15 +47,27 @@ import {
   completeCustomServerDeletion,
   customServerSecurityFingerprint
 } from './custom-server-identity'
+import { sanitizeSettings } from './document-codec'
+import { SettingsDocumentStore } from './document-store'
+import type { LocalShellRuntimeMutation } from './local-shell-runtime-contract'
+import { PROVIDER_RESOURCE_LIMITS } from './provider-resource-limits'
+import { buildProviderValidationPatch } from './provider-validation-state'
+import { sanitizePackageMirror } from './record-codec'
 import {
   buildReviewerModelMutation,
   buildSessionDetailsModelMutation,
   buildSubagentModelMutation,
   buildVisionModelMutation
 } from './subagent-model-settings'
-import { relocateManagedRuntimeEnablement } from '../notebook/managed-runtime-relocation'
-import { isApplicationRequiredSkillId } from '../skills/activation-policy'
-import type { LocalShellRuntimeMutation } from './local-shell-runtime-mutation'
+import type { StoredClassificationSettings } from './types'
+import {
+  type StoredCodexInfo,
+  type StoredComputeGrant,
+  type StoredConnectors,
+  type StoredCustomMcpServer,
+  type StoredProvider,
+  type StoredSettings
+} from './types'
 
 type SkillMutationGuard = <T>(operation: () => Promise<T>) => Promise<T>
 type Write = Promise<StoredSettings>
@@ -1284,5 +1282,5 @@ class SettingsRepository {
   }
 }
 
-export { SettingsRepository, sanitizeSettings }
 export { sanitizeConnectors, sanitizeCustomMcpServer, sanitizePackageMirror } from './record-codec'
+export { SettingsRepository, sanitizeSettings }

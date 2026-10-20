@@ -1,10 +1,12 @@
-import { existsSync, rmSync } from 'node:fs'
+import { RUNTIME_LOCK_FILE } from '../runtime-ownership'
+import { configureTestElectronHost } from '../../../test/runtime-host'
+import { existsSync, rmSync, readdirSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, type Mock, vi } from 'vitest'
 
-import type { Logger } from '../logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import { DEFAULT_UPLOAD_PROJECT_ID } from '../../shared/uploads'
 import { STAGING_UPLOAD_SESSION_ID, UPLOADS_DIR } from '../uploads/storage-helpers'
 
@@ -193,6 +195,7 @@ afterEach(async () => {
   initializeDataRootWriteAvailability(false)
   vi.unstubAllEnvs()
   clearApplicationShutdownTrigger()
+  await resetOwnership()
   await rm(currentParent, { recursive: true, force: true })
   await rm(targetParent, { recursive: true, force: true })
 })
@@ -277,14 +280,21 @@ describe('storage IPC handlers', () => {
     const preferences = new SettingsPreferencesModule(repository)
     initDataRoot(dataRoot)
     const deps = fakeDeps()
+    let targetRemoved = false
     deps.settingsService.setDataRoot = async (path, options) => {
       const pending = preferences.setDataRoot(path, options)
+      resetOwnership.resetOwnershipSync()
       rmSync(target, { recursive: true })
+      targetRemoved = !existsSync(target)
       await pending
     }
     const owner = createStorageCommandOwner(deps)
     expect(await owner.migrate({ parent: targetParent })).toMatchObject({ ok: true })
-    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(await owner.commitAndRelaunch({ parent: target })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('your current data is untouched.')
+    })
+    expect(targetRemoved).toBe(true)
     expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
@@ -299,13 +309,20 @@ describe('storage IPC handlers', () => {
     await mkdir(join(target, 'workspaces'), { recursive: true })
     await writeFile(join(target, 'workspaces/history.json'), '{}')
     const deps = fakeDeps()
+    let targetRemoved = false
     deps.settingsService.setDataRoot = async (path, options) => {
       const pending = preferences.setDataRoot(path, options)
+      resetOwnership.resetOwnershipSync()
       rmSync(target, { recursive: true })
+      targetRemoved = !existsSync(target)
       await pending
     }
     const owner = createStorageCommandOwner(deps)
-    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({ ok: false })
+    expect(await owner.setDataRootAndRelaunch({ parent: target })).toMatchObject({
+      ok: false,
+      error: 'The selected data folder changed. Check the location and confirm it again.'
+    })
+    expect(targetRemoved).toBe(true)
     expect((await repository.getSettings()).dataRoot).toBe(dataRoot)
     expect(isMigrationPending()).toBe(false)
     expect(deps.relaunch).not.toHaveBeenCalled()
@@ -1844,7 +1861,7 @@ describe('storage IPC handlers', () => {
 
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
 
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
     expect(deps.relaunch).not.toHaveBeenCalled()
   })
@@ -1859,6 +1876,58 @@ describe('storage IPC handlers', () => {
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
 
     expect(existsSync(target)).toBe(true)
+  })
+
+  it('treats repeated discard of a resolved copy as a no-op without touching live or unowned data', async () => {
+    initDataRoot(dataRoot)
+    await seedVerifiedMarker(target, dataRoot)
+    const deps = fakeDeps()
+    registerStorageIpcHandlers(deps)
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(existsSync(target)).toBe(false)
+    for (let attempt = 0; attempt < 3; attempt++) {
+      await expect(
+        invoke('storage:discard-migrated-copy', { parent: targetParent })
+      ).resolves.toEqual({ ok: true })
+    }
+    // A now-live root or unrelated replacement at the old target is never removed.
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: currentParent })
+    ).resolves.toEqual({ ok: true })
+    await mkdir(target)
+    const replacement = join(target, 'user-data.txt')
+    await writeFile(replacement, 'keep')
+    await expect(
+      invoke('storage:discard-migrated-copy', { parent: targetParent })
+    ).resolves.toEqual({ ok: true })
+    expect(await readFile(replacement, 'utf8')).toBe('keep')
+    expect(existsSync(dataRoot)).toBe(true)
+    expect(isMigrationPending()).toBe(false)
+    expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
+    expect(deps.relaunch).not.toHaveBeenCalled()
+  })
+
+  it('does not resolve a different staged copy or its global pending gate for a stale discard', async () => {
+    initDataRoot(dataRoot)
+    const owner = createStorageCommandOwner(fakeDeps())
+    expect((await owner.migrate({ parent: targetParent })).ok).toBe(true)
+    const otherParent = join(currentParent, 'unrelated')
+    await expect(owner.discardMigratedCopy({ parent: otherParent })).resolves.toEqual({
+      ok: false,
+      error: 'No matching staged data copy was found.'
+    })
+    // A recreated owner must also respect the process-wide gate, even without local staged state.
+    const otherOwner = createStorageCommandOwner(fakeDeps())
+    await expect(otherOwner.discardMigratedCopy({ parent: otherParent })).resolves.toEqual({
+      ok: false,
+      error: 'No matching staged data copy was found.'
+    })
+    expect(isMigrationPending()).toBe(true)
+    expect(existsSync(target)).toBe(true)
+    await expect(owner.discardMigratedCopy({ parent: targetParent })).resolves.toEqual({ ok: true })
+    expect(isMigrationPending()).toBe(false)
   })
 
   it('serializes commit and discard so one resolved migration cannot delete both copies', async () => {
@@ -1912,7 +1981,7 @@ describe('storage IPC handlers', () => {
 
     expect(commitOutcome).toEqual({ ok: false, error: 'A migration is already being resolved.' })
     expect(existsSync(join(dataRoot, 'artifacts', 'keep.txt'))).toBe(true)
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
   })
 
@@ -1946,7 +2015,7 @@ describe('storage IPC handlers', () => {
     expect(isMigrationPending()).toBe(true)
 
     await invoke('storage:discard-migrated-copy', { parent: targetParent })
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
   })
 
   it('allows a later migration while cleanup from an earlier move remains queued', async () => {
@@ -1964,7 +2033,7 @@ describe('storage IPC handlers', () => {
     })
     const runDataRootMigration = vi.fn<NonNullable<FakeDeps['runDataRootMigration']>>(
       async (_deps, parent, options) => {
-        await mkdir(alternateTarget)
+        expect(existsSync(join(alternateTarget, RUNTIME_LOCK_FILE))).toBe(true)
         options.onVerified?.({ token: 'next-migration', target: dataRootFor(parent) })
         return { ok: true }
       }
@@ -1980,6 +2049,7 @@ describe('storage IPC handlers', () => {
       expect(runDataRootMigration).toHaveBeenCalledOnce()
       await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2004,7 +2074,7 @@ describe('storage IPC handlers', () => {
       _parent,
       options
     ) => {
-      await mkdir(target)
+      expect(existsSync(join(target, RUNTIME_LOCK_FILE))).toBe(true)
       options.onVerified?.({ token: 'tok-ipc', target })
       return { ok: true }
     }
@@ -2035,7 +2105,7 @@ describe('storage IPC handlers', () => {
       _parent,
       options
     ) => {
-      await mkdir(target)
+      expect(existsSync(join(target, RUNTIME_LOCK_FILE))).toBe(true)
       options.onVerified?.({ token: 'tok-ipc', target })
       return { ok: true }
     }
@@ -2073,7 +2143,7 @@ describe('storage IPC handlers', () => {
     expect(outcome.switchoverFailed).toBe(true)
     // The UI can't retry, so the app must not soft-lock: the staged copy is discarded and the gate lifts.
     expect(isMigrationPending()).toBe(false)
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
   })
 
   it('rejects a concurrent migrate call while one is already in flight', async () => {
@@ -2136,6 +2206,7 @@ describe('storage IPC handlers', () => {
       await migratePromise
     } finally {
       releaseDisconnect?.()
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2159,6 +2230,7 @@ describe('storage IPC handlers', () => {
       expect(deps.settingsService.setDataRoot).not.toHaveBeenCalled()
       expect(deps.relaunch).not.toHaveBeenCalled()
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2191,6 +2263,7 @@ describe('storage IPC handlers', () => {
       expect(deps.relaunch).toHaveBeenCalledOnce()
       await expect(cleanupJournal.hasPending()).resolves.toBe(true)
     } finally {
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2236,6 +2309,7 @@ describe('storage IPC handlers', () => {
       await commitPromise
     } finally {
       releaseCommit?.()
+      await resetOwnership()
       await rm(alternateParent, { recursive: true, force: true })
     }
   })
@@ -2318,7 +2392,7 @@ describe('storage IPC handlers', () => {
       ok: false,
       cancelled: true
     })
-    expect(existsSync(target)).toBe(false)
+    expect(readdirSync(target)).toEqual([RUNTIME_LOCK_FILE])
     expect(isMigrationPending()).toBe(false)
   })
 
@@ -3272,3 +3346,5 @@ it.each([true, false])(
     expect(existsSync(legacy)).toBe(!missing)
   }
 )
+
+const resetOwnership = await configureTestElectronHost(await import('electron'))

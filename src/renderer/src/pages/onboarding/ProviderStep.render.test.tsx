@@ -4,10 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import {
-  getOfficialVendorModelIds,
-  resolveVendorModelApiEndpoints
-} from '../../../../shared/provider-registry'
+import { resolveVendorModelApiEndpoints } from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import type { ValidateProviderResult } from '../../../../shared/settings'
 import { i18next } from '@/i18n'
 import { useSettingsStore } from '@/stores/settings-store'
@@ -117,7 +115,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -142,7 +140,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -162,7 +160,7 @@ describe('ProviderStep', () => {
         {
           id: 'opencode',
           displayName: 'OpenCode',
-          supportedApiTypes: ['anthropic', 'openai'],
+          supportedApiTypes: ['messages', 'chat-completions'],
           supportsSkills: true
         }
       ]
@@ -170,7 +168,7 @@ describe('ProviderStep', () => {
 
     await renderStep({
       initialValue: {
-        ...createEmptyProviderFormValue({ apiEndpoint: 'anthropic' }),
+        ...createEmptyProviderFormValue({ apiEndpoint: 'messages' }),
         providerFormTouched: true
       }
     })
@@ -600,7 +598,7 @@ describe('ProviderStep', () => {
         {
           id: 'claude-code',
           displayName: 'Claude Code',
-          supportedApiTypes: ['anthropic'],
+          supportedApiTypes: ['messages'],
           supportsSkills: true
         }
       ]
@@ -623,12 +621,12 @@ describe('ProviderStep', () => {
       expect.objectContaining({
         vendorId: 'opencode',
         model: expect.any(String),
-        apiEndpoints: ['anthropic']
+        apiEndpoints: ['messages']
       })
     )
     const { model } = saveAndActivateProvider.mock.calls[0][0]
     expect(getOfficialVendorModelIds('opencode')).toContain(model)
-    expect(resolveVendorModelApiEndpoints('opencode', model)).toContain('anthropic')
+    expect(resolveVendorModelApiEndpoints('opencode', model)).toContain('messages')
   })
 
   // Switches the auth picker to the isolated "Sign in with Open-Science" mode — the only path that

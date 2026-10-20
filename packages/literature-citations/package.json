@@ -1,0 +1,59 @@
+{
+  "name": "@aipoch/literature-citations",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "license": "Apache-2.0",
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist",
+    "resources",
+    "LICENSE",
+    "README.md"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./contracts": {
+      "types": "./dist/contracts.d.ts",
+      "default": "./dist/contracts.js"
+    },
+    "./csl": {
+      "types": "./dist/csl.d.ts",
+      "default": "./dist/csl.js"
+    },
+    "./styles": {
+      "types": "./dist/styles.d.ts",
+      "default": "./dist/styles.js"
+    },
+    "./exchange": {
+      "types": "./dist/citation-exchange.d.ts",
+      "default": "./dist/citation-exchange.js"
+    },
+    "./documents": {
+      "types": "./dist/documents.d.ts",
+      "default": "./dist/documents.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "citeme-engine-wasm": "0.3.8",
+    "saxes": "6.0.0",
+    "fflate": "0.8.3",
+    "parse5": "^7.3.0",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.19.1",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.11"
+  }
+}

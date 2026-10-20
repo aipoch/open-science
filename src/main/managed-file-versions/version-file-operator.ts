@@ -648,8 +648,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
             if (error instanceof Error && 'code' in error && error.code === 'ENOENT') return
             throw error
           }
-          const sourceStats = await leaseHandle.stat()
-          const destinationStats = await destination.stat()
+          const sourceStats = await leaseHandle.stat({ bigint: true })
+          const destinationStats = await destination.stat({ bigint: true })
           if (
             sourceStats.dev === destinationStats.dev &&
             sourceStats.ino === destinationStats.ino
@@ -679,8 +679,8 @@ class NodeVersionFileOperator implements VersionFileOperator, VersionFileRecover
           )
           let primaryFailure: { error: unknown } | undefined
           try {
-            const sourceStats = await leaseHandle.stat()
-            const destinationStats = await destination.stat()
+            const sourceStats = await leaseHandle.stat({ bigint: true })
+            const destinationStats = await destination.stat({ bigint: true })
             if (
               sourceStats.dev === destinationStats.dev &&
               sourceStats.ino === destinationStats.ino

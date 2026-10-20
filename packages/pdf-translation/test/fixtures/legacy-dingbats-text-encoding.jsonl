@@ -1,0 +1,7 @@
+{"name": "legacy-check", "font": "ABCDEF+Dingbats", "source": "3", "expected": "✓"}
+{"name": "legacy-cross", "font": "Dingbats", "source": "7", "expected": "✗"}
+{"name": "standard-zapf-check", "font": "ZapfDingbats", "source": "3", "expected": "✓"}
+{"name": "ordinary-digit", "font": "Times-Roman", "source": "3", "expected": "3"}
+{"name": "unknown-symbol-font", "font": "Symbol", "source": "7", "expected": "7"}
+{"name": "already-decoded-check", "font": "Dingbats", "source": "✓", "expected": "✓"}
+{"name": "multi-digit-run-is-not-a-mark", "font": "Dingbats", "source": "37", "expected": "37"}

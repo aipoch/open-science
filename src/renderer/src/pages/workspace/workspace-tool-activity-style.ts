@@ -7,7 +7,7 @@ import type { ToolExecutionPhase } from './tool-execution-phase'
 // Centralizes compact activity-row styling so search and generic tool rows stay visually aligned.
 const getActivitySurfaceClassName = (activity: ToolActivity, phase?: ToolExecutionPhase): string =>
   cn(
-    'flex w-full min-h-[44px] items-start gap-2 rounded-lg py-2 pl-1.5 pr-2.5 text-[13px] transition-colors md:min-h-0 md:items-center md:py-[5px]',
+    'flex w-full min-h-[44px] items-start gap-2 rounded-lg py-2 pl-1.5 pr-2.5 text-[13px] transition-colors focus-visible:keyboard-focus focus-visible:-outline-offset-2 md:min-h-0 md:items-center md:py-[5px]',
     (phase ? phase === 'failed' : activity.status === 'failed')
       ? 'text-danger-000 hover:bg-danger-900'
       : (phase ? phase === 'executing' : isActivityActive(activity))

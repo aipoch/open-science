@@ -1,7 +1,8 @@
+import { captureDiagnosticLogs } from '../diagnostics/integration-test-helpers'
 import { describe, expect, it, vi, type Mock, type Mocked } from 'vitest'
 import type { SecureStorageCipher } from '../secure-storage'
 import { createCredentialAccess } from './access'
-import type { CredentialIdentity } from './selection'
+import { CredentialIdentityError, type CredentialIdentity } from './selection'
 
 const identity: CredentialIdentity = {
   backend: 'mac-keychain',
@@ -35,6 +36,23 @@ const fixture = (
 }
 
 describe('process credential access', () => {
+  it.each(['native-secret-operation-failed', 'unsupported-ciphertext-version'])(
+    'preserves the classified %s failure instead of reporting every failure as bad decryption',
+    (reason) => {
+      const { access, cipher, recover } = fixture()
+      const failure = new CredentialIdentityError(reason)
+      cipher.decryptString.mockImplementation(() => {
+        throw failure
+      })
+
+      expect(() => access.decryptString(Buffer.from('legacy:original'))).toThrow(/recovery/i)
+      expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
+      expect(cipher.encryptString).not.toHaveBeenCalled()
+      expect(recover).toHaveBeenCalledOnce()
+      expect(recover.mock.calls[0][0].reason).toBe(reason)
+    }
+  )
+
   it('reads old ciphertext with the one selected identity, without a second name lookup', () => {
     const { access, cipher, probe } = fixture()
     expect(access.decryptString(Buffer.from('legacy:old-secret'))).toBe('old-secret')
@@ -171,28 +189,26 @@ it('a concurrent first-creation loser stops without overwriting the winning key 
 
 it('preserves safe macOS recheck diagnostics in the final redacted recovery log', async () => {
   const { cipher } = fixture()
-  const { formatLine } = await import('../logger')
-  const lines: string[] = []
-  const access = createCredentialAccess({
-    identity,
-    cipher,
-    probe: () => ({
-      status: 'access-blocked',
-      reason: 'keychain-search-list-changed',
-      osStatus: 0
-    }),
-    recover: (error) =>
-      lines.push(
-        formatLine('error', 'credentials', 'access failed', {
+  const lines = await captureDiagnosticLogs((log) => {
+    const access = createCredentialAccess({
+      identity,
+      cipher,
+      probe: () => ({
+        status: 'access-blocked',
+        reason: 'keychain-search-list-changed',
+        osStatus: 0
+      }),
+      recover: (error) =>
+        log.error('access failed', {
           recoveryReason: error.reason,
           identityProbe: error.probe
         })
-      )
+    })
+    expect(() => access.decryptString(Buffer.from('legacy:old'))).toThrow(/recovery/i)
+    expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
+    expect(cipher.decryptString).not.toHaveBeenCalled()
+    expect(cipher.encryptString).not.toHaveBeenCalled()
   })
-  expect(() => access.decryptString(Buffer.from('legacy:old'))).toThrow(/recovery/i)
-  expect(() => access.encryptString('replacement')).toThrow(/recovery/i)
-  expect(cipher.decryptString).not.toHaveBeenCalled()
-  expect(cipher.encryptString).not.toHaveBeenCalled()
   expect(lines).toHaveLength(1)
   expect(JSON.parse(lines[0]).data.identityProbe).toEqual({
     appName: 'Open Science',

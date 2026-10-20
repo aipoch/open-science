@@ -1,0 +1,66 @@
+const APP_OWNED_ROOT_FILES = new Set(['.source.json', '.specialist-package.json'])
+
+export const isAppOwnedSkillRootFile = (relativePath: string): boolean =>
+  APP_OWNED_ROOT_FILES.has(relativePath.toLowerCase())
+
+// App-owned root metadata travels with a Skill package but is not part of the user-authored package
+// budget. Nested files with the same names remain ordinary package content.
+export const isSkillPackageBudgetedPath = (relativePath: string): boolean =>
+  !isAppOwnedSkillRootFile(relativePath)
+
+// VCS and archive metadata are not runtime Skill content. Ignore any path segment beginning with a
+// dot while preserving the two app-owned root metadata files above for their dedicated consumers.
+// This is deliberately separate from path traversal validation: dot-prefixed names are safe paths,
+// but importing them would make a package unreadable on the inspection boundary and adds no runtime
+// capability.
+export const isSkillPackageIgnoredPath = (relativePath: string): boolean =>
+  !isAppOwnedSkillRootFile(relativePath) &&
+  relativePath
+    .split('/')
+    .some((segment) => segment.startsWith('.') && segment !== '.' && segment !== '..')
+
+// Resource caps that bound a skill import from any source (a .zip/.skill bundle or a recursive
+// GitHub download). Without them a zip bomb or a very large repository could exhaust memory or freeze
+// the app while the user imports a skill from settings. Lives in shared/ so the renderer can enforce
+// the same numbers on the upload picker as the main process enforces on extraction/download. The
+// limits cover asset-heavy Skills while still rejecting archives whose structure or byte size is
+// pathological.
+export const SKILL_IMPORT_LIMITS = {
+  // Structural cap on the number of files in ONE skill. Large asset libraries can legitimately
+  // contain thousands of tiny files; byte limits remain the primary memory bound.
+  maxFiles: 16_384,
+  // Maximum size of any single file (decompressed, for zip entries). Set high because real skills
+  // legitimately bundle large reference assets (datasets, templates, model files) worth keeping.
+  maxFileBytes: 50 * 1024 * 1024,
+  // Maximum total decompressed size of ONE skill (all files in a single skill root / inner bundle).
+  // Comfortably above the single-file cap so a skill can carry a large file plus its other resources.
+  maxTotalBytes: 128 * 1024 * 1024,
+  // Maximum cumulative raw SKILL.md bytes included in ONE bundle preview response. Import keeps the
+  // larger per-skill caps above, but renderer-bound preview text must stay small enough for IPC.
+  maxPreviewContentBytes: 4 * 1024 * 1024,
+  // Maximum directory nesting either source is allowed to descend (zip subdirectories / GitHub dirs).
+  maxDepth: 8,
+  // Maximum GitHub API/download requests one import may issue, so a wide or mostly-empty directory
+  // tree can't trigger an unbounded number of requests even before any file budget is spent.
+  maxRequests: 512,
+  // --- Multi-skill / nested-bundle caps ---------------------------------------------------------
+  // A single uploaded bundle may hold many skills, each as a nested .zip/.skill entry. These caps
+  // bound the OUTER bundle so a resilient (skip-the-bad, keep-the-good) import can't be turned into a
+  // memory bomb: the per-skill caps above still apply to each individual skill once it's unpacked.
+  //
+  // Largest nested skill archive we'll even attempt to unpack (compressed). An inner archive bigger
+  // than this is skipped as "too large" rather than decompressed, so one oversized skill never blocks
+  // the rest of the bundle. Sized so a skill archive carrying a large reference asset still unpacks.
+  maxSkillArchiveBytes: 64 * 1024 * 1024,
+  // Largest uploaded bundle overall (the outer .zip). Generous enough for a bundle of several sizeable
+  // skills, bounded so a single upload can't exhaust memory. NOTE: the decoded bundle plus its
+  // extracted entries are held in memory during import, so this is the dominant memory bound.
+  maxBundleBytes: 256 * 1024 * 1024,
+  // Most skills one bundle may contribute, so a pathological archive of tiny skills can't produce an
+  // unbounded number of import candidates.
+  maxSkillsPerBundle: 256,
+  // Structural cap on the number of entries in the OUTER bundle walk (loose files + nested archives),
+  // above the per-skill cap so a bundle can carry multiple Skills. Decompressed size (maxBundleBytes)
+  // is the real memory guard; this only rejects an archive with a pathological entry count.
+  maxBundleEntries: 32_768
+} as const

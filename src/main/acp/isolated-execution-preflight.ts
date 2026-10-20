@@ -1,8 +1,9 @@
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { randomUUID } from 'node:crypto'
 
-import type { AcpPermissionRequest, AcpPermissionResponse, AcpRuntimeEvent } from '../../shared/acp'
-import type { AcpRuntimeCallbacks } from './runtime'
+import type { AcpPermissionResponse, AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
+import type { AcpRuntimeCallbacks } from './runtime-contract'
 
 type IsolatedAcpExecutionScope = Readonly<{
   appSessionId: string

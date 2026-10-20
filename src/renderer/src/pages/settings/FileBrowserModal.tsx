@@ -1,5 +1,5 @@
-import { Notice } from '@/components/notice'
 import { ErrorNotice } from '@/components/error-notice'
+import { Notice } from '@/components/notice'
 // Remote file browser modal (compute-file-preview, issue 02 + issue 03).
 // Opened from the ComputePanel host card folder-icon button (and later from the Files panel Remote
 // dropdown, issue 05). Presents a directory listing with navigation, a detail panel for
@@ -13,6 +13,9 @@ import { ErrorNotice } from '@/components/error-notice'
 //   - Download → OS Downloads via scp (issue 03); Add to project → artifact (issue 03)
 //   - Neither Download nor Add to project triggers an approval card (human actions, no gate)
 
+import * as Dialog from '@/components/ui/dialog'
+import { formatDisplayDateTime } from '@/lib/locale-format'
+import type { TFunction } from 'i18next'
 import {
   ArrowLeft,
   ArrowUp,
@@ -20,24 +23,22 @@ import {
   ChevronDown,
   ClipboardCopy,
   Download,
-  FolderOpen,
-  Folder,
   File,
+  Folder,
+  FolderOpen,
   MapPin,
   RefreshCw,
   X
 } from 'lucide-react'
-import * as Dialog from '@/components/ui/dialog'
 import { useCallback, useEffect, useRef, useState } from 'react'
-import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
-import { formatDisplayDateTime } from '@/lib/locale-format'
 
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
 import type { DirListing, RemoteDirEntry } from '../../../../shared/remote-fs'
-import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
-import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
+
 import { DiagnosticDetails } from '@/components/diagnostic-details'
 import { Button } from '@/components/ui/button'
+import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -46,12 +47,12 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger
 } from '@/components/ui/dropdown-menu'
-import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useComputeStore } from '@/stores/compute-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { resolveRemotePath, validateRemotePath } from '../../../../shared/remote-fs'
 import { computeRuntimeRecoveryAction } from './compute-runtime-recovery'
 import { fileBrowserRemoteError } from './file-browser-remote-error'
 

@@ -37,6 +37,7 @@ type FindOverlayTestFakes = {
     webContents: { loadFile: Mock; send: Mock; focus: Mock; close: Mock; isDestroyed: Mock }
     setBounds: Mock
     setBackgroundColor: Mock
+    setVisible: Mock
   }
   mainWindow: {
     contentView: { addChildView: Mock; removeChildView: Mock }
@@ -61,7 +62,8 @@ const createFakes = (): FindOverlayTestFakes => {
       isDestroyed: vi.fn(() => false)
     },
     setBounds: vi.fn(),
-    setBackgroundColor: vi.fn()
+    setBackgroundColor: vi.fn(),
+    setVisible: vi.fn()
   }
   const mainWindow = {
     contentView: { addChildView: vi.fn(), removeChildView: vi.fn() },
@@ -95,6 +97,7 @@ describe('find overlay manager', () => {
 
     manager.open()
 
+    expect(view.setVisible).toHaveBeenCalledWith(false)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(view.setBounds).not.toHaveBeenCalledWith({ x: 572, y: 8, width: 420, height: 40 })
     expect(view.webContents.focus).not.toHaveBeenCalled()
@@ -104,6 +107,7 @@ describe('find overlay manager', () => {
     await Promise.resolve()
 
     expect(view.webContents.focus).toHaveBeenCalledTimes(1)
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(view.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
       theme: 'light',
       followsSystem: true
@@ -123,6 +127,7 @@ describe('find overlay manager', () => {
     expect(mainWindow.contentView.addChildView).toHaveBeenCalledWith(view)
     expect(view.setBackgroundColor).toHaveBeenCalledWith('#fafaf8')
     expect(view.setBounds).toHaveBeenCalledWith({ x: 572, y: 8, width: 420, height: 40 })
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(view.webContents.focus).toHaveBeenCalledTimes(1)
     expect(view.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
       theme: 'light',
@@ -146,6 +151,7 @@ describe('find overlay manager', () => {
     // Simulate the overlay's X button -> main -> owner.closeOverlay().
     owner.closeOverlay()
 
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(mainWindow.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
     expect(mainWindow.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_HIDE_CHANNEL)
@@ -170,6 +176,7 @@ describe('find overlay manager', () => {
     expect(view.webContents.close).not.toHaveBeenCalled()
     expect(view.webContents.focus).toHaveBeenCalledTimes(1)
     expect(view.webContents.send).toHaveBeenCalledTimes(1)
+    expect(view.setVisible).toHaveBeenLastCalledWith(true)
     expect(view.webContents.send).toHaveBeenCalledWith(WINDOW_FIND_SHOW_CHANNEL, {
       theme: 'dark',
       followsSystem: false
@@ -232,10 +239,42 @@ describe('find overlay manager', () => {
 
     manager.close()
 
+    expect(view.setVisible).toHaveBeenLastCalledWith(false)
     expect(view.setBounds).toHaveBeenCalledWith({ x: 0, y: 0, width: 0, height: 0 })
     expect(mainWindow.webContents.stopFindInPage).toHaveBeenCalledWith('clearSelection')
     expect(mainWindow.webContents.focus).toHaveBeenCalledTimes(1)
     expect(manager.isOpen()).toBe(false)
+  })
+
+  it('returns focus to the source guest that opened find, falling back to the main renderer', () => {
+    const { view, mainWindow, registerOwner, manager } = createFakes()
+    manager.open()
+    const focusSource = vi.fn(() => true)
+    const owner = registerOwner.mock.calls[0]?.[1] as {
+      focusSource?: () => boolean
+    }
+    owner.focusSource = focusSource
+    registerFindOverlayOwner(view.webContents, owner as never)
+    view.webContents.focus.mockClear()
+    mainWindow.webContents.focus.mockClear()
+
+    manager.close()
+
+    expect(focusSource).toHaveBeenCalledOnce()
+    expect(mainWindow.webContents.focus).not.toHaveBeenCalled()
+  })
+
+  it('falls back to the main renderer when the source guest has closed', () => {
+    const { view, mainWindow, registerOwner, manager } = createFakes()
+    manager.open()
+    const owner = registerOwner.mock.calls[0]?.[1] as { focusSource?: () => boolean }
+    owner.focusSource = () => false
+    registerFindOverlayOwner(view.webContents, owner as never)
+    mainWindow.webContents.focus.mockClear()
+
+    manager.close()
+
+    expect(mainWindow.webContents.focus).toHaveBeenCalledOnce()
   })
 
   it('close() is a no-op when the overlay is already hidden', () => {
@@ -301,6 +340,7 @@ describe('find overlay resource ownership', () => {
       webContents: { loadFile: Mock; send: Mock; focus: Mock; close: Mock; isDestroyed: Mock }
       setBounds: Mock
       setBackgroundColor: Mock
+      setVisible: Mock
     }> = []
     const { mainWindow } = createFakes()
     const removeChildView = vi.fn((view: object) => attached.delete(view))
@@ -322,7 +362,8 @@ describe('find overlay resource ownership', () => {
             isDestroyed: vi.fn(() => false)
           },
           setBounds: vi.fn(),
-          setBackgroundColor: vi.fn()
+          setBackgroundColor: vi.fn(),
+          setVisible: vi.fn()
         }
         views.push(view)
         return view

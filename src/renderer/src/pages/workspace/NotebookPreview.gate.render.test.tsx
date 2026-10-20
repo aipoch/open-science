@@ -1,17 +1,23 @@
 // @vitest-environment jsdom
+import {
+  useDesktopRuntimeRecoveryStore,
+  refreshDesktopRecoveryReaders
+} from '../../stores/desktop-runtime-recovery-store'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { i18next } from '@/i18n'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
+import type { ToolActivity } from '@/stores/session-store'
 
 import type {
   NotebookEnvironmentStatus,
   NotebookRunRecord,
   NotebookSessionState
 } from '../../../../shared/notebook'
-import type { ProvisionStatus } from '../../../../shared/notebook-env'
+import type { ProvisionStatus } from '@aipoch/environment/contracts'
 import { createInitialNotebookEnvState, useNotebookEnvStore } from '../../stores/notebook-env-store'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
@@ -43,6 +49,7 @@ let container: HTMLDivElement
 let root: Root
 
 beforeEach(() => {
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', epoch: 0, closing: false })
   notebookCodeBlockSpy.mockClear()
   useNotebookEnvStore.setState(createInitialNotebookEnvState())
   useSettingsStore.setState(createInitialSettingsState())
@@ -429,7 +436,8 @@ describe('NotebookPreview per-kernel tabs', () => {
     runStaleness: NotebookSessionState['runStaleness'] = {},
     kernelStatus: NotebookSessionState['kernelStatus'] = 'idle',
     stateOverrides: Partial<NotebookSessionState> = {},
-    previewItem: NotebookPreviewItem = item
+    previewItem: NotebookPreviewItem = item,
+    deferredState?: Promise<NotebookSessionState>
   ): Promise<void> => {
     const readyStatus: ProvisionStatus = {
       pythonReady: true,
@@ -467,24 +475,26 @@ describe('NotebookPreview per-kernel tabs', () => {
 
     window.api = {
       notebook: {
-        state: vi.fn(() =>
-          Promise.resolve({
-            id: 'session-1',
-            sessionId: 'session-1',
-            cwd: '/tmp/proj',
-            notebookSessionRoot: '/tmp/proj/.notebook',
-            dataRoot: '/tmp/proj/.notebook/data',
-            runtimeRoot: '/tmp/proj/.notebook/runtime',
-            kernelStatus,
-            runJsonPath: '/tmp/proj/.notebook/run.json',
-            cells: [],
-            runCount: runs.length,
-            runs,
-            recentRuns: runs,
-            runStaleness,
-            environments: liveEnvironments,
-            ...stateOverrides
-          })
+        state: vi.fn(
+          () =>
+            deferredState ??
+            Promise.resolve({
+              id: 'session-1',
+              sessionId: 'session-1',
+              cwd: '/tmp/proj',
+              notebookSessionRoot: '/tmp/proj/.notebook',
+              dataRoot: '/tmp/proj/.notebook/data',
+              runtimeRoot: '/tmp/proj/.notebook/runtime',
+              kernelStatus,
+              runJsonPath: '/tmp/proj/.notebook/run.json',
+              cells: [],
+              runCount: runs.length,
+              runs,
+              recentRuns: runs,
+              runStaleness,
+              environments: liveEnvironments,
+              ...stateOverrides
+            })
         ),
         inspectNamespace: vi.fn((request) =>
           Promise.resolve({
@@ -527,6 +537,11 @@ describe('NotebookPreview per-kernel tabs', () => {
       }
     } as never
 
+    Object.assign(window.api, {
+      platform: 'linux',
+      localFs: {},
+      settings: { getNotebookNetworkStatus: vi.fn(async () => ({ kind: 'ready', warnings: [] })) }
+    })
     await act(async () => {
       root.render(<NotebookPreview item={previewItem} />)
     })
@@ -539,6 +554,620 @@ describe('NotebookPreview per-kernel tabs', () => {
       })
     }
   }
+
+  const selectAgentHistory = async (label: string): Promise<void> => {
+    await act(async () => {
+      fireEvent.click(screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }))
+    })
+    await act(async () => {
+      fireEvent.click(screen.getByRole('option', { name: new RegExp(label) }))
+    })
+  }
+
+  it.each([
+    {
+      name: 'a root after the child in the frame list',
+      rootFrameId: 'root-frame-session-1',
+      rootHistory: true,
+      language: 'python' as const
+    },
+    {
+      name: 'a root without previous history',
+      rootFrameId: 'root-frame-session-1',
+      rootHistory: false,
+      language: 'python' as const
+    },
+    {
+      name: 'a root retaining its pending Session ID',
+      rootFrameId: 'root-frame-pending-session-1',
+      rootHistory: true,
+      language: 'python' as const
+    },
+    {
+      name: 'R selected by the child history',
+      rootFrameId: 'root-frame-session-1',
+      rootHistory: true,
+      language: 'r' as const
+    }
+  ])('reveals manual terminal output in $name', async ({ rootFrameId, rootHistory, language }) => {
+    useSessionStore.setState({
+      sessions: [
+        {
+          id: 'session-1',
+          conversationGraph: {
+            rootFrameId,
+            frames: [
+              { id: 'frame-child', kind: 'delegate', delegateName: 'Evidence check' },
+              { id: rootFrameId, kind: 'root' }
+            ]
+          }
+        }
+      ]
+    } as never)
+    const runs = [
+      ...(rootHistory ? [makeRun({ runId: 'root', agentFrameId: rootFrameId })] : []),
+      makeRun({ runId: 'child', kernelKind: language, agentFrameId: 'frame-child' })
+    ]
+    await mountWithRuns(runs)
+    await selectAgentHistory('Evidence check')
+    const execute = vi.mocked(window.api.notebook.execute)
+    execute.mockImplementation(async (request) => {
+      const run = makeRun({
+        runId: 'manual',
+        source: 'user',
+        inputKind: 'terminal',
+        kernelKind: request.language,
+        script: request.code,
+        text: { stdout: 'manual-output', stderr: '', traceback: '', plain: ['manual-output'] }
+      })
+      runs.push(run)
+      return {
+        ...run,
+        inputFiles: [],
+        notebookSessionRoot: item.notebook.notebookSessionRoot,
+        dataRoot: item.notebook.dataRoot,
+        runtimeRoot: item.notebook.runtimeRoot,
+        kernelName: language
+      }
+    })
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="kernel-terminal-input"]'
+    )!
+    expect(input.disabled).toBe(false)
+    fireEvent.change(input, { target: { value: 'print("manual-output")' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(execute).toHaveBeenCalledWith({
+      projectId: 'proj',
+      sessionId: 'session-1',
+      workspaceCwd: '/tmp/proj',
+      code: 'print("manual-output")',
+      source: 'user',
+      inputKind: 'terminal',
+      language
+    })
+    expect(
+      screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+    ).toContain('Main Agent')
+    expect(
+      container.querySelector('[data-testid="kernel-terminal-scrollback"]')?.textContent
+    ).toContain('manual-output')
+  })
+
+  it('reveals manual output after refreshing a focused child Run and honors a new focus request', async () => {
+    const runs = [
+      makeRun({ runId: 'root' }),
+      makeRun({ runId: 'child', agentFrameId: 'frame-child' })
+    ]
+    const focusedItem = { ...item, notebookRunId: 'child', notebookRunFocusRequest: 1 }
+    await mountWithRuns(runs, [], {}, 'idle', {}, focusedItem)
+    const state = vi.mocked(window.api.notebook.state)
+    const readState = state.getMockImplementation()!
+    state.mockImplementation(async (request) => structuredClone(await readState(request)))
+    const execute = vi.mocked(window.api.notebook.execute)
+    execute.mockImplementation(async (request) => {
+      const run = makeRun({
+        runId: 'manual',
+        source: 'user',
+        inputKind: 'terminal',
+        script: request.code,
+        text: { stdout: 'focused-output', stderr: '', traceback: '', plain: ['focused-output'] }
+      })
+      runs.push(run)
+      return {
+        ...run,
+        inputFiles: [],
+        notebookSessionRoot: item.notebook.notebookSessionRoot,
+        dataRoot: item.notebook.dataRoot,
+        runtimeRoot: item.notebook.runtimeRoot,
+        kernelName: 'python'
+      }
+    })
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="kernel-terminal-input"]'
+    )!
+    fireEvent.change(input, { target: { value: 'print("focused-output")' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+    for (let i = 0; i < 5; i += 1) {
+      await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      })
+    }
+    expect(
+      screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+    ).toContain('Main Agent')
+    expect(
+      container.querySelector('[data-testid="kernel-terminal-scrollback"]')?.textContent
+    ).toContain('focused-output')
+    await act(async () => {
+      root.render(<NotebookPreview item={{ ...focusedItem, notebookRunFocusRequest: 2 }} />)
+    })
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(
+      screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+    ).toContain('Evidence check')
+  })
+
+  it('keeps a later Agent selection when manual execution completes', async () => {
+    const runs = [
+      makeRun({ runId: 'root' }),
+      makeRun({ runId: 'child', agentFrameId: 'frame-child' })
+    ]
+    await mountWithRuns(runs)
+    await selectAgentHistory('Evidence check')
+    let complete!: () => void
+    const completion = new Promise<void>((resolve) => {
+      complete = resolve
+    })
+    const execute = vi.mocked(window.api.notebook.execute)
+    execute.mockImplementation(async (request) => {
+      await completion
+      const run = makeRun({
+        runId: 'manual',
+        source: 'user',
+        inputKind: 'terminal',
+        script: request.code,
+        text: { stdout: 'delayed-output', stderr: '', traceback: '', plain: ['delayed-output'] }
+      })
+      runs.push(run)
+      return {
+        ...run,
+        inputFiles: [],
+        notebookSessionRoot: item.notebook.notebookSessionRoot,
+        dataRoot: item.notebook.dataRoot,
+        runtimeRoot: item.notebook.runtimeRoot,
+        kernelName: 'python'
+      }
+    })
+    const input = container.querySelector<HTMLTextAreaElement>(
+      '[data-testid="kernel-terminal-input"]'
+    )!
+    fireEvent.change(input, { target: { value: 'print("delayed-output")' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+    expect(
+      screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+    ).toContain('Evidence check')
+    await selectAgentHistory('Main Agent')
+    await selectAgentHistory('Evidence check')
+    await act(async () => {
+      complete()
+      await completion
+    })
+    expect(
+      screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+    ).toContain('Evidence check')
+    await selectAgentHistory('Main Agent')
+    expect(
+      container.querySelector('[data-testid="kernel-terminal-scrollback"]')?.textContent
+    ).toContain('delayed-output')
+  })
+
+  it.each(['python', 'repl'] as const)(
+    'retains the R view and draft when admission fails and Main Agent only has %s history',
+    async (rootKind) => {
+      await mountWithRuns([
+        makeRun({ runId: 'root', kernelKind: rootKind }),
+        makeRun({ runId: 'child', kernelKind: 'r', agentFrameId: 'frame-child' })
+      ])
+      await selectAgentHistory('Evidence check')
+      vi.mocked(window.api.notebook.execute).mockRejectedValue(
+        new Error('Manual execution unavailable')
+      )
+      const input = container.querySelector<HTMLTextAreaElement>(
+        '[data-testid="kernel-terminal-input"]'
+      )!
+      fireEvent.change(input, { target: { value: 'print("retry-me")' } })
+      await act(async () => {
+        fireEvent.keyDown(input, { key: 'Enter' })
+      })
+      expect(
+        screen.getByRole('combobox', { name: 'Filter notebook runs by Agent' }).textContent
+      ).toContain('Evidence check')
+      expect(
+        container.querySelector<HTMLTextAreaElement>('[data-testid="kernel-terminal-input"]')?.value
+      ).toBe('print("retry-me")')
+      expect(container.textContent).toContain('Manual execution unavailable')
+      expect(window.api.notebook.execute).toHaveBeenCalledWith(
+        expect.objectContaining({ language: 'r' })
+      )
+      expect(
+        container.querySelector('[data-testid="notebook-terminal-header"]')?.textContent
+      ).toContain('R kernel')
+    }
+  )
+
+  const seedPendingCode = (overrides: Partial<ToolActivity> = {}): void => {
+    const messages = [
+      {
+        id: 'prompt-1',
+        role: 'user' as const,
+        content: 'Run Python',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    const graph = createLinearConversationGraph({
+      sessionId: 'session-1',
+      messages,
+      createdAt: 1,
+      updatedAt: 2
+    })
+    const activity: ToolActivity = {
+      id: 'tool-1',
+      kind: 'tool',
+      title: 'Notebook run',
+      status: 'in_progress',
+      providerToolName: 'open_science_notebook_notebook_execute',
+      rawInput: { language: 'python', code: 'print("first-run-code")' },
+      executionInvocationId: 'invocation-1',
+      eventIds: [],
+      sortIndex: 1,
+      createdAt: 2,
+      updatedAt: 2,
+      ...overrides
+    }
+    graph.activities = [
+      {
+        ...activity,
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.frames[0].activeBranchId,
+        promptMessageId: 'prompt-1',
+        runtimeSegmentId: graph.runtimeSegments[0].id
+      }
+    ]
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...useSessionStore.getState().sessions[0],
+          status: 'running',
+          messages,
+          activeRun: { promptMessageId: 'prompt-1', startedAt: 1 },
+          activities: [activity],
+          conversationGraph: graph
+        }
+      ]
+    })
+  }
+
+  it.each([
+    [
+      'claude-code',
+      'mcp__open-science-notebook__notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'opencode',
+      'open_science_notebook_notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'codex-response',
+      'mcp__open_science_notebook__notebook_execute',
+      { language: 'python', code: 'print("first-run-code")' }
+    ],
+    [
+      'codex-bridge',
+      'open-science-notebook/notebook_execute',
+      { arguments: { language: 'python', code: 'print("first-run-code")' } }
+    ]
+  ])(
+    'shows %s code while the initial Notebook state is still waiting',
+    async (_framework, providerToolName, rawInput) => {
+      seedPendingCode({ providerToolName: providerToolName as string, rawInput })
+      await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+      expect(
+        container.querySelector('[data-testid="notebook-pending-code"]')?.textContent
+      ).toContain('first-run-code')
+      expect(container.textContent).toContain('Code received; waiting for execution details.')
+      expect(container.querySelector('textarea')).toBeNull()
+      expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    }
+  )
+
+  it('replaces preliminary code only when the exact Run arrives through the subscription', async () => {
+    seedPendingCode()
+    await mountWithRuns([
+      makeRun({ script: 'print("first-run-code")', executionInvocationId: 'other' })
+    ])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+    const state = vi.mocked(window.api.notebook.state)
+    const initial = await state.mock.results[0].value
+    state.mockResolvedValue({
+      ...initial,
+      runs: [
+        ...initial.runs,
+        makeRun({ runId: 'actual', executionInvocationId: 'invocation-1', status: 'running' })
+      ]
+    })
+    await act(async () => {
+      vi.mocked(window.api.notebook.onChanged).mock.calls[0][0](item.notebook)
+    })
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    expect(container.querySelector('[data-run-id="actual"]')).not.toBeNull()
+  })
+
+  it.each([true, false])(
+    'keeps returned code until Run details hydrate with invocation identity=%s',
+    async (withInvocation) => {
+      seedPendingCode({
+        status: 'completed',
+        executionInvocationId: withInvocation ? 'invocation-1' : undefined,
+        rawOutput: {
+          runId: 'actual',
+          executionInvocationId: 'invocation-1',
+          status: 'completed'
+        }
+      })
+      let resolveState!: (state: NotebookSessionState) => void
+      const pendingState = new Promise<NotebookSessionState>((resolve) => {
+        resolveState = resolve
+      })
+      await mountWithRuns([], [], {}, 'idle', {}, item, pendingState)
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+      const run = makeRun({ runId: 'actual', executionInvocationId: 'invocation-1' })
+      await act(async () =>
+        resolveState({
+          id: 'session-1',
+          sessionId: 'session-1',
+          cwd: '/tmp/proj',
+          kernelStatus: 'idle',
+          runCount: 1,
+          notebookSessionRoot: '/tmp/proj/.notebook',
+          dataRoot: '/tmp/proj/data',
+          runtimeRoot: '/tmp/proj/.notebook/runtime',
+          runJsonPath: '/tmp/proj/.notebook/runs.json',
+          latestRunEnvironments: {},
+          runs: [run],
+          recentRuns: [run],
+          cells: [],
+          environments: []
+        })
+      )
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+      expect(container.querySelector('[data-run-id="actual"]')).not.toBeNull()
+    }
+  )
+
+  it.each(['cancelled', 'interrupted'] as const)(
+    'removes code when the authenticated Run receipt is %s',
+    async (status) => {
+      seedPendingCode({
+        rawOutput: { runId: 'actual', executionInvocationId: 'invocation-1', status }
+      })
+      await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    }
+  )
+
+  it('removes preliminary code when the active Branch changes without waiting for Notebook state', async () => {
+    seedPendingCode()
+    await mountWithRuns([], [], {}, 'idle', {}, item, new Promise(() => undefined))
+    const session = useSessionStore.getState().sessions[0]
+    const graph = session.conversationGraph!
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            conversationGraph: {
+              ...graph,
+              frames: graph.frames.map((frame) => ({ ...frame, activeBranchId: 'other-branch' })),
+              branches: [...graph.branches, { ...graph.branches[0], id: 'other-branch' }]
+            }
+          }
+        ]
+      })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it.each(['completed', 'failed'] as const)(
+    'keeps code visible for a %s outer observer while the originating turn is live',
+    async (status) => {
+      seedPendingCode({ status })
+      await mountWithRuns([])
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).not.toBeNull()
+      expect(container.textContent).toContain('Code received; waiting for execution details.')
+    }
+  )
+
+  it.each(['declined', 'permission-closed'] as const)(
+    'removes preliminary code after %s',
+    async (toolDisposition) => {
+      seedPendingCode()
+      await mountWithRuns([])
+      const session = useSessionStore.getState().sessions[0]
+      await act(async () =>
+        useSessionStore.setState({
+          sessions: [
+            {
+              ...session,
+              activities: session.activities!.map((activity) => ({ ...activity, toolDisposition }))
+            }
+          ]
+        })
+      )
+      expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    }
+  )
+
+  it('removes preliminary code when the turn stops and ignores a late Notebook snapshot', async () => {
+    seedPendingCode()
+    let resolveState!: (state: NotebookSessionState) => void
+    const pendingState = new Promise<NotebookSessionState>((resolve) => {
+      resolveState = resolve
+    })
+    await mountWithRuns([], [], {}, 'idle', {}, item, pendingState)
+    const session = useSessionStore.getState().sessions[0]
+    await act(async () =>
+      useSessionStore.setState({ sessions: [{ ...session, activeRun: undefined, status: 'idle' }] })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+    await act(async () =>
+      resolveState({
+        ...item.notebook,
+        id: 'session-1',
+        cwd: '/tmp/proj',
+        kernelStatus: 'idle',
+        runCount: 0,
+        latestRunEnvironments: {},
+        runs: [],
+        recentRuns: [],
+        cells: [{ id: 'old', code: 'print("first-run-code")', language: 'python', status: 'idle' }],
+        environments: []
+      })
+    )
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it('shows only a permission belonging to the current tool and turn', async () => {
+    seedPendingCode()
+    const session = useSessionStore.getState().sessions[0]
+    const permission = {
+      state: 'pending' as const,
+      originatingPromptMessageId: 'prompt-1',
+      fingerprint: 'fingerprint',
+      createdAt: 2,
+      request: {
+        sessionId: 'session-1',
+        requestId: 'permission',
+        toolCallId: 'tool-1',
+        title: 'Run code',
+        options: []
+      }
+    }
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          status: 'waiting-permission',
+          runtimeContext: { version: 1, revision: 1, permission }
+        }
+      ]
+    })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')?.textContent).toContain(
+      'Needs approval'
+    )
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            runtimeContext: {
+              version: 1,
+              revision: 1,
+              permission: { ...permission, originatingPromptMessageId: 'old-prompt' }
+            }
+          }
+        ]
+      })
+    )
+    expect(
+      container.querySelector('[data-testid="notebook-pending-code"]')?.textContent
+    ).not.toContain('Needs approval')
+  })
+
+  it('shows the first R code before a Run and preserves source whitespace', async () => {
+    seedPendingCode({ rawInput: { language: 'r', code: '\n  print(1)' } })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="kernel-switcher-r"]')).not.toBeNull()
+    expect(notebookCodeBlockSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ code: '\n  print(1)', language: 'r' })
+    )
+  })
+
+  it('does not show another Frame as live preliminary code', async () => {
+    seedPendingCode()
+    const session = useSessionStore.getState().sessions[0]
+    const graph = session.conversationGraph!
+    useSessionStore.setState({
+      sessions: [
+        {
+          ...session,
+          conversationGraph: {
+            ...graph,
+            activities: graph.activities.map((activity) => ({
+              ...activity,
+              agentFrameId: 'other-frame'
+            }))
+          }
+        }
+      ]
+    })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')).toBeNull()
+  })
+
+  it('retains a bounded code preview with a truncation notice', async () => {
+    seedPendingCode({ rawInput: { language: 'python', code: 'print(1)\n'.repeat(3000) } })
+    await mountWithRuns([])
+    expect(container.querySelector('[data-testid="notebook-pending-code"]')?.textContent).toContain(
+      'Arguments were truncated for display.'
+    )
+    expect(notebookCodeBlockSpy.mock.calls[0][0].code.length).toBeLessThan(27000)
+  })
+
+  it('withholds folder recovery until the session content establishes a live local owner', async () => {
+    const session = useSessionStore.getState().sessions[0]
+    useSessionStore.setState({ sessions: [{ ...session, contentLoaded: false }] })
+    const run = makeRun({ runId: 'denied', kernelKind: 'bash', status: 'failed' })
+    run.text.stderr =
+      '<sandbox_violations>\nOPEN_SCIENCE_FILESYSTEM_ACCESS_BLOCKED: /fixture/config/settings.json Filesystem access failed; native permissions, read-only mounts, or the sandbox may be responsible.\n</sandbox_violations>\n'
+    await mountWithRuns([run])
+    const notice = (): Element | null =>
+      container.querySelector('[data-testid="notebook-folder-access-notice"]')
+    expect(notice()).toBeNull()
+    await act(async () =>
+      useSessionStore.setState({
+        sessions: [
+          {
+            ...session,
+            packageOrigin: {
+              importId: 'fixture-import',
+              importedAt: 1,
+              sourceProjectId: 'fixture-project',
+              sourceSessionId: 'fixture-session',
+              manifestChecksum: 'a'.repeat(64)
+            }
+          }
+        ]
+      })
+    )
+    expect(notice()).toBeNull()
+    await act(async () => useSessionStore.setState({ sessions: [session] }))
+    expect(notice()).not.toBeNull()
+  })
 
   it('uses one notebook scroll owner and an accessible real resize handle', async () => {
     await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
@@ -1501,6 +2130,79 @@ describe('NotebookPreview per-kernel tabs', () => {
       await new Promise((resolve) => setTimeout(resolve, 0))
     })
 
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
+  })
+
+  it('keeps an oversized Notebook failure local while the recovery barrier completes', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+    const state = vi.mocked(window.api.notebook.state)
+    const validState = await state.mock.results[0]?.value
+    state.mockRejectedValue(new Error('Desktop response exceeds the frame limit.'))
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling', epoch: 1 })
+      await refreshDesktopRecoveryReaders()
+    })
+    expect(container.textContent).toContain('Desktop response exceeds the frame limit.')
+    expect(container.querySelector('[data-testid="kernel-notebook-pane"]')).not.toBeNull()
+    const retry = [...container.querySelectorAll('button')].find((button) =>
+      button.textContent?.includes('Retry')
+    )!
+    expect(retry).toBeDefined()
+    state.mockResolvedValue(validState)
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+      retry.click()
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    expect(container.textContent).not.toContain('Desktop response exceeds the frame limit.')
+  })
+
+  it('keeps terminal drafts and retires a queued submission across desktop recovery', async () => {
+    await mountWithRuns([makeRun({ runId: 'p1', kernelKind: 'python' })])
+
+    const state = vi.mocked(window.api.notebook.state)
+    const idleState = await state.mock.results[0]?.value
+    let resolveRefresh!: (value: typeof idleState) => void
+    state.mockImplementationOnce(
+      () => new Promise((resolve) => (resolveRefresh = resolve as typeof resolveRefresh))
+    )
+    const onChanged = vi.mocked(window.api.notebook.onChanged).mock.calls[0]?.[0]
+
+    await act(async () => {
+      onChanged?.(item.notebook)
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const input = container.querySelector(
+      '[data-testid="kernel-terminal-input"]'
+    ) as HTMLTextAreaElement
+    fireEvent.change(input, { target: { value: 'print(42)' } })
+    await act(async () => {
+      fireEvent.keyDown(input, { key: 'Enter' })
+    })
+
+    expect(state).toHaveBeenCalledTimes(2)
+    expect(window.api.notebook.execute).not.toHaveBeenCalled()
+    expect(input.value).toBe('print(42)')
+
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'disconnected', epoch: 1 })
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'reconciling' })
+    })
+    await act(async () => {
+      resolveRefresh({ ...idleState, activeRunId: 'old-run' })
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    await act(async () => {
+      await refreshDesktopRecoveryReaders()
+    })
+    await act(async () => {
+      useDesktopRuntimeRecoveryStore.setState({ phase: 'connected' })
+    })
     expect(window.api.notebook.execute).not.toHaveBeenCalled()
     expect(input.value).toBe('print(42)')
   })

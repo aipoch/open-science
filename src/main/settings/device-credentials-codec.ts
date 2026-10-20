@@ -1,5 +1,5 @@
-import { normalizeLoopbackOAuthRedirectUri } from '../../shared/oauth-redirect'
-import { assertSecureCustomMcpUrl } from '../connectors/custom-mcp/url'
+import { normalizeLoopbackOAuthRedirectUri } from '@aipoch/connector-mcp-client/oauth-redirect'
+import { isSecureRemoteUrl } from '@aipoch/connector-core/url-admission'
 import { hasEmbeddedConnectorCredentials } from './connector-template'
 import {
   assertStoredDeviceCredentialLimits,
@@ -85,7 +85,8 @@ const decodeCredential = (value: unknown): StoredDeviceCredential => {
       throw new Error('Invalid OAuth credential record')
     }
     const normalizedResourceUri = canonicalizeResourceUri(resourceUri)
-    assertSecureCustomMcpUrl(normalizedResourceUri)
+    if (!isSecureRemoteUrl(normalizedResourceUri))
+      throw new Error('Remote MCP server URL must use HTTPS or loopback HTTP.')
     const credential: StoredDeviceCredential = {
       id,
       displayName,

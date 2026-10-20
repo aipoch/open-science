@@ -1,10 +1,12 @@
-import type { ChildProcessWithoutNullStreams } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { once } from 'node:events'
 import { mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
+import { DelegateExecutionCleanupError } from './execution-port'
+import * as processTree from '../process-tree'
 import { terminateProcessTree } from '../process-tree'
 import { createProductionFrameWorkspace } from './frame-workspace'
 import { createDeterministicDelegateExecution } from './deterministic-execution'
@@ -147,6 +149,65 @@ describe('durable delegated process ownership', () => {
     await next.releaseAll()
   })
 
+  it.each([false, true])(
+    'preserves a completed result and retries cleanup persistence (write failure: %s)',
+    async (failWrite) => {
+      const owner = await setup()
+      const base = createDeterministicDelegateExecution(1)
+      base.plan({ status: 'completed', response: 'Finalized result' })
+      const cleanupError = new DelegateExecutionCleanupError('process cleanup remains unconfirmed')
+      const execution = {
+        ...base,
+        run: (...args: Parameters<typeof base.run>) => {
+          const running = base.run(...args)
+          return {
+            ...running,
+            completion: running.completion.then((outcome) => ({ ...outcome, cleanupError }))
+          }
+        }
+      }
+      if (failWrite)
+        vi.spyOn(owner, 'recordFailure').mockImplementationOnce(() => {
+          throw new Error('receipt write failed')
+        })
+      const guarded = owner.protectExecution(execution, scope, 'codex')
+      const reservation = await guarded.reserve(1)
+      const running = guarded.run(
+        {
+          session: scope,
+          frameId: scope.frameId,
+          attemptId: scope.attemptId,
+          runtimeSegmentId: 'runtime-a',
+          task: 'produce result',
+          inputs: [],
+          continuation: false
+        },
+        reservation.slotIds[0]
+      )
+      await expect(running.completion).resolves.toMatchObject({
+        status: 'completed',
+        response: 'Finalized result',
+        cleanupError: expect.any(DelegateExecutionCleanupError)
+      })
+      await reservation.releaseAll()
+      if (failWrite) {
+        expect(owner.receipts(scope)).toEqual([])
+        await expect(guarded.recoverCleanup!()).rejects.toThrow()
+      }
+      const reopened = new DelegatedProcessOwnership(directory!)
+      expect(reopened.receipts(scope)).toMatchObject([
+        { phase: 'cleanup-pending', attemptId: scope.attemptId }
+      ])
+      expect(() => reopened.assertClear(scope)).toThrow()
+      const afterRestart = reopened.protectExecution(
+        createDeterministicDelegateExecution(1),
+        scope,
+        'codex'
+      )
+      await expect(afterRestart.reserve(1)).rejects.toThrow()
+    }
+  )
+
   it('publishes ownership before ACP IO and clears it only after whole-tree teardown', async () => {
     const owner = await setup()
     const child = owner.spawn(
@@ -169,6 +230,52 @@ describe('durable delegated process ownership', () => {
     expect(owner.receipts(scope)).toEqual([])
     await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
     expect(owner.receipts(scope)).toEqual([])
+  })
+
+  it('preserves cleanup evidence across reconstruction and removes it after proven teardown', async () => {
+    const owner = await setup()
+    const diagnostics = {
+      failureCategory: 'ownership-candidate-unresolved' as const,
+      recovery: 'stronger-ownership-proof-required' as const,
+      ownedIdentityCount: 2,
+      ambiguousIdentityCount: 2
+    }
+    const register = processTree.registerProcessTreeOwnership
+    let settle!: Parameters<typeof register>[1]['settled']
+    const spy = vi
+      .spyOn(processTree, 'registerProcessTreeOwnership')
+      .mockImplementation((child, authority) => {
+        settle = authority.settled
+        register(child, authority)
+      })
+    let child: ChildProcessWithoutNullStreams
+    try {
+      child = owner.spawn(
+        scope,
+        process.execPath,
+        ['-e', 'process.stdout.write("ready");setInterval(()=>{},1000)'],
+        {
+          stdio: 'pipe',
+          env: process.env,
+          windowsHide: true
+        }
+      )
+      children.push(child)
+    } finally {
+      spy.mockRestore()
+    }
+    await once(child.stdout, 'data')
+    settle({ reaped: false, diagnostics })
+    const reopened = new DelegatedProcessOwnership(directory!)
+    expect(reopened.receipts(scope)[0]).toMatchObject({
+      phase: 'cleanup-pending',
+      cleanupDiagnostics: diagnostics
+    })
+    owner.recordFailure(scope)
+    expect(reopened.receipts(scope)[0].cleanupDiagnostics).toEqual(diagnostics)
+    expect(() => reopened.assertClear(scope)).toThrow()
+    await expect(terminateProcessTree(child)).resolves.toEqual({ reaped: true })
+    expect(reopened.receipts(scope)).toEqual([])
   })
 
   it('does not launch when the durable intent cannot be written', async () => {
@@ -265,6 +372,132 @@ describe('durable delegated process ownership', () => {
     await expect(cold.recover(scope)).resolves.toBeUndefined()
     // Receipt must be cleared.
     expect(cold.receipts(scope)).toHaveLength(0)
+  })
+
+  it.skipIf(process.platform !== 'darwin')(
+    'clears a retained cold receipt after its real macOS leader has exited',
+    async () => {
+      const owner = await setup()
+      const child = owner.spawn(
+        scope,
+        process.execPath,
+        ['-e', 'setTimeout(() => process.exit(0), 50)'],
+        {
+          stdio: 'pipe',
+          env: process.env,
+          windowsHide: true
+        }
+      )
+      children.push(child)
+      // Persist the actual spawn identity as it would remain when the app exits before observing
+      // cleanup. Restore this evidence after live teardown so the cold path cannot silently skip.
+      const [receipt] = owner.receipts(scope)
+      expect(receipt.ownership?.leader?.birthToken).toBeDefined()
+      await once(child, 'close')
+      await terminateProcessTree(child)
+      const receiptPath = join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      )
+      await mkdir(
+        join(directory!, 'delegation-process-ownership', scope.projectId, scope.sessionId),
+        { recursive: true }
+      )
+      await writeFile(receiptPath, JSON.stringify(receipt))
+      const cold = new DelegatedProcessOwnership(directory!)
+      expect(cold.receipts(scope)).toHaveLength(1)
+      // Other processes can exit between the native snapshot and identity recheck. A blocked
+      // observation keeps the receipt and is retryable; require an eventual complete scan.
+      await expect.poll(() => cold.recover(scope), { timeout: 5_000 }).toBeUndefined()
+      expect(cold.receipts(scope)).toHaveLength(0)
+    }
+  )
+
+  it.skipIf(process.platform !== 'linux')(
+    'recovers a live tree while a newer unrelated process remains running',
+    async () => {
+      const owner = await setup()
+      const child = owner.spawn(
+        scope,
+        process.execPath,
+        [
+          '-e',
+          `
+          require('node:child_process').spawn(process.execPath, ['-e',
+            'process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)'
+          ], { stdio: ['ignore', 'inherit', 'inherit'] })
+          setInterval(() => {}, 1000)
+        `
+        ],
+        { stdio: 'pipe', env: process.env, windowsHide: true }
+      )
+      children.push(child)
+      const [ready] = await once(child.stdout, 'data')
+      const descendantPid = Number(String(ready))
+      expect(descendantPid).toBeGreaterThan(0)
+      // Keep an independent process alive after the receipt, as the OS observer can be during
+      // recovery. A readiness barrier makes this regression independent of observer scheduling.
+      const unrelated = spawn(
+        process.execPath,
+        ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
+        { stdio: 'pipe' }
+      )
+      try {
+        await once(unrelated.stdout, 'data')
+        const cold = new DelegatedProcessOwnership(directory!)
+        expect(cold.receipts(scope)).toHaveLength(1)
+        // A cold scan may conservatively block while processes exit or a snapshot is incomplete.
+        // Require eventual proof, as in the macOS case above; a persistent ambiguity still fails.
+        await expect.poll(() => cold.recover(scope, true), { timeout: 5_000 }).toBeUndefined()
+        expect(cold.receipts(scope)).toHaveLength(0)
+        for (const pid of [child.pid!, descendantPid]) {
+          expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
+        }
+        expect(process.kill(unrelated.pid!, 0)).toBe(true)
+      } finally {
+        const closed = once(unrelated, 'close')
+        unrelated.kill('SIGKILL')
+        await closed
+      }
+    },
+    15_000
+  )
+
+  it('does not erase historical ownership uncertainty with a clean cold scan', async () => {
+    const owner = await setup()
+    owner.recordFailure(scope)
+    const [receipt] = owner.receipts(scope)
+    const diagnostics = {
+      failureCategory: 'ownership-candidate-unresolved',
+      recovery: 'stronger-ownership-proof-required',
+      ownedIdentityCount: 1,
+      ambiguousIdentityCount: 1
+    }
+    const retained = {
+      ...receipt,
+      ownership: {
+        ...receipt.ownership,
+        token: '00000000-0000-4000-8000-000000000001',
+        leader: { pid: 2147483647, birthToken: 'darwin-proc-uniqueid:1' }
+      },
+      cleanupDiagnostics: diagnostics
+    }
+    await writeFile(
+      join(
+        directory!,
+        'delegation-process-ownership',
+        scope.projectId,
+        scope.sessionId,
+        `${receipt.receiptId}.json`
+      ),
+      JSON.stringify(retained)
+    )
+    const cold = new DelegatedProcessOwnership(directory!)
+    await expect(cold.recover(scope)).rejects.toThrow('Delegated process recovery is incomplete')
+    expect(cold.receipts(scope)[0].cleanupDiagnostics).toEqual(diagnostics)
   })
 
   // ── D1: reboot-proof clears receipts with a matching boot-session id ─────────────────────────

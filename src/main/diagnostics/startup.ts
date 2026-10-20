@@ -1,20 +1,27 @@
-import { createLogger, flushLogs, initLogger, type Logger } from '../logger'
+import {
+  createLogger,
+  flushLogs,
+  initLogger,
+  type Logger,
+  type LoggerConfig
+} from '@aipoch/diagnostics/node'
 import {
   flushDiagnosticsWithTimeout,
   type DiagnosticFlush,
   type DiagnosticFlushOutcome
-} from './flush'
-import { startDiagnosticOperation, type DiagnosticOperation } from './operation'
+} from '@aipoch/diagnostics/node'
+import { startDiagnosticOperation, type DiagnosticOperation } from '@aipoch/diagnostics/node'
 
 type ApplicationDiagnosticMetadata = {
   logDir: string
   runId?: string
   mirrorToConsole?: boolean
+  consoleFormat?: LoggerConfig['consoleFormat']
   version: string
   isPackaged: boolean
   platform: NodeJS.Platform
   arch: string
-  electronVersion: string
+  electronVersion?: string
   nodeVersion: string
   cpuUsage?: () => { user: number; system: number }
 }
@@ -31,7 +38,10 @@ export const initializeApplicationDiagnostics = (
   initLogger({
     logDir: metadata.logDir,
     ...(metadata.runId === undefined ? {} : { runId: metadata.runId }),
-    ...(metadata.mirrorToConsole === undefined ? {} : { mirrorToConsole: metadata.mirrorToConsole })
+    ...(metadata.mirrorToConsole === undefined
+      ? {}
+      : { mirrorToConsole: metadata.mirrorToConsole }),
+    ...(metadata.consoleFormat === undefined ? {} : { consoleFormat: metadata.consoleFormat })
   })
   const log = createLogger('main')
   const operation = startDiagnosticOperation(log, {

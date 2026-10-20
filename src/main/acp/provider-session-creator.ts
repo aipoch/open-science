@@ -1,14 +1,13 @@
 import type { ActiveSession, ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
-
 import type {
   AcpCreateSessionRequest,
   AcpCreateSessionResponse,
   AcpRuntimeEventInput
 } from '../../shared/acp'
 import { normalizePermissionProfile } from '../../shared/permission-profiles'
-import type { EffectiveSpecialistSkills } from '../../shared/specialist'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import {
   type AcpSessionCapabilityOwner,

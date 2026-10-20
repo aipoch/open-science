@@ -1,3 +1,4 @@
+import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -8,6 +9,11 @@ import { describe, expect, it, vi } from 'vitest'
 import { Tiktoken } from 'js-tiktoken/lite'
 import cl100kBase from 'js-tiktoken/ranks/cl100k_base'
 import { z } from 'zod'
+
+import {
+  sanitizeAgentUserChoiceRequest,
+  sanitizeAgentUserChoiceAnswer
+} from '../../shared/elicitation'
 
 import { HOST_SDK_SUBAGENT_OPERATION_IDS, hostSdkHelp } from '../host-sdk/help'
 import {
@@ -143,7 +149,7 @@ describe('notebook MCP server config', () => {
       command: '/Applications/Open-Science.app/Contents/MacOS/Open-Science',
       args: ['/app/out/main/index.js', '--open-science-notebook-mcp'],
       env: [
-        { name: 'ELECTRON_RUN_AS_NODE', value: '1' },
+        ...nodeRuntimeEnvironmentEntries(),
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_ENDPOINT', value: 'http://127.0.0.1:4567' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_RPC_TOKEN', value: 'secret-token' },
         { name: 'OPEN_SCIENCE_NOTEBOOK_PROJECT_ID', value: 'default-project' },
@@ -299,13 +305,11 @@ describe('notebook MCP server config', () => {
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('will not resolve a bare relative name')
   })
 
-  it('bounds recovery after repeated kernel-process failures', () => {
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/repeated kernel failures/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/retry at most once when safe/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before replaying')
+  it('keeps retry decisions tied to side effects without a global kernel failure stop rule', () => {
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/stop Notebook tools/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toMatch(/retry at most once/i)
+    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('check possible side effects before retrying')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('absent means unknown')
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/stop Notebook tools/i)
-    expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toMatch(/report the failure/i)
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).not.toContain('then revise/rerun')
   })
 
@@ -332,8 +336,10 @@ describe('notebook MCP server config', () => {
     ].join('\n')
 
     expect(agentGuidance).not.toMatch(/\b4,?000\b/)
-    expect(REPL_EXECUTE_DOC).toContain('hand off large data from the REPL to Python/R')
-    expect(REPL_EXECUTE_DOC).toContain('Python/R reads the same OPEN_SCIENCE_HANDOFF_DIR path')
+    expect(REPL_EXECUTE_DOC).toContain(
+      'Transfer large data via process.env.OPEN_SCIENCE_HANDOFF_DIR'
+    )
+    expect(REPL_EXECUTE_DOC).toContain('shared with Python/R')
     expect(REPL_EXECUTE_DOC).not.toContain('Do not echo large data')
   })
 
@@ -778,11 +784,13 @@ describe('ask_user_question tool', () => {
         {
           question: 'Which path should I take?',
           header: 'Approach',
+          kind: 'single-select',
           options: [option('Minimal'), option('Expanded')]
         },
         {
           question: 'Which output should I produce?',
           header: 'Output',
+          kind: 'single-select',
           options: [option('Notebook'), option('Report')]
         }
       ]
@@ -792,7 +800,7 @@ describe('ask_user_question tool', () => {
         questions: [
           {
             question: 'Which path?',
-            options: [option('A'), option('B'), option('C'), option('D'), option('E')]
+            options: Array.from({ length: 17 }, (_, index) => option(String(index)))
           }
         ]
       })
@@ -809,6 +817,72 @@ describe('ask_user_question tool', () => {
     ).toThrow()
   })
 
+  it.each([5, 16])(
+    'preserves all %i options and explicit multi-select through the RPC contract',
+    (count) => {
+      const question = {
+        question: 'Which outputs?',
+        kind: 'multi-select' as const,
+        options: Array.from({ length: count }, (_, index) => ({ label: `Option ${index + 1}` }))
+      }
+      const parsed = z.object(tool!.inputSchema).parse({ questions: [question] })
+      expect(parsed).toEqual({ questions: [question] })
+      expect(sanitizeAgentUserChoiceRequest({ sessionId: 'session-1', ...parsed })).toEqual({
+        sessionId: 'session-1',
+        questions: [question]
+      })
+      expect(tool!.description).toContain('2-16')
+      expect(tool!.description).toContain('multi-select only for combinable choices')
+      expect(tool!.description).toContain('never exclusive alternatives')
+    }
+  )
+
+  it('keeps legacy single-choice input unchanged and rejects invalid mode/capacity', () => {
+    const question = { question: 'Which outputs?', options: [{ label: 'A' }, { label: 'B' }] }
+    const request = { sessionId: 'session-1', questions: [question] }
+    expect(sanitizeAgentUserChoiceRequest(request)).toEqual(request)
+    for (const kind of ['text', 'multiple', true, 1, null]) {
+      expect(
+        z.object(tool!.inputSchema).safeParse({ questions: [{ ...question, kind }] }).success
+      ).toBe(false)
+      expect(
+        sanitizeAgentUserChoiceRequest({ ...request, questions: [{ ...question, kind }] })
+      ).toBeUndefined()
+    }
+    expect(
+      sanitizeAgentUserChoiceRequest({
+        ...request,
+        questions: [
+          { ...question, options: Array.from({ length: 17 }, (_, i) => ({ label: String(i) })) }
+        ]
+      })
+    ).toBeUndefined()
+    expect(
+      sanitizeAgentUserChoiceRequest({
+        ...request,
+        questions: [{ ...question, kind: 'single-select' }]
+      })?.questions[0].kind
+    ).toBe('single-select')
+  })
+
+  it('validates multiple answers without losing label boundaries or custom text', () => {
+    const labels = ['A, B', 'A', 'Quote " and newline\nend']
+    const question = {
+      question: 'Which outputs?',
+      kind: 'multi-select' as const,
+      options: labels.map((label) => ({ label }))
+    }
+    expect(sanitizeAgentUserChoiceAnswer(question, [...labels].reverse())).toEqual(labels)
+    expect(sanitizeAgentUserChoiceAnswer(question, [labels[0]])).toEqual([labels[0]])
+    expect(sanitizeAgentUserChoiceAnswer(question, ' Custom answer ')).toBe('Custom answer')
+    for (const value of [[], ['unknown'], [labels[0], labels[0]], [1]]) {
+      expect(sanitizeAgentUserChoiceAnswer(question, value)).toBeUndefined()
+    }
+    expect(
+      sanitizeAgentUserChoiceAnswer({ ...question, kind: 'single-select' }, labels)
+    ).toBeUndefined()
+  })
+
   it('returns only the choice outcome within the shared control-tool result budget', () => {
     expect(
       tool?.mapResult?.(
@@ -822,6 +896,59 @@ describe('ask_user_question tool', () => {
 
 describe('notebook_execute tool', () => {
   const tool = NOTEBOOK_RPC_TOOLS.find((entry) => entry.name === 'notebook_execute')
+
+  it('rejects omitted arguments before execution and accepts a corrected code object', async () => {
+    const server = createNotebookMcpServer({
+      endpoint: 'http://127.0.0.1:4567',
+      token: 'test-token',
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workspaceCwd: '/workspace'
+    })
+    const client = new ModelContextProtocolClient({ name: 'argument-repro', version: '1.0.0' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    const fetchRpc = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(
+        new Response(JSON.stringify({ result: { status: 'success', stdout: '42' } }))
+      )
+    try {
+      await server.connect(serverTransport)
+      await client.connect(clientTransport)
+      const catalog = await client.listTools()
+      expect(
+        catalog.tools.find(({ name }) => name === 'notebook_execute')?.inputSchema
+      ).toMatchObject({
+        type: 'object',
+        properties: { code: { type: 'string' } },
+        required: ['code']
+      })
+
+      const rejected = await client.callTool({ name: 'notebook_execute' })
+      expect(rejected).toMatchObject({
+        isError: true,
+        content: [
+          { type: 'text', text: expect.stringContaining('expected object, received undefined') }
+        ]
+      })
+      expect(fetchRpc).not.toHaveBeenCalled()
+
+      const corrected = await client.callTool({
+        name: 'notebook_execute',
+        arguments: { code: 'print(42)' }
+      })
+      expect(corrected.isError).not.toBe(true)
+      expect(fetchRpc).toHaveBeenCalledTimes(1)
+      expect(JSON.parse(String(fetchRpc.mock.calls[0]?.[1]?.body))).toMatchObject({
+        method: 'execute',
+        params: { code: 'print(42)' }
+      })
+    } finally {
+      fetchRpc.mockRestore()
+      await client.close()
+      await server.close()
+    }
+  })
 
   it('accepts an explicit background mode and documents its durable receipt lifecycle', () => {
     const schema = z.object(tool?.inputSchema ?? {})
@@ -1509,6 +1636,75 @@ describe('repl_execute tool', () => {
     }
   })
 
+  it('delivers verified REPL exit recovery in the immediate MCP response and history', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'repl-exit-mcp-'))
+    const recovery = {
+      execution: 'may-have-run' as const,
+      retryAfter: 'runtime-ready' as const,
+      kernel: {
+        kind: 'repl' as const,
+        signal: 'SIGKILL',
+        exitCode: null,
+        cause: 'unknown' as const,
+        cleanup: 'verified' as const
+      }
+    }
+    const service = new NotebookRuntimeService({
+      configRoot: root,
+      dataRoot: root,
+      projectId: 'default-project',
+      repository: new NotebookRunRepository(root),
+      executorFactory: () => ({
+        execute: async () => ({
+          status: 'failed',
+          stdout: '',
+          stderr: 'Kernel exited',
+          traceback: '',
+          cwdAfter: root,
+          outputs: [],
+          recovery
+        }),
+        shutdown: async () => ({ reaped: true })
+      })
+    })
+    const rpc = new NotebookLocalRpcServer(service, { transport: 'tcp' })
+    const connection = await rpc.issueSessionConnection(
+      'session-1',
+      'default-project',
+      'root-frame-session-1'
+    )
+    const mcp = createNotebookMcpServer({
+      ...connection,
+      projectId: 'default-project',
+      sessionId: 'session-1',
+      workspaceCwd: root
+    })
+    const client = new ModelContextProtocolClient({ name: 'exit-recovery-test', version: '1' })
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair()
+    await mcp.connect(serverTransport)
+    await client.connect(clientTransport)
+    try {
+      const response = await client.callTool({
+        name: 'repl_execute',
+        arguments: { code: 'process.kill(process.pid, "SIGKILL")' }
+      })
+      const text = (response.content as Array<{ type: string; text?: string }>).find(
+        (item) => item.type === 'text'
+      )!.text!
+      expect(JSON.parse(text).recovery).toMatchObject(recovery)
+      expect(JSON.parse(text).recovery.guidance).toContain('no extra restart')
+      expect(
+        (await service.state({ sessionId: 'session-1', workspaceCwd: root })).runs.at(-1)?.recovery
+      ).toEqual(recovery)
+    } finally {
+      await client.close()
+      await mcp.close()
+      await rpc.close()
+      await service.dispose()
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('preserves durable admission, retry, and Stop through the real Agent-facing MCP tool', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-repl-mcp-durable-'))
     const repository = new NotebookRunRepository(root)
@@ -1731,32 +1927,38 @@ describe('bash_execute tool', () => {
     })
   })
 
-  it('describes the stateless per-call shell distinctly from the persistent kernels', () => {
+  it('describes shell continuity and the boundaries that reset its state', () => {
     expect(tool?.description).toBe(BASH_EXECUTE_DOC)
-    expect(tool?.description.toLowerCase()).toContain('stateless')
-    expect(tool?.description).toContain('fresh process')
-    expect(tool?.description.toLowerCase()).toContain('persist')
+    expect(tool?.description).toContain('retain variables, exports, functions, and cwd')
+    expect(tool?.description).toContain('earlier commands are never replayed')
+    expect(tool?.description).toContain('resets its state')
   })
 
-  it('documents the actual Windows PowerShell dialect and keeps generated notebook files out of shell copies', () => {
-    const windowsDoc = buildShellExecuteDoc('win32')
+  it.each(['5.1', '7.6'] as const)(
+    'documents PowerShell %s and keeps generated notebook files out of shell copies',
+    (version) => {
+      const windowsDoc = buildShellExecuteDoc({ kind: 'powershell', version })
 
-    expect(windowsDoc).toContain('Windows PowerShell')
-    expect(windowsDoc).not.toContain('`sh -c`')
-    expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
-    expect(windowsDoc).not.toContain('./handoff/')
-    expect(windowsDoc).toContain('Windows PowerShell 5.1')
-    expect(windowsDoc).toContain('`&&` is unavailable')
-    expect(windowsDoc).toContain('cmdlet failure')
-    expect(windowsDoc).toContain('unhandled cmdlet failure')
-    expect(windowsDoc).toContain('native programs must emit UTF-8')
-    expect(windowsDoc).toContain('write_artifact_file')
-    expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
-    // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
-    // old "generated file's absolute local path" wording.
-    expect(windowsDoc).toContain('same relative filename you saved with')
-    expect(windowsDoc).not.toContain("generated file's absolute local path")
-  })
+      expect(windowsDoc).toContain(`PowerShell ${version}`)
+      expect(buildShellExecuteDoc('win32')).toContain('Windows PowerShell 5.1')
+      expect(windowsDoc).not.toContain('`sh -c`')
+      expect(windowsDoc).toContain('$env:OPEN_SCIENCE_HANDOFF_DIR')
+      expect(windowsDoc).not.toContain('./handoff/')
+      expect(windowsDoc.includes('`&&` is unavailable')).toBe(version === '5.1')
+      expect(buildShellExecuteDoc({ kind: 'powershell', version: '5.1' })).toContain(
+        '`&&` is unavailable'
+      )
+      expect(windowsDoc).toContain('cmdlet failure')
+      expect(windowsDoc).toContain('unhandled cmdlet failure')
+      expect(windowsDoc).toContain('native programs must emit UTF-8')
+      expect(windowsDoc).toContain('write_artifact_file')
+      expect(windowsDoc).toContain('Do NOT copy a generated notebook output into the workspace')
+      // Aligned with the relative-path artifact flow: point at the saved relative filename, not the
+      // old "generated file's absolute local path" wording.
+      expect(windowsDoc).toContain('same relative filename you saved with')
+      expect(windowsDoc).not.toContain("generated file's absolute local path")
+    }
+  )
 
   it('derives the WSL2 Bash tool contract from the same captured binding', () => {
     const binding = {
@@ -3287,7 +3489,8 @@ describe('compactRestartResult', () => {
     expect(compact.kernelStatus).toBe('idle')
     expect(compact.status).toBe('restarted')
     expect(compact.cells).toBe(2)
-    expect(String(compact.note)).toContain('restarted')
+    expect(String(compact.note)).toContain('fresh process starts on the next execution')
+    expect(String(compact.note)).toContain('interrupted writes may be partial')
     // The verbose run history is NOT carried into the agent-facing restart result.
     const serialized = JSON.stringify(compact)
     expect(serialized).not.toContain('runs')
@@ -3300,3 +3503,5 @@ describe('compactRestartResult', () => {
     expect(compactRestartResult('x')).toBe('x')
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

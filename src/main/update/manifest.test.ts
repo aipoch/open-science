@@ -16,6 +16,17 @@ const valid = {
 }
 
 describe('parseManifest', () => {
+  it('retains both Linux ARM64 installer entries from the published manifest', () => {
+    const downloads = {
+      'linux-arm64-appimage': {
+        url: 'https://cdn/app-linux-arm64.AppImage',
+        size: 20,
+        sha256: 'a'.repeat(64)
+      },
+      'linux-arm64-deb': { url: 'https://cdn/app_arm64.deb', size: 10, sha256: 'b'.repeat(64) }
+    }
+    expect(parseManifest({ ...valid, downloads }).downloads).toEqual(downloads)
+  })
   it('accepts a well-formed manifest', () => {
     expect(parseManifest(valid)).toMatchObject({
       version: '0.3.0',
@@ -31,7 +42,15 @@ describe('parseManifest', () => {
     const downloads = { ...valid.downloads, 'linux-arm64': null, solaris: { format: 2 } }
     expect(parseManifest({ ...valid, downloads }).downloads).toEqual(valid.downloads)
     expect(parseManifest({ ...valid, downloads: { solaris: null } }).downloads).toEqual({})
-    for (const key of ['mac-arm64', 'mac-x64', 'win-x64', 'linux-x64-appimage', 'linux-x64-deb']) {
+    for (const key of [
+      'mac-arm64',
+      'mac-x64',
+      'win-x64',
+      'linux-x64-appimage',
+      'linux-x64-deb',
+      'linux-arm64-appimage',
+      'linux-arm64-deb'
+    ]) {
       for (const invalid of [{ url: 'http://cdn/a' }, { size: 0 }, { sha256: 'bad' }]) {
         expect(() =>
           parseManifest({

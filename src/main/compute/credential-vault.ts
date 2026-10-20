@@ -1,13 +1,10 @@
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto'
 import { platform } from 'node:os'
 
+import { ComputeConnectionError } from '@aipoch/compute/node'
 import type { ComputePasswordCapability } from '../../shared/compute'
-import {
-  isSecureStorageAvailable,
-  protectedSafeStorage as safeStorage,
-  type SecureStorageCipher
-} from '../secure-storage'
-import { ComputeConnectionError } from './connection-broker'
+import type { SecureStorageCipher } from '../credential-identity/cipher-contract'
+import { isSecureStorageAvailable, protectedSafeStorage as safeStorage } from '../secure-storage'
 
 const MAX_PASSWORD_BYTES = 16 * 1024
 const PROTECTED_STRING_PREFIX = 'open-science:protected:v1:'
@@ -254,7 +251,7 @@ class CredentialVault {
   }
 }
 
-export { CredentialVault, MAX_PASSWORD_BYTES, isSecureStorageAvailable, validateComputePassword }
+export { CredentialVault, isSecureStorageAvailable, MAX_PASSWORD_BYTES, validateComputePassword }
 export type {
   ComputeCredentialReader,
   CredentialPasswordLease,

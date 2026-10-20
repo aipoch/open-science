@@ -3,12 +3,32 @@
 The `open-science` command controls the local Open-Science service and submits research tasks without
 requiring browser interaction.
 
+The [release compatibility policy](https://github.com/aipoch/open-science/blob/main/docs/compatibility.md)
+defines the 1.x contract for commands, machine-readable output and exit codes.
+
 ## Installation
 
-### From a Debian package (including WSL)
+### Standalone Node package
+
+Install the target-specific standalone tarball built with `npm run pack:backend`, using ordinary
+Node >=22.13.0. It includes the backend, Web UI, resources and native dependencies; Electron and
+a graphical display are not required.
+
+```bash
+npm install --global ./aipoch-open-science-VERSION.tgz # Replace VERSION with the downloaded version.
+open-science start --no-open
+open-science url
+```
+
+Linux secure storage requires an unlocked OS vault and user D-Bus session. See the
+[standalone runtime guide](https://github.com/aipoch/open-science/blob/main/docs/standalone-runtime.md)
+for build dependencies, compatibility and desktop-only capabilities.
+
+### Desktop package launchers (including Debian/WSL)
 
 Installing the `.deb` package registers `/usr/bin/open-science` automatically. No separate
-Node.js, desktop Settings interaction, or `cli install` command is needed:
+desktop Settings interaction or `cli install` command is needed to use the launcher.
+It starts or reuses the bundled ordinary Node backend without opening Electron:
 
 ```bash
 sudo apt install ./open-science.deb  # Use the downloaded package's actual filename.
@@ -21,7 +41,7 @@ The desktop shortcut continues to launch the application directly. Debian mainta
 through upgrades and removal. Upgrades migrate only the old package-owned system alternative;
 existing user launchers and unrelated manually selected alternatives are preserved. The installer
 reports a conflict instead of overwriting an unmanaged `/usr/bin/open-science` file or symlink.
-The Settings and `cli install`/`cli uninstall` controls manage the optional user launcher, not the
+The desktop Settings controls manage the optional user launcher, not the
 Debian-owned system entry; remove the Debian package to remove that entry.
 
 ### From other application packages
@@ -36,7 +56,9 @@ terminal after updating PATH. Choose **Uninstall command** in the same panel to 
 
 ### From npm
 
-The npm package requires Node.js 22.5 or later and an installed Open-Science desktop application.
+The lightweight CLI/SDK package requires Node.js 22.5 or later. It controls an existing service.
+To start an independent service, install the standalone artifact (Node >=22.13.0); the lightweight
+package alone does not contain backend resources.
 Install it globally after the package is published:
 
 ```bash
@@ -64,8 +86,8 @@ open-science init --config-root /absolute/path/to/profile --json
 
 `init` prepares the profile directory; the first `start` creates the authenticated service state and
 token. It does not migrate or modify an existing profile beyond creating the directory when needed.
-Use `--profile` as a portable alias for `--config-root`; the alias is reserved for future standalone
-CLI distributions and currently follows the same development-profile restrictions.
+Use `--profile` as an alias for `--config-root`. Both accept an absolute configuration directory,
+including in packaged distributions.
 
 Start the service without opening a browser, check its status, or stop it:
 
@@ -84,18 +106,17 @@ open-science url
 `open-science url` is the only command that intentionally prints an authenticated browser URL. Normal
 human-readable, JSON, and JSONL output never includes the local token.
 
-Use `--port <port>` to override the default port of `44100`. `--app-path <path>` selects a specific
-Open-Science executable, taking priority over `OPEN_SCIENCE_APP_PATH`; both override automatic app
-location. An invalid explicit path is an error, never a reason to silently select another installation.
-Old-name, custom and mixed-name layouts remain usable through an explicit executable path.
+Use `--port <port>` to override `OPEN_SCIENCE_WEB_PORT`, or the default port of `44100` when neither is set. `start` discovers the standalone
+Node entry bundled beside the CLI, or `out/backend/index.cjs` in a source checkout. Build the
+source entry with `npm run build:backend` and Web UI with `npm run build:web` first.
+`--app-path` and `OPEN_SCIENCE_APP_PATH` no longer select a hidden Electron backend.
+`--no-sandbox` does not apply to Node startup; existing Notebook/process permissions still apply.
 
-Standalone app discovery checks only current new-brand defaults: `/Applications/Open-Science.app`
-and `~/Applications/Open-Science.app` (internal executable `Contents/MacOS/Open-Science`) on macOS;
-`%LOCALAPPDATA%/Programs/Open-Science/open-science.exe` and
-`%PROGRAMFILES%/Open-Science/open-science.exe` on Windows; `/opt/Open-Science/open-science` on Linux.
-It does not search arbitrary PATH directories or use public CLI wrappers as desktop executables.
-Portable AppImages and nondefault installations require an explicit path. Existing repository
-build discovery still precedes installed defaults. Development builds also support `--config-root <path>`.
+An already running Node runtime is reused through authenticated discovery, including one started
+by the desktop. Electron attaches to an existing same-version Node server without adding another
+writer. Quitting a desktop stops only a server it started; a desktop attached to a CLI-started
+server only detaches. Closing a Web tab or SDK connection does not stop the server. Use
+`open-science stop` for an explicit global stop affecting every connected client.
 
 `open-science stop` requests an authenticated graceful shutdown and waits for the service to exit. If
 the request cannot be accepted or a dedicated daemon remains alive after the shutdown deadline, the
@@ -110,13 +131,13 @@ unhealthy records are retained; failed authentication never authorizes signallin
 
 `open-science stop --json` prints exactly one result object on success:
 
-| `result`              | Meaning                                                            |
-| --------------------- | ------------------------------------------------------------------ |
-| `already-stopped`     | No live service record was found.                                  |
-| `daemon-stopped`      | The authenticated standalone daemon exited.                        |
-| `web-service-stopped` | The attached web service stopped; the desktop app remains running. |
+| `result`              | Meaning                                                                      |
+| --------------------- | ---------------------------------------------------------------------------- |
+| `already-stopped`     | No live service record was found.                                            |
+| `daemon-stopped`      | The authenticated Node daemon exited (desktop-started or CLI-started).       |
+| `web-service-stopped` | Legacy desktop-host protocol only: Web stopped; old desktop remains running. |
 
-Among lifecycle commands, `status`, `stop`, and `update` support `--json`. `start` and `url` reject
+Among lifecycle commands, `status` and `stop` support `--json`. `start` and `url` reject
 it; run `start --no-open` followed by `status --json` for machine-readable startup status. Errors
 with `--json` are reported on stderr as a JSON error object with a nonzero exit code.
 
@@ -145,8 +166,8 @@ nonzero CLI error codes.
 
 ## First-run setup (Codex)
 
-The desktop application must already be installed. The standalone npm runtime remains deferred.
-`init` creates a configuration directory only; packaged builds do not accept `--profile` overrides.
+Install the standalone artifact or a desktop package containing the ordinary Node backend first.
+`init` creates a configuration directory only; `--profile` selects an absolute configuration directory.
 
 ```bash
 open-science start --no-open
@@ -202,26 +223,19 @@ profile. Doctor reports readiness, not a live third-party authorization or resea
 include the submitted secret or raw upstream error. Bootstrap/launcher writes require an
 authenticated local connection and are not exposed as research-agent tools.
 
-For packages without an automatically registered command, install the optional user PATH launcher
-with `cli install --json`. Before a launcher exists, invoke
-the bundled CLI by absolute path using the application's Electron executable in Node mode (for
-example on macOS):
+For desktop packages without an automatically registered command, use **Settings > General >
+Command line tool > Install command**. To invoke the bundled ordinary Node CLI directly on macOS:
 
 ```bash
-OPEN_SCIENCE_APP_PATH="/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
-ELECTRON_RUN_AS_NODE=1 "/Applications/Open-Science.app/Contents/MacOS/Open-Science" \
-  "/Applications/Open-Science.app/Contents/Resources/cli/index.mjs" start --no-open
+"/Applications/Open-Science.app/Contents/Resources/node-runtime/node" \
+  "/Applications/Open-Science.app/Contents/Resources/backend/cli.mjs" start --no-open
 ```
 
-Repeat the same absolute invocation with `cli install --json`. Respect the returned `pathHint`;
-Windows may require a new terminal and Unix shells may need the existing launcher directory on PATH.
-The launcher uses the existing ownership receipts and does not claim unrelated executables.
-An app-installed launcher stays bound to its installing application's actual executable. AppImage
-launchers use the stable AppImage file and mount its payload for each invocation. Startup maintenance
-repairs confirmed missing bindings, but does not rewrite an otherwise working launcher merely for
-new brand wording or take over a surviving binding to another installation. Use an explicit
-`cli install` to rebind and `cli uninstall` to remove an app-managed command. Old applications and
-launchers may remain; this does not authorize simultaneous writes to shared research data.
+The native Settings controls own launcher installation/removal. `cli install`/`cli uninstall` over
+the Node service are unavailable; npm owns standalone launchers. Reinstall historical Electron-as-Node
+launchers in desktop Settings. AppImage launchers retain a private immutable backend/Node cache so
+an independently started server survives the invocation's temporary mount. Existing ownership
+receipts and unrelated executables remain protected.
 
 ## Agent runtimes
 
@@ -232,44 +246,22 @@ open-science runtime list
 open-science runtime list --json
 ```
 
-## Application updates
+## Upgrading installations
 
-Check, download, and apply an Open-Science application update without opening the browser or desktop
-window:
-
-```bash
-open-science update
-open-science update --json
-```
-
-The command updates the installed Open-Science application, not the npm package. It reuses the
-application's release feed, artifact selection, checksum verification, and platform installer. If
-Open-Science is not running, it starts the local headless service. It normally leaves that service
-available for later CLI commands. When the update requires a visible installer, the command stops a
-service it started after the installer is safely downloaded; a service that was already running is
-left alone, and the printed next step tells you to run `open-science stop` before the installer.
-
-In-place installation never interrupts active root-agent, subagent, Notebook, or Reviewer work. Stop
-the reported work and run the command again. Platforms that require a visible installer download it
-without a save dialog to the application's writable data directory, then print the full path and
-required next step; the CLI does not open the installer.
-
-With `--json`, `outcome` is `up-to-date`, `install-started`, `manual-action-required`, or `blocked`.
-`install-started` means the platform updater accepted the handoff; because the running application
-exits during installation, the CLI cannot verify the final installed version in that invocation.
-Common fields are `current` and, when known, `latest`. Manual outcomes may add `installerPath` and
-`nextAction`; blocked outcomes add `blockedBy`.
-
-The CLI requires the running application to advertise the `update-cli-v1` RPC capability. If an older
-installation only advertises the legacy update commands, or does not advertise structured headless
-update behavior, it returns `manual-action-required` instead of guessing. Install the latest release from
-[the Open-Science download page](https://www.aipoch.com/open-science), then run the command again.
-Because the CLI is bundled with the installed application, installations predating this command need
-that one-time manual update before `open-science update` is available.
-
-On a rootless Linux host where Chromium sandboxing is unavailable, use
-`open-science update --no-sandbox`. This reuses the same explicit, security-reducing startup fallback
-as `open-science start --no-sandbox`; prefer the Debian package or a sandbox-capable host.
+Stop the backend before upgrading an installation, then restart it with the same profile.
+Use the installation channel that owns the CLI: Homebrew for a Formula, the new downloaded
+package for deb/rpm or a local npm tarball, or a verified new Release archive in a new directory
+with PATH/the symlink updated. npm registry publication remains deferred.
+The desktop update UI discovers and downloads packages. Automatic replacement remains closed for
+macOS ZIP, Linux AppImage and Debian until each channel passes complete installed-package
+acceptance. Windows automatic installation remains disabled; artifact checks and same-version copy tests do not certify a cross-version upgrade.
+For an accepted channel, use the desktop application's native update UI. A Desktop
+that adopts an orphaned Desktop-launched Runtime can stop it through the normal update gate.
+For a CLI-launched service, explicitly confirm stopping the service and switching to Desktop;
+all connected clients will disconnect, and future Desktop Quit stops the replacement Runtime.
+Cancel keeps the service running. The switch preserves supported configuration and refuses
+unsupported credential/profile settings before stopping. It does not upgrade standalone files.
+Installation recovery may require the original installer when file integrity cannot be verified.
 
 ## Codex subscription sign-in
 
@@ -305,22 +297,11 @@ without the bootstrap endpoint also permits this configured native-login path; i
 provider readiness. An empty profile instead receives `bootstrap_unavailable` with an instruction to
 update and restart the application. HTTP authorization failures do not trigger this fallback.
 
-### Linux AppImage sandbox fallback
+### AppImage and Node startup
 
-`open-science start` and `open-science update` keep Chromium sandboxing enabled by default. On some
-Linux hosts, an AppImage mounted with `nosuid` cannot use Chromium's SUID sandbox helper; Ubuntu may
-also restrict unprivileged user namespaces. In that case the command fails promptly with guidance
-instead of waiting for the service timeout.
-
-If the host cannot support sandboxed startup, an explicit rootless fallback is available:
-
-```bash
-open-science start --no-sandbox --no-open
-open-science update --no-sandbox
-```
-
-`--no-sandbox` disables Chromium's process sandbox and reduces security. Use it only when necessary;
-the Debian package or a host configuration that supports Chromium sandboxing is preferred.
+The desktop launcher starts ordinary Node. Chromium's `--no-sandbox` option is rejected by
+`open-science start`; it is not a fallback for starting or updating this backend. Desktop
+Chromium launch troubleshooting is separate from CLI service startup.
 
 ## Projects
 
@@ -460,7 +441,8 @@ open-science run \
   --json
 ```
 
-The default approval profile is `ask`. For unattended execution, explicitly add
+For a new Session, an explicit approval profile overrides Project Session defaults, then the saved global
+default; only when all are absent does it fall back to `ask`. Resumed Sessions retain their saved profile unless explicitly changed. For unattended execution, explicitly add
 `--permission-prompts none`. This keeps the selected approval profile and existing grants;
 it denies any remaining request that would require a person. `auto` can still require approval,
 and `full` does not answer questions or approve Plans on the user's behalf.
@@ -506,8 +488,9 @@ open-science run \
 - `--auto-review` and `--no-auto-review` update the Session automatic-review setting. When enabled, a
   successful turn starts the existing reviewer workflow before the Run becomes terminal; the Run
   `review` property reports whether it started and its final lifecycle/outcome.
-- `--memory` and `--no-memory` update the Session Memory setting. When enabled, the Session uses the
-  agent's persistent project-scoped memory; the two flags are mutually exclusive.
+- `--memory` and `--no-memory` set Memory for a new Session; the two flags are mutually exclusive.
+  With `--session`, provider/model/reasoning, Memory and enabled Compute Host changes are rejected.
+  Use `session config update` on the idle Session before resuming it.
 - `--specialist` accepts a Specialist UUID or stable Profile name. It binds only a new Session. An
   existing Session cannot be rebound, and a presentation `displayName` is not an identifier.
 - `--delegation allow|deny` updates whether the Session may create new delegated children. `deny`
@@ -573,7 +556,9 @@ availability only, never provider credentials.
 A framework change applies to new Sessions and future Reviewer work. Existing idle Sessions migrate
 lazily on their next turn, replaying their visible transcript when a fresh provider Session is
 needed. In-flight Main, Reviewer, and Subagent work remains pinned to the runtime generation and
-model snapshot admitted at its start. Reviewer and Subagent route changes affect only future work.
+model snapshot admitted at its start. In Reviewer inherit mode, admission freezes the model name;
+the provider is resolved when the Reviewer session is created. Fixed Reviewer routing freezes its
+explicit provider/framework target. Reviewer and Subagent route changes affect future work.
 
 ### Session persistence and compatibility
 
@@ -632,15 +617,16 @@ open-science run \
 
 Exit codes form part of the automation contract:
 
-| Exit code | Meaning                                                                   |
-| --------- | ------------------------------------------------------------------------- |
-| `0`       | The command succeeded, including a completed waited run.                  |
-| `1`       | A run failed or a general command failure occurred.                       |
-| `2`       | CLI usage was invalid.                                                    |
-| `3`       | The local daemon was unavailable.                                         |
-| `4`       | A requested project, run, session, artifact, or Specialist was not found. |
-| `5`       | Active research safely blocked an application update.                     |
-| `6`       | The application update requires a manual installation step.               |
+| Exit code | Meaning                                                                       |
+| --------- | ----------------------------------------------------------------------------- |
+| `0`       | The command succeeded, including a completed waited run.                      |
+| `1`       | A run failed, status found no service, or a general command failure occurred. |
+| `2`       | CLI usage was invalid.                                                        |
+| `3`       | The local daemon was unavailable.                                             |
+| `4`       | A requested project, run, session, artifact, or Specialist was not found.     |
+
+Codex login can propagate the native login process exit code (a signal without a code becomes `1`).
+A successfully cancelled Run is not itself a CLI failure; inspect its `cancelled` status.
 
 Timeouts and `session_busy` conflicts use exit code `1` and retain their distinct `timeout` and
 `session_busy` error codes in structured output.
@@ -656,56 +642,12 @@ open-science artifacts download <artifact-id> --output ./report.md --json
 
 Artifact output paths are resolved relative to the current working directory.
 
-## Rollback to 0.7.3
-
-The current Session and file formats contain fields that Open-Science 0.7.3 cannot safely write.
-Replacing only the application binary can therefore discard newer Upload, conversation-branch, and
-Artifact provenance data. Prepare a compatible copy before installing 0.7.3:
-
-1. Quit Open-Science completely.
-2. Run `open-science rollback-to-0.7.3 --yes`.
-3. Keep the paths printed by the command, then install and start Open-Science 0.7.3.
-
-No pre-upgrade backup is required. The command is offline and does not rewrite the newer data: it
-copies Uploads, Artifacts, Notebooks, and workspaces into a new rollback Data Root; converts each
-Session's active message branch to the 0.7.3 envelope; moves the newer Config Root to a timestamped
-sibling; and activates a converted Config Root at the original location. If the old Config Root and
-Data Root share one directory, the preserved newer Data Root moves with that directory. The command
-does not copy runtime environments, which 0.7.3 rebuilds.
-
-By default, the rollback Data Root is a timestamped sibling of the current Data Root. Choose another
-empty location with `--output`:
-
-```bash
-open-science rollback-to-0.7.3 --yes --output /path/to/OpenScience-0.7.3
-```
-
-Development and recovery workflows can override both source roots explicitly:
-
-```bash
-open-science rollback-to-0.7.3 --yes \
-  --config-root /path/to/.open-science \
-  --data-root /path/to/OpenScience \
-  --output /path/to/OpenScience-0.7.3
-```
-
-Use `--json` to print the rollback manifest as one JSON object. The same manifest is written to
-`rollback-to-0.7.3.json` in both the activated Config Root and rollback Data Root. It records the
-preserved newer Config Root and Data Root paths needed to return to the newer application.
-Adjacent durable preparation and cutover markers let the same command clean or finish an interrupted
-conversion after a process or power interruption; do not delete timestamped staging or preserved
-directories while that recovery runs.
-
-The 0.7.3 copy contains only the active branch of each conversation. Inactive branches, Artifact
-version history, reviews, and provenance snapshots remain preserved in the newer roots but are not
-visible to 0.7.3. The command refuses to run while Open-Science appears active, when a source path is
-missing or aliases storage through a symbolic link/junction, when a Version's size or checksum does
-not match SQLite, or when a rollback target already exists.
-
 ## Current scope
 
-The initial CLI does not expose file or directory attachments, per-run model selection, or per-run
-agent-backend selection. These require stable public runtime contracts before they can be added.
+The CLI does not expose file/directory attachments or per-run Agent framework selection.
+New Sessions accept provider/model selection; resumed Sessions use `session config update`.
+The help listing still includes `cli install`, but the Node host cannot perform this desktop-only
+operation. Use Settings in the desktop application to install a desktop launcher.
 
 ## Connector management
 
@@ -746,7 +688,7 @@ Changes reuse existing agent refresh behavior. Start a new session if its tool l
 these commands do not force-reset active conversations.
 
 `test` opens a separate MCP connection, discovers tools, and closes it. It does not enable a disabled
-Connector or execute business tools. Its result is `{ success, toolCount?, message }`; failure exits
+Connector or execute business tools. Its result is `{ success, toolCount?, message, stage?, code? }`; failure exits
 nonzero. Discovery is bounded to ten seconds. Bundled Connector live diagnostics are unsupported.
 OAuth refresh may update existing encrypted token state; testing does not perform first-time browser login.
 

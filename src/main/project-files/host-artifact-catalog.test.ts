@@ -684,6 +684,148 @@ describe('ManagedFileIndexRepository host Artifact catalog', () => {
     ])
   })
 
+  it('omits ambiguous versions so the single-version fallback rejects them', async () => {
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await createArtifactVersion('project-a', 'session-a', 'collision-artifact', 'collision')
+    await createUploadVersion('project-a', 'session-b', 'collision-upload', 'collision')
+    await expect(
+      repository.readHostArtifactCatalog({ projectId: 'project-a', versionId: 'collision' })
+    ).rejects.toThrow('ambiguous across generated Artifacts and Uploads')
+    await expect(
+      repository.readHostArtifactVersionRecords({
+        projectId: 'project-a',
+        versionIds: ['collision']
+      })
+    ).resolves.toEqual([])
+  })
+
+  it.each(['hidden', 'headless'] as const)(
+    'preserves %s publication rejection in the batch',
+    async (kind) => {
+      await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+      await createArtifactVersion(
+        'project-a',
+        'session-a',
+        'artifact-a',
+        'artifact-v1',
+        1,
+        kind === 'hidden' ? { managedVisibleAt: null } : {}
+      )
+      if (kind === 'headless') {
+        await client.artifactLineage.update({
+          where: { id: 'artifact-a' },
+          data: { currentVersionId: null }
+        })
+      }
+      const service = new ManagedFileVersionService({
+        storageRoot: root,
+        getClient: () => Promise.resolve(client)
+      })
+      await expect(
+        service.openVersion(
+          { source: 'artifact', projectId: 'project-a', fileId: 'artifact-a' },
+          'artifact-v1'
+        )
+      ).rejects.toMatchObject({ code: 'VERSION_NOT_FOUND' })
+      const records = await repository.readHostArtifactVersionRecords({
+        projectId: 'project-a',
+        versionIds: ['artifact-v1']
+      })
+      expect(records).toEqual([])
+    }
+  )
+
+  it('does not bypass the version service when the owning Project is missing', async () => {
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1')
+    await expect(
+      repository.readHostArtifactVersionRecords({
+        projectId: 'project-a',
+        versionIds: ['artifact-v1']
+      })
+    ).resolves.toEqual([])
+  })
+
+  it('resolves exact Artifact Version ids in one batch, including historical versions', async () => {
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v2', 2)
+    await createArtifactVersion('project-a', 'session-a', 'artifact-c', 'artifact-v4', 1, {
+      state: 'pending'
+    })
+    await createArtifactVersion('project-b', 'session-c', 'artifact-d', 'artifact-v5', 1)
+
+    const records = await repository.readHostArtifactVersionRecords({
+      projectId: 'project-a',
+      versionIds: ['artifact-v1', 'artifact-v2', 'artifact-v4', 'artifact-v5', 'missing']
+    })
+
+    expect(records.map((record) => record.versionId).sort()).toEqual(['artifact-v1', 'artifact-v2'])
+    expect(records.find((record) => record.versionId === 'artifact-v1')).toMatchObject({
+      source: 'artifact',
+      sourceFileId: 'artifact-a',
+      sessionId: 'session-a',
+      filename: 'artifact-a.csv',
+      contentType: 'text/csv',
+      sizeBytes: 10,
+      checksum: checksum('artifact-v1'),
+      contentStorageKey: 'artifacts/project-a/session-a/artifact-v1/content'
+    })
+  })
+
+  it('applies the explicit-version visibility gates across an exact-version batch', async () => {
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
+    await createArtifactVersion('project-a', 'session-b', 'artifact-b', 'artifact-v2', 1)
+
+    await client.fileOriginSession.update({
+      where: {
+        projectId_sessionId: { projectId: 'project-a', sessionId: 'session-a' }
+      },
+      data: {
+        state: 'deleting',
+        deletionOperationId: 'delete-operation',
+        retainedReviewIdsJson: '[]'
+      }
+    })
+
+    const records = await repository.readHostArtifactVersionRecords({
+      projectId: 'project-a',
+      versionIds: ['artifact-v1', 'artifact-v2']
+    })
+
+    expect(records.map((record) => record.versionId)).toEqual(['artifact-v2'])
+  })
+
+  it('opens an exact version from batch metadata and preserves the integrity lease', async () => {
+    await client.project.create({ data: { id: 'project-a', name: 'Project A' } })
+    await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'artifact-v1', 1)
+    const content = 'artifact-v1'
+    await client.artifactVersion.update({
+      where: { id: 'artifact-v1' },
+      data: { sizeBytes: BigInt(Buffer.byteLength(content)) }
+    })
+    const [record] = await repository.readHostArtifactVersionRecords({
+      projectId: 'project-a',
+      versionIds: ['artifact-v1']
+    })
+    const storagePath = join(root, ...record!.contentStorageKey.split('/'))
+    await mkdir(dirname(storagePath), { recursive: true })
+    await writeFile(storagePath, content)
+
+    const service = new ManagedFileVersionService({
+      storageRoot: root,
+      getClient: () => Promise.resolve(client)
+    })
+    const lease = await service.openExactVersionContent(record!)
+    try {
+      expect(lease.size).toBe(Buffer.byteLength(content))
+      expect(Buffer.from(await lease.readRange(0, lease.size)).toString()).toBe(content)
+      await lease.verifyUnchanged()
+    } finally {
+      await lease.close()
+    }
+  })
+
   it('resolves historical Version ids inside one Project and fails closed on source collisions', async () => {
     await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'history-v1', 1)
     await createArtifactVersion('project-a', 'session-a', 'artifact-a', 'history-v2', 2)

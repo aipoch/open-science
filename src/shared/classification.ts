@@ -1,20 +1,28 @@
 import type { ValidateProviderResult } from './settings'
+import type { AcpMessageImage } from './acp-image-contract'
 
-/** Classification endpoints are not chat providers and never enter conversation model catalogs. */
-export const TYPESAFE_MODEL_ID = 'jev-latest'
-export type ClassificationAdapter = 'typesafe' | 'openrouter' | 'custom'
-export type ClassificationModel = { id: string; label: string }
-export const CLASSIFICATION_MODELS = {
-  typesafe: [{ id: TYPESAFE_MODEL_ID, label: 'Jev Latest' }],
-  openrouter: [{ id: 'typesafe/jev-1.13', label: 'Jev 1.13' }]
-} satisfies Record<Exclude<ClassificationAdapter, 'custom'>, ClassificationModel[]>
+/** Shared provider definitions are filtered by capability before host-specific preference ordering. */
+import { getProviderModels } from '@aipoch/providers'
+import type { ClassificationAdapter, ClassificationModelDefinition } from '@aipoch/providers'
 
 export const classificationModelsForService = (service: {
   adapter: ClassificationAdapter
   models?: readonly string[]
   modelId?: string
-}): ClassificationModel[] => {
-  if (service.adapter !== 'custom') return CLASSIFICATION_MODELS[service.adapter]
+}): ClassificationModelDefinition[] => {
+  if (service.adapter !== 'custom') {
+    const catalog = getProviderModels(service.adapter, 'classification').map((model) => ({
+      id: model.modelId,
+      label: model.label
+    }))
+    if (service.adapter !== 'opencode') return [...catalog]
+    // Zen stores the explicitly selected default first; retain the complete allowlisted catalog.
+    const preferredId = service.modelId ?? service.models?.[0]
+    return [
+      ...catalog.filter((model) => model.id === preferredId),
+      ...catalog.filter((model) => model.id !== preferredId)
+    ]
+  }
   const models = service.models?.length ? service.models : service.modelId ? [service.modelId] : []
   return models.map((id) => ({ id, label: id }))
 }
@@ -35,7 +43,13 @@ export type ClassificationSnapshot = {
   services: ClassificationServiceView[]
   smartCollections?: ClassificationBinding
   capabilitySelection?: ClassificationBinding
-  availableProviders: { id: string; name: string; maskedKey?: string }[]
+  availableProviders: {
+    id: string
+    name: string
+    /** Older snapshots contained only OpenRouter accounts and omitted this field. */
+    vendorId?: 'openrouter' | 'opencode'
+    maskedKey?: string
+  }[]
 }
 export type ClassificationMutation = { revision: number } & (
   | {
@@ -77,6 +91,8 @@ export type ClassificationCandidate = {
 }
 export type ClassifySkills = (input: {
   text: string
+  /** Current-turn images only; loaded within the classifier's cancellation/deadline scope. */
+  loadImages?: (signal: AbortSignal) => Promise<readonly AcpMessageImage[]>
   catalog: ClassificationCandidate[]
   signal: AbortSignal
   usageContext?: Pick<ClassificationUsageContext, 'projectId' | 'sessionId'>

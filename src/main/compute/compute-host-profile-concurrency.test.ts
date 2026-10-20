@@ -7,10 +7,10 @@ vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd(), getPath: () => tmpdir() }
 }))
 
+import type { ComputeConnectionBrokerAcquirer } from '@aipoch/compute/node'
 import { createProjectDbClient, migrateApplicationDatabase } from '../projects/prisma-client'
-import { ComputeHostRepository } from './repository'
 import { ComputeHostProfileOwner } from './compute-host-profile-owner'
-import type { ComputeConnectionBrokerAcquirer } from './connection-broker'
+import { ComputeHostRepository } from './repository'
 
 let root: string
 let client: ReturnType<typeof createProjectDbClient>

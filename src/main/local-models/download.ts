@@ -2,8 +2,8 @@ import {
   DownloadSourceError,
   resilientDownload,
   type ResilientDownloadOpts
-} from '../net/resilient-download'
-import { netFetchStandard } from '../skills/net-fetch'
+} from '@aipoch/resilient-download'
+import { netFetchStandard } from '../network-fetch'
 import type { LocalModelRevision } from './catalog'
 import { localModelDownloadSources } from './download-sources'
 
@@ -124,7 +124,7 @@ export const downloadLocalModelAsset = async (
         expectedSha256: asset.sha256,
         maxRetries: 1,
         stallTimeoutMs: 30_000,
-        deps: { fetchImpl }
+        fetchImpl
       })
     } catch (error) {
       options.signal?.throwIfAborted()

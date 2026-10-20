@@ -656,6 +656,32 @@ describe('AcpSessionUpdateProjector', () => {
     ])
   })
 
+  it('never attributes a late Claude control banner to the next assistant turn', () => {
+    const projector = createProjector()
+    const routing: TestRouting = {
+      framework: 'claude-code',
+      eventId: 'late',
+      visible: true,
+      reconnectPending: false,
+      mcpServerNames: []
+    }
+    const notification: SessionNotification = {
+      sessionId: 'session-1',
+      update: {
+        sessionUpdate: 'agent_message_chunk',
+        content: { type: 'text', text: 'Compacting failed: Request was aborted.' },
+        _meta: { claudeCode: { isContextCompaction: true } }
+      }
+    }
+    expect(projector.route(notification, routing)).toEqual([])
+    const modelUpdate = { ...notification.update, _meta: undefined }
+    expect(projector.route({ ...notification, update: modelUpdate }, routing)).toContainEqual(
+      expect.objectContaining({ kind: 'visible-event' })
+    )
+    projector.clearSession('session-1')
+    expect(projector.route(notification, routing)).toEqual([])
+  })
+
   it('suppresses only the unscoped Codex compaction warning', () => {
     const projector = createProjector()
     const warning =

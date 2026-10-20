@@ -43,10 +43,10 @@ const createOwner = (
       providerId: provider.id,
       providerType: provider.type,
       effectiveModel: selection.kind === 'required' ? selection.model : provider.model,
-      apiEndpoints: ['openai'],
+      apiEndpoints: ['chat-completions'],
       frameworkCompatible: true,
       modelBridgeSupported: true,
-      needsChatResponsesBridge: false,
+      needsChatResponsesToChatCompletionsBridge: false,
       reasoningEffortProfile: { supported: false }
     }))
   } as unknown as ProviderAccountsModule
@@ -149,7 +149,7 @@ describe('SessionDetailsModelOwner', () => {
     const failure = {
       at: 20,
       category: 'model-not-found' as const,
-      target: { model: 'model-b', endpoint: 'openai' as const }
+      target: { model: 'model-b', endpoint: 'chat-completions' as const }
     }
     const { owner } = createOwner(
       {

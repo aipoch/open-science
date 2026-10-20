@@ -1,10 +1,11 @@
-import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
+import { ANNOTATION_DRAG_TYPE, annotationTransfers } from './annotations/annotation-transfer'
 import { SideChatProvider, useSideChatController } from './use-side-chat-controller'
 // @vitest-environment jsdom
 import { act, StrictMode, useEffect } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
+import { useNavigationStore } from '@/stores/navigation-store'
 import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore,
@@ -12,14 +13,17 @@ import {
   type PreviewSourceItem,
   type PreviewToolItem
 } from '@/stores/preview-workbench-store'
-import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import type { Annotation } from '../../../../shared/annotations'
-import type { LiteratureItemView } from '../../../../shared/literature'
+import { SOURCE_PREVIEW_PARTITION } from '../../../../shared/source-preview'
+import { literatureReadingDocument } from '../literature/workflows/literature-reading'
 import { FOCUS_COMPOSER_EVENT } from './composer-focus-events'
-import { literatureReadingDocument } from '../literature/literature-reading'
 import { createPreviewFileItemFromPdfContext } from './preview-file-item'
+
+// jsdom does not implement layout scrolling; real visibility is covered in keyboard-focus.spec.ts.
+Element.prototype.scrollIntoView ??= () => undefined
 
 vi.mock('@/components/ui/resizable', () => ({
   ResizablePanel: ({ children }: { children: React.ReactNode }): React.JSX.Element => (
@@ -125,27 +129,44 @@ describe('PreviewPanel', () => {
   let container: HTMLDivElement
   let root: Root
   let sourcePreviewListener: ((state: Record<string, unknown>) => void) | undefined
-  let releaseSourcePreview: ReturnType<typeof vi.fn>
-
   beforeEach(() => {
     pdfPreviewReport.pageCount = 2
     pdfPreviewReport.props.mockClear()
     usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
-    releaseSourcePreview = vi.fn()
     window.api = {
       saveManagedFile: vi.fn().mockResolvedValue({ saved: true }),
       managedFileVersions: {},
-      sourcePreview: {
-        release: releaseSourcePreview,
-        onLoadState: (listener: (state: Record<string, unknown>) => void) => {
-          sourcePreviewListener = listener
-          return () => {
-            sourcePreviewListener = undefined
-          }
-        }
-      },
+      getRuntimeVersions: () => ({ electron: '39.8.10' }),
+      sourcePreview: { onContextMenu: () => () => {} },
       uploads: { stageLocalPath: vi.fn().mockResolvedValue({ id: 'attachment-1' }) }
     } as unknown as Window['api']
+    sourcePreviewListener = (state) => {
+      const frame = container.querySelector('[data-source-preview-frame]')!
+      const details =
+        state.phase === 'loading'
+          ? {
+              name: 'did-start-navigation',
+              url: state.currentUrl,
+              isMainFrame: true,
+              isInPlace: false
+            }
+          : state.phase === 'loaded' || state.failure === 'http'
+            ? {
+                name: 'did-frame-navigate',
+                url: state.currentUrl,
+                isMainFrame: true,
+                httpResponseCode: state.httpStatusCode,
+                httpStatusText: state.httpStatusText
+              }
+            : {
+                name: 'did-fail-load',
+                validatedURL: state.currentUrl,
+                isMainFrame: true,
+                errorCode: state.errorCode,
+                errorDescription: state.errorDescription
+              }
+      frame.dispatchEvent(Object.assign(new Event(details.name), details))
+    }
     container = document.createElement('div')
     document.body.appendChild(container)
   })
@@ -426,7 +447,7 @@ describe('PreviewPanel', () => {
     tabBounds: [number, number]
     scrollLeft?: number
   }): { tabBar: HTMLElement; scrollTo: ReturnType<typeof vi.fn> } => {
-    const tabBar = container.querySelector<HTMLElement>('[aria-label="Open previews"]')
+    const tabBar = container.querySelector<HTMLElement>('[data-testid="preview-tab-strip"]')
     const tabContainer = container.querySelectorAll<HTMLElement>('[role="presentation"]')[tabIndex]
     if (!tabBar || !tabContainer) throw new Error('Expected preview tab geometry targets')
 
@@ -449,7 +470,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     expect(container.textContent).toContain('No preview content')
-    expect(container.querySelector('[aria-label="Open previews"]')).toBeNull()
+    expect(container.querySelector('[data-testid="preview-tab-strip"]')).toBeNull()
     expect(container.querySelector('[data-testid="preview-panel-top-bar"]')).toBeNull()
   })
 
@@ -457,7 +478,7 @@ describe('PreviewPanel', () => {
     await renderTwoFileTabs()
 
     const chromeRow = container.querySelector('[data-testid="preview-panel-top-bar"]')
-    const tabBar = container.querySelector('[aria-label="Open previews"]')
+    const tabBar = container.querySelector('[data-testid="preview-tab-strip"]')
 
     expect(chromeRow).not.toBeNull()
     expect(chromeRow?.contains(tabBar)).toBe(true)
@@ -499,7 +520,23 @@ describe('PreviewPanel', () => {
     expect(activeContent?.textContent).toBe('file:image:artifact:file-1.png:/workspace/file-1.png')
   })
 
-  it('keeps an HTTPS source iframe mounted while its tab is inactive', async () => {
+  it.each([
+    ['compute', 'Compute', 'cpu'],
+    ['library', 'Library', 'book-open'],
+    ['replay', 'Research replay', 'play']
+  ] as const)('shows the matching icon on the %s preview tab', async (toolKind, title, icon) => {
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createToolItem({ toolKind, title }))
+
+    await renderPanel()
+
+    const tab = container.querySelector(`[role="tab"][title="${title}"]`)
+    expect(tab?.querySelector(`.lucide-${icon}`)?.getAttribute('aria-hidden')).toBe('true')
+    expect(container.querySelector('[data-testid="tool-content"]')?.textContent).toBe(
+      `tool:${toolKind}`
+    )
+  })
+
+  it('keeps an HTTPS source webview mounted while its tab is inactive', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
     usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
 
@@ -540,7 +577,6 @@ describe('PreviewPanel', () => {
     expect(sourceHeaderClose?.className).toContain('hover:text-text-000')
     expect(sourceHeaderExternal?.nextElementSibling).toBe(sourceHeaderClose)
     expect(iframe?.getAttribute('src')).toBe('https://example.com/paper')
-    expect(iframe?.getAttribute('referrerpolicy')).toBe('no-referrer')
     expect(iframe?.getAttribute('title')).toBe('Source preview: Genome study')
     expect(container.querySelector('[aria-label="Open source in browser"]')).not.toBeNull()
     const sourcePanel = iframe?.closest<HTMLElement>('[role="tabpanel"]')
@@ -607,7 +643,6 @@ describe('PreviewPanel', () => {
         await act(async () => {
           container.querySelector<HTMLButtonElement>('[data-source-preview-header-close]')!.click()
         })
-        expect(releaseSourcePreview).toHaveBeenCalledWith(sourceItem.url)
       } finally {
         open.mockRestore()
       }
@@ -653,11 +688,10 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const iframe = container.querySelector<HTMLIFrameElement>('[data-source-preview-frame]')
-    expect(iframe?.getAttribute('sandbox')?.split(/\s+/u)).toEqual([
-      'allow-same-origin',
-      'allow-scripts',
-      'allow-forms'
-    ])
+    expect(iframe?.tagName).toBe('WEBVIEW')
+    expect(iframe?.hasAttribute('allowpopups')).toBe(false)
+    expect(iframe?.hasAttribute('preload')).toBe(false)
+    expect(iframe?.getAttribute('partition')).toBe(SOURCE_PREVIEW_PARTITION)
   })
 
   it('closes a source preview from the header action', async () => {
@@ -675,10 +709,9 @@ describe('PreviewPanel', () => {
 
     expect(usePreviewWorkbenchStore.getState().items).not.toContainEqual(sourceItem)
     expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
-    expect(releaseSourcePreview).toHaveBeenCalledWith('https://example.com/paper')
   })
 
-  it('keeps an HTTPS source iframe mounted while the preview panel is collapsed', async () => {
+  it('keeps an HTTPS source webview mounted while the preview panel is collapsed', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createSourceItem())
 
     await renderPanel()
@@ -688,7 +721,6 @@ describe('PreviewPanel', () => {
 
     expect(container.querySelector('[data-source-preview-frame]')).toBe(iframe)
     expect(iframe?.closest<HTMLElement>('[role="tabpanel"]')?.hidden).toBe(true)
-    expect(releaseSourcePreview).not.toHaveBeenCalled()
 
     await act(async () => usePreviewWorkbenchStore.getState().togglePanel())
 
@@ -766,13 +798,14 @@ describe('PreviewPanel', () => {
     expect(diagnostics.closest('[role="alert"]')).toBeNull()
     expect(container.querySelector('[data-source-preview-progress]')).toBeNull()
 
+    Object.assign(firstIframe!, { reload: vi.fn() })
     const retryButton = Array.from(container.querySelectorAll<HTMLButtonElement>('button')).find(
       (button) => button.textContent === 'Try again'
     )
     await act(async () => retryButton?.click())
 
     expect(container.querySelector('[data-source-preview-skeleton]')).not.toBeNull()
-    expect(container.querySelector('[data-source-preview-frame]')).not.toBe(firstIframe)
+    expect(container.querySelector('[data-source-preview-frame]')).toBe(firstIframe)
   })
 
   it('preserves a failed source state while its tab is inactive', async () => {
@@ -807,7 +840,7 @@ describe('PreviewPanel', () => {
     expect(container.querySelector('[data-source-preview-skeleton]')).toBeNull()
   })
 
-  it('releases a source iframe and its cached state only when the tab closes', async () => {
+  it('releases a source webview and its cached state only when the tab closes', async () => {
     const sourceItem = createSourceItem()
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
     usePreviewWorkbenchStore.getState().upsertItem(createFileItem({}))
@@ -818,14 +851,11 @@ describe('PreviewPanel', () => {
     await act(async () => {
       usePreviewWorkbenchStore.getState().activateItem('item-1')
     })
-    expect(releaseSourcePreview).not.toHaveBeenCalled()
 
     await act(async () => {
       usePreviewWorkbenchStore.getState().removeItem(sourceItem.id)
     })
     expect(container.querySelector('[data-source-preview-frame]')).toBeNull()
-    expect(releaseSourcePreview).toHaveBeenCalledOnce()
-    expect(releaseSourcePreview).toHaveBeenCalledWith('https://example.com/paper')
 
     await act(async () => {
       usePreviewWorkbenchStore.getState().upsertAndActivateItem(sourceItem)
@@ -882,7 +912,7 @@ describe('PreviewPanel', () => {
     const card = container.querySelector('[data-testid="preview-card"]')
     const header = card?.querySelector('[data-testid="preview-card-header"]')
     const headerFileName = header?.querySelector('[data-testid="file-name-root"]')
-    const tabBar = container.querySelector('[aria-label="Open previews"]')
+    const tabBar = container.querySelector('[data-testid="preview-tab-strip"]')
     const fileTab = tabBar?.querySelector(`[role="tab"][title="${name}"]`)
     const fileTabContainer = fileTab?.parentElement
 
@@ -908,7 +938,7 @@ describe('PreviewPanel', () => {
       header?.querySelector(`[aria-label="Open full screen preview of ${name}"]`)
     ).not.toBeNull()
     expect(header?.querySelector(`[aria-label="Close preview of ${name}"]`)).not.toBeNull()
-    expect(tabBar?.getAttribute('role')).toBe('tablist')
+    expect(tabBar?.querySelector('[role="tablist"]')).not.toBeNull()
     expect(tabBar?.className).toContain('min-w-0')
     expect(tabBar?.className).toContain('flex-1')
     expect(fileTabContainer?.className).toContain('max-w-[160px]')
@@ -957,6 +987,8 @@ describe('PreviewPanel', () => {
     expect(overlay?.className).toContain('data-[state=open]:fade-in-0')
     expect(dialog?.className).toContain('h-[90vh]')
     expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.className).toContain('max-w-[calc(100vw-2rem)]')
+    expect(dialog?.className).toContain('min-w-0')
     expect(dialog?.className).toContain('overscroll-contain')
     expect(dialog?.className).toContain('rounded-xl')
     expect(dialog?.className).toContain('border-border')
@@ -1150,7 +1182,7 @@ describe('PreviewPanel', () => {
     expect(usePreviewWorkbenchStore.getState().activeItemId).toBe('item-1')
   })
 
-  it('keeps pointer close affordances non-focusable and supports Delete on the tab', async () => {
+  it('exposes the active tab close button and preserves Delete navigation', async () => {
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createFileItem({}))
     usePreviewWorkbenchStore.getState().upsertItem(
       createFileItem({
@@ -1164,12 +1196,23 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const closeAffordances = container.querySelectorAll<HTMLElement>(
-      '[aria-label="Open previews"] [data-preview-close]'
+      '[data-testid="preview-tab-strip"] [data-preview-close]'
     )
-    expect(Array.from(closeAffordances).every((element) => element.tabIndex === -1)).toBe(true)
+    const tabList = container.querySelector('[role="tablist"][aria-label="Open previews"]')!
+    const ownedTabs = tabList
+      .getAttribute('aria-owns')!
+      .split(' ')
+      .map((id) => document.getElementById(id))
+    expect(ownedTabs).toEqual(Array.from(container.querySelectorAll('[role="tab"]')))
+    expect(ownedTabs).toHaveLength(2)
+    expect(tabList.querySelector('button')).toBeNull()
+    expect(Array.from(closeAffordances).map((element) => element.tabIndex)).toEqual([0, -1])
     expect(
       Array.from(closeAffordances).every(
-        (element) => element.tagName === 'SPAN' && element.getAttribute('aria-hidden') === 'true'
+        (element) =>
+          element.tagName === 'BUTTON' &&
+          element.hasAttribute('aria-label') &&
+          !element.closest('[role="tab"]')
       )
     ).toBe(true)
 
@@ -1284,6 +1327,8 @@ describe('PreviewPanel', () => {
     expect(dialog?.getAttribute('aria-label')).toBe('Files')
     expect(dialog?.className).toContain('h-[90vh]')
     expect(dialog?.className).toContain('w-[90vw]')
+    expect(dialog?.className).toContain('max-w-[calc(100vw-2rem)]')
+    expect(dialog?.className).toContain('min-w-0')
     expect(dialog?.querySelector('[data-testid="tool-content"]')).toBe(inlineContent)
 
     await act(async () => {
@@ -1370,7 +1415,7 @@ describe('PreviewPanel', () => {
     await renderPanel()
 
     const closeInactiveTab = container.querySelector<HTMLElement>(
-      '[aria-label="Open previews"] [data-preview-close="file-2.pdf"]'
+      '[data-testid="preview-tab-strip"] [data-preview-close="file-2.pdf"]'
     )
     await act(async () => {
       closeInactiveTab?.dispatchEvent(new MouseEvent('click', { bubbles: true }))
@@ -1682,12 +1727,44 @@ describe('PreviewPanel', () => {
       'Side chat'
     )
     expect(container.querySelector('[role="tab"]')?.textContent).not.toContain('Main analysis')
+    expect(container.querySelector('[role="tab"] svg')?.getAttribute('aria-hidden')).toBe('true')
+    expect(
+      container
+        .querySelector('[data-testid="preview-tab-strip"]')
+        ?.classList.contains('scrollbar-auto-hide')
+    ).toBe(true)
+    const information = panel!.querySelector<HTMLButtonElement>(
+      '[aria-label="Session information: Side chat"]'
+    )!
+    await act(async () => information.click())
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain('Main analysis')
+    expect(document.body.querySelector('[role="dialog"]')?.textContent).toContain(
+      'Compare the two cohorts'
+    )
+    await act(async () => information.click())
+    await act(async () => chat.setDraft('Keep this unfinished question'))
+    const textarea = panel!.querySelector('textarea')!
+    const enterFullScreen = (): void =>
+      panel!.querySelector<HTMLButtonElement>('[aria-label="Enter full screen"]')!.click()
+    await act(async () => enterFullScreen())
+    expect(panel!.closest('[role="dialog"]')).not.toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    expect(textarea.value).toBe('Keep this unfinished question')
+    expect(panel!.textContent).toContain('Question in the right panel')
+    await act(async () =>
+      panel!.querySelector<HTMLButtonElement>('[aria-label="Exit full screen"]')!.click()
+    )
+    expect(panel!.closest('[role="dialog"]')).toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    await act(async () => enterFullScreen())
     const viewMain = panel!.querySelector<HTMLButtonElement>('[aria-label="View main session"]')!
+    expect(viewMain.querySelector('svg.lucide-locate-fixed[aria-hidden="true"]')).not.toBeNull()
     await act(async () => viewMain.click())
     expect(openSession).toHaveBeenCalledWith('default', 'right-parent', 'user')
-    await act(async () => viewMain.focus())
-    expect(document.body.textContent).toContain('Main analysis')
-    expect(document.body.textContent).toContain('Compare the two cohorts')
+    expect(usePreviewWorkbenchStore.getState().expandedToolItemId).toBeNull()
+    expect(panel!.querySelector('textarea')).toBe(textarea)
+    expect(window.api.sideChat.cancel).not.toHaveBeenCalled()
+    expect(window.api.sideChat.close).not.toHaveBeenCalled()
     openSession.mockRestore()
   })
 

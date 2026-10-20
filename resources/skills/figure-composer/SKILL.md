@@ -90,6 +90,8 @@ Outline rules:
 - Use one row per sub-claim, normally 5–10 panels, and a 12-column grid.
 - Every non-schematic `data_vid` must be one of the supplied immutable Version
   identities. Do not invent or rewrite Version IDs.
+- Set `fixed_panel_set: true` only when the user explicitly requires the exact
+  listed panels.
 
 Geometry helpers reject duplicate panel letters (case-insensitive), overlapping
 grid spans, panels outside the grid, and invalid or subpixel grid dimensions.
@@ -121,7 +123,11 @@ const panelOutputSchema = {
 ```
 
 Use `wait: false`, then collect the exact `{ frameId, attemptId }` receipt
-handles. Reject a non-completed/error child, missing or unsatisfied structured
+handles. A collect timeout ends observation, not the child Attempt: collect
+the same handles again while any remain running. Retry only after a terminal
+failure or an explicitly rejected output, using a fresh child name. Panel
+workers must submit their structured result with `host.submitOutput` before
+finishing. Reject a non-completed/error child, missing or unsatisfied structured
 output, a missing or duplicate expected `panel_<letter>.png`, or a mismatch
 between its Artifact `versionId` and `structuredOutput.panelVersionId`. MIME
 metadata may be absent; the exact filename and Version identity are the binding
@@ -129,28 +135,46 @@ checks. Return each wave's validated `{ letter, versionId }` values from the
 `repl_execute` call instead of relying on local `const` or `let` declarations to
 survive a later call.
 
-Keep Version identities in outline order. Resolve bytes with
-`host.artifactPath(versionId)` only after collection; temporary paths are never
+Keep finalized Version identities in outline order. Temporary paths are never
 the Agent-to-Agent contract. Child names remain occupied after settlement, so
 use a unique `delegatePrefix` and round number.
 
 ## 3. Compose and bind the producer Run
 
-Resolve the collected Version identities, place the paths in a small JSON
-handoff under `process.env.OPEN_SCIENCE_HANDOFF_DIR`, and read that manifest from
-the Python producer cell. On that same `notebook_execute` request, pass the
-ordered, de-duplicated panel identities as
-`artifactVersionInputs: panelVersions.map(({ versionId }) => versionId)`. This
-registers the delegated immutable panel Versions as the composition Run's
-provenance inputs; paths remain byte-access implementation details and must never
-replace Version identities in this field. Call `compose_figure`, verify the
-notebook result is completed, and keep the actual returned `runId`. Publish the
-final PNG with
+Generate a producer task with
+`composition_task(outline, panelVersions, fig_label)`. Main's newly written
+Artifact can remain pending until its turn ends; the producer child publishes a
+finalized composite that the reviewer can use. Pass the ordered panel Version
+identities in `inputs` and require this output schema:
+
+```javascript
+{
+  type: 'object',
+  additionalProperties: false,
+  required: ['compositeVersionId'],
+  properties: { compositeVersionId: { type: 'string', minLength: 1 } }
+}
+```
+
+The producer resolves the collected Version identities and places the paths in a
+small JSON handoff under `process.env.OPEN_SCIENCE_HANDOFF_DIR`. On its
+`notebook_execute` request, it passes the ordered, de-duplicated panel identities
+as `artifactVersionInputs`. This registers the delegated immutable panel
+Versions as the composition Run's provenance inputs; paths remain byte-access
+implementation details and must never replace Version identities in this field.
+The producer calls `compose_figure`, verifies notebook completion, and keeps the
+actual returned `runId`. It publishes the final PNG with
 `write_artifact_file({ filename: "figure.png", producerRunId: composeResult.runId })`;
 never substitute a round number or locally invented Run identity. This binds the
 composite Artifact to the run that last wrote its bytes. Fail the workflow if
 any panel Version cannot be validated in the active Project; never silently
 compose with an unregistered provenance input.
+
+Collect the exact producer Attempt and require completed status, satisfied
+structured output, and exactly one `figure.png` Artifact whose `versionId`
+matches `structuredOutput.compositeVersionId`. Use that finalized composite
+Version for inspection and review. The producer submits the structured result
+with `host.submitOutput` and finishes normally.
 
 `compose_figure` requires each input image to match its `panel_px` dimensions
 exactly. A mismatch raises before the output is saved; regenerate the panel at
@@ -187,12 +211,14 @@ obvious defect before formal review.
 
 ## 4. Adversarial review loop
 
-Run at most three rounds with review floors 5 → 4 → 3. Generate the reviewer
-task with `composite_review_task(...)` and its `outputSchema` with
+Run at most three rounds. An independent reviewer Attempt is required before
+returning any composite. Generate the reviewer task with
+`composite_review_task(...)` and its `outputSchema` with
 `review_schema()`. Pass the task unchanged to one reviewer; include the
 composite, optional previous composite, `rulesVersionId`, and every non-null
 panel data Version in `inputs`. Collect the exact receipt and use only validated
-`structuredOutput` as the review object.
+`structuredOutput` as the review object. The reviewer submits it with
+`host.submitOutput`; do not replace formal review with Main's own inspection.
 
 After each result:
 
@@ -208,19 +234,26 @@ After each result:
 3. Call `group_fixes_by_panel(review)` and compute
    `regen = (affected | set(fixb)) & {p["letter"] for p in outline["panels"]}`.
 4. Regenerate only `regen`. Build each retry task as
-   `panel_task(outline, letter) + fixb.get(letter, "")` and add: “Do not
+   `panel_task(outline, letter, fig_label) + fixb.get(letter, "")` and add: “Do not
    over-correct: preserve everything the previous version got right.” Include
    the prior panel Version when one exists and its data Version in `inputs`.
-5. Keep every clean panel's exact Version identity. Compose a new revision only
-   after every regenerated panel passes the same identity checks.
+5. Keep every clean panel's exact Version identity. Compose a new revision with
+   a fresh producer child only after every regenerated panel passes the same
+   identity checks. Review only that new composite Version.
 
 Stop when accepted, or when `outline_revisions` is empty and new findings are
 only carve-out exceptions to the previous round; that is the over-labeling
-signal. Otherwise stop after round three.
+signal. Otherwise stop after round three. If the current composite was not
+accepted, report the unresolved findings rather than return an older composite
+as the final result.
+
+After acceptance, verify the composite's provenance contains the current panel
+Versions. Return that finalized `figure.png` Artifact with a user-visible link;
+do not publish a duplicate root Artifact.
 
 ## Anti-patterns
 
 - Do not regenerate clean panels.
-- Do not manufacture findings merely to meet the review floor.
+- Do not manufacture findings.
 - Verify review anchors on the composite, not only on isolated panels.
 - Remove labels that a reader with field context would find redundant.

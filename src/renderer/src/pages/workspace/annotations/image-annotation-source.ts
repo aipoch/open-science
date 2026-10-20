@@ -1,7 +1,7 @@
-import type { ImagePointAnnotation } from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
-import { parseUploadVersionReference } from '../../../../../shared/uploads'
 import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { ImagePointAnnotation } from '../../../../../shared/annotation-contract'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
+import { parseUploadVersionReference } from '../../../../../shared/uploads'
 
 type ImagePointAnnotationSource = ImagePointAnnotation['source']
 

@@ -1,30 +1,33 @@
-import * as storageRoots from '../storage-root'
-import { BookmarkRepository } from '../bookmarks/repository'
-import { SessionProjectionRepository } from '../session-persistence/projection'
-import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
-import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
-import { ContentRepository } from '../storage/content-repository'
-import { readPackageArchive, writePackageArchive, packageEntry } from './archive'
+import { createLiteraturePackageSource } from '../literature/package-source'
+import { persistentContentReferences } from '../storage/prisma-content-references'
+import { literatureItemInputSchema } from '@aipoch/literature-library/item'
+import { createHash } from 'node:crypto'
+import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
+import { afterEach, expect, it, vi } from 'vitest'
+import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 import {
   createLinearConversationGraph,
   forkEditedConversationMessage,
   resolveActiveConversationMessages
 } from '../../shared/conversation-graph'
-import { afterEach, expect, it, vi } from 'vitest'
-import { createHash } from 'node:crypto'
-import { mkdir, writeFile, readFile } from 'node:fs/promises'
-import { join } from 'node:path'
-import { fileURLToPath } from 'node:url'
-import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
-import { sha256 } from '../artifacts/provenance-canonical'
-import { createTestPdf } from '../../../test/fixtures/literature-pdf'
-import { SessionRepository } from '../session-persistence/repository'
-import { SessionPackageService } from './service'
-import { PackageLiteratureReader } from './literature-reader'
-import { ManagedFileVersionService } from '../managed-file-versions/service'
-import { literatureItemInputSchema } from '../../shared/literature'
-import { sessionLiteratureReferences } from './literature'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { sha256 } from '../artifacts/provenance-canonical'
+import { createProvenanceTestFixture } from '../artifacts/provenance-test-fixtures'
+import { BookmarkRepository } from '../bookmarks/repository'
+import { LiteratureAttachmentAuthority } from '../literature/attachment-authority'
+import { SessionPdfSourceResolver } from '../literature/session-pdf-source-resolver'
+import { ManagedFileVersionService } from '../managed-file-versions/service'
+import { ManagedPreviewResources } from '../managed-preview-resources'
+import { SessionProjectionRepository } from '../session-persistence/projection'
+import { SessionRepository } from '../session-persistence/repository'
+import * as storageRoots from '../storage-root'
+import { ContentRepository } from '../storage/content-repository'
+import { packageEntry, readPackageArchive, writePackageArchive } from './archive'
+import { sessionLiteratureReferences } from './literature'
+import { PackageLiteratureReader } from './literature-reader'
+import { SessionPackageService } from './service'
 
 vi.mock('electron', () => ({
   app: { getPath: () => '/home/user', isPackaged: true },
@@ -45,6 +48,7 @@ const setup = async (): Promise<
   // Session path codecs must use fixture data, not the desktop configuration under test.
   vi.spyOn(storageRoots, 'resolveDataRoot').mockReturnValue(fixture.storageRoot)
   const service = new SessionPackageService({
+    literatureSource: createLiteraturePackageSource(async () => fixture.client),
     storageRoot: fixture.storageRoot,
     getClient: async () => fixture.client
   })
@@ -126,6 +130,38 @@ const seed = async (source: Awaited<ReturnType<typeof setup>>): Promise<void> =>
   await new SessionRepository(storageRoot).saveSession(session())
 }
 
+it.each(['deleted', 'unavailable', 'checksum', 'size', 'content-type'] as const)(
+  'rejects a live Literature source with invalid %s identity',
+  async (invalid) => {
+    const fixture = await setup()
+    await seed(fixture)
+    if (invalid === 'deleted')
+      await fixture.client.literatureItem.update({
+        where: { id: 'item-1' },
+        data: { deletedAt: new Date() }
+      })
+    else if (invalid === 'content-type')
+      await fixture.client.literatureAttachmentVersion.update({
+        where: { id: 'version-1' },
+        data: { contentType: 'text/plain' }
+      })
+    else
+      await fixture.client.contentBlob.update({
+        where: { id: 'blob-1' },
+        data:
+          invalid === 'unavailable'
+            ? { state: 'quarantined' }
+            : invalid === 'checksum'
+              ? { checksum: '0'.repeat(64) }
+              : { sizeBytes: 1n }
+      })
+    const source = createLiteraturePackageSource(async () => fixture.client)
+    await expect(source.readVersions(['version-1'])).rejects.toThrow(
+      'Literature PDF content identity is invalid'
+    )
+  }
+)
+
 it.each([false, true])(
   'round-trips Reading PDF metadata with excluded=%s and keeps it out of the Library',
   async (excluded) => {
@@ -175,6 +211,7 @@ it.each([false, true])(
     const authority = new LiteratureAttachmentAuthority({
       getClient: async () => target.client,
       content: new ContentRepository({
+        references: persistentContentReferences,
         storageRoot: target.storageRoot,
         getClient: async () => target.client
       }),
@@ -252,9 +289,9 @@ it.each([false, true])(
     const reforked = await target.service.fork(forked)
     expect(reforked.sessionId).not.toBe(forked.sessionId)
   },
-  // This case migrates source/target databases and validates two imports plus two forks.
-  // Match the bounded Windows budget used by the adjacent package round-trip suites.
-  process.platform === 'win32' ? 120_000 : 30_000
+  // Two imports plus two forks repeatedly migrate real validation databases; Ubuntu coverage
+  // exceeded 30 seconds. Match the bounded budgets of the adjacent package round-trip suites.
+  process.platform === 'win32' ? 120_000 : 60_000
 )
 
 it('keeps metadata-only Literature references', () => {
@@ -383,6 +420,25 @@ it('round-trips two versions of one Literature attachment across stored branches
       expect(await readFile(lease.path)).toEqual(pdf)
     } finally {
       await lease.close()
+    }
+    const resources = new ManagedPreviewResources({
+      resolvePath: async () => {
+        throw new Error('Package preview must use its trusted lease')
+      },
+      openLiterature: () => reader.openContent(versions[index].id)
+    })
+    const resource = await resources.acquire(17, { source: 'literature', path: versions[index].id })
+    try {
+      expect(resource.sourceChecksum).toBe(sha256(pdf))
+      expect(resource.size).toBe(pdf.length)
+      const bytes = await resources.readRange(17, {
+        resourceId: resource.id,
+        begin: 0,
+        end: pdf.length
+      })
+      expect(Buffer.from(bytes.data)).toEqual(pdf)
+    } finally {
+      await resources.release(17, { resourceId: resource.id })
     }
   }
 })
@@ -628,6 +684,7 @@ it('forks a PDF referenced only by a private bookmark and keeps its metadata and
   const authority = new LiteratureAttachmentAuthority({
     getClient: async () => fixture.client,
     content: new ContentRepository({
+      references: persistentContentReferences,
       storageRoot: fixture.storageRoot,
       getClient: async () => fixture.client
     }),

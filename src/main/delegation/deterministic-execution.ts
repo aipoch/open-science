@@ -1,3 +1,5 @@
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import type { PermissionProfileId } from '../../shared/permission-profiles'
 import {
   DelegateExecutionError,
   type DelegateCapacityReservation,
@@ -10,8 +12,6 @@ import {
   type DelegatePermissionResponse,
   type RunningDelegateExecution
 } from './execution-port'
-import type { PermissionProfileId } from '../../shared/permission-profiles'
-import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp'
 
 type Deferred<Value> = Readonly<{
   promise: Promise<Value>

@@ -1,3 +1,5 @@
+import { patchCodexAcpAuthenticationStatusSource } from './codex-authentication-status'
+import { nodeRuntimeEnvironment } from '../node-process-host'
 import { randomUUID } from 'node:crypto'
 import { execFile, spawn, type ChildProcess } from 'node:child_process'
 import { createReadStream, type Dirent } from 'node:fs'
@@ -28,7 +30,12 @@ import {
   ACP_MODEL_TURN_COUNT_META_KEY,
   ACP_TURN_TOKEN_USAGE_META_KEY
 } from '../../shared/acp'
-import { MANAGED_CODEX_VERSION, MINIMUM_CODEX_ACP_VERSION } from '../../shared/codex-runtime'
+import {
+  MANAGED_CODEX_VERSION,
+  MINIMUM_CODEX_ACP_VERSION,
+  isSupportedCodexCliVersion,
+  CODEX_CLI_INCOMPATIBLE_MESSAGE
+} from '../../shared/codex-runtime'
 import {
   DEFAULT_REGISTRIES,
   defaultFetchJson,
@@ -38,7 +45,7 @@ import {
   type FetchJson,
   type FetchTarball
 } from './managed-claude'
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import { stripCodexCredentialEnv } from './process-tree'
 import { onProcessTreeReaped, terminateProcessTree } from '../process-tree'
 import { toErrorMessage } from '../error-message'
@@ -56,17 +63,17 @@ export const CODEX_ACP_INTEGRITY =
 
 export const CODEX_INTEGRITIES: Readonly<Record<string, string>> = {
   'darwin-arm64':
-    'sha512-B1qhN3fa1ay0R0wGziXqgwSkB5icpYChNKHhtBHff/0UtSTC7z+l8aTtvMlGjH3E8HEvY3+njIJelM9CAAoVWg==',
+    'sha512-62/e4TZ34z93KK3FYIHmo/K88aH0JRPA8x7SAVBdK4iG9f9HPO2tsDrJcmOj9z6DrFpMvPEVymomCbYpqN+ylQ==',
   'darwin-x64':
-    'sha512-vnSbbPzfoDZmmyzsxswsDDXQ06IVFBzkQU7/hroB3ji93Ok2utcsq8Psfk2tjF5r9mEx8RWFJhzuTGHG26/NDA==',
+    'sha512-PscZvqKD4zlaSw1nM5Sh4lU1M+01sr4b3qzGx8pf+4OLyULg1z1yAyTR1c35C3t62H8DXy/14y7oazTR3JMMKA==',
   'linux-arm64':
-    'sha512-QKdjYLYV4hXIuUQDP3P6F4NXuWFoKo9WUoV4nAREIx55kiUyi8UsYdsVobkeXir5n/maEQgYMCKLHVma4rNPiw==',
+    'sha512-nEaBZT3ldrtqUNaBlvI+Y+fg+LbNCTsQjbUnl7Q45rl9vSSqHU2vRj1l6iJDwupZkrpeIJ/ClHIwxgMKv1SKHg==',
   'linux-x64':
-    'sha512-x1EcwBlY3AObM1VTUHNM2AzAJQsyreGdagpF+qFiYi/Oa30VBktvvG0C6tLtCzqW6hjZNWkGZQWmeVk7MuJKWg==',
+    'sha512-Eac8XlC0nCXSeUjDU9l8yLJ6P9evv1mO+AnvILoNwlegBC7B3AVXqJ05QcMhQX7RcJ3Lk2618ykCb2X2ui8VAQ==',
   'win32-arm64':
-    'sha512-/FBh42976ltF1kxDoPQBg1Q6+hwChRU5/sm5dfeC8kFVQMvOCGoGeY5d8rRZGVJE8XojlXo74VQb0sHowcfgBw==',
+    'sha512-tFkxdrSXPUDQXXp3JwTxNOgI17RQcexyuaZTiNmL1A/UaVtVmVBNe+8cBk3r8b7dLpaoWFbjPwL7p5SBCrkLQg==',
   'win32-x64':
-    'sha512-lMkB43kJZH0VFr+hoXc11qqR7QtQIbkr07ALgj4urKL1osNyUyuy1iXd3Vzz2iCYvBUCSw7I0l/W1cEPGx9euQ=='
+    'sha512-vgqs/VRXNwhLYMsZDgYfnRSXpRh5Nm782L8lacGskw86kOxbMaquvQKxkuZHUBrJA2XGcksB7rMUHy1XaCJgrA=='
 }
 
 export type ManagedCodexPlatform = {
@@ -588,7 +595,7 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE = [
   '  }'
 ].join('\n')
 
-const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
+const CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS = [
   'function startCodexConnection(codexPath, env) {',
   '  const spawnEnv = env ?? process.env;',
   '  const startupConfigString = spawnEnv["CODEX_CONFIG"];',
@@ -609,6 +616,13 @@ const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT = [
   '    codex = spawn(process.execPath, [bundledCodexPath, ...appServerArgs], { env: spawnEnv });',
   '  }'
 ].join('\n')
+
+// Recognize the exact installed patch so existing adapters receive the console fix too.
+const CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT =
+  CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS.replaceAll(
+    'env: spawnEnv }',
+    'env: spawnEnv, windowsHide: true }'
+  )
 
 const CODEX_ADAPTER_REPLACE_RETRY_DELAYS_MS = [25, 50, 100, 200, 400] as const
 
@@ -804,19 +818,38 @@ export const patchCodexAcpSkillInputSource = (source: string): string => {
 // in model lookup. Project just that immutable catalog path into this native process's CLI override;
 // the remaining request-scoped config continues through codex-acp unchanged.
 export const patchCodexAcpModelCatalogStartupSource = (source: string): string => {
-  if (source.includes(CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)) return source
-
-  const matches = source.split(CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE).length - 1
-  if (matches === 1) {
-    return source.replace(
-      CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
-      CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
-    )
+  const variants = [
+    CODEX_ACP_MODEL_CATALOG_STARTUP_SOURCE,
+    CODEX_ACP_MODEL_CATALOG_STARTUP_PREVIOUS,
+    CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT
+  ]
+  const matches = variants.filter((variant) => source.includes(variant))
+  if (matches.length === 1 && source.split(matches[0]).length === 2) {
+    return source.replace(matches[0], CODEX_ACP_MODEL_CATALOG_STARTUP_REPLACEMENT)
   }
 
   throw new Error(
     'Pinned Codex ACP model-catalog startup patch no longer matches the adapter bundle'
   )
+}
+
+const CODEX_ACP_REVIEWER_MCP_SOURCE = '[mcp.name, this.createMcpSeverConfig(mcp.server)]'
+const CODEX_ACP_REVIEWER_MCP_REPLACEMENT =
+  '[mcp.name, { ...this.createMcpSeverConfig(mcp.server), ...(mcp.name === "open-science-reviewer" ? { required: true } : {}) }]'
+
+// Reviewer cannot submit without this server. Native required-server startup waits for tools/list
+// and fails before model dispatch; optional MCP servers retain the upstream startup grace period.
+const patchCodexAcpReviewerMcpSource = (source: string): string => {
+  const variants = [CODEX_ACP_REVIEWER_MCP_SOURCE, CODEX_ACP_REVIEWER_MCP_REPLACEMENT]
+  const matches = variants.filter((variant) => source.includes(variant))
+  if (matches.length === 1 && source.split(matches[0]).length === 2) {
+    return source.replace(matches[0], CODEX_ACP_REVIEWER_MCP_REPLACEMENT)
+  }
+  if (matches.length > 0 || source.includes('createSessionConfig(')) {
+    throw new Error('Pinned Codex ACP Reviewer MCP patch no longer matches the adapter bundle')
+  }
+  // Unit-test fixtures use tiny stand-in adapters without session configuration.
+  return source
 }
 
 const CODEX_ACP_PROMPT_FAILURE_SOURCE =
@@ -846,12 +879,93 @@ export const patchCodexAcpPromptFailureSource = (source: string): string => {
   return source
 }
 
+// The pinned adapter waits only for a successful compaction item. Capture the native turn as
+// well so failed/interrupted compactions settle and Cancel can address the actual turn.
+const CODEX_ACP_COMPACTION_PATCHES = [
+  [
+    `  async runCompact(params) {
+    const compactionCompleted = this.awaitCompactionCompleted(params.threadId);
+    await this.threadCompactStart(params);
+    return await compactionCompleted;
+  }`,
+    `  async runCompact(params, onTurnStarted) {
+    let turnId;
+    let observe;
+    let releaseCompletion;
+    const completion = new Promise((resolve, reject) => {
+      releaseCompletion = this.captureTurnCompletions(params.threadId, (event) => {
+        if (event.turn.id === turnId) resolve(event);
+      });
+      observe = (event) => {
+        if (event.eventType !== "notification" || event.params?.threadId !== params.threadId) return;
+        if (event.method === "turn/started") {
+          turnId = event.params.turn.id;
+          onTurnStarted?.(turnId, params.threadId);
+        } else if (event.method === "error" && event.params.turnId === turnId && event.params.willRetry === false) {
+          reject(RequestError.internalError(event.params.error, event.params.error.message));
+        } else if (isCompactionCompletedNotification(event)) {
+          resolve(undefined);
+        }
+      };
+      this.codexEventHandlers.push(observe);
+    });
+    // A notification can reject before thread/compact/start acknowledges the request.
+    void completion.catch(() => {});
+    try {
+      await this.threadCompactStart(params);
+      return await completion;
+    } finally {
+      releaseCompletion();
+      const index = this.codexEventHandlers.indexOf(observe);
+      if (index >= 0) this.codexEventHandlers.splice(index, 1);
+    }
+  }`
+  ],
+  [
+    `  async runCompact(sessionId) {
+    await this.codexClient.runCompact({ threadId: sessionId });
+  }`,
+    `  async runCompact(sessionId, onTurnStarted) {
+    return await this.codexClient.runCompact({ threadId: sessionId }, onTurnStarted);
+  }`
+  ],
+  [
+    `      case "compact": {
+        await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId));
+        return { handled: true };
+      }`,
+    `      case "compact": {
+        options.onTurnStartPending?.();
+        const turnCompleted = await this.runWithProcessCheck(() => this.codexAcpClient.runCompact(sessionId, options.onTurnStarted));
+        return { handled: true, turnCompleted };
+      }`
+  ]
+] as const
+
+export const patchCodexAcpCompactionSource = (source: string): string => {
+  if (!source.includes('async runCompact(')) return source
+  for (const [before, after] of CODEX_ACP_COMPACTION_PATCHES) {
+    if (source.includes(after)) continue
+    if (source.split(before).length !== 2) {
+      throw new Error('Pinned Codex ACP compaction patch no longer matches the adapter bundle')
+    }
+    source = source.replace(before, after)
+  }
+  return source
+}
+
 export const ensureManagedCodexContextUsage = async (adapterPath: string): Promise<void> => {
   const source = await readFile(adapterPath, 'utf8')
-  const patched = patchCodexAcpModelCatalogStartupSource(
-    patchCodexAcpSkillInputSource(
-      patchCodexAcpTurnUsageSource(
-        patchCodexAcpContextUsageSource(patchCodexAcpPromptFailureSource(source))
+  const patched = patchCodexAcpReviewerMcpSource(
+    patchCodexAcpModelCatalogStartupSource(
+      patchCodexAcpSkillInputSource(
+        patchCodexAcpTurnUsageSource(
+          patchCodexAcpContextUsageSource(
+            patchCodexAcpPromptFailureSource(
+              patchCodexAcpCompactionSource(patchCodexAcpAuthenticationStatusSource(source))
+            )
+          )
+        )
       )
     )
   )
@@ -1188,7 +1302,7 @@ const defaultVerifyAdapter: VersionVerifier = async (adapterPath, signal) =>
     [adapterPath, '--version'],
     {
       ...process.env,
-      ELECTRON_RUN_AS_NODE: '1',
+      ...nodeRuntimeEnvironment(),
       NO_BROWSER: '1'
     },
     process.platform,
@@ -1248,7 +1362,7 @@ export const verifyManagedCodexPair: PairVerifier = async (
     stdio: ['pipe', 'pipe', 'pipe'],
     env: {
       ...stripCodexCredentialEnv(process.env),
-      ELECTRON_RUN_AS_NODE: '1',
+      ...nodeRuntimeEnvironment(),
       CODEX_HOME: codexHome,
       CODEX_PATH: codexPath,
       NO_BROWSER: '1'
@@ -1592,6 +1706,8 @@ const installManagedCodexFiles = async (
         const verifiedVersion = await verifyCodex(codexPath, signal)
         signal?.throwIfAborted()
         if (!verifiedVersion) throw new Error('Installed Codex binary failed its --version check')
+        if (!isSupportedCodexCliVersion(verifiedVersion))
+          throw new Error(CODEX_CLI_INCOMPATIBLE_MESSAGE)
         // Smoke home lives in scratch (auto-removed), NEVER inside stagedRoot: stagedRoot is moved to
         // the final runtime, so anything Codex might write here must not ride along into the install.
         const smokeHome = join(scratch, 'smoke-home')

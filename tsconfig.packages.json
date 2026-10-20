@@ -1,0 +1,77 @@
+{
+  "files": [],
+  "references": [
+    {
+      "path": "./packages/durable-files/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/connector-core/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/connector-builtins/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/connector-mcp-client/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/diagnostics/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/pdf-structure/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/pdf-translation/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/skills/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/notebook-syntax/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/notebook-code-risk/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/notebook-analysis/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-citations/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/journal-catalog/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/environment/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/compute/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-discovery/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/specialists/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/reproducibility/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-screening/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/resilient-download/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-reading/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/literature-library/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/test-impact/tsconfig.dev.json"
+    },
+    {
+      "path": "./packages/providers/tsconfig.dev.json"
+    }
+  ]
+}

@@ -1,3 +1,4 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
 import { execFileSync, spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
@@ -15,9 +16,9 @@ import {
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import { startWorkingFileObservation } from './working-file-observer'
-import { restoreRRandomState } from './r-random-replay'
+import { restoreRRandomState } from '@aipoch/reproducibility'
 import rdsChordCells from './reported-mixed-rds-chord.fixture.json'
 import repelVolcanoCells from './reported-r-repel-volcano.fixture.json'
 import pipedVolcanoCells from './reported-r-piped-volcano.fixture.json'
@@ -58,6 +59,22 @@ import {
 // at <prefix>/bin/Rscript.
 const rEnvPrefix = process.env.OPEN_SCIENCE_TEST_R_ENV
 const gate = process.env.RUN_KERNEL && rEnvPrefix ? describe : describe.skip
+
+// The native plots succeed, but unproven R column dispatch does not certify file coverage.
+const partialRColumnEvidence = {
+  state: 'partial',
+  fileReads: 'partial',
+  writerAttribution: 'partial',
+  reasonCodes: [
+    'delayed-writes-not-observed',
+    'external-paths-not-observed',
+    'file-reads-not-observed',
+    'remote-outputs-not-observed',
+    'source-analysis-unsupported-call',
+    'transient-files-not-captured',
+    'writer-not-isolated'
+  ]
+}
 
 const LOOP = join(__dirname, '../../../resources/notebook/r_loop.R')
 const TINY_PNG_BYTES = Buffer.from(
@@ -255,7 +272,7 @@ gate('r_loop.R', () => {
           workingFiles: []
         })
       }
-      const result = await new NotebookDependencyAnalyzer({
+      const result = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       }).project({ projectId: 'p', sessionId: 's', completedRun: runs[3]! })
@@ -452,7 +469,7 @@ gate('r_loop.R', () => {
       const captured = new Map<string, KernelLoopResponse['environmentOverlay']>()
       const pngs: Buffer[] = []
       let required = new Set(pipedVolcanoCells.map((cell) => cell.runId))
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -785,15 +802,8 @@ gate('r_loop.R', () => {
             if (name === 'original') captured = response.environmentOverlay
             expect(captured?.executionContext?.before.rRandomState?.state).toBe('available')
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
-            expect(evidence.confirmedReadPaths).toEqual([
-              'data/inputs/differential-results-333333333333.xlsx'
-            ])
+            expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+            expect(evidence.confirmedReadPaths).toBeUndefined()
             expect(evidence.workingFiles.map((file) => file.relativePath).sort()).toEqual([
               'data/diagonal_volcano.png',
               'data/volcano_data.csv'
@@ -870,18 +880,24 @@ gate('r_loop.R', () => {
             expect(result.error).toBeNull()
             if (name === 'original') captured = result.environmentOverlay
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
-            expect(evidence.confirmedReadPaths?.sort()).toEqual(
-              [
-                'data/inputs/expression-matrix-444444444444.csv',
-                'data/inputs/differential-results-333333333333.xlsx'
-              ].sort()
-            )
+            if (name === 'original') {
+              expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+              expect(evidence.confirmedReadPaths).toBeUndefined()
+            } else {
+              // The replay omits the exploratory is.finite checks on unproven column values.
+              expect(evidence.fileEvidence).toMatchObject({
+                state: 'available',
+                fileReads: 'complete',
+                writerAttribution: 'complete',
+                reasonCodes: []
+              })
+              expect(evidence.confirmedReadPaths?.sort()).toEqual(
+                [
+                  'data/inputs/expression-matrix-444444444444.csv',
+                  'data/inputs/differential-results-333333333333.xlsx'
+                ].sort()
+              )
+            }
             expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
               'data/diagonal_volcano.pdf',
               'data/diagonal_volcano.png',
@@ -1154,7 +1170,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
           dataRoot
         )
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: sessionRoot,
           repository: { readSessionRuns: async () => runs }
         })
@@ -1192,12 +1208,19 @@ write.csv(df,"result.csv",row.names=FALSE)`
             )
             expect(result.error, `cell ${cell.index}`).toBeNull()
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence, `${name} cell ${cell.index}`).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
+            expect(evidence.fileEvidence, `${name} cell ${cell.index}`).toMatchObject(
+              cell.index === 4 || cell.index === 5
+                ? partialRColumnEvidence
+                : {
+                    state: cell.index === 3 ? 'available' : 'partial',
+                    fileReads: cell.index === 3 ? 'complete' : 'partial',
+                    writerAttribution: 'complete',
+                    reasonCodes:
+                      cell.index === 3
+                        ? []
+                        : ['file-reads-not-observed', 'source-analysis-unsupported-call']
+                  }
+            )
             expect(evidence.confirmedReadPaths ?? []).toEqual(
               cell.index === 3 ? ['data/inputs/expression-matrix-444444444444.csv'] : []
             )
@@ -1249,7 +1272,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
         mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
         mkdirSync(figures)
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => runs }
         })
@@ -1381,7 +1404,7 @@ write.csv(df,"result.csv",row.names=FALSE)`
           mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
           mkdirSync(figures)
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -1548,15 +1571,8 @@ write.csv(df,"result.csv",row.names=FALSE)`
           })
           expect((await send(script)).error).toBeNull()
           const evidence = await observation.finish()
-          expect(evidence.fileEvidence).toMatchObject({
-            state: 'available',
-            fileReads: 'complete',
-            writerAttribution: 'complete',
-            reasonCodes: []
-          })
-          expect(evidence.confirmedReadPaths).toEqual([
-            'data/inputs/differential-results-333333333333.xlsx'
-          ])
+          expect(evidence.fileEvidence).toMatchObject(partialRColumnEvidence)
+          expect(evidence.confirmedReadPaths).toBeUndefined()
           expect(evidence.workingFiles.map((f) => f.relativePath).sort()).toEqual([
             'data/diagonal_volcano.pdf',
             'data/diagonal_volcano.png'
@@ -1751,19 +1767,23 @@ set.seed(42)`)
             const result = await send(script)
             expect(result.error).toBeNull()
             const evidence = await observation.finish()
-            expect(evidence.fileEvidence).toMatchObject({
-              state: 'available',
-              fileReads: 'complete',
-              writerAttribution: 'complete',
-              reasonCodes: []
-            })
+            expect(evidence.fileEvidence).toMatchObject(
+              index === 4
+                ? {
+                    state: 'available',
+                    fileReads: 'complete',
+                    writerAttribution: 'complete',
+                    reasonCodes: []
+                  }
+                : partialRColumnEvidence
+            )
             expect(evidence.confirmedReadPaths?.sort()).toEqual(
               index === 4
                 ? [
                     'data/inputs/expression-matrix-444444444444.csv',
                     'data/inputs/differential-results-333333333333.xlsx'
                   ].sort()
-                : ['data/merged_diff_expr.rds']
+                : undefined
             )
             expect(evidence.workingFiles.map((f) => f.relativePath)).toEqual([
               index === 4 ? 'data/merged_diff_expr.rds' : 'data/diagonal_volcano.png'
@@ -2287,7 +2307,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
             dataRoot
           )
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: sessionRoot,
             repository: { readSessionRuns: async () => runs }
           })
@@ -2475,7 +2495,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
           }
         })
       }
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -2491,7 +2511,7 @@ out |> write.csv(file="out.csv", row.names=FALSE)`
         readFileSync(join(originalDir, 'palette.txt'))
       )
       // Re-loading the projection from disk must preserve package-based edges.
-      const reopened = new NotebookDependencyAnalyzer({
+      const reopened = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })

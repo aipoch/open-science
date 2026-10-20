@@ -555,3 +555,128 @@ describe('activity group elapsed time', () => {
     expect(getActivityGroupElapsedMs(activities, 9_000)).toBe(1_500)
   })
 })
+
+describe('Notebook risk review waiting presentation', () => {
+  const review = (overrides: Partial<ToolActivity> = {}): ToolActivity =>
+    createActivity({
+      id: 'app-approval:risk',
+      appOwned: true,
+      providerToolName: 'Open-Science',
+      status: 'in_progress',
+      promptMessageId: 'prompt',
+      createdAt: 200,
+      updatedAt: 1200,
+      rawInput: {
+        code: 'os.unlink(path)',
+        notebookCodeRisk: {
+          language: 'python',
+          runId: 'run-1',
+          risks: [{ operation: 'os.unlink', source: 'os.unlink(path)', line: 1 }]
+        }
+      },
+      ...overrides
+    })
+  const run = createActivity({
+    providerToolName: 'mcp__open-science-notebook__notebook_execute',
+    status: 'in_progress',
+    promptMessageId: 'prompt',
+    createdAt: 100,
+    updatedAt: 1400,
+    rawOutput: { status: 'running', runId: 'run-1' }
+  })
+  it('shows waiting even though the admitted Notebook Run is running', () => {
+    expect(formatActivityGroupPresentationTitle([run, review()], undefined, undefined)).toBe(
+      'Waiting for your approval'
+    )
+  })
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'hides %s review rows without discarding their timing and approval evidence',
+    (status) => {
+      const activities = [review({ status }), run]
+      expect(getRenderableActivityEntries(activities)).toEqual([
+        { activity: run, activityIndex: 1 }
+      ])
+      expect(getRenderableActivityEntries([review({ status })])).toEqual([])
+      expect(formatActivityGroupTitle(activities)).toBe('Completed a Notebook run')
+      expect(
+        formatStepCount(getRenderableActivityEntries(activities).map(({ activity }) => activity))
+      ).toBe('1 step')
+      expect(activities).toHaveLength(2)
+    }
+  )
+
+  it.each(['in_progress', 'completed', 'failed'] as const)(
+    'keeps unmarked legacy and lookalike reviews visible as ordinary %s tools',
+    (status) => {
+      const legacy = review({ appOwned: undefined, status })
+      const activities = [run, legacy]
+      expect(getRenderableActivityEntries(activities)).toEqual([
+        { activity: run, activityIndex: 0 },
+        { activity: legacy, activityIndex: 1 }
+      ])
+      expect(formatStepCount(activities)).toBe(
+        status === 'failed' ? '2 steps · 1 failed' : '2 steps'
+      )
+      expect(formatActivityGroupPresentationTitle(activities, undefined, undefined)).not.toBe(
+        'Waiting for your approval'
+      )
+    }
+  )
+
+  it('keeps environment selection and switching visible when hiding code-risk reviews', () => {
+    const selection = createActivity({
+      id: 'app-approval:environment',
+      appOwned: true,
+      providerToolName: 'Open-Science',
+      rawInput: {
+        notebookRuntimeSelection: {
+          language: 'python',
+          runtimeId: 'research',
+          label: 'Python research',
+          previousRuntimeId: 'base',
+          previousLabel: 'Python base'
+        }
+      }
+    })
+    const switched = createActivity({
+      id: 'runtime-switch',
+      providerToolName: 'mcp__open-science-notebook__notebook_switch_runtime',
+      rawInput: { language: 'python', runtimeId: 'research' }
+    })
+    expect(getRenderableActivityEntries([selection, review(), switched])).toEqual([
+      { activity: selection, activityIndex: 0 },
+      { activity: switched, activityIndex: 2 }
+    ])
+  })
+
+  it('excludes review waiting intervals and does not double count review steps', () => {
+    expect(getActivityGroupElapsedMs([run, review()], 1400, () => true)).toBe(100)
+    expect(
+      getActivityGroupElapsedMs([run, review({ status: 'completed' })], 1400, () => false)
+    ).toBe(300)
+    expect(
+      getActivityGroupElapsedMs(
+        [run, review({ status: 'completed', promptMessageId: 'different' })],
+        1400,
+        () => false
+      )
+    ).toBe(1300)
+    expect(
+      getActivityGroupElapsedMs(
+        [
+          run,
+          review({ status: 'completed' }),
+          review({
+            id: 'app-approval:second',
+            appOwned: true,
+            status: 'completed',
+            createdAt: 500,
+            updatedAt: 1300
+          })
+        ],
+        1400,
+        () => false
+      )
+    ).toBe(200)
+  })
+})

@@ -1,10 +1,19 @@
 import { saveWebProjectArchive } from './project-archive'
 import type { SaveProjectArtifactsRequest } from '../../shared/file-save'
+import { createSessionEventHydrator } from '../../shared/session-event-hydrator'
+import { createRuntimePayloadClient } from '../../shared/runtime-payload-client'
+import {
+  RUNTIME_PAYLOAD_CAPABILITY,
+  type RuntimePayloadOptions
+} from '../../shared/runtime-payload-transfer'
 import {
   configureComposerDraftStorage,
   preserveComposerDraftsForRecovery
 } from '@/pages/workspace/composer-draft-storage'
+import { createElement } from 'react'
+import { createRoot } from 'react-dom/client'
 import { flushSync } from 'react-dom'
+import { OpenScienceLogoLoader } from '@/components/OpenScienceLogoLoader'
 import {
   unwrapApplicationCommandOutcome,
   isApplicationCommandErrorCode
@@ -34,7 +43,6 @@ import { installWebRendererContracts } from './api-installer'
 import { i18next, initI18n, prepareI18nLocale } from '@/i18n'
 import { applyHtmlLang, resolveInitialLocale } from '@/lib/locale-preference'
 import { applyTheme, resolveInitialTheme } from '@/lib/theme'
-import openScienceLogoSvg from '../../main/remote-access/open-science-logo.svg?raw'
 
 // Apply the saved theme before the (async) web API install and the app import below, so the page
 // doesn't paint in light mode and then flip to dark. The Electron renderer does the same at the top
@@ -93,12 +101,21 @@ const setConnectionMessage = (message: string): void => {
   if (element) element.textContent = message
 }
 
+// Reuse the desktop animation and its continuous timeline before the application root mounts.
+// React replaces this HTML during startup; release the small temporary root and its observers then.
 const connectionLogo = document.getElementById('open-science-connection-logo')
 if (connectionLogo) {
-  connectionLogo.innerHTML = openScienceLogoSvg.replace(
-    '<svg ',
-    '<svg aria-hidden="true" focusable="false" '
-  )
+  const logoRoot = createRoot(connectionLogo)
+  flushSync(() => logoRoot.render(createElement(OpenScienceLogoLoader)))
+  const replacementObserver = new MutationObserver(() => {
+    if (connectionLogo.isConnected) return
+    replacementObserver.disconnect()
+    logoRoot.unmount()
+  })
+  replacementObserver.observe(document.getElementById('root') ?? document.body, {
+    childList: true,
+    subtree: true
+  })
 }
 
 const wait = (delayMs: number): Promise<void> =>
@@ -232,7 +249,11 @@ const encodeBinary = (_key: string, value: unknown): unknown => {
   return value
 }
 
-const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
+const invokeRaw = async (
+  channel: string,
+  args: readonly unknown[],
+  payloadOptions?: RuntimePayloadOptions
+): Promise<unknown> => {
   const request = async (signal?: AbortSignal): Promise<{ response: Response; body: string }> => {
     const response = await fetch(`/rpc/${encodeURIComponent(channel)}`, {
       method: 'POST',
@@ -240,7 +261,10 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
         'content-type': 'application/json',
         'x-open-science-client': clientId
       },
-      body: JSON.stringify({ protocolVersion: WEB_RPC_PROTOCOL_VERSION, args }, encodeBinary),
+      body: JSON.stringify(
+        { protocolVersion: WEB_RPC_PROTOCOL_VERSION, args, ...payloadOptions },
+        encodeBinary
+      ),
       signal
     })
     return { response, body: await response.text() }
@@ -254,7 +278,9 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
       : withRequestTimeout(
           WEB_RPC_TIMEOUT_MS,
           request,
-          channel === 'uploads:append-transfer' || channel === 'uploads:transfer-status'
+          channel === 'uploads:append-transfer' ||
+            channel === 'uploads:transfer-status' ||
+            (payloadOptions !== undefined && payloadOptions.transfer?.kind !== 'release')
             ? connectionSignal
             : undefined
         )
@@ -283,8 +309,20 @@ const invoke = async (channel: string, args: unknown[]): Promise<unknown> => {
     throw responseError(response, body, payload.error.message)
   }
   if (!response.ok) throw responseError(response, body, `RPC ${channel} failed`)
-  return rewritePreviewUrls(payload.result)
+  return payload.result
 }
+
+let supportsPayload = false
+const payloadClient = createRuntimePayloadClient({
+  invoke: invokeRaw,
+  encode: (value) => JSON.stringify(value, encodeBinary),
+  decode: (value) => JSON.parse(value, reviveBinary),
+  signal: () => eventConnectionController.signal
+})
+const invoke = async (channel: string, args: unknown[]): Promise<unknown> =>
+  rewritePreviewUrls(
+    await (supportsPayload ? payloadClient.invoke(channel, args) : invokeRaw(channel, args))
+  )
 
 const rewritePreviewUrls = (value: unknown): unknown => {
   if (Array.isArray(value)) return value.map(rewritePreviewUrls)
@@ -339,6 +377,7 @@ const connectEvents = (): void => {
     eventConnectionController = new AbortController()
   }
   const connectionLease = eventConnectionController
+  let receivedSequence = eventCursor.latestSequence
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
   const url = new URL(`${protocol}//${location.host}/events`)
   url.searchParams.set('client', clientId)
@@ -362,6 +401,14 @@ const connectEvents = (): void => {
     idleTimeout = window.setTimeout(expireConnection, EVENT_CONNECTION_IDLE_TIMEOUT_MS)
   }
 
+  const sessionEvents = createSessionEventHydrator({
+    load: (request) => invoke('sessions:load-one', [request]),
+    deliver: (event) => {
+      for (const listener of listeners.get(event.channel) ?? []) listener(event.payload)
+    },
+    onFailure: () => requireEventReload(socket)
+  })
+  socket.addEventListener('close', () => sessionEvents.dispose())
   socket.addEventListener('open', () => {
     if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
     armIdleTimeout()
@@ -392,32 +439,41 @@ const connectEvents = (): void => {
       return
     }
     if (message.kind === 'event') {
-      if (message.sequence !== eventCursor.latestSequence + 1) {
+      if (message.sequence !== receivedSequence + 1) {
         requireEventReload(socket)
         return
       }
       try {
-        for (const listener of listeners.get(message.channel) ?? []) listener(message.payload)
+        sessionEvents.receive(
+          { channel: message.channel, payload: message.payload },
+          new TextEncoder().encode(String(event.data)).length,
+          () => {
+            eventCursor.latestSequence = message.sequence
+          }
+        )
       } catch (error) {
         console.error('Failed to apply a Web event frame.', error)
         requireEventReload(socket)
         return
       }
-      eventCursor.latestSequence = message.sequence
+      receivedSequence = message.sequence
       return
     }
     if (message.kind === 'heartbeat') {
-      if (message.latestSequence !== eventCursor.latestSequence) requireEventReload(socket)
+      if (message.latestSequence !== receivedSequence) requireEventReload(socket)
       return
     }
-    if (message.latestSequence !== eventCursor.latestSequence) {
+    if (message.latestSequence !== receivedSequence) {
       requireEventReload(socket)
       return
     }
-    eventReconnectAttempt = 0
-    // Commit resource invalidation/loading states before the recovery gate enables interaction.
-    flushSync(() => publishEventConnectionPhase('live'))
-    window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
+    sessionEvents.whenIdle(() => {
+      if (!isCurrent() || eventRecoveryRequired || connectionLease.signal.aborted) return
+      eventReconnectAttempt = 0
+      // Apply large Session snapshots before the recovery gate enables interaction.
+      flushSync(() => publishEventConnectionPhase('live'))
+      window.dispatchEvent(new Event(WEB_EVENTS_OPEN_EVENT))
+    })
   })
   socket.addEventListener('close', (event) => {
     if (!isCurrent()) return
@@ -480,6 +536,7 @@ const installWebApi = async (): Promise<EventCursor> => {
     )
   }
   const bootstrap = parsedBootstrap.data
+  supportsPayload = bootstrap.rpcCapabilities?.includes(RUNTIME_PAYLOAD_CAPABILITY) ?? false
   configureComposerDraftStorage(bootstrap.draftScope)
   const callerLocation =
     bootstrap.webCallerLocation ??

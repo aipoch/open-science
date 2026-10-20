@@ -111,7 +111,9 @@ describe('managed CodeBuddy runtime', () => {
     expect(
       await readFile(join(managedCodeBuddyRoot(dataRoot), 'package/bin/codebuddy'), 'utf8')
     ).toContain('codebuddy')
-    expect(await readFile(binary, 'utf8')).toContain('ELECTRON_RUN_AS_NODE=1')
+    expect(await readFile(binary, 'utf8')).toContain(
+      `ELECTRON_RUN_AS_NODE=${process.versions.electron ? '1' : ''}`
+    )
     expect(await readFile(binary, 'utf8')).toContain(
       "'/Applications/Open-Science.app/Contents/MacOS/Open-Science'"
     )

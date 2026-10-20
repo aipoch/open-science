@@ -1,8 +1,8 @@
+import type { ModelProtocol } from '@aipoch/providers'
 import {
   preferredEndpoint,
   providerValidationTargetMatches,
   type AgentFrameworkId,
-  type ChatApiEndpoint,
   type ProviderType,
   type ProviderValidationTarget,
   type ValidateProviderResult
@@ -18,17 +18,17 @@ export const providerRuntimeValidationTarget = (
   target: {
     providerType: ProviderType
     effectiveModel?: string
-    apiEndpoints: readonly ChatApiEndpoint[]
-    needsChatResponsesBridge: boolean
+    apiEndpoints: readonly ModelProtocol[]
+    needsChatResponsesToChatCompletionsBridge: boolean
   },
-  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ChatApiEndpoint[] }
+  framework: { id: AgentFrameworkId; supportedApiTypes: readonly ModelProtocol[] }
 ): ProviderValidationTarget => ({
   model: target.effectiveModel,
   endpoint: preferredEndpoint(
     target.apiEndpoints,
     target.providerType === 'xai-subscription'
       ? ['responses']
-      : framework.id === 'codex' || target.needsChatResponsesBridge
+      : framework.id === 'codex' || target.needsChatResponsesToChatCompletionsBridge
         ? target.apiEndpoints
         : framework.supportedApiTypes
   )

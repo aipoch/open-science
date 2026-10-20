@@ -1,3 +1,4 @@
+import { RegistryProbeFailure } from '../settings/environment-check'
 import { describe, expect, it, vi } from 'vitest'
 import type { NetworkInterfaceInfo } from 'node:os'
 
@@ -172,14 +173,23 @@ describe('createConnectionTypeResolver', () => {
 describe('checkInternetReachability', () => {
   it('is reachable when any registry probe succeeds', async () => {
     const probe = vi.fn((registry: string) =>
-      registry === 'npmjs' ? Promise.reject(new Error('down')) : Promise.resolve(12)
+      registry === 'npmjs'
+        ? Promise.reject(new RegistryProbeFailure('transport', 'down'))
+        : Promise.resolve(12)
     )
 
     await expect(checkInternetReachability(probe as never)).resolves.toBe(true)
   })
 
+  it('does not report registry failure when the probe implementation itself is unavailable', async () => {
+    const probe = vi
+      .fn()
+      .mockRejectedValue(new Error('Runtime network must be configured by the host entry.'))
+    await expect(checkInternetReachability(probe)).rejects.toThrow()
+  })
+
   it('is unreachable when every registry probe fails', async () => {
-    const probe = vi.fn(() => Promise.reject(new Error('down')))
+    const probe = vi.fn(() => Promise.reject(new RegistryProbeFailure('transport', 'down')))
 
     await expect(checkInternetReachability(probe as never)).resolves.toBe(false)
   })

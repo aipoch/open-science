@@ -1,23 +1,31 @@
-import { act } from 'react'
-import { createRoot, type Root } from 'react-dom/client'
-import { fireEvent } from '@testing-library/react'
-import { vi } from 'vitest'
 import { i18next } from '@/i18n'
+import { useNavigationStore } from '@/stores/navigation-store'
+import { previewLeaveGuards } from '@/stores/preview-leave-guard'
+import {
+  createInitialPreviewWorkbenchState,
+  usePreviewWorkbenchStore
+} from '@/stores/preview-workbench-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
+import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import {
   createInitialSessionState,
   useSessionStore,
   type ChatSession
 } from '@/stores/session-store'
-import {
-  createInitialPreviewWorkbenchState,
-  usePreviewWorkbenchStore
-} from '@/stores/preview-workbench-store'
-import { useNavigationStore } from '@/stores/navigation-store'
-import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
-import { previewLeaveGuards } from '@/stores/preview-leave-guard'
-import type { LiteratureItemView } from '../../../../shared/literature'
+import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
+import { fireEvent } from '@testing-library/react'
+import { act } from 'react'
+import type { Root } from 'react-dom/client'
+import { createLiteratureTestRenderer } from '../../../../../test/renderer/literature'
+import { vi } from 'vitest'
 import { GlobalSearchDialog } from './GlobalSearchDialog'
+
+const { createRoot } = createLiteratureTestRenderer({
+  get api() {
+    return window.api
+  },
+  onRecovered: () => () => {}
+})
 
 export const artifact = {
   id: 'artifact-1',
@@ -217,9 +225,14 @@ export const teardownSearch = (): void => {
   vi.useRealTimers()
   void i18next.changeLanguage('en')
 }
-export const renderSearch = async (open = true): Promise<void> => {
+export const renderSearch = async (
+  open = true,
+  props: { isSessionPersistenceReady?: boolean; onOpenRecovery?: () => void } = {}
+): Promise<void> => {
   await act(async () => {
-    root.render(<GlobalSearchDialog open={open} onOpenChange={onClose} isSessionPersistenceReady />)
+    root.render(
+      <GlobalSearchDialog open={open} onOpenChange={onClose} isSessionPersistenceReady {...props} />
+    )
   })
   await act(async () => {
     await new Promise((resolve) => setTimeout(resolve, 20))

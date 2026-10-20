@@ -160,3 +160,88 @@ write.csv(frame, "result.csv", row.names=FALSE)`
     60_000
   )
 }
+
+it.skipIf(!process.env.RUN_KERNEL || !python)(
+  'captures and replays a real pandas helper with grouped output',
+  async () => {
+    const storageRoot = await mkdtemp(join(tmpdir(), 'helper-repro-scenario-'))
+    const sessionRoot = join(storageRoot, 'notebook')
+    const dataRoot = join(sessionRoot, 'data')
+    const outputPath = 'outputs/summary.csv'
+    const content = Buffer.from('group,value\nA,1\nA,3\nB,2\n')
+    const inputChecksum = checksum(content)
+    const inputPath = notebookPromptInputPath('patients.csv', inputChecksum)
+    const input: NotebookRunInputFile = {
+      sourceKind: 'upload-version',
+      sourceFileId: 'patients',
+      inputFileVersionId: 'patients-v1',
+      sourceProjectId: 'project',
+      sourceSessionId: 'session',
+      filename: 'patients.csv',
+      checksum: inputChecksum,
+      sizeBytes: content.length,
+      storageKey: 'uploads/patients',
+      association: 'turn-attached'
+    }
+    const helper = `import pandas as pd
+def summarize(input_path, output_path):
+    frame = pd.read_csv(input_path)
+    frame.groupby("group", as_index=False)["value"].mean().to_csv(output_path, index=False)`
+    const call = `summarize("${inputPath}", "${outputPath}")`
+    const script = `${helper}\n${call}`
+    try {
+      await mkdir(join(dataRoot, 'inputs'), { recursive: true })
+      await mkdir(join(dataRoot, 'outputs'), { recursive: true })
+      await writeFile(join(dataRoot, inputPath), content)
+      const observation = await startWorkingFileObservation({
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: call,
+        runId: 'groupby-helper',
+        registeredInputFiles: [input],
+        sourceFileAccessContext: {
+          staticStrings: [],
+          staticCollections: [],
+          localFileWrappers: [],
+          pythonHelperModules: [{ source: helper, exports: ['summarize'] }]
+        }
+      })
+      await execute(python!, ['-I', '-c', script], { cwd: dataRoot, timeout: 30_000 })
+      const result = await observation.finish()
+      expect(result.fileEvidence).toMatchObject({
+        state: 'available',
+        fileReads: 'complete',
+        writerAttribution: 'complete'
+      })
+      expect(result.confirmedReadPaths).toEqual([`data/${inputPath}`])
+      const evidence: {
+        relations: Array<{
+          relativePath: string
+          registeredInput?: { inputFileVersionId: string }
+          generation: { contentStorageKey: string }
+        }>
+      } = JSON.parse(await readFile(join(storageRoot, result.fileEvidence.storageKey!), 'utf8'))
+      const captured = evidence.relations.find((relation) => relation.registeredInput)
+      expect(captured?.registeredInput?.inputFileVersionId).toBe('patients-v1')
+      expect(evidence.relations.map((relation) => relation.relativePath)).toEqual(
+        expect.arrayContaining([`data/${inputPath}`, `data/${outputPath}`])
+      )
+      const replay = join(storageRoot, 'replay')
+      await mkdir(join(replay, 'inputs'), { recursive: true })
+      await mkdir(join(replay, 'outputs'), { recursive: true })
+      await writeFile(
+        join(replay, inputPath),
+        await readFile(join(storageRoot, captured!.generation.contentStorageKey))
+      )
+      await execute(python!, ['-I', '-c', script], { cwd: replay, timeout: 30_000 })
+      expect(await readFile(join(replay, outputPath), 'utf8')).toBe(
+        await readFile(join(dataRoot, outputPath), 'utf8')
+      )
+    } finally {
+      await rm(storageRoot, { recursive: true, force: true })
+    }
+  },
+  60_000
+)

@@ -1,63 +1,27 @@
-import type { PromptResponse } from '@agentclientprotocol/sdk'
 import { mkdir, mkdtemp, readdir, rm, stat } from 'node:fs/promises'
 import { join } from 'node:path'
-
-import { isCodexSubscriptionProviderId } from '../../shared/settings'
 import {
-  sanitizeAcpTurnTokenUsage,
-  type AcpMessageImage,
-  type AcpRuntimeEvent,
-  type AcpTurnTokenUsage
-} from '../../shared/acp'
-import type { AgentFrameworkId } from '../../shared/settings'
-import type { ResolvedAgentBackend } from '../agent-framework'
-import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
-import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
-import { AcpRuntime, type AcpRuntimeOptions } from './runtime'
+  extractRestrictedInferenceUsage,
+  RestrictedInferenceError,
+  type RestrictedInferenceClient,
+  type RestrictedInferenceResult,
+  type RestrictedInferenceRunInput
+} from './restricted-inference-contract'
+
+import { type AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
+import { isCodexSubscriptionProviderId } from '../../shared/settings'
+import type { ResolvedAgentBackend } from '../agent-framework/types'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-target'
 import { prepareRestrictedBackend } from './restricted-runtime-profile'
+import { AcpRuntime } from './runtime'
+import { composeAcpRuntimeBaseOwners } from './runtime-base-composition'
+import type { AcpRuntimeOptions } from './runtime-contract'
+import { composeAcpRuntimeSessionOwners } from './runtime-session-composition'
 
 const STALE_PROFILE_AGE_MS = 24 * 60 * 60 * 1000
 const DEFAULT_OUTPUT_LIMIT_BYTES = 256 * 1024
 const PROVIDER_DEFAULT_MODEL = 'provider-default'
-
-type RestrictedInferenceErrorCode =
-  'cancelled' | 'output-limit' | 'shutting-down' | 'tool-violation' | 'transport-unavailable'
-
-class RestrictedInferenceError extends Error {
-  constructor(
-    readonly code: RestrictedInferenceErrorCode,
-    message: string,
-    readonly usage?: AcpTurnTokenUsage
-  ) {
-    super(message)
-  }
-}
-
-const extractRestrictedInferenceUsage = (error: unknown): AcpTurnTokenUsage | undefined => {
-  if (error instanceof RestrictedInferenceError) return error.usage
-  if (!(error instanceof Error)) return undefined
-  return sanitizeAcpTurnTokenUsage(Object.getOwnPropertyDescriptor(error, 'usage')?.value)
-}
-
-type RestrictedInferenceResult = Readonly<{
-  text: string
-  frameworkId: AgentFrameworkId
-  model: string
-  stopReason: PromptResponse['stopReason']
-  usage?: AcpTurnTokenUsage
-}>
-
-type RestrictedInferenceRunInput = Readonly<{
-  prompt: string
-  images?: readonly AcpMessageImage[]
-  target: ExplicitAgentBackendTarget
-  systemPrompt: string
-  agentName: string
-  description: string
-  signal?: AbortSignal
-  outputLimitBytes?: number
-}>
 
 type RestrictedInferenceRuntime = Pick<
   AcpRuntime,
@@ -97,8 +61,8 @@ const deferred = (): Pick<ActiveRun, 'done' | 'finish'> => {
 
 const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<void> => {
   const owned: Array<{ release: () => Promise<void> }> = []
-  if (backend.responsesBridgeLease) owned.push(backend.responsesBridgeLease)
-  if (backend.anthropicBridgeLease) owned.push(backend.anthropicBridgeLease)
+  if (backend.responsesTransportLease) owned.push(backend.responsesTransportLease)
+  if (backend.messagesBridgeLease) owned.push(backend.messagesBridgeLease)
   if (backend.providerTransportLease) owned.push(backend.providerTransportLease)
   await Promise.all([...new Set(owned)].map((lease) => lease.release().catch(() => undefined)))
 }
@@ -116,7 +80,7 @@ const createRuntime = (options: AcpRuntimeOptions): RestrictedInferenceRuntime =
   return new AcpRuntime(options, base, composeAcpRuntimeSessionOwners(options, base))
 }
 
-class RestrictedInferenceRunner {
+class RestrictedInferenceRunner implements RestrictedInferenceClient {
   private readonly root: string
   private readonly now: () => number
   private readonly runtimeFactory: NonNullable<RestrictedInferenceRunnerOptions['createRuntime']>
@@ -246,7 +210,7 @@ class RestrictedInferenceRunner {
       })
       backend = resolvedBackend
       ensureActive()
-      const bridge = resolvedBackend.responsesBridgeLease
+      const bridge = resolvedBackend.responsesTransportLease
       const nativeCodexSubscriptionToolingDisabled =
         resolvedBackend.framework.id === 'codex' && nativeCodexSubscriptionAllowed
       if (
@@ -345,7 +309,7 @@ class RestrictedInferenceRunner {
       input.signal?.removeEventListener('abort', forwardAbort)
       active.controller.signal.removeEventListener('abort', onAbort)
       if (sessionId && toolLessBridgeScopeRegistered) {
-        backend?.responsesBridgeLease?.unregisterToolLessSession?.(sessionId)
+        backend?.responsesTransportLease?.unregisterToolLessSession?.(sessionId)
       }
       await runtime?.shutdownForQuit().catch(() => undefined)
       if (backend && !backendTransferred) await releaseUnattachedBackend(backend)
@@ -366,9 +330,9 @@ class RestrictedInferenceRunner {
 export {
   DEFAULT_OUTPUT_LIMIT_BYTES,
   extractRestrictedInferenceUsage,
+  resolveRestrictedInferenceModel,
   RestrictedInferenceError,
-  RestrictedInferenceRunner,
-  resolveRestrictedInferenceModel
+  RestrictedInferenceRunner
 }
 export type {
   RestrictedInferenceResult,

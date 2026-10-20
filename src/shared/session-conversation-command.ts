@@ -1,3 +1,5 @@
+import { z } from 'zod'
+import type { SessionConversationCommand } from './conversation-command-contract'
 import {
   activateConversationBranch,
   ensureConversationRuntimeSegment,
@@ -6,19 +8,18 @@ import {
   projectConversationMessage,
   resolveActiveConversationActivities,
   resolveActiveConversationMessages,
-  synchronizeActiveConversationMessages,
-  type PersistedRuntimeSegment
+  synchronizeActiveConversationMessages
 } from './conversation-graph'
-import {
-  materializeSessionConversationGraph,
-  type PersistedActiveRun,
-  type PersistedChatMessage,
-  type PersistedChatSession
-} from './session-persistence'
-import { z } from 'zod'
+import { materializeSessionConversationGraph } from './session-persistence'
+import type { PersistedChatSession } from './session-persistence'
+export { type SessionConversationCommand } from './conversation-command-contract'
 
 const identity = z.string().min(1).max(256)
-const commandBase = { id: identity, timestamp: z.number().finite().nonnegative() }
+const commandBase = {
+  id: identity,
+  timestamp: z.number().finite().nonnegative(),
+  preparationId: identity.optional()
+}
 const agentFrameworkId = z.enum(['claude-code', 'opencode', 'codex', 'codebuddy'])
 const segmentSchema = z.object({
   id: identity,
@@ -31,6 +32,13 @@ const segmentSchema = z.object({
 const wireCommands = z
   .array(
     z.discriminatedUnion('kind', [
+      z.object({
+        ...commandBase,
+        kind: z.literal('prepare-prompt'),
+        promptMessageId: identity,
+        mode: z.enum(['new', 'resume', 'rearm'])
+      }),
+      z.object({ ...commandBase, kind: z.literal('rollback-prompt'), preparationId: identity }),
       z.object({
         ...commandBase,
         kind: z.literal('append-user'),
@@ -96,31 +104,6 @@ export const sanitizeSessionConversationCommands = (
   })
 }
 
-// User actions carry intent, never a replacement copy of the runtime-owned graph. Stable Message,
-// Branch and Segment identities make replay independent of a lost renderer acknowledgement.
-export type SessionConversationCommand = {
-  id: string
-  timestamp: number
-} & (
-  | {
-      kind: 'append-user'
-      branchId: string
-      parentMessageId?: string
-      message: PersistedChatMessage
-    }
-  | { kind: 'fork-message'; branchId: string; parentBranchId: string; messageId: string }
-  | {
-      kind: 'fork-activity'
-      branchId: string
-      parentBranchId: string
-      messageId: string
-      activityId: string
-    }
-  | { kind: 'select-branch'; branchId: string; previousBranchId: string }
-  | { kind: 'open-segment'; segment: Omit<PersistedRuntimeSegment, 'agentFrameId' | 'endedAt'> }
-  | { kind: 'start-run' | 'resume-run'; run: PersistedActiveRun }
-)
-
 const sameValue = (left: unknown, right: unknown): boolean => {
   if (Object.is(left, right)) return true
   if (Array.isArray(left) || Array.isArray(right)) {
@@ -152,8 +135,8 @@ const sameValue = (left: unknown, right: unknown): boolean => {
 // edit is safe to retry once that projection clears the active run, so callers must distinguish this
 // transient admission race from a real branch identity conflict.
 export class SessionConversationCommandDeferredError extends Error {
-  constructor() {
-    super('Cannot fork a running or changed conversation Branch.')
+  constructor(message = 'Cannot fork a running or changed conversation Branch.') {
+    super(message)
     this.name = 'SessionConversationCommandDeferredError'
   }
 }
@@ -202,6 +185,11 @@ export const applySessionConversationCommands = (
       throw new Error('Root Agent Frame active Branch is invalid.')
     }
     switch (command.kind) {
+      case 'prepare-prompt':
+      case 'rollback-prompt':
+        // These commands require Main's preparation receipt. They are never optimistic graph
+        // mutations and must not be replayed through the renderer's shared projection helper.
+        throw new Error('Invalid Session conversation command identity.')
       case 'append-user': {
         if (command.message.role !== 'user') throw new Error('Only user Messages may be submitted.')
         const existing = graph.messages.find((entry) => entry.id === command.message.id)
@@ -217,9 +205,10 @@ export const applySessionConversationCommands = (
           }
           break
         }
-        if (result.activeRun) {
-          throw new Error('Cannot append a user Message while the Session run is active.')
-        }
+        if (result.activeRun)
+          throw new SessionConversationCommandDeferredError(
+            'Cannot append a user Message while the Session run is active.'
+          )
         if (branch.id !== command.branchId || branch.headMessageId !== command.parentMessageId) {
           throw new Error('Conversation Branch changed before the user Message was admitted.')
         }

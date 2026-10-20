@@ -11,7 +11,7 @@ vi.mock('electron', () => ({
 }))
 
 import type { AcpRuntimeEvent } from '../shared/acp'
-import type { ProvisionProgress } from '../shared/notebook-env'
+import type { ProvisionProgress } from '@aipoch/environment/contracts'
 import { ApplicationEventHub } from './application-events'
 import { broadcastNotebookEnvProgress } from './notebook/env-ipc'
 import { broadcastToRenderers, installRendererBroadcastEventHub } from './renderer-broadcast'
@@ -146,3 +146,8 @@ describe('application event flow', () => {
     hub.dispose()
   })
 })
+
+const { installElectronBroadcast } = await import('./renderer-broadcast-electron')
+const removeElectronBroadcast = installElectronBroadcast()
+const { afterAll } = await import('vitest')
+afterAll(removeElectronBroadcast)

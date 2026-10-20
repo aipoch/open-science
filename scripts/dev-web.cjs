@@ -1,25 +1,24 @@
 /* eslint-disable @typescript-eslint/no-require-imports, @typescript-eslint/explicit-function-return-type */
 
-// Starts electron-vite dev with the localhost web service enabled. Use --headless to skip the
-// initial Electron window while keeping the tray, agent runtime, and web UI available.
+// Starts the Node backend for browser development. Use dev for the Electron desktop host.
 const { spawnSync } = require('node:child_process')
 const path = require('node:path')
 
 const DEFAULT_WEB_PORT = '44100'
 
-// Builds the electron-vite invocation from argv/env: default the web port when unset and forward
-// --headless through electron-vite's `--` passthrough. Pure so it can be unit-tested without spawning.
+// Build the ordinary Node invocation and default the port; the entry owns all host configuration.
 const buildDevWebCommand = (argv, env) => {
-  const headless = argv.includes('--headless')
   const nextEnv = { ...env }
-  if (!nextEnv.OPEN_SCIENCE_WEB_PORT?.trim()) {
-    nextEnv.OPEN_SCIENCE_WEB_PORT = DEFAULT_WEB_PORT
-  }
-  const args = ['electron-vite', 'dev']
-  // Pass a namespaced flag to Electron: Chromium consumes a literal `--headless` and renders native
-  // menus (like the tray context menu) invisibly on Windows (electron/electron#48982).
-  if (headless) args.push('--', '--open-science-headless')
-  return { command: 'npx', args, env: nextEnv }
+  if (!nextEnv.OPEN_SCIENCE_WEB_PORT?.trim()) nextEnv.OPEN_SCIENCE_WEB_PORT = DEFAULT_WEB_PORT
+  delete nextEnv.ELECTRON_RUN_AS_NODE
+  const args = [
+    'out/backend/index.cjs',
+    '--development',
+    `--serve=${nextEnv.OPEN_SCIENCE_WEB_PORT}`,
+    ...argv.slice(2).filter((value) => value !== '--headless')
+  ]
+
+  return { command: process.execPath, args, env: nextEnv }
 }
 
 const main = () => {

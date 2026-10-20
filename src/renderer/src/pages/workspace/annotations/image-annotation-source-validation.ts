@@ -1,12 +1,8 @@
 import type { TFunction } from 'i18next'
 
-import {
-  imageAnnotationSourceIsFixed,
-  imageVersionKey,
-  type Annotation,
-  type ImagePointAnnotation
-} from '../../../../../shared/annotations'
-import { parseArtifactVersionLocator } from '../../../../../shared/artifact-provenance'
+import type { Annotation, ImagePointAnnotation } from '../../../../../shared/annotation-contract'
+import { imageAnnotationSourceIsFixed, imageVersionKey } from '../../../../../shared/annotations'
+import { parseArtifactVersionLocator } from '../../../../../shared/artifact-version-locator'
 import type { AcquireManagedPreviewRequest } from '../../../../../shared/preview-resources'
 import { parseUploadVersionReference } from '../../../../../shared/uploads'
 

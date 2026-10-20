@@ -1,5 +1,5 @@
 # Build for linux/amd64: this reproduces the x64 AppImage's Debian-build/Fedora-runtime boundary.
-FROM node:22-bookworm-slim AS client
+FROM node:24-bookworm-slim AS client
 RUN apt-get update && apt-get install -y --no-install-recommends openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY package-lock.json package-lock.json
@@ -12,8 +12,9 @@ COPY scripts/fixtures/linux-prisma/probe.mjs probe.mjs
 # The same generated client must first work on the Debian build host.
 RUN node probe.mjs
 
+# Keep the runtime probe on Node 24 to match Electron 43.
 FROM fedora:44
-RUN dnf -y --setopt=install_weak_deps=False install nodejs22 && dnf clean all
+RUN dnf -y --setopt=install_weak_deps=False install nodejs24 && dnf clean all
 WORKDIR /app
 # Match electron-builder's extraResources: only the generated client and its runtime are shipped.
 COPY --from=client /app/node_modules/.prisma node_modules/.prisma

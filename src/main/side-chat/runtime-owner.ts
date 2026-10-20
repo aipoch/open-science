@@ -4,20 +4,16 @@ import { join } from 'node:path'
 
 import type { PromptResponse } from '@agentclientprotocol/sdk'
 
-import {
-  getAcpRuntimeEventText,
-  type AcpPermissionRequest,
-  type AcpRuntimeEvent
-} from '../../shared/acp'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { AcpCreateSessionResponse } from '../../shared/acp'
+import { getAcpRuntimeEventText, type AcpRuntimeEvent } from '../../shared/acp'
+import type { AcpPermissionRequest } from '../../shared/acp-permission-contract'
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
-import type { PersistedSideChat } from '../../shared/session-persistence'
 import { sessionAgentConfigurationSchema } from '../../shared/session-configuration'
-import { materializeSessionAgentConfiguration } from '../acp/session-agent-target'
+import type { PersistedSideChat } from '../../shared/session-persistence'
 import { isCodexSubscriptionProviderId } from '../../shared/settings'
 import {
   SIDE_CHAT_MESSAGE_LIMIT,
-  type SideChatEntry,
   type SideChatModelSelection,
   type SideChatPromptRequest,
   type SideChatRuntimeEvent,
@@ -29,18 +25,20 @@ import {
   type SideChatStartRequest,
   type SideChatStartResponse
 } from '../../shared/side-chat'
-import type { ResolvedAgentBackend } from '../agent-framework'
-import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
-import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
-import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import type { SideChatEntry } from '../../shared/side-chat-entry-contract'
 import { AgentMcpHttpHost } from '../acp/mcp-http-host'
 import { prepareRestrictedBackend } from '../acp/restricted-runtime-profile'
+import { AcpRuntime } from '../acp/runtime'
 import { composeAcpRuntimeBaseOwners } from '../acp/runtime-base-composition'
+import type { AcpRuntimeOptions } from '../acp/runtime-contract'
 import { composeAcpRuntimeSessionOwners } from '../acp/runtime-session-composition'
-import { AcpRuntime, type AcpRuntimeOptions } from '../acp/runtime'
+import { materializeSessionAgentConfiguration } from '../acp/session-agent-target'
 import { SIDE_CHAT_SESSION_CAPABILITY_POLICY } from '../acp/session-capability-owner'
 import type { SideChatRelayOwner } from '../acp/side-chat-relay-owner'
+import type { ResolvedAgentBackend } from '../agent-framework'
+import { modelFacingAppMcpToolName } from '../agent-framework/app-mcp-names'
+import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
+import type { ExplicitAgentBackendTarget } from '../settings/backend-resolver'
 import {
   HOST_MESSAGE_CONTENT_INSTRUCTION,
   HOST_MESSAGE_MCP_SERVER_NAME,
@@ -92,7 +90,7 @@ type SideChatRuntimePort = Pick<
 
 type SideChatRuntimeStartRequest = SideChatStartRequest & Readonly<{ historyPreamble?: string }>
 
-type HostMessageBridge = NonNullable<ResolvedAgentBackend['responsesBridgeLease']>
+type HostMessageBridge = NonNullable<ResolvedAgentBackend['responsesTransportLease']>
 
 type SideChatRuntimeOwnerOptions = Readonly<{
   appVersion: string
@@ -228,8 +226,8 @@ const deferred = (): Deferred => {
 
 const releaseUnattachedBackend = async (backend: ResolvedAgentBackend): Promise<void> => {
   const leases = new Set([
-    backend.responsesBridgeLease,
-    backend.anthropicBridgeLease,
+    backend.responsesTransportLease,
+    backend.messagesBridgeLease,
     backend.providerTransportLease
   ])
   await Promise.all(
@@ -505,7 +503,7 @@ class SideChatRuntimeOwner {
             target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
-        const bridge = resolved.responsesBridgeLease
+        const bridge = resolved.responsesTransportLease
         if (
           bridge &&
           (!bridge.registerHostMessageSession || !bridge.unregisterHostMessageSession)
@@ -521,7 +519,7 @@ class SideChatRuntimeOwner {
       }
       backend = await resolveBackend()
       const initialBackend = backend
-      const bridge = initialBackend.responsesBridgeLease
+      const bridge = initialBackend.responsesTransportLease
 
       const runtimeRef: { current?: SideChatRuntimePort } = {}
       const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
@@ -1120,7 +1118,7 @@ class SideChatRuntimeOwner {
             target.frameworkId !== 'codex' || !isCodexSubscriptionProviderId(target.providerId)
         })
         resolved = await prepareSideChatBackend(resolved, profileRoot)
-        const bridge = resolved.responsesBridgeLease
+        const bridge = resolved.responsesTransportLease
         if (
           bridge &&
           (!bridge.registerHostMessageSession || !bridge.unregisterHostMessageSession)
@@ -1137,7 +1135,7 @@ class SideChatRuntimeOwner {
 
       backend = await resolveBackend()
       const initialBackend = backend
-      const bridge = initialBackend.responsesBridgeLease
+      const bridge = initialBackend.responsesTransportLease
       const runtimeRef: { current?: SideChatRuntimePort } = {}
       const auxiliaryUsage = this.createRuntimeAuxiliaryUsage(() => activeChat)
       const runtimeOptions: AcpRuntimeOptions = {
@@ -1897,5 +1895,5 @@ class SideChatRuntimeOwner {
   }
 }
 
-export { SIDE_CHAT_SYSTEM_PROMPT, SideChatRuntimeOwner, prepareSideChatBackend }
+export { prepareSideChatBackend, SIDE_CHAT_SYSTEM_PROMPT, SideChatRuntimeOwner }
 export type { SideChatRuntimeOwnerOptions, SideChatRuntimePort, SideChatRuntimeStartRequest }

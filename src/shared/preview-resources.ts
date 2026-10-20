@@ -30,6 +30,9 @@ export type ManagedPreviewResource = {
   size: number
   mimeType: string
   version: number
+  // Optional SHA-256 from the main-owned immutable content lease, never a PDF.js fingerprint.
+  // Transient evidence for this acquired resource; older responses may omit it.
+  sourceChecksum?: string
   // Pixel dimensions for image resources, probed from the file header at acquire time.
   // Absent for non-images and for images whose header could not be parsed.
   width?: number

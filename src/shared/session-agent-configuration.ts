@@ -1,10 +1,10 @@
 import type { ConfiguredModelCatalogEntry } from './configured-model-catalog'
+import type { ReasoningEffort } from './model-preference-contract'
 import { resolveProviderEffectiveModel } from './provider-reasoning-effort'
 import type { PersistedChatSession } from './session-persistence'
 import {
   canonicalSessionProviderId,
   type ProviderView,
-  type ReasoningEffort,
   type SessionAgentConfiguration
 } from './settings'
 

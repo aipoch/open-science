@@ -1,6 +1,6 @@
 import { SettingsService } from '../settings/service'
 import { SettingsRepository } from '../settings/repository'
-import { SkillRegistry } from '../skills/registry'
+import { SkillRegistry } from '@aipoch/skills'
 import { ClaudeCodeSkillMaterializer } from '../skills/materializer'
 import {
   loadSkillDocument,
@@ -101,6 +101,7 @@ const backend = (frameworkId: AgentFrameworkId): ResolvedAgentBackend => {
     executablePath: '/codex-acp.js',
     env: {
       CODEX_CONFIG: JSON.stringify({
+        agents: { enabled: false },
         features: { multi_agent: false, multi_agent_v2: false }
       })
     }
@@ -362,6 +363,7 @@ describe('production delegated framework runtime bridge', () => {
           'runtime',
           'bound-attempt'
         )
+        expect(observed!.delegatedRuntimeHome).toBe(runtimeHome)
         const projection = observed!.fixedBackend!.sessionOptions![
           OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION
         ] as { root: string; skillsDirectory: string }
@@ -394,7 +396,10 @@ describe('production delegated framework runtime bridge', () => {
           await expect(completion).resolves.toMatchObject({ status: 'completed' })
           await expect(stat(runtimeHome)).rejects.toMatchObject({ code: 'ENOENT' })
         } else {
-          await expect(completion).rejects.toThrow('cleanup could not be confirmed')
+          await expect(completion).resolves.toMatchObject({
+            status: 'completed',
+            cleanupError: expect.objectContaining({ name: 'DelegateExecutionCleanupError' })
+          })
           expect((await stat(runtimeHome)).isDirectory()).toBe(true)
           expect(
             await readFile(join(projection.skillsDirectory, 'research', 'SKILL.md'), 'utf8')

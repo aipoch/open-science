@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -44,7 +45,11 @@ describe('SettingsService connector facade', () => {
   it('owns device OAuth sign-in and disconnect through the Connector runtime adapter', async () => {
     const authenticate = vi.fn(async (id: string) => {
       await service.saveCustomServerOAuthState('credential:' + id, {
-        tokens: { access_token: 'oauth-token', token_type: 'bearer' }
+        tokens: {
+          access_token: 'oauth-token',
+          token_type: 'bearer',
+          issuer: 'https://auth.example.test/'
+        }
       })
     })
     const disconnect = vi.fn(async () => undefined)
@@ -83,3 +88,5 @@ describe('SettingsService connector facade', () => {
     expect(stored).toContain('enc:')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

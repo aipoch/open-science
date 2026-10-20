@@ -1,6 +1,6 @@
 import { isCurrentInFlight } from '../../shared/in-flight-promise'
 import type { XaiOAuthDeviceAuthorization } from '../../shared/settings'
-import { netFetchStandard } from '../skills/net-fetch'
+import { netFetchStandard } from '../network-fetch'
 
 const ISSUER = 'https://auth.x.ai'
 const CLIENT_ID = 'b1a00492-073a-47ea-816f-4c329264a828'

@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { buildSpecialistIdentityAppend, buildSpecialistIdentityPrefix } from './identity'
 import type { SpecialistView } from '../../shared/specialist'
-import { emptyFullAccessConfig, emptySelectedConfig } from '../../shared/specialist'
+import { emptyFullAccessConfig, emptySelectedConfig } from '@aipoch/specialists'
 
 const makeProfile = (overrides: Partial<SpecialistView> = {}): SpecialistView => ({
   id: 'uuid-1',

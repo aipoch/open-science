@@ -1,3 +1,9 @@
+import {
+  LibraryReferenceActionsContext,
+  LibraryPreviewNavigationContext
+} from './previews/library-reference-actions'
+import { requestComposerFocus } from './composer-focus-events'
+import type { LiteratureReference } from '../../../../shared/session-persistence'
 import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
 import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import type { SessionDiagnosticIdentity } from '../../../../shared/session-diagnostics'
@@ -8,6 +14,7 @@ import { useTranslation } from 'react-i18next'
 import type { NotebookSessionReference } from '../../../../shared/notebook'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import { useWorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
   pendingWorkspaceElicitations,
   useWorkspaceElicitation
@@ -15,22 +22,28 @@ import {
 import { usePreviewPersistence } from '@/lib/preview-persistence/preview-persistence'
 import {
   deleteSession,
+  hydratePersistedSessionIfPresent,
+  loadPersistedSession,
   retryPendingArtifactFinalization,
   saveSessionInOrder
 } from '@/lib/session-persistence/session-persistence'
 import { forkSession, sessionForkAvailable } from '@/lib/session-fork'
 import { exportSessionPackage, sessionPackageExportAvailable } from '@/lib/session-package-export'
-import { usePackageOperationStore } from '@/stores/package-operation-store'
+import { packageOperationActive, usePackageOperationStore } from '@/stores/package-operation-store'
+import { createSessionActionBindings } from './session-action-menu'
 import { useMemoryStore } from '@/stores/memory-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSettingsStore } from '@/stores/settings-store'
+import { useSessionPendingInteractions } from '@/hooks/useSessionPendingInteractions'
 import {
   createNotebookPreviewItem,
   createProjectComputePreviewItem,
   createProjectFilesPreviewItem,
+  createProjectLibraryPreviewItem,
   PROJECT_COMPUTE_PREVIEW_ID,
   PROJECT_FILES_PREVIEW_ID,
+  PROJECT_LIBRARY_PREVIEW_ID,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
 import {
@@ -53,8 +66,8 @@ import {
   suppressNextAutoReview,
   clearSuppressNextAutoReview
 } from '@/lib/acp/workspace-events'
-import { resolveEffectiveSpecialistSkills } from '../../../../shared/specialist'
-import { revealNotebookWhenProjectActive } from './notebook-preview-availability'
+import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'
+import { registerNotebookWhenProjectActive } from './notebook-preview-availability'
 import { invalidateSessionNotebookCache } from './session-notebook-data'
 import { hasCurrentRunningDelegatedAttempt } from '../../../../shared/delegated-work-projection'
 import {
@@ -68,6 +81,9 @@ import {
   starterHistorySessionSelector
 } from './composer/composer-history'
 import { ConversationPanel } from './ConversationPanel'
+import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
+import { useConversationSubmissions } from './use-conversation-submissions'
+import type { LibraryMentionScopeRequest } from './WorkspaceMessageItem'
 import { ConversationExportDialog } from './ConversationExportDialog'
 import { DeleteSessionDialog } from './DeleteSessionDialog'
 import { DownloadProjectArtifactsDialog } from './DownloadProjectArtifactsDialog'
@@ -76,7 +92,6 @@ import { SessionReproducibilityDialog } from './SessionReproducibilityDialog'
 import { FilePreviewDialog } from './FilePreviewDialog'
 import { EditSessionDialog } from './EditSessionDialog'
 import { SessionNotebookDialog } from './SessionNotebookDialog'
-import { ProjectPackageDropZone } from '@/components/ProjectPackageDropZone'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import { PdfAnnotationsProvider } from './pdf-annotations/PdfAnnotationsProvider'
 import { JobDetailModal } from '@/components/JobDetailModal'
@@ -137,6 +152,7 @@ const WorkspacePage = ({
   isPreviewPresentationActive = true
 }: WorkspacePageProps): React.JSX.Element => {
   const { t } = useTranslation()
+  const conversationSubmissions = useConversationSubmissions()
   // The active project scopes which sessions are visible and stamps newly created ones. The workspace
   // is only reachable via openProject/openSession (which set it); '' is a defensive sentinel that
   // matches no session and triggers the redirect below.
@@ -157,7 +173,6 @@ const WorkspacePage = ({
     (state) => state.setArtifactMentionAvailability
   )
   const goHome = useNavigationStore((state) => state.goHome)
-  const openProjectLiterature = useNavigationStore((state) => state.openProjectLiterature)
   const openSettings = useSettingsStore((state) => state.openSettings)
   const defaultPermissionProfile = useSettingsStore((state) => state.defaultPermissionProfile)
   const settingsSkills = useSettingsStore((state) => state.skills)
@@ -167,6 +182,7 @@ const WorkspacePage = ({
   )
   const loadSkills = useSettingsStore((state) => state.loadSkills)
   const pendingCredentialRequests = useSettingsStore((state) => state.pendingCredentialRequests)
+  const pendingInteractionFactsBySession = useSessionPendingInteractions()
   const selectedAgentFrameworkId = useSettingsStore((state) => state.agentFrameworkId)
   const agentFrameworks = useSettingsStore((state) => state.agentFrameworks)
   const memoryGloballyEnabled = useMemoryStore((state) => state.enabled)
@@ -195,6 +211,11 @@ const WorkspacePage = ({
   const previewPanelState = usePreviewWorkbenchStore((state) => state.panelState)
   const previewOpenRequestVersion = usePreviewWorkbenchStore((state) => state.openRequestVersion)
   const activePreviewItemId = usePreviewWorkbenchStore((state) => state.activeItemId)
+  const activePreviewProjectId = usePreviewWorkbenchStore((state) => state.activeProjectId)
+  const pendingLibraryMention = useRef<{
+    projectId: string
+    scope: LibraryMentionScopeRequest
+  } | null>(null)
   const fileDialogItem = usePreviewWorkbenchStore((state) => state.fileDialogItem)
   const togglePreviewPanel = usePreviewWorkbenchStore((state) => state.togglePanel)
   const projectFormDialog = useProjectFormDialog()
@@ -253,13 +274,16 @@ const WorkspacePage = ({
   const openDiagnostics = (session: ChatSession): void =>
     setDiagnosticSession({ projectId: session.projectId, sessionId: session.id })
   const [checkSession, setCheckSession] = useState<ChatSession>()
-  const [artifactFinalizationRetrySessionId, setArtifactFinalizationRetrySessionId] =
-    useState<string>()
+  const [artifactFinalizationRetry, setArtifactFinalizationRetry] = useState<{
+    sessionId: string
+    promptMessageId: string
+  }>()
   const [manualReviewRequests, setManualReviewRequests] = useState<
     Record<string, ManualReviewRequestState>
   >({})
   const previewFocusFallbackRef = useRef<HTMLElement>(null)
   const sessionInfoReturnFocusRef = useRef<HTMLElement | null>(null)
+  const packageBusy = usePackageOperationStore((state) => packageOperationActive(state.operation))
   const manualReviewPendingSessionIdsRef = useRef(new Set<string>())
   const syncPreviewPanelState = usePreviewWorkbenchStore((state) => state.syncPanelState)
   const runtime = useWorkspaceAgentRuntime()
@@ -359,6 +383,29 @@ const WorkspacePage = ({
         : storedActiveSession,
     [hasPersistedActiveFixLoop, storedActiveSession]
   )
+  // Preserve the new composer through its pending-to-durable Session binding. Other
+  // selections still remount the panel so local dialogs/details cannot cross Sessions.
+  const panelSessionId = activeSession?.id
+  const [panelIdentity, setPanelIdentity] = useState(() => ({
+    projectId: scopedProjectId,
+    sessionId: panelSessionId,
+    pendingMessageId: activeSession?.isPending ? activeSession.messages[0]?.id : undefined,
+    generation: 0
+  }))
+  if (panelIdentity.projectId !== scopedProjectId || panelIdentity.sessionId !== panelSessionId) {
+    const bindsPendingConversation =
+      panelIdentity.pendingMessageId !== undefined &&
+      activeSession?.messages[0]?.id === panelIdentity.pendingMessageId &&
+      !useSessionStore.getState().sessions.some((session) => session.id === panelIdentity.sessionId)
+    const continuesComposer =
+      panelIdentity.projectId === scopedProjectId && bindsPendingConversation
+    setPanelIdentity({
+      projectId: scopedProjectId,
+      sessionId: panelSessionId,
+      pendingMessageId: activeSession?.isPending ? activeSession.messages[0]?.id : undefined,
+      generation: panelIdentity.generation + (continuesComposer ? 0 : 1)
+    })
+  }
   const isReviewHistoryUnavailable =
     storedActiveSession !== undefined &&
     (persistedReviewSnapshot === undefined || reviewLoadError !== undefined)
@@ -507,6 +554,7 @@ const WorkspacePage = ({
   })
   const { doc: draftDoc, error: attachmentError } = composer.view
   const { changeDoc: changeComposerDraftDoc, setError: setAttachmentError } = composer.actions
+  useWorkspaceSessionDiscussion({ composer, draftKey: currentDraftKey, editable: canEditDraft })
   const delegationControl = useWorkspaceSessionDelegationControlOwner({
     activeSession,
     selectedSessionId,
@@ -569,15 +617,24 @@ const WorkspacePage = ({
   const visibleCredentialRequests = useMemo(
     () =>
       activeSession
-        ? pendingCredentialRequests.filter((request) => request.sessionId === activeSession.id)
+        ? pendingCredentialRequests.filter(
+            (request) => request.sessionId === activeSession.id && !request.closed
+          )
         : [],
     [activeSession, pendingCredentialRequests]
   )
   const activeSessionActionability = activeSession
     ? projectSessionActionability(activeSession, {
-        rootPermissionPending: resolveRootPermissionPending(pendingPermissions, activeSession.id),
+        rootPermissionPending:
+          pendingInteractionFactsBySession.get(activeSession.id)?.rootPermissionPending ||
+          resolveRootPermissionPending(pendingPermissions, activeSession.id),
         credentialPending: visibleCredentialRequests.length > 0,
-        presentedWaitReason: visibleCredentialRequests.length > 0 ? 'waiting-for-user' : undefined
+        presentedWaitReason: pendingInteractionFactsBySession.get(activeSession.id)
+          ?.rootPermissionPending
+          ? 'waiting-permission'
+          : visibleCredentialRequests.length > 0
+            ? 'waiting-for-user'
+            : undefined
       })
     : undefined
   const activeNotebookReference = activeSession ? notebookReferences[activeSession.id] : undefined
@@ -650,6 +707,23 @@ const WorkspacePage = ({
     composer,
     session: sessionController,
     runtime,
+    onNewSessionAppended: (message) => {
+      const state = useSessionStore.getState()
+      if (
+        state.selectedSessionId !== message.sessionId ||
+        !state.sessions.some((session) => session.id === message.sessionId && session.isPending)
+      )
+        return
+      // Only this panel's own first send may retain its instance. Selecting an
+      // unrelated pending Session follows the ordinary remount path above.
+      setPanelIdentity((current) =>
+        current.projectId === scopedProjectId &&
+        current.generation === panelIdentity.generation &&
+        !current.sessionId
+          ? { ...current, sessionId: message.sessionId, pendingMessageId: message.messageId }
+          : current
+      )
+    },
     sideChat: !sideChatDisabledReason ? { start: sideChat.start } : undefined,
     sideChatOpen: sideChat.view !== undefined,
     resetNewConversationSettings: () => {
@@ -819,16 +893,20 @@ const WorkspacePage = ({
       : activeSession?.status === 'error'
         ? 'Resolve the current session error before compacting.'
         : 'Wait for the current agent activity to finish.'
+  // runtime.actionError is global to the Runtime, so only the no-Session surface may show it.
+  const activeSessionOperationError = useWorkspaceOperationErrors((state) =>
+    activeSession ? (state.errors[activeSession.id] ?? null) : null
+  )
   const durablePermissionError =
     activeSession?.status === 'waiting-permission' &&
     activeSession.runtimeContext?.permission?.state === 'pending'
-      ? (activeSession.error ?? actionError)
+      ? (activeSession.error ?? activeSessionOperationError)
       : null
   const visibleActionError =
     activeManualReviewRequest?.error ??
     attachmentError ??
     sessionController.view.exportError ??
-    (activeSession ? durablePermissionError : actionError)
+    (activeSession ? (durablePermissionError ?? activeSessionOperationError) : actionError)
 
   const compactActiveContext = useCallback((): void => {
     if (!activeSession || !canCompactContext) return
@@ -861,6 +939,38 @@ const WorkspacePage = ({
   // previews) and persists/restores each project's panel state across switches and restarts.
   usePreviewPersistence(activeProjectId, isSessionPersistenceReady)
 
+  const onOpenLibraryMention = useCallback(
+    (scope: LibraryMentionScopeRequest): void => {
+      if (!scopedProjectId) return
+      if (
+        !isSessionPersistenceReady ||
+        usePreviewWorkbenchStore.getState().activeProjectId !== scopedProjectId
+      ) {
+        pendingLibraryMention.current = { projectId: scopedProjectId, scope }
+        return
+      }
+      pendingLibraryMention.current = null
+      usePreviewWorkbenchStore
+        .getState()
+        .upsertAndActivateItem(createProjectLibraryPreviewItem(scope))
+    },
+    [isSessionPersistenceReady, scopedProjectId]
+  )
+
+  useEffect(() => {
+    const pending = pendingLibraryMention.current
+    if (!pending) return
+    if (pending.projectId !== scopedProjectId) {
+      pendingLibraryMention.current = null
+      return
+    }
+    if (!isSessionPersistenceReady || activePreviewProjectId !== scopedProjectId) return
+    pendingLibraryMention.current = null
+    usePreviewWorkbenchStore
+      .getState()
+      .upsertAndActivateItem(createProjectLibraryPreviewItem(pending.scope))
+  }, [activePreviewProjectId, isSessionPersistenceReady, scopedProjectId])
+
   // Clear the consumed `Chat with agent` prefill intent from the store once it has been applied in the
   // render phase above, so a later normal open starts fresh. (Calling a store action — not a React
   // setter — so this does not trip the set-state-in-effect rule.)
@@ -872,22 +982,22 @@ const WorkspacePage = ({
     if (pendingWslSupportPrefill !== undefined) consumeWslSupportPrefill()
   }, [pendingWslSupportPrefill, consumeWslSupportPrefill])
 
-  // The first agent-side notebook call reveals the new notebook entry and its preview together.
+  // Agent-side notebook calls make the entry available without opening its preview.
   useEffect(() => {
-    let cancelPendingOpen = (): void => undefined
+    let cancelPendingRegistration = (): void => undefined
     const removeNotebookAvailableListener = window.api.notebook.onAvailable((notebook) => {
       setNotebookReferences((references) => ({
         ...references,
         [notebook.sessionId]: notebook
       }))
       if (notebook.projectId !== scopedProjectId || notebook.sessionId !== activeSessionId) return
-      cancelPendingOpen()
-      cancelPendingOpen = revealNotebookWhenProjectActive(notebook)
+      cancelPendingRegistration()
+      cancelPendingRegistration = registerNotebookWhenProjectActive(notebook)
     })
 
     return () => {
       removeNotebookAvailableListener()
-      cancelPendingOpen()
+      cancelPendingRegistration()
     }
   }, [activeSessionId, scopedProjectId])
 
@@ -1005,6 +1115,154 @@ const WorkspacePage = ({
     sessionController.actions,
     setAttachmentError
   ])
+  const [pendingLibraryReferences, setPendingLibraryReferences] = useState<{
+    projectId: string
+    draftKey: string
+    references: readonly LiteratureReference[]
+  }>()
+  const consumedLibraryReferences = useRef<typeof pendingLibraryReferences>(undefined)
+  const libraryLoadIntent = useRef<
+    | {
+        projectId: string
+        sessionId: string | null
+        sourceSessionId: string | null | undefined
+        navigationRevision: number
+        references: readonly LiteratureReference[]
+      }
+    | undefined
+  >(undefined)
+  useEffect(
+    () => () => {
+      libraryLoadIntent.current = undefined
+    },
+    [activeProjectId, isSessionPersistenceReady]
+  )
+  const addLibraryReferences = (
+    references: readonly LiteratureReference[],
+    sessionId: string | null
+  ): void => {
+    if (!isSessionPersistenceReady || !activeProjectId) return
+    const projectId = activeProjectId
+    const sourceSessionId = useSessionStore.getState().selectedSessionId
+    const navigationRevision = useNavigationStore.getState().explicitNavigationRevision
+    const previous = libraryLoadIntent.current
+    const intent = {
+      projectId,
+      sessionId,
+      sourceSessionId,
+      navigationRevision,
+      references:
+        previous?.projectId === projectId &&
+        previous.sessionId === sessionId &&
+        previous.sourceSessionId === sourceSessionId &&
+        previous.navigationRevision === navigationRevision
+          ? [...previous.references, ...references]
+          : references
+    }
+    libraryLoadIntent.current = intent
+    const isCurrent = (): boolean =>
+      libraryLoadIntent.current === intent &&
+      useNavigationStore.getState().activeProjectId === projectId &&
+      useNavigationStore.getState().explicitNavigationRevision === navigationRevision &&
+      useSessionStore.getState().selectedSessionId === sourceSessionId
+    const reject = (): void => {
+      if (!isCurrent()) return
+      libraryLoadIntent.current = undefined
+      setAttachmentError(t('This conversation cannot accept references right now.'))
+      requestComposerFocus()
+    }
+    const accept = (): void => {
+      if (!isCurrent()) return
+      if (sessionId) {
+        const target = useSessionStore
+          .getState()
+          .sessions.find((session) => session.id === sessionId)
+        if (
+          !target ||
+          target.projectId !== projectId ||
+          target.contentLoaded === false ||
+          target.isPending ||
+          target.packageOrigin ||
+          target.archivedAt !== undefined ||
+          target.status === 'waiting-plan-approval'
+        ) {
+          reject()
+          return
+        }
+      }
+      libraryLoadIntent.current = undefined
+      const draftKey = sessionId ?? newConversationDraftKey
+      const enqueue = (): void =>
+        setPendingLibraryReferences((pending) => ({
+          projectId,
+          draftKey,
+          references:
+            pending?.projectId === projectId &&
+            pending.draftKey === draftKey &&
+            consumedLibraryReferences.current !== pending
+              ? [...pending.references, ...intent.references]
+              : intent.references
+        }))
+      if (sessionId && sessionId !== sourceSessionId) {
+        useNavigationStore.getState().openSession(projectId, sessionId, 'user', enqueue)
+      } else {
+        if (!sessionId && sourceSessionId) openNewConversation()
+        enqueue()
+      }
+    }
+    const target = useSessionStore.getState().sessions.find((session) => session.id === sessionId)
+    // Session summaries omit packageOrigin. Resolve just the chosen destination through the
+    // persistence owner before navigation or draft writes; do not hydrate the whole picker.
+    if (target?.projectId === projectId && target.contentLoaded === false) {
+      void loadPersistedSession({ projectId, sessionId: target.id })
+        .then((persisted) => {
+          if (!isCurrent()) return
+          if (!persisted || persisted.projectId !== projectId || persisted.id !== sessionId) {
+            reject()
+            return
+          }
+          hydratePersistedSessionIfPresent(persisted)
+          accept()
+        })
+        .catch(reject)
+    } else {
+      accept()
+    }
+  }
+  useEffect(() => {
+    const pending = pendingLibraryReferences
+    if (!pending || consumedLibraryReferences.current === pending) return
+    consumedLibraryReferences.current = pending
+    setPendingLibraryReferences(undefined)
+    // A cancelled/superseded navigation must never append to a different draft. The controller
+    // reads its live document after its layout effect has restored the destination draft.
+    if (pending.projectId !== activeProjectId || pending.draftKey !== currentDraftKey) return
+    if (
+      !canEditDraft ||
+      activeSession?.contentLoaded === false ||
+      !composer.actions.appendLiterature(pending.draftKey, pending.references)
+    ) {
+      setAttachmentError(
+        t(
+          'Could not add references. Check that the conversation is editable and the reference limit is not exceeded.'
+        )
+      )
+      requestComposerFocus()
+      return
+    }
+    setAttachmentError(null)
+    requestComposerFocus()
+  }, [
+    pendingLibraryReferences,
+    activeProjectId,
+    activeSession?.contentLoaded,
+    currentDraftKey,
+    canEditDraft,
+    composer.actions,
+    setAttachmentError,
+    t
+  ])
+
   const activeSessionHasMessages = (activeSession?.messages.length ?? 0) > 0
 
   useEffect(() => {
@@ -1148,15 +1406,16 @@ const WorkspacePage = ({
     })()
   }
 
-  const requestArtifactFinalizationRetry = (): void => {
-    if (!activeSession || artifactFinalizationRetrySessionId) return
-    const sessionId = activeSession.id
-    setArtifactFinalizationRetrySessionId(sessionId)
-    void retryPendingArtifactFinalization(sessionId)
+  const requestArtifactFinalizationRetry = (sessionId: string, promptMessageId: string): void => {
+    if (artifactFinalizationRetry) return
+    setArtifactFinalizationRetry({ sessionId, promptMessageId })
+    void retryPendingArtifactFinalization(sessionId, undefined, { promptMessageId })
       .catch(() => undefined)
       .finally(() => {
-        setArtifactFinalizationRetrySessionId((current) =>
-          current === sessionId ? undefined : current
+        setArtifactFinalizationRetry((current) =>
+          current?.sessionId === sessionId && current.promptMessageId === promptMessageId
+            ? undefined
+            : current
         )
       })
   }
@@ -1215,12 +1474,23 @@ const WorkspacePage = ({
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectFilesPreviewItem())
   }
 
+  const openLibraryPreview = (): boolean => {
+    if (!isSessionPersistenceReady) {
+      return useNavigationStore.getState().openProjectLiterature(scopedProjectId, 'user')
+    }
+    usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectLibraryPreviewItem())
+    return usePreviewWorkbenchStore.getState().activeItemId === PROJECT_LIBRARY_PREVIEW_ID
+  }
+
   const openComputePreview = (): void => {
     if (!isSessionPersistenceReady) return
     usePreviewWorkbenchStore.getState().upsertAndActivateItem(createProjectComputePreviewItem())
   }
   const canOpenProjectCompute =
-    typeof window.api.backgroundResultDelivery?.getProjectActivity === 'function'
+    typeof window.api.notebook?.getProjectActivity === 'function' &&
+    typeof window.api.notebook?.onChanged === 'function' &&
+    typeof window.api.compute?.jobsList === 'function' &&
+    typeof window.api.compute?.onJobUpdated === 'function'
   const bookmarkSession =
     activeSession && isSessionPersistenceReady && !activeSession.packageOrigin
       ? activeSession
@@ -1231,15 +1501,11 @@ const WorkspacePage = ({
     activeProject?.archivedAt === undefined
   )
 
-  return (
-    <ProjectPackageDropZone
-      projectId={scopedProjectId}
-      projectName={activeProject?.name ?? t('Project')}
-      canImport={
-        isSessionPersistenceReady &&
-        Boolean(activeProject) &&
-        activeProject?.archivedAt === undefined
-      }
+  const canImportSessionPackage =
+    isSessionPersistenceReady && Boolean(activeProject) && activeProject?.archivedAt === undefined
+
+  const content = (
+    <main
       ref={previewFocusFallbackRef}
       tabIndex={-1}
       className="h-[100dvh] overflow-hidden bg-bg-10 text-[13px] leading-normal text-text-000 md:h-screen md:p-[10px]"
@@ -1297,7 +1563,8 @@ const WorkspacePage = ({
                 onNewConversation={openNewConversation}
                 isFilesOpen={activePreviewItemId === PROJECT_FILES_PREVIEW_ID}
                 onOpenFiles={openFilesPreview}
-                onOpenLiterature={() => openProjectLiterature(scopedProjectId, 'user')}
+                isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
+                onOpenLiterature={openLibraryPreview}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
                 }
@@ -1362,8 +1629,9 @@ const WorkspacePage = ({
                   close()
                   openFilesPreview()
                 }}
+                isLibraryOpen={activePreviewItemId === PROJECT_LIBRARY_PREVIEW_ID}
                 onOpenLiterature={() => {
-                  if (openProjectLiterature(scopedProjectId, 'user')) close()
+                  if (openLibraryPreview()) close()
                 }}
                 isComputeOpen={
                   canOpenProjectCompute && activePreviewItemId === PROJECT_COMPUTE_PREVIEW_ID
@@ -1471,12 +1739,22 @@ const WorkspacePage = ({
               openMobileSidebar
             }) => (
               <ConversationPanel
+                key={JSON.stringify([scopedProjectId, panelIdentity.generation])}
+                submissions={conversationSubmissions}
                 view={{
                   activeSession,
                   composerFocusKey: currentDraftKey,
                   canEditDraft,
+                  persistenceBlocked: persistenceBlockedSessionIds.includes(
+                    activeSession?.id ?? ''
+                  ),
                   actionError: visibleActionError,
-                  sideChatDisabledReason
+                  sideChatDisabledReason,
+                  sessionImport: {
+                    projectId: scopedProjectId,
+                    projectName: activeProject?.name ?? t('Project'),
+                    canImport: canImportSessionPackage
+                  }
                 }}
                 composer={composer}
                 conversation={conversation}
@@ -1485,7 +1763,8 @@ const WorkspacePage = ({
                 layout={{
                   isPreviewPanelCollapsed,
                   togglePreviewPanel: togglePreviewPanelFromLayout,
-                  openSidebar: openMobileSidebar
+                  openSidebar: openMobileSidebar,
+                  onOpenLibraryMention
                 }}
                 permissions={{
                   requests: visiblePermissionRequests,
@@ -1543,7 +1822,11 @@ const WorkspacePage = ({
                 }}
                 workflows={{
                   artifactFinalization: {
-                    running: artifactFinalizationRetrySessionId !== undefined,
+                    running: artifactFinalizationRetry !== undefined,
+                    retryingPromptMessageId:
+                      artifactFinalizationRetry?.sessionId === activeSession?.id
+                        ? artifactFinalizationRetry?.promptMessageId
+                        : undefined,
                     request: requestArtifactFinalizationRetry
                   },
                   review: {
@@ -1562,6 +1845,32 @@ const WorkspacePage = ({
                   }
                 }}
                 sessionTools={{
+                  menuBindings: createSessionActionBindings({
+                    canMutateConversations: isSessionPersistenceReady,
+                    canDeleteConversations: false,
+                    canDownloadArtifacts: false,
+                    canArchiveSession,
+                    packageBusy,
+                    onTogglePin: sessionController.actions.togglePin,
+                    onRenameSession: (session) => {
+                      sessionInfoReturnFocusRef.current = document.querySelector<HTMLElement>(
+                        '[data-testid="session-header-menu-trigger"]'
+                      )
+                      sessionController.actions.openEdit(session)
+                    },
+                    onForkSession: sessionForkAvailable() ? forkSession : undefined,
+                    onExportSession:
+                      typeof window.api.sessions?.exportConversation === 'function'
+                        ? sessionController.actions.openExportConversation
+                        : undefined,
+                    onExportPackage: sessionPackageExportAvailable()
+                      ? openPackageExport
+                      : undefined,
+                    onExportDiagnostics: sessionDiagnosticsAvailable()
+                      ? openDiagnostics
+                      : undefined,
+                    onArchiveSession: sessionController.actions.archive
+                  }),
                   exportDiagnostics: sessionDiagnosticsAvailable() ? openDiagnostics : undefined,
                   togglePin: isSessionPersistenceReady
                     ? sessionController.actions.togglePin
@@ -1592,7 +1901,10 @@ const WorkspacePage = ({
                         useSessionStore.getState().streamingMessages
                       )
                     )
-                    await window.api.acp.cancel({ sessionId: activeSession.id, scope: 'subagents' })
+                    await window.api.acp.cancel({
+                      sessionId: activeSession.id,
+                      scope: 'subagents'
+                    })
                   }
                 }}
               />
@@ -1633,6 +1945,7 @@ const WorkspacePage = ({
           />
           {diagnosticSession && (
             <SessionDiagnosticsDialog
+              key={JSON.stringify([diagnosticSession.projectId, diagnosticSession.sessionId])}
               identity={diagnosticSession}
               onClose={() => setDiagnosticSession(undefined)}
             />
@@ -1681,7 +1994,25 @@ const WorkspacePage = ({
           <ProjectFormDialog {...projectFormDialog.dialogProps} />
         </PdfAnnotationsProvider>
       </BookmarksProvider>
-    </ProjectPackageDropZone>
+    </main>
+  )
+  return (
+    <LibraryReferenceActionsContext.Provider
+      value={
+        isSessionPersistenceReady && activeProjectId
+          ? {
+              projectId: scopedProjectId,
+              currentSessionId: selectedSessionId ?? undefined,
+              canAddToCurrent: canEditDraft && activeSession?.contentLoaded !== false,
+              add: addLibraryReferences
+            }
+          : undefined
+      }
+    >
+      <LibraryPreviewNavigationContext.Provider value={onOpenLibraryMention}>
+        {content}
+      </LibraryPreviewNavigationContext.Provider>
+    </LibraryReferenceActionsContext.Provider>
   )
 }
 

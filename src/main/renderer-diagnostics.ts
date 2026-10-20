@@ -1,4 +1,4 @@
-import type { Logger } from './logger'
+import type { Logger } from '@aipoch/diagnostics/node'
 import {
   RENDERER_FAILURE_CHANNEL,
   isRendererFailureReport,

@@ -2,7 +2,7 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { SkillRegistry } from './registry'
+import { SkillRegistry } from '@aipoch/skills'
 
 // The real bundled-skills root shipped with the app. The registry reads manifest.json + each SKILL.md.
 const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')

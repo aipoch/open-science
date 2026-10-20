@@ -17,7 +17,7 @@ it('rejects a multipart download when its response resets instead of throwing a 
     headers: { 'content-type': 'multipart/byteranges; boundary=regression' }
   })
   const output = new PassThrough()
-  const request = Object.assign(new EventEmitter(), { end: vi.fn() })
+  const request = Object.assign(new EventEmitter(), { end: vi.fn(), abort: vi.fn() })
   let rejectDownload!: (error: Error) => void
   const download = new Promise<void>((_resolve, reject) => {
     rejectDownload = reject
@@ -53,6 +53,7 @@ it('rejects a multipart download when its response resets instead of throwing a 
     // Without the patch it throws this exact error and leaves the download promise pending.
     expect(() => response.emit('error', error)).not.toThrow()
     await rejected
+    expect(request.abort).toHaveBeenCalledOnce()
   } finally {
     // Settle the assertion even on the red run, without letting a hung promise mask the real failure.
     rejectDownload(error)

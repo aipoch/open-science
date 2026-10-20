@@ -18,13 +18,12 @@ type NotificationInboxRecord = Omit<NotificationRecordInput, 'id' | 'readAt'>
 type NotificationInboxBadge = Readonly<{ setCount(count: number): void }>
 
 type NotificationInboxDesktopRuntime = Readonly<{
-  isAppFocused: () => boolean
+  isAppFocused: () => boolean | Promise<boolean>
   confirmSessionVisible?: (sessionId: string) => Promise<boolean>
   badge: NotificationInboxBadge
 }>
 
 type NotificationInboxControllerDependencies = Readonly<{
-  headless: boolean
   repository: NotificationInboxDbRepository
   onChanged: (event: NotificationInboxChanged) => void
   createId?: () => string
@@ -51,7 +50,7 @@ type NotificationInboxController = Readonly<{
   syncViewState(state: UnreadTaskViewState): Promise<void>
   handleAppFocus(): Promise<void>
   handleWindowCreated(): void
-  configureDesktop(runtime: NotificationInboxDesktopRuntime): void
+  configureDesktop(runtime?: NotificationInboxDesktopRuntime): void
   setSessionAvailability(check: (sessionId: string) => Promise<boolean>): void
   refreshBadge(): void
 }>
@@ -82,15 +81,16 @@ export const createNotificationInboxController = (
   let unreadCount = 0
   let latestSequence = 0
   let visibleSessionId: string | undefined
+  let viewRevision = 0
   let desktop: NotificationInboxDesktopRuntime | undefined
   let isSessionAvailable: ((sessionId: string) => Promise<boolean>) | undefined
 
   const reportError = (error: unknown): void => dependencies.onError?.(error)
 
-  const isAppFocused = (): boolean => {
+  const isAppFocused = async (): Promise<boolean> => {
     if (!desktop) return false
     try {
-      return desktop.isAppFocused()
+      return await desktop.isAppFocused()
     } catch (error) {
       reportError(error)
       return false
@@ -98,7 +98,7 @@ export const createNotificationInboxController = (
   }
 
   const refreshBadge = (): void => {
-    if (dependencies.headless || !desktop) return
+    if (!desktop) return
     try {
       desktop.badge.setCount(unreadCount)
     } catch (error) {
@@ -165,10 +165,18 @@ export const createNotificationInboxController = (
     if (sessionId && deletedSessionIds.has(sessionId)) return
     if (sessionId && isSessionAvailable && !(await isSessionAvailable(sessionId))) return
 
+    const desktopAtStart = desktop
+    const revisionAtStart = viewRevision
     let readAt: number | undefined
-    if (sessionId && isAppFocused()) {
+    if (sessionId && (await isAppFocused())) {
       const visible = await confirmVisibleSession(sessionId)
-      if (isAppFocused() && visible) readAt = now()
+      if (
+        (await isAppFocused()) &&
+        visible &&
+        desktop === desktopAtStart &&
+        viewRevision === revisionAtStart
+      )
+        readAt = now()
     }
     if (sessionId && deletedSessionIds.has(sessionId)) return
 
@@ -240,20 +248,24 @@ export const createNotificationInboxController = (
     mutate(() => dependencies.repository.reconcileSessionCatalog(existingSessionIds, now()))
 
   const syncViewState = async (state: UnreadTaskViewState): Promise<void> => {
-    visibleSessionId = state.visibleSessionId?.trim() || undefined
-    if (isAppFocused() && visibleSessionId) {
-      await markVisibleSessionNotificationsRead([visibleSessionId])
+    const revision = ++viewRevision
+    const candidate = state.visibleSessionId?.trim() || undefined
+    visibleSessionId = candidate
+    if ((await isAppFocused()) && candidate && revision === viewRevision) {
+      await markVisibleSessionNotificationsRead([candidate])
     } else refreshBadge()
   }
 
   const handleAppFocus = async (): Promise<void> => {
-    if (!isAppFocused() || !visibleSessionId) {
+    const revision = viewRevision
+    if (!(await isAppFocused()) || !visibleSessionId) {
       refreshBadge()
       return
     }
     const candidate = visibleSessionId
     const visible = await confirmVisibleSession(candidate)
-    if (isAppFocused() && visible) await markVisibleSessionNotificationsRead([candidate])
+    if ((await isAppFocused()) && visible && revision === viewRevision)
+      await markVisibleSessionNotificationsRead([candidate])
     else refreshBadge()
   }
 
@@ -272,10 +284,13 @@ export const createNotificationInboxController = (
     syncViewState,
     handleAppFocus,
     handleWindowCreated: () => {
+      viewRevision += 1
       visibleSessionId = undefined
       refreshBadge()
     },
     configureDesktop: (runtime) => {
+      viewRevision += 1
+      visibleSessionId = undefined
       desktop = runtime
       refreshBadge()
     },

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { EventEmitter } from 'node:events'
 import { createElectronSurfaceAdapter } from '../ipc-surfaces/adapter'
 import { disposeIpcHandlerRegistry } from '../ipc-handler-registry'
@@ -23,7 +24,8 @@ vi.mock('electron', () => ({
   net: { fetch: vi.fn() },
   protocol: { handle: vi.fn(), unhandle: vi.fn() }
 }))
-vi.mock('../logger', () => ({
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => ({ warn: vi.fn(), error: vi.fn(), info: vi.fn(), debug: vi.fn() }),
   diagnosticErrorFields: () => ({})
 }))
@@ -214,3 +216,5 @@ describe('Office host navigation', () => {
     expect(s.listenerCount('did-start-navigation')).toBe(0)
   })
 })
+
+await configureTestElectronHost(await import('electron'))

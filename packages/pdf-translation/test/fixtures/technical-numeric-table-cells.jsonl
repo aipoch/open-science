@@ -1,0 +1,12 @@
+{"name": "memory-size-cell-keeps-native-units", "value": "48MB", "preserved": true}
+{"name": "binary-memory-size-cell-keeps-native-units", "value": "16 KiB", "preserved": true}
+{"name": "spaced-bit-depth-cell-keeps-native-unit", "value": "8 bit", "preserved": true}
+{"name": "compact-bit-depth-cell-keeps-native-unit", "value": "6bit", "preserved": true}
+{"name": "ascii-tensor-shape-keeps-native-dimensions", "value": "13x13x64", "preserved": true}
+{"name": "multiplication-tensor-shape-keeps-native-dimensions", "value": "13\u00d713\u00d764", "preserved": true}
+{"name": "bit-depth-description-remains-translatable", "value": "8 bit quantization", "preserved": false}
+{"name": "layer-count-description-remains-translatable", "value": "32 layers", "preserved": false}
+{"name": "bit-depth-does-not-establish-a-new-table", "value": "6bit", "preserved": false, "proof": false}
+{"name": "check-mark-remains-a-table-value", "value": "✓", "preserved": true}
+{"name": "cross-mark-remains-a-table-value", "value": "✗", "preserved": true}
+{"name": "runtime-with-uncertainty-and-speedup-is-a-value", "value": "15.2±0.31s (24.8%)", "preserved": true}

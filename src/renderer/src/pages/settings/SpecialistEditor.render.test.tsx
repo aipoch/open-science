@@ -3,17 +3,15 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { fireEvent } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-
 import { SpecialistEditor } from './SpecialistEditor'
 import { clickRadixMenuItem, openRadixMenu } from './test-utils'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   SPECIALIST_DESCRIPTION_MAX_LENGTH,
-  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH,
-  type SpecialistView
-} from '../../../../shared/specialist'
-
+  SPECIALIST_SYSTEM_PROMPT_MAX_LENGTH
+} from '@aipoch/specialists'
+import { type SpecialistView } from '../../../../shared/specialist'
 ;(globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true
 
 if (!Element.prototype.hasPointerCapture) {

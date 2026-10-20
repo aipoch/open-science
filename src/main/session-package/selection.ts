@@ -1,10 +1,10 @@
+import type { NotebookRunDocument } from '../../shared/notebook'
 import type {
   PackageExcludedFile,
   PackageSelectableFile,
   SessionPackageInventoryEntry
 } from '../../shared/session-package'
-import type { NotebookRunDocument } from '../../shared/notebook'
-import type { PackageRecords } from './native-snapshot'
+import type { PackageRecords } from './records-contract'
 
 // Only immutable file payloads are optional. Metadata, snapshots and their integrity checks remain
 // required even when the user chooses not to share an Artifact's content.

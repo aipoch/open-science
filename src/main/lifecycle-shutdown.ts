@@ -1,10 +1,11 @@
+import { trackLifecycleSettlement } from './lifecycle-settlement'
 // Coordinates a bounded, best-effort shutdown of the app's backend subsystems (main/Side Chat agent
 // runtimes and notebook kernels). Kept free of Electron imports so it stays trivially unit-testable:
 // callers inject the runtime handles. Every operation is time-bounded so app quit can never hang on a
 // backend that refuses to settle, and reports { reaped } so the update-install gate can tell a clean
 // teardown (all process trees gone, file handles released) from a degraded one.
 
-import { diagnosticErrorFields, type Logger } from './logger'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import type { LegacyShellRecovery } from '../shared/update'
 
 export type NotebookShutdownOptions = { legacyShellRecoveryToken?: string }
@@ -88,6 +89,7 @@ export const QUIT_SHUTDOWN_BUDGET_MS = 5000
 // up to ~6s for taskkill /T + ~5s waiting for the real exit). The installer's uninstall step deletes the
 // running app's files, so releasing every handle first matters more here than finishing quickly.
 export const UPDATE_SHUTDOWN_BUDGET_MS = 15000
+const ABANDON_GRACE_MS = 3000
 
 // Runs two backend teardowns concurrently, never rejecting and never running longer than budgetMs. A
 // failing backend is logged but does not block the other, and a hung backend is abandoned once the
@@ -159,6 +161,11 @@ const runBounded = async (
     timer.unref?.()
   })
 
+  // The fence outlives the caller's budget only by a short grace; after that the teardown is abandoned.
+  trackLifecycleSettlement(settleAll, {
+    owner: 'backend-shutdown',
+    abandonAfterMs: budgetMs + ABANDON_GRACE_MS
+  })
   const result = await Promise.race([settleAll.then(() => 'done' as const), deadline])
   if (timer) clearTimeout(timer)
 
@@ -196,6 +203,19 @@ export const shutdownBackends = async (deps: QuitShutdownDeps): Promise<void> =>
 // and notebook sessions, so the subsequent quit teardown finds nothing left to kill and returns fast.
 export class BackendShutdownCoordinator {
   constructor(private readonly deps: BackendShutdownDeps) {}
+
+  // Keep the backend transport and reusable owners alive until pending cleanup (including Windows
+  // ACL restoration) finishes. This is the full cleanup gate, so use its budget rather than the short
+  // terminal-quit budget. A refused quit can flush state and retry through the same backend.
+  async runForQuitPreparation(): Promise<
+    Extract<ShutdownStepOutcome, 'completed' | 'timeout' | 'failed'>
+  > {
+    const outcome = await this.runForUpdateGate(UPDATE_SHUTDOWN_BUDGET_MS, {
+      holdSideChatAdmission: true
+    })
+    if (!outcome.completed) return 'timeout'
+    return outcome.reaped ? 'completed' : 'failed'
+  }
 
   runForQuit(
     budgetMs: number = this.deps.timeoutMs ?? QUIT_SHUTDOWN_BUDGET_MS

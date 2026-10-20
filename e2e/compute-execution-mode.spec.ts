@@ -3,14 +3,10 @@ import { resolve } from 'node:path'
 import type { Locator, Page } from 'playwright'
 
 import { test } from './fixtures/electron-app'
+import { openSettingsPage } from './fixtures/settings-preferences'
 
 const openComputeSettings = async (page: Page): Promise<Locator> => {
-  await page.getByRole('button', { name: /settings/i }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings' })
-  await settings
-    .getByRole('navigation', { name: 'Settings' })
-    .getByRole('button', { name: 'Compute', exact: true })
-    .click()
+  const settings = await openSettingsPage(page, 'Compute')
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
   return settings
 }

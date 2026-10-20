@@ -27,7 +27,7 @@ import {
   type PersistedChatSession,
   type PersistedToolActivity
 } from '../../shared/session-persistence'
-import { DurableJsonReadLimitError, readFileWithinLimit } from '../storage/durable-json-file'
+import { DurableJsonReadLimitError, readFileWithinLimit } from '@aipoch/durable-files'
 import {
   DEV_SESSION_DIR_NAME,
   SessionRepository,

@@ -1,10 +1,6 @@
-import type {
-  AcpAgentRuntimeUpdate,
-  AcpModelCallUsage,
-  AcpPermissionScope,
-  AcpPermissionRequest,
-  AcpTurnTokenUsage
-} from '../../shared/acp'
+import type { AcpAgentRuntimeUpdate } from '../../shared/acp'
+import type { AcpPermissionRequest, AcpPermissionScope } from '../../shared/acp-permission-contract'
+import type { AcpModelCallUsage, AcpTurnTokenUsage } from '../../shared/acp-usage-contract'
 import type { PermissionProfileId } from '../../shared/permission-profiles'
 import type { ResolvedSubagentModelSnapshot } from '../../shared/session-persistence'
 import type { ResolvedAgentBackend } from '../agent-framework'
@@ -72,15 +68,19 @@ type DelegatePermissionResponse = Readonly<{
   cancelled?: boolean
 }>
 
-type DelegateExecutionOutcome =
-  | Readonly<{
-      status: 'completed'
-      response: string
-      turnUsage?: AcpTurnTokenUsage
-      modelCallUsage?: readonly AcpModelCallUsage[]
-      turnUsageUnavailable?: true
-    }>
-  | Readonly<{ status: 'cancelled' }>
+// Execution results and resource retirement are independent terminal facts.
+// This field stays inside the host; it must not replace an already committed result.
+type DelegateExecutionOutcome = Readonly<{ cleanupError?: Error }> &
+  (
+    | Readonly<{
+        status: 'completed'
+        response: string
+        turnUsage?: AcpTurnTokenUsage
+        modelCallUsage?: readonly AcpModelCallUsage[]
+        turnUsageUnavailable?: true
+      }>
+    | Readonly<{ status: 'cancelled' }>
+  )
 
 type DelegateExecutionInput = Readonly<{
   /** Captured before asynchronous admission; never persisted. */
@@ -157,23 +157,23 @@ type DelegateExecution = Readonly<{
 }>
 
 export {
-  DelegateExecutionError,
   DelegateExecutionCleanupError,
+  DelegateExecutionError,
   DelegateMessageParkedError,
   DelegateMessagePreAcceptanceError
 }
 export type {
   DelegateCapacityReservation,
+  DelegateChildTurnIdentity,
+  DelegatedExecutionModelAdmission,
+  DelegateExecution,
   DelegateExecutionBackendClaim,
   DelegateExecutionBackendLease,
-  DelegateExecution,
   DelegateExecutionErrorCode,
   DelegateExecutionEvent,
   DelegateExecutionInput,
-  DelegateMessageAcceptanceEvidence,
-  DelegateChildTurnIdentity,
   DelegateExecutionOutcome,
-  DelegatedExecutionModelAdmission,
+  DelegateMessageAcceptanceEvidence,
   DelegatePermissionResponse,
   RunningDelegateExecution
 }

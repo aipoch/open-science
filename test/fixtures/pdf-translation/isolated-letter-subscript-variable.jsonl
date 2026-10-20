@@ -1,0 +1,5 @@
+{"name": "letter-subscript-is-a-formula-not-translatable-prose", "size": 7, "lower": 1.5, "sourceOnly": true}
+{"name": "ordinary-two-letter-text-is-not-a-subscript", "size": 10, "lower": 0, "sourceOnly": false}
+{"name":"matrix-product-equation-tail-preserves-lowered-index","base":"XYq","tail":")),","size":7,"lower":1.5,"sourceOnly":true}
+{"name":"matrix-product-spelling-without-lowered-index-is-not-proof","base":"XYq","tail":")),","size":10,"lower":0,"sourceOnly":false}
+{"name":"ordinary-word-with-letter-marker-is-not-a-matrix-product","base":"Word","tail":")),","size":7,"lower":1.5,"sourceOnly":false}

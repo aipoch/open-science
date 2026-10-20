@@ -3,8 +3,8 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-import { parseFrontmatter } from './frontmatter'
-import { SkillRegistry } from './registry'
+import { parseFrontmatter } from '@aipoch/skills/document'
+import { SkillRegistry } from '@aipoch/skills'
 
 // The real bundled-skills root shipped with the app.
 const skillsRoot = join(__dirname, '..', '..', '..', 'resources', 'skills')

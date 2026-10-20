@@ -20,15 +20,17 @@ import {
 } from '@/components/ui/select'
 import {
   getOfficialVendor,
-  getOfficialVendorModelIds,
-  resolveVendorApiKeyUrl
-} from '../../../../shared/provider-registry'
+  resolveVendorApiKeyUrl,
+  type CustomReasoningEffortTransport
+} from '@aipoch/providers'
+import { getOfficialVendorModelIds } from '../../../../shared/provider-model-policy'
 import {
   CUSTOM_REASONING_EFFORT_PRESETS,
   CUSTOM_REASONING_EFFORT_TRANSPORTS,
-  type CustomReasoningEffortTransport,
   type ReasoningEffortPresetId
 } from '../../../../shared/reasoning-effort'
+import { customProviderRequiresKey } from '../../../../shared/provider-url-policy'
+
 import { getApiKeySecurityCopyKeys } from './provider-key-security'
 import { ProviderKindIcon } from './provider-icons'
 import {
@@ -43,7 +45,7 @@ import {
   type ProviderFormValue,
   type ProviderKind
 } from './provider-form-value'
-import { customProviderRequiresKey } from '../../../../shared/provider-base-url'
+
 import {
   ENDPOINT_PATHS,
   isProviderUsableByFramework,
@@ -96,16 +98,17 @@ const CUSTOM_PROVIDER_MAX_OUTPUT_TOKEN_PRESETS = [
 // locale and stay out of the catalog — translating `Messages API (/v1/messages)` would make it harder
 // to match against a gateway's own documentation.
 const API_FORMAT_LABELS: Record<ProviderFormValue['apiEndpoint'], string> = {
-  openai: 'Chat Completions (/v1/chat/completions) — GPT / DeepSeek / OpenAI-compatible',
-  anthropic: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
+  'chat-completions':
+    'Chat Completions (/v1/chat/completions) — GPT / DeepSeek / OpenAI-compatible',
+  messages: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
   responses: 'Responses (/v1/responses) — GPT / OpenAI'
 }
 
 // Custom gateways declare exactly one protocol. Official vendors may serve several endpoints; that
 // multi-endpoint set lives in the registry and is not a selectable custom option.
 const selectableApiFormats = (): ProviderFormValue['apiEndpoint'][] => [
-  'openai',
-  'anthropic',
+  'chat-completions',
+  'messages',
   'responses'
 ]
 
@@ -122,24 +125,28 @@ const RequiredMark = (): React.JSX.Element => (
   </span>
 )
 
-type AdvancedSettingsDisclosureProps = {
+type SettingsDisclosureProps = {
   expanded: boolean
   label: string
   onToggle: () => void
   children: React.ReactNode
+  contentClassName?: string
+  contentId?: string
 }
 
-const AdvancedSettingsDisclosure = ({
+const SettingsDisclosure = ({
   expanded,
   label,
   onToggle,
-  children
-}: AdvancedSettingsDisclosureProps): React.JSX.Element => (
+  children,
+  contentClassName = 'mt-3 flex min-w-0 flex-col gap-4 pl-6',
+  contentId = 'provider-advanced-settings'
+}: SettingsDisclosureProps): React.JSX.Element => (
   <div>
     <button
       type="button"
       aria-expanded={expanded}
-      aria-controls="provider-advanced-settings"
+      aria-controls={contentId}
       onClick={onToggle}
       className="flex min-h-8 w-full items-center gap-2 rounded-lg py-1.5 text-left text-sm font-medium whitespace-nowrap text-foreground transition-colors duration-150 outline-none motion-reduce:transition-none hover:text-primary focus-visible:ring-3 focus-visible:ring-ring/50"
     >
@@ -153,7 +160,7 @@ const AdvancedSettingsDisclosure = ({
     </button>
 
     {expanded ? (
-      <div id="provider-advanced-settings" className="mt-3 flex min-w-0 flex-col gap-4 pl-6">
+      <div id={contentId} className={contentClassName}>
         {children}
       </div>
     ) : null}
@@ -195,7 +202,7 @@ const TokenLimitField = ({
       <label id={`${id}-label`} className={fieldLabelClassName} htmlFor={id}>
         {label}
       </label>
-      <FieldHelp content={help} />
+      <FieldHelp label={label} content={help} />
     </div>
     <Input
       id={id}
@@ -255,7 +262,7 @@ const ProviderForm = ({
   encryptionAvailable = true,
   showCodexSubscriptions = false,
   showClaudeIsolated = false,
-  defaultCustomApiEndpoint = 'anthropic',
+  defaultCustomApiEndpoint = 'messages',
   framework
 }: ProviderFormProps): React.JSX.Element => {
   const { t } = useTranslation()
@@ -266,14 +273,19 @@ const ProviderForm = ({
   const isClaudeSubscription = value.type === 'claude-shared' || value.type === 'claude-isolated'
   const isXaiSubscription = value.type === 'xai-subscription'
   const vendor = isOfficial && value.vendorId ? getOfficialVendor(value.vendorId) : undefined
+  // A loopback custom gateway starts with the local-server presets visible, but the user can still
+  // collapse them after that automatic reveal.
+  const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
   const [advancedOpen, setAdvancedOpen] = useState(
     () =>
       value.codexTransport !== 'auto' ||
       value.supportsImageInput ||
       value.reasoningEffortPreset !== 'unsupported' ||
+      Boolean(value.contextWindow.trim()) ||
       Boolean(value.maxInputTokens.trim()) ||
       Boolean(value.maxOutputTokens.trim())
   )
+  const [localModelOpen, setLocalModelOpen] = useState(loopbackCustomGateway)
   const selectedKey = selectedKindKey(value)
   // Scope reveal state to the exact provider kind and draft value. Input events advance that scope
   // only while already revealed, so an externally replaced provider record starts masked.
@@ -284,7 +296,6 @@ const ProviderForm = ({
   const keyVisible = revealedKeyDraft?.kind === selectedKey && revealedKeyDraft.key === value.key
   // A loopback custom gateway (local model server) serves without a key, so the key field reads as
   // optional and the required-field guard below stays quiet for it.
-  const loopbackCustomGateway = isCustom && !customProviderRequiresKey(value.baseUrl)
   const keyRequired = !loopbackCustomGateway && (needsKey || !hasStoredKey)
   // Whether the active framework can drive this draft as configured. Undefined while the caller
   // supplies no framework context, or before the framework list has loaded (compatibility
@@ -298,7 +309,10 @@ const ProviderForm = ({
         )
 
   const advancedVisible =
-    advancedOpen || Boolean(errors.maxInputTokens) || Boolean(errors.maxOutputTokens)
+    advancedOpen ||
+    Boolean(errors.contextWindow) ||
+    Boolean(errors.maxInputTokens) ||
+    Boolean(errors.maxOutputTokens)
 
   const selectedKind = PROVIDER_KINDS.find((kind) => kind.key === selectedKey)
   // Where to get a key for an official vendor (region-specific console); custom providers have none.
@@ -319,6 +333,7 @@ const ProviderForm = ({
             )}
           </label>
           <FieldHelp
+            label={t('API key')}
             content={
               <>
                 <span className="block font-medium">{t(securityCopyKeys.title)}</span>
@@ -405,10 +420,13 @@ const ProviderForm = ({
       <div className="space-y-1.5">
         <div className="flex items-center gap-1">
           <span className={fieldLabelClassName}>{t('Provider type')}</span>
-          {selectedKind ? <FieldHelp content={t(selectedKind.descriptionKey)} /> : null}
+          {selectedKind ? (
+            <FieldHelp label={t('Provider type')} content={t(selectedKind.descriptionKey)} />
+          ) : null}
         </div>
         <Select
           value={selectedKey}
+          disabled={disabled}
           onValueChange={(key) => onChange(providerKindPatch(key, defaultCustomApiEndpoint))}
         >
           <SelectTrigger aria-label={t('Provider type')}>
@@ -515,7 +533,7 @@ const ProviderForm = ({
                   )}
             </p>
           </div>
-          <AdvancedSettingsDisclosure
+          <SettingsDisclosure
             expanded={advancedVisible}
             label={t('Advanced settings')}
             onToggle={() => setAdvancedOpen((open) => !open)}
@@ -524,6 +542,7 @@ const ProviderForm = ({
               <div className="flex items-center gap-1">
                 <span className={fieldLabelClassName}>{t('Transport')}</span>
                 <FieldHelp
+                  label={t('Transport')}
                   content={t(
                     'Auto uses WebSocket when available and falls back to HTTPS. Use HTTPS for compatibility or WebSocket for lower latency.'
                   )}
@@ -554,7 +573,7 @@ const ProviderForm = ({
                 </SelectContent>
               </Select>
             </div>
-          </AdvancedSettingsDisclosure>
+          </SettingsDisclosure>
         </>
       ) : isClaudeSubscription ? (
         <>
@@ -637,8 +656,13 @@ const ProviderForm = ({
         </>
       ) : isCustom ? (
         <>
-          <div className="space-y-1.5">
-            <span className={fieldLabelClassName}>{t('Local model server')}</span>
+          <SettingsDisclosure
+            expanded={localModelOpen}
+            label={t('Local model server')}
+            onToggle={() => setLocalModelOpen((open) => !open)}
+            contentClassName="mt-2 flex min-w-0 flex-col gap-2 pl-6"
+            contentId="provider-local-model-server"
+          >
             <div className="flex flex-wrap gap-2" role="group" aria-label={t('Local model server')}>
               {LOCAL_MODEL_PRESETS.map((preset) => {
                 const active = value.baseUrl.trim() === preset.baseUrl
@@ -648,9 +672,10 @@ const ProviderForm = ({
                     type="button"
                     aria-pressed={active}
                     disabled={disabled}
-                    onClick={() =>
+                    onClick={() => {
+                      setLocalModelOpen(true)
                       onChange(localModelPresetPatch(preset, value, defaultCustomApiEndpoint))
-                    }
+                    }}
                     className={cn(
                       'inline-flex min-h-8 items-center rounded-full border px-3 text-xs font-medium transition-colors duration-150 outline-none motion-reduce:transition-none focus-visible:ring-3 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50',
                       active
@@ -668,7 +693,7 @@ const ProviderForm = ({
                 'Quick-fills the base URL and the Chat Completions format. Tap again to clear. Everything stays editable.'
               )}
             </p>
-          </div>
+          </SettingsDisclosure>
 
           <div className="space-y-1.5">
             <div className="flex items-center gap-1">
@@ -677,6 +702,7 @@ const ProviderForm = ({
                 <RequiredMark />
               </label>
               <FieldHelp
+                label={t('Base URL')}
                 content={
                   <Trans
                     t={t}
@@ -695,7 +721,13 @@ const ProviderForm = ({
               value={value.baseUrl}
               disabled={disabled}
               placeholder={t('https://gateway.example')}
-              onChange={(event) => onChange({ baseUrl: event.target.value })}
+              onChange={(event) => {
+                const baseUrl = event.target.value
+                if (!loopbackCustomGateway && !customProviderRequiresKey(baseUrl)) {
+                  setLocalModelOpen(true)
+                }
+                onChange({ baseUrl })
+              }}
             />
             {errors.baseUrl ? (
               <p id="provider-base-url-error" className={fieldErrorClassName} role="alert">
@@ -708,6 +740,7 @@ const ProviderForm = ({
             <div className="flex items-center gap-1">
               <span className={fieldLabelClassName}>{t('API format')}</span>
               <FieldHelp
+                label={t('API format')}
                 content={t(
                   'Choose the protocol documented by the gateway. The model name does not determine the protocol. A provider is only selectable under an agent framework that supports its format.'
                 )}
@@ -778,23 +811,23 @@ const ProviderForm = ({
             ) : null}
           </div>
 
-          <TokenLimitField
-            id="provider-context-window"
-            label={t('Context window')}
-            help={t('Total tokens shared by the request and response.')}
-            value={value.contextWindow}
-            presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
-            disabled={disabled}
-            error={errors.contextWindow}
-            onValueChange={(contextWindow) => onChange({ contextWindow })}
-            t={t}
-          />
-
-          <AdvancedSettingsDisclosure
+          <SettingsDisclosure
             expanded={advancedVisible}
             label={t('Advanced settings')}
             onToggle={() => setAdvancedOpen((open) => !open)}
           >
+            <TokenLimitField
+              id="provider-context-window"
+              label={t('Context window')}
+              help={t('Total tokens shared by the request and response.')}
+              value={value.contextWindow}
+              presets={CUSTOM_PROVIDER_CONTEXT_WINDOW_PRESETS}
+              disabled={disabled}
+              error={errors.contextWindow}
+              onValueChange={(contextWindow) => onChange({ contextWindow })}
+              t={t}
+            />
+
             <div className="grid gap-x-6 gap-y-3 sm:grid-cols-2">
               <div className="flex items-start justify-between gap-3">
                 <label className="space-y-0.5" htmlFor="provider-image-input">
@@ -836,12 +869,16 @@ const ProviderForm = ({
             {value.reasoningEffortPreset !== 'unsupported' ? (
               <div className="space-y-3 border-t border-border-200 pt-3">
                 <div
-                  className={cn('grid gap-3', value.apiEndpoint === 'openai' && 'sm:grid-cols-2')}
+                  className={cn(
+                    'grid gap-3',
+                    value.apiEndpoint === 'chat-completions' && 'sm:grid-cols-2'
+                  )}
                 >
                   <div className="space-y-1.5">
                     <div className="flex items-center gap-1">
                       <span className={fieldLabelClassName}>{t('Supported effort levels')}</span>
                       <FieldHelp
+                        label={t('Supported effort levels')}
                         content={
                           <>
                             <span className="block">
@@ -854,7 +891,7 @@ const ProviderForm = ({
                                 'Examples reflect common native model APIs. A gateway may use different mappings.'
                               )}
                             </span>
-                            {value.apiEndpoint === 'anthropic' ? (
+                            {value.apiEndpoint === 'messages' ? (
                               <span className="mt-1 block">
                                 {t(
                                   "Messages API uses the framework's Anthropic-compatible thinking request automatically."
@@ -899,11 +936,12 @@ const ProviderForm = ({
                     </Select>
                   </div>
 
-                  {value.apiEndpoint === 'openai' ? (
+                  {value.apiEndpoint === 'chat-completions' ? (
                     <div className="space-y-1.5">
                       <div className="flex items-center gap-1">
                         <span className={fieldLabelClassName}>{t('Reasoning request format')}</span>
                         <FieldHelp
+                          label={t('Reasoning request format')}
                           content={t(
                             'The JSON fields sent to a Chat Completions gateway. Follow the gateway documentation; OpenAI-compatible services commonly use {{parameter}}.',
                             { parameter: 'reasoning_effort' }
@@ -970,7 +1008,7 @@ const ProviderForm = ({
                 t={t}
               />
             </div>
-          </AdvancedSettingsDisclosure>
+          </SettingsDisclosure>
         </>
       ) : isOfficial ? (
         <>
@@ -979,6 +1017,7 @@ const ProviderForm = ({
               <span className={fieldLabelClassName}>{t('Endpoint')}</span>
               <Select
                 value={value.region ?? vendor.regions[0]?.id}
+                disabled={disabled}
                 onValueChange={(region) => onChange({ region })}
               >
                 <SelectTrigger aria-label={t('Endpoint')}>
@@ -1031,6 +1070,7 @@ const ProviderForm = ({
                   <div className="flex items-center gap-1">
                     <span className={fieldLabelClassName}>{t('Supported models')}</span>
                     <FieldHelp
+                      label={t('Supported models')}
                       content={t(
                         'Bundled with the app. Refresh from the vendor to pull the latest. Choose one from the Active model selector after adding.'
                       )}

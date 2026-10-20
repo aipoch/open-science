@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from 'node:crypto'
-
 import type {
   AddMarketplaceSourceRequest,
   GetMarketplaceReleaseRequest,
@@ -18,9 +17,9 @@ import type {
   RemoveMarketplaceSourceRequest
 } from '../../../shared/specialist-marketplace'
 import type { SpecialistMarketplaceProvenance } from '../../../shared/specialist'
-import type { SpecialistPackageService } from '../package/service'
-import { compareSemver } from '../package/semver'
-import { filterMarketplaceSpecialistZip } from '../package/zip-adapter'
+import type { SpecialistPackageService } from '@aipoch/specialists/node'
+import { compareSemver } from '@aipoch/specialists/node'
+import { filterMarketplaceSpecialistZip } from './archive'
 import {
   marketplaceKeyFingerprint,
   parseMarketplaceRelease,

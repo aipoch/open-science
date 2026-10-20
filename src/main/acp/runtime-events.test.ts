@@ -166,29 +166,32 @@ describe('ACP runtime event normalization', () => {
     ).toBe('mcp__skills__load_skill')
   })
 
-  it('maps Codex context-compaction tool calls into the shared compaction lifecycle', () => {
-    const notification: SessionNotification = {
-      sessionId: 'session-1',
-      update: {
-        sessionUpdate: 'tool_call',
-        toolCallId: 'compact-1',
-        title: 'Context compacting',
-        kind: 'other',
-        status: 'in_progress',
-        _meta: { contextCompaction: true }
+  it.each([true, { version: 1 }])(
+    'maps Codex context-compaction metadata %j into the shared lifecycle',
+    (marker) => {
+      const notification: SessionNotification = {
+        sessionId: 'session-1',
+        update: {
+          sessionUpdate: 'tool_call',
+          toolCallId: 'compact-1',
+          title: 'Context compacting',
+          kind: 'other',
+          status: 'in_progress',
+          _meta: { contextCompaction: marker }
+        }
       }
-    }
 
-    expect(toAcpRuntimeEvent(notification, 'event-compact-start', 1710000000002)).toMatchObject({
-      id: 'event-compact-start',
-      timestamp: 1710000000002,
-      kind: 'compaction',
-      sessionId: 'session-1',
-      toolCallId: 'compact-1',
-      title: 'Compacting context',
-      status: 'in_progress'
-    })
-  })
+      expect(toAcpRuntimeEvent(notification, 'event-compact-start', 1710000000002)).toMatchObject({
+        id: 'event-compact-start',
+        timestamp: 1710000000002,
+        kind: 'compaction',
+        sessionId: 'session-1',
+        toolCallId: 'compact-1',
+        title: 'Compacting context',
+        status: 'in_progress'
+      })
+    }
+  )
 
   it.each(['tool_call', 'tool_call_update'] as const)(
     'maps Codex %s completion events for live updates and history replay',
@@ -212,6 +215,30 @@ describe('ACP runtime event normalization', () => {
         title: 'Context compacted',
         status: 'completed'
       })
+    }
+  )
+
+  it.each([
+    [{ version: 1 }, 'compaction'],
+    [{ version: 2 }, 'tool'],
+    [{}, 'tool'],
+    [false, 'tool']
+  ] as const)(
+    'recognizes only supported versioned compaction markers (%j)',
+    (marker, expectedKind) => {
+      const event = toAcpRuntimeEvent(
+        {
+          sessionId: 'session-1',
+          update: {
+            sessionUpdate: 'tool_call_update',
+            toolCallId: 'compact-1',
+            status: 'completed',
+            _meta: { contextCompaction: marker }
+          }
+        },
+        'event-compact-complete'
+      )
+      expect(event?.kind).toBe(expectedKind)
     }
   )
 

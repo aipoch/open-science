@@ -1,3 +1,4 @@
+import { readAnnotations } from '../pdf-annotations/repository'
 import { Prisma, type PrismaClient, type Tag as PrismaTag } from '@prisma/client'
 
 import {
@@ -78,7 +79,7 @@ class TagRepository {
           orderBy: [{ createdAt: 'asc' }, { tagId: 'asc' }, { resourceType: 'asc' }]
         })
       ])
-      const pdfAnnotations = await transaction.pdfAnnotation.findMany({
+      const annotationRows = await transaction.pdfAnnotation.findMany({
         where: {
           id: {
             in: [
@@ -89,16 +90,18 @@ class TagRepository {
               )
             ]
           }
-        },
-        select: {
-          id: true,
-          projectId: true,
-          sessionId: true,
-          versionId: true,
-          name: true,
-          note: true
         }
       })
+      const pdfAnnotations = (await readAnnotations(transaction, annotationRows)).map(
+        (annotation) => ({
+          id: annotation.id,
+          projectId: annotation.projectId ?? null,
+          sessionId: annotation.sessionId,
+          versionId: annotation.target.source.versionId,
+          name: annotation.target.source.name,
+          note: annotation.note
+        })
+      )
       const libraryVersionIds = pdfAnnotations
         .filter(({ projectId }) => projectId === null)
         .map(({ versionId }) => versionId)

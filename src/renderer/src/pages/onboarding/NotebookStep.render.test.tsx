@@ -36,8 +36,8 @@ const renderStep = async (onBack: () => void = vi.fn()): Promise<void> => {
 }
 
 const finishButton = (): HTMLButtonElement | undefined =>
-  Array.from(container.querySelectorAll('button')).find(
-    (button) => button.textContent?.trim() === 'Finish'
+  Array.from(container.querySelectorAll('button')).find((button) =>
+    ['Finish', 'Finishing setup…'].includes(button.textContent?.trim() ?? '')
   ) as HTMLButtonElement | undefined
 
 const backButton = (): HTMLButtonElement | undefined =>
@@ -186,6 +186,9 @@ describe('NotebookStep', () => {
     })
 
     expect(completeOnboarding).toHaveBeenCalledOnce()
+    expect(finishButton()?.textContent).toBe('Finishing setup…')
+    expect(finishButton()?.getAttribute('aria-busy')).toBe('true')
+    expect(container.querySelector('[role="status"]')?.textContent).toContain('Finishing setup…')
     expect(finishButton()?.disabled).toBe(true)
     expect(backButton()?.disabled).toBe(true)
   })

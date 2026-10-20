@@ -44,6 +44,24 @@ vi.mock('@/stores/review-store', () => ({
       loadReviewsForSession: mocks.loadReviewsForSession
     })
 }))
+vi.mock('./LibraryPreview', () => ({
+  default: ({
+    projectId,
+    isActive,
+    scopeRequest
+  }: {
+    projectId?: string
+    isActive: boolean
+    scopeRequest?: { collectionId?: string }
+  }): React.JSX.Element => (
+    <div
+      data-testid="library-preview"
+      data-project={projectId}
+      data-active={isActive}
+      data-collection={scopeRequest?.collectionId}
+    />
+  )
+}))
 vi.mock('../SubagentReleaseSurfaces', () => ({
   SubagentPreview: ({ isActive }: { isActive: boolean }): React.JSX.Element => (
     <div data-testid="subagent-preview" data-active={isActive} />
@@ -74,6 +92,22 @@ vi.mock('../SessionReviewerPanel', () => ({
   )
 }))
 
+vi.mock('../SessionReplayPreview', () => ({
+  SessionReplayPreview: ({
+    item,
+    isActive
+  }: {
+    item: PreviewToolItem
+    isActive: boolean
+  }): React.JSX.Element => (
+    <div
+      data-testid="lazy-replay"
+      data-source={item.replaySourceSessionId}
+      data-active={isActive}
+    />
+  )
+}))
+
 import { PreviewToolContent } from './PreviewToolContent'
 
 const createItem = (overrides: Partial<PreviewToolItem>): PreviewToolItem => ({
@@ -88,6 +122,26 @@ const render = (item: PreviewToolItem): string =>
   renderToStaticMarkup(<PreviewToolContent item={item} />)
 
 describe('PreviewToolContent', () => {
+  it('loads Replay through the lazy boundary with its source and visibility intact', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await act(async () =>
+        root.render(
+          <PreviewToolContent
+            item={createItem({ toolKind: 'replay', replaySourceSessionId: 'archive' })}
+            isActive={false}
+          />
+        )
+      )
+      const preview = container.querySelector('[data-testid="lazy-replay"]')
+      expect(preview?.getAttribute('data-source')).toBe('archive')
+      expect(preview?.getAttribute('data-active')).toBe('false')
+    } finally {
+      await act(async () => root.unmount())
+    }
+  })
+
   it('forwards visibility to Subagent previews so hidden mounted tabs cannot auto-load', () => {
     const item = createItem({ toolKind: 'subagents' })
     expect(renderToStaticMarkup(<PreviewToolContent item={item} isActive={false} />)).toContain(
@@ -107,6 +161,30 @@ describe('PreviewToolContent', () => {
 
   it('routes project file tools through a project-scoped remount boundary', () => {
     expect(render(createItem({ toolKind: 'files' }))).toContain('data-testid="project-files"')
+  })
+
+  it('passes the project and inactive state through the lazy Library boundary', async () => {
+    const container = document.createElement('div')
+    const root = createRoot(container)
+    try {
+      await act(async () => {
+        root.render(
+          <PreviewToolContent
+            item={createItem({
+              toolKind: 'library',
+              libraryScopeRequest: { collectionId: 'collection-1' }
+            })}
+            isActive={false}
+          />
+        )
+      })
+      const preview = container.querySelector('[data-testid="library-preview"]')
+      expect(preview?.getAttribute('data-project')).toBe('project-1')
+      expect(preview?.getAttribute('data-active')).toBe('false')
+      expect(preview?.getAttribute('data-collection')).toBe('collection-1')
+    } finally {
+      await act(async () => root.unmount())
+    }
   })
 
   it('routes Project Compute through a project-scoped remount boundary', () => {

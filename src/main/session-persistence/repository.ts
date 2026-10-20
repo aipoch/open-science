@@ -1,51 +1,52 @@
-import { SessionProjectionAfterCommitError } from './save-session'
-import { packageOriginSchema } from '../../shared/session-package'
-import { decodeSessionComputePolicy, type SessionComputePolicy } from './compute-policy'
-import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
-import { constants as fsConstants } from 'node:fs'
-import { createHash } from 'node:crypto'
+import type { SessionComputePolicy } from '@aipoch/compute'
 import { Buffer } from 'node:buffer'
+import { createHash } from 'node:crypto'
+import { constants as fsConstants } from 'node:fs'
+import { copyFile, lstat, mkdir, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises'
 import { basename, dirname, join } from 'node:path'
+import { packageOriginSchema } from '../../shared/session-package'
 import { isSessionPackagePending } from '../storage/session-package-state'
+import { decodeSessionComputePolicy } from './compute-policy'
 import { preserveImportedSession } from './imported-session'
+import { SessionProjectionAfterCommitError } from './save-session'
 
 import {
+  MAX_PERSISTED_SESSION_BYTES,
+  SessionDeletionCommittedError,
+  SessionRevisionConflictError,
+  SessionSizeLimitError,
   createEmptySessionManifest,
   createSessionFile,
   decodeSessionFile,
-  MAX_PERSISTED_SESSION_BYTES,
-  SessionSizeLimitError,
-  SessionRevisionConflictError,
-  SessionDeletionCommittedError,
+  normalizeSessionManifest,
   sanitizeSessionUploadedAttachments,
   sessionRevision,
-  normalizeSessionManifest,
   type LoadAllSessionsResult,
   type PersistedChatSession,
   type PersistedSessionManifest,
   type SaveSessionManifestRequest,
-  type SessionSummary,
-  type SessionUsageProjection,
   type SessionLoadFailure,
-  type SessionLoadWarning
+  type SessionLoadWarning,
+  type SessionSummary,
+  type SessionUsageProjection
 } from '../../shared/session-persistence'
-import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
+import {
+  DurableJsonReadLimitError,
+  DurableJsonRecoveryBarrierError,
+  isRecoverableDurableJsonTemporaryFile,
+  readDurableJsonFile,
+  readFileWithinLimit,
+  recoverDurableJsonDirectory,
+  writeDurableJsonFile
+} from '@aipoch/durable-files'
+import { defaultFileDurability } from '@aipoch/durable-files'
 import { SessionPersistenceOperationScheduler } from './operation-scheduler'
-import { defaultFileDurability } from '../storage/file-durability'
 import {
   assertSessionProjectionStorageShape,
   buildSessionProjection,
   type SessionProjectionRepository
 } from './projection'
-import {
-  DurableJsonRecoveryBarrierError,
-  DurableJsonReadLimitError,
-  isRecoverableDurableJsonTemporaryFile,
-  readFileWithinLimit,
-  readDurableJsonFile,
-  recoverDurableJsonDirectory,
-  writeDurableJsonFile
-} from '../storage/durable-json-file'
+import { decodeSessionDataPaths, encodeSessionDataPaths } from './session-data-paths'
 
 const SESSIONS_DIR = 'sessions'
 const DELETED_SESSIONS_DIR = 'deleted-sessions'
@@ -803,6 +804,15 @@ class SessionRepository {
 
   hasLiveRuntimeSession(projectId: string, sessionId: string): boolean {
     return this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+  }
+
+  // Decode-only preservation for Main's live release after exhausted writes. This is not evidence
+  // of an attached runtime and is never persisted; process restart uses ordinary recovery.
+  private readonly retainedRuntimeState = new Set<string>()
+  retainRuntimeSessionState(projectId: string, sessionId: string, retained: boolean): void {
+    const key = JSON.stringify([projectId, sessionId])
+    if (retained) this.retainedRuntimeState.add(key)
+    else this.retainedRuntimeState.delete(key)
   }
 
   // Terminal mutations must distinguish absence from a transient/non-ENOENT read failure. Treating
@@ -2028,7 +2038,8 @@ class SessionRepository {
           ? preserveRuntimeState
           : (sessionId) =>
               this.dependencies.hasActiveRuntimePrompt(projectId, sessionId) ||
-              this.dependencies.hasLiveRuntimeSession(projectId, sessionId)
+              this.dependencies.hasLiveRuntimeSession(projectId, sessionId) ||
+              this.retainedRuntimeState.has(JSON.stringify([projectId, sessionId]))
     })
     if (decoded.status === 'unsupported-version') throw new UnsupportedSessionFileError()
     if (decoded.status === 'invalid') throw new Error('Invalid Session file')
@@ -2179,5 +2190,10 @@ const isMissingFileError = (error: unknown): boolean =>
 
 export { DEV_SESSION_DIR_NAME, PROD_SESSION_DIR_NAME, getSessionPersistenceDir } from './paths'
 export { SessionRepository }
-export type { ProjectSessionDeletionState, ProjectSessionLoadDiagnostics, SessionLoadDiagnostic }
-export type { SessionLoadDiagnostics, SessionScanMetrics }
+export type {
+  ProjectSessionDeletionState,
+  ProjectSessionLoadDiagnostics,
+  SessionLoadDiagnostic,
+  SessionLoadDiagnostics,
+  SessionScanMetrics
+}

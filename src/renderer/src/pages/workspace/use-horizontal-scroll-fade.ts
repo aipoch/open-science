@@ -30,6 +30,13 @@ export const useHorizontalScrollFade = <T extends HTMLElement>(): RefCallback<T>
     const update = (): void => updateHorizontalScrollFade(element)
     update()
     element.addEventListener('scroll', update, { passive: true })
+    const revealFocus = (event: FocusEvent): void => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.matches(':focus-visible')) {
+        target.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+      }
+    }
+    element.addEventListener('focusin', revealFocus)
 
     const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(update)
     observer?.observe(element)
@@ -37,6 +44,7 @@ export const useHorizontalScrollFade = <T extends HTMLElement>(): RefCallback<T>
       element,
       cleanup: () => {
         element.removeEventListener('scroll', update)
+        element.removeEventListener('focusin', revealFocus)
         observer?.disconnect()
       }
     }

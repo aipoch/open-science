@@ -1,7 +1,7 @@
 import { realpath } from 'node:fs/promises'
 import { parsePowerShellSearchCommands } from './powershell-search-parser'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
-import { fieldChildren, withParsedNotebookSource, type Node } from './dependency-analysis-parser'
+import { fieldChildren, withParsedNotebookSource, type Node } from '@aipoch/notebook-syntax'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
 
 // Maps WSL2 guest paths (e.g. /mnt/c/data) to Windows host paths (e.g. C:\data).
@@ -285,7 +285,7 @@ export const assertShellSearchScope = async (
   grantedRoots: readonly GrantedLocalRoot[],
   platform: NodeJS.Platform = process.platform,
   signal?: AbortSignal,
-  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix' }
+  runtimeBinding?: { kind: 'wsl2-bash' | 'powershell' | 'native-posix'; version?: '5.1' | '7.6' }
 ): Promise<void> => {
   const root = await physicalPath(resolve(cwd))
   if (dirname(root) === root) return denied('the session cwd must not be a filesystem root')
@@ -549,7 +549,7 @@ export const assertShellSearchScope = async (
     runtimeBinding?.kind !== 'wsl2-bash' &&
     runtimeBinding?.kind !== 'native-posix'
   ) {
-    const commands = await parsePowerShellSearchCommands(command, signal)
+    const commands = await parsePowerShellSearchCommands(command, signal, runtimeBinding?.version)
     if (!commands) {
       // Not a PowerShell command or parse failed, continue with bash analysis
       await analyze(command, { cwd: undefined, variables: new Map() })

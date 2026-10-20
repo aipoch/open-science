@@ -15,8 +15,8 @@ const terminateProcessTree = vi.hoisted(() =>
 )
 const ownerErrorLog = vi.hoisted(() => vi.fn())
 vi.mock('../process-tree', () => ({ terminateProcessTree }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({ ...actual.createLogger('acp'), error: ownerErrorLog })
@@ -273,19 +273,19 @@ describe('AcpConnectionResourceOwner', () => {
         connection: { close: vi.fn() } as unknown as ClientConnection,
         framework: 'claude-code',
         bridgeLease: undefined,
-        anthropicBridgeLease: { setTarget, release }
+        messagesBridgeLease: { setTarget, release }
       })
       return attempt.publish({ close: true, delete: false, resume: true, steering: false })
     })
 
-    expect(owner.anthropicBridgeAvailable).toBe(true)
-    expect(owner.setAnthropicBridgeTarget('kimi/kimi-k3')).toBe(true)
+    expect(owner.messagesBridgeAvailable).toBe(true)
+    expect(owner.setMessagesBridgeTarget('kimi/kimi-k3')).toBe(true)
     expect(setTarget).toHaveBeenCalledWith('kimi/kimi-k3')
 
     const teardownEpoch = owner.supersede()
     await owner.teardown(teardownEpoch, vi.fn())
 
-    expect(owner.anthropicBridgeAvailable).toBe(false)
+    expect(owner.messagesBridgeAvailable).toBe(false)
     expect(release).toHaveBeenCalledOnce()
   })
 

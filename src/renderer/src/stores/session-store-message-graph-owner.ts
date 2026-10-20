@@ -1,7 +1,4 @@
-import { createSessionBranchSource } from '../../../shared/session-branch-source'
 import type { StoreApi } from 'zustand'
-import { captureSessionConversationIntents } from './session-conversation-intents'
-import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
 import {
   activateConversationBranch,
   forkEditedConversationMessage,
@@ -10,8 +7,16 @@ import {
   resolveActiveConversationActivities,
   resolveActiveConversationMessages
 } from '../../../shared/conversation-graph'
-import { normalizeDelegationPolicy } from '../../../shared/session-persistence'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../shared/permission-profiles'
+import { createSessionBranchSource } from '../../../shared/session-branch-source'
+import { applySessionConversationCommands } from '../../../shared/session-conversation-command'
+import { normalizeDelegationPolicy } from '../../../shared/session-persistence'
+import { sessionExportLocked, usePackageOperationStore } from './package-operation-store'
+import {
+  captureSessionConversationIntents,
+  pendingSessionConversationCommands
+} from './session-conversation-intents'
+import type { ChatMessage, ChatSession } from './session-store-contract'
 import {
   buildUserMessage,
   canBranchInNewSession,
@@ -23,17 +28,17 @@ import {
   createTitleFromMessage,
   createTitleFromUploads,
   isBeforeTimelineItem,
-  projectSessionBranchSnapshot,
   projectElicitationRevision,
+  projectSessionBranchSnapshot,
   synchronizeSessionGraph,
   type SessionMessageGraphActions
 } from './session-store-message-graph-helpers'
 import {
+  hydrateSession,
   hydrateToolActivity,
   pruneStreamingMessageContent,
+  toPersistedSession,
   type ActiveRun,
-  type ChatMessage,
-  type ChatSession,
   type SessionStoreData
 } from './session-store-persistence-owner'
 import * as sessionDetails from './session-store-session-details'
@@ -64,7 +69,13 @@ export const createSessionMessageGraphOwner = <
   set: StoreApi<State>['setState'],
   get: StoreApi<State>['getState']
 ): SessionMessageGraphActions => ({
-  prepareInterruptedTurnContinuation: (sessionId, promptMessageId, update, contextReset) => {
+  prepareInterruptedTurnContinuation: (
+    sessionId,
+    promptMessageId,
+    update,
+    contextReset,
+    preparationId
+  ) => {
     let prepared: { runtimeSegmentId?: string } | undefined
     set((state) => {
       const before = state.sessions.find((session) => session.id === sessionId)
@@ -136,7 +147,8 @@ export const createSessionMessageGraphOwner = <
       captureSessionConversationIntents(
         before,
         sessions.find((session) => session.id === sessionId),
-        'resume-run'
+        'resume-run',
+        preparationId
       )
       return { sessions } as Partial<State>
     })
@@ -270,6 +282,7 @@ export const createSessionMessageGraphOwner = <
   },
   appendUserMessage: ({
     sessionId,
+    preparationId,
     messageId,
     rearmExisting,
     content,
@@ -316,7 +329,11 @@ export const createSessionMessageGraphOwner = <
         return undefined
       }
       if (rearmExisting && existingSession) {
-        const now = Date.now()
+        const now = Math.max(
+          Date.now(),
+          (existingSession?.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+          (existingSession?.activeRun?.startedAt ?? 0) + 1
+        )
         const activeRun: ActiveRun = {
           promptMessageId: existingMessage.id,
           startedAt: now
@@ -346,7 +363,9 @@ export const createSessionMessageGraphOwner = <
           )
           captureSessionConversationIntents(
             existingSession,
-            sessions.find((session) => session.id === sessionId)
+            sessions.find((session) => session.id === sessionId),
+            'start-run',
+            preparationId
           )
           return {
             selectedSessionId: preserveSelection ? current.selectedSessionId : sessionId,
@@ -356,7 +375,11 @@ export const createSessionMessageGraphOwner = <
       }
       return { sessionId, messageId: existingMessage.id }
     }
-    const now = Date.now()
+    const now = Math.max(
+      Date.now(),
+      (existingSession?.runtimeTranscriptLastRun?.startedAt ?? 0) + 1,
+      (existingSession?.activeRun?.startedAt ?? 0) + 1
+    )
     const userMessage: ChatMessage = {
       ...buildUserMessage({
         id: stableMessageId ?? createMessageId(),
@@ -430,7 +453,9 @@ export const createSessionMessageGraphOwner = <
         // commands while the updater still owns the before/after pair.
         captureSessionConversationIntents(
           existingSession,
-          sessions.find((session) => session.id === sessionId)
+          sessions.find((session) => session.id === sessionId),
+          'start-run',
+          preparationId
         )
         return {
           selectedSessionId: preserveSelection ? current.selectedSessionId : sessionId,
@@ -633,47 +658,76 @@ export const createSessionMessageGraphOwner = <
     agentBackendId,
     providerSessionId,
     providerContinuityToken,
-    wslSetup
+    wslSetup,
+    preparationId,
+    preparationBaseline
   }) => {
     if (!pendingSessionId || !sessionId) return undefined
-
     const state = get()
     const pendingSession = state.sessions.find(
       (session) => session.id === pendingSessionId && session.isPending
     )
     if (!pendingSession) return undefined
-
-    const now = Date.now()
+    let boundSession: ChatSession = {
+      ...pendingSession,
+      id: sessionId,
+      isPending: false,
+      pendingBindingSessionId: undefined,
+      ...(pendingSession.conversationGraph
+        ? {
+            conversationGraph: rebindConversationGraphSessionId(
+              pendingSession.conversationGraph,
+              pendingSessionId,
+              sessionId
+            )
+          }
+        : {}),
+      cwd: cwd ?? pendingSession.cwd,
+      agentFrameworkId: agentFrameworkId ?? pendingSession.agentFrameworkId,
+      agentBackendId: agentBackendId ?? pendingSession.agentBackendId,
+      providerSessionId: providerSessionId ?? pendingSession.providerSessionId,
+      providerContinuityToken: providerContinuityToken ?? pendingSession.providerContinuityToken,
+      ...(preparationBaseline
+        ? {
+            revision: preparationBaseline.revision,
+            runtimeTranscriptOwner: preparationBaseline.runtimeTranscriptOwner,
+            runtimeConversationCommandIds: preparationBaseline.runtimeConversationCommandIds,
+            runtimeSessionAdmissions: preparationBaseline.runtimeSessionAdmissions,
+            runtimeTranscriptLastRun: preparationBaseline.runtimeTranscriptLastRun
+          }
+        : {}),
+      wslSetup,
+      updatedAt: Date.now()
+    }
+    // Publish tagged append/start intent before the newly bound Session becomes savable.
+    captureSessionConversationIntents(preparationBaseline, boundSession, 'start-run', preparationId)
+    // Main's seed/prepare notification can hydrate the durable identity before createSession binds
+    // this pending one. Apply our exact submission intents to that latest authority, preserving
+    // concurrent history and metadata, then publish one canonical Session identity.
+    const existingAuthority = state.sessions.find((candidate) => candidate.id === sessionId)
+    if (preparationBaseline) {
+      const authority = applySessionConversationCommands(
+        existingAuthority ? toPersistedSession(existingAuthority) : preparationBaseline,
+        pendingSessionConversationCommands(sessionId)
+      )
+      boundSession = {
+        ...boundSession,
+        ...hydrateSession(authority),
+        isPending: false,
+        autoReviewEnabled: boundSession.autoReviewEnabled,
+        memoryEnabled: boundSession.memoryEnabled,
+        delegationPolicy: boundSession.delegationPolicy,
+        delegationPolicyAuthorityPending: boundSession.delegationPolicyAuthorityPending,
+        wslSetup
+      }
+    }
     set({
       selectedSessionId:
         state.selectedSessionId === pendingSessionId ? sessionId : state.selectedSessionId,
-      sessions: state.sessions.map((session) =>
-        session.id === pendingSessionId
-          ? {
-              ...session,
-              id: sessionId,
-              isPending: false,
-              ...(session.conversationGraph
-                ? {
-                    conversationGraph: rebindConversationGraphSessionId(
-                      session.conversationGraph,
-                      pendingSessionId,
-                      sessionId
-                    )
-                  }
-                : {}),
-              cwd: cwd ?? session.cwd,
-              agentFrameworkId: agentFrameworkId ?? session.agentFrameworkId,
-              agentBackendId: agentBackendId ?? session.agentBackendId,
-              providerSessionId: providerSessionId ?? session.providerSessionId,
-              providerContinuityToken: providerContinuityToken ?? session.providerContinuityToken,
-              wslSetup,
-              updatedAt: now
-            }
-          : session
-      )
+      sessions: state.sessions
+        .filter((session) => session.id !== sessionId || session.id === pendingSessionId)
+        .map((session) => (session.id === pendingSessionId ? boundSession : session))
     } as Partial<State>)
-
     return pendingSession.activeRun
       ? { sessionId, messageId: pendingSession.activeRun.promptMessageId }
       : { sessionId }
@@ -749,7 +803,7 @@ export const createSessionMessageGraphOwner = <
     })
   },
 
-  truncateSessionFromMessage: (sessionId, messageId) => {
+  truncateSessionFromMessage: (sessionId, messageId, preparationId) => {
     if (!sessionId || !messageId) return
     const before = get().sessions.find((session) => session.id === sessionId)
 
@@ -810,7 +864,9 @@ export const createSessionMessageGraphOwner = <
       })
       captureSessionConversationIntents(
         before,
-        sessions.find((session) => session.id === sessionId)
+        sessions.find((session) => session.id === sessionId),
+        'start-run',
+        preparationId
       )
       return {
         sessions,

@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { PreviewStateRepository } from './preview-repository'
@@ -361,3 +362,5 @@ const createDeferred = <Value>(): {
 const flushMicrotasks = async (): Promise<void> => {
   for (let index = 0; index < 10; index += 1) await Promise.resolve()
 }
+
+await configureTestElectronHost(await import('electron'))

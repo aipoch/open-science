@@ -17,13 +17,16 @@ import {
   type SessionActionId
 } from '@/pages/workspace/session-action-menu'
 import type { ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
 import { useProjectStore } from '@/stores/project-store'
+import { HomePage } from '@/pages/home/HomePage'
 import type { PackageOperationSnapshot } from '../../../src/shared/session-package'
 import '@/assets/main.css'
 import { createRoot } from 'react-dom/client'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import zhHans from '../../../src/shared/i18n/locales/zh-Hans.json'
 import {
+  PackageExportProgressButton,
   PackageOperationIndicator,
   SessionPackageOperation
 } from '@/components/SessionPackageOperation'
@@ -43,6 +46,7 @@ usePackageOperationStore.getState().receive({
   progress: { phase: 'selecting' },
   summary: {
     metadataBytes: 7987,
+    pdfNotesAvailable: new URLSearchParams(location.search).has('pdf-notes'),
     retainedFiles: new URLSearchParams(location.search).has('retained')
       ? [
           {
@@ -103,7 +107,17 @@ if (mode) {
       isExample: false,
       createdAt: 1,
       updatedAt: 1
-    }
+    },
+    ...(new URLSearchParams(location.search).has('many-projects')
+      ? Array.from({ length: 30 }, (_, index) => ({
+          id: `project-${index}`,
+          name: `Research project ${index + 1} — longitudinal analysis and supporting evidence`,
+          description: '',
+          isExample: false,
+          createdAt: 1,
+          updatedAt: 1
+        }))
+      : [])
   ]
   const preview = {
     title: 'Nanomaterials and tumour immunity',
@@ -130,9 +144,9 @@ if (mode) {
     state:
       mode === 'error' || mode === 'update-required'
         ? 'failed'
-        : mode === 'cleanup'
+        : mode === 'cleanup' || mode === 'success'
           ? 'succeeded'
-          : mode === 'progress'
+          : ['progress', 'checking', 'validating'].includes(mode)
             ? 'running'
             : 'awaiting-selection',
     error:
@@ -144,21 +158,36 @@ if (mode) {
           ? 'The package could not be imported.'
           : undefined,
     cleanupPending: mode === 'cleanup',
+    result:
+      mode === 'success' || mode === 'cleanup'
+        ? { imported: { projectId: 'cancer', sessionId: 'imported' } }
+        : undefined,
+    ioBytesPerSecond: mode === 'checking' || mode === 'validating' ? 32 * 1024 ** 2 : undefined,
     importQueueFull: new URLSearchParams(location.search).has('queue-full'),
     importRequestId: 'file-open',
     importFilename: 'tumour-immunity.science',
     importTarget: mode === 'project' ? undefined : { projectId: 'cancer' },
     importPreview: mode === 'review' ? preview : undefined,
     progress:
-      mode === 'update-required'
-        ? { phase: 'validating' }
-        : mode === 'error' || mode === 'cleanup'
-          ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
-          : mode === 'progress'
-            ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
-            : { phase: mode === 'review' ? 'confirming' : 'selecting' },
+      mode === 'checking'
+        ? { phase: 'copying', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
+        : mode === 'update-required' || mode === 'validating'
+          ? { phase: 'validating' }
+          : mode === 'error' || mode === 'cleanup'
+            ? { phase: mode === 'cleanup' ? 'cleaning' : 'importing' }
+            : mode === 'progress'
+              ? { phase: 'importing', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 }
+              : { phase: mode === 'review' ? 'confirming' : 'selecting' },
     pendingImports: [{ id: 'next', filename: 'follow-up-study.science' }]
   }
+  window.addEventListener('package-fixture-inspected', () => {
+    Object.assign(operation, {
+      state: 'awaiting-selection',
+      importPreview: preview,
+      progress: { phase: 'confirming' }
+    })
+    usePackageOperationStore.getState().receive({ ...operation })
+  })
   useProjectStore.setState({
     projects,
     isLoaded: true,
@@ -185,10 +214,10 @@ if (mode) {
           action: string
           target?: { projectId?: string; projectName?: string }
           requestId?: string
-          bytesPerSecond?: number
+          bytesPerSecond?: number | null
         }) => {
           if (request.action === 'set-speed')
-            operation.transferBytesPerSecond = request.bytesPerSecond
+            operation.transferBytesPerSecond = request.bytesPerSecond ?? undefined
           if (request.action === 'discard-import')
             operation.pendingImports = operation.pendingImports?.filter(
               (file) => file.id !== request.requestId
@@ -209,6 +238,17 @@ if (mode) {
                 totalBytes: 42 * 1024 ** 2
               }
             })
+          if (request.action === 'cancel') operation.state = 'cancelling'
+          if (request.action === 'next-import')
+            Object.assign(operation, {
+              id: 'next-import',
+              state: 'awaiting-selection',
+              result: undefined,
+              importFilename: 'follow-up-study.science',
+              importTarget: undefined,
+              progress: { phase: 'selecting' },
+              pendingImports: []
+            })
           usePackageOperationStore.getState().receive({ ...operation })
           return operation
         }
@@ -217,14 +257,78 @@ if (mode) {
   })
   usePackageOperationStore.getState().receive(operation)
 }
+const exportMode = new URLSearchParams(location.search).get('export')
+if (exportMode) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    state: exportMode === 'success' ? 'succeeded' : 'running',
+    files: undefined,
+    progress:
+      exportMode === 'creating'
+        ? { phase: 'compressing' }
+        : { phase: 'saving', completedBytes: 18 * 1024 ** 2, totalBytes: 42 * 1024 ** 2 },
+    result:
+      exportMode === 'success'
+        ? { filePath: '/Users/researcher/Documents/tumour-immunity.science' }
+        : undefined
+  })
+}
 const menuMode = new URLSearchParams(location.search).has('menu')
+if (new URLSearchParams(location.search).has('transfers')) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    browserTransfers: Array.from({ length: 4 }, (_, index) => ({
+      id: `transfer-${index}`,
+      filename: `research-package-${index}.science`,
+      state: 'receiving',
+      completedBytes: 18 * 1024 ** 2,
+      totalBytes: 42 * 1024 ** 2
+    }))
+  })
+}
+if (new URLSearchParams(location.search).has('evidence')) {
+  const current = usePackageOperationStore.getState().operation!
+  usePackageOperationStore.getState().receive({
+    ...current,
+    state: 'failed',
+    error: 'Review flagged content before exporting.',
+    sensitiveContent: Array.from({ length: 20 }, (_, index) => ({
+      location: `research-file-${index}.txt`,
+      offset: 0,
+      rule: 'field',
+      matchLength: 8,
+      leftBoundary: 'start',
+      rightBoundary: 'end',
+      context: 'Redacted fixture evidence',
+      valueHash: 'fixture'
+    }))
+  })
+}
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
-const backgroundMode = new URLSearchParams(location.search).has('background')
+const background = new URLSearchParams(location.search)
+const backgroundMode = background.has('background')
+const homeSurface = background.get('surface') === 'home'
+const newConversationSurface = background.get('surface') === 'new-conversation'
 if (backgroundMode) {
+  if (background.get('background') === 'running') {
+    const current = usePackageOperationStore.getState().operation!
+    usePackageOperationStore.getState().receive({
+      ...current,
+      state: 'running',
+      files: undefined,
+      progress: { phase: 'copying', completedBytes: 512, totalBytes: 1024 }
+    })
+  }
   usePackageOperationStore.getState().setOpen(false)
   Object.defineProperty(window, 'api', {
     configurable: true,
     value: {
+      projectFiles: {
+        getOverview: async () => ({ artifactCount: 0, isIndexComplete: true }),
+        onChanged: () => noop
+      },
       sessions: {
         packageOperation: async (request: { action: string }) => {
           const current = usePackageOperationStore.getState().operation!
@@ -248,6 +352,22 @@ const menuSession: ChatSession = {
   updatedAt: 1
 }
 const noop = (): void => undefined
+if (homeSurface) {
+  useProjectStore.setState({
+    projects: [
+      {
+        id: 'fixture',
+        name: 'Nanomaterials research',
+        description: 'Research workspace',
+        isExample: false,
+        createdAt: 1,
+        updatedAt: Date.now()
+      }
+    ],
+    isLoaded: true
+  })
+  useSessionStore.setState({ sessions: [menuSession] })
+}
 const MenuContents = (): React.JSX.Element => {
   const menu = useActionMenuTarget<SessionActionId>()
   return (
@@ -301,12 +421,26 @@ void localeReady.then(() =>
   createRoot(document.getElementById('root')!).render(
     <>
       {menuMode ? <SessionMenuFixture /> : null}
-      {backgroundMode ? (
+      {backgroundMode && homeSurface ? (
+        <HomePage canDeleteProjects hasCompleteSessionCatalog onOpenGlobalSearch={noop} />
+      ) : null}
+      {backgroundMode && !homeSurface ? (
         <div className="mx-auto max-w-4xl p-4">
+          <header className="flex items-center gap-3 border-b border-border pb-3">
+            <h1 className="min-w-0 flex-1 truncate text-sm font-semibold">
+              {newConversationSurface ? 'New conversation' : 'Nanomaterials and tumour immunity'}
+            </h1>
+            <PackageExportProgressButton />
+          </header>
           <PackageOperationIndicator />
         </div>
       ) : null}
       {mode === 'early-error' ? <SessionPackageImportError /> : <SessionPackageOperation />}
+      {mode && !backgroundMode ? (
+        <div className="mx-auto max-w-3xl p-4">
+          <PackageOperationIndicator />
+        </div>
+      ) : null}
     </>
   )
 )

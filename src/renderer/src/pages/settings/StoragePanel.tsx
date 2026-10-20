@@ -1,7 +1,7 @@
 import { storageErrorMessage } from '@/lib/storage-error'
 import { Notice } from '@/components/notice'
 import { InlineNotice } from '@/components/ui/inline-notice'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import {
   CheckCircle2,
   ChevronRight,
@@ -42,7 +42,7 @@ import type {
 } from '../../../../shared/storage'
 import { PdfParsingCacheAction } from './PdfParsingCacheAction'
 import { SettingsSection } from './SettingsLayout'
-import { isAgentRepairCheck } from './settings-navigation'
+import { isAgentRepairCheck } from '@/lib/settings-navigation'
 import { StorageMigrationModal } from './StorageMigrationModal'
 
 // Formats a byte count as a human-readable size (1000-based, one decimal place).
@@ -495,6 +495,13 @@ const StoragePanel = ({ onContinueToAgent }: StoragePanelProps): React.JSX.Eleme
             <pre className={cn('mt-1', PATH_PILL)} aria-label={t('Data root path')}>
               {storageStatus.dataRoot}
             </pre>
+            {window.api.platform !== 'win32' && /\s/u.test(storageStatus.dataRoot) ? (
+              <InlineNotice className="mt-2" role="alert">
+                {t(
+                  'The current data location contains spaces. R environments cannot run reliably here. Use Change location to move your data to a path without spaces. You can cancel and keep the current location; your existing data will remain available.'
+                )}
+              </InlineNotice>
+            ) : null}
             <p className="mt-1.5 text-xs text-muted-foreground">
               {info
                 ? info.isDefault

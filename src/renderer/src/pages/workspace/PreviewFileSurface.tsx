@@ -4,6 +4,7 @@ import { useVersionHistoryPages } from './use-version-history-pages'
 import { VersionHistoryLoadButton } from './VersionHistoryLoadButton'
 import { unwrapProvenanceRead } from '../../../../shared/provenance-read-result'
 import {
+  AtSign,
   BookOpen,
   Check,
   ChevronLeft,
@@ -34,6 +35,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ActionMenuItems, ActionMenuProvider, ActionMenuTarget } from '@/components/action-menu'
+import { ActionToast } from '@/components/ActionToast'
 import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
@@ -61,6 +63,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
+import { FileTypeIcon } from './file-type-icon'
 import {
   LocalFileActionErrorNotice,
   LocalFileHeaderActions,
@@ -68,11 +71,17 @@ import {
   type SaveAsArtifactState
 } from './LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
+import { useProjectFileMentionAction } from './use-project-file-mention-action'
+import type { ProjectFileMentionTarget } from './project-file-mention'
 import {
   useManagedFileDownload,
   type ManagedFileDownloadController
 } from './use-managed-file-download'
-import { usePdfContextAction, type PdfContextAction } from './use-pdf-context-action'
+import {
+  resolvePdfContextTarget,
+  usePdfContextAction,
+  type PdfContextAction
+} from './use-pdf-context-action'
 import {
   createProjectFileResolveRequest,
   createPreviewFileItemForArtifactVersion,
@@ -82,7 +91,7 @@ import {
 } from './preview-file-item'
 import { PreviewFileContent } from './previews/PreviewFileContent'
 import type { PreviewDownloadVersionContext } from './previews/preview-runtime-context'
-import type { PreviewInteractionPort } from './previews/preview-types'
+import type { ActivePdfTranslation, PreviewInteractionPort } from './previews/preview-types'
 import { ArtifactProvenancePanel } from './ArtifactProvenancePanel'
 import { ManagedVersionDiffError } from './ManagedVersionDiffError'
 import { PreviewProvenanceSplit } from './PreviewProvenanceSplit'
@@ -169,7 +178,7 @@ const PreviewProvenanceButton = ({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Tooltip>
         {/* The preview dialog auto-focuses this first header button on open, and Radix opens
             tooltips on any focus — only real keyboard focus (":focus-visible") may open it. */}
@@ -198,6 +207,56 @@ const PreviewProvenanceButton = ({
   )
 }
 
+const ProjectFileMentionButton = ({
+  target,
+  tooltipClassName,
+  onMentioned
+}: {
+  target: ProjectFileMentionTarget
+  tooltipClassName?: string
+  onMentioned?: () => void
+}): React.JSX.Element => {
+  const { t } = useTranslation()
+  const mention = useProjectFileMentionAction(target)
+  const label = t('Mention {{name}}', { name: target.name })
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className={previewHeaderActionClassName}
+            aria-label={label}
+            disabled={!mention.available || mention.pending}
+            aria-busy={mention.pending}
+            onClick={() => {
+              void mention.mention().then((mentioned) => {
+                if (mentioned) onMentioned?.()
+              })
+            }}
+          >
+            {mention.pending ? (
+              <Loader2 className="animate-spin motion-reduce:animate-none" aria-hidden="true" />
+            ) : (
+              <AtSign aria-hidden="true" />
+            )}
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent className={tooltipClassName}>{label}</TooltipContent>
+      </Tooltip>
+      {mention.error ? (
+        <ActionToast
+          title={t('Could not resolve file version.')}
+          dismissLabel={t('Dismiss')}
+          onDismiss={mention.dismissError}
+        />
+      ) : null}
+    </TooltipProvider>
+  )
+}
+
 const PreviewViewInContextButton = ({
   item,
   onViewInContext,
@@ -212,7 +271,7 @@ const PreviewViewInContextButton = ({
   const { t } = useTranslation()
 
   return (
-    <TooltipProvider delayDuration={300}>
+    <TooltipProvider>
       <Tooltip>
         <TooltipTrigger asChild>
           <span className="inline-flex">
@@ -293,6 +352,24 @@ const PreviewFileHeader = ({
     ...(viewInContextEntry ? [viewInContextEntry] : []),
     ...(hideEntry ? [hideEntry] : [])
   ]
+  // Managed artifact/upload previews can be mentioned in the chat straight from the open surface;
+  // local and literature previews carry no managed identity and never offer the action. An omitted
+  // source is the artifact default the preview projection uses for generated files.
+  const mentionTarget = useMemo<ProjectFileMentionTarget | undefined>(() => {
+    const source = item.source ?? 'artifact'
+    if (!item.projectId || !item.managedFileId || (source !== 'artifact' && source !== 'upload')) {
+      return undefined
+    }
+    return {
+      id: item.managedFileId,
+      source,
+      sourceFileId: item.managedFileId,
+      projectId: item.projectId,
+      name: item.name,
+      path: item.path,
+      ...(item.mimeType ? { mimeType: item.mimeType } : {})
+    }
+  }, [item.managedFileId, item.mimeType, item.name, item.path, item.projectId, item.source])
 
   return (
     <header
@@ -309,22 +386,25 @@ const PreviewFileHeader = ({
           tooltipClassName={tooltipClassName}
         />
       ) : null}
-      <TooltipProvider delayDuration={300}>
+      <TooltipProvider>
         <Tooltip>
           <TooltipTrigger asChild>
-            <span className="min-w-0 flex-1 text-[12px] font-medium text-text-000">
-              <ExtensionPreservingFileName name={item.name} className="flex-1" />
-              {item.source === 'local' ? (
-                <span
-                  data-testid="local-file-path"
-                  className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
-                >
-                  <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
-                    {t('This computer')}
+            <span className="flex min-w-0 flex-1 items-center gap-1.5 text-[12px] font-medium text-text-000">
+              <FileTypeIcon name={item.name} mimeType={item.mimeType} />
+              <span className="min-w-0 flex-1">
+                <ExtensionPreservingFileName name={item.name} className="flex-1" />
+                {item.source === 'local' ? (
+                  <span
+                    data-testid="local-file-path"
+                    className="flex min-w-0 items-center gap-1 text-[10px] font-normal leading-tight text-text-100"
+                  >
+                    <span className="shrink-0 rounded-full bg-muted px-1.5 py-px">
+                      {t('This computer')}
+                    </span>
+                    <span className="truncate">{item.path}</span>
                   </span>
-                  <span className="truncate">{item.path}</span>
-                </span>
-              ) : null}
+                ) : null}
+              </span>
             </span>
           </TooltipTrigger>
           <TooltipContent className={tooltipClassName}>
@@ -360,7 +440,7 @@ const PreviewFileHeader = ({
             </DropdownMenuContent>
           </DropdownMenu>
         ) : (
-          <TooltipProvider delayDuration={300}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className="inline-flex">
@@ -458,6 +538,13 @@ const PreviewFileHeader = ({
                 tone="strong"
                 className="bg-transparent shadow-none"
               />
+              {mentionTarget ? (
+                <ProjectFileMentionButton
+                  target={mentionTarget}
+                  tooltipClassName={tooltipClassName}
+                  onMentioned={onClose}
+                />
+              ) : null}
               {item.originSession?.state === 'deleted' ? (
                 <span
                   data-testid="deleted-origin-session"
@@ -498,7 +585,7 @@ const PreviewFileHeader = ({
         </>
       )}
       {!managedControlsOnly && onOpenFullScreen ? (
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -519,7 +606,7 @@ const PreviewFileHeader = ({
         </TooltipProvider>
       ) : null}
       {!managedControlsOnly ? (
-        <TooltipProvider delayDuration={200}>
+        <TooltipProvider>
           <Tooltip>
             <TooltipTrigger asChild>
               <Button
@@ -750,6 +837,12 @@ const PreviewFileSurfaceContent = forwardRef<
     const [saving, setSaving] = useState(false)
     const [editError, setEditError] = useState<string>()
     const [conflictHead, setConflictHead] = useState<ManagedFileVersionDescriptor>()
+    const [activePdfTranslation, setActivePdfTranslation] = useState<ActivePdfTranslation>()
+    const [pendingTranslationLeave, setPendingTranslationLeave] = useState<() => boolean | void>()
+    const reportPdfTranslation = useCallback((translation: ActivePdfTranslation | undefined) => {
+      setActivePdfTranslation(translation)
+      if (!translation) setPendingTranslationLeave(undefined)
+    }, [])
     const [pendingLeaveAction, setPendingLeaveAction] = useState<() => boolean | void>()
     const saveGenerationRef = useRef(0)
     const pendingSaveRef = useRef<ManagedFileVersionSaveTextEditRequest | undefined>(undefined)
@@ -975,6 +1068,25 @@ const PreviewFileSurfaceContent = forwardRef<
     const hidePdfReadingEntry = contentItem.format === 'pdf' && (confirmedPdfPageCount ?? 0) <= 1
     const visiblePdfContextAction =
       hidePdfReadingEntry && pdfContextAction?.state === 'link' ? undefined : pdfContextAction
+    const pdfProseRegions = usePreviewWorkbenchStore((state) =>
+      readingContextBindingId
+        ? state.pdfProseRegionsByBindingId[readingContextBindingId]
+        : undefined
+    )
+    const pdfProseRegionsScope = usePreviewWorkbenchStore((state) => state.pdfProseRegionsScope)
+    const pdfProseRegionIdentityKey = JSON.stringify([
+      pdfProseRegionsScope,
+      readingContextBindingId
+    ])
+    const reportPdfProseRegions = useCallback(
+      (regions: NonNullable<PreviewInteractionPort['pdfProseRegions']>): void => {
+        if (!readingContextBindingId) return
+        if (usePreviewWorkbenchStore.getState().pdfProseRegionsScope !== pdfProseRegionsScope)
+          return
+        usePreviewWorkbenchStore.getState().setPdfProseRegions(readingContextBindingId, regions)
+      },
+      [readingContextBindingId, pdfProseRegionsScope]
+    )
     const reportPdfReadingPosition = useCallback(
       (position: { pageNumber: number; pageCount: number }): void => {
         setPdfPageCount((current) =>
@@ -1093,11 +1205,15 @@ const PreviewFileSurfaceContent = forwardRef<
 
     const guardLeave = useCallback(
       (action: () => boolean | void): boolean => {
+        if (activePdfTranslation) {
+          setPendingTranslationLeave((current) => current ?? action)
+          return false
+        }
         if (!isDirty) return true
         setPendingLeaveAction((current) => current ?? action)
         return false
       },
-      [isDirty]
+      [isDirty, activePdfTranslation]
     )
     const requestLeave = useCallback(
       (action: () => boolean | void): boolean => guardLeave(action) && action() !== false,
@@ -1450,6 +1566,41 @@ const PreviewFileSurfaceContent = forwardRef<
     const managedDownloadUnavailable =
       (resolvedPreviewItem.source === 'artifact' || resolvedPreviewItem.source === 'upload') &&
       (!resolvedPreviewItem.projectId || !resolvedPreviewItem.managedFileId)
+    const addPdfTarget = resolvePdfContextTarget(resolvedPreviewItem)
+    const addPdfSessionId = managedNavigationInspect?.sessionId ?? resolvedPreviewItem.sessionId
+    const addPdfReadOnly = useSessionStore((state) =>
+      Boolean(state.sessions.find((session) => session.id === addPdfSessionId)?.packageOrigin)
+    )
+    const addPdfBinding =
+      addPdfTarget &&
+      addPdfTarget.sourceKind !== 'literature-attachment-version' &&
+      addPdfTarget.sourceFileId &&
+      projectId &&
+      addPdfSessionId &&
+      !addPdfReadOnly &&
+      !annotationVersionPending
+        ? {
+            'pdf-add-to-literature': {
+              execute: async () => {
+                const navigationRevision = useNavigationStore.getState().userNavigationRevision
+                const result = await window.api.bookmarks.resolvePdfSource({
+                  projectId,
+                  sessionId: addPdfSessionId,
+                  sourceKind: addPdfTarget.sourceKind as 'upload-version' | 'artifact-version',
+                  sourceFileId: addPdfTarget.sourceFileId!,
+                  versionId: addPdfTarget.sourceVersionId
+                })
+                if (!result.ok)
+                  throw new Error(t('PDF annotations are unavailable for this source.'))
+                if (useNavigationStore.getState().userNavigationRevision !== navigationRevision)
+                  return
+                useNavigationStore.getState().openProjectLiterature(projectId, 'user', {
+                  pdf: result.source
+                })
+              }
+            }
+          }
+        : {}
     const previewActionBindings: PreviewActionBindings =
       resolvedPreviewItem.source === 'local'
         ? {
@@ -1468,6 +1619,7 @@ const PreviewFileSurfaceContent = forwardRef<
             close: { execute: closePreview }
           }
         : {
+            ...addPdfBinding,
             ...(visiblePdfContextAction
               ? {
                   'pdf-context': {
@@ -1614,7 +1766,7 @@ const PreviewFileSurfaceContent = forwardRef<
                   ) : managedWorkflow.showTextTools && managedControlsInspect ? (
                     <>
                       {managedInspect?.canEdit ? (
-                        <TooltipProvider delayDuration={200}>
+                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Button
@@ -1636,7 +1788,7 @@ const PreviewFileSurfaceContent = forwardRef<
                           </Tooltip>
                         </TooltipProvider>
                       ) : null}
-                      <TooltipProvider delayDuration={200}>
+                      <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <Button
@@ -1848,6 +2000,14 @@ const PreviewFileSurfaceContent = forwardRef<
                           onAnnotationError={onAnnotationError}
                           onRetry={retryManagedPreview}
                           onPdfReadingPositionChange={reportPdfReadingPosition}
+                          pdfProseRegions={pdfProseRegions}
+                          pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                          onPdfProseRegionsChange={
+                            readingContextBindingId && !hidePdfReadingEntry
+                              ? reportPdfProseRegions
+                              : undefined
+                          }
+                          onPdfTranslationChange={reportPdfTranslation}
                         />
                       ) : null
                     ) : managedWorkflow.diffResult ? (
@@ -1882,6 +2042,14 @@ const PreviewFileSurfaceContent = forwardRef<
                       onAnnotationError={onAnnotationError}
                       onRetry={retryManagedPreview}
                       onPdfReadingPositionChange={reportPdfReadingPosition}
+                      pdfProseRegions={pdfProseRegions}
+                      pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+                      onPdfProseRegionsChange={
+                        readingContextBindingId && !hidePdfReadingEntry
+                          ? reportPdfProseRegions
+                          : undefined
+                      }
+                      onPdfTranslationChange={reportPdfTranslation}
                     />
                   ) : null}
                 </div>
@@ -1907,6 +2075,25 @@ const PreviewFileSurfaceContent = forwardRef<
             </div>
           </ActionMenuTarget>
         </PreviewActionMenuAdapterProvider>
+        <ConfirmActionDialog
+          open={pendingTranslationLeave !== undefined}
+          title={t('Stop translation and close preview?')}
+          description={t(
+            'Translation will stop when you close this preview. Completed paragraphs ({{done}} / {{total}}) are saved. You can resume when you reopen it.',
+            { done: activePdfTranslation?.done ?? 0, total: activePdfTranslation?.total ?? 0 }
+          )}
+          cancelLabel={t('Continue translating')}
+          confirmLabel={t('Stop and close')}
+          dismissOnOutside
+          testId="stop-pdf-translation-confirmation"
+          onCancel={() => setPendingTranslationLeave(undefined)}
+          onConfirm={() => {
+            const action = pendingTranslationLeave
+            setPendingTranslationLeave(undefined)
+            activePdfTranslation?.cancel()
+            if (action) previewLeaveGuards.runApproved(leaveGuardScope, action)
+          }}
+        />
         <ConfirmActionDialog
           open={pendingLeaveAction !== undefined}
           title={t('Discard unsaved changes?')}

@@ -70,10 +70,59 @@ const mount = async (sessionId = 's1'): Promise<void> => {
     )
   )
 }
+it.each([false, true])(
+  'preserves preview descendants while a first Session binds (document scoped: %s)',
+  async (documentScoped) => {
+    installStore()
+    const mounted = vi.fn()
+    const unmounted = vi.fn()
+    const Preview = (): React.JSX.Element => {
+      useEffect(() => {
+        mounted()
+        return unmounted
+      }, [])
+      return <input aria-label="Preview position" defaultValue="125%" />
+    }
+    const render = async (sessionId?: string): Promise<void> => {
+      await act(async () => {
+        root.render(
+          <PdfAnnotationsProvider
+            projectId={sessionId ? 'p1' : undefined}
+            sessionId={sessionId}
+            loadAnnotations={false}
+          >
+            {documentScoped ? (
+              <PdfAnnotationsProvider
+                projectId="p1"
+                sessionId={sessionId}
+                sourceFileId="f1"
+                versionId="v1"
+              >
+                <Preview />
+              </PdfAnnotationsProvider>
+            ) : (
+              <Preview />
+            )}
+          </PdfAnnotationsProvider>
+        )
+      })
+    }
+    await render()
+    const preview = container.querySelector('input')!
+    preview.value = '150%'
+    await render('pending-session')
+    await render('bound-session')
+    expect(container.querySelector('input')).toBe(preview)
+    expect(preview.value).toBe('150%')
+    expect(mounted).toHaveBeenCalledTimes(1)
+    expect(unmounted).not.toHaveBeenCalled()
+  }
+)
 it('keeps writes committed during a stale paged load', async () => {
   const load = deferred<PdfAnnotationListResult>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(() => load.promise),
       create: vi.fn().mockResolvedValue(annotation),
       update: vi.fn(),
@@ -96,6 +145,7 @@ it('does not publish a pending write into a different Session', async () => {
   const save = deferred<PdfAnnotation>()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0 }),
       create: vi.fn(() => save.promise),
       update: vi.fn(),
@@ -119,6 +169,42 @@ it('does not publish a pending write into a different Session', async () => {
   expect(port.annotations).toEqual([])
   expect(port.total).toBe(0)
 })
+it('discards the previous scope history and rejects its captured write port', async () => {
+  installStore()
+  await mount()
+  await act(async () => {
+    await port.create('a1', annotation.target, 'document-note', undefined, [], 'First session')
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+  const previous = port
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({ items: [], total: 0 })
+  await mount('s2')
+  expect(port.annotations).toEqual([])
+  expect(port.history(annotation.target.source)).toEqual({
+    canUndo: false,
+    canRedo: false,
+    busy: false
+  })
+  await expect(
+    previous.create('stale', annotation.target, 'document-note', undefined, [], 'Stale')
+  ).rejects.toThrow()
+  expect(window.api.pdfAnnotations.create).toHaveBeenCalledTimes(1)
+})
+
+it('ignores the previous scope load when it finishes after switching sessions', async () => {
+  installStore()
+  const oldLoad = deferred<PdfAnnotationListResult>()
+  vi.mocked(window.api.pdfAnnotations.list)
+    .mockReturnValueOnce(oldLoad.promise)
+    .mockResolvedValue({ items: [], total: 0 })
+  await mount()
+  await mount('s2')
+  await act(async () => oldLoad.resolve({ items: [annotation], total: 1 }))
+  expect(port.sessionId).toBe('s2')
+  expect(port.annotations).toEqual([])
+  expect(port.loading).toBe(false)
+})
+
 it('preserves list failures for retry instead of treating them as an empty notebook', async () => {
   const list = vi
     .fn()
@@ -126,6 +212,7 @@ it('preserves list failures for retry instead of treating them as an empty noteb
     .mockResolvedValue({ items: [annotation], total: 1 })
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list,
       create: vi.fn(),
       update: vi.fn(),
@@ -143,12 +230,75 @@ it('preserves list failures for retry instead of treating them as an empty noteb
   expect(port.annotations).toEqual([annotation])
 })
 
+it.each([
+  { projectId: 'p1', sessionId: 's2' },
+  { projectId: 'p2', sessionId: 's1' },
+  { projectId: 'p1', sessionId: 's1', sourceFileId: 'f2', versionId: 'v2' },
+  { literatureVersionId: 'library-v1' }
+])('retires writes and callbacks when returning from scope %j', async (otherScope) => {
+  installStore()
+  const save = deferred<PdfAnnotation>()
+  vi.mocked(window.api.pdfAnnotations.create).mockImplementationOnce(() => save.promise)
+  await mount()
+  const previous = port
+  let pending!: Promise<PdfAnnotation>
+  let queued!: Promise<unknown>
+  await act(async () => {
+    pending = previous.create('a1', annotation.target, 'document-note', undefined, [], 'Old')
+    queued = previous
+      .create('queued', annotation.target, 'document-note', undefined, [], 'Queued')
+      .catch((error: unknown) => error)
+  })
+  await act(async () => {
+    root.render(
+      <PdfAnnotationsProvider {...otherScope}>
+        <Probe />
+      </PdfAnnotationsProvider>
+    )
+  })
+  await mount()
+  const reads = vi.mocked(window.api.pdfAnnotations.list).mock.calls.length
+  await act(async () => {
+    previous.retryLoad()
+    await port.create('fresh', annotation.target, 'document-note', undefined, [], 'Fresh')
+    save.resolve(annotation)
+    await pending
+    expect(await queued).toBeInstanceOf(Error)
+    await expect(
+      previous.create('late', annotation.target, 'document-note', undefined, [], 'Late')
+    ).rejects.toThrow()
+  })
+  expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(reads)
+  expect(window.api.pdfAnnotations.create).toHaveBeenCalledTimes(2)
+  expect(port.annotations.map((item) => item.id)).toEqual(['fresh'])
+  expect(port.history(annotation.target.source)).toEqual({
+    canUndo: true,
+    canRedo: false,
+    busy: false
+  })
+  await act(async () => port.undo(annotation.target.source))
+  expect(port.annotations).toEqual([])
+})
+
+it('ignores a stale read after leaving and returning to the same Session', async () => {
+  installStore()
+  const load = deferred<PdfAnnotationListResult>()
+  vi.mocked(window.api.pdfAnnotations.list).mockImplementationOnce(() => load.promise)
+  await mount()
+  await mount('s2')
+  await mount()
+  await act(async () => load.resolve({ items: [annotation], total: 1 }))
+  expect(port.annotations).toEqual([])
+  expect(port.loading).toBe(false)
+})
+
 const installStore = (initial: PdfAnnotation[] = []): Map<string, PdfAnnotation> => {
   const items = new Map(initial.map((item) => [item.id, item]))
   let tick = 0
   const timestamp = (): string => new Date(Date.UTC(2026, 8, 20, 0, 0, ++tick)).toISOString()
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn(async () => ({ items: [...items.values()], total: items.size })),
       create: vi.fn(async (request) => {
         const { createdAt, ...content } = request
@@ -481,6 +631,7 @@ it('uses the shared Literature version scope for writes and history without a Se
   }
   window.api = {
     pdfAnnotations: {
+      reconcile: vi.fn().mockResolvedValue(null),
       list: vi.fn().mockResolvedValue({ items: [], total: 0, source: global.target.source }),
       create: vi.fn().mockResolvedValue(global),
       delete: vi.fn().mockResolvedValue({ deleted: true })
@@ -623,4 +774,50 @@ it('projects deleted Tags without reloading notes or applying stale assignment s
   })
   expect(port.annotations[0].tagIds).toEqual([])
   expect(window.api.pdfAnnotations.list).toHaveBeenCalledTimes(1)
+})
+
+it('shares undo history across linked source indexes', async () => {
+  const items = installStore([annotation])
+  const other = { ...annotation.target.source, sourceFileId: 'linked', versionId: 'linked' }
+  vi.mocked(window.api.pdfAnnotations.list).mockImplementation(async () => ({
+    items: [...items.values()],
+    total: items.size,
+    sourceGroups: [[annotation.target.source, other]]
+  }))
+  await mount()
+  await act(async () => {
+    await port.update(annotation.id, { note: 'Shared edit' })
+  })
+  expect(port.forSource(other).map((row) => row.note)).toEqual(['Shared edit'])
+  expect(port.history(other).canUndo).toBe(true)
+  await act(async () => {
+    await port.undo(other)
+  })
+  expect(port.forSource(annotation.target.source).map((row) => row.note)).toEqual(['Saved'])
+  expect(port.history(other).canRedo).toBe(true)
+})
+
+it('invalidates deletion undo when empty notebooks become linked', async () => {
+  installStore([annotation])
+  await mount()
+  await act(async () => {
+    await port.remove(annotation.id)
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(true)
+  vi.mocked(window.api.pdfAnnotations.list).mockResolvedValue({
+    items: [],
+    total: 0,
+    sourceGroups: [
+      [
+        annotation.target.source,
+        { ...annotation.target.source, projectId: undefined, versionId: 'library' }
+      ]
+    ]
+  })
+  const notify = vi.mocked(window.api.pdfAnnotations.onChanged).mock.calls[0][0]
+  await act(async () => {
+    notify({ scope: { projectId: 'p1' } })
+  })
+  expect(port.history(annotation.target.source).canUndo).toBe(false)
+  expect(port.total).toBe(0)
 })

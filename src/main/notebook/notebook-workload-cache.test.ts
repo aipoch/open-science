@@ -16,7 +16,7 @@ import {
   notebookWorkloadCacheRoot,
   prepareNotebookWorkloadCache,
   removeNotebookWorkloadCache
-} from './notebook-workload-cache-paths'
+} from '@aipoch/environment'
 
 const roots: string[] = []
 const makeRuntime = (): string => {

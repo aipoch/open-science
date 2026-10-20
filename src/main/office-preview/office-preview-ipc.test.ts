@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 type TestSender = {
@@ -12,8 +13,8 @@ const handlers = new Map<string, TestHandler>()
 const listeners = new Map<string, TestHandler>()
 const log = { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
 
-vi.mock('../logger', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('../logger')>()),
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
   createLogger: () => log
 }))
 
@@ -164,3 +165,5 @@ describe('registerOfficePreviewIpcHandlers', () => {
     ).resolves.toEqual({ kind: 'cancelled' })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

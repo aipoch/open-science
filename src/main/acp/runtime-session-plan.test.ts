@@ -182,6 +182,7 @@ const createRuntimeHarness = (options: {
       delete: vi.fn(() => false)
     },
     planDeliveryClaimRetries: new Map(),
+    cancellationTeardown: undefined,
     artifactTurns: {
       handleForExecution: () => 'artifact-handle',
       snapshot: () => ({ promptMessageId: 'interaction-1' })

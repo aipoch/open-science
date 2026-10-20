@@ -4,9 +4,9 @@ import { request } from 'node:http'
 import { test } from '../fixtures/electron-app'
 
 const REMOTE_HOST = 'electron-e2e.r3proxy.com'
-const REMOTE_PORT = 44_100
 
 const remoteRequest = async (
+  port: number,
   path: string,
   cookie?: string
 ): Promise<{ body: string; setCookie: string[]; status: number }> =>
@@ -21,7 +21,7 @@ const remoteRequest = async (
         },
         host: '127.0.0.1',
         path,
-        port: REMOTE_PORT
+        port
       },
       (response) => {
         let body = ''
@@ -55,6 +55,7 @@ test('re-enters with a trusted browser after the Electron app restarts', async (
           setMode: (request: { mode: 'remoteit' }) => Promise<{
             enabled: boolean
             lifecycle: string
+            remoteIt: { service?: { port: number } }
           }>
         }
       }
@@ -62,8 +63,10 @@ test('re-enters with a trusted browser after the Electron app restarts', async (
     return bridge.api.remoteAccess.setMode({ mode: 'remoteit' })
   })
   expect(enabled).toMatchObject({ enabled: true, lifecycle: 'running' })
+  const port = enabled.remoteIt.service?.port
+  if (!port) throw new Error('The remote service did not report its local port.')
 
-  const pairing = await remoteRequest('/')
+  const pairing = await remoteRequest(port, '/')
   expect(pairing.status).toBe(200)
   expect(pairing.body).toContain('Approve this browser')
   const pairingCookie = cookieValue(pairing.setCookie, 'open_science_remote_pairing')
@@ -88,12 +91,16 @@ test('re-enters with a trusted browser after the Electron app restarts', async (
   })
   expect(approved.trustedBrowsers).toHaveLength(1)
 
-  const status = await remoteRequest('/__open_science_remote/pair/status', pairingCookie as string)
+  const status = await remoteRequest(
+    port,
+    '/__open_science_remote/pair/status',
+    pairingCookie as string
+  )
   expect(status.status).toBe(200)
   expect(JSON.parse(status.body)).toEqual({ status: 'approved' })
   const sessionCookie = cookieValue(status.setCookie, 'open_science_remote_session')
   expect(sessionCookie).toBeDefined()
-  expect((await remoteRequest('/api/bootstrap', sessionCookie)).status).toBe(200)
+  expect((await remoteRequest(port, '/api/bootstrap', sessionCookie)).status).toBe(200)
 
   page = await app.restart()
   await expect
@@ -113,7 +120,12 @@ test('re-enters with a trusted browser after the Electron app restarts', async (
     )
     .toMatchObject({ enabled: true, lifecycle: 'running' })
 
-  const reentered = await remoteRequest('/api/bootstrap', sessionCookie)
+  const restoredPort = await page.evaluate(async () => {
+    const snapshot = await window.api.remoteAccess.getSnapshot()
+    return snapshot.remoteIt.service?.port
+  })
+  if (!restoredPort) throw new Error('The restored remote service did not report its local port.')
+  const reentered = await remoteRequest(restoredPort, '/api/bootstrap', sessionCookie)
   expect(reentered.status).toBe(200)
   expect(JSON.parse(reentered.body)).toMatchObject({
     appName: expect.stringContaining('Open-Science')

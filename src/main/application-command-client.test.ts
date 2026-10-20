@@ -87,3 +87,24 @@ describe('Application command client', () => {
     expect(invocations[1]?.callerLease.isCurrent()).toBe(true)
   })
 })
+
+it.each(['projects:list', 'sessions:load-one'])(
+  'preserves dispatcher authorization errors for %s without payload negotiation',
+  async (channel) => {
+    const original = new Error('Original command authorization failure.')
+    const dispatcher: ApplicationCommandByNameDispatcher = {
+      commandNames: () => [channel],
+      invoke: vi.fn(async () => {
+        throw original
+      })
+    }
+    const client = createApplicationCommandClient()
+    const context = createWebCallerContext('expired', { isAuthorizationCurrent: () => false })
+    try {
+      await expect(client.invoke(dispatcher, channel, context, [])).rejects.toBe(original)
+      expect(dispatcher.invoke).toHaveBeenCalledOnce()
+    } finally {
+      client.dispose()
+    }
+  }
+)

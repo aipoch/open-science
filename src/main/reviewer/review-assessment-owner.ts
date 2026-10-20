@@ -13,7 +13,7 @@ import type {
   TurnScope
 } from '../../shared/reviewer'
 import type { PersistedChatSession } from '../../shared/session-persistence'
-import { createLogger, errorLogFields } from '../logger'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
 import type { SessionAuxiliaryTurnUsageRecord } from '../session-persistence/auxiliary-turn-usage'
 import type { AcpProviderTurnProbe } from '../acp/provider-turn-adapter'
 import type { ReviewerAcpRuntime } from './acp-runtime'
@@ -70,6 +70,8 @@ type InitialAssessmentOptions = CommonAssessmentOptions & {
 
 type TrackedAssessmentOptions = CommonAssessmentOptions & {
   mode: 'tracked'
+  resumedSourceFindingIds?: string[]
+  onStarted?: () => void
   trackedChecks: readonly ReviewCheck[]
 }
 
@@ -279,7 +281,7 @@ export const runReviewAssessment = async (
 
   const runningReview: ReviewWithChecks = { ...review, checks: [], submittedChecks: [] }
   onReviewUpdate?.(runningReview)
-  if (options.mode === 'initial') options.onStarted?.()
+  options.onStarted?.()
 
   log.info(options.mode === 'tracked' ? 'scoped re-review created' : 'review created', {
     reviewId: review.id,
@@ -380,6 +382,7 @@ export const runReviewAssessment = async (
           providerSessionId: reviewerSession!.sessionId,
           cwd: built.cwd
         })
+        if (abortSignal?.aborted) throw new Error('reviewer session was aborted before stopping')
         const promptRequest = reviewerSession!.prompt([{ type: 'text', text: prompt }])
         void Promise.resolve(promptRequest).catch(() => undefined)
         const stopReason = await driveReviewerToStop(
@@ -489,10 +492,17 @@ export const runReviewAssessment = async (
   }
 
   if (reviewerSessionFailed) {
+    const details = (reviewerSessionError as { data?: { details?: unknown } } | null)?.data?.details
     const errorMessage =
-      reviewerSessionError instanceof Error
-        ? reviewerSessionError.message
-        : String(reviewerSessionError)
+      reviewerSessionError instanceof Error &&
+      reviewerSessionError.name === 'RequestError' &&
+      reviewerSessionError.message === 'Internal error' &&
+      typeof details === 'string' &&
+      details.trim()
+        ? details
+        : reviewerSessionError instanceof Error
+          ? reviewerSessionError.message
+          : String(reviewerSessionError)
     log.error(
       options.mode === 'tracked' ? 'scoped re-review session failed' : 'reviewer session failed',
       { reviewId: review.id, ...errorLogFields(reviewerSessionError) }
@@ -529,6 +539,9 @@ export const runReviewAssessment = async (
         reviewId: review.id,
         checks: checksReceived,
         expectedSourceFindingIds: trackedChecks.map((check) => check.id),
+        ...(options.mode === 'tracked' && options.resumedSourceFindingIds
+          ? { resumedSourceFindingIds: options.resumedSourceFindingIds }
+          : {}),
         reviewerLog: capturedLog,
         keepFlaggedReviewRunning:
           options.mode === 'initial' && options.keepFlaggedReviewRunning === true

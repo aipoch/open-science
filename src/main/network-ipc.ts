@@ -1,7 +1,7 @@
 import { ipcMainHandle } from './ipc-handler-registry'
 
-import { startDiagnosticOperation } from './diagnostics/operation'
-import { createLogger, type Logger } from './logger'
+import { startDiagnosticOperation } from '@aipoch/diagnostics/node'
+import { createLogger, type Logger } from '@aipoch/diagnostics/node'
 import { checkInternetReachability, getNetworkInfo } from './net/network-info'
 
 import type { NetworkInfo } from '../shared/network'
@@ -20,7 +20,22 @@ type NetworkIpcDiagnostics = Readonly<{
 // internet required); checkConnectivity is a real end-to-end HTTPS probe reused from the
 // onboarding environment check, so it can tell "internet broken" apart from "link is up".
 const createNetworkCommandOwner = (): NetworkCommandOwner => ({
-  getInfo: getNetworkInfo,
+  async getInfo() {
+    const operation = startDiagnosticOperation(createLogger('network'), {
+      operation: 'local-network-info'
+    })
+    try {
+      const info = await getNetworkInfo()
+      operation.complete({
+        connectionType: info.connectionType,
+        hasAddress: info.ipAddress !== null
+      })
+      return info
+    } catch (error) {
+      operation.fail(error)
+      throw error
+    }
+  },
   checkConnectivity: checkInternetReachability
 })
 

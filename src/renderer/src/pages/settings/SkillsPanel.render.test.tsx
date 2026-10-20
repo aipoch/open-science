@@ -8,9 +8,10 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type { AgentHomeSkillView, SkillImportPreviewContent } from '../../../../shared/settings'
+import type { SkillImportPreviewContent } from '../../../../shared/settings'
+import type { AgentHomeSkillView } from '@aipoch/skills/document'
 import { SkillsPanel } from './SkillsPanel'
-import { SKILL_IMPORT_LIMITS } from '../../../../shared/skill-import-limits'
+import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import { useNavigationStore } from '@/stores/navigation-store'
 import { createInitialProjectState, useProjectStore } from '@/stores/project-store'
@@ -353,7 +354,7 @@ describe('SkillsPanel (list view)', () => {
     expect(filters?.querySelector('[aria-label="Filter Skills by agent"]')).not.toBeNull()
     expect(filters?.querySelector('[aria-label="Filter by Tag"]')).not.toBeNull()
     const search = filters?.querySelector<HTMLInputElement>('[aria-label="Search skills"]')
-    expect(search?.parentElement?.className).toContain('min-w-48')
+    expect(search?.parentElement?.className).toContain('basis-full')
     expect(filters?.contains(manage ?? null)).toBe(false)
     expect(filters?.contains(addSkill ?? null)).toBe(false)
     expect(manage).toBeUndefined()
@@ -1224,31 +1225,337 @@ describe('SkillsPanel (sub-views)', () => {
     )
   })
 
-  it('syncs identity edits made in visible imported frontmatter', () => {
-    act(() => {
-      root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
-    })
-    pasteValue(
-      'Skill body',
-      ['---', 'name: original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
-    )
-    setValue(
-      'Skill body',
-      ['---', 'name: revised', 'description: After', 'author: Ada', '---', '# Body'].join('\n')
+  it.each(['body', 'metadata', 'remove-header'] as const)(
+    'preserves top-level identity edits when imported content changes only %s',
+    (change) => {
+      act(() => {
+        root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+      })
+      const imported = [
+        '---',
+        'name: original',
+        'description: Before',
+        'author: Ada',
+        '---',
+        '# Body'
+      ].join('\n')
+      pasteValue('Skill body', imported)
+      setValue('Skill name', 'my-new-skill')
+      setValue('Skill description', 'My revised description')
+      setValue(
+        'Skill body',
+        change === 'body'
+          ? `${imported}\nAdditional instruction.`
+          : change === 'metadata'
+            ? imported.replace('author: Ada', 'author: Grace')
+            : '# Body'
+      )
+
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Skill name"]')?.value
+      ).toBe('my-new-skill')
+      expect(
+        document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill description"]')?.value
+      ).toBe('My revised description')
+      const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Create skill'
+      )
+      act(() => publish?.click())
+
+      expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+        name: 'my-new-skill',
+        description: 'My revised description',
+        body: change === 'body' ? '# Body\nAdditional instruction.' : '# Body',
+        ...(change === 'remove-header'
+          ? {}
+          : { metadata: { author: change === 'metadata' ? 'Grace' : 'Ada' } }),
+        references: []
+      })
+    }
+  )
+
+  it.each(['body', 'header', 'body-after-invalid', 'header-after-invalid'] as const)(
+    'keeps the edit name immutable and saves the description after %s edits',
+    async (change) => {
+      Object.assign(window.api.settings, {
+        getSkillDetail: vi.fn().mockResolvedValue({
+          id: 'personal-mine',
+          etag: 'version',
+          name: 'Mine',
+          description: 'Custom',
+          source: 'personal',
+          updatedAt: '2026-07-08T00:00:00.000Z',
+          enabled: true,
+          body: '# Body',
+          references: []
+        })
+      })
+      await act(async () => {
+        root.render(
+          <SkillsPanel view={{ kind: 'edit', id: 'personal-mine' }} onNavigate={vi.fn()} />
+        )
+      })
+      const imported = [
+        '---',
+        'name: original',
+        'description: Before',
+        'author: Ada',
+        '---',
+        '# Body'
+      ].join('\n')
+      pasteValue('Skill body', imported)
+      setValue('Skill description', 'My revised description')
+      setValue('Skill body', `${imported}\nAdditional instruction.`)
+      if (change.endsWith('-after-invalid')) {
+        setValue(
+          'Skill body',
+          `${imported.replace('author: Ada', 'author: "Ada')}\nAdditional instruction.`
+        )
+        setValue('Skill body', `${imported}\nAdditional instruction.`)
+      }
+      expect(
+        document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill description"]')?.value
+      ).toBe('My revised description')
+      if (change.startsWith('header')) {
+        setValue(
+          'Skill body',
+          imported
+            .replace('name: original', 'name: revised')
+            .replace('description: Before', 'description: After')
+        )
+      }
+      const name = document.body.querySelector<HTMLInputElement>('[aria-label="Skill name"]')!
+      expect(name.disabled).toBe(true)
+      expect(name.value).toBe('Mine')
+      expect(
+        document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill description"]')?.value
+      ).toBe(change.startsWith('header') ? 'After' : 'My revised description')
+      const save = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Save'
+      )
+      await act(async () => save?.click())
+      expect(useSettingsStore.getState().updateSkill).toHaveBeenCalledWith({
+        id: 'personal-mine',
+        etag: 'version',
+        description: change.startsWith('header') ? 'After' : 'My revised description',
+        body: change.startsWith('header') ? '# Body' : '# Body\nAdditional instruction.',
+        metadata: { author: 'Ada' },
+        references: []
+      })
+    }
+  )
+
+  it.each(['name', 'description', 'both'] as const)(
+    'syncs only changed identity fields in visible imported frontmatter: %s',
+    (change) => {
+      act(() => {
+        root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />)
+      })
+      pasteValue(
+        'Skill body',
+        ['---', 'name: original', 'description: Before', 'author: Ada', '---', '# Body'].join('\n')
+      )
+      setValue('Skill name', 'top-level-name')
+      setValue('Skill description', 'Top-level description')
+      setValue(
+        'Skill body',
+        [
+          '---',
+          `name: ${change === 'description' ? 'original' : 'revised'}`,
+          `description: ${change === 'name' ? 'Before' : 'After'}`,
+          'author: Ada',
+          '---',
+          '# Body'
+        ].join('\n')
+      )
+
+      const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Create skill'
+      )
+      act(() => publish?.click())
+
+      expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+        name: change === 'description' ? 'top-level-name' : 'revised',
+        description: change === 'name' ? 'Top-level description' : 'After',
+        body: '# Body',
+        metadata: { author: 'Ada' },
+        references: []
+      })
+    }
+  )
+
+  describe('imported identity parse recovery', () => {
+    const imported = [
+      '---',
+      'name: original',
+      'description: Before',
+      'author: Ada',
+      '---',
+      '# Body'
+    ].join('\n')
+    const mountCreate = (): void => {
+      act(() => root.render(<SkillsPanel view={{ kind: 'create' }} onNavigate={vi.fn()} />))
+    }
+    const overrideIdentity = (): void => {
+      setValue('Skill name', 'top-level-name')
+      setValue('Skill description', 'Top-level description')
+    }
+    const expectIdentity = (name: string, description: string): void => {
+      expect(
+        document.body.querySelector<HTMLInputElement>('[aria-label="Skill name"]')?.value
+      ).toBe(name)
+      expect(
+        document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill description"]')?.value
+      ).toBe(description)
+    }
+    const publish = (): void => {
+      const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+        (button) => button.textContent?.trim() === 'Create skill'
+      )!
+      act(() => button.click())
+    }
+
+    it.each(['none', 'name', 'description', 'both'] as const)(
+      'retains the last valid baseline and syncs only %s changed during invalid YAML',
+      (change) => {
+        mountCreate()
+        pasteValue('Skill body', imported)
+        overrideIdentity()
+        let raw = imported.replace('author: Ada', 'author: "Ada')
+        setValue('Skill body', raw)
+        expectIdentity('top-level-name', 'Top-level description')
+        if (change === 'name' || change === 'both') {
+          raw = raw.replace('name: original', 'name: header-name')
+        }
+        if (change === 'description' || change === 'both') {
+          raw = raw.replace('description: Before', 'description: Header description')
+        }
+        setValue('Skill body', raw)
+        expectIdentity('top-level-name', 'Top-level description')
+        setValue('Skill body', raw.replace('author: "Ada', 'author: "Ada"'))
+        const name = change === 'name' || change === 'both' ? 'header-name' : 'top-level-name'
+        const description =
+          change === 'description' || change === 'both'
+            ? 'Header description'
+            : 'Top-level description'
+        expectIdentity(name, description)
+        publish()
+        expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+          name,
+          description,
+          body: '# Body',
+          metadata: { author: 'Ada' },
+          references: []
+        })
+      }
     )
 
-    const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+    it.each(['author: Ada', '{}', 'null'])(
+      'updates the valid missing-field baseline for %s before reintroducing identical values',
+      (header) => {
+        mountCreate()
+        pasteValue('Skill body', imported)
+        overrideIdentity()
+        setValue('Skill body', `---\n${header}\n---\n# Body`)
+        expectIdentity('top-level-name', 'Top-level description')
+        setValue('Skill body', imported)
+        expectIdentity('original', 'Before')
+        publish()
+        expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+          name: 'original',
+          description: 'Before',
+          body: '# Body',
+          metadata: { author: 'Ada' },
+          references: []
+        })
+      }
     )
-    act(() => publish?.click())
 
-    expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
-      name: 'revised',
-      description: 'After',
-      body: '# Body',
-      metadata: { author: 'Ada' },
-      references: []
-    })
+    it.each([
+      'prefilled',
+      'filled-after-import',
+      'empty-name',
+      'empty-description',
+      'empty-both'
+    ] as const)(
+      'fills only empty fields on first valid parse after an invalid import: %s',
+      (fields) => {
+        mountCreate()
+        if (fields === 'prefilled') overrideIdentity()
+        if (fields === 'empty-name') setValue('Skill description', 'Top-level description')
+        if (fields === 'empty-description') setValue('Skill name', 'top-level-name')
+        pasteValue('Skill body', imported.replace('author: Ada', 'author: "Ada'))
+        if (fields === 'filled-after-import') overrideIdentity()
+        const name =
+          fields === 'empty-name' || fields === 'empty-both' ? 'original' : 'top-level-name'
+        const description =
+          fields === 'empty-description' || fields === 'empty-both'
+            ? 'Before'
+            : 'Top-level description'
+        setValue('Skill body', imported)
+        expectIdentity(name, description)
+        publish()
+        expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+          name,
+          description,
+          body: '# Body',
+          metadata: { author: 'Ada' },
+          references: []
+        })
+      }
+    )
+
+    it.each(['valid', 'invalid'] as const)(
+      'resets the comparison baseline for an explicit %s reimport',
+      (validity) => {
+        mountCreate()
+        pasteValue('Skill body', imported)
+        overrideIdentity()
+        setValue('Skill body', imported + '\nInitial body edit.')
+        const replacement =
+          validity === 'valid'
+            ? imported.replace('name: original', 'name: replacement')
+            : imported
+                .replace('name: original', 'name: replacement')
+                .replace('author: Ada', 'author: "Ada')
+        pasteValue('Skill body', replacement)
+        expectIdentity('top-level-name', 'Top-level description')
+        setValue('Skill body', replacement.replace('author: "Ada', 'author: "Ada"') + '\nExtra.')
+        const name = 'top-level-name'
+        const description = 'Top-level description'
+        expectIdentity(name, description)
+        publish()
+        expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+          name,
+          description,
+          body: '# Body\nExtra.',
+          metadata: { author: 'Ada' },
+          references: []
+        })
+      }
+    )
+
+    it.each(['literal', 'import'] as const)(
+      'retains existing %s semantics after removing an imported header',
+      (mode) => {
+        mountCreate()
+        pasteValue('Skill body', imported)
+        overrideIdentity()
+        setValue('Skill body', '# Plain body')
+        if (mode === 'literal') setValue('Skill body', imported)
+        else pasteValue('Skill body', imported)
+        setValue('Skill body', imported + '\nExtra.')
+        expectIdentity('top-level-name', 'Top-level description')
+        publish()
+        expect(useSettingsStore.getState().createSkill).toHaveBeenCalledWith({
+          name: 'top-level-name',
+          description: 'Top-level description',
+          body: mode === 'literal' ? imported + '\nExtra.' : '# Body\nExtra.',
+          ...(mode === 'import' ? { metadata: { author: 'Ada' } } : {}),
+          references: []
+        })
+      }
+    )
   })
 
   it('uses one Content mode Tab stop and switches mode with ArrowRight', async () => {
@@ -1293,7 +1600,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', body)
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 
@@ -1339,7 +1646,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 
@@ -1421,7 +1728,7 @@ describe('SkillsPanel (sub-views)', () => {
       })
 
       const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-        (button) => button.textContent?.trim() === 'Publish'
+        (button) => button.textContent?.trim() === 'Create skill'
       )
       expect(pending).toHaveLength(1)
       expect(input?.disabled).toBe(true)
@@ -1459,7 +1766,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     await act(async () => {
       publish?.click()
@@ -1567,7 +1874,7 @@ describe('SkillsPanel (sub-views)', () => {
     setValue('Skill body', '# Body')
 
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     expect(document.body.textContent).toContain(
       'Use up to 64 lowercase letters, numbers, and single hyphens.'
@@ -1595,7 +1902,7 @@ describe('SkillsPanel (sub-views)', () => {
       document.body.querySelector<HTMLTextAreaElement>('[aria-label="Skill body"]')?.value
     ).toBe(pasted)
     const publish = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
-      (button) => button.textContent?.trim() === 'Publish'
+      (button) => button.textContent?.trim() === 'Create skill'
     )
     act(() => publish?.click())
 

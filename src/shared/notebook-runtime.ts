@@ -1,4 +1,5 @@
-import type { NotebookLanguage } from './notebook'
+import type { DiscoveredInterpreter, EnvProvenance } from '@aipoch/environment/contracts'
+import type { NotebookLanguage } from './notebook-language-contract'
 
 // Renderer-safe wire shapes for the notebook Runtime Registry (managed + external environments).
 // RuntimeEnablement owns global admission while NotebookRuntimeBindings own each Session's selected
@@ -6,47 +7,6 @@ import type { NotebookLanguage } from './notebook'
 
 // Where a language's interpreter comes from: an app-owned micromamba env, or the user's own install.
 export type RuntimeSource = 'managed' | 'external'
-
-// The ONE mapping from who owns an env to which tool reads/writes its packages (the `via` in
-// package-operation policy): app-owned conda envs (managed OR agent-created, both under the app
-// runtime root) go through the bundled micromamba; the user's own envs are handled by their own
-// interpreter's pip (Python) or their own R library (R) — never the bundled micromamba against a
-// foreign env. Shared by package writes and the Settings package listing so they cannot drift.
-export const packageToolFor = (
-  language: NotebookLanguage,
-  appOwned: boolean
-): 'micromamba' | 'pip' | 'r-library' =>
-  appOwned ? 'micromamba' : language === 'r' ? 'r-library' : 'pip'
-
-// v4 environment discovery (Settings cards). Where an interpreter came from — also gates the agent
-// remove-guard: only 'agent-created' envs may be removed by the agent.
-export type EnvProvenance = 'app-managed' | 'user-own' | 'agent-created'
-
-// One detected interpreter. `envId` (its real path) is the stable identity used to persist the
-// per-env enabled/disabled choice across re-detection.
-export type DiscoveredInterpreter = {
-  language: NotebookLanguage
-  provenance: EnvProvenance
-  envId: string
-  interpreterPath: string
-  label: string
-  version?: string
-  runnable: boolean
-  condaEnv?: string
-  detail?: string
-  // Advisory discovery only; never persisted as consent. Missing means detection was unavailable.
-  personalRLibraries?: string[]
-}
-
-// One installed package in a discovered environment, surfaced by the Settings "Packages" dialog.
-// `build`/`channel` are present only for conda-tracked entries (a micromamba listing); pip and CRAN
-// listings carry name + version only.
-export type EnvPackage = {
-  name: string
-  version: string
-  build?: string
-  channel?: string
-}
 
 // The v4 per-language enablement state, keyed by `envId` (the interpreter's real path). `enabled` is
 // an EXPLICIT override map — a present entry wins over the provenance default (see isEnvEnabled), an

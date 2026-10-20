@@ -1,6 +1,7 @@
+import { createNotebookDependencyAnalyzer } from './dependency-analysis-adapter'
 import { once } from 'node:events'
 import { describe, it, expect } from 'vitest'
-import { notebookExecutionContextSchema } from '../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 import {
   execFileSync,
   spawn,
@@ -27,7 +28,7 @@ import {
 } from './reported-python-callback.fixture'
 import { startWorkingFileObservation } from './working-file-observer'
 import type { NotebookRunRecord } from '../../shared/notebook'
-import { NotebookDependencyAnalyzer } from './dependency-analysis'
+
 import withVolcanoCells from './reported-with-volcano.fixture.json'
 import mixedVennCells from './reported-mixed-venn.fixture.json'
 import vennCounterCells from './reported-mixed-venn-counter.fixture.json'
@@ -128,7 +129,7 @@ gate('python_loop.py', () => {
       '\n# %%\n'
     )
     const runs: NotebookRunRecord[] = []
-    const analyzer = new NotebookDependencyAnalyzer({
+    const analyzer = createNotebookDependencyAnalyzer({
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     })
@@ -261,7 +262,7 @@ w.save(sys.argv[1])`,
         mkdirSync(join(dataRoot, 'inputs'), { recursive: true })
         writeFileSync(join(dataRoot, 'inputs/source.csv'), 'x\n1\n2\n3\n')
         const runs: NotebookRunRecord[] = []
-        const analyzer = new NotebookDependencyAnalyzer({
+        const analyzer = createNotebookDependencyAnalyzer({
           storageRoot: root,
           repository: { readSessionRuns: async () => runs }
         })
@@ -416,7 +417,7 @@ w.save(sys.argv[1])`,
           )
           const loop = startLoop(pyBin!, { PYTHONDONTWRITEBYTECODE: '1' })
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -526,7 +527,7 @@ w.save(sys.argv[1])`,
             'df=xl.parse(sheet_name=0)\ndf.to_csv("result.csv",index=False)\nxl.close()'
           ]
           const runs: NotebookRunRecord[] = []
-          const analyzer = new NotebookDependencyAnalyzer({
+          const analyzer = createNotebookDependencyAnalyzer({
             storageRoot: root,
             repository: { readSessionRuns: async () => runs }
           })
@@ -631,7 +632,7 @@ w.save(sys.argv[1])`,
         expect((await loop.send(`import os\nos.chdir(${JSON.stringify(dir)})`)).error).toBeNull()
       }
       for (const source of scripts) expect((await original.send(source)).error).toBeNull()
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       }).project({ projectId: 'p', sessionId: 's', completedRun: runs[4]! })
@@ -789,7 +790,7 @@ w.save(sys.argv[1])`,
       const original = startLoop(pyBin!, environment)
       let replay: ReturnType<typeof startLoop> | undefined
       const runs: NotebookRunRecord[] = []
-      const analyzer = new NotebookDependencyAnalyzer({
+      const analyzer = createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => runs }
       })
@@ -1066,7 +1067,7 @@ w.save(sys.argv[1])`,
         inputFiles: [],
         ...files
       }
-      const projection = await new NotebookDependencyAnalyzer({
+      const projection = await createNotebookDependencyAnalyzer({
         storageRoot: root,
         repository: { readSessionRuns: async () => [run] }
       }).project({ projectId: 'project', sessionId: 'session', completedRun: run })
@@ -1104,6 +1105,91 @@ w.save(sys.argv[1])`,
     } finally {
       original.child.kill()
       replay?.child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it.each(['capture_probe', 'capture_alias'])(
+    'does not claim conflicting same-directory metadata is loaded for %s',
+    async (importName) => {
+      const root = mkdtempSync(join(tmpdir(), 'python-duplicate-metadata-'))
+      for (const version of ['1.0', '2.0']) {
+        const dist = join(root, `capture_probe-${version}.dist-info`)
+        mkdirSync(dist)
+        writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+        writeFileSync(join(dist, 'top_level.txt'), `${importName}\n`)
+        writeFileSync(join(dist, 'RECORD'), `${importName}.py,,\n`)
+      }
+      writeFileSync(join(root, `${importName}.py`), '__version__ = "1.0"\n')
+      const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+      try {
+        const response = await send(
+          `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import ${importName}`
+        )
+        expect(response.error).toBeNull()
+        const packages = response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+        expect(packages.filter((pkg) => pkg.loaded_state === 'loaded')).toEqual([
+          expect.objectContaining({ version: '1.0' })
+        ])
+        expect(packages).toContainEqual(
+          expect.objectContaining({ version: '2.0', loaded_state: 'unknown' })
+        )
+      } finally {
+        child.kill()
+        rmSync(root, { recursive: true, force: true })
+      }
+    },
+    60_000
+  )
+
+  it('keeps ambiguous same-directory versions unknown when the module has no version', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-unknown-metadata-'))
+    for (const version of ['1.0', '2.0']) {
+      const dist = join(root, `capture_probe-${version}.dist-info`)
+      mkdirSync(dist)
+      writeFileSync(join(dist, 'METADATA'), `Name: capture-probe\nVersion: ${version}\n`)
+      writeFileSync(join(dist, 'top_level.txt'), 'capture_alias\n')
+      writeFileSync(join(dist, 'RECORD'), 'capture_alias.py,,\n')
+    }
+    writeFileSync(join(root, 'capture_alias.py'), 'VALUE = 42\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_alias`
+      )
+      expect(response.error).toBeNull()
+      const packages = response.environment.packages.filter((pkg) => pkg.name === 'capture-probe')
+      expect(packages).toHaveLength(2)
+      expect(packages.every((pkg) => pkg.loaded_state === 'unknown')).toBe(true)
+    } finally {
+      child.kill()
+      rmSync(root, { recursive: true, force: true })
+    }
+  }, 60_000)
+
+  it('does not duplicate equivalent module and distribution release spellings', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'python-equivalent-metadata-'))
+    const dist = join(root, 'capture_probe-2026.7.22.dist-info')
+    mkdirSync(dist)
+    writeFileSync(join(dist, 'METADATA'), 'Name: capture-probe\nVersion: 2026.7.22\n')
+    writeFileSync(join(dist, 'top_level.txt'), 'capture_probe\n')
+    writeFileSync(join(dist, 'RECORD'), 'capture_probe.py,,\n')
+    writeFileSync(join(root, 'capture_probe.py'), '__version__ = "2026.07.22"\n')
+    const { child, send } = startLoop(pyBin as string, { PYTHONDONTWRITEBYTECODE: '1' })
+    try {
+      const response = await send(
+        `import sys; sys.path.insert(0, ${JSON.stringify(root)}); import capture_probe`
+      )
+      expect(response.error).toBeNull()
+      expect(
+        response.environment.packages.filter(
+          (pkg) => pkg.name.replace(/_/gu, '-') === 'capture-probe'
+        )
+      ).toEqual([expect.objectContaining({ version: '2026.7.22', loaded_state: 'loaded' })])
+    } finally {
+      child.kill()
       rmSync(root, { recursive: true, force: true })
     }
   }, 60_000)

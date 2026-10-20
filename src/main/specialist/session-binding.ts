@@ -12,7 +12,7 @@
 // writing specialistId to the persisted session file; this service holds the
 // live in-memory view and the resolution logic.
 
-import { createLogger } from '../logger'
+import { createLogger } from '@aipoch/diagnostics/node'
 import type { SpecialistService } from './service'
 import type { SessionSpecialistResolution, SpecialistView } from '../../shared/specialist'
 

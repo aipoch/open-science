@@ -466,7 +466,7 @@ describe('SessionDetailsOwner', () => {
       // This reads and executes production source; it does not reimplement the projection.
       const source = ts.createSourceFile(
         'ipc.ts',
-        readFileSync(new URL('../ipc.ts', import.meta.url), 'utf8'),
+        readFileSync(new URL('../composition/session-surfaces.ts', import.meta.url), 'utf8'),
         ts.ScriptTarget.Latest,
         true
       )

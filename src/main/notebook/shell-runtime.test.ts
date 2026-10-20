@@ -4,12 +4,18 @@ import {
   captureShellRuntimeBinding,
   defaultShellRuntimeBinding,
   shellRuntimeAgentContract,
+  shellRuntimeBindingSchema,
   shellRuntimeDialect,
   shellRuntimePlatform,
   shellRuntimeSandboxTarget
 } from './shell-runtime'
 
 describe('shell runtime binding', () => {
+  it.each(['5.1', '7.6'] as const)('preserves the recorded PowerShell %s identity', (version) => {
+    const binding = shellRuntimeBindingSchema.parse({ kind: 'powershell', version })
+    expect(binding).toEqual({ kind: 'powershell', version })
+    expect(shellRuntimeAgentContract(binding).sessionInstruction).toContain(`PowerShell ${version}`)
+  })
   it.each([
     ['win32', { kind: 'powershell', version: '5.1' }],
     ['linux', { kind: 'native-posix', shell: '/bin/sh' }],

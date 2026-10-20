@@ -45,6 +45,7 @@ const NotebookFilePreview = lazy(() =>
 export const renderPreviewFile = ({
   item,
   presentation,
+  readOnly,
   annotationVersionId,
   annotationBlockedByHistoricalVersion,
   annotationVersionPending,
@@ -53,11 +54,16 @@ export const renderPreviewFile = ({
   onUpdateAnnotationNote,
   onRemoveAnnotation,
   onAnnotationError,
-  onPdfReadingPositionChange
+  onPdfReadingPositionChange,
+  pdfProseRegions,
+  pdfProseRegionIdentityKey,
+  onPdfProseRegionsChange,
+  onPdfTranslationChange
 }: PreviewFileRendererProps): React.JSX.Element | undefined => {
   const props = {
     item,
     presentation,
+    readOnly,
     annotationVersionId,
     annotationBlockedByHistoricalVersion,
     annotationVersionPending,
@@ -84,7 +90,7 @@ export const renderPreviewFile = ({
     case 'image':
       return <ImagePreviewRenderer {...props} />
     case 'json':
-      return <PlanJsonPreview item={item} />
+      return <PlanJsonPreview item={item} readOnly={readOnly} />
     case 'markdown':
       return <MarkdownPreviewRenderer {...props} />
     case 'pdb':
@@ -97,7 +103,14 @@ export const renderPreviewFile = ({
       return <TiffPreviewRenderer item={item} />
     case 'pdf':
       return (
-        <PdfPreviewRenderer {...props} onPdfReadingPositionChange={onPdfReadingPositionChange} />
+        <PdfPreviewRenderer
+          {...props}
+          onPdfReadingPositionChange={onPdfReadingPositionChange}
+          pdfProseRegions={pdfProseRegions}
+          pdfProseRegionIdentityKey={pdfProseRegionIdentityKey}
+          onPdfProseRegionsChange={onPdfProseRegionsChange}
+          onPdfTranslationChange={onPdfTranslationChange}
+        />
       )
     case 'word':
     case 'spreadsheet':

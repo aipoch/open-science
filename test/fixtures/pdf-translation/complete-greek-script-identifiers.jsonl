@@ -1,0 +1,7 @@
+{"name":"dropped-letter-index-is-not-a-complete-translation","source":"With γr3 and γr4, compare the estimates.","translation":"使用 γ3 和 γr4 比较估计值。","missing":["γr3"]}
+{"name":"complete-indexed-identifiers-remain-valid","source":"With γr3 and γr4, compare the estimates.","translation":"使用 γr3 和 γr4 比较估计值。","missing":[]}
+{"name":"unicode-super-and-subscripts-keep-complete-identity","source":"Use δs5 for the estimate.","translation":"使用 δˢ₅ 进行估计。","missing":[]}
+{"name":"changed-numeric-index-is-rejected","source":"Use δs5 for the estimate.","translation":"使用 δs6 进行估计。","missing":["δs5"]}
+{"name":"longer-identifier-cannot-satisfy-a-shorter-one","source":"Use δs5 for the estimate.","translation":"使用 δs50 进行估计。","missing":["δs5"]}
+{"name":"repeated-indexed-variable-must-not-be-dropped","source":"Compare γr3 to the previous γr3.","translation":"比较 γr3 与先前的值。","missing":["γr3"]}
+{"name":"ordinary-greek-words-and-simple-variables-are-outside-this-guard","source":"The Greek word is αλφα and the variable is α.","translation":"希腊语单词为阿尔法，变量为 α。","missing":[]}

@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { createDatabaseAtReleasedManifest } from '../../../test/fixtures/application-database'
+import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -17,7 +18,7 @@ const COMPUTE_ANALYSIS_CONSTRAINTS_MIGRATION_ID = '0021_compute_job_analysis_con
 const MEMORY_GLOBAL_CONTENT_UNIQUE_MIGRATION_ID = '0022_memory_global_content_unique'
 const COMPUTE_JOB_OPERATION_MIGRATION_ID = '0023_compute_job_operation'
 const COMPUTE_JOB_FILE_EVIDENCE_MIGRATION_ID = '0024_compute_job_file_evidence'
-const CURRENT_MIGRATION_ID = '0045_artifact_hidden'
+const CURRENT_MIGRATION_ID = '0051_artifact_hidden'
 const MEMORY_AUXILIARY_SCHEMA_NAMES = [
   'MemoryEntryFts',
   'MemoryEntry_fts_insert',
@@ -302,7 +303,13 @@ describe('agent memory project scope migration', () => {
     })
   })
 
+  // Replaying the historical suffix rebuilds tables twice; use the migration suite's 120s budget.
   it('replays an unledgered partial memory migration and restores missing triggers', async () => {
+    await client.$disconnect()
+    const legacyRoot = join(storageRoot, 'legacy')
+    await mkdir(legacyRoot)
+    client = createProjectDbClient(legacyRoot)
+    await createDatabaseAtReleasedManifest(client)
     await client.$executeRawUnsafe('DROP TRIGGER "MemoryEntry_fts_update"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "fileEvidence"')
     await client.$executeRawUnsafe('ALTER TABLE "ComputeJob" DROP COLUMN "producerRunId"')
@@ -344,12 +351,18 @@ describe('agent memory project scope migration', () => {
         '0042_classification_usage',
         '0043_pdf_annotations',
         '0044_literature_smart_collections',
+        '0045_literature_smart_pause_run',
+        '0046_journal_attributes',
+        '0047_session_replay',
+        '0048_pdf_annotation_sharing',
+        '0049_pascalcase_table_names',
+        '0050_literature_translation',
         CURRENT_MIGRATION_ID
       ],
       to: CURRENT_MIGRATION_ID
     })
     await expect(verifyCurrentApplicationSchema(client)).resolves.toBeUndefined()
-  })
+  }, 120_000)
 
   it('rejects unexpected triggers in the current runtime schema', async () => {
     await client.$executeRawUnsafe(`CREATE TRIGGER "MemoryEntry_unexpected_copy"

@@ -1,11 +1,7 @@
 {
   "ownerPaths": [
     "src/main/notebook/artifact-source-scope.ts",
-    "src/main/notebook/dependency-analysis.path-plot.test.ts",
-    "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
-    "src/main/notebook/dependency-analysis.r-plot-values.test.ts",
-    "src/main/notebook/dependency-analysis.subplots.test.ts",
-    "src/main/notebook/dev-web-reproducibility.fixture.json",
+    "src/main/notebook/artifact-r-reproduction.integration.test.ts",
     "src/main/notebook/host-artifacts-service.test.ts",
     "src/main/notebook/host-artifacts-service.ts",
     "src/main/notebook/host-lineage-service.test.ts",
@@ -15,17 +11,13 @@
   ],
   "interfacePaths": [
     "src/main/notebook/artifact-source-scope.ts",
-    "src/main/notebook/dev-web-reproducibility.fixture.json",
     "src/main/notebook/host-artifacts-service.ts",
     "src/main/notebook/host-lineage-service.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
-      "src/main/notebook/dependency-analysis.path-plot.test.ts",
-      "src/main/notebook/dependency-analysis.r-plot-repro.test.ts",
-      "src/main/notebook/dependency-analysis.r-plot-values.test.ts",
-      "src/main/notebook/dependency-analysis.subplots.test.ts",
+      "src/main/notebook/artifact-r-reproduction.integration.test.ts",
       "src/main/notebook/host-artifacts-service.test.ts",
       "src/main/notebook/host-lineage-service.test.ts",
       "src/main/notebook/local-rpc-server.artifacts.test.ts",
@@ -37,6 +29,9 @@
       "src/shared/renderer-contract-catalog.test.ts"
     ],
     "consumer": [
+      "src/main/application-command-wiring.test.ts",
+      "src/main/composition/project-lifecycle.test.ts",
+      "src/main/composition/reviewer.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/artifact-turn-owner.test.ts",
@@ -104,7 +99,6 @@
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/notebook/delegated-lane-capability.test.ts",
-      "src/main/notebook/dependency-analysis.dev-web.test.ts",
       "src/main/notebook/e2e.certification.test.ts",
       "src/main/notebook/host-mcp.integration.test.ts",
       "src/main/notebook/host-model-service.test.ts",
@@ -164,7 +158,26 @@
       "src/main/window-find-ipc.test.ts",
       "src/shared/renderer-surface-inventory.test.ts",
       "src/shared/renderer-surface-matrix.test.ts",
-      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts"
+      "src/renderer/src/pages/workspace/workspace-message-queue-controller.test.ts",
+      "src/main/notebook/runtime-service.rpc-retirement.test.ts",
+      "src/main/notebook/runtime-service.macos-isolation.integration.test.ts",
+      "src/main/session-persistence/ipc.test.ts",
+      "src/main/acp/approved-handoff-outcome.integration.test.ts",
+      "src/main/acp/approved-handoff-outcome.test.ts",
+      "src/main/composition/notebook-environment.test.ts",
+      "src/main/desktop-runtime-transport.integration.test.ts",
+      "src/main/side-chat/application-commands.test.ts",
+      "src/main/acp/specialist-switch-recovery.integration.test.ts",
+      "src/main/agents/production-completion-handoff.test.ts",
+      "src/main/notebook/analysis-file-evidence.test.ts",
+      "src/main/notebook/artifact-analysis-contract.integration.test.ts",
+      "src/main/desktop-runtime-backpressure.integration.test.ts",
+      "src/main/desktop-runtime-transport-diagnostics.test.ts",
+      "src/main/node-entry.test.ts",
+      "src/main/desktop-runtime-session-size.integration.test.ts",
+      "src/main/notebook-payload.integration.test.ts",
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/composition/session-packages.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

@@ -1,5 +1,5 @@
 import { X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -51,7 +51,7 @@ const PermissionScopeConfirmationDialog = ({
       ? t('Matching actions can run without another approval for every session in this project.')
       : t('Matching actions can run without another approval for every session in every project.')
   const settingsTarget = retainedConfirmation?.settingsTarget
-    ? `${t('Settings')} → ${t('Network')} → ${t('Allowed domains')}`
+    ? `${t('Settings')} → ${t('Network')} → ${t('Notebook network access')}`
     : t('Settings → Permissions')
 
   return (

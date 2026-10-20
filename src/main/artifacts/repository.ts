@@ -9,9 +9,9 @@ import type {
 } from '../../shared/artifacts'
 import { ArtifactCompatibilityOwner } from './compatibility-owner'
 import {
-  defaultArtifactDurability,
-  type ArtifactDurability as ArtifactRepositoryDurability
-} from './durability'
+  defaultFileDurability,
+  type FileDurability as ArtifactRepositoryDurability
+} from '@aipoch/durable-files'
 import {
   ArtifactCompatibilityScanIncompleteError,
   ArtifactPublicationOwner,
@@ -39,7 +39,7 @@ type ArtifactRepositoryStorage = ArtifactStorageAccessDurability
 
 export type { ArtifactRepositoryDurability }
 
-const defaultArtifactRepositoryDurability = defaultArtifactDurability
+const defaultArtifactRepositoryDurability = defaultFileDurability
 
 class ArtifactRepository {
   private readonly publicationOwner: ArtifactPublicationOwner

@@ -1,33 +1,22 @@
-export const OPEN_SCIENCE_DOMAIN_GROUP_IDS = [
-  'packageRegistries',
-  'nih',
-  'genomics',
-  'proteomics',
-  'literature',
-  'clinical'
-] as const
-
-export type OpenScienceDomainGroupId = (typeof OPEN_SCIENCE_DOMAIN_GROUP_IDS)[number]
-
-export type OpenScienceDomainGroup = Readonly<{
-  id: OpenScienceDomainGroupId
-  domains: readonly string[]
-  locked?: boolean
-}>
-
-export type NotebookNetworkSettings = Readonly<{
-  allowedDomains: readonly string[]
-  disabledOpenScienceDomainGroups: readonly OpenScienceDomainGroupId[]
-  disabledOpenScienceDomains: readonly string[]
-}>
-
-export type NotebookNetworkPolicy = Readonly<{
-  allowedDomains: readonly string[]
-  askDomains: readonly string[]
-  deniedDomains: readonly string[]
-  deniedDomainReasons: Readonly<Record<string, string>>
-}>
-
+import type { DownloadProgress } from '@aipoch/resilient-download'
+import {
+  OPEN_SCIENCE_DOMAIN_GROUP_IDS,
+  type OpenScienceDomainGroupId,
+  type OpenScienceDomainGroup,
+  type TrustedPrivateDestination,
+  type NotebookNetworkSettings,
+  type NotebookNetworkPolicy
+} from './notebook-network-settings'
+export { OPEN_SCIENCE_DOMAIN_GROUP_IDS } from './notebook-network-settings'
+export type {
+  OpenScienceDomainGroupId,
+  OpenScienceDomainGroup,
+  TrustedPrivateDestination,
+  PrivateDestinationRequest,
+  PrivateDestinationReview,
+  NotebookNetworkSettings,
+  NotebookNetworkPolicy
+} from './notebook-network-settings'
 export type NotebookNetworkStatusReason =
   | 'linuxBubblewrapMissing'
   | 'macSeatbeltUnavailable'
@@ -40,16 +29,36 @@ export type NotebookNetworkStatusReason =
   | 'windowsOwnershipMissing'
   | 'windowsProfileMissing'
 
-export type NotebookNetworkStatus =
-  | Readonly<{ kind: 'checking' }>
-  | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
-  | Readonly<{
-      kind: 'setupRequired'
-      platform: 'linux' | 'win32'
-      reasons: readonly NotebookNetworkStatusReason[]
-    }>
-  | Readonly<{ kind: 'unsupported'; platform: NodeJS.Platform }>
-  | Readonly<{ kind: 'error'; reason: NotebookNetworkStatusReason }>
+export type NotebookRuntimeSetupPhase = 'checking' | 'downloading' | 'verifying'
+
+export type NotebookNetworkStatus = Readonly<{
+  windowsRuntimeSetup?: Readonly<{
+    downloadBytes: number
+    canCancel: boolean
+    cancelled: boolean
+    failure?: Readonly<{ component: 'node' | 'powershell'; phase: NotebookRuntimeSetupPhase }>
+  }>
+}> &
+  (
+    | Readonly<{
+        kind: 'checking'
+        runtimePreparation?: Readonly<{
+          component: 'node' | 'powershell'
+          phase: NotebookRuntimeSetupPhase
+          download?: DownloadProgress
+          received?: number
+          total?: number
+        }>
+      }>
+    | Readonly<{ kind: 'ready'; warnings: readonly NotebookNetworkStatusReason[] }>
+    | Readonly<{
+        kind: 'setupRequired'
+        platform: 'linux' | 'win32'
+        reasons: readonly NotebookNetworkStatusReason[]
+      }>
+    | Readonly<{ kind: 'unsupported'; platform: NodeJS.Platform }>
+    | Readonly<{ kind: 'error'; reason: NotebookNetworkStatusReason }>
+  )
 
 export const DEFAULT_NOTEBOOK_NETWORK_SETTINGS: NotebookNetworkSettings = Object.freeze({
   allowedDomains: [],
@@ -282,6 +291,13 @@ export const normalizeNotebookNetworkSettings = (value: unknown): NotebookNetwor
     : []
 
   return {
+    ...(Array.isArray(record.trustedPrivateDestinations)
+      ? {
+          trustedPrivateDestinations: normalizeTrustedPrivateDestinations(
+            record.trustedPrivateDestinations
+          )
+        }
+      : {}),
     allowedDomains: normalizeAllowedDomains(record.allowedDomains),
     disabledOpenScienceDomainGroups: disabledGroups,
     disabledOpenScienceDomains: disabledDomains
@@ -313,6 +329,9 @@ export const buildNotebookNetworkPolicy = (
     )
 
   return {
+    ...(settings.trustedPrivateDestinations?.length
+      ? { trustedPrivateDestinations: settings.trustedPrivateDestinations }
+      : {}),
     allowedDomains: uniqueSorted([...builtIn, ...settings.allowedDomains]),
     // Exact custom approvals override these automatic-access exclusions. Remove matching
     // built-in exact rules above so they cannot masquerade as explicit approvals.
@@ -322,3 +341,37 @@ export const buildNotebookNetworkPolicy = (
   }
 }
 import { AUTOMATIC_PACKAGE_MIRROR_DOMAINS } from './mirror'
+
+// Shape validation only: the main/runtime owner classifies addresses and rechecks DNS.
+export const normalizeTrustedPrivateDestinations = (
+  value: unknown
+): TrustedPrivateDestination[] => {
+  if (!Array.isArray(value)) return []
+  const entries = new Map<string, TrustedPrivateDestination>()
+  for (const item of value) {
+    if (!item || typeof item !== 'object') continue
+    const { hostname, port, approvedAddresses } = item
+    const host = typeof hostname === 'string' ? validateCustomAllowedDomain(hostname) : undefined
+    if (
+      !host?.ok ||
+      !Number.isInteger(port) ||
+      port < 1 ||
+      port > 65535 ||
+      !Array.isArray(approvedAddresses) ||
+      !approvedAddresses.length ||
+      !approvedAddresses.every((address) => typeof address === 'string' && address.length <= 45)
+    )
+      continue
+    const key = `${host.hostname}:${port}`
+    // Duplicate records must never combine into a wider grant.
+    if (entries.has(key)) return []
+    entries.set(key, {
+      hostname: host.hostname,
+      port,
+      approvedAddresses: uniqueSorted(approvedAddresses)
+    })
+  }
+  return [...entries.values()].sort(
+    (a, b) => a.hostname.localeCompare(b.hostname) || a.port - b.port
+  )
+}

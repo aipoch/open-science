@@ -74,6 +74,28 @@ describe('agent loading message state', () => {
     expect(getAgentLoadingPhase(session)).toBe('thinking')
   })
 
+  it('keeps a live tool on the owning prompt when a routed reply is the newest user message', async () => {
+    const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
+    const session = createSession({
+      status: 'idle',
+      agentPromptInFlight: true,
+      messages: [
+        createMessage({ id: 'prompt-1', role: 'user' }),
+        createMessage({
+          id: 'steering-1',
+          role: 'user',
+          content: 'Also add a legend',
+          responseToMessageId: 'prompt-1',
+          createdAt: 1710000000150,
+          updatedAt: 1710000000150
+        })
+      ],
+      activities: [createActivity({ status: 'in_progress' })]
+    })
+
+    expect(getAgentLoadingPhase(session)).toBe('interacting-with-tools')
+  })
+
   it('shows loading when the foreground runtime owns a request without a local active run', async () => {
     const { getAgentLoadingPhase } = await loadAgentLoadingMessageModule()
     const session = createSession({

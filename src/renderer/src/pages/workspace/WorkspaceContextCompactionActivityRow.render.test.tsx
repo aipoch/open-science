@@ -49,15 +49,15 @@ describe('WorkspaceContextCompactionActivityRow', () => {
     expect(html).toContain('aria-live="polite"')
   })
 
-  it('explains that failed or cancelled compaction leaves earlier context unchanged', () => {
+  it('preserves chat history without claiming the native context is unchanged', () => {
     const failed = renderActivity({ status: 'failed', title: 'Context compaction failed' })
     const cancelled = renderActivity({ title: 'Context compaction cancelled' })
 
     expect(failed).toContain('Context compaction failed')
-    expect(failed).toContain('Earlier context is unchanged.')
+    expect(failed).toContain('Your conversation history is preserved.')
     expect(failed).toContain('lucide-circle-alert')
     expect(cancelled).toContain('Context compaction cancelled')
-    expect(cancelled).toContain('Earlier context is unchanged.')
+    expect(cancelled).toContain('Your conversation history is preserved.')
     expect(cancelled).toContain('lucide-circle-minus')
   })
 })

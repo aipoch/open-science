@@ -231,3 +231,25 @@ describe('D03 subscriber failure isolation', () => {
     expect(verifyDatabase).toHaveBeenCalledTimes(2)
   })
 })
+
+it('joins an active retry before acknowledging a cancelled Node startup', async () => {
+  const { waitForVerifiedDatabaseStartup } = await import('./database-startup-owner')
+  let finish!: () => void
+  const attempt = new Promise<void>((resolve) => {
+    finish = resolve
+  })
+  const owner = {
+    whenVerified: () => new Promise<void>(() => undefined),
+    whenAttemptSettled: () => attempt
+  }
+  const controller = new AbortController()
+  const waiting = waitForVerifiedDatabaseStartup(owner, controller.signal)
+  const rejected = vi.fn()
+  const settled = waiting.catch(rejected)
+  controller.abort()
+  await Promise.resolve()
+  expect(rejected).not.toHaveBeenCalled()
+  finish()
+  await settled
+  expect(rejected).toHaveBeenCalledOnce()
+})

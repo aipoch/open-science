@@ -11,9 +11,8 @@ const gateway = vi.hoisted(() => ({
 const wslRelease = vi.hoisted(() => vi.fn().mockResolvedValue(undefined))
 const wslBeginSpawn = vi.hoisted(() => vi.fn())
 
-vi.mock('node:dns/promises', () => ({
-  lookup: vi.fn(async () => [{ address: '8.8.8.8', family: 4 }])
-}))
+const dnsLookup = vi.hoisted(() => vi.fn())
+vi.mock('node:dns/promises', () => ({ lookup: dnsLookup }))
 
 vi.mock('../runtime/src/gateway/command-gateway.js', () => ({
   CommandGateway: { open: vi.fn().mockResolvedValue(gateway) }
@@ -71,10 +70,6 @@ import {
   type NetworkRuntimeConfig
 } from '../runtime/src/notebook-runtime.js'
 import { CommandGateway } from '../runtime/src/gateway/command-gateway.js'
-import {
-  buildNotebookNetworkPolicy,
-  normalizeNotebookNetworkSettings
-} from '../../../src/shared/notebook-network.js'
 import { createRuntimeConfig } from './config.js'
 import { linuxLaunch } from '../runtime/src/platform/linux-isolation.js'
 import { wsl2Launch } from '../runtime/src/platform/wsl2-isolation.js'
@@ -103,6 +98,7 @@ const config = (allowedDomains: readonly string[]): NetworkRuntimeConfig => ({
 
 beforeEach(async () => {
   vi.clearAllMocks()
+  dnsLookup.mockResolvedValue([{ address: '8.8.8.8', family: 4 }])
   await NotebookNetworkRuntime.initialize(config(['example.com']), async () => false)
   await NotebookNetworkRuntime.wrap({
     command: 'curl https://example.com',
@@ -125,21 +121,56 @@ afterEach(async () => {
 })
 
 describe('Notebook runtime configuration updates', () => {
-  it('routes disabled overlapping domains through approval after a live policy update', async () => {
-    const settings = normalizeNotebookNetworkSettings({
-      disabledOpenScienceDomains: ['rest.uniprot.org']
+  it('revokes private grants and rejects an in-flight DNS result from the old policy', async () => {
+    const privatePolicy = {
+      allowedDomains: [],
+      deniedDomains: [],
+      trustedPrivateDestinations: [
+        { hostname: 'lab.internal.example', port: 8443, approvedAddresses: ['10.32.0.7'] }
+      ]
+    }
+    const next = createRuntimeConfig({
+      resources: { root: '/resources' },
+      policy: privatePolicy
     })
-    const next = (value: typeof settings): NetworkRuntimeConfig =>
-      createRuntimeConfig({
-        resources: { root: '/resources' },
-        policy: buildNotebookNetworkPolicy(value)
-      })
-    NotebookNetworkRuntime.updateConfig(next(settings))
+    NotebookNetworkRuntime.updateConfig(next)
+    dnsLookup.mockResolvedValue([{ address: '10.32.0.7', family: 4 }])
     const decide = vi.mocked(CommandGateway.open).mock.calls[0]![0].decide
-    await expect(decide('rest.uniprot.org', 443)).resolves.toMatchObject({ allowed: false })
-    await expect(decide('www.uniprot.org', 443)).resolves.toMatchObject({ allowed: true })
-    NotebookNetworkRuntime.updateConfig(next({ ...settings, allowedDomains: ['rest.uniprot.org'] }))
-    await expect(decide('rest.uniprot.org', 443)).resolves.toMatchObject({ allowed: true })
+    await expect(decide('lab.internal.example', 8443)).resolves.toMatchObject({
+      allowed: true,
+      address: '10.32.0.7'
+    })
+    let resolve!: (addresses: { address: string; family: number }[]) => void
+    dnsLookup.mockImplementationOnce(
+      () =>
+        new Promise((done) => {
+          resolve = done
+        })
+    )
+    const pending = decide('lab.internal.example', 8443)
+    NotebookNetworkRuntime.updateConfig({ ...next, trustedPrivateDestinations: [] })
+    resolve([{ address: '10.32.0.7', family: 4 }])
+    await expect(pending).resolves.toMatchObject({ allowed: false })
+    await expect(decide('lab.internal.example', 8443)).resolves.toMatchObject({ allowed: false })
+    expect(gateway.resetConnections).toHaveBeenCalledTimes(2)
+  })
+
+  it('routes disabled overlapping domains through approval after a live policy update', async () => {
+    const policy = {
+      allowedDomains: ['*.example.org'],
+      askDomains: ['rest.example.org'],
+      deniedDomains: []
+    }
+    const next = (value: typeof policy): NetworkRuntimeConfig =>
+      createRuntimeConfig({ resources: { root: '/resources' }, policy: value })
+    NotebookNetworkRuntime.updateConfig(next(policy))
+    const decide = vi.mocked(CommandGateway.open).mock.calls[0]![0].decide
+    await expect(decide('rest.example.org', 443)).resolves.toMatchObject({ allowed: false })
+    await expect(decide('www.example.org', 443)).resolves.toMatchObject({ allowed: true })
+    NotebookNetworkRuntime.updateConfig(
+      next({ ...policy, allowedDomains: ['*.example.org', 'rest.example.org'] })
+    )
+    await expect(decide('rest.example.org', 443)).resolves.toMatchObject({ allowed: true })
   })
 
   it('routes an explicit WSL2 target through its command-scoped host gateway', async () => {
@@ -244,6 +275,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: true,
       temporaryResourcesRemoved: true
     })
@@ -335,6 +367,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: false,
       temporaryResourcesRemoved: false
     })
@@ -414,6 +447,7 @@ describe('Notebook runtime configuration updates', () => {
       })
     ).resolves.toEqual({
       processesTerminated: true,
+      processState: 'started-and-reaped',
       networkClosed: true,
       temporaryResourcesRemoved: true
     })
@@ -424,7 +458,7 @@ describe('Notebook runtime configuration updates', () => {
       NotebookNetworkRuntime.cleanupAfterCommand('command-1', 'timeout', {
         processesTerminated: false
       })
-    ).resolves.toEqual({
+    ).resolves.toMatchObject({
       processesTerminated: false,
       networkClosed: true,
       temporaryResourcesRemoved: true
@@ -566,6 +600,7 @@ describe('Notebook runtime configuration updates', () => {
     const wrapped = await NotebookNetworkRuntime.wrap({
       command: 'curl https://example.com',
       commandId: 'supervised-windows-command',
+      windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef',
       cwd: '/workspace',
       env: {},
       superviseProcessTree: true,
@@ -578,6 +613,11 @@ describe('Notebook runtime configuration updates', () => {
     })
 
     expect(windowsSupervisedLaunch).toHaveBeenCalledOnce()
+    expect(windowsSupervisedLaunch).toHaveBeenCalledWith(
+      expect.objectContaining({
+        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef'
+      })
+    )
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
   })
 })

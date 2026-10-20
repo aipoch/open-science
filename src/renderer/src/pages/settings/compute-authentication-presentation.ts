@@ -1,6 +1,6 @@
 import type { TFunction } from 'i18next'
 
-import type { ComputeAuthenticationErrorCode } from '../../../../shared/compute'
+import type { ComputeAuthenticationErrorCode } from '@aipoch/compute'
 
 type ComputeAuthenticationPresentationSurface = 'runtime' | 'create' | 'password_reset'
 

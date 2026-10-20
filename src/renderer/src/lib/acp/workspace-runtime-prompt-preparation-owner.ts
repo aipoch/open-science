@@ -1,5 +1,5 @@
-import type { AcpMessageImage, AcpStateSnapshot } from '../../../../shared/acp'
-import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
+import type { AcpStateSnapshot } from '../../../../shared/acp'
+import type { AcpMessageImage } from '../../../../shared/acp-image-contract'
 import type { PermissionProfileId } from '../../../../shared/permission-profiles'
 import {
   CLAUDE_CLI_INCOMPATIBLE_MESSAGE,
@@ -10,6 +10,7 @@ import {
   RESUME_UNSUPPORTED_MESSAGE,
   RESUME_WORKSPACE_MISSING_MESSAGE
 } from '../../../../shared/run-error-classification'
+import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../shared/settings'
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import {
   projectSessionActionability,
@@ -24,6 +25,7 @@ import {
   type HistoryReplayDescriptor
 } from './history-preamble'
 import type { useAcpRuntime } from './useAcpRuntime'
+import { reportWorkspaceOperationError } from './workspace-operation-error'
 import {
   acquireWorkspacePromptPreparation,
   isWorkspacePromptPreparationInFlight
@@ -89,6 +91,25 @@ type ExistingWorkspacePromptAdmission = Readonly<{
   allowCompactionRecovery: boolean
 }>
 
+// A pending Session that was already rejected before binding may re-send its retained draft. This
+// explicit marker, not the presence of an Operation Error, is what authorizes that retry: cancelling
+// or retrying an unrelated action clears Operation Errors without invalidating the draft.
+const retryablePendingSessionIds = new Set<string>()
+
+const markPendingSessionRetryable = (sessionId: string): void => {
+  const liveIds = new Set(useSessionStore.getState().sessions.map(({ id }) => id))
+  for (const id of retryablePendingSessionIds)
+    if (!liveIds.has(id)) retryablePendingSessionIds.delete(id)
+  retryablePendingSessionIds.add(sessionId)
+}
+
+const consumePendingSessionRetry = (sessionId: string): void => {
+  retryablePendingSessionIds.delete(sessionId)
+}
+
+const isPendingSessionRetryable = (sessionId: string): boolean =>
+  retryablePendingSessionIds.has(sessionId)
+
 const canPrepareExistingWorkspacePrompt = ({
   sessionId,
   session,
@@ -105,7 +126,7 @@ const canPrepareExistingWorkspacePrompt = ({
         sessionId
       ),
       allowPendingSessionRetry: Boolean(
-        session.isPending && (session.status !== 'idle' || !session.branchSource)
+        session.isPending && (!session.branchSource || isPendingSessionRetryable(session.id))
       )
     }).actions.startTurn.allowed)
 
@@ -284,7 +305,7 @@ const prepareExistingWorkspacePrompt = async (
     if (branchResetRequired) {
       const resetCwd = request.cwd || currentSession?.cwd || runtime.state.cwd
       if (!resetCwd) {
-        useSessionStore.getState().failRun(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+        reportWorkspaceOperationError(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
         return undefined
       }
 
@@ -320,7 +341,7 @@ const prepareExistingWorkspacePrompt = async (
     if (shouldResumeSession) {
       const resumeCwd = request.cwd || runtime.state.cwd
       if (!resumeCwd) {
-        useSessionStore.getState().failRun(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
+        reportWorkspaceOperationError(sessionId, RESUME_WORKSPACE_MISSING_MESSAGE)
         return undefined
       }
 
@@ -408,7 +429,7 @@ const prepareExistingWorkspacePrompt = async (
     }
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined
-    useSessionStore.getState().failRun(sessionId, getResumeFailureMessage(error))
+    reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error))
     return undefined
   } finally {
     releasePreparation?.()
@@ -520,9 +541,12 @@ export {
   acquireWorkspacePromptPreparation,
   canAdmitExistingWorkspacePrompt,
   canPrepareExistingWorkspacePrompt,
+  consumePendingSessionRetry,
   getResumeFailureMessage,
+  isPendingSessionRetryable,
   isWorkspacePromptPreparationInFlight,
+  markPendingSessionRetryable,
   prepareExistingWorkspacePrompt,
   shutdownNotebookForBranchChange
 }
-export type { PrepareExistingWorkspacePromptRequest, PreparedExistingWorkspacePrompt }
+export type { PreparedExistingWorkspacePrompt, PrepareExistingWorkspacePromptRequest }

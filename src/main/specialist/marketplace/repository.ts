@@ -5,7 +5,7 @@ import {
   DurableJsonRecoveryBarrierError,
   readDurableJsonFile,
   writeDurableJsonFile
-} from '../../storage/durable-json-file'
+} from '@aipoch/durable-files'
 
 export type StoredMarketplaceSource = {
   id: string

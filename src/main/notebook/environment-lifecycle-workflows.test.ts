@@ -8,8 +8,8 @@ const loggerSpies = vi.hoisted(() => ({
   info: vi.fn(),
   error: vi.fn()
 }))
-vi.mock('../logger', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../logger')>()
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@aipoch/diagnostics/node')>()
   return {
     ...actual,
     createLogger: () => ({
@@ -22,13 +22,17 @@ vi.mock('../logger', async (importOriginal) => {
 })
 
 import { beginMigration, clearMigrationPending } from '../storage/migration-state'
-import { serializeProvisioner } from './environment-operation-foundation'
+import { serializeProvisioner } from '@aipoch/environment'
 import { ShellProcessOwnershipRegistry } from './shell-process-ownership.windows-posix'
 import {
   createNotebookEnvironmentLifecycle,
   type NotebookEnvironmentLifecycle
 } from './environment-lifecycle-workflows'
-import type { ProvisionProgress, RuntimeProvisioner, RuntimeRepairOptions } from './provisioner'
+import type {
+  ProvisionProgress,
+  RuntimeProvisioner,
+  RuntimeRepairOptions
+} from '@aipoch/environment'
 import type { ExplicitRuntimeRepairTarget } from './runtime-repair'
 
 afterEach(() => clearMigrationPending())
@@ -779,7 +783,7 @@ describe('environment lifecycle startup', () => {
 
   it('does nothing when already ready', async () => {
     const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_ENV_VERSION, DEFAULT_PY_ENV } =
-      await import('./runtime-paths')
+      await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate2-'))
     const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV))
     mkdirSync(join(bin, '..'), { recursive: true })
@@ -794,7 +798,7 @@ describe('environment lifecycle startup', () => {
 
   it('uses the injected platform when checking startup readiness', async () => {
     const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_ENV_VERSION, DEFAULT_PY_ENV } =
-      await import('./runtime-paths')
+      await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate-win32-'))
     const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV, 'win32'), 'win32')
     mkdirSync(join(bin, '..'), { recursive: true })
@@ -810,7 +814,7 @@ describe('environment lifecycle startup', () => {
 
   it('upgrades when an older-version marker with an existing python bin is found', async () => {
     const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_PY_ENV } =
-      await import('./runtime-paths')
+      await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate3-'))
     const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV))
     mkdirSync(join(bin, '..'), { recursive: true })
@@ -824,7 +828,7 @@ describe('environment lifecycle startup', () => {
   })
 
   it('repairs when a marker exists but the python bin is missing', async () => {
-    const { writeReadyMarker } = await import('./runtime-paths')
+    const { writeReadyMarker } = await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate4-'))
     writeReadyMarker(dir, 0, 't')
     const provisioner = fakeProvisioner()
@@ -845,7 +849,7 @@ describe('environment lifecycle startup', () => {
     // A user who ran R first has a lazily-built default-r dir but no Python and no ready marker
     // (provisionR never writes it). needsRepair keys off the residual default-r, so the action is
     // 'repair' — but there is no Python to repair, so startup must stay detect-only (no eager DL).
-    const { rBin, envPrefix, DEFAULT_R_ENV } = await import('./runtime-paths')
+    const { rBin, envPrefix, DEFAULT_R_ENV } = await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate-rfirst-'))
     const rbin = rBin(envPrefix(dir, DEFAULT_R_ENV))
     mkdirSync(join(rbin, '..'), { recursive: true })
@@ -900,8 +904,8 @@ describe('environment lifecycle startup', () => {
     // DefaultRuntimeProvisioner with the isPrefixBlocked dep ipc.ts injects (← isPrefixRecoveryBlocked),
     // set up a marker-but-no-bin state so the planner picks 'repair', and assert the gate refuses:
     // nothing is spawned, the (possibly-live) prefix is not deleted, and the error is broadcast.
-    const { writeReadyMarker, envPrefix, DEFAULT_PY_ENV } = await import('./runtime-paths')
-    const { DefaultRuntimeProvisioner } = await import('./provisioner')
+    const { writeReadyMarker, envPrefix, DEFAULT_PY_ENV } = await import('@aipoch/environment')
+    const { DefaultRuntimeProvisioner } = await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate-blocked-'))
     const prefix = envPrefix(dir, DEFAULT_PY_ENV)
     mkdirSync(prefix, { recursive: true }) // a partial prefix an orphan may still be writing
@@ -935,7 +939,7 @@ describe('environment lifecycle startup', () => {
     // rebuild. Use an existing-but-stale marker so the gate would call upgradeIfNeeded, and assert
     // recovery settled first.
     const { writeReadyMarker, envPrefix, pythonBin, DEFAULT_PY_ENV } =
-      await import('./runtime-paths')
+      await import('@aipoch/environment')
     const dir = mkdtempSync(join(tmpdir(), 'os-gate-barrier-'))
     const bin = pythonBin(envPrefix(dir, DEFAULT_PY_ENV))
     mkdirSync(join(bin, '..'), { recursive: true })

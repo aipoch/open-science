@@ -43,6 +43,47 @@ beforeEach(() => {
 })
 
 describe('NotebookNetworkSandbox', () => {
+  it('admits a new command without forgetting independently releasable process debt', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    const complete = {
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    }
+    const debt = {
+      ...complete,
+      processesTerminated: false,
+      admission: 'independent-command-allowed'
+    }
+    backend.cleanupAfterCommand.mockResolvedValue(debt)
+    await sandbox.initialize()
+    try {
+      const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+      const first = await sandbox.wrap(command)
+      const confirmTermination = vi.fn().mockResolvedValue(false)
+      await expect(
+        first.cleanup('cancel', { processesTerminated: false, confirmTermination })
+      ).resolves.toEqual(debt)
+      const fresh = await sandbox.wrap(command)
+      expect(() => first.setExecutionActive(true)).toThrow('already closed')
+      expect(() => fresh.setExecutionActive(true)).not.toThrow()
+      await expect(sandbox.dispose()).rejects.toThrow('cleanup was incomplete')
+      expect(backend.reset).not.toHaveBeenCalled()
+      expect(confirmTermination).toHaveBeenCalled()
+      backend.cleanupAfterCommand.mockResolvedValue(complete)
+      confirmTermination.mockResolvedValue(true)
+      await expect(first.cleanup('cancel', { processesTerminated: false })).resolves.toEqual(
+        complete
+      )
+      await fresh.cleanup('exit', { processesTerminated: true })
+    } finally {
+      backend.cleanupAfterCommand.mockResolvedValue(complete)
+      await sandbox.dispose()
+    }
+  })
+
   it('shares one termination verification across concurrent admissions', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
@@ -83,9 +124,57 @@ describe('NotebookNetworkSandbox', () => {
     const second = await sandbox.wrap(command)
     expect(confirmTermination).toHaveBeenCalledTimes(2)
     expect(backend.cleanupAfterCommand).toHaveBeenLastCalledWith(expect.any(String), 'exit', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'started-and-reaped'
     })
     await second.cleanup('exit', { processesTerminated: true })
+    await sandbox.dispose()
+  })
+
+  it('releases a never-started command without retaining a process fence', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const wrapped = await sandbox.wrap(command)
+    await expect(
+      wrapped.cleanup('spawn-failed', {
+        processesTerminated: true,
+        processState: 'never-started'
+      })
+    ).resolves.toMatchObject({ processesTerminated: true })
+    expect(backend.cleanupAfterCommand.mock.lastCall?.[2]).toMatchObject({
+      processesTerminated: true
+    })
+    expect(backend.cleanupAfterCommand.mock.lastCall?.[2].processState).toBe('never-started')
+    const next = await sandbox.wrap(command)
+    await next.cleanup('exit', { processesTerminated: true })
+    await sandbox.dispose()
+  })
+
+  it('keeps termination-unknown fenced until the owning proof succeeds', async () => {
+    const sandbox = new NotebookNetworkSandbox(options())
+    vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+    backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+    await sandbox.initialize()
+    const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+    const wrapped = await sandbox.wrap(command)
+    await expect(
+      wrapped.cleanup('exit', {
+        processesTerminated: false,
+        processState: 'termination-unknown'
+      })
+    ).resolves.toMatchObject({ processesTerminated: false })
+    await expect(sandbox.wrap(command)).rejects.toThrow('SHELL_CLEANUP_INCOMPLETE')
+    expect(backend.cleanupAfterCommand.mock.calls.at(-1)?.[2].processState).toBe(
+      'termination-unknown'
+    )
+    backend.cleanupAfterCommand.mockResolvedValue({
+      processesTerminated: true,
+      networkClosed: true,
+      temporaryResourcesRemoved: true
+    })
     await sandbox.dispose()
   })
   it('keeps native execution blocked without new termination evidence', async () => {
@@ -136,6 +225,51 @@ describe('NotebookNetworkSandbox', () => {
     )
   })
 
+  it.each(['incomplete', 'throw'] as const)(
+    'certifies only the rejected request when admission cleanup is %s',
+    async (failure) => {
+      const sandbox = new NotebookNetworkSandbox(options())
+      vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+      const command = { command: 'true', cwd: '/workspace', onNetworkAccessRequest: denyNetwork }
+      const complete = {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+      backend.wrap.mockRejectedValueOnce(new Error('preparation failed'))
+      backend.cleanupAfterCommand.mockResolvedValue({ ...complete, networkClosed: false })
+      await sandbox.initialize()
+      try {
+        await expect(sandbox.wrap(command)).rejects.toMatchObject({
+          name: 'NotebookSandboxPreparationCleanupError',
+          retryCleanup: expect.any(Function)
+        })
+        const originalId = backend.wrap.mock.calls[0][0].commandId
+        if (failure === 'throw')
+          backend.cleanupAfterCommand.mockRejectedValue(new Error('cleanup rejected'))
+        const results = await Promise.allSettled([sandbox.wrap(command), sandbox.wrap(command)])
+        for (const result of results) {
+          expect(result.status).toBe('rejected')
+          if (result.status === 'rejected') {
+            expect(result.reason).toBeInstanceOf(NotebookSandboxPreparationError)
+            expect(result.reason.cleanupComplete).toBe(true)
+          }
+        }
+        expect(backend.wrap).toHaveBeenCalledOnce()
+        expect(backend.cleanupAfterCommand.mock.calls.every(([id]) => id === originalId)).toBe(true)
+        backend.cleanupAfterCommand.mockResolvedValue(complete)
+        backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {} })
+        const fresh = await sandbox.wrap(command)
+        expect(backend.wrap).toHaveBeenCalledTimes(2)
+        expect(backend.cleanupAfterCommand.mock.lastCall?.[0]).toBe(originalId)
+        await fresh.cleanup('exit', { processesTerminated: true })
+      } finally {
+        backend.cleanupAfterCommand.mockResolvedValue(complete)
+        await sandbox.dispose()
+      }
+    }
+  )
+
   it('awaits one backend cleanup when command preparation fails', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
@@ -180,7 +314,8 @@ describe('NotebookNetworkSandbox', () => {
     await expect(disposal).resolves.toBeUndefined()
     expect(backend.cleanupAfterCommand).toHaveBeenCalledOnce()
     expect(backend.cleanupAfterCommand).toHaveBeenCalledWith(expect.any(String), 'spawn-failed', {
-      processesTerminated: true
+      processesTerminated: true,
+      processState: 'never-started'
     })
   })
 
@@ -216,7 +351,8 @@ describe('NotebookNetworkSandbox', () => {
     const second = new NotebookNetworkSandbox(options())
     vi.spyOn(first, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
     vi.spyOn(second, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
-    const beginSpawn = vi.fn()
+    const spawnLease = { started: vi.fn(), notStarted: vi.fn() }
+    const beginSpawn = vi.fn(() => spawnLease)
     backend.wrap.mockResolvedValue({
       argv: ['/bin/sh', '-c', 'sandboxed'],
       env: { HTTPS_PROXY: 'http://127.0.0.1:4123' },
@@ -232,6 +368,7 @@ describe('NotebookNetworkSandbox', () => {
       command: 'python notebook.py',
       cwd: '/workspace',
       superviseProcessTree: true,
+      windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef',
       onNetworkAccessRequest: denyNetwork
     })
     expect(wrapped).toMatchObject({
@@ -241,10 +378,14 @@ describe('NotebookNetworkSandbox', () => {
     expect(wrapped.annotateStderr).toBeTypeOf('function')
     expect(wrapped.resetNetworkConnections).toBeTypeOf('function')
     expect(wrapped.cleanup).toBeTypeOf('function')
-    expect(wrapped.beginSpawn).toBe(beginSpawn)
+    expect(wrapped.beginSpawn?.()).toBe(spawnLease)
+    expect(beginSpawn).toHaveBeenCalledOnce()
     await expect(wrapped.confirmProcessTreeTermination?.()).resolves.toBe(true)
     expect(backend.wrap).toHaveBeenCalledWith(
-      expect.objectContaining({ superviseProcessTree: true })
+      expect.objectContaining({
+        superviseProcessTree: true,
+        windowsShellControlPipe: 'OpenScience.Shell.0123456789abcdef0123456789abcdef'
+      })
     )
 
     first.updatePolicy({ allowedDomains: ['api.crossref.org'], deniedDomains: [] })
@@ -356,6 +497,65 @@ describe('NotebookNetworkSandbox', () => {
     await sandbox.dispose()
   })
 
+  it.each(['incomplete', 'throw'] as const)(
+    'rejects direct reactivation after %s cleanup while allowing cleanup retries',
+    async (failure) => {
+      const sandbox = new NotebookNetworkSandbox(options())
+      vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
+      const beginSpawn = vi.fn(() => ({ started: vi.fn(), notStarted: vi.fn() }))
+      backend.wrap.mockResolvedValue({ argv: ['sandboxed'], env: {}, beginSpawn })
+      const complete = {
+        processesTerminated: true,
+        networkClosed: true,
+        temporaryResourcesRemoved: true
+      }
+      backend.cleanupAfterCommand.mockResolvedValue(complete)
+      if (failure === 'throw')
+        backend.cleanupAfterCommand.mockRejectedValueOnce(new Error('cleanup failed'))
+      else
+        backend.cleanupAfterCommand.mockResolvedValueOnce({
+          ...complete,
+          temporaryResourcesRemoved: false
+        })
+      await sandbox.initialize()
+      try {
+        const wrapped = await sandbox.wrap({
+          command: 'true',
+          cwd: '/workspace',
+          onNetworkAccessRequest: denyNetwork
+        })
+        wrapped.beginSpawn?.().started()
+        wrapped.setExecutionActive(true)
+        const cleanup = wrapped.cleanup('exit', { processesTerminated: true })
+        expect(() => wrapped.setExecutionActive(true)).toThrow('already closed')
+        expect(() => wrapped.beginSpawn?.()).toThrow('already closed')
+        if (failure === 'throw') await expect(cleanup).rejects.toThrow('cleanup failed')
+        else await expect(cleanup).resolves.toMatchObject({ temporaryResourcesRemoved: false })
+        expect(() => wrapped.setExecutionActive(true)).toThrow('already closed')
+        expect(() => wrapped.beginSpawn?.()).toThrow('already closed')
+        expect(() => wrapped.setExecutionActive(false)).not.toThrow()
+        expect(
+          backend.setCommandExecutionActive.mock.calls.filter(([, active]) => active)
+        ).toHaveLength(1)
+        await expect(wrapped.cleanup('exit', { processesTerminated: true })).resolves.toEqual(
+          complete
+        )
+        expect(() => wrapped.setExecutionActive(true)).toThrow('already closed')
+        const fresh = await sandbox.wrap({
+          command: 'true',
+          cwd: '/workspace',
+          onNetworkAccessRequest: denyNetwork
+        })
+        expect(() => fresh.setExecutionActive(true)).not.toThrow()
+        fresh.beginSpawn?.().started()
+        expect(beginSpawn).toHaveBeenCalledTimes(2)
+        await fresh.cleanup('exit', { processesTerminated: true })
+      } finally {
+        await sandbox.dispose()
+      }
+    }
+  )
+
   it('surfaces sandbox denial annotations and cleans up each command once', async () => {
     const sandbox = new NotebookNetworkSandbox(options())
     vi.spyOn(sandbox, 'status').mockResolvedValue({ kind: 'ready', warnings: [] })
@@ -369,6 +569,17 @@ describe('NotebookNetworkSandbox', () => {
       onNetworkAccessRequest: denyNetwork
     })
     expect(wrapped.annotateStderr('curl failed')).toBe('annotated stderr')
+    expect(backend.annotateStderr).toHaveBeenLastCalledWith(
+      expect.any(String),
+      'curl failed',
+      undefined
+    )
+    wrapped.annotateStderr('', 'redirected diagnostic')
+    expect(backend.annotateStderr).toHaveBeenLastCalledWith(
+      expect.any(String),
+      '',
+      'redirected diagnostic'
+    )
     wrapped.resetNetworkConnections()
     expect(backend.resetCommandConnections).toHaveBeenCalledWith(expect.any(String))
     const firstCleanup = wrapped.cleanup('timeout', { processesTerminated: false })

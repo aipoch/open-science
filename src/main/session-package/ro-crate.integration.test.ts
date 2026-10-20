@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { readFile, stat, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -202,3 +203,5 @@ it('retains legacy timestamp import compatibility and reports an explicit error 
   await expect(stat(forwarded)).rejects.toMatchObject({ code: 'ENOENT' })
   expect(await readFile(legacy)).toEqual(before)
 })
+
+await configureTestElectronHost(await import('electron'))

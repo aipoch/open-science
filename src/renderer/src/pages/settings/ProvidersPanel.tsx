@@ -2,7 +2,7 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { Notice } from '@/components/notice'
 import type { TFunction } from 'i18next'
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { Plus } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 

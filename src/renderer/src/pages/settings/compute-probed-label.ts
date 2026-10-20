@@ -1,4 +1,5 @@
-import type { ComputeHost } from '../../../../shared/compute'
+import type { ComputeHost } from '@aipoch/compute'
+
 import { relativeTimeParts, type RelativeTimeUnit } from '@/lib/format-relative-time'
 
 // Buckets a host's last probe time into a catalog key plus its count, for the "probed 2 h ago" line the

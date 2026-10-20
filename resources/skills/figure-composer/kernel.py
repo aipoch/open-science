@@ -2,7 +2,11 @@ def figure_outline_schema():
     return {"type":"object","properties":{
         "claim":{"type":"string"}, "width_mm":{"type":"number"},
         "ncol":{"type":"integer"},
-        "row_heights_mm":{"type":"array","items":{"type":"number"}},
+        "row_heights_mm":{"type":"array","minItems":1,
+                          "description":"Physical row heights in millimeters, not grid weights.",
+                          "items":{"type":"number","exclusiveMinimum":0}},
+        "fixed_panel_set":{"type":"boolean","description":
+            "True only when the user requires the exact listed panels."},
         "panels":{"type":"array","items":{"type":"object","properties":{
             "letter":{"type":"string"},
             "role":{"type":"string","enum":["schematic","hero","primary","supporting"]},
@@ -130,7 +134,42 @@ Neighbors: {neighbours}
   Fix and re-save until both pass — do not ship a panel that fails either check.
 - Design rules {rules_ref} apply in full.
 
-Publish `panel_{letter}.png` with the Artifact writer using the exact notebook `runId` as `producerRunId`; submit its returned `panelVersionId` plus `labelsUsed`. The parent accepts the identity only when it matches `artifactsCreated`."""
+Publish `panel_{letter}.png` with the Artifact writer using the exact notebook `runId` as `producerRunId`. Call `host.submitOutput({{panelVersionId: version_id, labelsUsed}})` using the returned immutable Version ID, verify `accepted: true`, and finish with an ordinary final response. The parent accepts the identity only when it matches `artifactsCreated`."""
+
+
+def composition_task(outline, panel_versions, fig_label="Figure"):
+    """Build a producer-child task with one validated Version per outline panel."""
+    import json
+    grid_geom(outline)
+    expected = [panel["letter"] for panel in outline["panels"]]
+    versions = {}
+    for item in panel_versions:
+        letter, version_id = item["letter"], item["versionId"]
+        if letter not in expected or letter in versions:
+            raise ValueError(f"unexpected or duplicate panel Version for {letter!r}")
+        if not isinstance(version_id, str) or not version_id:
+            raise ValueError(f"panel {letter!r} needs an immutable Version ID")
+        versions[letter] = version_id
+    if set(versions) != set(expected):
+        raise ValueError("composition needs exactly one Version for every outline panel")
+    ordered = [{"letter": letter, "versionId": versions[letter]} for letter in expected]
+    return f"""Compose the panels into {fig_label}. You are the producer child, not the outer composer. Do not delegate or review the figure.
+
+Outline:
+```json
+{json.dumps(outline, ensure_ascii=False)}
+```
+Ordered panel Versions:
+```json
+{json.dumps(ordered)}
+```
+
+1. In `repl_execute`, resolve each exact Version ID with `host.artifactPath(versionId)`. Write the outline and resolved paths as a JSON handoff under `process.env.OPEN_SCIENCE_HANDOFF_DIR`. Do not substitute filenames or search for panels.
+2. In `notebook_execute`, set `kernelSkillIds: ["figure-composer"]`, read the handoff, and call `compose_figure(outline, panel_paths, 'figure.png')` directly. Set `artifactVersionInputs` to the ordered, de-duplicated panel Version IDs. Verify completion and retain the actual `runId`.
+3. Publish `figure.png` with `write_artifact_file` using that `runId` as `producerRunId`.
+4. Call `host.submitOutput({{compositeVersionId: version_id}})` with the writer's immutable Version ID. Verify `accepted: true`, then finish with an ordinary final response.
+
+Publish exactly one `figure.png`. Never use a pending Version or path as an `artifactVersionInputs` value."""
 
 
 def compose_crops(outline, dpi=300, gutter_mm=4, pad_px=4):
@@ -206,7 +245,7 @@ def review_schema(per_panel=True):
         "required":["editor_verdict","outline_revisions","violations","strongest_aspect"]}
 
 
-def composite_review_task(composite_vid, outline, rules_vid, prev_vid=None, round_no=1, min_floor=5):
+def composite_review_task(composite_vid, outline, rules_vid, prev_vid=None, round_no=1):
     """Build the adversarial reviewer's task string for the composed figure."""
     panel_tbl = "\n".join(
         f"  {p['letter']}: {p['role']:<10} row{p['row']}+{p.get('rowspan',1)} col{p['col']}+{p['colspan']} "
@@ -217,6 +256,9 @@ def composite_review_task(composite_vid, outline, rules_vid, prev_vid=None, roun
         for p in outline["panels"] if p.get("data_vid")) or "  none (all panels are schematic)"
     prev_line = (f"\n**Previous version** (for `regression_vs_prev`): `{{{{artifact:{prev_vid}}}}}`"
                  if prev_vid else "")
+    panel_set_line = (" The user requires exactly these panels; do not propose adding, "
+                      "removing, merging, or renaming them."
+                      if outline.get("fixed_panel_set") else "")
     return f"""You are an adversarial journal production editor reviewing a COMPOSED multi-panel figure.
 Review at TWO levels:
 
@@ -225,7 +267,7 @@ Review at TWO levels:
      fit its slot → propose rowspan/colspan/row_heights change.
    - §2.4 Titles: any title that fails the "read it aloud cold" test (cryptic noun fragments),
      or a small-multiple row that should have ONE row-header instead of per-panel titles.
-   - Panel set: anything that doesn't earn its space, or a missing panel the claim needs.
+   - Panel set: anything that doesn't earn its space, or a missing panel the claim needs.{panel_set_line}
 2. **Panel level** (`violations`): everything the design rules cover, scoped to one panel.
 
 ## Figure
@@ -243,8 +285,9 @@ Review at TWO levels:
 ## Method
 Environment `figures`. Render the composite at full size, then inspect each panel crop from
 the outline geometry. For panels with data, spot-check 2–3 plotted values against the CSV.
-Be calibrated: minimum {min_floor} violations total (decreasing 5→4→3 by round);
-do not manufacture. Return ONLY structured output."""
+Report every real finding; zero findings is valid. Do not manufacture findings.
+Submit one object satisfying the output schema with `host.submitOutput(review)`,
+verify `accepted: true`, and finish with an ordinary final response."""
 
 
 def apply_outline_revisions(outline, revisions, previous_outline=None, dpi=300, gutter_mm=4):

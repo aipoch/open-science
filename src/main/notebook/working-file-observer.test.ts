@@ -23,11 +23,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { ProvenanceNotebookRun } from '../../shared/artifact-provenance'
 import type { NotebookRunRecord } from '../../shared/notebook'
 import { sealArtifactProvenanceGraph } from '../artifacts/artifact-provenance-graph'
-import {
-  resolveArtifactReproducibilityExecutionPlan,
-  sealArtifactReproducibilityRecipe
-} from '../artifacts/artifact-reproducibility-recipe'
-import { projectArtifactReproducibility } from '../artifacts/provenance-reproducibility-projection'
+import { reproductionRecipes } from '../artifacts/reproducibility-host'
+
+import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 import {
   batchComputeProjectEvidenceRequests,
   beginComputeJobFileEvidence,
@@ -787,12 +785,14 @@ describe('working-file evidence', () => {
       outputs: [],
       inputFileVersionKeys: []
     }
-    const recipe = sealArtifactReproducibilityRecipe({
+    const recipe = reproductionRecipes.sealArtifactReproducibilityRecipe({
       provenanceGraph: graph,
       inputFiles: [],
       runs: [persistedRun]
     })
-    expect(resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')).toMatchObject({
+    expect(
+      reproductionRecipes.resolveArtifactReproducibilityExecutionPlan(recipe, 'original-inputs')
+    ).toMatchObject({
       steps: [{ activityId: run.runId }]
     })
   })
@@ -1272,7 +1272,7 @@ describe('working-file evidence', () => {
       fileReads: 'partial',
       externalPaths: 'partial',
       writerAttribution: 'complete',
-      reasonCodes: expect.arrayContaining(['absolute-path-not-frozen'])
+      reasonCodes: expect.arrayContaining(['external-paths-not-observed'])
     })
   })
 
@@ -1590,6 +1590,30 @@ describe('working-file evidence', () => {
     })
   })
 
+  it('downgrades evidence when execution stops before the notebook completes', async () => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        code: 'from pathlib import Path\nPath("failed.csv").write_text("partial")',
+        language: 'python',
+        runId: 'run-incomplete-execution'
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    await writeFile(join(dataRoot, 'failed.csv'), 'partial')
+
+    const result = await observation.finish(undefined, 'incomplete')
+
+    expect(result.fileEvidence).toMatchObject({
+      state: 'partial',
+      writerAttribution: 'partial',
+      reasonCodes: expect.arrayContaining(['execution-incomplete'])
+    })
+  })
+
   it.each([
     [
       'Python',
@@ -1640,7 +1664,7 @@ describe('working-file evidence', () => {
     }
   )
 
-  it('keeps a multi-step local file wrapper conservative', async () => {
+  it('captures a multi-step local file wrapper', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     const observation = await startWorkingFileObservation(
       {
@@ -1664,9 +1688,11 @@ describe('working-file evidence', () => {
     const result = await observation.finish()
 
     expect(result.fileEvidence).toMatchObject({
-      state: 'partial',
-      writerAttribution: 'partial',
-      reasonCodes: expect.arrayContaining(['writer-not-isolated'])
+      state: 'available',
+      fileReads: 'complete',
+      externalPaths: 'complete',
+      writerAttribution: 'complete',
+      reasonCodes: []
     })
   })
 
@@ -4041,3 +4067,5 @@ describe('working-file evidence', () => {
     })
   })
 })
+
+;(await import('../../../test/runtime-metadata')).configureTestRuntimeMetadata()

@@ -96,7 +96,7 @@ export const ReproducibilityLogViewport = ({
       </div>
       {hasNewOutput ? (
         <div className="pointer-events-none absolute right-3 bottom-2">
-          <TooltipProvider delayDuration={350}>
+          <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
                 <Button

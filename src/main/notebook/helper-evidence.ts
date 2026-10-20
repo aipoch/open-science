@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { notebookHelperEvidenceKey } from '@aipoch/reproducibility/helper-identity'
 
 import type { NotebookHelperModuleEvidence } from '../../shared/notebook'
 
@@ -9,16 +10,6 @@ const recordValue = (value: unknown): Record<string, unknown> | undefined =>
 
 const digestNotebookHelperSource = (source: string): string =>
   createHash('sha256').update(source).digest('hex')
-
-const notebookHelperEvidenceKey = (
-  helper: Pick<
-    NotebookHelperModuleEvidence,
-    'helperId' | 'skillIdentity' | 'registeredGeneration' | 'sourceDigest'
-  >
-): string =>
-  [helper.skillIdentity, helper.helperId, helper.registeredGeneration, helper.sourceDigest].join(
-    '\0'
-  )
 
 const decodeNotebookHelperEvidence = (
   value: unknown

@@ -1,10 +1,11 @@
+import { literatureItemInputSchema } from '@aipoch/literature-library/contracts'
 import { expect } from '@playwright/test'
-import { PDFDocument } from 'pdf-lib'
-import { dirname, join } from 'node:path'
 import { writeFile } from 'node:fs/promises'
-import { test } from './fixtures/electron-app'
+import { dirname, join } from 'node:path'
+import { PDFDocument } from 'pdf-lib'
 import { createProjectDbClient } from '../src/main/projects/prisma-client'
-import { literatureItemInputSchema } from '../src/shared/literature'
+import { test } from './fixtures/electron-app'
+import { openAllReferences } from './fixtures/library'
 
 // Opt in: production Electron reader + SQLite + IPC. Seed costs are excluded from UI timings.
 test('measures large notebooks in the full reader and sidebar', async ({ app }, testInfo) => {
@@ -21,8 +22,7 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
     (item) => window.api.literature.transact({ kind: 'create-item', item }),
     literatureItemInputSchema.parse({ itemType: 'journalArticle', title: 'Notebook capacity' })
   )
-  await page.getByRole('button', { name: 'Library', exact: true }).click()
-  await page.getByRole('button', { name: 'All references', exact: true }).click()
+  await openAllReferences(page)
   await page.getByText('Notebook capacity', { exact: true }).click()
   await page.locator('input[aria-label="Add PDF"]').setInputFiles(path)
   const preview = page.getByRole('button', { name: 'Preview capacity.pdf', exact: true })
@@ -32,6 +32,9 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
   const results: unknown[] = []
   try {
     const version = await db.literatureAttachmentVersion.findFirstOrThrow()
+    const binding = await db.pdfAnnotationSourceBinding.findFirstOrThrow({
+      where: { versionId: version.id }
+    })
     for (const count of (process.env.PDF_NOTES_COUNTS ?? '500,2000,10000').split(',').map(Number)) {
       await db.pdfAnnotation.deleteMany()
       for (let start = 0; start < count; start += 250) {
@@ -41,6 +44,7 @@ test('measures large notebooks in the full reader and sidebar', async ({ app }, 
             const exact = `Evidence ${n}: a representative quoted passage for notebook capacity testing.`
             return {
               id: `capacity-${n}`,
+              documentId: binding.documentId,
               sourceKind: 'literature-attachment-version',
               sourceFileId: version.attachmentId,
               versionId: version.id,

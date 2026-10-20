@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next'
-import { notebookExecutionContextSchema } from '../../../../shared/notebook-execution-context'
+import { notebookExecutionContextSchema } from '@aipoch/reproducibility/execution-context'
 
 export const ExecutionContextDetails = ({
   value

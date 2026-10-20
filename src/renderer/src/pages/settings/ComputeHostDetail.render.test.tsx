@@ -5,12 +5,11 @@ import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-import type {
-  ChangeComputeHostAuthenticationRequest,
-  ComputeHost
-} from '../../../../shared/compute'
-import { ComputeHostDetail } from './ComputeHostDetail'
+import type { ComputeHost } from '@aipoch/compute'
+import type { ChangeComputeHostAuthenticationRequest } from '../../../../shared/compute'
+
 import { createInitialComputeState, useComputeStore } from '@/stores/compute-store'
+import { ComputeHostDetail } from './ComputeHostDetail'
 
 let container: HTMLDivElement
 let root: Root

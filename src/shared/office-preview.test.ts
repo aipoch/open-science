@@ -1,10 +1,29 @@
 import { describe, expect, it } from 'vitest'
 
 import {
+  getOfficeSearchSessionId,
   getOfficePreviewTimeoutMs,
   isOfficePreviewHostMessage,
   isOfficePreviewRuntimeMessage
 } from './office-preview'
+
+describe('Office search shortcut routing', () => {
+  it('accepts only a searchable Office runtime frame with a session', () => {
+    const runtime = 'open-science-office-preview://runtime/office-preview.html?sessionId=active'
+    expect(getOfficeSearchSessionId(`${runtime}&extension=xlsx`)).toBe('active')
+    expect(getOfficeSearchSessionId(`${runtime}&extension=xls`)).toBe('active')
+    expect(getOfficeSearchSessionId(`${runtime}&extension=spreadsheet`)).toBe('active')
+    expect(getOfficeSearchSessionId(`${runtime}&extension=pptx`)).toBe('active')
+    expect(getOfficeSearchSessionId(`${runtime}&extension=docx`)).toBeUndefined()
+    expect(getOfficeSearchSessionId(runtime)).toBeUndefined()
+    expect(
+      getOfficeSearchSessionId(
+        'open-science-office-preview://other/office-preview.html?sessionId=active&extension=xlsx'
+      )
+    ).toBeUndefined()
+    expect(getOfficeSearchSessionId('not a URL')).toBeUndefined()
+  })
+})
 
 describe('Office preview frame messages', () => {
   it('accepts versioned runtime state messages and rejects malformed state', () => {
@@ -93,6 +112,22 @@ describe('Office preview frame messages', () => {
         version: 1,
         type: 'start',
         start: { ...start, sessionId: '' }
+      })
+    ).toBe(false)
+    expect(
+      isOfficePreviewHostMessage({
+        channel: 'open-science-office-preview',
+        version: 1,
+        type: 'find',
+        sessionId: 'session-1'
+      })
+    ).toBe(true)
+    expect(
+      isOfficePreviewHostMessage({
+        channel: 'open-science-office-preview',
+        version: 1,
+        type: 'find',
+        sessionId: ''
       })
     ).toBe(false)
   })

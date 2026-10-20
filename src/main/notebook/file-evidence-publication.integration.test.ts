@@ -3,9 +3,12 @@ import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from
 import { createRequire } from 'node:module'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { createPackageWithOptions } from '@electron/asar'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 
+const require = createRequire(import.meta.url)
+const builderRequire = createRequire(require.resolve('electron-builder/package.json'))
+const appBuilderRequire = createRequire(builderRequire.resolve('app-builder-lib/package.json'))
+const { createPackageWithOptions } = appBuilderRequire('@electron/asar')
 const workerPath = resolve('resources/notebook/file_evidence_worker.js')
 
 // Pause immediately before the real rename so a real Windows reader can acquire its handle.
@@ -209,7 +212,7 @@ describe.skipIf(process.platform !== 'win32')('file-evidence Windows atomic publ
         unpackDir: 'resources'
       })
       runtime = {
-        executable: createRequire(import.meta.url)('electron') as string,
+        executable: require('electron') as string,
         worker: join(
           resources,
           'app.asar.unpacked',

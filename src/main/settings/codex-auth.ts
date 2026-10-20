@@ -1114,7 +1114,10 @@ export const openCodexAuthSession = async ({
   const command = isJavaScript ? process.execPath : needsShell ? `"${adapterPath}"` : adapterPath
   const args = isJavaScript ? [adapterPath] : []
   const env = createCodexAuthEnvironment(mode, storageRoot, process.env, proxyEnv)
-  if (isJavaScript) env.ELECTRON_RUN_AS_NODE = '1'
+  if (isJavaScript) {
+    if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = '1'
+    else delete env.ELECTRON_RUN_AS_NODE
+  }
   if (nativePath) env.CODEX_PATH = nativePath
 
   const child = spawnCodexWithInstallAdmission(

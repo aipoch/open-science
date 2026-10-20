@@ -2,7 +2,7 @@ import type { PdfElementOutput } from './agent-reader'
 import type { PdfStructureOwner } from './owner'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { PersistedChatSession, SessionPdfBinding } from '../../../shared/session-persistence'
-import type { PdfStructureResult } from '../../../shared/pdf-structure'
+import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { createLinearConversationGraph } from '../../../shared/conversation-graph'
 import { PdfElementAgentReader, type PdfElementContext } from './agent-reader'
 import { PdfStructureSourceAuthority } from './source'
@@ -48,6 +48,7 @@ const table: PdfStructureResult['elements'][number] = {
         rowSpan: 1,
         columnSpan: 3,
         text: 'Adjusted survival (%)',
+        sourceItems: [{ pageNumber: 2, index: 0, text: 'raw source heading' }],
         regions: [region]
       },
       ...Array.from({ length: 69 }, (_, i) => ({
@@ -56,6 +57,7 @@ const table: PdfStructureResult['elements'][number] = {
         rowSpan: 1,
         columnSpan: 1,
         text: i === 0 ? 'Treatment' : `Group ${i}: 9.2a`,
+        sourceItems: [{ pageNumber: 2, index: i + 1, text: 'raw source data' }],
         regions: [region],
         ...(i === 1
           ? {
@@ -200,6 +202,8 @@ describe('Agent PDF evidence from existing Structure caches', () => {
       scanComplete: false
     })
     expect(JSON.stringify(first.data)).not.toContain('textRuns')
+    expect(JSON.stringify(first.data)).not.toContain('sourceItems')
+    expect(JSON.stringify(first.data)).not.toContain('raw source')
     expect(owner.readThumbnail).not.toHaveBeenCalled()
     const last = await reader.list(context, { cursor: first.data.nextCursor as string })
     expect(last.data).toMatchObject({
@@ -275,6 +279,8 @@ describe('Agent PDF evidence from existing Structure caches', () => {
     expect([first, second, last].every((batch) => JSON.stringify(batch.data).length < 32000)).toBe(
       true
     )
+    expect(JSON.stringify([first, second, last])).not.toContain('sourceItems')
+    expect(JSON.stringify([first, second, last])).not.toContain('raw source')
   })
 
   it('paginates within a crowded page without duplicate objects and rejects a replaced extraction', async () => {

@@ -1,4 +1,4 @@
-import { diagnosticErrorFields, type Logger } from './logger'
+import { diagnosticErrorFields, type Logger } from '@aipoch/diagnostics/node'
 import {
   BackendShutdownOutcomeError,
   QUIT_SHUTDOWN_BUDGET_MS,

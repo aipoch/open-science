@@ -94,3 +94,11 @@ it('deduplicates drops before the first main-process progress event', async () =
   await importSessionPackage('existing-project', file)
   expect(importPackage).toHaveBeenCalledTimes(2)
 })
+
+it('passes a dropped package without a destination to the existing project-selection flow', async () => {
+  const importPackage = vi.fn(async () => null)
+  vi.stubGlobal('api', { sessions: { importPackage } })
+  const file = new File(['fixture'], 'research.science')
+  await importSessionPackage(undefined, file)
+  expect(importPackage).toHaveBeenCalledExactlyOnceWith({}, file)
+})

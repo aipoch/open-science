@@ -1,5 +1,5 @@
-import type { AcpPermissionRequest } from '../../../../shared/acp'
 import type { ToolActivity } from '@/stores/session-store'
+import type { AcpPermissionRequest } from '../../../../shared/acp-permission-contract'
 
 // The Skill runtime serves loads through its own MCP server; ACP providers namespace the tool as
 // mcp__skills__load_skill (Claude), mcp.skills.load_skill (Codex), or a flattened underscore form.

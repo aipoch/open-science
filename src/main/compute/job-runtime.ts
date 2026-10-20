@@ -1,15 +1,19 @@
-import { JobHarvestScheduler } from './job-harvest-scheduler'
-import { broadcastJobUpdated } from './ipc'
-import { harvestJob } from './harvest-engine'
-import { JobPoller, type JobPollerDeps } from './job-poller'
-import type { ComputeJobDeletionOwner } from './job-deletion-owner'
-import type { ComputeJobRepository } from './job-repository'
-import type { ComputeHostRepository } from './repository'
+import type { ComputeJobDeletionOwner } from '@aipoch/compute/node'
+import {
+  ComputeJobCancellationReaper,
+  createHarvestScheduler,
+  JobPoller,
+  type JobPollerDeps
+} from '@aipoch/compute/node'
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
 import type { ComputeService } from './compute-service'
 import type { ComputeConnectionBroker } from './connection-broker'
-import { createLogger, errorLogFields } from '../logger'
-import { ComputeJobCancellationReaper } from './compute-job-cancellation-owner'
-import type { ComputeJobOperationRepository } from './compute-job-operation-repository'
+import { harvestJob } from './harvest-engine'
+import { broadcastJobUpdated } from './ipc'
+import { createNotifyingJobPoller } from './job-notifier'
+import type { ComputeJobRepository } from './job-repository'
+import type { ComputeHostRepository } from './repository'
 
 const log = createLogger('compute-integrity')
 
@@ -18,6 +22,7 @@ type ComputeJobRuntime = { start(): void | Promise<void>; stop(): Promise<void> 
 type ComputeJobRuntimeDeps = {
   computeService: Pick<
     ComputeService,
+    | 'execution'
     | 'bindJobHarvestRetry'
     | 'handleJobUpdated'
     | 'handleJobCancellationConfirmed'
@@ -56,11 +61,9 @@ export const createComputeJobRuntime = (
     hostRepository: deps.hostRepository,
     jobRepository: deps.jobRepository,
     onJobUpdated: deps.computeService.handleJobUpdated,
-    broadcast,
     onIntegrityIssues: (issues) => {
       for (const issue of issues) log.warn('compute job needs attention', issue)
     },
-    storageRoot: deps.storageRoot,
     harvestFn: async (job, signal) => {
       signal = signal
         ? AbortSignal.any([signal, harvestAbortController.signal])
@@ -80,7 +83,7 @@ export const createComputeJobRuntime = (
     }
   }
 
-  const harvestScheduler = new JobHarvestScheduler(pollerDeps.harvestFn!)
+  const harvestScheduler = createHarvestScheduler(pollerDeps.harvestFn!)
   pollerDeps.harvestScheduler = harvestScheduler
 
   const unbindHarvestRetry = deps.computeService.bindJobHarvestRetry(async (request) => {
@@ -107,10 +110,19 @@ export const createComputeJobRuntime = (
     await harvestScheduler.retry(job, signal)
   })
 
-  const poller = adapters.createPoller?.(pollerDeps) ?? new JobPoller(pollerDeps)
+  const poller =
+    adapters.createPoller?.(pollerDeps) ??
+    createNotifyingJobPoller({
+      ...pollerDeps,
+      execution: deps.computeService.execution,
+      jobRepository: deps.jobRepository,
+      hostRepository: deps.hostRepository,
+      storageRoot: deps.storageRoot,
+      broadcast
+    })
   const cancellationReaper = deps.operationRepository
     ? (adapters.createCancellationReaper?.(deps.operationRepository) ??
-      new ComputeJobCancellationReaper(
+      deps.computeService.execution.createCancellationReaper(
         deps.operationRepository,
         deps.jobRepository,
         deps.connectionBroker,

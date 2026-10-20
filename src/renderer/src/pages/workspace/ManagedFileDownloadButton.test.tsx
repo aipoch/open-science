@@ -3,7 +3,9 @@ import { act, useEffect } from 'react'
 import { PdfExportProvider } from './pdf-annotations/PdfExportProvider'
 import {
   usePdfExportRegistration,
-  type PdfExportAction
+  usePdfTranslationExportRegistration,
+  type PdfExportAction,
+  type PdfTranslationExportAction
 } from './pdf-annotations/pdf-export-context'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -13,6 +15,15 @@ import { ManagedFileDownloadButton } from './ManagedFileDownloadButton'
 
 const RegisterExport = ({ action }: { action: PdfExportAction }): null => {
   const register = usePdfExportRegistration()
+  useEffect(() => {
+    register?.(action)
+    return () => register?.(undefined)
+  }, [register, action])
+  return null
+}
+
+const RegisterTranslationExport = ({ action }: { action: PdfTranslationExportAction }): null => {
+  const register = usePdfTranslationExportRegistration()
   useEffect(() => {
     register?.(action)
     return () => register?.(undefined)
@@ -100,6 +111,43 @@ describe('ManagedFileDownloadButton', () => {
     await act(async () => items[2].click())
     expect(execute).toHaveBeenCalledTimes(1)
     expect(original).not.toHaveBeenCalled()
+  })
+
+  it('offers the translated PDF from the top-right download menu', async () => {
+    const execute = vi.fn().mockResolvedValue(undefined)
+    window.api = {
+      saveManagedFile: vi.fn().mockResolvedValue({ saved: false })
+    } as unknown as Window['api']
+    const action: PdfTranslationExportAction = {
+      path: '/paper.pdf',
+      busy: false,
+      saving: false,
+      disabled: false,
+      label: 'Export translated PDF',
+      execute,
+      cancel: vi.fn()
+    }
+    root = createRoot(container)
+    await act(async () =>
+      root.render(
+        <PdfExportProvider>
+          <RegisterTranslationExport action={action} />
+          <ManagedFileDownloadButton source="local" path="/paper.pdf" suggestedName="paper.pdf" />
+        </PdfExportProvider>
+      )
+    )
+    await act(async () => {
+      container
+        .querySelector<HTMLButtonElement>('button')
+        ?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await Promise.resolve()
+    })
+    const translated = [...document.body.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+      (item) => item.textContent === 'Export translated PDF'
+    )
+    expect(translated).toBeDefined()
+    await act(async () => translated?.dispatchEvent(new MouseEvent('click', { bubbles: true })))
+    expect(execute).toHaveBeenCalledOnce()
   })
 
   it('offers the viewed and latest versions when downloading from history', async () => {

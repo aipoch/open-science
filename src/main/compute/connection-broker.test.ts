@@ -1,24 +1,23 @@
-import { describe, expect, it, vi } from 'vitest'
 import { spawn } from 'node:child_process'
+import { mkdir, mkdtemp, rm, stat } from 'node:fs/promises'
 import { createConnection } from 'node:net'
 import { platform, tmpdir } from 'node:os'
-import { mkdtemp, mkdir, stat, rm } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { describe, expect, it, vi } from 'vitest'
+import { configureTestElectronHost } from '../../../test/runtime-host'
 
 vi.mock('electron', () => ({
   app: { isPackaged: false, getAppPath: () => process.cwd() }
 }))
 
-import type { ComputeHost } from '../../shared/compute'
-import {
-  ComputeConnectionError,
-  SshConfigComputeConnectionBroker,
-  type ComputeConnectionLease
-} from './connection-broker'
+import type { ComputeHost } from '@aipoch/compute'
+
+import { ComputeConnectionError, type ComputeConnectionLease } from '@aipoch/compute/node'
+import { SshConfigComputeConnectionBroker } from './connection-broker'
+
+import type { ResolvedSshTarget, ScpRunner, SshRunner } from '@aipoch/compute/node'
 import { PasswordSshAdapter, createAskpassEnvironment } from './connection-adapters'
 import { CredentialVault } from './credential-vault'
-import type { ScpRunner } from './scp-runner'
-import type { ResolvedSshTarget, SshRunner } from './ssh-runner'
 
 const host = {
   id: 'host-1',
@@ -1958,3 +1957,5 @@ describe('ComputeConnectionBroker SSH configuration compatibility', () => {
     expect(getCredential).toHaveBeenNthCalledWith(2, 'host-1')
   })
 })
+
+await configureTestElectronHost(await import('electron'))

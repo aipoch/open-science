@@ -7,10 +7,10 @@ import { NotebookKernelExecutor } from './kernel-executor'
 import { callNotebookRpc, type NotebookMcpEnvironment } from './mcp-server'
 import { NotebookLocalRpcServer } from './local-rpc-server'
 import { NotebookRunRepository, getRuntimeRoot } from './repository'
-import { DEFAULT_R_ENV, envPrefix } from './runtime-paths'
+import { DEFAULT_R_ENV, envPrefix } from '@aipoch/environment'
 import { NotebookRuntimeService, resolveLoopScriptPaths } from './runtime-service'
 import type { NotebookOutput, NotebookRunSummary } from '../../shared/notebook'
-import type { DiscoveredInterpreter } from '../../shared/notebook-runtime'
+import type { DiscoveredInterpreter } from '@aipoch/environment/contracts'
 import type { NotebookControlResult, NotebookShellResult } from './runtime-service'
 
 // End-to-end capability certification. Wires the REAL stack the way main/ipc.ts wires it: a real

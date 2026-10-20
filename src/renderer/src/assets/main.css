@@ -9,6 +9,59 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Windows alone replaces its native title text with an application-menu row. CSS safe-area
+   variables reserve the actual system caption controls, including DPI and interface zoom. */
+html[data-windows-titlebar] {
+  --windows-titlebar-height: 36px;
+  --windows-content-center-y: calc(
+    var(--windows-titlebar-height) + (100vh - var(--windows-titlebar-height)) / 2
+  );
+  --windows-content-max-height: calc(100svh - var(--windows-titlebar-height) - 2rem);
+}
+
+html[data-windows-titlebar='fullscreen'] {
+  --windows-titlebar-height: 0px;
+}
+
+.windows-titlebar {
+  position: fixed;
+  inset: 0 0 auto;
+  height: var(--windows-titlebar-height);
+  /* Keep the Windows application menu legible when a renderer overlay covers the app content. */
+  z-index: var(--z-index-titlebar);
+  -webkit-app-region: drag;
+}
+
+.windows-titlebar-safe-area {
+  display: flex;
+  align-items: center;
+  margin-left: env(titlebar-area-x, 0px);
+  width: env(titlebar-area-width, 100%);
+  height: 100%;
+}
+
+.windows-titlebar-menu {
+  -webkit-app-region: no-drag;
+}
+
+.windows-app-content {
+  padding-top: var(--windows-titlebar-height);
+}
+
+html[data-windows-titlebar] .windows-app-content :is(.h-svh, .h-screen, .h-\[100dvh\]) {
+  height: calc(100svh - var(--windows-titlebar-height));
+}
+
+html[data-windows-titlebar] .windows-app-content :is(.min-h-svh, .min-h-screen) {
+  min-height: calc(100svh - var(--windows-titlebar-height));
+}
+
+@media (min-width: 768px) {
+  html[data-windows-titlebar] .windows-app-content .md\:h-screen {
+    height: calc(100svh - var(--windows-titlebar-height));
+  }
+}
+
 /* Scope highlight inheritance to its text surface: global highlight styles make unrelated
    token-heavy Notebook trees recalculate every named highlight during panel resizing. */
 [data-annotation-surface]::highlight(agent-annotation-draft) {
@@ -101,6 +154,70 @@
 
 .pdf-text-layer[data-main-rotation='270'] {
   transform: rotate(270deg) translateX(-100%);
+}
+
+/* PDF.js owns link geometry, including crop boxes and quads. Only links are mounted here;
+   the app's annotation tools keep ownership of editing, forms and evidence overlays. */
+.pdf-native-links {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: clip;
+  pointer-events: none;
+  transform-origin: 0 0;
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='90'] {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='180'] {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+:is(.pdf-native-links, .pdf-native-links section)[data-main-rotation='270'] {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pdf-native-links[data-main-rotation='90'] .norotate {
+  transform: rotate(270deg) translateX(-100%);
+}
+
+.pdf-native-links[data-main-rotation='180'] .norotate {
+  transform: rotate(180deg) translate(-100%, -100%);
+}
+
+.pdf-native-links[data-main-rotation='270'] .norotate {
+  transform: rotate(90deg) translateY(-100%);
+}
+
+.pdf-native-links section {
+  position: absolute;
+  box-sizing: border-box;
+  transform-origin: 0 0;
+  pointer-events: auto;
+  user-select: none;
+}
+
+.pdf-native-links a {
+  position: absolute;
+  inset: 0;
+  cursor: pointer;
+}
+
+.pdf-native-links a:hover,
+.pdf-native-links a:focus-visible {
+  background: color-mix(in oklab, var(--primary) 14%, transparent);
+  outline: 2px solid var(--ring);
+}
+
+.pdf-native-links a:active {
+  background: color-mix(in oklab, var(--primary) 24%, transparent);
+}
+
+[data-pdf-native-links][inert] .pdf-native-links section,
+[data-pdf-cursor-mode]:has(.pdf-text-layer:active) .pdf-native-links section {
+  pointer-events: none;
 }
 
 .pdf-text-layer :is(span, br) {
@@ -303,6 +420,7 @@
   --z-index-modal: 50;
   --z-index-toast: 40;
   --z-index-markdown-menu: 200;
+  --z-index-titlebar: 1000;
   --radius-sm: calc(var(--radius) - 4px);
   --radius-md: calc(var(--radius) - 2px);
   --radius-lg: var(--radius);
@@ -312,6 +430,11 @@
 :root {
   color-scheme: light;
   --radius: 0.5rem;
+  /* Portaled surfaces are positioned against the browser viewport rather than the content
+     wrapper. Keep a zero-height default so the same geometry works on non-Windows surfaces. */
+  --windows-titlebar-height: 0px;
+  --windows-content-center-y: 50vh;
+  --windows-content-max-height: calc(100svh - 2rem);
   /* Light-theme elevation (referenced by the shadow-* utilities via @theme inline). */
   --shadow-card-value: 0 0 0 1px rgb(10 10 10 / 0.06), 0 4px 24px rgb(10 10 10 / 0.04);
   --shadow-card-opaque-value: 0 0 0 1px rgb(10 10 10 / 0.08), 0 8px 28px rgb(10 10 10 / 0.1);
@@ -466,6 +589,13 @@
   --ring: oklch(0.66 0.1 184);
 }
 
+/* Keyboard focus must remain visible in forced colors and appear without a transition. */
+@utility keyboard-focus {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+  transition-property: none;
+}
+
 @layer base {
   *,
   *::before,
@@ -475,7 +605,7 @@
   }
 
   :focus-visible {
-    @apply outline-2 outline-offset-2 outline-ring/50;
+    @apply keyboard-focus;
   }
 
   html,
@@ -517,6 +647,38 @@
 }
 
 @layer components {
+  @keyframes pdf-translation-content-expand {
+    from {
+      height: 0;
+    }
+    to {
+      height: var(--radix-collapsible-content-height);
+    }
+  }
+
+  @keyframes pdf-translation-content-collapse {
+    from {
+      height: var(--radix-collapsible-content-height);
+    }
+    to {
+      height: 0;
+    }
+  }
+
+  .pdf-translation-collapsible-content[data-state='open'] {
+    animation: pdf-translation-content-expand 180ms ease-out;
+  }
+
+  .pdf-translation-collapsible-content[data-state='closed'] {
+    animation: pdf-translation-content-collapse 150ms ease-in;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .pdf-translation-collapsible-content {
+      animation: none;
+    }
+  }
+
   @keyframes package-setup-nudge {
     0%,
     60%,
@@ -627,6 +789,12 @@
       hsl(var(--always-black)) calc(100% - 2.5rem),
       transparent
     );
+  }
+
+  /* Edge fades must not erase a keyboard-focused chip or its outline. */
+  .scroll-fade-x:has(:focus-visible) {
+    -webkit-mask-image: none;
+    mask-image: none;
   }
 
   /* Keep scrollbars available without letting idle tracks compete with the content. */
@@ -765,6 +933,39 @@
     }
   }
 
+  /* Radix owns positioning and presence; animate only the anchored content. Popovers opt in. */
+  .hover-bubble {
+    transform-origin: var(--radix-popover-content-transform-origin);
+  }
+
+  .hover-bubble:is([data-state='open'], [data-state='delayed-open']):where(
+      :not([data-skip-entry-animation='true'])
+    ) {
+    animation: hover-bubble-enter 240ms cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+
+  /* Close immediately: outgoing previews must not overlap the next card or retain a Radix layer. */
+  .hover-bubble[data-state='closed'] {
+    pointer-events: none;
+  }
+
+  @keyframes hover-bubble-enter {
+    from {
+      opacity: 0;
+      transform: scale(0.9);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .hover-bubble:is([data-state]) {
+      animation: none;
+    }
+  }
+
   /* Key only the content to its owner's phase: focus and the button hit target survive swaps. */
   .button-feedback {
     display: inline-flex;
@@ -784,6 +985,55 @@
     to {
       opacity: 1;
       transform: translateY(0);
+    }
+  }
+
+  .message-bell-ring {
+    transform-origin: 50% 15%;
+    animation: message-bell-ring 620ms ease-out;
+  }
+
+  @keyframes message-bell-ring {
+    0%,
+    100% {
+      transform: rotate(0);
+    }
+    18% {
+      transform: rotate(-16deg);
+    }
+    38% {
+      transform: rotate(12deg);
+    }
+    58% {
+      transform: rotate(-7deg);
+    }
+    76% {
+      transform: rotate(3deg);
+    }
+  }
+
+  .message-bell-dot-pop {
+    animation: message-bell-dot-pop 300ms ease-out;
+  }
+
+  @keyframes message-bell-dot-pop {
+    0% {
+      opacity: 0.5;
+      transform: scale(0.4);
+    }
+    60% {
+      opacity: 1;
+      transform: scale(1.25);
+    }
+    100% {
+      transform: scale(1);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .message-bell-ring,
+    .message-bell-dot-pop {
+      animation: none;
     }
   }
 

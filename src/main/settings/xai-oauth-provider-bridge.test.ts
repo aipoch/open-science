@@ -33,7 +33,7 @@ describe('xAI OAuth provider bridge', () => {
     const bridge = createXaiOAuthProviderBridge(
       [{ id: 'active', model: 'grok-4.6' }],
       'active',
-      'openai',
+      'chat-completions',
       vi.fn(async () => 'access-token'),
       upstream
     )
@@ -63,7 +63,7 @@ describe('xAI OAuth provider bridge', () => {
     const bridge = createXaiOAuthProviderBridge(
       [{ id: 'active', model: 'grok-4.6' }],
       'active',
-      'anthropic',
+      'messages',
       getAccessToken,
       upstream
     )
@@ -114,7 +114,7 @@ describe('xAI OAuth provider bridge', () => {
         { id: 'other', model: 'grok-4.5' }
       ],
       'active',
-      'anthropic',
+      'messages',
       vi.fn(async () => 'access-token'),
       vi.fn<typeof fetch>()
     )
@@ -165,7 +165,7 @@ describe('xAI OAuth provider bridge', () => {
     const bridge = createXaiOAuthProviderBridge(
       [{ id: 'active', model: 'grok-4.6' }],
       'active',
-      'openai',
+      'chat-completions',
       vi.fn(async () => 'access-token'),
       upstream
     )
@@ -196,16 +196,16 @@ describe('xAI OAuth provider bridge', () => {
 
   it('adapts CodeBuddy Chat Completions before translating them to Responses', async () => {
     const upstream = vi.fn<typeof fetch>().mockResolvedValue(Response.json(responsesPayload))
-    const adaptOpenAiRequest = vi.fn((request: Record<string, unknown>) => ({
+    const adaptChatCompletionsRequest = vi.fn((request: Record<string, unknown>) => ({
       ...request,
       messages: [{ role: 'user', content: 'Adapted input' }]
     }))
     const bridge = createXaiOAuthProviderBridge(
       [{ id: 'active', model: 'grok-4.6' }],
       'active',
-      'openai',
+      'chat-completions',
       vi.fn(async () => 'access-token'),
-      { fetchImpl: upstream, adaptOpenAiRequest }
+      { fetchImpl: upstream, adaptChatCompletionsRequest }
     )
     bridges.push(bridge)
     const connection = await bridge.start()
@@ -219,7 +219,7 @@ describe('xAI OAuth provider bridge', () => {
       })
     })
 
-    expect(adaptOpenAiRequest).toHaveBeenCalledWith(
+    expect(adaptChatCompletionsRequest).toHaveBeenCalledWith(
       expect.objectContaining({ messages: [{ role: 'user', content: 'Original input' }] })
     )
     expect(JSON.parse(String(upstream.mock.calls[0]?.[1]?.body))).toMatchObject({

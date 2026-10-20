@@ -6,7 +6,7 @@ import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
 import { useNotebookEnvStore } from '@/stores/notebook-env-store'
 import { useSessionStore } from '@/stores/session-store'
-import { isTerminalProvisionPhase } from '../../../../shared/notebook-env'
+import { isTerminalProvisionPhase } from '@aipoch/environment/contracts'
 import { getAgentThinkingStartedAt, type AgentLoadingPhase } from './agent-loading-message'
 import { provisionProgressText } from './provision-progress-text'
 

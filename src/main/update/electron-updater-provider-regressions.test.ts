@@ -34,6 +34,50 @@ const offline = async (): Promise<never> => {
   throw new Error('No network in audit')
 }
 
+it.each([undefined, '00000000-0000-4000-8000-000000000001'])(
+  'passes only an operation UUID to the real NSIS launcher (%s)',
+  async (operationId) => {
+    const { NsisUpdater } = requireRepo('electron-updater/out/NsisUpdater')
+    const spawnLog = vi.fn(async () => {})
+    const dispatchError = vi.fn()
+    const updater = {
+      installerPath: 'installer.exe',
+      openScienceUpdateOperation: operationId,
+      spawnLog,
+      dispatchError
+    }
+    expect(
+      NsisUpdater.prototype.doInstall.call(updater, { isSilent: false, isForceRunAfter: true })
+    ).toBe(true)
+    expect(spawnLog).toHaveBeenCalledWith(
+      'installer.exe',
+      operationId
+        ? ['--updated', `--open-science-update-operation=${operationId}`, '--force-run']
+        : ['--updated', '--force-run']
+    )
+    updater.openScienceUpdateOperation = '../untrusted-path'
+    expect(NsisUpdater.prototype.doInstall.call(updater, {})).toBe(false)
+    expect(spawnLog).toHaveBeenCalledTimes(1)
+    expect(dispatchError).toHaveBeenCalledOnce()
+  }
+)
+
+it.each([
+  ['x64', 'latest-linux'],
+  ['arm64', 'latest-linux-arm64']
+])('uses the installed updater architecture channel for %s', (arch, channel) => {
+  const { Provider } = requireRepo('electron-updater/out/providers/Provider')
+  // Upstream Provider.getChannelFilePrefix reads process.env.TEST_UPDATER_ARCH || process.arch.
+  // Exercise its own test seam; a custom app channel would receive the architecture suffix twice.
+  vi.stubEnv('TEST_UPDATER_ARCH', arch)
+  try {
+    const provider = new Provider({ platform: 'linux', executor: {} })
+    expect(provider.getDefaultChannelName()).toBe(channel)
+  } finally {
+    vi.unstubAllEnvs()
+  }
+})
+
 it.each([true, false])(
   'handles real updater cache completion with cancellation=%s',
   async (cancelled) => {

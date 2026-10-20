@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/aipoch/open-science/releases/latest">
+  <a href="https://aipoch.com/open-science/download">
     <img alt="ダウンロード" src="https://img.shields.io/badge/Download-Latest%20Release-2f9e44?style=flat">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
@@ -14,8 +14,11 @@
   <a href="https://doi.org/10.5281/zenodo.22252246">
     <img alt="DOI" src="https://img.shields.io/badge/DOI-10.5281%2Fzenodo.22252246-0b7285?style=flat">
   </a>
-  <a href="https://huggingface.co/datasets/phylobio/BiomniBench-DA">
-    <img alt="BiomniBench-DA Public 50 で第1位" src="https://img.shields.io/badge/%F0%9F%8F%86%20%231-BiomniBench--DA%20Public%2050-f59f00?style=flat">
+  <a href="https://arxiv.org/abs/2610.17110">
+    <img alt="AIPOCH Open-Science の arXiv プレプリント：2610.17110" src="../images/readme/arxiv-preprint.svg">
+  </a>
+  <a href="#ベンチマーク性能">
+    <img alt="AIPOCH Open-Science — 報告されたベンチマーク比較での最高スコア" src="../../docs/images/readme/benchmark-comparisons.svg">
   </a>
   <a href="https://github.com/aipoch/open-science/releases/latest">
     <img alt="対応プラットフォーム macOS Windows Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-4263eb?style=flat">
@@ -25,9 +28,6 @@
   </a>
   <a href="https://aipoch.com/open-science">
     <img alt="ウェブサイト aipoch.com" src="https://img.shields.io/badge/website-aipoch.com-e8590c?style=flat">
-  </a>
-  <a href="https://discord.gg/zxQAYjReRv">
-    <img alt="Discord" src="https://img.shields.io/badge/Discord-Join%20the%20Community-5865F2?style=flat&logo=discord&logoColor=white">
   </a>
 </p>
 
@@ -49,7 +49,9 @@ AIPOCH Open-Science は科学者と研究者のための AI 研究ワークベ�
 
 AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材料科学、物理学、環境科学など、幅広い分野の計算集約型・データ集約型研究を支援します。文献レビューと仮説構築から、コード実行、データ分析、シミュレーション、可視化、追跡可能な研究成果の作成まで、研究プロセス全体を支えます。
 
-> 💡 **[AIPOCH Open-Science v0.33.1 をリリースしました](https://github.com/aipoch/open-science/releases/latest)** _(2026年9月更新)_。AIPOCH Open-Science v0.33.1 では、一時停止と再開ができるライブな Literature スマートスクリーニング、HMMER シーケンス検索と InterProScan ジョブ結果という 2 つの新しいリサーチコネクタと、Genomes コネクタでの Clustal Omega 多重シーケンスアライメント、そしてプロバイダーカタログへの GPT-6 と Claude Opus 5.5 が追加されました。PDF 証拠をワークスペース会話の最初のメッセージに添付できるようになり、セッション診断ではオプトインで機密性の高いパッケージ証拠を含められるようになりました。Windows のマネージド Python ランタイムが復旧し、ノートブックとコンピュートの保存競合が適切に回復され、ビジョン機能が変化したときにエージェントブリッジが再接続されるようになりました。詳細は[最新のリリースノート](https://github.com/aipoch/open-science/releases/latest)をご覧ください。
+完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
+
+> 💡 **AIPOCH Open-Science v1.0.0** _（2026年10月更新）_。この節目では、ローカル優先の研究ワークスペース、科学エージェント、Python/R Notebook の実行、文献ツール、持ち運び可能な `.science` 研究パッケージをまとめています。v0.37.2 以降の改善と CLI のアップグレードに関する変更は、[1.0.0 のリリースノート](../../release-notes/1.0.0/ja.md)をご覧ください。ダウンロードは引き続き[最新の公開済みリリース](https://github.com/aipoch/open-science/releases/latest)に対応します。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />
@@ -59,6 +61,8 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 - [クイックスタート](#-クイックスタート)
 - [製品ツアー](#製品ツアー)
+- [AIPOCH Open-Science `.science` 研究パッケージ](#aipoch-open-science-science-研究パッケージ)
+- [AIPOCH Open-Science の論文と引用](#aipoch-open-science-の論文と引用)
 - [ベンチマーク性能](#ベンチマーク性能)
 - [主な機能](#主な機能)
 - [モデルプロバイダー](#モデルプロバイダー)
@@ -72,22 +76,31 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 ### 1. アプリをダウンロードする
 
-[最新リリース](https://github.com/aipoch/open-science/releases/latest)を開いて **Assets** を展開し、コンピューターに合うインストーラーを選択します。
+[公式ダウンロードページ](https://aipoch.com/open-science/download)を開き、コンピューターに合うインストーラーを選択します。
 
-| コンピューター                       | 選択するもの                                |
-| ------------------------------------ | ------------------------------------------- |
-| macOS 12+ — Apple Silicon（M1 以降） | Apple Silicon / ARM64 用 macOS DMG          |
-| macOS 12+ — Intel                    | Intel / x64 用 macOS DMG                    |
-| Windows x64                          | Windows x64 インストーラー                  |
-| Linux x64                            | Linux x64 AppImage または Debian パッケージ |
+| コンピューター                       | 選択するもの                                  |
+| ------------------------------------ | --------------------------------------------- |
+| macOS 12+ — Apple Silicon（M1 以降） | Apple Silicon / ARM64 用 macOS DMG            |
+| macOS 12+ — Intel                    | Intel / x64 用 macOS DMG                      |
+| Windows x64                          | Windows x64 インストーラー（コード署名済み）  |
+| Linux x64                            | Linux x64 AppImage または Debian パッケージ   |
+| Linux ARM64                          | Linux ARM64 AppImage または Debian パッケージ |
 
-公式リリースページからダウンロードしてください。必要に応じて[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
+[公式ダウンロードページ](https://aipoch.com/open-science/download)からダウンロードしてください。必要に応じて[ダウンロードの検証](../../SECURITY.md#verifying-your-download)を参照してください。
 
 macOS では [Homebrew](https://brew.sh) でもインストールできます：
 
 ```bash
 brew install --cask open-science
 ```
+
+macOS または Linux のスタンドアロン CLI には、別の [AIPOCH tap](https://github.com/aipoch/homebrew-tap) を使用します。
+
+```bash
+brew install aipoch/tap/open-science
+```
+
+この Formula は Node を同梱し、デスクトップアプリなしで動作します。バージョンはデスクトップ Cask と異なる場合があります。前提条件と更新方法は[スタンドアロン実行環境ガイド](../standalone-runtime.md)を参照してください。
 
 Windows での再インストールでは研究データが保持されます。完全に初期化する場合は、確認後にローカルデータを完全削除する[データリセットツール](../../scripts/windows-reset/README.md)を参照してください。
 
@@ -154,15 +167,80 @@ Windows での再インストールでは研究データが保持されます。
   <img src="../images/readme/product-tour-provenance.jpg" alt="生成結果を追跡する Provenance 入口を備えた AIPOCH Open-Science の研究アーティファクトプレビュー" width="900">
 </p>
 
+## AIPOCH Open-Science `.science` 研究パッケージ
+
+完了した研究セッションを、レビュー、引き継ぎ、アーカイブに使える持ち運び可能な `.science` パッケージとしてエクスポートできます。研究記録に含める会話分岐、ファイルバージョン、Notebook 記録、検証証拠を選択して、別のプロジェクトやコンピューターにインポートできます。
+
+**エクスポート → 転送 → 確認**
+
+1. 完了したセッションをエクスポートし、含める内容を選択します。
+2. `.science` ファイルを共同研究者または別のコンピューターに移します。
+3. プロジェクトにインポートします。右側の **Research replay** で記録された過程を確認し、左側の会話から質問して固定ステップを参照できます。
+
+インポートした記録は読み取り専用です。再生してもコードの実行、モデルの呼び出し、認証情報の復元は行いません。最初の質問で関連する編集可能な会話が作成されます。研究を続けるには **Create a copy to continue research** で作業用コピーを作成します。再実行には完全なレシピ、必要な入力、利用可能な実行環境が必要です。
+
+Side Chat、非公開の読書ブックマーク、認証情報は含まれず、ファイルの範囲はエクスポート時の選択によります。受け取った検証記録は送信者のチェックを示すもので、このコンピューターでの再実行を証明しません。[`.science` パッケージガイド](https://aipoch.com/docs/guides/research-packages/)を参照してください。
+
+## AIPOCH Open-Science の論文と引用
+
+**[AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages](https://arxiv.org/abs/2610.17110)**
+
+arXiv プレプリント · [v1](https://arxiv.org/abs/2610.17110v1) · 2026 年 10 月 12 日投稿。
+
+本プレプリントは、研究の文脈、成果物のバージョン、検証記録を可搬な `.science` パッケージで共有できるオープンソースの AI 研究ワークベンチ、AIPOCH Open-Science を紹介します。パッケージ交換の設計と制御された評価の詳細は論文をご覧ください。
+
+研究で AIPOCH Open-Science を使用する場合は、このプレプリントを引用できます。
+
+<details>
+<summary>BibTeX 引用</summary>
+
+```bibtex
+@misc{ouyang2026aipochopenscienceopensourceai,
+      title={AIPOCH Open-Science: An Open-Source AI Research Workbench with Reproducible .science Packages},
+      author={Wen Ouyang and Bocheng Huang and Qianyu Yao and Fei Sun and Minying Deng and Haoyue Cheng and Wenwen Zhou and Lei Mou and Yusi Wei and Jiang Li and Kun Zhu and Lei Wang and Yi Feng and Jiaheng Dai and Ke Qian and Dan Wang and Yahui Wang and Chenyi Wang and Mingsheng Lyu and Yaqiang Zhang and Ping Zheng and Chunhua Tang and Xinge Ma and Xu Zhang and Youjia Fan and Can Lu and Zhijun Dai and Man Hu and Qiqi Xie and Beinan Liu and Yuanning Guo and Yunze Liu and Jinhong Jiang and Xianjun Fu and Mingwei Zhang and Yuanji Xu and Shilin Xia and Bowen Yang and Mingjun Yu and Jingdun Xie and Xuwei Chen and Xia Zou and Yuzhou Xue and Jianguo Zhou and Chunhao Cao and Donghao Tian and Lei Huang and Jinxiao Li and Shengrong Long and Zefeng Song and Honglin Li and Jiang Luo and Wenying Jiang and Shanshan Li and Lei Dai and Ning Jiang and Ying Cai and Chaohui Li and Chunyan Peng and Hetong Zhao and Angqing Li and Chunyan Yang and Chongyang Sun and Yong Li and Xinyu Shi and Wei Dai and Ming Peng and Chen Sang and Yuanyuan Han and Desong Qiu and Haixin Miao and Jian Xu and Yi Chen and Xiaoliang Shi and Tian Shen and Teng Hu and Shuhao Wang and Yingyong Hou and Huimei Wang},
+      year={2026},
+      eprint={2610.17110},
+      archivePrefix={arXiv},
+      primaryClass={cs.SE},
+      url={https://arxiv.org/abs/2610.17110},
+}
+```
+
+</details>
+
 ## ベンチマーク性能
 
-### 🏆 BiomniBench-DA Public 50 で第 1 位
+以下は 2026 年 8～10 月に報告された過去の結果であり、v1.0.0 を対象とした新しい評価ではありません。
 
-AIPOCH Open-Science は、集計された BiomniBench-DA Public 50 の比較で最高のランキングスコアを達成し、**gpt-5.6-sol (xhigh)** で **79.05** を獲得しました。この結果は、Gemini 3.1 Pro の評価スコア **81.04** と DeepSeek v4-pro の評価スコア **77.06** を等加重平均したもので、収集された Public 50 の結果で AIPOCH Open-Science を **第 1 位** に位置付けています。[BiomniBench-DA データセット](https://huggingface.co/datasets/phylobio/BiomniBench-DA)をご覧ください。
+出典レポート: [9 月 29 日](https://hwtgofuh6ud.feishu.cn/wiki/Kl5cwupToi901BkEaQacM1V2n7e), [10 月 12 日](https://hwtgofuh6ud.feishu.cn/wiki/XZSbw7L87ibjQUk98qJcuqFUnKh) (アクセス権限が必要な場合があります).
 
-<p align="center">
-  <img src="../images/readme/biomnibench-public50-leaderboard.png" alt="AIPOCH Open-Science が 79.05 で第 1 位となった BiomniBench-DA Public 50 の比較" width="1200" />
-</p>
+### 🏆 AstaBench LitQA2-FullText-Search — 10問すべてで対象論文を発見
+
+AIPOCH Open-Science は **DeepSeek v4-flash（max）**、文献検索スペシャリスト、スキルを組み合わせ、公式検証セット10問で **recall@30が100%** を記録しました。すべての対象論文が検索結果の上位30件に含まれました。報告に掲載された公開検証結果3件を上回り、その最高値 **80%より20パーセントポイント高い** 値です。ローカルで3回の反復テストが報告され、この科学的な質問群での論文検索性能を示しています。
+
+![AIPOCH Open-Science は AstaBench LitQA2検証セットでrecall@30が100%、10/10を達成。テストと検証では問題が異なる](../images/readme/astabench-litqa2.png)
+
+図にはテストと検証の記録が含まれ、順位は数値のみの比較です。Recall@30は対象論文の検索を測る指標であり、科学的な質問への正答率ではありません。
+
+### 🏆 ASI-Bench B1–B4 — 掲載された4つの比較すべてで最高の表示スコア
+
+AIPOCH Open-Science は **GPT-6（gpt-6-astra / xhigh）**、分野別スペシャリスト、スキルを用い、ASI-Bench B1、B2、B3、B4でそれぞれ **79.35、56.11、59.67、59.46点** を記録しました。各値は報告に掲載された比較の最高表示値です。4条件は順に、**詳細な計画の実行、ワークフローの構成、自律的な研究手法の選択、無関係な背景情報がある状況での自律研究**を評価します。
+
+同じモデルと同名の推論強度を用いたローカルCodex対照は74.78、56.09、58.12、55.45点で、数値差は **+4.57、+0.02、+1.55、+4.01点** です。B1/B2はローカルで3回の反復を報告し、B3/B4はそれぞれ60問を3回実行した平均値です。
+
+![AIPOCH Open-Science の ASI-Bench B1–B4スコアは79.35、56.11、59.67、59.46。ローカル結果と公開参照を区別](../images/readme/asi-bench-b1-b4.jpg)
+
+ローカル実行にはseed31415を使用しました。AIPOCHのB1は59問を採点し、報告に記載された採点器の問題により1問を除外しています。B3/B4はv0.32.0と代替の評価モデルを使用しました。公開参照とは問題インスタンス、構成、採点条件が異なり、B2の0.02点差は数値上の差にとどまります。
+
+### 🏆 集計されたBiomniBench-DA Public 50比較で最高値 — 79.05点
+
+AIPOCH Open-Science は **gpt-5.6-sol（xhigh）** を使用し、BiomniBench-DA Public 50と呼ばれる50タスクの内部評価で **79.05点** を記録しました。これは集計された比較の最高表示値です。Gemini 3.1 Proによる **81.04点** とDeepSeek v4-proによる **77.06点** の等加重平均で、この構成の生物医学データ分析性能を示します。[評価報告](https://aipoch.com/blog/open-science-biomnibench-da)をご覧ください。
+
+![AIPOCH Open-Science のBiomniBench-DA Public 50内部評価は、評価値77.06と81.04の平均で79.05](../images/readme/biomnibench-public50-leaderboard.png)
+
+比較には異なる評価モデルの組み合わせが混在しており、統一された採点条件による公式順位ではありません。
+
+**評価範囲：** これらは自己報告のローカル・内部評価結果です。掲載された比較での最高値は、公式ランキング1位や統計的に有意な改善を意味しません。
 
 ## 主な機能
 
@@ -171,7 +249,7 @@ AIPOCH Open-Science は、プロジェクト管理、マルチモデルエージ
 | 分野                                         | 主な機能                                                                                                                                                                                                                                                                                                                                                                                                          |
 | -------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **科学スキル**                               | **23 個の組み込みスキル**と、[Skills Marketplace](https://github.com/aipoch/openscience-skill-marketplace) からワンクリックでインストール・更新できる **525 個のスキル**で研究を拡張します。会話や完了した作業からスキルを作成し、パッケージや GitHub ソースを取り込めます。投稿は審査後に公開され、ローカルインポートだけでは公開されません。                                                                    |
-| **コネクタ**                                 | **24 個の組み込みコネクタ**で科学リソースにアクセスし、独自のローカル／リモート MCP コネクタも追加できます。ツール単位の権限管理とコネクタ設定のインポート／エクスポートに対応します。                                                                                                                                                                                                                            |
+| **コネクタ**                                 | **36 個の組み込みコネクタ**で科学リソースにアクセスし、独自のローカル／リモート MCP コネクタも追加できます。ツール単位の権限管理とコネクタ設定のインポート／エクスポートに対応します。                                                                                                                                                                                                                            |
 | **スペシャリストと委任**                     | [Specialist Marketplace](https://github.com/aipoch/openscience-specialist-marketplace) から **10 個のスペシャリスト**をインストールするか、個人スペシャリストを作成・調整してメインエージェントから作業を委任できます。パッケージの入出力に対応し、投稿は審査後に公開されますが、ローカルインポートだけでは公開されません。                                                                                       |
 | **モデルとエージェントバックエンド**         | クラウドモデル、互換カスタムゲートウェイ、Claude・Codex のサブスクリプションログインを利用できます。バックエンドは Claude Code、OpenCode、Codex、CodeBuddy から選べ、モデル接続確認、画像入力、推論強度の設定に対応します。                                                                                                                                                                                       |
 | **プロジェクト・セッション・研究パッケージ** | プロジェクトを整理し、セッションのピン留め、メッセージ分岐、サイドチャット、履歴復元を利用できます。会話分岐、選択したファイルバージョン、Notebook 記録、検証証拠を含む**持ち運び可能な `.science` 研究パッケージ**を別のプロジェクトやコンピューターへ移せます。インポートは読み取り専用でコード実行や認証情報復元を行わず、サイドチャットとブックマークは対象外、同梱ファイルはエクスポート時の選択に従います。 |
@@ -181,9 +259,13 @@ AIPOCH Open-Science は、プロジェクト管理、マルチモデルエージ
 | **科学ファイルとプレビュー**                 | 1 ファイル最大 **10 GiB** をアップロードし、プロジェクトファイルの管理や科学データ、PDF、Office 文書、画像、コード、分子構造のプレビューを利用できます。これはアップロード上限で、モデルが全内容を読める保証ではなく、コンテキスト、添付解析、プレビューには個別の制限があります。大きなファイルは通常コードで分割して読み取り・分析します。                                                                      |
 | **アーティファクトと来歴**                   | 不変の成果物バージョンに、利用可能な生成コード、入力、実行履歴、環境情報、レビュー証拠を保持します。デスクトップでは完全な実行レシピ、必要な入力、利用可能なランタイムを用いて対象バージョンを再実行し、出力比較と検証記録のエクスポートができます。証拠不足は検証を妨げる場合があり、再実行の検証は科学的妥当性を証明しません。                                                                                  |
 
+永続的な PDF 注釈と文書ノートに対応します。スクリーニングモデルを設定すると、スマートコレクションが採用・除外基準に沿って文献を評価します。AI と手動の判断は別々に記録され、人によるレビューを支援します。
+
+デスクトップアプリでは、成果物の来歴を RO-Crate 1.1 としてエクスポートできます。バージョンに紐づく環境バンドルから管理対象環境を作成できるのは、記録が完全で対象プラットフォームと互換性がある場合だけです。コンピューター全体のバックアップではありません。
+
 ## モデルプロバイダー
 
-AIPOCH Open-Science は製品レベルでモデルに依存しません。主要クラウド LLM プロバイダーやカスタムゲートウェイに接続するか、既存の Claude または Codex サブスクリプションを再利用できます。現在利用できるプロバイダーは、選択したエージェントバックエンドとその API プロトコルに依存します。モデルへの接続方法は 4 つあります。
+AIPOCH Open-Science は製品レベルでモデルに依存しません。主要クラウド LLM プロバイダーやカスタムゲートウェイに接続するか、既存の Claude または Codex サブスクリプションを再利用できます。現在利用できるプロバイダーは、選択したエージェントバックエンドとその API プロトコルに依存します。次の接続方法を利用できます。
 
 | プロバイダーモード               | 動作                                                                                                                                                                                                                                                                                                                                                                                                                                            |
 | -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -191,8 +273,9 @@ AIPOCH Open-Science は製品レベルでモデルに依存しません。主要
 | **カスタムゲートウェイ**         | Base URL、正確なモデル ID、選択したエージェントバックエンドが対応する API プロトコル（Messages、Chat Completions、Responses）を指定し、接続テストを実行します。リモートゲートウェイには HTTPS と API Key が必要です。`localhost`、`127.0.0.1`、`[::1]` などのループバックでは HTTP とキーなしの接続を使用できます。Ollama、LM Studio、llama.cpp、vLLM のプリセットがあります。既定の API 形式だけではサーバーやモデルの互換性は保証されません。 |
 | **Codex サブスクリプション**     | Codex エージェントフレームワークを選択し、プロバイダー種別で Codex サブスクリプションを選びます。                                                                                                                                                                                                                                                                                                                                               |
 | **Claude サブスクリプション**    | 2 つのモードでログインできます。**共有**はブラウザーログインの認証情報をデフォルトの `~/.claude` プロファイルに保存します。**分離**はアプリ所有の `CLAUDE_CONFIG_DIR` で `claude setup-token` を実行し、`~/.claude/` から完全に分離して、ブラウザーフローとトークン貼り付けのフォールバックを提供します。                                                                                                                                       |
+| **xAI (Grok) OAuth**             | 組み込みの xAI (Grok) OAuth デバイスログインを使用します。利用可否は xAI アカウントと選択したバックエンドの対応プロトコルに依存するため、アプリで接続を検証してください。                                                                                                                                                                                                                                                                       |
 
-組み込みプロバイダーには OpenAI、Anthropic、DeepSeek、NVIDIA Build などがあります。モデルと地域別エンドポイントはインストール済みバージョンとバックエンドによるため、アプリの選択画面と接続テストで確認してください。
+25 個のプリセット プロバイダー オプションがあり、 OpenAI、Anthropic、DeepSeek、NVIDIA Build などがあります。モデルと地域別エンドポイントはインストール済みバージョンとバックエンドによるため、アプリの選択画面と接続テストで確認してください。
 
 ## データ、権限、信頼
 
@@ -220,11 +303,11 @@ AIPOCH Open-Science はプロジェクトデータ、設定、アーティファ
 
 ## 開発とパッケージング
 
-AIPOCH Open-Science は React、TypeScript、Prisma/SQLite、ACP ベースのエージェントランタイムで構築された Electron アプリです。
+AIPOCH Open-Science は通常の Node バックエンドと Electron デスクトップクライアントで構成され、React、TypeScript、Prisma/SQLite、ACP ベースのエージェント実行環境を使用します。
 
 ソース開発の前提条件：
 
-- Node.js 22（[`.nvmrc`](../../.nvmrc) を参照）と npm
+- Node.js 24（[`.nvmrc`](../../.nvmrc) を参照）と npm
 - Git
 - Notebook の実行は任意で、アプリ管理の Python/R 環境または自分で設定した互換インタープリターを使用できます。
 
@@ -239,18 +322,26 @@ npm run dev
 
 ### Localhost Web とヘッドレスモード
 
-デスクトップバックエンドは、ローカルコンピューターのブラウザーへ同じレンダラーを任意で提供できます。この機能はデフォルトで無効で、`127.0.0.1` だけにバインドします。
+Web UI は通常の Node バックエンドで動作し、Electron や画面環境は不要です。
 
 ```bash
-npm run build:web
 npm run dev:web
+npm run pack:backend
 ```
 
-アプリが表示する認証済み URL を開きます。`npm run dev:headless` を使うと、Electron ウィンドウを開かずにバックエンド、トレイ、エージェントランタイム、localhost Web サービスを開始できます。`OPEN_SCIENCE_WEB_PORT` でポートを選択できます（デフォルト `44100`）。アプリを明示的に終了すると、エージェントと Notebook のプロセスも通常どおり終了します。
+Web UI は通常の Node バックエンドで動作し、Electron や画面環境は不要です。`npm run dev:web` と `npm run dev:headless` はバックエンドと Web UI をビルドして起動し、デスクトップやトレイを起動しません。`OPEN_SCIENCE_WEB_PORT` でポートを指定します（既定値 `44100`）。Ctrl+C でフォアグラウンドサービスを正常終了します。
+
+ソース開発には Node.js 24 が必要です。独立 npm tarball は Node >=22.13.0、軽量 CLI/SDK は Node >=22.5 が必要です。Release アーカイブ、Homebrew Formula、デスクトップのコマンドランチャーはランタイムを同梱します。
+
+デスクトップとブラウザーは同じサービスを共有します。デスクトップ終了時は自分で起動したバックエンドだけを停止し、CLI が起動したサービスからは切断するだけです。
+
+[CLI](../../packages/open-science/CLI.md) · [Node](../standalone-runtime.md)
 
 ### モバイルリモートアクセス
 
 Remote.It のペアリングにより、スマートフォンやタブレットから同じ localhost Web UI にアクセスできます。6 桁の AIPOCH Open-Science コードでブラウザーをペアリングし、デスクトップで一度承認すると、ループバックサーバーを直接公開せずにワークスペースへ接続できます。ブラウザーの信頼は取り消し可能で、モード変更やサービス停止によりアクティブなリモートセッションは直ちに無効になります。
+
+ホストを起動してオンラインに保ち、AIPOCH Open-Science と Remote.It エージェントを実行し、ログイン済み Remote.It アカウントにホストを追加する必要があります。ブラウザーの承認には期限があり、取り消しも可能です。[リモート制御ガイド](../remote-control.md)を参照してください。
 
 ### ヘッドレス CLI と SDK
 
@@ -275,7 +366,7 @@ Remote.It のペアリングにより、スマートフォンやタブレット�
 
 ### コマンドラインインターフェースはありますか？
 
-回答：あります。**Settings → General → Command line tool → Install command** からワンクリックでインストールできます（`open-science` を PATH に追加し、別途 Node.js は不要です）。CLI はブラウザーを開かずにローカルサービスを制御し、研究タスクを送信します。
+回答：あります。独立したバックエンドを起動するには、スタンドアロン Node パッケージをインストールします。**Settings → General → Command line tool → Install command** でインストールするコマンドは、起動済みのデスクトップインスタンスを制御します。この用途では別途 Node.js は不要です。例外として、Debian パッケージ付属のランチャーは、同梱の Node ランタイムで同梱のバックエンドを起動できます。以下の独立起動の例では、スタンドアロンパッケージと通常の Node.js をインストールし、ローカルプロファイルを初期化してサービスを起動します。
 
 ```bash
 # サービスをバックグラウンドで開始
@@ -321,7 +412,7 @@ AIPOCH Open-Science では、バグ報告、機能提案、設計に関する議
 
 > ⭐ **リポジトリに Star：** このプロジェクトが役立った場合は、GitHub で Star を付けていただけると助かります。Star は継続的な開発を後押しします。数秒ででき、プロジェクトに大きな意味があります。
 
-提供済み、一部実装、計画中の機能は[機能マップ](../../ROADMAP.md#capability-map)を参照してください。
+提供済み、一部実装、計画中の機能は[機能マップ](../ROADMAP.md#capability-map)を参照してください。
 
 ## ライセンス
 

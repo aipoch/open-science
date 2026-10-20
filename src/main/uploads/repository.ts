@@ -1,3 +1,4 @@
+import { persistentContentReferences } from '../storage/prisma-content-references'
 import type { PrismaClient } from '@prisma/client'
 
 import {
@@ -53,7 +54,11 @@ class UploadRepository {
   ) {
     this.dataRoot = dataRoot
     this.contentRepository = options.getClient
-      ? new ContentRepository({ storageRoot: dataRoot, getClient: options.getClient })
+      ? new ContentRepository({
+          references: persistentContentReferences,
+          storageRoot: dataRoot,
+          getClient: options.getClient
+        })
       : undefined
     this.transferOwner = new ActiveTransferOwner(dataRoot, options)
     this.managedUploadResolver = new ManagedUploadResolver(dataRoot, options)
@@ -107,12 +112,14 @@ class UploadRepository {
   async finalizePendingSessionUploads(
     sessionId: string,
     attachments: UploadedAttachment[],
-    projectId = DEFAULT_UPLOAD_PROJECT_ID
+    projectId = DEFAULT_UPLOAD_PROJECT_ID,
+    options: { deferVisibility?: boolean } = {}
   ): Promise<UploadedAttachment[]> {
     const finalized = await this.stagedPublicationOwner.finalizePendingSessionUploads(
       sessionId,
       attachments,
-      projectId
+      projectId,
+      options
     )
     const newlyPublished = finalized.filter((file) =>
       attachments.some((input) => input.id === file.id && input.versionId !== file.versionId)

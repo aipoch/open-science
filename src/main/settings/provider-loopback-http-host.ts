@@ -7,7 +7,7 @@ import {
   type ServerResponse
 } from 'node:http'
 
-import { createLogger, errorLogFields, type Logger } from '../logger'
+import { createLogger, errorLogFields, type Logger } from '@aipoch/diagnostics/node'
 
 // A turn may contain up to 24 MiB of base64 image data before frameworks add text, replayed history,
 // and tool declarations. Keep every authenticated Provider bridge on one memory-bounded envelope.

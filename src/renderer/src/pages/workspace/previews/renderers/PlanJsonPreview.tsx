@@ -24,7 +24,10 @@ type PlanViewMode = 'plan' | 'raw'
 // live step status when the Session's stored projection matches the previewed Artifact Version, a
 // read-only snapshot otherwise. Ordinary JSON files never leave the raw view, so the switch row and
 // banners below only exist once a Plan document has been recognized.
-export const PlanJsonPreview = ({ item }: PreviewFileRendererProps): React.JSX.Element => {
+export const PlanJsonPreview = ({
+  item,
+  readOnly
+}: PreviewFileRendererProps): React.JSX.Element => {
   const { t } = useTranslation()
   const state = usePreviewFileContent(item)
   const session = useSessionStore((store) =>
@@ -53,7 +56,7 @@ export const PlanJsonPreview = ({ item }: PreviewFileRendererProps): React.JSX.E
 
   if (!planDocument) return <JsonPreviewBody item={item} state={state} />
 
-  const resolved = resolvePlanFileProjection(session, item.selectedVersionId)
+  const resolved = readOnly ? undefined : resolvePlanFileProjection(session, item.selectedVersionId)
   const projection = resolved?.projection ?? snapshotPlanProjection(planDocument)
   const stale = resolved?.stale ?? false
   const snapshot = resolved === undefined

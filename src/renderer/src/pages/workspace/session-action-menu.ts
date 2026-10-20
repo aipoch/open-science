@@ -3,6 +3,8 @@ import {
   Archive,
   GitBranch,
   BookOpen,
+  MessageSquare,
+  Play,
   Download,
   Stethoscope,
   Pencil,
@@ -19,6 +21,7 @@ import type {
   ActionMenuRecipeEntry
 } from '@/components/action-menu'
 import type { ChatSession, SessionStatus } from '@/stores/session-store'
+import { projectPresentedSessionActionability } from './session-wait-reason'
 
 export type SessionActionId =
   | 'toggle-pin'
@@ -26,6 +29,8 @@ export type SessionActionId =
   | 'download-artifacts'
   | 'check-artifacts'
   | 'view-notebook'
+  | 'view-replay'
+  | 'discuss'
   | 'export'
   | 'export-package'
   | 'export-diagnostics'
@@ -44,6 +49,8 @@ export const SESSION_ACTION_CATALOG = {
   'download-artifacts': { labelKey: 'Download all artifacts', icon: Download },
   'check-artifacts': { labelKey: 'Check session artifacts', icon: PackageCheck },
   'view-notebook': { labelKey: 'View notebook', icon: BookOpen },
+  'view-replay': { labelKey: 'View replay', icon: Play },
+  discuss: { labelKey: 'Discuss', icon: MessageSquare },
   export: { labelKey: 'Export conversation…', icon: Download },
   'export-package': { labelKey: 'Export Session package', icon: Package },
   'export-diagnostics': { labelKey: 'Export diagnostics…', icon: Stethoscope },
@@ -56,6 +63,8 @@ export const SESSION_ACTION_RECIPE = [
   { kind: 'action', action: 'toggle-pin' },
   { kind: 'action', action: 'edit' },
   { kind: 'separator' },
+  { kind: 'action', action: 'discuss' },
+  { kind: 'action', action: 'view-replay' },
   { kind: 'action', action: 'download-artifacts' },
   { kind: 'action', action: 'check-artifacts' },
   { kind: 'action', action: 'view-notebook' },
@@ -78,24 +87,38 @@ type SessionActionOptions = {
   canArchiveSession?: (session: ChatSession) => boolean
   onTogglePin: (session: ChatSession) => void
   onRenameSession: (session: ChatSession) => void
-  onDownloadArtifacts: (session: ChatSession) => void
+  onDownloadArtifacts?: (session: ChatSession) => void
   onCheckArtifacts?: (session: ChatSession) => void
-  onViewNotebook: (session: ChatSession) => void
+  onViewNotebook?: (session: ChatSession) => void
+  onViewReplay?: (session: ChatSession) => void
+  onDiscussSession?: (session: ChatSession) => Promise<void>
   onExportSession?: (session: ChatSession) => void
   onForkSession?: (session: ChatSession) => Promise<void>
   onExportPackage?: (session: ChatSession) => Promise<void>
   onExportDiagnostics?: (session: ChatSession) => void
   packageBusy?: boolean
   onArchiveSession?: (session: ChatSession) => void
-  onDeleteSession: (session: ChatSession) => void
+  onDeleteSession?: (session: ChatSession) => void
 }
 
-const isExportDisabled = ({ session, presentedStatus }: SessionActionInvocation): boolean =>
-  (session.activeMessageCount ?? session.messages.length) === 0 ||
+const hasTransferActivity = ({ session, presentedStatus }: SessionActionInvocation): boolean =>
   presentedStatus === 'running' ||
-  presentedStatus === 'waiting-for-user' ||
-  presentedStatus === 'waiting-permission' ||
-  presentedStatus === 'waiting-plan-approval'
+  presentedStatus.startsWith('waiting-') ||
+  Boolean(session.activeRun || session.compacting || session.agentPromptInFlight) ||
+  projectPresentedSessionActionability(session).activity !== 'inactive' ||
+  session.runtimeContext?.permission?.state === 'pending' ||
+  session.runtimeContext?.plan?.approval === 'pending'
+
+// Imported runtime fields are evidence; transient renderer work still blocks a transfer.
+// Fork keeps the stricter admission below because its destination is writable.
+const hasExportActivity = (invocation: SessionActionInvocation): boolean =>
+  invocation.session.packageOrigin
+    ? Boolean(invocation.session.compacting || invocation.session.agentPromptInFlight)
+    : hasTransferActivity(invocation)
+
+const isExportDisabled = (invocation: SessionActionInvocation): boolean =>
+  (invocation.session.activeMessageCount ?? invocation.session.messages.length) === 0 ||
+  hasExportActivity(invocation)
 
 const forkDisabledDescription = (
   options: SessionActionOptions,
@@ -104,12 +127,7 @@ const forkDisabledDescription = (
   if (!options.canMutateConversations) return i18n.t('Session storage is not ready.')
   if (options.packageBusy)
     return i18n.t('Wait for the current transfer to finish before forking a Session.')
-  if (
-    session.status !== 'idle' ||
-    presentedStatus !== 'idle' ||
-    session.runtimeContext?.permission?.state === 'pending' ||
-    session.runtimeContext?.plan?.approval === 'pending'
-  ) {
+  if (hasTransferActivity({ session, presentedStatus })) {
     return i18n.t('Wait for all Session activity and pending approvals to finish before forking.')
   }
   return undefined
@@ -129,8 +147,8 @@ export const createSessionActionBindings = (
     disabled: !options.canMutateConversations
   },
   'download-artifacts': {
-    execute: ({ session }) => options.onDownloadArtifacts(session),
-    hidden: !options.canDownloadArtifacts
+    execute: ({ session }) => options.onDownloadArtifacts?.(session),
+    hidden: !options.canDownloadArtifacts || !options.onDownloadArtifacts
   },
   'check-artifacts': {
     execute: ({ session }) => options.onCheckArtifacts?.(session),
@@ -138,7 +156,18 @@ export const createSessionActionBindings = (
     disabled: !options.canMutateConversations
   },
   'view-notebook': {
-    execute: ({ session }) => options.onViewNotebook(session)
+    execute: ({ session }) => options.onViewNotebook?.(session),
+    hidden: !options.onViewNotebook
+  },
+  'view-replay': {
+    execute: ({ session }) => options.onViewReplay?.(session),
+    hidden: !options.onViewReplay,
+    disabled: ({ session }) => Boolean(session.isPending)
+  },
+  discuss: {
+    execute: ({ session }) => options.onDiscussSession?.(session),
+    hidden: !options.onDiscussSession,
+    disabled: ({ session }) => Boolean(session.isPending)
   },
   export: {
     execute: ({ session }) => options.onExportSession?.(session),
@@ -148,11 +177,10 @@ export const createSessionActionBindings = (
   'export-package': {
     execute: ({ session }) => options.onExportPackage?.(session),
     hidden: !options.onExportPackage,
-    disabled: ({ session, presentedStatus }) =>
+    disabled: (invocation) =>
       !options.canMutateConversations ||
       Boolean(options.packageBusy) ||
-      session.status !== 'idle' ||
-      presentedStatus !== 'idle'
+      hasExportActivity(invocation)
   },
   'export-diagnostics': {
     execute: ({ session }) => options.onExportDiagnostics?.(session),
@@ -169,7 +197,8 @@ export const createSessionActionBindings = (
     disabled: ({ session }) => !options.canArchiveSession?.(session)
   },
   delete: {
-    execute: ({ session }) => options.onDeleteSession(session),
+    execute: ({ session }) => options.onDeleteSession?.(session),
+    hidden: !options.onDeleteSession,
     disabled: !options.canDeleteConversations
   }
 })

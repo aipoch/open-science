@@ -1,6 +1,6 @@
 import { storageErrorMessage } from '@/lib/storage-error'
 import { X } from 'lucide-react'
-import { AlertDialog } from 'radix-ui'
+import * as AlertDialog from '@/components/ui/alert-dialog'
 import { ErrorNotice } from '@/components/error-notice'
 import { useRef, useState } from 'react'
 import { Trans, useTranslation } from 'react-i18next'

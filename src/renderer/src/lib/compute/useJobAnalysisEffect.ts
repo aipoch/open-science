@@ -82,6 +82,13 @@ const analysisTurnState = (
   if (prompt.role !== 'user') return 'failed'
   // A rearmed prompt may still have an older partial response. Its live run owns completion.
   if (session.activeRun?.promptMessageId === messageId) return 'running'
+  // Main's exact turn result survives later prompts and replies that contain no text. A complete
+  // text response alone is not success when Artifact publication subsequently failed.
+  const outcome = prompt.turnOutcome
+  if (outcome?.kind === 'completed') return 'succeeded'
+  if (outcome?.kind === 'failed') return 'failed'
+  if (outcome?.kind === 'cancelled') return 'cancelled'
+  if (outcome?.kind === 'interrupted' && outcome.cause !== 'app-restart') return 'failed'
   const recovery =
     session.resumeRecovery?.promptMessageId === messageId ? session.resumeRecovery : undefined
   if (recovery?.cause === 'cancelled') return 'cancelled'
@@ -143,6 +150,7 @@ export const useJobAnalysisEffect = ({
     if (!enabled) return
 
     let isActive = true
+    let scanInFlight = false
     let pendingScanRetry: ReturnType<typeof setTimeout> | undefined
     const turnEndUnsubscribes = new Set<() => void>()
 
@@ -294,9 +302,12 @@ export const useJobAnalysisEffect = ({
     }
 
     const scanPendingJobs = (retryDelay = 1_000): void => {
+      if (!isActive || scanInFlight) return
       if (typeof window.api?.compute?.jobsPendingNotification !== 'function') return
       clearTimeout(pendingScanRetry)
       pendingScanRetry = undefined
+      // Manual Retry and automatic backoff share one request and one retry timer.
+      scanInFlight = true
 
       void window.api.compute
         .jobsPendingNotification({ allSessions: true })
@@ -314,6 +325,9 @@ export const useJobAnalysisEffect = ({
             pendingScanRetry = undefined
             scanPendingJobs(Math.min(retryDelay * 2, 30_000))
           }, retryDelay)
+        })
+        .finally(() => {
+          scanInFlight = false
         })
     }
 

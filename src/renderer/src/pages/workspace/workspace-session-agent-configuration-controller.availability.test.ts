@@ -8,7 +8,7 @@ import type { ChatSession } from '@/stores/session-store'
 const mocks = vi.hoisted(() => ({
   providers: [] as ProviderView[],
   setAgentConfiguration: vi.fn(),
-  endpoints: ['anthropic']
+  endpoints: ['messages']
 }))
 vi.mock('@/stores/settings-store', () => ({
   selectFrameworkApiEndpoints: () => mocks.endpoints,
@@ -36,7 +36,7 @@ const provider = (id: string): ProviderView => ({
   type: 'custom',
   model: 'model',
   models: ['model'],
-  apiEndpoints: ['anthropic'],
+  apiEndpoints: ['messages'],
   supportsImageInput: false,
   hasKey: true,
   needsKey: false
@@ -85,7 +85,7 @@ describe('saved Session model availability', () => {
                 lastValidationFailure: {
                   at: 1,
                   category: 'network',
-                  target: { model: 'model', endpoint: 'anthropic' }
+                  target: { model: 'model', endpoint: 'messages' }
                 }
               },
               provider('fallback')

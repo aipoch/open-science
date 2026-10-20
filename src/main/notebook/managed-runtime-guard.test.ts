@@ -309,7 +309,10 @@ describe('protectManagedRuntimeWrites', () => {
       const cacheRoot = join(runtimeRoot, 'cache', 'notebook')
       const cacheFile = join(cacheRoot, 'allowed.txt')
       const blockedFile = join(runtimeRoot, 'blocked.txt')
+      const npmRoot = join(runtimeRoot, 'npm', 'darwin-arm64')
+      const npmFile = join(npmRoot, 'installed-tool')
       await mkdir(cacheRoot, { recursive: true })
+      await mkdir(npmRoot, { recursive: true })
 
       try {
         const invocation = protectManagedRuntimeWrites(
@@ -317,20 +320,23 @@ describe('protectManagedRuntimeWrites', () => {
             executable: '/bin/sh',
             args: [
               '-c',
-              'printf cache > "$1"; printf blocked > "$2"',
+              'printf cache > "$1"; printf npm > "$3"; printf blocked > "$2"',
               'open-science-seatbelt-test',
               cacheFile,
-              blockedFile
+              blockedFile,
+              npmFile
             ]
           },
           runtimeRoot,
-          'darwin'
+          'darwin',
+          [npmRoot]
         )
         const result = spawnSync(invocation.executable, invocation.args, { encoding: 'utf8' })
 
         expect(result.status).not.toBe(0)
         expect(result.stderr).toMatch(/Operation not permitted/)
         expect(await readFile(cacheFile, 'utf8')).toBe('cache')
+        expect(await readFile(npmFile, 'utf8')).toBe('npm')
         await expect(stat(blockedFile)).rejects.toMatchObject({ code: 'ENOENT' })
       } finally {
         await rm(root, { recursive: true, force: true })

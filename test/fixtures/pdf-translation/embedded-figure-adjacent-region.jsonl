@@ -1,0 +1,12 @@
+{"name": "nearby figure paint stays outside the prose region", "rotation": 0, "figureTop": 693.5, "translated": true}
+{"name": "actual figure overlap remains protected", "rotation": 0, "figureTop": 704, "translated": false, "figureX": 80}
+{"name": "quarter-turn adjacent figure remains separate", "rotation": 90, "figureTop": 693.5, "translated": true}
+{"name": "quarter-turn figure intersection remains protected", "rotation": 90, "figureTop": 704, "translated": false, "figureX": 80}
+{"name": "half-turn adjacent figure remains separate", "rotation": 180, "figureTop": 693.5, "translated": true}
+{"name": "half-turn figure intersection remains protected", "rotation": 180, "figureTop": 704, "translated": false, "figureX": 80}
+{"name": "three-quarter-turn adjacent figure remains separate", "rotation": 270, "figureTop": 693.5, "translated": true}
+{"name": "three-quarter-turn figure intersection remains protected", "rotation": 270, "figureTop": 704, "translated": false, "figureX": 80}
+{"name": "borrowed-right-space-can-be-trimmed-at-rotation-0", "rotation": 0, "figureTop": 704, "translated": true}
+{"name": "borrowed-right-space-can-be-trimmed-at-rotation-90", "rotation": 90, "figureTop": 704, "translated": true}
+{"name": "borrowed-right-space-can-be-trimmed-at-rotation-180", "rotation": 180, "figureTop": 704, "translated": true}
+{"name": "borrowed-right-space-can-be-trimmed-at-rotation-270", "rotation": 270, "figureTop": 704, "translated": true}

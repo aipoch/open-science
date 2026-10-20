@@ -1,3 +1,4 @@
+import { configureTestElectronHost } from '../../../test/runtime-host'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const { ipcHandlers } = vi.hoisted(() => ({
@@ -88,3 +89,5 @@ describe('registerLocalFsIpcHandlers', () => {
     })
   })
 })
+
+await configureTestElectronHost(await import('electron'))

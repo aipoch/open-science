@@ -1,20 +1,6 @@
-import {
-  ANNOTATION_LIMITS,
-  type PdfNormalizedQuad,
-  type PdfRegionSelector,
-  type PdfTextSelector
-} from './annotations'
-
-export type PdfDocumentSource = Readonly<{
-  kind: 'artifact-version' | 'upload-version' | 'literature-attachment-version'
-  projectId?: string
-  sourceFileId: string
-  versionId: string
-  sessionId?: string
-  checksum: string
-  name: string
-  path: string
-}>
+import type { PdfNormalizedQuad, PdfRegionSelector, PdfTextSelector } from './annotation-contract'
+import { ANNOTATION_LIMITS } from './annotations'
+import { sanitizePdfDocumentSource, type PdfDocumentSource } from './pdf-document-source'
 
 export type PdfBookmarkSource = PdfDocumentSource & Readonly<{ projectId: string }>
 
@@ -90,16 +76,6 @@ const hasOnlyKeys = (value: Record<string, unknown>, allowed: ReadonlySet<string
   Object.keys(value).every((key) => allowed.has(key))
 
 const TARGET_KEYS = new Set(['kind', 'source', 'selector'])
-const SOURCE_KEYS = new Set([
-  'kind',
-  'projectId',
-  'sourceFileId',
-  'versionId',
-  'sessionId',
-  'checksum',
-  'name',
-  'path'
-])
 const TEXT_SELECTOR_KEYS = new Set([
   'kind',
   'pageNumber',
@@ -202,50 +178,6 @@ const markMetadata = (
   const tags = markTags(selector.tags)
   if (!kind || !color || (selector.tags !== undefined && !tags)) return undefined
   return { markKind: kind, color, ...(tags?.length ? { tags } : {}) }
-}
-
-export const sanitizePdfDocumentSource = (value: unknown): PdfDocumentSource | undefined => {
-  if (!isRecord(value) || !hasOnlyKeys(value, SOURCE_KEYS)) return undefined
-  const kind = value.kind
-  if (
-    kind !== 'artifact-version' &&
-    kind !== 'upload-version' &&
-    kind !== 'literature-attachment-version'
-  ) {
-    return undefined
-  }
-  const projectId = boundedString(value.projectId, PDF_BOOKMARK_LIMITS.id)?.trim()
-  const sourceFileId = boundedString(value.sourceFileId, PDF_BOOKMARK_LIMITS.id)?.trim()
-  const versionId = boundedString(value.versionId, PDF_BOOKMARK_LIMITS.id)?.trim()
-  const sessionId =
-    value.sessionId === undefined
-      ? undefined
-      : boundedString(value.sessionId, PDF_BOOKMARK_LIMITS.id)?.trim()
-  const name = boundedString(value.name, PDF_BOOKMARK_LIMITS.name)?.trim()
-  const path = boundedString(value.path, PDF_BOOKMARK_LIMITS.path)?.trim()
-  if (
-    (!projectId && kind !== 'literature-attachment-version') ||
-    (value.projectId !== undefined && !projectId) ||
-    !sourceFileId ||
-    !versionId ||
-    !name ||
-    !path ||
-    typeof value.checksum !== 'string' ||
-    !/^[a-f0-9]{64}$/u.test(value.checksum) ||
-    (value.sessionId !== undefined && !sessionId)
-  ) {
-    return undefined
-  }
-  return {
-    kind,
-    projectId,
-    sourceFileId,
-    versionId,
-    ...(sessionId ? { sessionId } : {}),
-    checksum: value.checksum,
-    name,
-    path
-  }
 }
 
 export const sanitizePdfDocumentTarget = (

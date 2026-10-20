@@ -1,5 +1,5 @@
 import { ipcMainHandle } from '../ipc-handler-registry'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import type {
   AppendNotebookCodeCellRequest,
@@ -23,6 +23,9 @@ const log = createLogger('notebook:ipc')
 
 // Registers renderer-callable notebook commands on the main-process IPC bus.
 const registerNotebookIpcHandlers = (handlers: NotebookCommandWorkflows): void => {
+  ipcMainHandle('notebook:run-index', (_event, request: NotebookSessionRequest) =>
+    handlers.runIndex(request)
+  )
   ipcMainHandle('notebook:state', (_event, request: NotebookSessionStateRequest) =>
     handlers.state(request)
   )

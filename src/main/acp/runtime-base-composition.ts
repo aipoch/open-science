@@ -1,19 +1,23 @@
 import { randomUUID } from 'node:crypto'
 import { resolve } from 'node:path'
 
+import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
+import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
 import { claudeCodeFramework } from '../agent-framework'
+import { readCurrentRunContext } from '../artifacts/mcp-server'
 import { ArtifactRepository } from '../artifacts/repository'
 import { ArtifactRunRegistry } from '../artifacts/run-registry'
-import { readCurrentRunContext } from '../artifacts/mcp-server'
-import { createLogger, errorLogFields } from '../logger'
+import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
 import { getNotebookInputRoot } from '../notebook/input-staging'
 import { createProductionPlanService } from '../session-plan/production-plan-service'
 import { SessionPlanInteractionOwner } from '../session-plan/session-plan-interaction-owner'
 import { AcpAgentConnectionAdapter } from './agent-connection-adapter'
+import { ArtifactTurnOwner } from './artifact-turn-owner'
 import { AcpBackendGenerationOwner } from './backend-generation-owner'
 import type { AcpConnectionCloseWorkflow } from './connection-close-workflow'
 import { AcpConnectionResourceOwner } from './connection-resource-owner'
 import { AcpConnectionTransitionOwner } from './connection-transition-owner'
+import { AcpClassificationImageLoader } from './classification-image-loader'
 import { ContextUsageTracker } from './context-usage-tracker'
 import { createManagedFileReferenceResolver } from './file-reference-resolver'
 import { AcpGenerationActivityOwner } from './generation-activity-owner'
@@ -24,17 +28,14 @@ import { AcpPromptOutcomeFinalizer } from './prompt-outcome-finalizer'
 import { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import { AcpProviderPromptSerializationOwner } from './provider-prompt-serialization-owner'
 import type { ReviewerSessionOwner } from './reviewer-session-owner'
-import type { AcpRuntimeOptions } from './runtime'
+import type { AcpRuntimeOptions } from './runtime-contract'
 import { AcpRuntimeSnapshotOwner } from './runtime-snapshot-owner'
 import { AcpSessionCapabilityOwner } from './session-capability-owner'
 import { AcpSessionConfigurator } from './session-configurator'
 import { AcpSessionInteractionOwner } from './session-interaction-owner'
 import { AcpSessionPresentationPolicy } from './session-presentation-policy'
-import { createNotebookArtifactSourceScopeProvider } from '../notebook/artifact-source-scope'
-import { ArtifactTurnOwner } from './artifact-turn-owner'
-import { AcpTurnSkillOwner } from './turn-skill-owner'
 import { TurnResourceSnapshotStore } from './turn-resource-snapshot-store'
-import type { ArtifactLiteratureRequest } from '../../shared/artifact-literature'
+import { AcpTurnSkillOwner } from './turn-skill-owner'
 
 const log = createLogger('acp')
 
@@ -559,6 +560,10 @@ const composeAcpRuntimeBaseOwners = (options: AcpRuntimeOptions) => {
               })
           }
         : {})
+    }),
+    classificationImageLoader: new AcpClassificationImageLoader({
+      uploadRepository,
+      managedFileVersions: options.artifacts?.managedFileVersions
     }),
     sessionPresentationPolicy: new AcpSessionPresentationPolicy(),
     promptOutcomeFinalizer: new AcpPromptOutcomeFinalizer()

@@ -22,7 +22,7 @@ import {
 } from './session-aggregate'
 import { NotebookSessionRegistry } from './session-registry'
 import type { NotebookRuntimeBindingOwner } from './runtime-binding'
-import { DEFAULT_PY_ENV, DEFAULT_R_ENV, resolveEnvName } from './runtime-paths'
+import { DEFAULT_PY_ENV, DEFAULT_R_ENV, resolveEnvName } from '@aipoch/environment'
 import type { KernelProcessKind, NotebookKernelTerminationDiagnostic } from './kernel-executor'
 import {
   createFrameNotebookLane,
@@ -33,7 +33,7 @@ import {
 } from './lane-identity'
 import { resolveProjectId } from '../../shared/project-scope'
 import { reconcileWorkingFileEvidence } from './working-file-observer'
-import { createLogger, diagnosticErrorFields } from '../logger'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import type { KernelProcessLifecycleOwner } from './kernel-process-lifecycle.windows-posix'
 import { assertResearchSessionWritable } from '../storage/session-package-state'
 
@@ -41,11 +41,12 @@ type RuntimeSession = NotebookSessionAggregate
 const log = createLogger('notebook:file-evidence-lifecycle')
 
 type NotebookExecutorLifecycleCallbacks = {
-  onIdleShutdown: (kind?: KernelProcessKind, env?: string) => Promise<void>
+  onIdleShutdown: (kind?: KernelProcessKind, env?: string, kernelEpochId?: string) => Promise<void>
   onTerminated: (
     kind: KernelProcessKind,
     env?: string,
-    diagnostic?: NotebookKernelTerminationDiagnostic
+    diagnostic?: NotebookKernelTerminationDiagnostic,
+    kernelEpochId?: string
   ) => Promise<void>
 }
 
@@ -70,7 +71,7 @@ type NotebookSessionLifecycleOptions = {
   sessions: NotebookSessionRegistry<RuntimeSession>
   runtimeBindings: NotebookRuntimeBindingOwner
   waitForRevocationDrains: () => Promise<void>
-  ensureProcessRecovery: () => Promise<void>
+  ensureProcessRecovery: (laneKey: string) => Promise<void>
   processLifecycle: KernelProcessLifecycleOwner
   executorFactory?: (
     sessionId: string,
@@ -155,7 +156,7 @@ class NotebookSessionLifecycleOwner {
       return Promise.reject(error)
     }
     const ensuring = this.options.sessions.getOrCreate(lane, async () => {
-      await this.options.ensureProcessRecovery()
+      await this.options.ensureProcessRecovery(notebookLaneKey(lane))
       this.assertDeletionAvailable(projectId, request.sessionId)
       await assertResearchSessionWritable(this.options.storageRoot, projectId, request.sessionId)
       let document = await this.options.repository.loadOrCreate({
@@ -379,8 +380,10 @@ class NotebookSessionLifecycleOwner {
     const { sessionId } = notebookLaneScope(lane)
     const generation = Symbol(`notebook-executor:${notebookLaneKey(lane)}`)
     const lifecycle: NotebookExecutorLifecycleCallbacks = {
-      onIdleShutdown: (kind, env) => this.handleIdleShutdown(lane, kind, env, generation),
-      onTerminated: (kind, env) => this.handleTerminated(lane, kind, env, generation)
+      onIdleShutdown: (kind, env, kernelEpochId) =>
+        this.handleIdleShutdown(lane, kind, env, generation, kernelEpochId),
+      onTerminated: (kind, env, _diagnostic, kernelEpochId) =>
+        this.handleTerminated(lane, kind, env, generation, kernelEpochId)
     }
     const injected = this.options.executorFactory
     if (injected) return { executor: injected(sessionId, lifecycle), generation }
@@ -392,8 +395,8 @@ class NotebookSessionLifecycleOwner {
         platform: this.options.platform,
         processLifecycle: this.options.processLifecycle,
         laneKey: notebookLaneKey(lane),
-        onIdleShutdown: (kind, env) => {
-          void lifecycle.onIdleShutdown(kind, env).catch((error: unknown) => {
+        onIdleShutdown: (kind, env, kernelEpochId) => {
+          void lifecycle.onIdleShutdown(kind, env, kernelEpochId).catch((error: unknown) => {
             this.options.onKernelStatusPersistenceFailure?.({
               operation: 'idle-shutdown',
               lane,
@@ -403,7 +406,7 @@ class NotebookSessionLifecycleOwner {
             })
           })
         },
-        onTerminated: (kind, env, diagnostic) => {
+        onTerminated: (kind, env, diagnostic, kernelEpochId) => {
           if (diagnostic) {
             log.warn('Notebook kernel process terminated', {
               lane,
@@ -412,15 +415,17 @@ class NotebookSessionLifecycleOwner {
               ...diagnostic
             })
           }
-          void lifecycle.onTerminated(kind, env).catch((error: unknown) => {
-            this.options.onKernelStatusPersistenceFailure?.({
-              operation: 'terminated',
-              lane,
-              kind,
-              env,
-              error
+          void lifecycle
+            .onTerminated(kind, env, diagnostic, kernelEpochId)
+            .catch((error: unknown) => {
+              this.options.onKernelStatusPersistenceFailure?.({
+                operation: 'terminated',
+                lane,
+                kind,
+                env,
+                error
+              })
             })
-          })
         }
       })
     }
@@ -496,7 +501,11 @@ class NotebookSessionLifecycleOwner {
       // Holding the lane teardown gate while waiting closes both sides of the race: an earlier revoke
       // must finish before removal, while a later revoke cannot enter until the lane is already gone.
       await this.options.waitForRevocationDrains()
-      return this.options.sessions.remove(lane)
+      const session = this.options.sessions.get(lane)
+      const removed = await this.options.sessions.remove(lane)
+      // Registry removal invalidates activity even when process reaping remains unconfirmed.
+      if (session) this.notifyChanged(session)
+      return removed
     })
     if (!result.reaped) {
       throw new Error(
@@ -684,12 +693,17 @@ class NotebookSessionLifecycleOwner {
     lane: NotebookLaneIdentity,
     kind: KernelProcessKind | undefined,
     env: string | undefined,
-    generation: NotebookSessionExecutorGeneration
+    generation: NotebookSessionExecutorGeneration,
+    kernelEpochId?: string
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
     const processKey = processKeyFor(kind, env)
+    // Production callbacks carry their original process epoch. Legacy injected executors still
+    // fence a callback queued behind another lifecycle projection to the epoch seen at arrival.
+    const expectedEpochId = kernelEpochId ?? session.currentKernelEpochId(processKey)
     const projection = session.runExecutorLifecycleCallback(generation, async () => {
+      if (session.currentKernelEpochId(processKey) !== expectedEpochId) return
       await this.projectKernelIdleShutdown(lane, kind, env)
     })
     session.blockKernelExecutionUntil(processKey, projection)
@@ -700,12 +714,17 @@ class NotebookSessionLifecycleOwner {
     lane: NotebookLaneIdentity,
     kind: KernelProcessKind,
     env: string | undefined,
-    generation: NotebookSessionExecutorGeneration
+    generation: NotebookSessionExecutorGeneration,
+    kernelEpochId?: string
   ): Promise<void> {
     const session = this.options.sessions.get(lane)
     if (!session) return
     const processKey = processKeyFor(kind, env)
+    // Production callbacks carry their original process epoch. Legacy injected executors still
+    // fence a callback queued behind another lifecycle projection to the epoch seen at arrival.
+    const expectedEpochId = kernelEpochId ?? session.currentKernelEpochId(processKey)
     const projection = session.runExecutorLifecycleCallback(generation, async () => {
+      if (session.currentKernelEpochId(processKey) !== expectedEpochId) return
       await this.projectKernelTerminated(lane, kind, env)
     })
     session.blockKernelExecutionUntil(processKey, projection)
