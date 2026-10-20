@@ -73,7 +73,7 @@ it('the dedicated configuration discovers every declared native file', () => {
   )
   expect(
     JSON.parse(output)
-      .map(({ file }: { file: string }) => file)
+      .map(({ file }: { file: string }) => resolve(file))
       .sort()
   ).toEqual(suite.testFiles.map((path) => resolve(root, path)).sort())
 }, 30000)
