@@ -83,6 +83,15 @@ const ddl = \`ALTER TABLE "Legacy" ADD COLUMN "value" TEXT\`
         }
       ])
     ).not.toThrow()
+
+    expect(() =>
+      assertRuntimeDdlLocality([
+        {
+          path: 'src/main/literature/full-text-index-schema.ts',
+          source: 'const ddl = `CREATE TABLE "LiteratureIndexChunk" ("id" INTEGER)`'
+        }
+      ])
+    ).not.toThrow()
   })
 
   it('keeps unsafe migration SQL behind the private executor', () => {
