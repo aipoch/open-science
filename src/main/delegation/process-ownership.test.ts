@@ -451,7 +451,34 @@ describe('durable delegated process ownership', () => {
         expect(cold.receipts(scope)).toHaveLength(1)
         // A cold scan may conservatively block while processes exit or a snapshot is incomplete.
         // Require eventual proof, as in the macOS case above; a persistent ambiguity still fails.
-        await expect.poll(() => cold.recover(scope, true), { timeout: 5_000 }).toBeUndefined()
+        try {
+          await expect.poll(() => cold.recover(scope, true), { timeout: 5_000 }).toBeUndefined()
+        } catch (error) {
+          const processes = await Promise.all(
+            (await readdir('/proc'))
+              .filter((entry) => /^\d+$/.test(entry))
+              .map(async (pid) => {
+                const stat = await readFile(`/proc/${pid}/stat`, 'utf8').catch(
+                  (error: NodeJS.ErrnoException) => error.code
+                )
+                const environment = await readFile(`/proc/${pid}/environ`).then(
+                  () => 'readable',
+                  (error: NodeJS.ErrnoException) => error.code
+                )
+                return { pid, stat, environment }
+              })
+          )
+          console.error('[DEBUG-recovery-ci]', {
+            now: Date.now(),
+            uptime: await readFile('/proc/uptime', 'utf8'),
+            receipts: cold.receipts(scope),
+            leaderPid: child.pid,
+            descendantPid,
+            unrelatedPid: unrelated.pid,
+            processes
+          })
+          throw error
+        }
         expect(cold.receipts(scope)).toHaveLength(0)
         for (const pid of [child.pid!, descendantPid]) {
           expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: 'ESRCH' }))
