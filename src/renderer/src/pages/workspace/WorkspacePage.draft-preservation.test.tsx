@@ -35,6 +35,13 @@ import type {
 import type { UploadedAttachment } from '../../../../shared/uploads'
 import { emptyDoc, type ComposerDoc } from './composer/composer-doc'
 import { researchDraftKey } from './research-draft-identity'
+import {
+  configureComposerDraftStorage,
+  flushComposerDrafts,
+  readComposerDraft,
+  revokeComposerDraftStorage,
+  writeComposerDraft
+} from './composer-draft-storage'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
 import {
@@ -343,6 +350,7 @@ describe('WorkspacePage draft preservation', () => {
     await act(async () => {
       root.unmount()
     })
+    revokeComposerDraftStorage()
     globalThis.FileReader = originalFileReader
     vi.restoreAllMocks()
     container.remove()
@@ -1959,6 +1967,190 @@ describe('WorkspacePage draft preservation', () => {
     expect(deleteUpload).toHaveBeenCalledWith({ path: attachmentB.path })
     expect(deleteSession).toHaveBeenCalledWith({ projectId: 'proj-1', sessionId: 'sess-b' })
     expect(conversationProps.composer.view.doc).toEqual(emptyDoc)
+  })
+
+  it.each([
+    ['foreground', 'deleted'],
+    ['background', 'deleted'],
+    ['foreground', 'failed'],
+    ['background', 'failed']
+  ] as const)(
+    'settles the %s research draft only when deletion is %s',
+    async (visibility, outcome) => {
+      const source = makeImported()
+      const membership = membershipFor(source)
+      const key = researchDraftKey(membership)
+      useSessionStore.setState({ sessions: [source, createSession('sess-b', 'proj-1')] })
+      useResearchWorkspaceStore.getState().openDraft(membership)
+      configureComposerDraftStorage('research-deletion-test')
+      await renderPage()
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('research question'))
+      )
+      const attachment = createAttachment('research-delete')
+      await stageAttachment(attachment)
+      // Keep the attachment in both the live draft and a text-edit undo snapshot.
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('research question with attachment'))
+      )
+      if (visibility === 'background') {
+        await openSession('sess-b')
+        await act(async () =>
+          conversationProps.composer.actions.changeDoc(textDoc('keep other draft'))
+        )
+      }
+      if (outcome === 'failed')
+        deleteSession.mockResolvedValueOnce({
+          status: 'failed',
+          reason: 'runtime',
+          runtimeDetached: false
+        })
+      await act(async () => sidebarProps.onDeleteSession(source))
+      await act(async () => deleteDialogProps.onConfirmDelete())
+      act(() => {
+        flushComposerDrafts()
+      })
+      if (outcome === 'deleted') {
+        expect(deleteUpload).toHaveBeenCalledTimes(1)
+        expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+        expect(
+          useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']
+        ).toBeUndefined()
+        // A later flush must not resurrect a parked or still-active source draft.
+        act(() => flushComposerDrafts())
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+      } else {
+        expect(deleteUpload).not.toHaveBeenCalled()
+        expect(readComposerDraft('proj-1', key, 'retry')?.doc).toEqual(
+          textDoc('research question with attachment')
+        )
+        expect(useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']).toEqual(
+          membership
+        )
+      }
+      if (visibility === 'background')
+        expect(conversationProps.composer.view.doc).toEqual(textDoc('keep other draft'))
+    }
+  )
+
+  it.each([
+    ['foreground', 'deleted'],
+    ['background', 'deleted'],
+    ['foreground', 'failed'],
+    ['background', 'failed']
+  ] as const)(
+    'keeps the %s research upload lifecycle with its draft when deletion is %s',
+    async (visibility, outcome) => {
+      const source = makeImported()
+      const membership = membershipFor(source)
+      const key = researchDraftKey(membership)
+      useSessionStore.setState({ sessions: [source, createSession('sess-b', 'proj-1')] })
+      useResearchWorkspaceStore.getState().openDraft(membership)
+      configureComposerDraftStorage('research-transfer-deletion-test')
+      await renderPage()
+      const upload = createDeferred<UploadedAttachment>()
+      stageLocalFile.mockReturnValueOnce(upload.promise)
+      await act(async () => {
+        conversationProps.composer.actions.changeDoc(textDoc('pending research upload'))
+        conversationProps.composer.actions.stageFiles([
+          new File(['data'], 'research-pending.txt', { type: 'text/plain' })
+        ])
+      })
+      expect(conversationProps.composer.view.transfers).toHaveLength(1)
+      const transferId = conversationProps.composer.view.transfers[0].transferId
+      await act(async () =>
+        conversationProps.composer.actions.changeDoc(textDoc('pending upload with undo snapshot'))
+      )
+      if (visibility === 'background') await openSession('sess-b')
+      if (outcome === 'failed')
+        deleteSession.mockResolvedValueOnce({
+          status: 'failed',
+          reason: 'runtime',
+          runtimeDetached: false
+        })
+      await act(async () => sidebarProps.onDeleteSession(source))
+      await act(async () => deleteDialogProps.onConfirmDelete())
+      // Shared undo snapshots must not issue a second cancellation during deletion.
+      expect(abortTransfer).toHaveBeenCalledTimes(outcome === 'deleted' ? 1 : 0)
+      if (outcome === 'deleted') expect(abortTransfer).toHaveBeenCalledWith({ transferId })
+      const attachment = createAttachment('late-research-upload')
+      await act(async () => upload.resolve(attachment))
+      act(() => flushComposerDrafts())
+      if (outcome === 'deleted') {
+        expect(deleteUpload).toHaveBeenCalledTimes(1)
+        expect(deleteUpload).toHaveBeenCalledWith({ path: attachment.path })
+        expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+        expect(conversationProps.composer.view.attachments).toEqual([])
+        expect(conversationProps.view.composerFocusKey).toBe('sess-b')
+      } else {
+        expect(abortTransfer).not.toHaveBeenCalled()
+        expect(deleteUpload).not.toHaveBeenCalled()
+        if (visibility === 'background')
+          await act(async () => useSessionStore.setState({ selectedSessionId: undefined }))
+        expect(conversationProps.composer.view.attachments).toEqual([attachment])
+        expect(readComposerDraft('proj-1', key, 'retry')?.doc).toEqual(
+          textDoc('pending upload with undo snapshot')
+        )
+      }
+    }
+  )
+
+  it('does not clear a replacement research draft when the frozen source deletion finishes', async () => {
+    const source = makeImported()
+    const replacement = makeImported('sess-b')
+    useSessionStore.setState({ sessions: [source, replacement] })
+    useResearchWorkspaceStore.getState().openDraft(membershipFor(source))
+    await renderPage()
+    const deletion = createDeferred<{ status: 'deleted'; runtimeDetached: true }>()
+    deleteSession.mockImplementationOnce(async ({ sessionId }: { sessionId: string }) => {
+      const result = await deletion.promise
+      useSessionStore.getState().deleteSession(sessionId)
+      return result
+    })
+    await act(async () => sidebarProps.onDeleteSession(source))
+    await act(async () => deleteDialogProps.onConfirmDelete())
+    await openSession(replacement.id)
+    await act(async () => {
+      useResearchWorkspaceStore.getState().openDraft(membershipFor(replacement))
+      conversationProps.composer.actions.changeDoc(textDoc('replacement question'))
+    })
+    await act(async () => deletion.resolve({ status: 'deleted', runtimeDetached: true }))
+    expect(useResearchWorkspaceStore.getState().draftResearchByProject['proj-1']).toEqual(
+      membershipFor(replacement)
+    )
+    expect(conversationProps.composer.view.doc).toEqual(textDoc('replacement question'))
+  })
+
+  it('deletes an unrestored persisted research draft from its owning project', async () => {
+    const source = makeImported()
+    const membership = membershipFor(source)
+    const key = researchDraftKey(membership)
+    useProjectStore.setState((state) => ({
+      projects: [...state.projects, { ...state.projects[0], id: 'proj-2' }]
+    }))
+    useSessionStore.setState({
+      sessions: [source, createSession('other', 'proj-2')],
+      selectedSessionId: 'other'
+    })
+    useNavigationStore.setState({ activeProjectId: 'proj-2' })
+    useResearchWorkspaceStore.getState().openDraft(membership)
+    configureComposerDraftStorage('unrestored-research-deletion-test')
+    writeComposerDraft('proj-1', key, {
+      doc: textDoc('saved on the previous launch'),
+      annotations: [],
+      attachments: [],
+      attachmentTransfers: [],
+      automaticReadingEnabled: true
+    })
+    await renderPage()
+    expect(readComposerDraft('proj-1', key, 'retry')).toBeDefined()
+    await act(async () => sidebarProps.onDeleteSession(source))
+    await act(async () => deleteDialogProps.onConfirmDelete())
+    act(() => flushComposerDrafts())
+    expect(readComposerDraft('proj-1', key, 'retry')).toBeUndefined()
+    expect(useSessionStore.getState().selectedSessionId).toBe('other')
+    expect(useNavigationStore.getState().activeProjectId).toBe('proj-2')
   })
 
   it('keeps project Literature accessible while session persistence is recovering', async () => {

@@ -5,7 +5,10 @@ export const MANAGED_EXECUTION_DATA_DIRS = [
   'research-demos',
   'managed-execution-requests',
   'session-operations',
-  'managed-session-requests'
+  'managed-session-requests',
+  'managed-run-observations',
+  'managed-observation-publications',
+  'browser-recordings'
 ] as const
 
 // Durable directories that follow the relocatable data root. Keep runtime separate: installed

@@ -5,6 +5,7 @@ export function configuredCredentialPatterns(secrets: readonly string[]): Buffer
   return secrets
     .flatMap((secret) => [
       secret,
+      JSON.stringify(secret).slice(1, -1),
       encodeURIComponent(secret),
       Buffer.from(secret).toString('base64')
     ])

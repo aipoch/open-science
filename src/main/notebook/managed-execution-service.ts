@@ -1621,7 +1621,11 @@ export class ManagedExecutionService {
     })
     const initialLease = previousOperation ? undefined : await this.acquireExecutionProfile(request)
     try {
-      if (initialLease?.secretValues.some((secret) => JSON.stringify(request).includes(secret)))
+      if (
+        initialLease?.secretValues.some((secret) =>
+          JSON.stringify(request).includes(JSON.stringify(secret).slice(1, -1))
+        )
+      )
         throw new Error('Research credentials must not appear in commands or execution requests.')
     } finally {
       initialLease?.release()
@@ -1860,7 +1864,11 @@ export class ManagedExecutionService {
       signal
     )
     const credentialLease = await this.acquireExecutionProfile(request)
-    if (credentialLease?.secretValues.some((secret) => JSON.stringify(request).includes(secret))) {
+    if (
+      credentialLease?.secretValues.some((secret) =>
+        JSON.stringify(request).includes(JSON.stringify(secret).slice(1, -1))
+      )
+    ) {
       credentialLease.release()
       throw new Error('Research credentials must not appear in commands or execution requests.')
     }

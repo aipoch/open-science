@@ -858,6 +858,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/main/session-package/research-reproduction.integration.test.ts"
     ],
+    "run_observation_coordination": ["src/main/storage/migration-service.test.ts"],
     "session_plan_delivery": [
       "src/main/acp/specialist-capability-resolution.test.ts",
       "src/main/session-details/composition.test.ts"

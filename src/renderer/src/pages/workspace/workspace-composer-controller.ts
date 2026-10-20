@@ -349,7 +349,7 @@ type WorkspaceComposerController = {
     ) => boolean
     discardSnapshot: (snapshot: ComposerSendSnapshot) => void
     hasUnfinishedTransfers: (draftKey: string) => boolean
-    beginSessionDeletion: (draftKey: string) => boolean
+    beginSessionDeletion: (draftKey: string, projectId?: string) => boolean
     settleSessionDeletion: (draftKey: string, deleted: boolean) => void
   }
 }
@@ -2015,7 +2015,14 @@ const useWorkspaceComposerController = ({
       discardSnapshot: (snapshot) =>
         releaseHistoryResources([{ attachments: snapshot.attachments, attachmentTransfers: [] }]),
       hasUnfinishedTransfers,
-      beginSessionDeletion,
+      beginSessionDeletion: (draftKey, projectId): boolean => {
+        if (!beginSessionDeletion(draftKey)) return false
+        // Deletion can target a persisted draft that this composer has never restored.
+        // Keep its project identity with the existing owner across navigation and settlement.
+        draftProjectsRef.current[draftKey] =
+          projectId ?? draftProjectsRef.current[draftKey] ?? projectIdRef.current
+        return true
+      },
       settleSessionDeletion: (draftKey, deleted): void => {
         settleSessionDeletion(draftKey, deleted)
         if (!deleted) return

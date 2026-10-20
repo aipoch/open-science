@@ -4,7 +4,7 @@ import { screenAuxiliaryOutput } from './screened-auxiliary-output'
 it.each(['plain', 'uri', 'base64'] as const)(
   'rejects %s configured credentials before optional recorded evidence is saved',
   async (encoding) => {
-    const secret = 'fixture-key/+123'
+    const secret = 'fixture-key/"\\\n+123'
     const value =
       encoding === 'plain'
         ? secret

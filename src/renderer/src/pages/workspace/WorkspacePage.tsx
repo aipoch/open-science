@@ -3,7 +3,10 @@ import {
   LibraryPreviewNavigationContext
 } from './previews/library-reference-actions'
 import { requestComposerFocus } from './composer-focus-events'
-import type { LiteratureReference } from '../../../../shared/session-persistence'
+import type {
+  LiteratureReference,
+  ResearchMembership
+} from '../../../../shared/session-persistence'
 import { SessionDiagnosticsDialog } from './SessionDiagnosticsDialog'
 import { sessionDiagnosticsAvailable } from '@/lib/session-diagnostics'
 import type { SessionDiagnosticIdentity } from '../../../../shared/session-diagnostics'
@@ -82,7 +85,7 @@ import {
 import { ConversationPanel } from './ConversationPanel'
 import { useWorkspaceSessionDiscussion } from './workspace-session-discussion'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
-import { ordinaryDraftKey, researchDraftKey } from './research-draft-identity'
+import { ordinaryDraftKey, researchDraftKey, sameResearch } from './research-draft-identity'
 import { researchSourceFromSession } from './workspace-discussion-navigation'
 import {
   ensureResearchPreview,
@@ -549,6 +552,11 @@ const WorkspacePage = ({
   )
   // Composer ports are lazy event-time callbacks. The controller does not invoke them while its hook
   // initializes, so the composer owner below is established before any archive/delete action can run.
+  const deletingResearchDrafts = useRef(new Map<string, ResearchMembership>())
+  const researchDraftForSession = (sessionId: string): ResearchMembership | undefined =>
+    researchSourceFromSession(
+      useSessionStore.getState().sessions.find((session) => session.id === sessionId)
+    )
   const sessionController = useWorkspaceSessionController({
     activeSession,
     selectedSessionId,
@@ -561,10 +569,39 @@ const WorkspacePage = ({
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
-    hasUnfinishedTransfers: (sessionId) => composer.lifecycle.hasUnfinishedTransfers(sessionId),
-    beginSessionDeletion: (sessionId) => composer.lifecycle.beginSessionDeletion(sessionId),
-    settleSessionDeletion: (sessionId, deleted) =>
-      composer.lifecycle.settleSessionDeletion(sessionId, deleted),
+    hasUnfinishedTransfers: (sessionId) => {
+      const source = researchDraftForSession(sessionId)
+      return (
+        composer.lifecycle.hasUnfinishedTransfers(sessionId) ||
+        Boolean(source && composer.lifecycle.hasUnfinishedTransfers(researchDraftKey(source)))
+      )
+    },
+    beginSessionDeletion: (sessionId) => {
+      // Freeze the source identity before durable deletion removes it from the Session store.
+      // Both keys use the same composer owner for transfer cancellation and attachment release.
+      const source = researchDraftForSession(sessionId)
+      if (!composer.lifecycle.beginSessionDeletion(sessionId, source?.sourceProjectId)) return false
+      if (source) {
+        if (
+          !composer.lifecycle.beginSessionDeletion(researchDraftKey(source), source.sourceProjectId)
+        ) {
+          composer.lifecycle.settleSessionDeletion(sessionId, false)
+          return false
+        }
+        deletingResearchDrafts.current.set(sessionId, source)
+      }
+      return true
+    },
+    settleSessionDeletion: (sessionId, deleted) => {
+      const source = deletingResearchDrafts.current.get(sessionId)
+      deletingResearchDrafts.current.delete(sessionId)
+      composer.lifecycle.settleSessionDeletion(sessionId, deleted)
+      if (!source) return
+      composer.lifecycle.settleSessionDeletion(researchDraftKey(source), deleted)
+      const research = useResearchWorkspaceStore.getState()
+      if (deleted && sameResearch(research.draftResearchByProject[source.sourceProjectId], source))
+        research.leaveDraft(source.sourceProjectId)
+    },
     deleteSession,
     onSessionSizeLimit
   })

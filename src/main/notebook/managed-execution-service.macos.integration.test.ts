@@ -641,13 +641,14 @@ server.listen(4173,'127.0.0.1',()=>console.log('project ready'));
 it.skipIf(process.platform !== 'darwin')(
   'leases a local profile to the real Node process and redacts its output without publishing credentials',
   async () => {
-    const secret = 'test-key-real-native-process-47321809'
+    const secret = 'test-key-real-"native\\process\n-47321809'
     const driver = `import fs from 'node:fs'; import path from 'node:path';
     const key = process.env.PROVIDER_API_KEY;
     if (!key) throw new Error('Credential missing');
     process.stdout.write(key.slice(0, 9));
     await new Promise(resolve => setTimeout(resolve, 25));
     process.stdout.write(key.slice(9) + '\\n');
+    process.stdout.write(JSON.stringify({ credential: key }) + '\\n');
     fs.writeFileSync(path.join(process.env.OPEN_SCIENCE_OUTPUT_DIR, 'result.json'), JSON.stringify({ credentialProvided: !!key, model: process.env.MODEL }));`
     const h = await setup(driver, true)
     try {
@@ -672,6 +673,37 @@ it.skipIf(process.platform !== 'darwin')(
       expect(
         await h.service.preflight({ ...selection, profileId: profile.profileId })
       ).toMatchObject({ status: 'ready', remoteServicesVerified: false })
+      for (const field of ['command', 'description'] as const) {
+        const unsafe = {
+          ...h.environment,
+          requestId: 'private-request-' + field,
+          profileId: profile.profileId,
+          command: 'node "$OPEN_SCIENCE_INPUT_DIR/main.mjs"',
+          outputs: [{ path: 'result.json', filename: 'result.json' }],
+          [field]: secret
+        }
+        await expect(h.service.execute(unsafe)).rejects.toThrow(
+          'Research credentials must not appear in commands or execution requests.'
+        )
+        await expect(
+          h.service.executeInTurn(unsafe, {
+            ...scope,
+            operationId: 'borrowed-private-request',
+            workspaceCwd: h.root,
+            provenanceContext: {
+              rootFrameId: 'root',
+              agentFrameId: 'root',
+              messageBranchId: 'branch',
+              runtimeSegmentId: 'segment',
+              promptMessageId: 'prompt'
+            },
+            recordRun: vi.fn(),
+            saveOutput: vi.fn(),
+            recoverOutput: vi.fn()
+          })
+        ).rejects.toThrow('Research credentials must not appear in commands or execution requests.')
+        expect(await h.operations.get({ ...scope, requestId: unsafe.requestId })).toBeUndefined()
+      }
       const operation = { ...scope, requestId: 'profile-run' }
       await h.service.execute({
         ...h.environment,
@@ -689,6 +721,7 @@ it.skipIf(process.platform !== 'darwin')(
       expect(runs).toHaveLength(1)
       expect(JSON.stringify(runs)).not.toContain(secret)
       expect(runs[0].text.stdout).toContain('[redacted]')
+      expect(runs[0].text.stdout).toContain('{"credential":"[redacted]"}')
       for (const id of done!.artifactVersionIds) {
         const version = await h.fixture.client.artifactVersion.findUniqueOrThrow({ where: { id } })
         const contents = await readFile(join(h.root, version.contentStorageKey), 'utf8')
@@ -721,7 +754,7 @@ it.skipIf(process.platform !== 'darwin')(
 it.skipIf(process.platform !== 'darwin')(
   'stops publication when a real workload writes a leased credential to its selected output',
   async () => {
-    const secret = 'fixture-unpublishable-key-673629'
+    const secret = 'fixture-unpublishable-"key\\value\n-673629'
     const driver = `import fs from 'node:fs'; import path from 'node:path'; fs.writeFileSync(path.join(process.env.OPEN_SCIENCE_OUTPUT_DIR, 'result.json'), JSON.stringify({ key: process.env.PROVIDER_API_KEY }));`
     const h = await setup(driver, true)
     try {

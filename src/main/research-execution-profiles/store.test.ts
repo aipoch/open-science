@@ -109,6 +109,43 @@ it('preserves secrets during non-secret updates, fails closed when locked, and r
   await store.remove(saved.profileId, binding)
   expect(await store.list(binding)).toEqual([])
 })
+it.each(['fixture"credential', 'fixture\\credential', 'fixture\ncredential'])(
+  'rejects credentials requiring JSON escaping in public settings',
+  async (credential) => {
+    const { store, request } = await setup()
+    await expect(
+      store.save(
+        { ...request, credentials: { provider: credential }, variables: { CONFIG: credential } },
+        binding,
+        slots
+      )
+    ).rejects.toThrow('public')
+    expect(await store.list(binding)).toEqual([])
+  }
+)
+it('rejects a replaced credential in public settings and preserves the original profile', async () => {
+  const { root, store, request } = await setup()
+  const saved = await store.save(request, binding, slots)
+  const path = join(root, 'research-execution-profiles.json')
+  const before = await readFile(path, 'utf8')
+  await expect(
+    store.save(
+      {
+        ...request,
+        profileId: saved.profileId,
+        credentials: { provider: 'replacement-fixture-credential' },
+        variables: { CONFIG: secret }
+      },
+      binding,
+      slots
+    )
+  ).rejects.toThrow('public')
+  expect(await readFile(path, 'utf8')).toBe(before)
+  const lease = await store.lease(saved.profileId, binding, slots)
+  expect(lease.privateEnvironment.PROVIDER_API_KEY).toBe(secret)
+  expect(lease.profile.variables).toEqual(request.variables)
+  lease.release()
+})
 it('does not grant runtime control, wildcards, local hosts, or persist an aborted save', async () => {
   const { root, store, request } = await setup()
   for (const name of [

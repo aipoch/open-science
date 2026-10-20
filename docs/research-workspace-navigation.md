@@ -27,6 +27,9 @@ ordinary conversations on their existing path.
   and research membership identities establish sidebar ownership.
 - Deferred leave confirmations and asynchronous source lookups revalidate navigation intent,
   source import identity and destination availability before changing selection or preferences.
+- Deleting an imported source clears its source-specific question draft through the composer's
+  existing deletion lifecycle, including pending transfers and the draft's original Project.
+  Failed deletion retains the draft; successful deletion clears only the matching research identity.
 
 ## Preview source and ownership
 
@@ -74,6 +77,8 @@ restored document. A stale render cannot overwrite saved text. Delivery acknowle
 acceptance. Navigation, cancelled recovery and closed viewers invalidate pending handoffs.
 No Ask action sends a message. A first Send uses the research membership and source context to
 create a discussion; it cannot append to or change the imported Session.
+Returning to an ordinary source Session also rechecks cancellation and navigation intent after a
+deferred leave confirmation, so closing a viewer cannot leave behind an actionable navigation.
 
 ## Validation
 

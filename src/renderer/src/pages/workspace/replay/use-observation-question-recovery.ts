@@ -94,16 +94,24 @@ export const useObservationQuestionRecovery = (
         label: t('Open source Session'),
         onClick: (selection, signal) => {
           if (signal?.aborted) return
-          useNavigationStore
-            .getState()
-            .openSession(target.projectId, target.sessionId, 'user', () =>
+          const revision = useNavigationStore.getState().explicitNavigationRevision
+          const selectedSessionId = useSessionStore.getState().selectedSessionId
+          useNavigationStore.getState().openSession(
+            target.projectId,
+            target.sessionId,
+            'user',
+            () =>
               stageRecoveredQuestion(
                 selection,
                 { ...target, draftKey: target.sessionId },
                 signal,
                 demo
-              )
-            )
+              ),
+            () =>
+              !signal?.aborted &&
+              useNavigationStore.getState().explicitNavigationRevision === revision &&
+              useSessionStore.getState().selectedSessionId === selectedSessionId
+          )
         }
       }
 }

@@ -139,14 +139,19 @@ export class ResearchExecutionProfileStore {
       for (const [key, secret] of Object.entries(request.credentials))
         credentialRefs[key] = this.cipher.encrypt(secret)
       // Non-secret settings may never contain a configured secret, including a previous value.
-      const secrets = Object.values(credentialRefs).map((ref) => this.cipher.decrypt(ref))
-      const publicText = JSON.stringify([
+      const secrets = [
+        ...new Set([
+          ...Object.values(previous?.credentialRefs ?? {}),
+          ...Object.values(credentialRefs)
+        ])
+      ].map((ref) => this.cipher.decrypt(ref))
+      const publicValues = [
         request.displayName,
-        request.variables,
-        request.allowedNetworkHosts,
-        request.conditionChanges
-      ])
-      if (secrets.some((secret) => publicText.includes(secret)))
+        ...Object.entries(request.variables).flat(),
+        ...request.allowedNetworkHosts,
+        ...request.conditionChanges
+      ]
+      if (secrets.some((secret) => publicValues.some((value) => value.includes(secret))))
         throw new Error('A credential cannot be saved in public research settings.')
       const settings = {
         ...binding,

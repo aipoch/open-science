@@ -84,6 +84,11 @@ a connected local Electron document, require its current caller lease, and redac
 not exposed to the HTTP or Host SDK writer. A profile is bound to the exact source and
 description/plan identity.
 
+Public settings are checked against both the previous and replacement credentials before saving.
+Execution requests reject credential values even when JSON serialization escapes them; output
+screening and streamed-log redaction also recognize their JSON-escaped representation. These
+checks do not identify arbitrary transformations or repair previously saved/exported content.
+
 `execute` may reference the selected `profileId`. The backend resolves its authorized environment variables
 and network policy for that invocation, and screens captured output before publication. Local
 readiness does not validate external credentials or establish scientific reproduction. Projects can
@@ -102,6 +107,11 @@ data-root handoff stop the owned process before cleanup. Replaced or unproven di
 for diagnosis; cleanup never scans unrelated host directories. The existing storage owner includes
 managed environment directories in application data accounting/removal. Detaching a desktop from
 a separately owned backend does not stop that backend or its admitted executions.
+
+Data-root moves also retain sampled observation history, pending publication records and native
+browser-recording receipts. These records preserve restart recovery and exact media Version
+mapping; they are not disposable caches. A move does not search other historical roots for records
+omitted by an earlier move.
 
 Material, operation, Notebook Run and output Version identities are distinct. Collection receipts
 identify what actually ran; an Agent's comparison report must explain differences and cannot claim
