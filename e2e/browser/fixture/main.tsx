@@ -6,6 +6,8 @@ import { useTranslation } from 'react-i18next'
 import { initI18n } from '@/i18n'
 import { SettingsPage } from '@/pages/settings/SettingsPage'
 import { HomePage } from '@/pages/home/HomePage'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -209,4 +211,8 @@ export function Fixture(): React.JSX.Element {
     </TooltipProvider>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+createRoot(document.getElementById('root')!).render(
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    <Fixture />
+  </LiteratureRendererProvider>
+)
