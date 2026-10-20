@@ -21,7 +21,7 @@ import { sanitizeExportFilename } from '../../shared/conversation-export'
 import type { NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
 import { PACKAGE_MAX_BYTES } from '../../shared/session-package'
-import type { SessionPackageService } from './service'
+import { PackageImportRecoveryRequiredError, type SessionPackageService } from './service'
 import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 import { copyFileWithinBudget } from '../bounded-file-io'
 import { SessionPackageOperation } from './operation'
@@ -42,6 +42,7 @@ type NativeImportFile = {
   onReleased?: () => void
   validateBeforeTarget?: boolean
   work?: Promise<void>
+  recovery?: PackageImportRecoveryRequiredError
 }
 class PackageSourceUnavailableError extends Error {}
 
@@ -701,6 +702,7 @@ export class SessionPackageDesktop {
     validateBeforeTarget = false
   ): Promise<SessionPackageImportResult> {
     let operationSignal: AbortSignal | undefined
+    let importFile: NativeImportFile | undefined
     const rememberSource = (path: string): void => {
       const id = this.operations.snapshot?.importRequestId ?? this.activeFile?.id ?? randomUUID()
       if (this.lastImportFile?.path !== path) this.lastImportFile?.onReleased?.()
@@ -708,6 +710,14 @@ export class SessionPackageDesktop {
         this.activeFile?.path === path
           ? this.activeFile.onReleased
           : this.lastImportFile?.onReleased
+      // Only a queued retry owns the previous handle. An explicit import of the same path
+      // remains a new request, and changing its destination cannot inherit recovery authority.
+      const recovery =
+        this.activeFile?.path === path &&
+        this.activeFile.target?.projectId === target.projectId &&
+        this.activeFile.target?.projectName === target.projectName
+          ? this.activeFile.recovery
+          : undefined
       this.lastImportFile = {
         id,
         path,
@@ -715,9 +725,25 @@ export class SessionPackageDesktop {
         target: { ...target },
         originClientId,
         onReleased,
-        validateBeforeTarget
+        validateBeforeTarget,
+        recovery
       }
+      importFile = this.lastImportFile
       this.operations.setImportSource(id, basename(path), target)
+    }
+    const completeImport = async (
+      result: SessionPackageRequest
+    ): Promise<SessionPackageRequest> => {
+      this.operations.completeResult({ imported: result })
+      try {
+        await this.options.afterImport(result, originClientId, !target.projectId)
+      } catch (error) {
+        createLogger('session-package').warn(
+          'Imported Session notification failed',
+          diagnosticErrorFields(error)
+        )
+      }
+      return result
     }
     return this.operations
       .run(
@@ -733,6 +759,44 @@ export class SessionPackageDesktop {
           if (sourcePath) rememberSource(sourcePath)
           if (!sourcePath || target.projectId || target.projectName) this.options.assertCanStart?.()
           this.operations.setCleanupPending(this.pendingCleanup.size > 0)
+          const recovery = importFile?.recovery
+          if (recovery) {
+            this.options.assertCanStart?.()
+            const release = target.projectId
+              ? await this.options.reserveImport?.(target.projectId, signal)
+              : undefined
+            try {
+              this.operations.report({ phase: 'importing' })
+              const result = await this.options.withDataRootWrite(() =>
+                this.acceptCleanup(() =>
+                  recovery.resume(signal).catch((error: unknown) => {
+                    if (
+                      error instanceof PackageCleanupPendingError &&
+                      'value' in error.outcome &&
+                      error.outcome.value === undefined
+                    )
+                      throw new PackageCleanupPendingError(
+                        error.outcome,
+                        async () => {
+                          await error.retryCleanup()
+                          importFile!.recovery = undefined
+                        },
+                        error.cause
+                      )
+                    throw error
+                  })
+                )
+              )
+              if (result || !this.operations.snapshot?.cleanupPending)
+                importFile!.recovery = undefined
+              if (!result) throw recovery
+              return await completeImport(result)
+            } catch (error) {
+              this.failOperation(error)
+            } finally {
+              release?.()
+            }
+          }
           if (sourcePath && validateBeforeTarget) {
             // Browser uploads are untrusted bytes: reuse archive inspection before target selection.
             // importFrom still revalidates the staged archive and owns packageOrigin/receipt.json.
@@ -790,47 +854,46 @@ export class SessionPackageDesktop {
               this.operations.report({ phase: 'validating' })
               const result = await this.options.withDataRootWrite(() =>
                 this.acceptCleanup(() =>
-                  this.options.service.importFrom(
-                    archive,
-                    signal,
-                    // Service progress starts after confirmation; final validation belongs to import.
-                    (progress) =>
-                      this.operations.report(
-                        progress.phase === 'validating' ? { phase: 'importing' } : progress
-                      ),
-                    async (preview, budgetSignal) => {
-                      await this.operations.waitForImport(
-                        { preview, filename: basename(input) },
-                        budgetSignal
-                      )
-                      signal.throwIfAborted()
-                    },
-                    target
-                  )
+                  this.options.service
+                    .importFrom(
+                      archive,
+                      signal,
+                      // Service progress starts after confirmation; final validation belongs to import.
+                      (progress) =>
+                        this.operations.report(
+                          progress.phase === 'validating' ? { phase: 'importing' } : progress
+                        ),
+                      async (preview, budgetSignal) => {
+                        await this.operations.waitForImport(
+                          { preview, filename: basename(input) },
+                          budgetSignal
+                        )
+                        signal.throwIfAborted()
+                      },
+                      target
+                    )
+                    .catch((error: unknown) => {
+                      if (error instanceof PackageImportRecoveryRequiredError)
+                        importFile!.recovery = error
+                      throw error
+                    })
                 )
               )
-              this.operations.completeResult({ imported: result })
-              try {
-                await this.options.afterImport(result, originClientId, !target.projectId)
-              } catch (error) {
-                createLogger('session-package').warn(
-                  'Imported Session notification failed',
-                  diagnosticErrorFields(error)
-                )
-              }
-              return result
+              return completeImport(result)
             }, undefined)
           } finally {
             release?.()
           }
         },
-        target
+        target,
+        () => Boolean(importFile?.recovery)
       )
       .catch((error) => {
         if (
           operationSignal?.aborted &&
           !this.shutdown.signal.aborted &&
-          !this.operations.snapshot?.result?.recovery
+          !this.operations.snapshot?.result?.recovery &&
+          !importFile?.recovery
         )
           return null
         throw error
