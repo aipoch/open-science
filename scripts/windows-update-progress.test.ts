@@ -14,7 +14,7 @@ describe.skipIf(process.platform !== 'win32')('native Windows update presentatio
         '--directory',
         resolve('build/windows-update-progress')
       ],
-      { stdio: 'pipe', timeout: 120_000 }
+      { stdio: 'inherit', timeout: 120_000 }
     )
   }, 130_000)
   it.each(['success', 'installer-failure', 'cancel', 'unconfirmed', 'late-ready', 'wrong-receipt'])(
