@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { syncBuiltinESMExports } from 'node:module'
 import { request as httpRequest } from 'node:http'
+import { Server } from 'node:net'
 import fs from 'node:fs/promises'
 import type { BrowserPackageTransfer } from '../../shared/session-package'
 import { afterEach, describe, expect, it, vi } from 'vitest'
@@ -21,6 +22,27 @@ afterEach(async () => {
   vi.restoreAllMocks()
   syncBuiltinESMExports()
   for (const dispose of disposers.splice(0).reverse()) await dispose()
+})
+
+it.each(['EACCES', 'EADDRINUSE'])('selects another test port after %s', async (code) => {
+  const listen = vi.spyOn(Server.prototype, 'listen').mockImplementationOnce(function (
+    this: Server
+  ) {
+    queueMicrotask(() => this.emit('error', Object.assign(new Error('Port unavailable'), { code })))
+    return this
+  })
+  expect(await findBrowserImportPort()).toBeGreaterThanOrEqual(49152)
+  expect(listen.mock.calls.length).toBeGreaterThanOrEqual(2)
+})
+
+it('bounds test port discovery when every port is denied', async () => {
+  const error = Object.assign(new Error('Port unavailable'), { code: 'EACCES' })
+  const listen = vi.spyOn(Server.prototype, 'listen').mockImplementation(function (this: Server) {
+    queueMicrotask(() => this.emit('error', error))
+    return this
+  })
+  await expect(findBrowserImportPort()).rejects.toBe(error)
+  expect(listen).toHaveBeenCalledTimes(32)
 })
 
 it('keeps released-source cleanup failures visible and retries without revoking the receipt', async () => {

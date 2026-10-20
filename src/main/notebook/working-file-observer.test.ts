@@ -1109,7 +1109,14 @@ describe('working-file evidence', () => {
           runEvidenceWorker: async (root, request, signal) => {
             if (request.operation === 'begin') {
               const item = request.initialFiles[0]!
-              if (condition === 'cross-project') expect(item.immutableSource).toBeUndefined()
+              // Windows file IDs can exceed the worker protocol's safe integer range. The
+              // owner then deliberately omits sharing and freezes the working input instead.
+              if (
+                condition === 'cross-project' ||
+                !Number.isSafeInteger(original.dev) ||
+                !Number.isSafeInteger(original.ino)
+              )
+                expect(item.immutableSource).toBeUndefined()
               else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
               // Keep the old inode allocated so Linux cannot reuse it for the frozen copy.
               if (condition === 'missing') await rename(originalPath, `${originalPath}.old`)
@@ -1122,7 +1129,11 @@ describe('working-file evidence', () => {
                 await rename(originalPath, `${originalPath}.old`)
                 await symlink(workingPath, originalPath)
               }
-              if (condition === 'working-file')
+              if (
+                condition === 'working-file' &&
+                Number.isSafeInteger(working.dev) &&
+                Number.isSafeInteger(working.ino)
+              )
                 item.immutableSource = {
                   physicalPath: workingPath,
                   dev: working.dev,

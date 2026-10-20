@@ -379,6 +379,9 @@ describe('post-merge Windows validation', () => {
     expect(scheduledFixes.run).toContain('src/main/notebook/runtime-service.rpc-retirement.test.ts')
     expect(scheduledFixes.run).toContain('src/main/notebook/shell-npm-environment.test.ts')
     for (const test of [
+      'src/main/session-package/browser-import.test.ts',
+      'src/main/notebook/working-file-observer.test.ts',
+      'src/main/session-persistence/projection.test.ts',
       'scripts/windows-notebook-sandbox-uninstall.test.ts',
       'scripts/windows-release-workflows.test.ts',
       'src/main/notebook/kernel-executor.test.ts',
