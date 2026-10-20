@@ -832,8 +832,7 @@ describe('ask_user_question tool', () => {
         questions: [question]
       })
       expect(tool!.description).toContain('2-16')
-      expect(tool!.description).toContain('multi-select only for combinable choices')
-      expect(tool!.description).toContain('never exclusive alternatives')
+      expect(tool!.description).toContain('multi-select for combinable choices only')
     }
   )
 

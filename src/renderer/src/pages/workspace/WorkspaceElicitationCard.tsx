@@ -42,6 +42,7 @@ import {
 import type { ElicitationEditDraft } from '@/stores/session-store'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import { ChoiceKindChip } from './ChoiceKindChip'
 
 const displayValue = (
   value: ElicitationValue,
@@ -329,12 +330,16 @@ const WorkspaceElicitationCard = ({
     })
   }
 
-  // Terminal cards put their status (skipped/cancelled) on the title line, right after the icon.
+  // Terminal cards put their status (skipped/cancelled) on the title line, after the type chip.
   const summaryHeader = (statusPrefix?: string): React.JSX.Element => (
-    <div className="flex items-center gap-2">
-      <span className="grid size-[22px] shrink-0 place-items-center text-primary">
-        <CircleHelp className="size-3.5" strokeWidth={2} aria-hidden="true" />
-      </span>
+    <div className="flex items-start gap-2">
+      {choiceQuestions?.[0] ? (
+        <ChoiceKindChip kind={choiceQuestions[0].choiceField.kind} />
+      ) : (
+        <span className="grid size-[22px] shrink-0 place-items-center text-primary">
+          <CircleHelp className="size-3.5" strokeWidth={2} aria-hidden="true" />
+        </span>
+      )}
       <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-semibold leading-5">
         {statusPrefix ? (
           <span className="text-xs font-normal text-text-300">{`${statusPrefix} · `}</span>
@@ -369,30 +374,35 @@ const WorkspaceElicitationCard = ({
       // Translucent white panel: a different material from the gray summary rows,
       // scaled to the summary rows (size-5 badges, 13px text).
       <div className="mb-1.5 mt-1 rounded-[10px] bg-bg-000/60 p-2">
-        {annotationPort && annotationItemId ? (
-          <TextAnnotationSurface
-            source={{
-              kind: 'session-item',
-              sessionId: annotationPort.sessionId,
-              itemType: 'elicitation',
-              itemId: annotationItemId,
-              sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
-            }}
-            activeAnnotations={annotationPort.activeAnnotations}
-            onAdd={annotationPort.onAdd}
-            onUpdateNote={annotationPort.onUpdateNote}
-            onRemove={annotationPort.onRemove}
-            onError={annotationPort.onError}
-          >
-            <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
-              {question.choiceField.description || question.choiceField.label}
-            </p>
-          </TextAnnotationSurface>
-        ) : (
-          <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
-            {question.choiceField.description || question.choiceField.label}
-          </p>
-        )}
+        <div className="flex items-start gap-2">
+          <ChoiceKindChip kind={question.choiceField.kind} />
+          <div className="min-w-0 flex-1">
+            {annotationPort && annotationItemId ? (
+              <TextAnnotationSurface
+                source={{
+                  kind: 'session-item',
+                  sessionId: annotationPort.sessionId,
+                  itemType: 'elicitation',
+                  itemId: annotationItemId,
+                  sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
+                }}
+                activeAnnotations={annotationPort.activeAnnotations}
+                onAdd={annotationPort.onAdd}
+                onUpdateNote={annotationPort.onUpdateNote}
+                onRemove={annotationPort.onRemove}
+                onError={annotationPort.onError}
+              >
+                <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
+                  {question.choiceField.description || question.choiceField.label}
+                </p>
+              </TextAnnotationSurface>
+            ) : (
+              <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
+                {question.choiceField.description || question.choiceField.label}
+              </p>
+            )}
+          </div>
+        </div>
         <div className="mt-1" data-testid="elicitation-choice-review">
           {question.choiceField.options?.map((option, index) => {
             const selected = isChoiceOptionSelected(question, reviewValues, option.value)
@@ -638,7 +648,7 @@ const WorkspaceElicitationCard = ({
       )}
     >
       {showChoiceProgress && choiceQuestions ? (
-        <div className="pointer-events-none sticky top-3 z-10 -mb-5 flex h-5 justify-end sm:top-4">
+        <div className="pointer-events-none sticky top-3 z-10 mb-2 flex h-5 justify-end sm:top-4">
           <span
             data-testid="elicitation-question-progress"
             role="status"
@@ -672,7 +682,8 @@ const WorkspaceElicitationCard = ({
       ) : null}
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
-        <div className="flex items-start">
+        <div className="flex items-start gap-2">
+          {choiceQuestion ? <ChoiceKindChip kind={choiceQuestion.choiceField.kind} /> : null}
           {annotationPort && annotationItemId ? (
             <div className="min-w-0 flex-1">
               <TextAnnotationSurface
@@ -690,23 +701,13 @@ const WorkspaceElicitationCard = ({
                 onRemove={annotationPort.onRemove}
                 onError={annotationPort.onError}
               >
-                <h3
-                  className={cn(
-                    'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-                    showChoiceProgress && 'pr-36'
-                  )}
-                >
+                <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
                   {choiceTitle ?? elicitation.message}
                 </h3>
               </TextAnnotationSurface>
             </div>
           ) : (
-            <h3
-              className={cn(
-                'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-                showChoiceProgress && 'pr-36'
-              )}
-            >
+            <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
               {choiceTitle ?? elicitation.message}
             </h3>
           )}
@@ -718,7 +719,12 @@ const WorkspaceElicitationCard = ({
           <p className="text-xs text-text-300">{t('No submitted answer recorded.')}</p>
           {elicitation.fields.map((field) => (
             <div key={field.id} className="text-sm">
-              <p className="font-medium">{field.description || field.label}</p>
+              <div className="flex items-start gap-2">
+                <ChoiceKindChip kind={field.kind} />
+                <p className="min-w-0 flex-1 break-words font-medium">
+                  {field.description || field.label}
+                </p>
+              </div>
               {field.options?.map((option) => (
                 <p key={option.value} className="text-text-300">
                   {option.label}
@@ -746,9 +752,6 @@ const WorkspaceElicitationCard = ({
         </p>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
         <form className="mt-2" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
-          {choiceQuestion.choiceField.kind === 'multi-select' ? (
-            <p className="mb-1 text-xs text-text-300">{t('Select one or more options')}</p>
-          ) : null}
           <div className="max-h-[min(24rem,50vh)] space-y-0.5 overflow-y-auto">
             {choiceQuestion.choiceField.options?.map((option, index) => {
               const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
@@ -1193,7 +1196,8 @@ const WorkspaceElicitationCard = ({
                     </span>
                     <span className="min-w-0 flex-1">
                       {answers.length > 1 ? (
-                        <span className="block text-xs leading-4 text-text-100">
+                        <span className="flex items-start gap-2 text-xs leading-5 text-text-100">
+                          {question ? <ChoiceKindChip kind={question.choiceField.kind} /> : null}
                           {/* Custom/agent-decide answers live on the `question_N_custom` field
                               labeled "Other" — surface the owning question's label instead. */}
                           {choiceQuestions?.[questionIndex]?.choiceField.label ??
@@ -1244,7 +1248,8 @@ const WorkspaceElicitationCard = ({
                         <Minus className="size-3" strokeWidth={2.5} aria-hidden="true" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-xs leading-4 text-text-100">
+                        <span className="flex items-start gap-2 text-xs leading-5 text-text-100">
+                          <ChoiceKindChip kind={question.choiceField.kind} />
                           {question.choiceField.label}
                         </span>
                         <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">

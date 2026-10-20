@@ -141,6 +141,124 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it('labels every recorded choice in pending replay without labelling custom text fields', async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          readOnly
+          request={{ ...multiQuestionRequest, fields: mixedChoiceFields }}
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: mixedChoiceFields,
+            state: 'pending'
+          }}
+        />
+      )
+    )
+    const replay = container.querySelector('[data-testid="elicitation-recorded-pending"]')!
+    expect(
+      Array.from(replay.querySelectorAll('[data-testid="choice-kind-chip"]')).map(
+        (chip) => chip.textContent
+      )
+    ).toEqual(['Multi select', 'Single select'])
+  })
+
+  it.each([
+    ['single-select', 'Single select', 'single-cell'],
+    ['multi-select', 'Multi select', ['multi-omics', 'single-cell']]
+  ] as const)(
+    'labels %s from the field kind and submits matching selections',
+    async (kind, label, value) => {
+      const onRespond = vi.fn().mockResolvedValue(undefined)
+      const choiceFields: ElicitationField[] = [{ ...fields[0], kind }, fields[1]]
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            request={{ ...request, fields: choiceFields }}
+            elicitation={{ message: 'Which outputs?', fields: choiceFields, state: 'pending' }}
+            onRespond={onRespond}
+          />
+        )
+      )
+      expect(container.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(label)
+      for (const option of ['multi-omics', 'single-cell']) {
+        await act(async () =>
+          container
+            .querySelector<HTMLButtonElement>(`[data-testid="elicitation-option-${option}"]`)!
+            .click()
+        )
+      }
+      const finish = Array.from(container.querySelectorAll('button')).find(
+        (button) => button.textContent?.trim() === 'Finish'
+      )!
+      await act(async () => finish.click())
+      expect(onRespond).toHaveBeenCalledWith(
+        expect.objectContaining({ answers: [{ fieldId: 'question_0', value }] })
+      )
+    }
+  )
+
+  it('labels each recorded question independently, including custom answers and expanded review', async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          readOnly
+          request={{ ...multiQuestionRequest, fields: mixedChoiceFields }}
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: mixedChoiceFields,
+            state: 'answered',
+            answers: [
+              { fieldId: 'question_0_custom', value: 'Let the agent decide' },
+              { fieldId: 'question_1', value: 'english' }
+            ]
+          }}
+        />
+      )
+    )
+    const rows = Array.from(
+      container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
+    )
+    expect(
+      rows.map((row) => row.querySelector('[data-testid="choice-kind-chip"]')?.textContent)
+    ).toEqual(['Multi select', 'Single select'])
+    expect(container.querySelector('svg.lucide-circle-question-mark')).toBeNull()
+    await act(async () => rows[1].click())
+    const review = container.querySelector(
+      '[data-testid="elicitation-choice-review"]'
+    )!.parentElement!
+    expect(review.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Single select'
+    )
+    expect(
+      review
+        .querySelector('[data-testid="elicitation-option-english"]')
+        ?.getAttribute('data-selected')
+    ).toBe('true')
+  })
+
+  it.each(['declined', 'cancelled'] as const)(
+    'preserves each question type in %s records',
+    async (state) => {
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            request={{ ...multiQuestionRequest, fields: mixedChoiceFields }}
+            elicitation={{
+              message: multiQuestionRequest.message,
+              fields: mixedChoiceFields,
+              state
+            }}
+          />
+        )
+      )
+      const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
+      expect(
+        rows.map((row) => row.querySelector('[data-testid="choice-kind-chip"]')?.textContent)
+      ).toEqual(['Multi select', 'Single select'])
+    }
+  )
+
   it('keeps 16 options in choice mode and submits all checked values in option order', async () => {
     const onRespond = vi.fn().mockResolvedValue(undefined)
     const options = Array.from({ length: 16 }, (_, i) => ({
@@ -211,6 +329,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(container.querySelector('h3')?.textContent).toBe(
       'What should this skill primarily cover?'
     )
+    expect(container.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Multi select'
+    )
     expect(
       container.querySelector('[data-testid="elicitation-question-progress"]')?.textContent
     ).toBe('1 of 2')
@@ -229,7 +350,6 @@ describe('WorkspaceElicitationCard choice question', () => {
         .querySelector('[data-testid="elicitation-question-progress"]')
         ?.parentElement?.classList.contains('top-3')
     ).toBe(true)
-    expect(container.querySelector('h3')?.classList.contains('pr-36')).toBe(true)
     expect(
       Array.from(
         container.querySelectorAll('[data-testid="elicitation-question-progress-segment"]')
@@ -254,6 +374,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     await act(async () => nextButton?.click())
 
     expect(container.querySelector('h3')?.textContent).toBe('Which language should the skill use?')
+    expect(container.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Single select'
+    )
     expect(onRespond).not.toHaveBeenCalled()
   })
 
@@ -620,7 +743,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(card?.className).not.toContain('border-border-200')
 
     const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
-    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
+    expect(summary?.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Single select'
+    )
     expect(summary?.textContent).toContain('What should this skill primarily cover?')
     expect(summary?.textContent).toContain('2 questions')
     // The status sits on the title line itself, right after the icon, ahead of the title.
@@ -714,7 +839,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     })
   })
 
-  it('renders the answered summary as a compact checklist with a question-type icon', async () => {
+  it('renders the answered summary as a compact checklist with a question-type chip', async () => {
     const mixedRequest = { ...multiQuestionRequest, fields: mixedChoiceFields }
 
     await act(async () => {
@@ -738,13 +863,11 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(card?.className).toContain('bg-bg-200')
     expect(card?.className).not.toContain('border-border-200')
 
-    // Header: question-type icon (bare — no tile background or shadow); the title is the
-    // first question's text plus a question count.
+    // The header chip describes the first question; each answer row has its own type.
     const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
-    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
-    const iconWrap = summary?.querySelector('span')
-    expect(iconWrap?.className).not.toContain('bg-bg-000')
-    expect(iconWrap?.className).not.toContain('shadow-sm')
+    expect(summary?.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Multi select'
+    )
     expect(summary?.textContent).toContain('What should this skill primarily cover?')
     expect(summary?.textContent).toContain('2 questions')
     expect(summary?.textContent).not.toContain('Please answer the following questions.')
@@ -1089,7 +1212,9 @@ describe('WorkspaceElicitationCard choice question', () => {
     const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
     // Single-question cards use the question itself as the summary title.
     expect(summary?.textContent).toContain('Skill type')
-    expect(summary?.querySelector('svg.lucide-circle-question-mark')).not.toBeNull()
+    expect(summary?.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
+      'Single select'
+    )
     const row = container.querySelector<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
     expect(row?.getAttribute('aria-expanded')).toBe('false')
     expect(row?.querySelector('svg.lucide-chevron-down')).not.toBeNull()

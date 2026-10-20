@@ -1,26 +1,39 @@
 import '@/assets/main.css'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
-import { initI18n } from '@/i18n'
+import { initI18n, prepareI18nLocale } from '@/i18n'
 import { WorkspaceElicitationCard } from '@/pages/workspace/WorkspaceElicitationCard'
 import { WorkspaceDelegatedQuestionCard } from '@/pages/workspace/WorkspaceDelegatedQuestionCard'
-import type { ElicitationField } from '../../../src/shared/elicitation'
+import type { AgentUserChoicePrompt, ElicitationField } from '../../../src/shared/elicitation'
 import type { ElicitationResponse } from '../../../src/shared/acp'
 
-initI18n('en')
+const search = new URLSearchParams(location.search)
+const kind = search.has('single') ? 'single-select' : 'multi-select'
 const options = Array.from({ length: 16 }, (_, index) => ({
   label: `Option ${index + 1}`,
   description: `Research category ${index + 1}`
 }))
-const fields: ElicitationField[] = [
-  {
-    id: 'question_0',
-    label: 'Which outputs?',
-    kind: 'multi-select',
-    options: options.map((option) => ({ ...option, value: option.label }))
-  },
-  { id: 'question_0_custom', label: 'Other', kind: 'text' }
+const questions: AgentUserChoicePrompt[] = [
+  { question: 'Which outputs?', kind, options },
+  ...(search.has('mixed')
+    ? [
+        {
+          question: 'Which approach should we use for the next phase of this research project?',
+          kind: 'single-select' as const,
+          options: options.slice(0, 2)
+        }
+      ]
+    : [])
 ]
+const fields: ElicitationField[] = questions.flatMap((question, index) => [
+  {
+    id: `question_${index}`,
+    label: question.question,
+    kind: question.kind ?? 'single-select',
+    options: question.options.map((option) => ({ ...option, value: option.label }))
+  },
+  { id: `question_${index}_custom`, label: 'Other', kind: 'text' }
+])
 export const Fixture = (): React.JSX.Element => {
   const [response, setResponse] = useState<ElicitationResponse>()
   const onRespond = async (value: ElicitationResponse): Promise<void> => {
@@ -28,7 +41,7 @@ export const Fixture = (): React.JSX.Element => {
   }
   return (
     <main className="mx-auto max-w-2xl p-4">
-      {new URLSearchParams(location.search).has('delegate') ? (
+      {search.has('delegate') ? (
         <WorkspaceDelegatedQuestionCard
           projectId="project-1"
           sessionId="session-1"
@@ -42,7 +55,7 @@ export const Fixture = (): React.JSX.Element => {
             rootOriginMessageId: 'prompt',
             rootBranchId: 'root-branch',
             sourceName: 'Researcher',
-            questions: [{ question: 'Which outputs?', kind: 'multi-select', options }],
+            questions,
             askedAt: 1,
             status: 'pending',
             draftAnswers: [],
@@ -59,7 +72,12 @@ export const Fixture = (): React.JSX.Element => {
             message: 'Which outputs?',
             fields
           }}
-          elicitation={{ message: 'Which outputs?', fields, state: 'pending' }}
+          elicitation={{
+            message: 'Which outputs?',
+            fields,
+            state: response?.action === 'accept' ? 'answered' : 'pending',
+            answers: response?.answers
+          }}
           onRespond={onRespond}
         />
       )}
@@ -67,4 +85,8 @@ export const Fixture = (): React.JSX.Element => {
     </main>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+const locale = search.get('locale') === 'ru' ? 'ru' : 'en'
+void Promise.resolve(prepareI18nLocale(locale)).then(() => {
+  initI18n(locale)
+  createRoot(document.getElementById('root')!).render(<Fixture />)
+})

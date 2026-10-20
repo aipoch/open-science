@@ -184,7 +184,7 @@ const userChoiceQuestionSchema = z.object({
   kind: z
     .enum(['single-select', 'multi-select'])
     .default('single-select')
-    .describe('Single answer or combinable choices.'),
+    .describe('UI shows the mode; omit it from question text.'),
   options: z
     .array(userChoiceOptionSchema)
     .min(MIN_AGENT_USER_CHOICE_OPTIONS)
@@ -1544,7 +1544,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'For materially different interpretations, use this app-owned tool as the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique, described options each. Never print choice lists or add Other (UI adds custom, agent-decide, Skip). Use multi-select only for combinable choices, never exclusive alternatives; otherwise single-select. Questions appear individually; multiple answers return as a JSON array of labels. Pending ends the turn; Finish continues.',
+      'For materially different interpretations, use this app-owned tool as the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique, described options each. Never print choice lists or add Other (UI adds custom, agent-decide, Skip). Use multi-select for combinable choices only; otherwise single-select. Questions appear individually; multiple answers return as a JSON array of labels. Pending ends the turn; Finish continues.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,
