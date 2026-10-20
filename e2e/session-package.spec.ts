@@ -750,9 +750,10 @@ for (const launch of ['cold', 'warm'] as const) {
         )
         .toEqual([])
       await dialog.getByRole('button', { name: 'Open imported Session', exact: true }).click()
-      await expect(
-        page.getByRole('region', { name: 'Imported research history', exact: true })
-      ).toBeVisible()
+      await expect(page.getByTestId('research-workspace-header')).toContainText('Legacy research')
+      await expect(page.getByTestId('research-workspace-header')).toContainText(
+        'Original record · Read-only'
+      )
       await expect(page.getByTestId('replay-panel')).toBeVisible()
       await page.getByRole('button', { name: 'All projects', exact: true }).click()
       await expect(page.getByRole('region', { name: 'Projects', exact: true })).toBeVisible()
