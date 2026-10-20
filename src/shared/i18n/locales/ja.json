@@ -7318,6 +7318,16 @@
     "Cannot cancel; the app will reopen automatically.": "キャンセルできません。完了後に自動で起動します。",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "一部の PDF グリフには信頼できるテキスト表現がありません。元のページと照合してください。",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "一部の PDF テキストには信頼できる Unicode マッピングがありません。抽出したテキストは保持されています。元のページと照合してください。",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "一部の表構造の信頼性を確認できません。元の画像とテキストは、セルへの割り当てを行わずに保持されます。"
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "一部の表構造の信頼性を確認できません。元の画像とテキストは、セルへの割り当てを行わずに保持されます。",
+    "This animated image is too large to preview safely. Download the original to view it.": "このアニメーション画像は大きすぎるため、安全にプレビューできません。元のファイルをダウンロードして表示してください。",
+    "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "この画像はプレビューの上限（{{limit}} ピクセル）を超えています。元のファイルをダウンロードして表示してください。",
+    "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "この画像はサイズ変更の上限（50 MiB）を超えています。元のファイルをダウンロードして表示してください。",
+    "Image preview memory or processing capacity is busy. Close other previews and retry.": "画像プレビュー用のメモリまたは処理リソースが使用中です。他のプレビューを閉じて再試行してください。",
+    "The image dimensions could not be read safely. The file may be damaged or use an unsupported format.": "画像の寸法を安全に読み取れませんでした。ファイルが破損しているか、非対応の形式である可能性があります。",
+    "The image could not be decoded or resized within the preview safety limits. Download the original to view it.": "プレビューの安全上の制限内で画像をデコードまたはサイズ変更できませんでした。元のファイルをダウンロードして表示してください。",
+    "The file changed while its preview was being prepared. Retry to load the latest version.": "プレビューの準備中にファイルが変更されました。再試行して最新バージョンを読み込んでください。",
+    "The preview resource could not be loaded. Retry to request it again.": "プレビュー用リソースを読み込めませんでした。再試行して再取得してください。",
+    "Permission to read this file was denied. Check its access permissions and retry.": "このファイルの読み取りが拒否されました。アクセス権を確認して再試行してください。",
+    "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "ブラウザーでこの画像を表示できませんでした。破損、非対応の形式、またはメモリ不足の可能性があります。元のファイルをダウンロードして表示してください。"
   }
 }

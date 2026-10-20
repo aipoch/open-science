@@ -7479,6 +7479,16 @@
     "Cannot cancel; the app will reopen automatically.": "Abbruch nicht möglich; die App öffnet sich automatisch.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "Für einige PDF-Schriftzeichen gibt es keine zuverlässige Textdarstellung. Vergleichen Sie die Originalseite.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Für einige PDF-Textstellen fehlt eine zuverlässige Unicode-Zuordnung. Der extrahierte Text bleibt erhalten; vergleichen Sie ihn mit der Originalseite.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Einige Tabellenstrukturen sind unzuverlässig. Die ursprünglichen Bilder und Texte bleiben ohne Zuordnung zu Zellen erhalten."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Einige Tabellenstrukturen sind unzuverlässig. Die ursprünglichen Bilder und Texte bleiben ohne Zuordnung zu Zellen erhalten.",
+    "This animated image is too large to preview safely. Download the original to view it.": "Dieses animierte Bild ist für eine sichere Vorschau zu groß. Laden Sie das Original herunter, um es anzusehen.",
+    "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "Dieses Bild überschreitet die Vorschaugrenze von {{limit}} Pixeln. Laden Sie das Original herunter, um es anzusehen.",
+    "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "Dieses Bild überschreitet die Grenze von 50 MiB für die Größenänderung. Laden Sie das Original herunter, um es anzusehen.",
+    "Image preview memory or processing capacity is busy. Close other previews and retry.": "Der Arbeitsspeicher oder die Verarbeitungskapazität für Bildvorschauen ist ausgelastet. Schließen Sie andere Vorschauen und versuchen Sie es erneut.",
+    "The image dimensions could not be read safely. The file may be damaged or use an unsupported format.": "Die Bildabmessungen konnten nicht sicher gelesen werden. Die Datei ist möglicherweise beschädigt oder verwendet ein nicht unterstütztes Format.",
+    "The image could not be decoded or resized within the preview safety limits. Download the original to view it.": "Das Bild konnte innerhalb der Sicherheitsgrenzen der Vorschau nicht dekodiert oder verkleinert werden. Laden Sie das Original herunter, um es anzusehen.",
+    "The file changed while its preview was being prepared. Retry to load the latest version.": "Die Datei wurde während der Vorbereitung der Vorschau geändert. Versuchen Sie es erneut, um die neueste Version zu laden.",
+    "The preview resource could not be loaded. Retry to request it again.": "Die Vorschauressource konnte nicht geladen werden. Versuchen Sie es erneut, um sie nochmals anzufordern.",
+    "Permission to read this file was denied. Check its access permissions and retry.": "Die Berechtigung zum Lesen dieser Datei wurde verweigert. Prüfen Sie die Zugriffsrechte und versuchen Sie es erneut.",
+    "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "Der Browser konnte dieses Bild nicht anzeigen. Es ist möglicherweise beschädigt, wird nicht unterstützt oder überschreitet den verfügbaren Arbeitsspeicher. Laden Sie das Original herunter, um es anzusehen."
   }
 }

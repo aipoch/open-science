@@ -151,6 +151,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "environment_engine": ["src/main/session-package/literature-source.test.ts"],
+    "host_bounded_io": ["src/main/image-preview-resize.test.ts"],
     "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
     "host_runtime_ports": [
       "src/main/cli-install/launcher.test.ts",

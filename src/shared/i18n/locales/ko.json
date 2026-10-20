@@ -7316,6 +7316,16 @@
     "Cannot cancel; the app will reopen automatically.": "취소할 수 없습니다. 완료 후 앱이 자동으로 다시 열립니다.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "일부 PDF 글리프에는 신뢰할 수 있는 텍스트 표현이 없습니다. 원본 페이지와 비교해 주세요.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "일부 PDF 텍스트에 신뢰할 수 있는 Unicode 매핑이 없습니다. 추출된 텍스트는 보존됩니다. 원본 페이지와 비교해 주세요.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "일부 표 구조의 신뢰성을 확인할 수 없습니다. 원본 이미지와 텍스트는 셀에 할당하지 않고 유지됩니다."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "일부 표 구조의 신뢰성을 확인할 수 없습니다. 원본 이미지와 텍스트는 셀에 할당하지 않고 유지됩니다.",
+    "This animated image is too large to preview safely. Download the original to view it.": "이 애니메이션 이미지는 너무 커서 안전하게 미리보기를 할 수 없습니다. 원본을 다운로드하여 확인하세요.",
+    "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "이 이미지는 미리보기 제한인 {{limit}}픽셀을 초과합니다. 원본을 다운로드하여 확인하세요.",
+    "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "이 이미지는 크기 조정 제한인 50 MiB를 초과합니다. 원본을 다운로드하여 확인하세요.",
+    "Image preview memory or processing capacity is busy. Close other previews and retry.": "이미지 미리보기의 메모리 또는 처리 용량이 사용 중입니다. 다른 미리보기를 닫고 다시 시도하세요.",
+    "The image dimensions could not be read safely. The file may be damaged or use an unsupported format.": "이미지 크기를 안전하게 읽을 수 없습니다. 파일이 손상되었거나 지원되지 않는 형식일 수 있습니다.",
+    "The image could not be decoded or resized within the preview safety limits. Download the original to view it.": "미리보기 안전 제한 내에서 이미지를 디코딩하거나 크기를 조정할 수 없습니다. 원본을 다운로드하여 확인하세요.",
+    "The file changed while its preview was being prepared. Retry to load the latest version.": "미리보기를 준비하는 동안 파일이 변경되었습니다. 최신 버전을 불러오려면 다시 시도하세요.",
+    "The preview resource could not be loaded. Retry to request it again.": "미리보기 리소스를 불러올 수 없습니다. 다시 시도하여 요청하세요.",
+    "Permission to read this file was denied. Check its access permissions and retry.": "이 파일에 대한 읽기 권한이 거부되었습니다. 접근 권한을 확인하고 다시 시도하세요.",
+    "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "브라우저에서 이 이미지를 표시할 수 없습니다. 이미지가 손상되었거나 지원되지 않는 형식이거나 사용 가능한 메모리를 초과했을 수 있습니다. 원본을 다운로드하여 확인하세요."
   }
 }

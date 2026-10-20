@@ -7788,6 +7788,16 @@
     "Cannot cancel; the app will reopen automatically.": "Отмена невозможна; приложение откроется автоматически.",
     "Some PDF glyphs have no reliable text representation. Compare the original page.": "Для некоторых глифов PDF нет надёжного текстового представления. Сверьтесь с исходной страницей.",
     "Some PDF text has no reliable Unicode mapping. The extracted text is retained; compare it with the original page.": "Для части текста PDF отсутствует надёжное сопоставление с Unicode. Извлечённый текст сохранён; сравните его с исходной страницей.",
-    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Структура некоторых таблиц ненадёжна. Исходные изображения и текст сохранены без распределения по ячейкам."
+    "Some table structures are unreliable. Original images and text are retained without cell assignments.": "Структура некоторых таблиц ненадёжна. Исходные изображения и текст сохранены без распределения по ячейкам.",
+    "This animated image is too large to preview safely. Download the original to view it.": "Это анимированное изображение слишком велико для безопасного предпросмотра. Скачайте оригинал для просмотра.",
+    "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "Это изображение превышает лимит предпросмотра в {{limit}} пикселей. Скачайте оригинал для просмотра.",
+    "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "Это изображение превышает лимит изменения размера в 50 MiB. Скачайте оригинал для просмотра.",
+    "Image preview memory or processing capacity is busy. Close other previews and retry.": "Память или ресурсы обработки предпросмотра изображений заняты. Закройте другие окна предпросмотра и повторите попытку.",
+    "The image dimensions could not be read safely. The file may be damaged or use an unsupported format.": "Не удалось безопасно прочитать размеры изображения. Возможно, файл повреждён или имеет неподдерживаемый формат.",
+    "The image could not be decoded or resized within the preview safety limits. Download the original to view it.": "Не удалось декодировать изображение или изменить его размер в пределах ограничений безопасности предпросмотра. Скачайте оригинал для просмотра.",
+    "The file changed while its preview was being prepared. Retry to load the latest version.": "Файл изменился во время подготовки предпросмотра. Повторите попытку, чтобы загрузить последнюю версию.",
+    "The preview resource could not be loaded. Retry to request it again.": "Не удалось загрузить ресурс предпросмотра. Повторите попытку, чтобы запросить его снова.",
+    "Permission to read this file was denied. Check its access permissions and retry.": "Отказано в разрешении на чтение этого файла. Проверьте права доступа и повторите попытку.",
+    "The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.": "Браузер не смог отобразить это изображение. Возможно, оно повреждено, не поддерживается или превышает объём доступной памяти. Скачайте оригинал для просмотра."
   }
 }
