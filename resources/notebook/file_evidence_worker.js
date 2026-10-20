@@ -989,6 +989,36 @@ const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   return { bytesRead: position, checksum: hash.digest('hex') }
 }
 
+// The host supplies only a verified same-Project Version identity, never the mutable input.
+// Keep the private link only when it still identifies those exact bytes; otherwise copy normally.
+const linkImmutableInput = (source, temporaryName, size, checksum) => {
+  if (!source || typeof source.physicalPath !== 'string' || !validIdentity(source)) return false
+  let linked = false
+  try {
+    const metadata = lstatSync(source.physicalPath)
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      !sameIdentity(identity(metadata), source)
+    )
+      return false
+    linkSync(source.physicalPath, temporaryName)
+    linked = true
+    const retained = lstatSync(temporaryName)
+    if (
+      !retained.isFile() ||
+      retained.isSymbolicLink() ||
+      !sameIdentity(identity(retained), source)
+    )
+      throw new Error('Immutable input changed before retention.')
+    verifyBlob(temporaryName, size, checksum)
+    return true
+  } catch {
+    if (linked) rmSync(temporaryName)
+    return false
+  }
+}
+
 const copyGeneration = (
   source,
   generation,
@@ -997,7 +1027,8 @@ const copyGeneration = (
   runBytesUsed,
   newBytesUsed,
   blobPool,
-  existingBlobBytes
+  existingBlobBytes,
+  immutableSource
 ) => {
   if (request.captureCancelled) {
     return { state: 'unavailable', reason: 'generation-freeze-failed' }
@@ -1039,39 +1070,46 @@ const copyGeneration = (
     const contentName = `sha256-${checksum}`
     const blobPath = join(blobPool.path, contentName)
     let publishedNewBlob = false
+    let sharedImmutable = false
     if (existsSync(blobPath)) {
       verifyBlob(blobPath, before.size, checksum)
       bindRunBlob(blobPath, contentName, before.size, checksum)
     } else {
-      const filesystem = statfsSync(blobPool.path)
-      const currentAvailableBytes = Math.min(
-        request.availableBytes - newBytesUsed,
-        filesystem.bavail * filesystem.bsize
-      )
-      if (
-        existingBlobBytes + newBytesUsed + before.size > request.maxEvidenceBytes ||
-        currentAvailableBytes - before.size < request.diskReserveBytes
-      ) {
+      if (existingBlobBytes + before.size > request.maxEvidenceBytes) {
         return { state: 'unavailable', reason: 'generation-budget-exceeded' }
       }
-      targetDescriptor = openSync(
-        temporaryName,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        0o600
-      )
-      const copied = streamDescriptor(sourceDescriptor, before.size, targetDescriptor)
+      sharedImmutable =
+        !sameIdentity(identity(before), immutableSource) &&
+        linkImmutableInput(immutableSource, temporaryName, before.size, checksum)
+      if (!sharedImmutable) {
+        const filesystem = statfsSync(blobPool.path)
+        const currentAvailableBytes = Math.min(
+          request.availableBytes - newBytesUsed,
+          filesystem.bavail * filesystem.bsize
+        )
+        if (currentAvailableBytes - before.size < request.diskReserveBytes) {
+          return { state: 'unavailable', reason: 'generation-budget-exceeded' }
+        }
+        targetDescriptor = openSync(
+          temporaryName,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+          0o600
+        )
+        const copied = streamDescriptor(sourceDescriptor, before.size, targetDescriptor)
+        if (copied.bytesRead !== before.size || copied.checksum !== checksum) {
+          return { state: 'unavailable', reason: 'generation-freeze-failed' }
+        }
+        fsyncSync(targetDescriptor)
+        closeSync(targetDescriptor)
+        targetDescriptor = undefined
+      }
       const afterCopy = fstatSync(sourceDescriptor)
       if (
-        copied.bytesRead !== before.size ||
-        copied.checksum !== checksum ||
         fingerprint(before) !== fingerprint(afterCopy) ||
         fingerprint(afterCopy) !== fingerprint(source)
       ) {
         return { state: 'unavailable', reason: 'generation-freeze-failed' }
       }
-      fsyncSync(targetDescriptor)
-      closeSync(targetDescriptor)
-      targetDescriptor = undefined
       try {
         linkSync(temporaryName, blobPath)
         syncDirectoryPath(blobPool.path)
@@ -1087,7 +1125,8 @@ const copyGeneration = (
     publishedBlobPath = undefined
     return {
       state: 'available',
-      newBytes: publishedNewBlob ? before.size : 0,
+      newBytes: publishedNewBlob && !sharedImmutable ? before.size : 0,
+      newPoolBytes: publishedNewBlob ? before.size : 0,
       generation: {
         generationId: generation.generationId,
         relativePath,
@@ -1114,7 +1153,7 @@ const copyGeneration = (
 const begin = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
-  const existingBlobBytes = blobPoolBytes(blobPool)
+  let existingBlobBytes = blobPoolBytes(blobPool)
   if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
     throw new Error('Invalid file-evidence Project budget.')
   }
@@ -1176,7 +1215,8 @@ const begin = (request) => {
         bytesUsed,
         newBytesUsed,
         blobPool,
-        existingBlobBytes
+        existingBlobBytes,
+        registeredInput ? item.immutableSource : undefined
       )
       const relation = {
         relation: item.relation === 'staged-input' ? 'staged-input' : 'present-before',
@@ -1192,6 +1232,7 @@ const begin = (request) => {
         if (registeredInput) relation.registeredInput = registeredInput
         bytesUsed += frozen.generation.sizeBytes
         newBytesUsed += frozen.newBytes
+        existingBlobBytes += frozen.newPoolBytes
       } else {
         relation.reasonCode = frozen.reason
         reasons.push(frozen.reason)
@@ -1294,7 +1335,7 @@ const ensureCapture = (request) => {
 const persist = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
-  const existingBlobBytes = blobPoolBytes(blobPool)
+  let existingBlobBytes = blobPoolBytes(blobPool)
   if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
     throw new Error('Invalid file-evidence Project budget.')
   }
@@ -1466,6 +1507,7 @@ const persist = (request) => {
           relation.generation = frozen.generation
           bytesUsed += frozen.generation.sizeBytes
           newBytesUsed += frozen.newBytes
+          existingBlobBytes += frozen.newPoolBytes
           generations.push({
             path: change.after.path,
             generationId: frozen.generation.generationId,

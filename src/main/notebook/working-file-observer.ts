@@ -34,6 +34,7 @@ import type { NotebookLanguage } from '../../shared/notebook-language-contract'
 import { assertDiskReserve, digestFileWithinBudget } from '../bounded-file-io'
 import { LOCAL_RESOURCE_BUDGETS } from '../resource-budget'
 import { availableBytes } from '../storage/usage'
+import { NodeVersionFileOperator } from '../managed-file-versions/version-file-operator'
 import { reportNotebookFileAnalysis } from './evidence-diagnostics'
 import { createRootNotebookLane } from './lane-identity'
 import { notebookPromptInputPath } from './prompt-input-materialization'
@@ -145,6 +146,7 @@ type EvidenceWorkerBeginRequest = EvidenceWorkerBlobPoolBinding & {
     generation: { generationId: string; capturedAt: string }
     relation?: 'present-before' | 'staged-input'
     registeredInput?: Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'>
+    immutableSource?: FileIdentity & { physicalPath: string }
   }>
   maxGenerationBytes: number
   maxActivityBytes: number
@@ -1456,22 +1458,10 @@ const beginEvidenceCapture = async (
     observations.flatMap((observation) => observation.initialFiles),
     request.sourceFileAccess
   )
-  const registeredInputsByPath = new Map<
-    string,
-    Pick<NotebookRunInputFile, 'sourceKind' | 'inputFileVersionId' | 'checksum'> | undefined
-  >()
+  const registeredInputsByPath = new Map<string, NotebookRunInputFile | undefined>()
   for (const input of request.registeredInputFiles ?? []) {
     const path = `data/${notebookPromptInputPath(input.filename, input.checksum)}`
-    registeredInputsByPath.set(
-      path,
-      registeredInputsByPath.has(path)
-        ? undefined
-        : {
-            sourceKind: input.sourceKind,
-            inputFileVersionId: input.inputFileVersionId,
-            checksum: input.checksum
-          }
-    )
+    registeredInputsByPath.set(path, registeredInputsByPath.has(path) ? undefined : input)
   }
   const initialViewState: ExecutionFileEvidenceCoverage = observations.every(
     (observation) => observation.initialAvailable
@@ -1497,6 +1487,61 @@ const beginEvidenceCapture = async (
     reservedDiskBytes += plannedBytes
     reservedBytes = plannedBytes
     const capturedAt = new Date((dependencies.now ?? Date.now)()).toISOString()
+    const versionFiles = new NodeVersionFileOperator({ storageRoot: fileEvidenceStorageRoot })
+    const files: EvidenceWorkerBeginRequest['initialFiles'] = []
+    for (const file of initialFiles) {
+      const input = registeredInputsByPath.get(file.relativePath)
+      let immutableSource: EvidenceWorkerBeginRequest['initialFiles'][number]['immutableSource']
+      // Ready Versions and evidence share the Project deletion boundary. Never link a working
+      // input, a cross-Project Version or an arbitrary registered path into immutable evidence.
+      const kind = input?.sourceKind === 'upload-version' ? 'uploads' : 'artifacts'
+      if (
+        input &&
+        projectScope &&
+        input.sourceProjectId === projectScope.projectId &&
+        input.storageKey.startsWith(`${kind}/${projectScope.projectId}/`) &&
+        input.sizeBytes === file.size &&
+        input.sizeBytes <= capture.maxGenerationBytes &&
+        /^[a-f0-9]{64}$/u.test(input.checksum) &&
+        !existsSync(join(blobRoot.path, `sha256-${input.checksum}`))
+      ) {
+        try {
+          const lease = await versionFiles.openImmutable(input.storageKey, {
+            checksum: input.checksum,
+            sizeBytes: input.sizeBytes
+          })
+          try {
+            if (
+              Number.isSafeInteger(lease.fileIdentity.dev) &&
+              Number.isSafeInteger(lease.fileIdentity.ino)
+            ) {
+              immutableSource = { physicalPath: lease.localPath, ...lease.fileIdentity }
+            }
+          } finally {
+            await lease.close()
+          }
+        } catch (error) {
+          // Sharing is optional; the observed working input remains the snapshot authority.
+          log.debug('Immutable input cannot seed evidence content; freezing the working copy', {
+            ...diagnosticErrorFields(error)
+          })
+        }
+      }
+      files.push({
+        file,
+        generation: { generationId: (dependencies.createId ?? randomUUID)(), capturedAt },
+        ...(input
+          ? {
+              registeredInput: {
+                sourceKind: input.sourceKind,
+                inputFileVersionId: input.inputFileVersionId,
+                checksum: input.checksum
+              }
+            }
+          : {}),
+        ...(immutableSource ? { immutableSource } : {})
+      })
+    }
     const result = await runSerializedEvidenceWorker(
       dependencies.runEvidenceWorker ?? runEvidenceWorker,
       capture.evidenceRoot.path,
@@ -1514,16 +1559,7 @@ const beginEvidenceCapture = async (
         expectedBlobRootIdentity: capture.blobRoot.identity,
         blobStorageKeyPrefix: capture.blobStorageKeyPrefix,
         initialViewState,
-        initialFiles: initialFiles.map((file) => ({
-          file,
-          generation: {
-            generationId: (dependencies.createId ?? randomUUID)(),
-            capturedAt
-          },
-          ...(registeredInputsByPath.get(file.relativePath)
-            ? { registeredInput: registeredInputsByPath.get(file.relativePath) }
-            : {})
-        })),
+        initialFiles: files,
         maxGenerationBytes: capture.maxGenerationBytes,
         maxActivityBytes: capture.maxActivityBytes,
         maxEvidenceBytes: capture.maxEvidenceBytes,

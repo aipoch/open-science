@@ -885,6 +885,90 @@ describe('working-file evidence', () => {
     })
   })
 
+  it.each(['cross-project', 'missing', 'replaced', 'corrupt', 'symlink', 'working-file'] as const)(
+    'freezes an isolated input when immutable sharing is unsafe: %s',
+    async (condition) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const content = 'x\n1\n'
+      const checksum = createHash('sha256').update(content).digest('hex')
+      const inputPath = `inputs/input-${checksum.slice(0, 12)}.csv`
+      const workingPath = join(dataRoot, inputPath)
+      const projectId = condition === 'cross-project' ? 'project-2' : 'project-1'
+      const storageKey = `uploads/${projectId}/source-session/version/content`
+      const originalPath = join(storageRoot!, storageKey)
+      await mkdir(dirname(workingPath), { recursive: true })
+      await mkdir(dirname(originalPath), { recursive: true })
+      await writeFile(workingPath, content)
+      await writeFile(originalPath, content)
+      const original = await stat(originalPath)
+      const working = await stat(workingPath)
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code: `open('${inputPath}').read()`,
+          language: 'python',
+          runId: 'sharing-fallback',
+          fileEvidenceStorageRoot: storageRoot!,
+          fileEvidenceRoot: join(storageRoot!, 'execution-file-evidence', 'project-1', 'session-1'),
+          fileEvidenceStoragePrefix: 'execution-file-evidence/project-1/session-1',
+          registeredInputFiles: [
+            {
+              inputFileVersionId: 'version',
+              sourceKind: 'upload-version',
+              sourceFileId: 'input',
+              sourceProjectId: projectId,
+              sourceSessionId: 'source-session',
+              filename: 'input.csv',
+              sizeBytes: content.length,
+              checksum,
+              storageKey,
+              association: 'turn-attached'
+            }
+          ]
+        },
+        {
+          watchDirectory: watcherUnavailable,
+          runEvidenceWorker: async (root, request, signal) => {
+            if (request.operation === 'begin') {
+              const item = request.initialFiles[0]!
+              if (condition === 'cross-project') expect(item.immutableSource).toBeUndefined()
+              else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
+              if (condition === 'missing') await rm(originalPath)
+              if (condition === 'replaced') {
+                await rename(originalPath, `${originalPath}.old`)
+                await writeFile(originalPath, content)
+              }
+              if (condition === 'corrupt') await writeFile(originalPath, 'x\n2\n')
+              if (condition === 'symlink') {
+                await rm(originalPath)
+                await symlink(workingPath, originalPath)
+              }
+              if (condition === 'working-file')
+                item.immutableSource = {
+                  physicalPath: workingPath,
+                  dev: working.dev,
+                  ino: working.ino
+                }
+            }
+            return runEvidenceWorker(root, request, signal)
+          }
+        }
+      )
+      const result = await observation.finish()
+      expect(result.fileEvidence.fileReads).toBe('complete')
+      const sidecar = JSON.parse(
+        await readFile(join(storageRoot!, result.fileEvidence.storageKey!), 'utf8')
+      )
+      const frozenPath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
+      const frozen = await stat(frozenPath)
+      expect([frozen.dev, frozen.ino]).not.toEqual([original.dev, original.ino])
+      expect([frozen.dev, frozen.ino]).not.toEqual([working.dev, working.ino])
+      await expect(readFile(frozenPath, 'utf8')).resolves.toBe(content)
+    }
+  )
+
   it('does not persist files returned by an R directory listing as content reads', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     await Promise.all([
