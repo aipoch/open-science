@@ -267,6 +267,11 @@ reader is updated. Future additional consumers are captured by the generated ind
 format. Resource edges add coverage without proving a complete dependency cone or authorizing
 consumer retirement.
 
+The consumer-coverage guard requires reachable coverage and a fresh derived index; it does not
+require deleting conservative explicit consumers. A newly complete dependency graph can prove
+current independence without proving historical reachability. Only the trusted base/head
+retirement checks described below authorize removing those existing obligations.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
