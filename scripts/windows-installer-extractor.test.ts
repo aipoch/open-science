@@ -22,12 +22,17 @@ function loadStage(cache: string): {
   compile: ReturnType<typeof vi.fn>
 } {
   const download = vi.fn(async () => cache)
-  const compile = vi.fn((_source: string, destination: string) => {
+  const compile = vi.fn((source: string, destination: string) => {
+    expect(
+      existsSync(source),
+      'helper source must exist outside the isolated fixture project'
+    ).toBe(true)
     writeFileSync(destination, 'compiled helper')
   })
   const module = { exports: undefined as unknown as (context: unknown) => Promise<void> }
   runInNewContext(script, {
     module,
+    __dirname: resolve('build'),
     require: (id: string) =>
       id === 'app-builder-lib/out/binDownload'
         ? { getBinFromCustomLoc: download }
@@ -99,7 +104,7 @@ describe('verified Windows installer extractor', () => {
       await stage(context)
       expect(signIf).toHaveBeenCalledTimes(4)
       expect(compile).toHaveBeenCalledWith(
-        join(root, 'build/windows-install-publication.cs'),
+        resolve('build/windows-install-publication.cs'),
         join(root, 'out/windows-installer/x64/windows-install-publication.dll')
       )
       expect(readFileSync(join(toolDirectory!, 'x64/7za.exe')).equals(original)).toBe(true)

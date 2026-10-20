@@ -45,7 +45,7 @@ module.exports = async (context) => {
   await context.packager.signIf(tool)
   const helper = path.join(directory, 'windows-install-publication.dll')
   require('./compile-windows-install-publication.cjs')(
-    path.join(context.packager.projectDir, 'build/windows-install-publication.cs'),
+    path.join(__dirname, 'windows-install-publication.cs'),
     helper
   )
   await context.packager.signIf(helper)
