@@ -1,0 +1,54 @@
+name: Clean up closed PR caches
+
+on:
+  pull_request:
+    branches: [main]
+    types: [closed]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List eligible caches without deleting them
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  # Different PR closures must not replace one another's pending cleanup.
+  group: closed-pr-cache-cleanup-${{ github.event.pull_request.number || 'sweep' }}
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    # Fork PR tokens cannot delete caches; the manual sweep covers those refs.
+    if: ${{ (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      actions: write
+      pull-requests: read
+    steps:
+      - name: Checkout trusted cleanup code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: refs/heads/main
+          persist-credentials: false
+          sparse-checkout: scripts/ci/cleanup-pr-caches.mjs
+          sparse-checkout-cone-mode: false
+      - name: Clean up closed PR caches
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9
+        env:
+          PR_NUMBER: ${{ github.event.pull_request.number || '' }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
+        with:
+          script: |
+            const { cleanupPrCaches } = await import(`${process.env.GITHUB_WORKSPACE}/scripts/ci/cleanup-pr-caches.mjs`)
+            await cleanupPrCaches({
+              github,
+              repo: context.repo,
+              pullNumber: process.env.PR_NUMBER ? Number(process.env.PR_NUMBER) : undefined,
+              dryRun: process.env.DRY_RUN === 'true',
+              log: core.info
+            })

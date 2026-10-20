@@ -272,6 +272,30 @@ require deleting conservative explicit consumers. A newly complete dependency gr
 current independence without proving historical reachability. Only the trusted base/head
 retirement checks described below authorize removing those existing obligations.
 
+## Actions cache maintenance
+
+The **Clean up closed PR caches** workflow removes caches scoped to a closed internal PR's
+`refs/pull/<number>/merge` ref. It checks the PR's current state before deletion, runs only
+trusted main-branch code, and preserves open-PR, main, branch and tag caches. A reopened PR
+may need to populate its cache again. This follows GitHub's
+[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches).
+
+Fork PRs skip automatic cleanup because their tokens cannot delete caches. For closed fork
+PRs, older closed PRs, or caches saved by jobs that finished after the close event, run a
+manual sweep on main. Inspect the dry-run logs before enabling deletion:
+
+```bash
+gh workflow run cache-cleanup.yml --ref main -f dry_run=true
+gh workflow run cache-cleanup.yml --ref main -f dry_run=false
+```
+
+If the shared Windows Notebook runtime cache has already been evicted, run
+`gh workflow run windows-notebook-runtime.yml --ref main` after cleanup. This reuses the
+existing compiler and verification workflow to restore main's cache; PR-scoped caches cannot
+warm main or other PRs. Cache keys and validation remain unchanged. Cleanup reduces quota
+pressure but cannot guarantee retention; a missing runtime cache still triggers compilation.
+No Release assets, Deployments or periodic compiler runs are used.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and
