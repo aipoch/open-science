@@ -17,13 +17,14 @@ import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
-  MAX_DECODED_IMAGE_PIXELS,
   readRasterImageDimensions,
   type RasterImageDimensions
 } from './raster-image-safety'
 
 const MAX_PREVIEW_RANGE_BYTES = 1024 * 1024
 const MAX_IMAGE_HEADER_BYTES = 1024 * 1024
+// Allow large scientific figures in the viewer without raising model attachment processing limits.
+const MAX_PREVIEW_IMAGE_PIXELS = 64_000_000
 const MAX_RELEASED_RESOURCE_TOMBSTONES = 1024
 const PREVIEW_SCHEME = 'open-science-preview'
 const MANAGED_PREVIEW_SCHEME = {
@@ -306,9 +307,9 @@ class ManagedPreviewResources {
         }
         const dimensions = readRasterImageDimensions(header, mimeType)
         if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
-        if (exceedsDecodedImagePixelLimit(dimensions)) {
+        if (exceedsDecodedImagePixelLimit(dimensions, MAX_PREVIEW_IMAGE_PIXELS)) {
           throw new Error(
-            `Image preview exceeds the ${MAX_DECODED_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
+            `Image preview exceeds the ${MAX_PREVIEW_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
           )
         }
         imageDimensions = dimensions

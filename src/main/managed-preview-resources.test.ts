@@ -125,8 +125,30 @@ describe('ManagedPreviewResources', () => {
     })
   })
 
+  it.each([
+    [9_456, 2_800],
+    [9_496, 2_028],
+    [8_000, 8_000]
+  ])('previews a %i × %i scientific figure within the pixel budget', async (width, height) => {
+    const png = createCompressedPng(width, height)
+    const filePath = await createFile(png, 'figure.png')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+
+    const resource = await resources.acquire(17, {
+      source: 'local',
+      path: filePath,
+      mimeType: 'image/png'
+    })
+
+    expect(resource).toMatchObject({ width, height, mimeType: 'image/png' })
+    await expect(
+      resources.readRange(17, { resourceId: resource.id, begin: 0, end: png.length })
+    ).resolves.toMatchObject({ data: new Uint8Array(png) })
+    resources.release(17, { resourceId: resource.id })
+  })
+
   it('rejects an ordinary image preview above the decoded pixel budget before minting a URL', async () => {
-    const filePath = await createFile(createCompressedPng(5_000, 5_000), 'large.png')
+    const filePath = await createFile(createCompressedPng(8_001, 8_000), 'large.png')
     const createId = vi.fn(() => 'unsafe-image-resource')
     const resources = new ManagedPreviewResources({
       resolvePath: async () => filePath,
@@ -135,9 +157,51 @@ describe('ManagedPreviewResources', () => {
 
     await expect(
       resources.acquire(17, { source: 'local', path: filePath, mimeType: 'image/png' })
-    ).rejects.toThrow(/16,000,000.*pixel/i)
+    ).rejects.toThrow(/64,000,000.*pixel/i)
     expect(createId).not.toHaveBeenCalled()
   })
+
+  it.each([
+    [9_456, 2_800, true],
+    [8_000, 8_000, true],
+    [8_001, 8_000, false]
+  ])(
+    'applies the preview budget to a managed %i × %i artifact',
+    async (width, height, admitted) => {
+      const png = createCompressedPng(width, height)
+      const close = vi.fn().mockResolvedValue(undefined)
+      const createId = vi.fn(() => 'figure-resource')
+      const lease = {
+        path: '/managed/figure.png',
+        size: png.length,
+        versionToken: 1,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(png.length), mtimeNs: 3n },
+        readRange: vi.fn(async (begin: number, end: number) => png.subarray(begin, end)),
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+        close
+      }
+      const resources = new ManagedPreviewResources({
+        resolvePath: vi.fn(),
+        openLatestManagedFile: vi.fn().mockResolvedValue(lease),
+        createId
+      })
+      const pending = resources.acquire(17, {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'figure-1'
+      })
+
+      if (admitted) {
+        const resource = await pending
+        expect(resource).toMatchObject({ width, height, mimeType: 'image/png' })
+        resources.release(17, { resourceId: resource.id })
+      } else {
+        await expect(pending).rejects.toThrow(/64,000,000.*pixel/i)
+        expect(createId).not.toHaveBeenCalled()
+      }
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
 
   it.each([undefined, '', 'fingerprint', 'A'.repeat(64), 123, 'a'.repeat(64)])(
     'returns only a valid trusted Literature checksum (%s), without reading content',
