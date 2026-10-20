@@ -4954,52 +4954,56 @@ const seedWorkspaceStores = (): void => {
 }
 
 describe('PreviewFileSurface View in context entry', () => {
-  it.each(['context', 'more', 'toolbar'] as const)(
-    'hides an artifact from the %s entry',
-    async (entry) => {
-      seedWorkspaceStores()
-      const setArtifactHidden = vi.fn().mockResolvedValue(undefined)
-      window.api.projectFiles = { ...window.api.projectFiles, setArtifactHidden }
-      const onClose = vi.fn()
+  it.each([
+    ['context', undefined],
+    ['more', undefined],
+    ['toolbar', undefined],
+    ['context', 'artifact'],
+    ['more', 'artifact'],
+    ['toolbar', 'artifact']
+  ] as const)('hides an artifact from the %s entry with source %s', async (entry, source) => {
+    seedWorkspaceStores()
+    const setArtifactHidden = vi.fn().mockResolvedValue(undefined)
+    window.api.projectFiles = { ...window.api.projectFiles, setArtifactHidden }
+    const onClose = vi.fn()
+    await act(async () => {
+      root.render(
+        <PreviewFileSurface
+          item={{ ...item, source, projectId: 'project-1', managedFileId: 'artifact-1' }}
+          onClose={onClose}
+          provenanceEntry={entry === 'toolbar' ? 'trailing' : 'menu'}
+        />
+      )
+    })
+    if (entry === 'context') {
       await act(async () => {
-        root.render(
-          <PreviewFileSurface
-            item={{ ...item, projectId: 'project-1', managedFileId: 'artifact-1' }}
-            onClose={onClose}
-            provenanceEntry={entry === 'toolbar' ? 'trailing' : 'menu'}
-          />
+        container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(
+          new MouseEvent('contextmenu', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 20,
+            clientY: 20
+          })
         )
       })
-      if (entry === 'context') {
-        await act(async () => {
-          container.querySelector('[data-testid="preview-content"]')?.dispatchEvent(
-            new MouseEvent('contextmenu', {
-              bubbles: true,
-              cancelable: true,
-              clientX: 20,
-              clientY: 20
-            })
-          )
-        })
-        expect(document.body.textContent).toContain('Hide file')
-        await clickMenuItem('Hide file')
-      } else if (entry === 'more') {
-        await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
-        expect(document.body.textContent).toContain('Hide file')
-        await clickMenuItem('Hide file')
-      } else {
-        const hide = container.querySelector<HTMLElement>('[aria-label="Hide sin.png"]')
-        expect(hide).not.toBeNull()
-        await click(hide)
-      }
-      expect(setArtifactHidden).toHaveBeenCalledWith({
-        projectId: 'project-1',
-        fileId: 'artifact-1',
-        hidden: true
-      })
-      expect(onClose).toHaveBeenCalled()
+      expect(document.body.textContent).toContain('Hide file')
+      await clickMenuItem('Hide file')
+    } else if (entry === 'more') {
+      await openMenu(container.querySelector('[aria-label="File actions for sin.png"]'))
+      expect(document.body.textContent).toContain('Hide file')
+      await clickMenuItem('Hide file')
+    } else {
+      const hide = container.querySelector<HTMLElement>('[aria-label="Hide sin.png"]')
+      expect(hide).not.toBeNull()
+      await click(hide)
     }
-  )
+    expect(setArtifactHidden).toHaveBeenCalledWith({
+      projectId: 'project-1',
+      fileId: 'artifact-1',
+      hidden: true
+    })
+    expect(onClose).toHaveBeenCalled()
+  })
 
   it('closes after the visibility broadcast revokes the content before hide resolves', async () => {
     seedWorkspaceStores()

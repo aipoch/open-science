@@ -34,7 +34,6 @@ import type { ArtifactPreviewResult } from '../../../../shared/artifacts'
 import type { GrantedLocalRoot } from '../../../../shared/local-fs'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 
-import { ArtifactHideButton } from './ArtifactHideButton'
 import { ArtifactPreview } from './artifact-preview'
 import { ExtensionPreservingFileName } from './ExtensionPreservingFileName'
 import { FileTypeIcon } from './file-type-icon'
@@ -123,9 +122,6 @@ const FileActionButtons = ({
           className
         )}
       >
-        {source === 'artifact' ? (
-          <ArtifactHideButton projectId={projectId} fileId={fileId} name={name} />
-        ) : null}
         <ManagedFileDownloadButton
           source={source}
           path={path}

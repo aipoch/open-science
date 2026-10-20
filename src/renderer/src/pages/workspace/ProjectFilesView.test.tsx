@@ -394,26 +394,39 @@ describe('ProjectFilesView', () => {
     })
   }
 
-  it('offers Hide on generated files and keeps a dedicated Hidden filter reachable', async () => {
-    await renderView([
-      createSession({
-        artifacts: [
-          {
-            id: 'artifact-hide',
-            kind: 'managed-file',
-            path: '/workspace/result.txt',
-            name: 'result.txt'
-          }
-        ]
+  it.each(['Grid view', 'List view'])(
+    'omits hover Hide in %s and keeps the Hidden filter reachable',
+    async (view) => {
+      await renderView([
+        createSession({
+          artifacts: [
+            {
+              id: 'artifact-hide',
+              kind: 'managed-file',
+              path: '/workspace/result.txt',
+              name: 'result.txt'
+            }
+          ]
+        })
+      ])
+      if (view === 'List view') {
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[aria-label="List view"]')!.click()
+        )
+      }
+      expect(
+        container.querySelector('[aria-label="Preview generated file result.txt"]')
+      ).not.toBeNull()
+      expect(container.querySelector('[aria-label="Hide result.txt"]')).toBeNull()
+      expect(
+        container.querySelector('[aria-label="Open result.txt in split view beside the session"]')
+      ).not.toBeNull()
+      await act(async () => {
+        clickDropdownTrigger(container.querySelector('[aria-label="Filter project files"]'))
       })
-    ])
-    const hide = container.querySelector<HTMLButtonElement>('[aria-label="Hide result.txt"]')
-    expect(hide).not.toBeNull()
-    await act(async () => {
-      clickDropdownTrigger(container.querySelector('[aria-label="Filter project files"]'))
-    })
-    expect(document.querySelector('[data-filter-id="hidden"]')?.textContent).toContain('Hidden')
-  })
+      expect(document.querySelector('[data-filter-id="hidden"]')?.textContent).toContain('Hidden')
+    }
+  )
 
   it('renders an empty state when the project has no files', async () => {
     await renderView([])

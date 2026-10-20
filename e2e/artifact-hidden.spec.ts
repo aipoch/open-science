@@ -2,6 +2,9 @@ import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProject, sendPrompt } from './certification/helpers'
 
+// Native iframe context-menu events need a presented Electron window on macOS.
+test.use({ windowMode: 'normal' })
+
 test('persists Hidden across relaunch and revokes ordinary Electron reads', async ({ app }) => {
   let page = await app.completeOnboarding()
   page = await app.configureFakeAgent()
@@ -33,10 +36,35 @@ test('persists Hidden across relaunch and revokes ordinary Electron reads', asyn
     file
   )
   await page.getByRole('button', { name: 'Files', exact: true }).click()
-  await page.getByRole('button', { name: 'Hide context-menu.html', exact: true }).click()
+  const fileCard = page.getByRole('button', {
+    name: 'Preview generated file context-menu.html',
+    exact: true
+  })
+  await fileCard.hover()
   await expect(
     page.getByRole('button', { name: 'Hide context-menu.html', exact: true })
   ).toHaveCount(0)
+  await page
+    .getByRole('button', {
+      name: 'Open context-menu.html in split view beside the session',
+      exact: true
+    })
+    .click()
+  await page
+    .getByTestId('preview-card')
+    .frameLocator('iframe[title="Preview of context-menu.html"]')
+    .getByText('Managed frame content.', { exact: true })
+    .click({ button: 'right' })
+  await expect(
+    page.getByTestId('preview-content-context-menu').getByRole('menuitem', {
+      name: 'Hide file',
+      exact: true
+    })
+  ).toBeVisible()
+  await page.keyboard.press('Escape')
+  await page.getByRole('button', { name: 'File actions for context-menu.html' }).click()
+  await page.getByRole('menuitem', { name: 'Hide file', exact: true }).click()
+  await expect(fileCard).toHaveCount(0)
   expect(
     await page.evaluate(
       async ({ file, lease }) => {

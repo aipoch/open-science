@@ -1638,7 +1638,8 @@ const PreviewFileSurfaceContent = forwardRef<
                   }
                 }
               : {}),
-            ...(resolvedPreviewItem.source === 'artifact' &&
+            // Generated file projections omit source; use the same artifact default as reads.
+            ...((resolvedPreviewItem.source ?? 'artifact') === 'artifact' &&
             resolvedPreviewItem.projectId &&
             resolvedPreviewItem.managedFileId
               ? {
