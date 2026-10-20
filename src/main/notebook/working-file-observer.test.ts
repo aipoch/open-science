@@ -27,6 +27,8 @@ import { reproductionRecipes } from '../artifacts/reproducibility-host'
 
 import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 import {
+  maintainWorkingFileEvidence,
+  withWorkingFileEvidenceRead,
   batchComputeProjectEvidenceRequests,
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
@@ -81,6 +83,149 @@ afterEach(async () => {
 })
 
 describe('working-file evidence', () => {
+  it.each([
+    'unused',
+    'duplicate',
+    'unresolved',
+    'corrupt',
+    'pending',
+    'symlink',
+    'unknown',
+    'cross-session',
+    'export-read',
+    'different-content',
+    'unowned-project',
+    'unknown-relation',
+    'unknown-generation',
+    'interrupted-compaction'
+  ] as const)('maintains historical evidence conservatively: %s', async (condition) => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot!, 'execution-file-evidence', 'history-project')
+    const location = {
+      storageRoot: storageRoot!,
+      root: join(projectRoot, 'session-1'),
+      storageKeyPrefix: 'execution-file-evidence/history-project/session-1'
+    }
+    const content = 'retained data'
+    await writeFile(join(dataRoot, 'keep.txt'), content)
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: "open('keep.txt').read()",
+        runId: 'history-run',
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: location.root,
+        fileEvidenceStoragePrefix: location.storageKeyPrefix
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    const result = await observation.finish()
+    await completeWorkingFileEvidence(location, {
+      runId: 'history-run',
+      fileEvidence: result.fileEvidence
+    })
+    const key = result.fileEvidence.storageKey!
+    const path = join(storageRoot!, key)
+    const sidecar = JSON.parse(await readFile(path, 'utf8'))
+    const activity = dirname(path)
+    const retainedPath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
+    const retainedPool = join(
+      projectRoot,
+      'blobs',
+      `sha256-${sidecar.relations[0].generation.checksum}`
+    )
+    const orphanContent = 'old unused capture'
+    const orphanHash = createHash('sha256').update(orphanContent).digest('hex')
+    const orphanPool = join(projectRoot, 'blobs', `sha256-${orphanHash}`)
+    const orphanPath = join(activity, 'blobs', `sha256-${orphanHash}`)
+    await writeFile(orphanPool, orphanContent)
+    await link(orphanPool, orphanPath)
+    const owner = {
+      receiptName: 'receipt-history-run.json',
+      finalName: 'activity-history-run',
+      activityId: 'history-run',
+      activityKind: 'notebook-run' as const,
+      evidenceId: result.fileEvidence.evidenceId!,
+      checksum: result.fileEvidence.checksum!,
+      storageKey: key
+    }
+    if (condition === 'duplicate' || condition === 'interrupted-compaction') {
+      await unlink(retainedPath)
+      await writeFile(retainedPath, content)
+      expect((await stat(retainedPath)).ino).not.toBe((await stat(retainedPool)).ino)
+    }
+    if (condition === 'interrupted-compaction')
+      await link(
+        retainedPool,
+        join(dirname(retainedPath), `.compact-sha256-${sidecar.relations[0].generation.checksum}`)
+      )
+    if (condition === 'unowned-project')
+      await unlink(join(projectRoot, '..', '.project-ownership-history-project.json'))
+    if (condition === 'unknown-relation' || condition === 'unknown-generation') {
+      if (condition === 'unknown-relation') sidecar.relations[0].relation = 'future-reference'
+      else sidecar.relations[0].generation.futureReference = 'unknown'
+      const bytes = JSON.stringify(sidecar)
+      await writeFile(path, bytes)
+      owner.checksum = createHash('sha256').update(bytes).digest('hex')
+    }
+    if (condition === 'unresolved') {
+      sidecar.relations[0].previousGenerationId = 'lost-generation'
+      const bytes = JSON.stringify(sidecar)
+      await writeFile(path, bytes)
+      owner.checksum = createHash('sha256').update(bytes).digest('hex')
+    }
+    if (condition === 'corrupt') await writeFile(path, '{broken')
+    if (condition === 'pending') await writeFile(join(location.root, 'receipt-running.json'), '{}')
+    if (condition === 'unknown') await writeFile(join(projectRoot, 'unknown-format'), 'retain')
+    if (condition === 'symlink') await symlink(dataRoot, join(projectRoot, 'outside'), 'junction')
+    if (condition === 'different-content') {
+      await unlink(orphanPath)
+      await writeFile(orphanPath, 'unexpected occupant')
+    }
+    if (condition === 'cross-session') {
+      const other = join(projectRoot, 'session-2', 'frames', 'frame-2', 'activity-other')
+      await mkdir(other, { recursive: true })
+      await writeFile(
+        join(other, 'evidence.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          evidenceId: 'other',
+          state: 'available',
+          activityId: 'other',
+          activityKind: 'notebook-run',
+          relations: [
+            {
+              relation: 'present-before',
+              generation: {
+                generationId: 'other',
+                checksum: orphanHash,
+                sizeBytes: orphanContent.length,
+                contentStorageKey: `${location.storageKeyPrefix}/activity-history-run/blobs/sha256-${orphanHash}`
+              }
+            }
+          ]
+        })
+      )
+    }
+    if (condition === 'export-read') {
+      await withWorkingFileEvidenceRead(storageRoot!, 'history-project', async () => {
+        await maintainWorkingFileEvidence(location, [owner])
+        await expect(readFile(orphanPath, 'utf8')).resolves.toBe(orphanContent)
+      })
+    }
+    await maintainWorkingFileEvidence(location, [owner])
+    if (['unused', 'duplicate', 'export-read', 'interrupted-compaction'].includes(condition)) {
+      await expect(stat(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(orphanPool)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect((await stat(retainedPath)).ino).toBe((await stat(retainedPool)).ino)
+      await maintainWorkingFileEvidence(location, [owner])
+    } else await expect(stat(orphanPath)).resolves.toBeDefined()
+    await expect(readFile(retainedPath, 'utf8')).resolves.toBe(content)
+  })
+
   it('recovers many empty Session directories with one worker per Project', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot!, 'execution-file-evidence')
@@ -1415,6 +1560,12 @@ describe('working-file evidence', () => {
         expect(sidecar.relations).toHaveLength(retained ? 1 : 0)
         if (usage === 'predecessor') {
           expect(sidecar.relations[0].previousGenerationId).toBe(`generation-${index}`)
+          expect(sidecar.predecessorGenerations).toEqual([
+            expect.objectContaining({
+              generationId: `generation-${index}`,
+              checksum: createHash('sha256').update(content).digest('hex')
+            })
+          ])
         }
         const name = `sha256-${createHash('sha256').update(content).digest('hex')}`
         const expected = retained ? [name] : []

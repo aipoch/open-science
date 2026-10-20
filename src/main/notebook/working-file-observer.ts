@@ -227,6 +227,12 @@ type EvidenceWorkerReconcileRequest = EvidenceWorkerBlobPoolBinding & {
     storageKey: string
   }>
 }
+type EvidenceWorkerHistoryRequest = EvidenceWorkerBlobPoolBinding & {
+  operation: 'compact-history'
+  expectedRootIdentity: FileIdentity
+  storageKeyPrefix: string
+  retained: EvidenceWorkerReconcileRequest['retained']
+}
 type EvidenceWorkerProjectReconcileRequest = {
   operation: 'reconcile-compute-project'
   expectedRootIdentity: FileIdentity
@@ -267,6 +273,7 @@ type EvidenceWorkerEnsureProjectRequest = {
 }
 type EvidenceWorkerRequest =
   | EvidenceWorkerBeginRequest
+  | EvidenceWorkerHistoryRequest
   | EvidenceWorkerEnsureCaptureRequest
   | EvidenceWorkerPersistRequest
   | EvidenceWorkerRecoverPublishedRequest
@@ -303,6 +310,7 @@ type EvidenceWorkerResult =
     }
   | { ok: true; removedProjectEntries: number }
   | { ok: true; projectOwned: true }
+  | { ok: true; maintainedFiles: number }
 
 type ActiveEvidenceCapture = {
   evidenceRoot: { path: string; identity: FileIdentity }
@@ -424,7 +432,8 @@ const assertEvidenceRootIdentity = async (path: string, expected: FileIdentity):
 
 const secureEvidenceRoot = async (
   storageRoot: string,
-  requestedEvidenceRoot: string
+  requestedEvidenceRoot: string,
+  create = true
 ): Promise<{ path: string; identity: FileIdentity }> => {
   const resolvedStorageRoot = resolve(storageRoot)
   await assertRealDirectory(resolvedStorageRoot)
@@ -436,7 +445,8 @@ const secureEvidenceRoot = async (
   let evidenceRoot = canonicalStorageRoot
   for (const segment of nested.split(sep)) {
     evidenceRoot = join(evidenceRoot, segment)
-    await ensureRealDirectory(evidenceRoot)
+    if (create) await ensureRealDirectory(evidenceRoot)
+    else await assertRealDirectory(evidenceRoot)
     if ((await realpath(evidenceRoot)) !== evidenceRoot) {
       throw new UnsafeEvidencePathError('Execution file-evidence root resolves through a symlink.')
     }
@@ -628,6 +638,81 @@ const runSerializedEvidenceWorker = async (
   }
 }
 
+const evidenceReaders = new Map<string, number>()
+const historyCursors = new Map<string, number>()
+const historyMaintenance = new Map<string, Promise<void>>()
+const evidenceProjectKey = (storageRoot: string, projectId: string): string =>
+  `${resolve(storageRoot)}\0${projectId}`
+
+// Establish the barrier before draining queued mutations, including maintenance already queued.
+export const withWorkingFileEvidenceRead = async <T>(
+  storageRoot: string,
+  projectId: string,
+  read: () => Promise<T>
+): Promise<T> => {
+  const key = evidenceProjectKey(storageRoot, projectId)
+  evidenceReaders.set(key, (evidenceReaders.get(key) ?? 0) + 1)
+  try {
+    await evidenceMutationTail.catch(() => undefined)
+    return await read()
+  } finally {
+    const remaining = (evidenceReaders.get(key) ?? 1) - 1
+    if (remaining) evidenceReaders.set(key, remaining)
+    else evidenceReaders.delete(key)
+  }
+}
+
+export const maintainWorkingFileEvidence = (
+  location: WorkingFileEvidenceLocation,
+  retained: EvidenceWorkerReconcileRequest['retained']
+): Promise<void> => {
+  const project = projectEvidenceScope(
+    location.storageRoot,
+    location.root,
+    location.storageKeyPrefix
+  )
+  if (!project || retained.length === 0) return Promise.resolve()
+  const projectKey = evidenceProjectKey(location.storageRoot, project.projectId)
+  if (evidenceReaders.has(projectKey)) return Promise.resolve()
+  const key = resolve(location.root)
+  const pending = historyMaintenance.get(key)
+  if (pending) return pending
+  const operation = (async () => {
+    const root = await secureEvidenceRoot(location.storageRoot, location.root, false)
+    const pool = await secureEvidenceRoot(
+      location.storageRoot,
+      join(project.projectRoot, 'blobs'),
+      false
+    )
+    const cursor = (historyCursors.get(key) ?? 0) % retained.length
+    const batch = [...retained.slice(cursor), ...retained.slice(0, cursor)].slice(0, 32)
+    historyCursors.set(key, (cursor + batch.length) % retained.length)
+    if (historyCursors.size > 256) historyCursors.delete(historyCursors.keys().next().value!)
+    await runSerializedEvidenceWorker(
+      async (...args) =>
+        evidenceReaders.has(projectKey)
+          ? { ok: true, maintainedFiles: 0 }
+          : runEvidenceWorker(...args),
+      root.path,
+      {
+        operation: 'compact-history',
+        expectedRootIdentity: root.identity,
+        blobRoot: pool.path,
+        expectedBlobRootIdentity: pool.identity,
+        blobStorageKeyPrefix: project.blobStorageKeyPrefix,
+        storageKeyPrefix: location.storageKeyPrefix,
+        retained: batch
+      }
+    )
+  })()
+    .catch((error) => {
+      log.debug('Historical evidence maintenance deferred', diagnosticErrorFields(error))
+    })
+    .finally(() => historyMaintenance.delete(key))
+  historyMaintenance.set(key, operation)
+  return operation
+}
+
 const ensureWorkingFileEvidenceProject = async (
   storageRoot: string,
   projectId: string,
@@ -749,6 +834,17 @@ const completeWorkingFileEvidence = async (
   if (!('removedStagingEntries' in result)) {
     throw new Error('File-evidence completion returned an invalid result.')
   }
+  await maintainWorkingFileEvidence(location, [
+    {
+      receiptName: receiptNameForActivity(run.runId),
+      finalName,
+      activityId: run.runId,
+      activityKind: 'notebook-run',
+      evidenceId: evidence.evidenceId,
+      checksum: evidence.checksum,
+      storageKey: evidence.storageKey
+    }
+  ])
 }
 
 const reconcileEvidenceReceipts = async (
@@ -912,6 +1008,7 @@ const reconcileWorkingFileEvidence = async (
     ['compute-job'],
     []
   )
+  await maintainWorkingFileEvidence(location, retainedNotebookRuns)
   const legacy = await reconcileLegacyNotebookEvidence(location, runs)
   return {
     removedStagingEntries: current.removedStagingEntries + legacy.removedStagingEntries,
@@ -1071,6 +1168,13 @@ const reconcileComputeJobFileEvidence = async (
       }
       removedStagingEntries += result.removedStagingEntries
       removedActivityEntries += result.removedActivityEntries
+    }
+    for (const session of projectSessions) {
+      if (session.deferredActivityIds.length === 0)
+        await maintainWorkingFileEvidence(
+          computeEvidenceLocation(storageRoot, projectName, session.sessionName),
+          session.retained
+        )
     }
   }
   return { removedStagingEntries, removedActivityEntries }
@@ -2531,6 +2635,18 @@ const settleComputeJobFileEvidence = async (request: {
     checksum: evidence.checksum,
     storageKey: evidence.storageKey
   })
+  await maintainWorkingFileEvidence(location, [
+    {
+      receiptName: receiptNameForActivity(request.jobId),
+      finalName,
+      activityId: request.jobId,
+      activityKind: 'compute-job',
+      ...(request.producerRunId ? { parentActivityId: request.producerRunId } : {}),
+      evidenceId: evidence.evidenceId,
+      checksum: evidence.checksum,
+      storageKey: evidence.storageKey
+    }
+  ])
 }
 
 export {

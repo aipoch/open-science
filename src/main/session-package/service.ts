@@ -1,3 +1,4 @@
+import { withWorkingFileEvidenceRead } from '../notebook/working-file-observer'
 import type { PackageLiteratureSource } from './literature-source'
 import { isSensitiveDiagnosticKey } from '@aipoch/diagnostics'
 import {
@@ -555,6 +556,16 @@ export class SessionPackageService {
     options: PackageSnapshotOptions
   ): Promise<SessionPackagePreview> {
     const request = sessionPackageRequestSchema.parse(rawRequest)
+    return withWorkingFileEvidenceRead(this.options.storageRoot, request.projectId, () =>
+      this.exportSnapshot(request, path, options)
+    )
+  }
+
+  private async exportSnapshot(
+    request: SessionPackageRequest,
+    path: string,
+    options: PackageSnapshotOptions
+  ): Promise<SessionPackagePreview> {
     const sessions = new SessionRepository(this.configRoot)
     const loaded = await loadSessionMutationAuthority(
       sessions,
@@ -641,6 +652,7 @@ export class SessionPackageService {
             .map((entry) => ({
               storageKey: entry.storageKey!,
               filename: entry.storageKey!,
+              checksum: entry.checksum,
               sizeBytes: entry.sizeBytes
             }))
         },
@@ -856,6 +868,7 @@ export class SessionPackageService {
       [...selectable, ...inheritedExclusions].map((file) => file.storageKey)
     )
     const retainedFiles: PackageSelectionSummary['retainedFiles'] = []
+    const measuredContent = new Map<string, { checksum: string; sizeBytes: number }>()
     for (const key of new Set([
       ...nativeStorageKeys(records),
       ...notebookKeys,
@@ -865,11 +878,20 @@ export class SessionPackageService {
       if (optionalKeys.has(key)) continue
       this.signal.throwIfAborted()
       await assertPackageSourcePath(this.options.storageRoot, sourceKey(key))
-      retainedFiles.push({
-        storageKey: key,
-        filename: key,
-        sizeBytes: (await lstat(resolveStorageKey(this.options.storageRoot, sourceKey(key)))).size
-      })
+      const original = resolveStorageKey(this.options.storageRoot, sourceKey(key))
+      const metadata = await lstat(original)
+      // Shared evidence paths can name one immutable inode; do not reread it per activity.
+      const identity =
+        metadata.ino > 0
+          ? [metadata.dev, metadata.ino, metadata.size, metadata.mtimeMs, metadata.ctimeMs].join(
+              ':'
+            )
+          : key
+      const integrity =
+        measuredContent.get(identity) ??
+        (await digestFileWithinBudget(original, metadata.size, this.signal))
+      measuredContent.set(identity, integrity)
+      retainedFiles.push({ storageKey: key, filename: key, ...integrity })
     }
     const sessionJson = JSON.stringify({ version: 2, session: sharedSession })
     let recordsJson = JSON.stringify(records)

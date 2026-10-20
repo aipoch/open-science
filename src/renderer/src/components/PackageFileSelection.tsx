@@ -20,6 +20,8 @@ import type {
 
 import {
   formatPackageBytes as packageBytes,
+  packageContentBytes,
+  packageContentIdentity,
   PACKAGE_MAX_FILE_BYTES
 } from '../../../shared/session-package'
 const PAGE_SIZE = 25
@@ -58,23 +60,31 @@ export const PackageFileSelection = ({
     { id: 'execution-file-evidence', label: t('Execution evidence') },
     { id: 'other', label: t('Other files') }
   ]
-  const retainedFiles = useMemo(
-    () =>
-      [...(summary?.retainedFiles ?? [])]
-        .map((file) => {
-          const source = file.storageKey.split('/')[0]
-          return {
-            ...file,
-            category: ['notebooks', 'artifacts', 'uploads', 'execution-file-evidence'].includes(
-              source
-            )
+  const retainedFiles = useMemo(() => {
+    const groups = new Map<
+      string,
+      PackageSelectionSummary['retainedFiles'][number] & { paths: string[] }
+    >()
+    for (const file of summary?.retainedFiles ?? []) {
+      const identity = packageContentIdentity(file)
+      const existing = groups.get(identity)
+      if (existing) existing.paths.push(file.storageKey)
+      else groups.set(identity, { ...file, paths: [file.storageKey] })
+    }
+    return [...groups.values()]
+      .map((file) => {
+        const source = file.storageKey.split('/')[0]
+        return {
+          ...file,
+          category: ['notebook-file-evidence', 'file-evidence'].includes(source)
+            ? 'execution-file-evidence'
+            : ['notebooks', 'artifacts', 'uploads', 'execution-file-evidence'].includes(source)
               ? source
               : 'other'
-          }
-        })
-        .sort((a, b) => b.sizeBytes - a.sizeBytes),
-    [summary?.retainedFiles]
-  )
+        }
+      })
+      .sort((a, b) => b.sizeBytes - a.sizeBytes)
+  }, [summary?.retainedFiles])
   const retainedByCategory = useMemo(() => {
     const groups = new Map<string, typeof retainedFiles>()
     for (const file of retainedFiles) {
@@ -127,22 +137,16 @@ export const PackageFileSelection = ({
       return { excludedStorageKeys: [...next], selectionPreset: 'custom' }
     })
   const stats = useMemo(() => {
-    let selectedBytes = 0,
-      requiredBytes = 0,
-      optionalCount = 0,
-      selectedOptionalCount = 0,
-      selectedOptionalBytes = 0
+    let optionalCount = 0,
+      selectedOptionalCount = 0
     let oversized = false,
       requiredOversized = false
     for (const file of files) {
       const selected = !excluded.has(file.storageKey)
-      if (selected) selectedBytes += file.sizeBytes
-      if (file.requiredForEvidence) requiredBytes += file.sizeBytes
-      else {
+      if (!file.requiredForEvidence) {
         optionalCount++
         if (selected) {
           selectedOptionalCount++
-          selectedOptionalBytes += file.sizeBytes
         }
       }
       if (file.sizeBytes > PACKAGE_MAX_FILE_BYTES) {
@@ -150,21 +154,32 @@ export const PackageFileSelection = ({
         if (file.requiredForEvidence) requiredOversized = true
       }
     }
+    const requiredContent = [
+      ...(summary?.retainedFiles ?? []),
+      ...files.filter((file) => file.requiredForEvidence)
+    ]
     return {
-      selectedBytes,
-      requiredBytes,
+      selectedBytes:
+        packageContentBytes([
+          ...(summary?.retainedFiles ?? []),
+          ...files.filter((file) => !excluded.has(file.storageKey))
+        ]) - packageContentBytes(summary?.retainedFiles ?? []),
+      requiredBytes:
+        packageContentBytes(requiredContent) - packageContentBytes(summary?.retainedFiles ?? []),
       optionalCount,
       selectedOptionalCount,
-      selectedOptionalBytes,
+      selectedOptionalBytes:
+        packageContentBytes([
+          ...requiredContent,
+          ...files.filter((file) => !file.requiredForEvidence && !excluded.has(file.storageKey))
+        ]) - packageContentBytes(requiredContent),
       oversized,
       requiredOversized
     }
-  }, [files, excluded])
+  }, [files, excluded, summary])
   const { selectedBytes, oversized, requiredOversized } = stats
   const retainedBytes = useMemo(
-    () =>
-      (summary?.metadataBytes ?? 0) +
-      (summary?.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0) ?? 0),
+    () => (summary?.metadataBytes ?? 0) + packageContentBytes(summary?.retainedFiles ?? []),
     [summary]
   )
   const compactUnavailable = files.some(
@@ -363,9 +378,7 @@ export const PackageFileSelection = ({
                     </Tooltip>
                   </TooltipProvider>
                   <span className="ml-auto tabular-nums text-muted-foreground">
-                    {packageBytes(
-                      summary.retainedFiles.reduce((sum, file) => sum + file.sizeBytes, 0)
-                    )}
+                    {packageBytes(packageContentBytes(summary.retainedFiles))}
                   </span>
                   <Button
                     variant="ghost"
@@ -413,9 +426,17 @@ export const PackageFileSelection = ({
                         )
                         .map((file) => (
                           <div key={file.storageKey} className="flex gap-3 py-1">
-                            <span className="min-w-0 flex-1 truncate" title={file.filename}>
-                              {file.filename.split(/[\\/]/).pop() || file.filename}
-                            </span>
+                            <details className="min-w-0 flex-1">
+                              <summary className="truncate" title={file.filename}>
+                                {file.filename.split(/[\\/]/).pop() || file.filename}
+                                {file.paths.length > 1 ? ` ×${file.paths.length}` : ''}
+                              </summary>
+                              {file.paths.map((path) => (
+                                <div key={path} className="break-all text-muted-foreground">
+                                  {path}
+                                </div>
+                              ))}
+                            </details>
                             {!retainedCategory ? (
                               <span className="shrink-0 text-muted-foreground">
                                 {

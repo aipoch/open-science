@@ -61,6 +61,7 @@ export const selectablePackageFiles = (
         storageKey: String(row.contentStorageKey),
         filename: String(row.filename),
         sizeBytes: Number(row.sizeBytes),
+        checksum: String(row.checksum),
         groupId: String(row.artifactId ?? row.uploadFileId),
         source:
           table === 'ArtifactVersion'
