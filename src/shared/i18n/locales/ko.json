@@ -3285,7 +3285,6 @@
     "{{count}} months ago_other": "{{count}}개월 전",
     "{{count}} packages_other": "패키지 {{count}}개",
     "{{count}} repl_other": "REPL {{count}}개",
-    "{{count}} questions_other": "총 {{count}}문항",
     "{{count}} results_other": "결과 {{count}}개",
     "1 result": "결과 1개",
     "{{count}} running · {{elapsed}}_other": "{{count}}개 실행 중 · {{elapsed}}",

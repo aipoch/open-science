@@ -63,10 +63,8 @@ for (const surface of ['main', 'delegate']) {
         page.getByTestId('elicitation-answer-summary').getByTestId('choice-kind-chip')
       ).toHaveText('Single select')
       await page.getByTestId('elicitation-answer-row').click()
-      await expect(page.getByTestId('choice-kind-chip')).toHaveText([
-        'Single select',
-        'Single select'
-      ])
+      await expect(page.getByTestId('choice-kind-chip')).toHaveText('Single select')
+      await expect(page.getByRole('heading', { name: 'Which outputs?' })).toHaveCount(1)
     }
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)
@@ -95,9 +93,60 @@ test('mixed questions keep long localized chips clear of the progress indicator 
   await expect(page.getByTestId('choice-kind-chip')).toHaveText('Один вариант')
   await page.getByTestId('elicitation-option-Option 2').click()
   await page.getByRole('button', { name: 'Завершить', exact: true }).click()
-  const rows = page.getByTestId('elicitation-answer-row')
-  await expect(rows.nth(0).getByTestId('choice-kind-chip')).toHaveText('Несколько вариантов')
-  await expect(rows.nth(1).getByTestId('choice-kind-chip')).toHaveText('Один вариант')
+  const records = page.getByTestId('elicitation-question-record')
+  await expect(records.nth(0).getByTestId('choice-kind-chip')).toHaveText('Несколько вариантов')
+  await expect(records.nth(1).getByTestId('choice-kind-chip')).toHaveText('Один вариант')
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
+    true
+  )
+})
+
+test('three recorded questions expose independent answer disclosures without repeating titles', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 390, height: 800 })
+  await page.goto('/ask-user.html?review=1')
+  const records = page.getByTestId('elicitation-question-record')
+  await expect(records).toHaveCount(3)
+  await expect(page.getByRole('heading')).toHaveText([
+    'Which outputs?',
+    'Which approach should we use for the next phase of this research project?',
+    'Which resources are available?'
+  ])
+  await expect(page.getByText('3 questions', { exact: false })).toHaveCount(0)
+  const firstAnswer = records.nth(0).getByTestId('elicitation-answer-row')
+  await expect(firstAnswer).toHaveText('Option 1, Option 3')
+  await records.nth(0).getByRole('heading').click()
+  await expect(firstAnswer).toHaveAttribute('aria-expanded', 'false')
+  await firstAnswer.focus()
+  await page.keyboard.press('Enter')
+  await expect(firstAnswer).toHaveAttribute('aria-expanded', 'true')
+  await expect(firstAnswer).toBeFocused()
+  const options = records.nth(0).getByTestId('elicitation-choice-review')
+  await expect(options.getByRole('heading')).toHaveCount(0)
+  await expect(options.getByTestId('choice-kind-chip')).toHaveCount(0)
+  await expect(options.locator('[data-testid^="elicitation-option-"]')).toHaveCount(16)
+  await expect(options.getByTestId('elicitation-option-Option 1')).toHaveAttribute(
+    'data-selected',
+    'true'
+  )
+  await expect(options.getByTestId('elicitation-option-Option 3')).toHaveAttribute(
+    'data-selected',
+    'true'
+  )
+  await expect(options.getByTestId('elicitation-option-Option 16')).toHaveAttribute(
+    'data-selected',
+    'false'
+  )
+  const secondAnswer = records.nth(1).getByTestId('elicitation-answer-row')
+  await secondAnswer.focus()
+  await page.keyboard.press('Space')
+  await expect(secondAnswer).toHaveAttribute('aria-expanded', 'true')
+  await firstAnswer.click()
+  await expect(firstAnswer).toHaveAttribute('aria-expanded', 'false')
+  await expect(secondAnswer).toHaveAttribute('aria-expanded', 'true')
+  await expect(page.getByRole('heading')).toHaveCount(3)
+  await expect(page.getByTestId('choice-kind-chip')).toHaveCount(3)
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true
   )

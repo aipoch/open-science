@@ -3359,7 +3359,6 @@
     "{{count}} months ago_other": "{{count}} 個月前",
     "{{count}} packages_other": "{{count}} 個套件",
     "{{count}} repl_other": "{{count}} repl",
-    "{{count}} questions_other": "共 {{count}} 問",
     "{{count}} results_other": "{{count}} 筆結果",
     "1 result": "1 筆結果",
     "{{count}} running · {{elapsed}}_other": "{{count}} 個執行中 · {{elapsed}}",

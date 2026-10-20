@@ -220,16 +220,17 @@ describe('WorkspaceElicitationCard choice question', () => {
       container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
     )
     expect(
-      rows.map((row) => row.querySelector('[data-testid="choice-kind-chip"]')?.textContent)
+      rows.map(
+        (row) => row.parentElement?.querySelector('[data-testid="choice-kind-chip"]')?.textContent
+      )
     ).toEqual(['Multi select', 'Single select'])
     expect(container.querySelector('svg.lucide-circle-question-mark')).toBeNull()
     await act(async () => rows[1].click())
     const review = container.querySelector(
       '[data-testid="elicitation-choice-review"]'
     )!.parentElement!
-    expect(review.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
-      'Single select'
-    )
+    expect(review.querySelector('[data-testid="choice-kind-chip"]')).toBeNull()
+    expect(review.querySelector('h3')).toBeNull()
     expect(
       review
         .querySelector('[data-testid="elicitation-option-english"]')
@@ -254,7 +255,9 @@ describe('WorkspaceElicitationCard choice question', () => {
       )
       const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
       expect(
-        rows.map((row) => row.querySelector('[data-testid="choice-kind-chip"]')?.textContent)
+        rows.map(
+          (row) => row.parentElement?.querySelector('[data-testid="choice-kind-chip"]')?.textContent
+        )
       ).toEqual(['Multi select', 'Single select'])
     }
   )
@@ -671,6 +674,11 @@ describe('WorkspaceElicitationCard choice question', () => {
       container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
     )
     expect(rows).toHaveLength(2)
+    expect(container.querySelectorAll('[data-testid="elicitation-question-record"]')).toHaveLength(
+      2
+    )
+    expect(rows[0]?.querySelector('h3')).toBeNull()
+    expect(rows[0]?.textContent).not.toContain('What should this skill primarily cover?')
     expect(rows[0]?.getAttribute('aria-expanded')).toBe('false')
     expect(rows[1]?.getAttribute('aria-expanded')).toBe('false')
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
@@ -696,7 +704,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     // The second question stays a collapsed list row — its options are not rendered.
     expect(container.querySelector('[data-testid="elicitation-option-chinese"]')).toBeNull()
     expect(container.textContent).toContain('What should this skill primarily cover?')
-    expect(container.textContent).not.toContain('Which language should the skill use?')
+    expect(container.textContent).toContain('Which language should the skill use?')
     // The custom-input row only appears when the recorded answer was a custom input.
     expect(container.querySelector('[data-testid="elicitation-custom-answer-review"]')).toBeNull()
     expect(container.querySelector('textarea')).toBeNull()
@@ -708,6 +716,10 @@ describe('WorkspaceElicitationCard choice question', () => {
     await act(async () => rows[1]?.click())
     expect(rows[1]?.getAttribute('aria-expanded')).toBe('true')
     expect(container.querySelectorAll('[data-testid="elicitation-choice-review"]')).toHaveLength(2)
+    expect(
+      Array.from(container.querySelectorAll('h3')).map((heading) => heading.textContent)
+    ).toEqual(['What should this skill primarily cover?', 'Which language should the skill use?'])
+    expect(container.querySelector('[data-testid="elicitation-choice-review"] h3')).toBeNull()
     expect(container.textContent).toContain('Which language should the skill use?')
     expect(
       container
@@ -747,21 +759,23 @@ describe('WorkspaceElicitationCard choice question', () => {
       'Single select'
     )
     expect(summary?.textContent).toContain('What should this skill primarily cover?')
-    expect(summary?.textContent).toContain('2 questions')
-    // The status sits on the title line itself, right after the icon, ahead of the title.
-    const headerText = summary?.querySelector('h3')?.textContent ?? ''
-    expect(headerText).toContain('Skipped')
-    expect(headerText.indexOf('Skipped')).toBeLessThan(
-      headerText.indexOf('What should this skill primarily cover?')
-    )
-    expect(summary?.querySelector('p')).toBeNull()
+    expect(summary?.textContent).not.toContain('2 questions')
+    expect(
+      Array.from(summary!.querySelectorAll('h3')).map((heading) => heading.textContent)
+    ).toEqual(['What should this skill primarily cover?', 'Which language should the skill use?'])
+    expect(summary?.querySelectorAll('h3')).toHaveLength(2)
 
     const rows = Array.from(
       container.querySelectorAll<HTMLButtonElement>('[data-testid="elicitation-answer-row"]')
     )
     expect(rows).toHaveLength(2)
+    expect(container.querySelectorAll('[data-testid="elicitation-question-record"]')).toHaveLength(
+      2
+    )
+    expect(rows[0]?.querySelector('h3')).toBeNull()
+    expect(rows[0]?.textContent).not.toContain('What should this skill primarily cover?')
     expect(rows[0]?.getAttribute('aria-expanded')).toBe('false')
-    expect(rows[0]?.textContent).toContain('Skill scope')
+    expect(rows[0]?.textContent).not.toContain('Skill scope')
     expect(container.querySelector('[data-testid="elicitation-choice-review"]')).toBeNull()
 
     // Clicking a row reveals that question's original content with nothing selected.
@@ -863,22 +877,25 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(card?.className).toContain('bg-bg-200')
     expect(card?.className).not.toContain('border-border-200')
 
-    // The header chip describes the first question; each answer row has its own type.
+    // Each independent question has one persistent title and its own type.
     const summary = container.querySelector('[data-testid="elicitation-answer-summary"]')
     expect(summary?.querySelector('[data-testid="choice-kind-chip"]')?.textContent).toBe(
       'Multi select'
     )
     expect(summary?.textContent).toContain('What should this skill primarily cover?')
-    expect(summary?.textContent).toContain('2 questions')
+    expect(summary?.textContent).not.toContain('2 questions')
+    expect(
+      Array.from(summary!.querySelectorAll('h3')).map((heading) => heading.textContent)
+    ).toEqual(['What should this skill primarily cover?', 'Which language should the skill use?'])
     expect(summary?.textContent).not.toContain('Please answer the following questions.')
     // No separator lines between summary rows.
-    expect(summary?.children[1]?.className).not.toContain('divide-y')
+    expect(summary?.children[0]?.className).not.toContain('divide-y')
 
     const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
     expect(rows).toHaveLength(2)
     expect(rows[0]?.querySelector('svg.lucide-chevron-down')).not.toBeNull()
     expect(rows[0]?.querySelector('svg.lucide-check')).not.toBeNull()
-    expect(rows[0]?.textContent).toContain('Skill scope')
+    expect(rows[0]?.textContent).not.toContain('Skill scope')
     expect(rows[0]?.textContent).toContain('Multi-omics integration, Clinical statistics')
     expect(rows[1]?.textContent).toContain('Chinese')
   })
@@ -924,12 +941,16 @@ describe('WorkspaceElicitationCard choice question', () => {
 
     const rows = Array.from(container.querySelectorAll('[data-testid="elicitation-answer-row"]'))
     expect(rows).toHaveLength(2)
-    // Custom answers live on the `question_N_custom` field whose label is "Other" — the row
-    // must surface the owning question's label instead.
-    expect(rows[0]?.textContent).toContain('Skill scope')
+    // Custom answers stay under their owning question, never a generic Other heading.
+    expect(rows[0]?.textContent).not.toContain('Skill scope')
     expect(rows[0]?.textContent).not.toContain('Other')
     expect(rows[0]?.textContent).toContain('Use our private sources')
-    expect(rows[1]?.textContent).toContain('Language')
+    expect(rows[0]?.parentElement?.querySelector('h3')?.textContent).toBe(
+      'What should this skill primarily cover?'
+    )
+    expect(rows[1]?.parentElement?.querySelector('h3')?.textContent).toBe(
+      'Which language should the skill use?'
+    )
     expect(rows[1]?.textContent).not.toContain('Other')
   })
 

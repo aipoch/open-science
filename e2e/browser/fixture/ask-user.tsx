@@ -8,6 +8,7 @@ import type { AgentUserChoicePrompt, ElicitationField } from '../../../src/share
 import type { ElicitationResponse } from '../../../src/shared/acp'
 
 const search = new URLSearchParams(location.search)
+document.documentElement.classList.toggle('dark', search.has('dark'))
 const kind = search.has('single') ? 'single-select' : 'multi-select'
 const options = Array.from({ length: 16 }, (_, index) => ({
   label: `Option ${index + 1}`,
@@ -15,10 +16,19 @@ const options = Array.from({ length: 16 }, (_, index) => ({
 }))
 const questions: AgentUserChoicePrompt[] = [
   { question: 'Which outputs?', kind, options },
-  ...(search.has('mixed')
+  ...(search.has('mixed') || search.has('review')
     ? [
         {
           question: 'Which approach should we use for the next phase of this research project?',
+          kind: 'single-select' as const,
+          options: options.slice(0, 2)
+        }
+      ]
+    : []),
+  ...(search.has('review')
+    ? [
+        {
+          question: 'Which resources are available?',
           kind: 'single-select' as const,
           options: options.slice(0, 2)
         }
@@ -35,7 +45,19 @@ const fields: ElicitationField[] = questions.flatMap((question, index) => [
   { id: `question_${index}_custom`, label: 'Other', kind: 'text' }
 ])
 export const Fixture = (): React.JSX.Element => {
-  const [response, setResponse] = useState<ElicitationResponse>()
+  const [response, setResponse] = useState<ElicitationResponse | undefined>(() =>
+    search.has('review')
+      ? {
+          requestId: 'question-1',
+          action: 'accept',
+          answers: [
+            { fieldId: 'question_0', value: ['Option 1', 'Option 3'] },
+            { fieldId: 'question_1', value: 'Option 2' },
+            { fieldId: 'question_2', value: 'Option 1' }
+          ]
+        }
+      : undefined
+  )
   const onRespond = async (value: ElicitationResponse): Promise<void> => {
     setResponse(value)
   }
@@ -81,7 +103,12 @@ export const Fixture = (): React.JSX.Element => {
           onRespond={onRespond}
         />
       )}
-      <pre data-testid="submitted-answer">{response && JSON.stringify(response)}</pre>
+      <pre
+        className="mt-4 whitespace-pre-wrap break-words text-xs text-text-300"
+        data-testid="submitted-answer"
+      >
+        {response && JSON.stringify(response)}
+      </pre>
     </main>
   )
 }

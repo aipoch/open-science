@@ -3274,7 +3274,6 @@
     "{{count}} months ago_other": "{{count}} か月前",
     "{{count}} packages_other": "{{count}} パッケージ",
     "{{count}} repl_other": "{{count}} REPL",
-    "{{count}} questions_other": "全 {{count}} 問",
     "{{count}} results_other": "{{count}} 件の結果",
     "1 result": "1 件の結果",
     "{{count}} running · {{elapsed}}_other": "{{count}} が実行中 · {{elapsed}}",

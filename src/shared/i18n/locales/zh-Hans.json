@@ -3361,7 +3361,6 @@
     "{{count}} months ago_other": "{{count}} 个月前",
     "{{count}} packages_other": "{{count}} 个软件包",
     "{{count}} repl_other": "{{count}} repl",
-    "{{count}} questions_other": "共 {{count}} 问",
     "{{count}} results_other": "{{count}} 条结果",
     "1 result": "1 条结果",
     "{{count}} running · {{elapsed}}_other": "{{count}} 个运行中 · {{elapsed}}",
