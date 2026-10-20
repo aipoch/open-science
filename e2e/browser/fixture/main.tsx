@@ -93,6 +93,32 @@ if (new URLSearchParams(location.search).has('search-shortcuts')) {
   })
 }
 
+if (new URLSearchParams(location.search).has('capability-scroll')) {
+  useSettingsStore.setState({
+    skills: Array.from({ length: 40 }, (_, index) => ({
+      id: `scroll-skill-${index}`,
+      name: `Scroll skill ${String(index).padStart(2, '0')}`,
+      displayName: `Scroll skill ${String(index).padStart(2, '0')}`,
+      description: '',
+      enabled: true,
+      available: true,
+      source: 'personal',
+      updatedAt: '2026-10-20T00:00:00.000Z'
+    })),
+    connectors: Array.from({ length: 40 }, (_, index) => ({
+      id: `scroll-connector-${index}`,
+      name: `scroll-connector-${index}`,
+      displayName: `Scroll connector ${String(index).padStart(2, '0')}`,
+      description: '',
+      enabled: true,
+      sources: [],
+      requiresNcbi: false,
+      autoAllow: false,
+      group: 'featured'
+    }))
+  })
+}
+
 const undoFixture = new URLSearchParams(location.search).has('undo')
 if (undoFixture) {
   const grants: PermissionGrantView[] = ['Attach connector', 'Attach skill', 'Create agent'].map(
