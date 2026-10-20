@@ -754,7 +754,115 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
-  it('routes live events into Workspace before snapshot reconciliation', async () => {
+  describe.each([
+    ['claude-code', 'claude-code', 'messages'],
+    ['opencode', 'opencode', 'chat-completions'],
+    ['codex-response', 'codex', 'responses'],
+    ['codex-bridge', 'codex', 'chat-completions']
+  ] as const)('send selection with %s', (executionPath, frameworkId, endpoint) => {
+    it.each(['completed-session', undefined, 'sending-session'] as const)(
+      'retains selection %s when another Session finishes preparing a send',
+      async (selectedSessionId) => {
+        useSettingsStore.setState({
+          activeProviderId: 'session-provider',
+          activeModel: 'session-model',
+          agentFrameworkId: frameworkId,
+          agentFrameworks: [
+            {
+              id: frameworkId,
+              displayName: frameworkId,
+              supportsSkills: true,
+              supportedApiTypes: [frameworkId === 'codex' ? 'responses' : endpoint]
+            }
+          ],
+          providers: [
+            {
+              id: 'session-provider',
+              type: 'custom',
+              name: 'Session',
+              apiEndpoints: [endpoint],
+              baseUrl: 'https://example.test/v1',
+              model: 'session-model',
+              models: ['session-model'],
+              supportsImageInput: false,
+              hasKey: true,
+              needsKey: false
+            }
+          ]
+        })
+        for (const sessionId of ['completed-session', 'sending-session']) {
+          useSessionStore.getState().appendUserMessage({
+            sessionId,
+            content: 'Earlier turn',
+            cwd: workspacePath,
+            projectId: 'project-1',
+            agentFrameworkId: frameworkId,
+            agentConfiguration: {
+              providerId: 'session-provider',
+              model: 'session-model',
+              reasoningEffort: 'low'
+            }
+          })
+          useSessionStore.getState().finishRun(sessionId)
+        }
+        const runtime = createRuntime(createSnapshot({ sessionIds: ['sending-session'] }))
+        runtimeMock.current = runtime
+        const preparationEntered = createDeferred<void>()
+        const releasePreparation = createDeferred<void>()
+        const saveSession = vi.mocked(window.api.sessions.saveSession)
+        const acknowledgeSave = saveSession.getMockImplementation()!
+        saveSession.mockImplementation(async (...args) => {
+          if (args[1]?.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')) {
+            preparationEntered.resolve()
+            await releasePreparation.promise
+          }
+          return acknowledgeSave(...args)
+        })
+        await render()
+        expect(
+          latest.resolveSessionRuntimeSelection('sending-session').historyReplayDescriptor.target
+        ).toBe(executionPath)
+
+        let sending!: ReturnType<typeof latest.sendMessage>
+        await act(async () => {
+          sending = latest.sendMessage({
+            sessionId: 'sending-session',
+            text: 'Continue the analysis.'
+          })
+          await preparationEntered.promise
+        })
+        await act(async () => {
+          if (selectedSessionId) useSessionStore.getState().selectSession(selectedSessionId)
+          else useSessionStore.getState().clearSelection()
+        })
+        expect(useSessionStore.getState().selectedSessionId).toBe(selectedSessionId)
+
+        await act(async () => {
+          releasePreparation.resolve()
+          await sending
+        })
+
+        expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+        expect(
+          useSessionStore
+            .getState()
+            .sessions.find(({ id }) => id === 'sending-session')
+            ?.messages.at(-1)?.content
+        ).toBe('Continue the analysis.')
+        expect(useSessionStore.getState().selectedSessionId).toBe(selectedSessionId)
+      }
+    )
+  })
+
+  it('routes background live events before snapshot reconciliation without switching Sessions', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'completed-session',
+      content: 'Earlier question',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    useSessionStore.getState().finishRun('completed-session')
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Stream the answer',
@@ -778,6 +886,7 @@ describe('workspace Agent Runtime hook contract', () => {
     runtime.currentRuntimeEvents = () => []
     runtimeMock.current = runtime
     await render()
+    await act(async () => useSessionStore.getState().selectSession('completed-session'))
 
     const events: AcpRuntimeEvent[] = Array.from({ length: 8 }, (_, index) => ({
       id: `runtime-1:acp-event-${index + 1}`,
@@ -808,6 +917,7 @@ describe('workspace Agent Runtime hook contract', () => {
       .map((message) => message.content)
       .join('')
     expect(agentText).toBe('x'.repeat(8))
+    expect(useSessionStore.getState().selectedSessionId).toBe('completed-session')
     expect(
       useSessionStore.getState().sessions.find((session) => session.id === 'session-1')
         ?.awaitingFirstAgentOutput

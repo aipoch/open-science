@@ -1012,6 +1012,7 @@ const performSendWorkspaceMessage = async (
   lifecycle: WorkspaceCommandLifecycle = {},
   attempt?: WorkspaceSendAttempt
 ): Promise<SendWorkspaceMessageResult | undefined> => {
+  const selectionAtStart = useSessionStore.getState().selectedSessionId
   let promptPreparation: WorkspacePromptPreparation | undefined
   if (input.sessionId) clearWorkspaceOperationError(input.sessionId)
   if (input.sessionId && hasPendingWorkspacePromptRollback(input.sessionId)) {
@@ -1292,7 +1293,9 @@ const performSendWorkspaceMessage = async (
         agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration,
         agentTarget: resolveSendAgentTarget(input),
-        preserveSelection: input.preserveSelection
+        preserveSelection:
+          input.preserveSelection ||
+          useSessionStore.getState().selectedSessionId !== selectionAtStart
       })
       if (!appended) return undefined
       // This submission now owns the retry; a concurrent send must not also bypass admission.
@@ -1516,7 +1519,9 @@ const performSendWorkspaceMessage = async (
         agentBackendId: prepared.appendOwnership.agentBackendId ?? input.agentBackendId,
         agentConfiguration: input.agentConfiguration
       }),
-      preserveSelection: input.preserveSelection
+      // Preparing a send must not undo navigation that happened while it was awaiting I/O.
+      preserveSelection:
+        input.preserveSelection || useSessionStore.getState().selectedSessionId !== selectionAtStart
     })
     if (!appended) return undefined
     input.onMessageAppended?.(appended)
