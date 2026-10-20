@@ -427,11 +427,13 @@ describe('durable delegated process ownership', () => {
           '-e',
           `
           // Reap the descendant before exiting; orphan zombies otherwise depend on PID 1.
-          process.on('SIGTERM', () => {})
+          const { once } = require('node:events')
+          const keepAlive = setInterval(() => {}, 1000)
+          const stopped = once(process, 'SIGTERM')
           const descendant = require('node:child_process').spawn(process.execPath, ['-e',
             'process.stdout.write(String(process.pid)); setInterval(() => {}, 1000)'
           ], { stdio: ['ignore', 'inherit', 'inherit'] })
-          descendant.once('exit', () => process.exit(0))
+          Promise.all([stopped, once(descendant, 'exit')]).then(() => clearInterval(keepAlive))
         `
         ],
         { stdio: 'pipe', env: process.env, windowsHide: true }
