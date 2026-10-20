@@ -16,7 +16,9 @@ its public exports are the only supported import paths.
   receipt publication and persistence. No SQL, Prisma, transaction, commit or rollback API belongs here.
 - The browser-safe `@aipoch/reproducibility/contracts` entry exposes schemas and immutable DTOs.
   The `/comparison` entry exposes comparison contracts; `/execution-context` exposes execution-context helpers.
-  The root entry is Node-only. Internal workers, validators and helper implementations are private.
+  The `/helper-identity` entry exposes `notebookHelperEvidenceKey` without loading the executor or
+  comparison dependencies. It preserves the same identity encoding and root export.
+  The root entry is Node-only. Other internal workers, validators and helper implementations are private.
 
 ## Composition
 

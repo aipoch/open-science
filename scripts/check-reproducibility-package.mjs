@@ -74,6 +74,25 @@ try {
     devDependencies: { typescript: '^5.9.3', '@types/node': '^22.19.1' }
   })
   npm(['install', '--ignore-scripts', '--no-audit', '--no-fund', ...offline], consumer)
+  // Run before the general consumer: the identity entry must not eagerly load the root or its dependencies.
+  execFileSync(
+    process.execPath,
+    [
+      '--input-type=module',
+      '-e',
+      `
+import assert from 'node:assert/strict'
+import {createRequire} from 'node:module'
+import {notebookHelperEvidenceKey} from '@aipoch/reproducibility/helper-identity'
+const require = createRequire(import.meta.url)
+const entry = require.resolve('@aipoch/reproducibility/helper-identity')
+assert.deepEqual(Object.keys(require.cache), [entry])
+assert.equal(require(entry).notebookHelperEvidenceKey, notebookHelperEvidenceKey)
+assert.equal(notebookHelperEvidenceKey({skillIdentity:'skill',helperId:'helper',registeredGeneration:'generation',sourceDigest:'digest'}), 'skill\\0helper\\0generation\\0digest')
+`
+    ],
+    { cwd: consumer, env, stdio: 'inherit' }
+  )
   writeFileSync(
     join(consumer, 'consumer.mts'),
     `
@@ -84,6 +103,7 @@ import {compareReproducedContent, validatePythonRandomState, createReproductionR
 import {outputComparisonPolicySchema, type ArtifactReproducibilityRecipe} from '@aipoch/reproducibility/contracts'
 import {outputComparisonPolicySchema as comparisonSchema} from '@aipoch/reproducibility/comparison'
 import {notebookExecutionContextSchema} from '@aipoch/reproducibility/execution-context'
+import {notebookHelperEvidenceKey} from '@aipoch/reproducibility/helper-identity'
 const require = createRequire(import.meta.url)
 assert.ok(realpathSync(require.resolve('@aipoch/reproducibility')).startsWith(process.cwd()))
 assert.equal(require('@aipoch/reproducibility').compareReproducedContent,compareReproducedContent)
@@ -92,6 +112,8 @@ assert.equal(require('@aipoch/reproducibility/comparison').outputComparisonPolic
 assert.equal(comparisonSchema,outputComparisonPolicySchema)
 assert.equal(require('@aipoch/reproducibility/execution-context').notebookExecutionContextSchema,notebookExecutionContextSchema)
 assert.equal(notebookExecutionContextSchema.safeParse({}).success,false)
+assert.equal(require('@aipoch/reproducibility').notebookHelperEvidenceKey,notebookHelperEvidenceKey)
+assert.equal(notebookHelperEvidenceKey({skillIdentity:'skill',helperId:'helper',registeredGeneration:'generation',sourceDigest:'digest'}), 'skill\\0helper\\0generation\\0digest')
 for (const suffix of ['/src/index', '/dist/index.js', '/recipe', '/package.json'])
  assert.throws(()=>require('@aipoch/reproducibility'+suffix),{code:'ERR_PACKAGE_PATH_NOT_EXPORTED'})
 assert.equal(validatePythonRandomState(undefined),undefined)
