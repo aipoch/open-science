@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act } from 'react'
+import { i18next } from '../../i18n'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -141,6 +142,67 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
+  it.each(['answered', 'pending'] as const)(
+    'localizes the system answer in %s records without changing its stored value',
+    async (state) => {
+      const answers = [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
+      await act(async () => i18next.changeLanguage('zh-Hans'))
+      try {
+        await act(async () =>
+          root.render(
+            <WorkspaceElicitationCard
+              readOnly
+              request={request}
+              elicitation={{
+                message: request.message,
+                fields,
+                state,
+                ...(state === 'answered' ? { answers } : { draftAnswers: answers })
+              }}
+            />
+          )
+        )
+        const record = container.querySelector(
+          state === 'answered'
+            ? '[data-testid="elicitation-answer-row"]'
+            : '[data-testid="elicitation-recorded-pending"]'
+        )!
+        expect(record.textContent).toContain('让智能体决定')
+        expect(record.textContent).not.toContain('Let the agent decide')
+        await act(async () => i18next.changeLanguage('en'))
+        expect(record.textContent).toContain('Let the agent decide')
+        expect(answers[0].value).toBe('Let the agent decide')
+      } finally {
+        await act(async () => i18next.changeLanguage('en'))
+      }
+    }
+  )
+
+  it('preserves ordinary answer text even when it matches the system answer', async () => {
+    const textFields: ElicitationField[] = [{ id: 'notes', label: 'Notes', kind: 'text' }]
+    await act(async () => i18next.changeLanguage('zh-Hans'))
+    try {
+      await act(async () =>
+        root.render(
+          <WorkspaceElicitationCard
+            request={{ ...request, fields: textFields }}
+            elicitation={{
+              message: request.message,
+              fields: textFields,
+              state: 'answered',
+              answers: [{ fieldId: 'notes', value: 'Let the agent decide' }]
+            }}
+          />
+        )
+      )
+      expect(container.querySelector('[data-testid="elicitation-answer-row"]')?.textContent).toBe(
+        'Let the agent decide'
+      )
+    } finally {
+      await act(async () => i18next.changeLanguage('en'))
+    }
+  })
+
   it('labels every recorded choice in pending replay without labelling custom text fields', async () => {
     await act(async () =>
       root.render(
@@ -1155,6 +1217,7 @@ describe('WorkspaceElicitationCard choice question', () => {
     expect(agentDecides?.lastElementChild?.className).toContain('flex-1')
     await act(async () => agentDecides?.click())
     expect(agentDecides?.getAttribute('aria-pressed')).toBe('true')
+    expect(customInput?.value).toBe('')
     expect(onRespond).not.toHaveBeenCalled()
     const finishAgentDecision = Array.from(container.querySelectorAll('button')).find(
       (button) => button.textContent?.trim() === 'Finish'

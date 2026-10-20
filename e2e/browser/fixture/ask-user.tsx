@@ -112,7 +112,8 @@ export const Fixture = (): React.JSX.Element => {
     </main>
   )
 }
-const locale = search.get('locale') === 'ru' ? 'ru' : 'en'
+const locale =
+  search.get('locale') === 'zh-Hans' ? 'zh-Hans' : search.get('locale') === 'ru' ? 'ru' : 'en'
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
   createRoot(document.getElementById('root')!).render(<Fixture />)

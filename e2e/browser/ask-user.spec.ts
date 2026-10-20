@@ -151,3 +151,23 @@ test('three recorded questions expose independent answer disclosures without rep
     true
   )
 })
+
+test('Chinese agent-decide answers stay translated while the submitted value stays stable', async ({
+  page
+}) => {
+  await page.goto('/ask-user.html?locale=zh-Hans')
+  await page.getByRole('button', { name: '让智能体决定', exact: true }).click()
+  await expect(page.getByRole('textbox')).toHaveValue('')
+  await page.getByRole('button', { name: '完成', exact: true }).click()
+  const answer = page.getByTestId('elicitation-answer-row')
+  await expect(answer).toHaveText('让智能体决定')
+  expect(JSON.parse(await page.getByTestId('submitted-answer').innerText()).answers).toEqual([
+    { fieldId: 'question_0_custom', value: 'Let the agent decide' }
+  ])
+  await answer.click()
+  const review = page.getByTestId('elicitation-choice-review')
+  await expect(review.getByText('让智能体决定', { exact: true })).toBeVisible()
+  await expect(page.getByTestId('elicitation-answer-summary')).not.toContainText(
+    'Let the agent decide'
+  )
+})

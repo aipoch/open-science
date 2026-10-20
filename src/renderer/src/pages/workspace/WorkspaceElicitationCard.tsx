@@ -285,6 +285,12 @@ const WorkspaceElicitationCard = ({
     currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id &&
     currentChoiceAnswer?.value === 'Let the agent decide'
   )
+  // Translate the app-owned sentinel only in a choice's custom field, not arbitrary answer text.
+  const displayAnswer = (answer: ElicitationAnswer): string =>
+    answer.value === 'Let the agent decide' &&
+    choiceQuestions?.some((question) => question.customField.id === answer.fieldId)
+      ? t('Let the agent decide')
+      : displayValue(answer.value, fieldsById.get(answer.fieldId), t)
   const canReviewAnswer = Boolean(elicitation.state === 'answered' && choiceQuestions)
   const isPendingPlaceholder = variant === 'pending-placeholder' && elicitation.state === 'pending'
   const choiceTitle =
@@ -681,9 +687,7 @@ const WorkspaceElicitationCard = ({
             <div className="text-sm">
               <p className="text-xs text-text-300">{t('Saved draft answers')}</p>
               {elicitation.draftAnswers.map((answer) => (
-                <p key={answer.fieldId}>
-                  {displayValue(answer.value, fieldsById.get(answer.fieldId), t)}
-                </p>
+                <p key={answer.fieldId}>{displayAnswer(answer)}</p>
               ))}
             </div>
           ) : null}
@@ -789,7 +793,11 @@ const WorkspaceElicitationCard = ({
               aria-label={t('Type your own answer')}
               placeholder={t('Or type your own answer…')}
               rows={1}
-              value={typeof customChoiceValue === 'string' ? customChoiceValue : ''}
+              value={
+                !agentDecidesSelected && typeof customChoiceValue === 'string'
+                  ? customChoiceValue
+                  : ''
+              }
               disabled={isSubmitting}
               maxLength={Math.min(
                 choiceQuestion.customField.maxLength ?? MAX_ELICITATION_MESSAGE_CHARS,
@@ -1158,7 +1166,7 @@ const WorkspaceElicitationCard = ({
                         </span>
                       ) : null}
                       <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
-                        {displayValue(answer.value, field, t)}
+                        {displayAnswer(answer)}
                       </span>
                     </span>
                     {expandable ? (
