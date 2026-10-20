@@ -73,24 +73,30 @@ export const PackageFileSelection = ({
     }
     return [...groups.values()]
       .map((file) => {
-        const source = file.storageKey.split('/')[0]
-        return {
-          ...file,
-          category: ['notebook-file-evidence', 'file-evidence'].includes(source)
-            ? 'execution-file-evidence'
-            : ['notebooks', 'artifacts', 'uploads', 'execution-file-evidence'].includes(source)
-              ? source
-              : 'other'
-        }
+        const categories = [
+          ...new Set(
+            file.paths.map((path) => {
+              const source = path.split('/')[0]
+              return ['notebook-file-evidence', 'file-evidence'].includes(source)
+                ? 'execution-file-evidence'
+                : ['notebooks', 'artifacts', 'uploads', 'execution-file-evidence'].includes(source)
+                  ? source
+                  : 'other'
+            })
+          )
+        ]
+        return { ...file, categories }
       })
       .sort((a, b) => b.sizeBytes - a.sizeBytes)
   }, [summary?.retainedFiles])
   const retainedByCategory = useMemo(() => {
     const groups = new Map<string, typeof retainedFiles>()
     for (const file of retainedFiles) {
-      const group = groups.get(file.category)
-      if (group) group.push(file)
-      else groups.set(file.category, [file])
+      for (const category of file.categories) {
+        const group = groups.get(category)
+        if (group) group.push(file)
+        else groups.set(category, [file])
+      }
     }
     return groups
   }, [retainedFiles])
@@ -439,11 +445,13 @@ export const PackageFileSelection = ({
                             </details>
                             {!retainedCategory ? (
                               <span className="shrink-0 text-muted-foreground">
-                                {
-                                  retainedCategories.find(
-                                    (category) => category.id === file.category
-                                  )?.label
-                                }
+                                {file.categories
+                                  .map(
+                                    (id) =>
+                                      retainedCategories.find((category) => category.id === id)
+                                        ?.label
+                                  )
+                                  .join(' / ')}
                               </span>
                             ) : null}
                             <span className="shrink-0 tabular-nums">

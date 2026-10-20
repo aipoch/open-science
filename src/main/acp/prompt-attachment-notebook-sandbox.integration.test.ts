@@ -2,7 +2,7 @@ import type { ContentBlock } from '@agentclientprotocol/sdk'
 import { NotebookNetworkSandbox } from '@aipoch/notebook-network-sandbox'
 import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -161,7 +161,9 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
         storageKey: 'uploads/project-1/session-1/upload-file-1/content',
         association: 'turn-attached'
       }
-      const stagedPath = join(notebookInputRoot, registeredInput.sourceKind, checksum, 'content')
+      const inputLease = await openLatest()
+      const openContent = vi.fn(async () => inputLease)
+      const stageContent = vi.fn()
       const inputRegistry = new NotebookInputRegistry({
         storageRoot,
         inputAuthority: {
@@ -170,13 +172,8 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
             state: 'available' as const,
             input: registeredInput
           })),
-          openContent: vi.fn(),
-          stageContent: vi.fn(async () => {
-            await mkdir(dirname(stagedPath), { recursive: true })
-            await writeFile(stagedPath, bytes)
-            await chmod(stagedPath, 0o444)
-            return stagedPath
-          })
+          openContent,
+          stageContent
         }
       })
       const promptInputs = await inputRegistry.registerTurn({
@@ -194,6 +191,16 @@ describe.runIf(process.platform === 'darwin' || process.platform === 'linux')(
       ])
       expect(isAbsolute(promptInputs[0]!.notebookPath)).toBe(false)
       expect(promptInputs[0]!.notebookPath).not.toContain('..')
+      expect(openContent).toHaveBeenCalledWith(registeredInput)
+      expect(inputLease.copyTo).toHaveBeenCalledExactlyOnceWith(expect.any(String), {
+        exclusive: true
+      })
+      expect(dirname(inputLease.copyTo.mock.calls[0]![0])).toBe(
+        await realpath(dirname(join(notebookDataRoot, promptInputs[0]!.notebookPath)))
+      )
+      expect(inputLease.verifyUnchanged).toHaveBeenCalledOnce()
+      expect(inputLease.close).toHaveBeenCalledOnce()
+      expect(stageContent).not.toHaveBeenCalled()
       const sandbox = new NotebookNetworkSandbox({
         policy: { allowedDomains: [], deniedDomains: [] },
         resources: {

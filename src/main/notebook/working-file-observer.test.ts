@@ -97,7 +97,12 @@ describe('working-file evidence', () => {
     'unowned-project',
     'unknown-relation',
     'unknown-generation',
-    'interrupted-compaction'
+    'interrupted-compaction',
+    'imported-sibling',
+    'imported-reference',
+    'pending-import',
+    'invalid-import-marker',
+    'misplaced-import-marker'
   ] as const)('maintains historical evidence conservatively: %s', async (condition) => {
     const { sessionRoot, dataRoot } = await createRoots()
     const projectRoot = join(storageRoot!, 'execution-file-evidence', 'history-project')
@@ -185,7 +190,29 @@ describe('working-file evidence', () => {
       await unlink(orphanPath)
       await writeFile(orphanPath, 'unexpected occupant')
     }
-    if (condition === 'cross-session') {
+    if (
+      [
+        'imported-sibling',
+        'imported-reference',
+        'pending-import',
+        'invalid-import-marker',
+        'misplaced-import-marker'
+      ].includes(condition)
+    ) {
+      const imported = join(projectRoot, 'session-2')
+      await mkdir(imported, { recursive: true })
+      const operation = '00000000-0000-4000-8000-000000000001'
+      await writeFile(
+        join(
+          condition === 'misplaced-import-marker' ? activity : imported,
+          '.session-package-owner'
+        ),
+        condition === 'invalid-import-marker' ? 'unverified' : operation
+      )
+      if (condition === 'pending-import')
+        await mkdir(join(storageRoot!, 'session-package-imports', operation), { recursive: true })
+    }
+    if (condition === 'cross-session' || condition === 'imported-reference') {
       const other = join(projectRoot, 'session-2', 'frames', 'frame-2', 'activity-other')
       await mkdir(other, { recursive: true })
       await writeFile(
@@ -217,7 +244,11 @@ describe('working-file evidence', () => {
       })
     }
     await maintainWorkingFileEvidence(location, [owner])
-    if (['unused', 'duplicate', 'export-read', 'interrupted-compaction'].includes(condition)) {
+    if (
+      ['unused', 'duplicate', 'export-read', 'interrupted-compaction', 'imported-sibling'].includes(
+        condition
+      )
+    ) {
       await expect(stat(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })
       await expect(stat(orphanPool)).rejects.toMatchObject({ code: 'ENOENT' })
       expect((await stat(retainedPath)).ino).toBe((await stat(retainedPool)).ino)

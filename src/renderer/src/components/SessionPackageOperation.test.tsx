@@ -2270,7 +2270,8 @@ it('groups verified duplicate evidence and retains expandable source paths', asy
   const checksum = 'a'.repeat(64)
   const paths = [
     'execution-file-evidence/p/s/activity-a/blobs/sha256-a',
-    'execution-file-evidence/p/s/activity-b/blobs/sha256-a'
+    'execution-file-evidence/p/s/activity-b/blobs/sha256-a',
+    'artifacts/p/s/result.csv'
   ]
   const inventory: PackageOperationSnapshot = {
     ...snapshot,
@@ -2303,8 +2304,15 @@ it('groups verified duplicate evidence and retains expandable source paths', asy
   act(() => button('View files').click())
   const details = document.querySelector('details')!
   expect(details).not.toBeNull()
-  expect(details.querySelector('summary')?.textContent).toContain('×2')
+  expect(details.querySelector('summary')?.textContent).toContain('×3')
   for (const path of paths) expect(details.textContent).toContain(path)
   expect(document.body.textContent).toContain('1.0 MiB')
   expect(document.body.textContent).not.toContain('2.0 MiB')
+  for (const category of ['Artifacts1', 'Execution evidence1', 'All1']) {
+    act(() => button(category).click())
+    const requiredFiles = button(category).closest('section')!
+    expect(requiredFiles.querySelectorAll('details')).toHaveLength(1)
+    for (const path of paths)
+      expect(requiredFiles.querySelector('details')?.textContent).toContain(path)
+  }
 })

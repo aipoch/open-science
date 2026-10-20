@@ -1295,9 +1295,22 @@ export class SessionPackageService {
     target: SessionPackageImportRequest,
     forkSource?: PersistedChatSession
   ): Promise<{ projectId: string; sessionId: string }> {
-    if (target.projectId) await this.assertImportProject(target.projectId)
     const operationId = randomUUID()
     const projectId = target.projectId ?? `import-${operationId}`
+    return withWorkingFileEvidenceRead(this.options.storageRoot, projectId, () =>
+      this.importSnapshot(path, onProgress, confirm, target, { operationId, projectId }, forkSource)
+    )
+  }
+
+  private async importSnapshot(
+    path: string,
+    onProgress: ((progress: PackageProgress) => void) | undefined,
+    confirm: ((preview: SessionPackagePreview, signal: AbortSignal) => Promise<void>) | undefined,
+    target: SessionPackageImportRequest,
+    { operationId, projectId }: { operationId: string; projectId: string },
+    forkSource?: PersistedChatSession
+  ): Promise<{ projectId: string; sessionId: string }> {
+    if (target.projectId) await this.assertImportProject(target.projectId)
     // Only read-only imports use the import identity convention consumed by the lazy catalog.
     const sessionId = forkSource ? randomUUID() : `import-${randomUUID()}`
     const operationRoot = join(this.options.storageRoot, 'session-package-imports', operationId)
@@ -1745,14 +1758,24 @@ export class SessionPackageService {
         }
         // Database and publication failures still propagate to the deferred data-root gate.
         if (identity) {
-          const client = await this.options.getClient()
-          const committed = await client.fileOriginSession.findUnique({
-            where: {
-              projectId_sessionId: { projectId: identity.projectId, sessionId: identity.sessionId }
+          const journal = identity
+          await withWorkingFileEvidenceRead(
+            this.options.storageRoot,
+            journal.projectId,
+            async () => {
+              const client = await this.options.getClient()
+              const committed = await client.fileOriginSession.findUnique({
+                where: {
+                  projectId_sessionId: {
+                    projectId: journal.projectId,
+                    sessionId: journal.sessionId
+                  }
+                }
+              })
+              if (!committed) await this.removeUnpublished(journal, operation)
+              else await this.finishPublishedImport(stage, operation)
             }
-          })
-          if (!committed) await this.removeUnpublished(identity, operation)
-          else await this.finishPublishedImport(stage, operation)
+          )
         }
         if (this.configRoot !== this.options.storageRoot) {
           const dataStage = join(this.options.storageRoot, 'session-package-imports', operation)
@@ -1908,17 +1931,19 @@ export class SessionPackageService {
   }
 
   private async removeUnpublished(journal: ImportJournal, operation: string): Promise<void> {
-    for (const entry of journal.directories) {
-      const parent = join(this.options.storageRoot, entry.scope, journal.projectId)
-      const directory = join(parent, entry.sessionId)
-      if (!(await this.ownsDirectory(directory, operation))) continue
-      await assertPackageSourcePath(
-        this.options.storageRoot,
-        `${entry.scope}/${journal.projectId}/${entry.sessionId}`
-      )
-      await rm(directory, { recursive: true, force: true })
-      await defaultFileDurability.syncDirectory(parent)
-    }
+    return withWorkingFileEvidenceRead(this.options.storageRoot, journal.projectId, async () => {
+      for (const entry of journal.directories) {
+        const parent = join(this.options.storageRoot, entry.scope, journal.projectId)
+        const directory = join(parent, entry.sessionId)
+        if (!(await this.ownsDirectory(directory, operation))) continue
+        await assertPackageSourcePath(
+          this.options.storageRoot,
+          `${entry.scope}/${journal.projectId}/${entry.sessionId}`
+        )
+        await rm(directory, { recursive: true, force: true })
+        await defaultFileDurability.syncDirectory(parent)
+      }
+    })
   }
 
   private async finishPublishedImport(operationRoot: string, operation: string): Promise<void> {

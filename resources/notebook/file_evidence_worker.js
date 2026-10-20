@@ -1120,6 +1120,18 @@ const compactHistory = (request) => {
           value,
           checksum: createHash('sha256').update(bytes).digest('hex')
         })
+      } else if (entry.name === '.session-package-owner' && depth === 1 && entry.isFile()) {
+        const metadata = lstatSync(path)
+        const operation = readRegularFile(path, 36).toString('utf8')
+        if (
+          !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(operation) ||
+          fingerprint(lstatSync(path)) !== fingerprint(metadata)
+        )
+          throw new Error('Invalid package ownership marker.')
+        // A surviving import stage also protects publication interrupted by a host restart.
+        if (entryExists(join(projectRoot, '..', '..', 'session-package-imports', operation)))
+          throw new Error('History contains an unfinished import.')
+        metadataSnapshots.push([path, fingerprint(metadata)])
       } else if (!/^\.ownership-[A-Za-z0-9-]+$/.test(entry.name) || !entry.isFile()) {
         throw new Error('Unknown history entry.')
       }
