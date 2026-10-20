@@ -51,7 +51,7 @@ AIPOCH Open-Science unterstützt rechen- und datenintensive Forschung in zahlrei
 
 Abgeschlossene Forschungssitzungen können außerdem als portable `.science`-Pakete zur Prüfung, Übergabe und Archivierung exportiert werden, einschließlich ausgewählter Gesprächsverzweigungen, Dateiversionen, Notebook-Aufzeichnungen und Verifikationsevidenz.
 
-> 💡 **AIPOCH Open-Science v1.0.0** _(aktualisiert im Oktober 2026)_. Dieser Meilenstein vereint den lokal ausgerichteten Forschungsarbeitsbereich, wissenschaftliche Agenten, Python/R-Ausführung im Notebook, Literaturwerkzeuge und portable `.science`-Forschungspakete. Die [Versionshinweise zu 1.0.0](../../release-notes/1.0.0/de.md) beschreiben Änderungen seit v0.37.2 und Hinweise zum CLI-Upgrade. Downloads entsprechen weiterhin der [neuesten veröffentlichten Version](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.1** _(aktualisiert im Oktober 2026)_. Dieser Patch ergänzt den Ein-Klick-Import von `.science`-Paketen aus dem Browser, ein klareres und zuverlässigeres In-App-Update (insbesondere unter Windows), dauerhaft sichtbare Wartezustände von Sitzungen, Sicherheitsfixes für den Umgang mit MCP-OAuth-Anmeldedaten sowie eine Reihe von Korrekturen für PDF, Literatur und Sitzungspakete. Details finden Sie in den [Versionshinweisen zu 1.0.1](../../release-notes/1.0.1/de.md). Downloads entsprechen weiterhin der [neuesten veröffentlichten Version](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science Hero-Banner: Science, Open to All — eine quelloffene, modellunabhängige und selbst gehostete Forschungsumgebung für wissenschaftliche KI" src="../images/readme/open-science-banner.png" />
