@@ -118,7 +118,8 @@
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
       "src/main/session-package/literature-source.test.ts",
