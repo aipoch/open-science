@@ -1260,7 +1260,6 @@
     "workspace_pdf_reading_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_permissions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/workspace/WorkspaceDelegatedQuestionCard.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_plan_model": [
@@ -1316,7 +1315,10 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_skill_document": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
-    "workspace_tool_blocks": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_tool_blocks": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
+    ],
     "workspace_tool_model": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

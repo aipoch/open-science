@@ -1,5 +1,6 @@
 {
   "ownerPaths": [
+    "src/renderer/src/pages/workspace/ChoiceKindChip.tsx",
     "src/renderer/src/pages/workspace/HighlightedCodeLines.tsx",
     "src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx",
     "src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.render.test.tsx",
@@ -12,6 +13,7 @@
     "src/renderer/src/pages/workspace/WorkspaceToolSummaryCard.tsx"
   ],
   "interfacePaths": [
+    "src/renderer/src/pages/workspace/ChoiceKindChip.tsx",
     "src/renderer/src/pages/workspace/HighlightedCodeLines.tsx",
     "src/renderer/src/pages/workspace/WorkspaceActivityIcon.tsx",
     "src/renderer/src/pages/workspace/WorkspaceAgentLoadingRow.tsx",
