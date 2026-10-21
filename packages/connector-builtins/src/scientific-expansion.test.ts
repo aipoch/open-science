@@ -311,6 +311,7 @@ describe('scientific data-source contracts', () => {
     const cancelled = read({ ...ctx, signal: abort.signal }, 'https://example.org/2')
     const rejection = expect(cancelled).rejects.toThrow('cancelled')
     const third = read(ctx, 'https://example.org/3')
+    const fourth = read(ctx, 'https://example.org/4')
     abort.abort(new Error('cancelled'))
     await rejection
     await first
@@ -321,6 +322,14 @@ describe('scientific data-source contracts', () => {
     await third
     expect(ctx.fetchText).toHaveBeenCalledTimes(2)
     expect(ctx.fetchText).toHaveBeenLastCalledWith('https://example.org/3', 'application/json', {
+      retry: false
+    })
+    await vi.advanceTimersByTimeAsync(333)
+    expect(ctx.fetchText).toHaveBeenCalledTimes(2)
+    await vi.advanceTimersByTimeAsync(1)
+    await fourth
+    expect(ctx.fetchText).toHaveBeenCalledTimes(3)
+    expect(ctx.fetchText).toHaveBeenLastCalledWith('https://example.org/4', 'application/json', {
       retry: false
     })
   })
