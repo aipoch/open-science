@@ -2,20 +2,17 @@
 
 import { execFileSync } from 'node:child_process'
 import {
-  verifiedExistingHostOwnerTransfers,
-  verifiedHostOwnerSplits,
-  verifiedHostSourceMoves
-} from './host-owner-split.mjs'
-import {
   dependencyBasedConsumerRetirements,
   dependencyBoundaryViolations,
   sourceSnapshot,
   verifiedConsumerRetirements,
-  verifiedExcludedPackageTests,
-  verifiedFuzzyMatchOwnerSplit,
-  verifiedPdfTextOwnerSplit,
-  verifiedPromiseIdentityOwnerSplit
-} from './consumer-retirement.mjs'
+  verifiedExcludedPackageTests
+} from './module-graph/index.mjs'
+import {
+  verifiedExistingHostOwnerTransfers,
+  verifiedHostOwnerSplits,
+  verifiedHostSourceMoves
+} from './host-owner-split.mjs'
 import {
   moduleImpactRegistrationPath,
   isModuleImpactRegistrationPath,
@@ -351,9 +348,6 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
       cwd
     }),
     boundedOwnerSplits: new Set([
-      ...verifiedPdfTextOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
-      ...verifiedPromiseIdentityOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
-      ...verifiedFuzzyMatchOwnerSplit(mergeBase, head, baseManifest, headManifest, { cwd }),
       ...verifiedExistingHostOwnerTransfers(mergeBase, head, baseManifest, headManifest, { cwd }),
       ...hostSplits.paths,
       ...hostMoves.paths

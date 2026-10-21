@@ -1,16 +1,16 @@
-import { dependencyConsumerBoundaries } from './module-derived-consumers.mjs'
 import {
-  createConsumerDependencyReader,
+  createDependencyReader,
   dependencyBoundaryViolations,
-  provablyStaleConsumerTests
-} from './consumer-retirement.mjs'
+  provablyStaleConsumerTests,
+  reviewedBoundaries
+} from './index.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
 import { existsSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
+import { moduleOwnershipFromRevisions } from '../check-module-ownership.mjs'
 
 const roots: string[] = []
 afterEach(() => {
@@ -254,7 +254,7 @@ it.each([
       [consumer, source],
       ['src/independent.ts', 'export const value = 2']
     ])
-    const inspect = createConsumerDependencyReader(
+    const inspect = createDependencyReader(
       { files: new Set(sources.keys()), read: (path: string) => sources.get(path) },
       [[owner, runtimeConsumers]]
     )
@@ -661,7 +661,7 @@ it.each([
   ['const Evaluate = Function; Evaluate(source)()', false]
 ])('distinguishes loader use from harmless module/type references: %s', (text, complete) => {
   const source = new Map([[consumer, text as string]])
-  const inspect = createConsumerDependencyReader(
+  const inspect = createDependencyReader(
     { files: new Set(source.keys()), read: (path: string) => source.get(path) },
     []
   )
@@ -778,7 +778,7 @@ it.each(['source', 'contract', 'owner', 'capability', 'module-edge', 'runtime', 
     if (change === 'runtime')
       f.put('scripts/ci/module-runtime-consumers.json', '{"src/shared/fuzzy-match.ts":[]}')
     if (change === 'policy')
-      f.put('scripts/ci/consumer-retirement.mjs', 'export const bypass = true')
+      f.put('scripts/ci/module-graph/retirement.mjs', 'export const bypass = true')
     expect(f.inspect().ok).toBe(false)
   },
   30_000
@@ -862,7 +862,7 @@ it.each([
   ['missing contract file', "import WebSocket from 'ws'", false]
 ])('validates stateful boundaries with layers and contracts: %s', (scenario, text, valid) => {
   const id = 'host_websocket_transport'
-  const boundary = dependencyConsumerBoundaries[id]
+  const boundary = reviewedBoundaries[id]
   const contents = new Map([
     ...boundary.sources.map((path: string) => [path, text] as [string, string]),
     ...boundary.requiredTests.map((path: string) => [path, 'export {}'] as [string, string]),
@@ -920,7 +920,7 @@ it.each([
     ['src/owner.ts', 'export const value = 1']
   ])
   const source = { files: new Set(contents.keys()), read: (path: string) => contents.get(path) }
-  const inspect = createConsumerDependencyReader(source, [], {
+  const inspect = createDependencyReader(source, [], {
     runtimeOnly: true,
     literalLoaders: true,
     externalImports: ['node:module', 'node:sqlite']
@@ -929,15 +929,13 @@ it.each([
   if (complete && body.includes("'./owner'"))
     expect(inspect.dependencies('src/consumer.ts').paths.has('src/owner.ts')).toBe(true)
   // Opt-in completeness must never leak into the default retirement proof.
-  expect(createConsumerDependencyReader(source, []).dependencies('src/consumer.ts').complete).toBe(
-    false
-  )
+  expect(createDependencyReader(source, []).dependencies('src/consumer.ts').complete).toBe(false)
 })
 
 it.each(['node:fs/promises', 'node:child_process', 'react'])(
   'rejects high-layer external imports in mixed-owner policy files: %s',
   (specifier) => {
-    const boundary = dependencyConsumerBoundaries.main_connectors
+    const boundary = reviewedBoundaries.main_connectors
     const contents = new Map([
       ...boundary.sources.map((path: string) => [path, 'export {}'] as [string, string]),
       ...boundary.requiredTests.map((path: string) => [path, 'export {}'] as [string, string])
@@ -988,15 +986,15 @@ it.each([
   const source = { files: new Set(contents.keys()), read: (path: string) => contents.get(path) }
   const options = { staticOnly: true, runtimeOnly: true }
   expect(
-    createConsumerDependencyReader(source, [], {
+    createDependencyReader(source, [], {
       ...options,
       reviewedSyntax: true
     }).dependencies('src/consumer.ts').complete
   ).toBe(complete)
   // The stronger independent-history proof does not acquire these opt-ins.
-  expect(
-    createConsumerDependencyReader(source, [], options).dependencies('src/consumer.ts').complete
-  ).toBe(false)
+  expect(createDependencyReader(source, [], options).dependencies('src/consumer.ts').complete).toBe(
+    false
+  )
 })
 
 it.each(['css', 'md?raw', 'html?raw'])(
@@ -1008,17 +1006,15 @@ it.each(['css', 'md?raw', 'html?raw'])(
       [asset, '@import "unknown.css"']
     ])
     const source = { files: new Set(contents.keys()), read: (path: string) => contents.get(path) }
-    const reviewed = createConsumerDependencyReader(source, [], {
+    const reviewed = createDependencyReader(source, [], {
       runtimeOnly: true,
       resourceImports: [asset]
     }).dependencies('src/view.ts')
     expect(reviewed.complete).toBe(true)
     expect([...reviewed.paths]).toEqual([asset])
-    expect(createConsumerDependencyReader(source, []).dependencies('src/view.ts').complete).toBe(
-      false
-    )
+    expect(createDependencyReader(source, []).dependencies('src/view.ts').complete).toBe(false)
     expect(
-      createConsumerDependencyReader(source, [], {
+      createDependencyReader(source, [], {
         runtimeOnly: true,
         resourceImports: ['src/other.css']
       }).dependencies('src/view.ts').complete
@@ -1067,12 +1063,12 @@ it.each([
   }
   if (scenario === 'unreviewed-import') contents.set('src/renderer/view.ts', "import './new.css'")
   const source = { files: new Set(contents.keys()), read: (path: string) => contents.get(path) }
-  dependencyConsumerBoundaries[id] = boundary
+  reviewedBoundaries[id] = boundary
   try {
     expect(dependencyBoundaryViolations(source, { modules: { [id]: module } }).length === 0).toBe(
       scenario === 'complete'
     )
   } finally {
-    delete dependencyConsumerBoundaries[id]
+    delete reviewedBoundaries[id]
   }
 })

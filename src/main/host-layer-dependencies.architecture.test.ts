@@ -4,9 +4,9 @@ import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import ts from 'typescript'
 // @ts-expect-error The repository's JavaScript evidence reader has no declaration file.
-import { createConsumerDependencyReader } from '../../scripts/ci/consumer-retirement.mjs'
+import { createDependencyReader } from '../../scripts/ci/module-graph/index.mjs'
 // @ts-expect-error The repository's JavaScript boundary checker has no declaration file.
-import { boundaryViolations, dependencyLayer } from '../../scripts/ci/module-relationships.mjs'
+import { boundaryViolations, dependencyLayer } from '../../scripts/ci/module-graph/policy.mjs'
 import { loadModuleImpactManifest } from '../../scripts/ci/load-module-impact.mjs'
 
 type Graph = Map<string, Set<string>>
@@ -76,8 +76,8 @@ function hostGraphs(overrides: Record<string, string> = {}): {
     )
   )
   const runtimeEdges = Object.entries(JSON.parse(read('scripts/ci/module-runtime-consumers.json')!))
-  const structuralReader = createConsumerDependencyReader({ files, read }, runtimeEdges)
-  const runtimeReader = createConsumerDependencyReader({ files, read }, runtimeEdges, {
+  const structuralReader = createDependencyReader({ files, read }, runtimeEdges)
+  const runtimeReader = createDependencyReader({ files, read }, runtimeEdges, {
     runtimeOnly: true
   })
   const structural: Graph = new Map()
@@ -125,7 +125,7 @@ function hostGraphs(overrides: Record<string, string> = {}): {
       ...[...production]
         .filter((path) => dependencyLayer(path) === 'foundation')
         .flatMap((path) => {
-          const inspect = createConsumerDependencyReader({ files, read }, runtimeEdges, {
+          const inspect = createDependencyReader({ files, read }, runtimeEdges, {
             staticOnly: true
           })
           return inspect(path, new Set()).complete

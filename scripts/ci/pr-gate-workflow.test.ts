@@ -318,56 +318,57 @@ describe('PR Gate workflow', () => {
     expect(result.stderr).toContain('unit_macos_related_merge ended with failure')
   })
 
-  it('retains trusted legacy extraction when the base predates the optional reader', () => {
-    const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-gate-legacy-')))
+  it('exports the complete trusted base tree and never candidate files', () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), 'pr-gate-trusted-')))
     const git = (...args: string[]): string =>
       execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
-    try {
-      mkdirSync(join(root, 'scripts/ci'), { recursive: true })
-      for (const file of [
-        'module-impact-authority.mjs',
-        'windows-core-plan.mjs',
-        'windows-core-checks.json',
-        'module-impact-shadow.mjs',
-        'module-test-impact.mjs',
-        'module-impact.json',
-        'validate-module-impact.mjs',
-        'classify-pr-changes.mjs',
-        'change-impact.json'
-      ])
-        writeFileSync(
-          join(root, 'scripts/ci', file),
-          file.endsWith('.json') ? '{}' : 'process.stdout.write("trusted legacy")\n'
-        )
-      git('init', '--quiet')
-      git('config', 'user.email', 'ci@example.com')
-      git('config', 'user.name', 'CI Test')
-      git('add', '.')
-      git('commit', '--quiet', '-m', 'legacy base')
-      const base = git('rev-parse', 'HEAD')
-      writeFileSync(
-        join(root, 'scripts/ci/load-module-impact.mjs'),
-        'throw new Error("candidate reader")'
-      )
+    const put = (path: string, contents: string): void => {
+      mkdirSync(dirname(join(root, path)), { recursive: true })
+      writeFileSync(join(root, path), contents)
+    }
+    const prepare = workflow.jobs.preflight.steps!.find(({ id }) => id === 'trusted_classifier')!
+    const run = (base: string): { output: string; dir: string } => {
       const output = join(root, 'outputs')
-      const prepare = workflow.jobs.preflight.steps!.find(({ id }) => id === 'trusted_classifier')!
+      writeFileSync(output, '')
       const result = spawnSync('bash', ['-c', prepare.run!], {
         cwd: root,
         encoding: 'utf8',
         env: { ...process.env, BASE_SHA: base, RUNNER_TEMP: root, GITHUB_OUTPUT: output }
       })
       expect(result.status, result.stderr).toBe(0)
-      expect(readFileSync(output, 'utf8')).toContain('source=base')
-      expect(existsSync(join(root, 'pr-gate-trusted-classifier/load-module-impact.mjs'))).toBe(
-        false
+      return { output: readFileSync(output, 'utf8'), dir: join(root, 'pr-gate-trusted-classifier') }
+    }
+    try {
+      git('init', '--quiet')
+      git('config', 'user.email', 'ci@example.com')
+      git('config', 'user.name', 'CI Test')
+      put('scripts/ci/classify-pr-changes.mjs', 'export const policy = "unrelated"\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'base without a trusted classifier')
+      expect(run(git('rev-parse', 'HEAD')).output).toContain('source=bootstrap')
+
+      // Nested internals and data travel with the entrypoint; no workflow file list exists.
+      put(
+        'scripts/ci/module-impact-authority.mjs',
+        "import { value } from './module-graph/policy.mjs'\nprocess.stdout.write(value)\n"
       )
+      put('scripts/ci/module-graph/policy.mjs', 'export const value = "trusted nested"\n')
+      put('scripts/ci/module-boundaries.json', '{"trusted":true}\n')
+      git('add', '.')
+      git('commit', '--quiet', '-m', 'trusted base')
+      const base = git('rev-parse', 'HEAD')
+      put('scripts/ci/module-graph/policy.mjs', 'throw new Error("candidate internals")\n')
+      put('scripts/ci/candidate-only.mjs', 'throw new Error("candidate addition")\n')
+
+      const { output, dir } = run(base)
+      expect(output).toContain('source=base')
+      expect(readFileSync(join(dir, 'module-boundaries.json'), 'utf8')).toContain('trusted')
+      expect(existsSync(join(dir, 'candidate-only.mjs'))).toBe(false)
       expect(
-        execFileSync(
-          process.execPath,
-          [join(root, 'pr-gate-trusted-classifier/module-impact-authority.mjs')],
-          { encoding: 'utf8' }
-        )
-      ).toBe('trusted legacy')
+        execFileSync(process.execPath, [join(dir, 'module-impact-authority.mjs')], {
+          encoding: 'utf8'
+        })
+      ).toBe('trusted nested')
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
@@ -408,7 +409,11 @@ describe('PR Gate workflow', () => {
           'module-impact-shadow.mjs',
           'module-ownership-paths.mjs',
           'module-test-impact.mjs',
-          'module-derived-consumers.mjs',
+          'module-graph/policy.mjs',
+          'module-graph/boundaries.mjs',
+          'module-graph/derived-index.mjs',
+          'module-graph/layers.mjs',
+          'module-boundaries.json',
           'module-derived-consumers.json',
           'module-impact.json',
           'load-module-impact.mjs',
@@ -838,7 +843,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Classify change impact'
     )
 
-    expect(prepare?.run).toContain('git show "${BASE_SHA}:${file}"')
+    expect(prepare?.run).toContain('git archive --format=tar "$BASE_SHA" scripts/ci')
     expect(prepare?.run).toContain('source=bootstrap')
     expect(classify?.env).toMatchObject({
       DRY_RUN_MODE: "${{ inputs.dry_run || 'classified' }}",
@@ -1006,11 +1011,10 @@ describe('PR Gate workflow', () => {
       portable_matrix: '${{ steps.portable_matrix.outputs.matrix }}'
     })
     expect(prepare?.['continue-on-error']).toBeUndefined()
+    // The authority marks a trusted base; the whole base tree is exported, never a file list.
     expect(prepare?.run).toContain('scripts/ci/module-impact-authority.mjs')
-    expect(prepare?.run).toContain('scripts/ci/module-impact-shadow.mjs')
-    expect(prepare?.run).toContain('scripts/ci/module-test-impact.mjs')
-    expect(prepare?.run).toContain('scripts/ci/module-impact.json')
-    expect(prepare?.run).toContain('git show "${BASE_SHA}:${file}"')
+    expect(prepare?.run).toContain('git archive --format=tar "$BASE_SHA" scripts/ci')
+    expect(prepare?.run).not.toContain('git show')
     expect(prepare?.run).toContain('source=bootstrap')
     expect(shadowPrepare).toBeUndefined()
     expect(shadowPublish).toBeUndefined()
@@ -1264,7 +1268,7 @@ describe('PR Gate workflow', () => {
       ({ name }) => name === 'Check complete module ownership and consumer evidence'
     )
     expect(guard?.run).toContain('scripts/ci/audit-module-ownership.test.ts')
-    expect(guard?.run).toContain('scripts/ci/module-consumer-coverage.test.ts')
+    expect(guard?.run).toContain('scripts/ci/module-graph/consumer-coverage.test.ts')
     expect(guard?.if).toBe(
       "${{ contains(fromJSON(needs.preflight.outputs.plan).bundles, 'unit') && fromJSON(needs.preflight.outputs.plan).mode != 'full' && !contains(fromJSON(needs.preflight.outputs.plan).roots, 'module_registration') }}"
     )
