@@ -552,3 +552,57 @@ it('routes API key recovery to the existing editor without starting login', asyn
   await act(async () => update?.click())
   expect(edit).toHaveBeenCalledWith(provider)
 })
+
+it.each(['claude-isolated', 'custom'] as const)(
+  'clears %s recovery after fresh validation while retaining an older model failure',
+  (type) => {
+    const provider = {
+      ...useSettingsStore.getState().providers[0],
+      type,
+      lastValidatedAt: 10,
+      lastValidationFailure: {
+        at: 20,
+        category: 'model-not-found' as const,
+        target: { model: 'unavailable-model' }
+      }
+    }
+    useSettingsStore.setState({ providers: [provider] })
+    act(() =>
+      root.render(
+        <ProvidersPanel
+          recoveryProviderId={provider.id}
+          onCreateProvider={vi.fn()}
+          onEditProvider={vi.fn()}
+          onBusyProviderChange={vi.fn()}
+        />
+      )
+    )
+    const recoveryCopy =
+      type === 'custom'
+        ? 'Update the saved credential, then test the connection.'
+        : 'Sign in again to restore access to this account.'
+    expect(container.textContent).toContain(recoveryCopy)
+
+    const validated = {
+      ...provider,
+      hasKey: true,
+      lastValidatedAt: 30,
+      lastValidatedTarget: { model: 'available-model' }
+    }
+    act(() => useSettingsStore.setState({ providers: [validated] }))
+    expect(container.textContent).not.toContain(recoveryCopy)
+    expect(useSettingsStore.getState().providers[0].lastValidationFailure).toEqual(
+      provider.lastValidationFailure
+    )
+
+    act(() =>
+      useSettingsStore.setState({
+        providers: [{ ...validated, lastValidationFailure: { at: 30, category: 'auth' } }]
+      })
+    )
+    expect(container.textContent).toContain(recoveryCopy)
+
+    act(() => useSettingsStore.setState({ providers: [{ ...validated, needsKey: true }] }))
+    expect(container.textContent).toContain(recoveryCopy)
+  }
+)
