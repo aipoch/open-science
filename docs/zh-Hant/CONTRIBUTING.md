@@ -107,7 +107,7 @@ Web 介面使用一般 Node 後端，不需要 Electron 或圖形顯示環境。
 
 ```bash
 node scripts/ci/audit-module-ownership.mjs
-npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-graph/consumer-coverage.test.ts
 ```
 
 這些檢查驗證註冊資訊，不代表產品行為已通過測試。還需對受影響模組執行 `npm run test:module -- <module-id>`，並執行[驗證政策](#驗證政策)要求的其他檢查。提交後，使用 `npm run test:affected:explain -- --base origin/main --head HEAD` 檢視計畫；該指令比較已提交的版本，不包含暫存或未暫存的修改。未知擁有權及既有的完整驗證標記仍保留完整備援；完成註冊不會免除必要的 CI 檢查。

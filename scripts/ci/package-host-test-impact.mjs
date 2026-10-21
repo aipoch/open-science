@@ -1,6 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
+import { sourceSnapshot, createDependencyReader } from './module-graph/index.mjs'
 import { loadModuleImpactManifestAtRevision } from './load-module-impact.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
@@ -151,7 +151,7 @@ function refineConsumerTests(
     // the actual changed files, including every historical runtime edge.
     const boundaryTests = new Set([...protectedTests, ...directEvidence])
     const completeReaders = sources.map((source) =>
-      createConsumerDependencyReader(source, runtimeEdges, { staticOnly: true, runtimeOnly: true })
+      createDependencyReader(source, runtimeEdges, { staticOnly: true, runtimeOnly: true })
     )
     const changedSources = new Set(paths)
     const omitted = plan.testFiles.filter(
@@ -179,11 +179,11 @@ function refineConsumerTests(
     }
     if (tier === 'pr') {
       const inspectors = sources.map((source) =>
-        createConsumerDependencyReader(source, runtimeEdges, { runtimeOnly: true })
+        createDependencyReader(source, runtimeEdges, { runtimeOnly: true })
       )
       const structural =
         boundary === 'host'
-          ? sources.map((source) => createConsumerDependencyReader(source, runtimeEdges))
+          ? sources.map((source) => createDependencyReader(source, runtimeEdges))
           : []
       const retainedReasons = []
       const deferred = plan.testFiles.filter((test) => {

@@ -21,8 +21,8 @@ import { isModuleRoutableOwnerPath } from './module-ownership-paths.mjs'
 import {
   loadDerivedConsumers,
   withDerivedConsumers,
-  usesDependencyConsumers
-} from './module-derived-consumers.mjs'
+  usesReviewedBoundary
+} from './module-graph/policy.mjs'
 
 const defaultManifest = withDerivedConsumers(loadModuleImpactManifest(), loadDerivedConsumers())
 const packageRegistryPath = new URL('./package-test-boundaries.json', import.meta.url)
@@ -94,7 +94,7 @@ function expandConsumers(manifest, seeds, testsOnly = false) {
   const visit = (moduleId) => {
     if (selected.has(moduleId)) return
     selected.add(moduleId)
-    if (testsOnly && usesDependencyConsumers(moduleId, manifest.modules[moduleId])) return
+    if (testsOnly && usesReviewedBoundary(moduleId, manifest.modules[moduleId])) return
     for (const consumer of manifest.modules[moduleId].consumerModules) visit(consumer)
   }
   for (const seed of seeds) visit(seed)

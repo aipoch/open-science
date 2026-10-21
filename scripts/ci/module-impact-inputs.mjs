@@ -8,7 +8,7 @@ import {
 } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
 
-import { loadDerivedConsumers, withDerivedConsumers } from './module-derived-consumers.mjs'
+import { loadDerivedConsumers, withDerivedConsumers } from './module-graph/policy.mjs'
 
 const defaultManifest = loadModuleImpactManifest()
 const shard = /^scripts\/ci\/module-impact\/([a-z][a-z0-9_]*)\.json$/
