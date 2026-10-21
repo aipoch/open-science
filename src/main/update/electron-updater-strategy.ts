@@ -541,7 +541,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       const installFailure = this.installerStarted
       // A post-handoff SDK error is not proof that the detached native installer has exited.
       if (!this.manual.hasPendingAttempt())
-        this.manual.failed(installFailure ? 'install' : 'download')
+        this.recordManualFailure(installFailure ? 'install' : 'download')
       this.readOnlyInstallerFailure ||= isMacReadOnlyUpdaterError(err, this.platform)
       this.applying = false
       this.installerStarted = false
@@ -557,6 +557,15 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             : 'Update error'
       })
     })
+  }
+
+  private recordManualFailure(kind: 'download' | 'install'): void {
+    try {
+      this.manual.failed(kind)
+    } catch (error) {
+      // Auxiliary failure bookkeeping must not interrupt error publication or handoff cleanup.
+      this.log.warn('manual update failure could not be persisted', error)
+    }
   }
 
   private pendingNativeRecovery(): Partial<UpdateStatus> {
@@ -795,7 +804,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         // reset the status to 'available', so leave it untouched here. Caught so the lifecycle never
         // rejects and can't poison the next download()'s drain.
         if (!token.cancelled) {
-          this.manual.failed('download')
+          this.recordManualFailure('download')
           this.setStatus({
             ...this.status,
             state: 'error',
@@ -888,9 +897,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const pending = (async () => {
       try {
         const result = await action()
-        if (result.outcome === 'recovered' || result.outcome === 'cancelled')
-          this.manual.recovered()
-        else if (result.outcome === 'installed') this.manual.supersede(undefined)
+        try {
+          if (result.outcome === 'recovered' || result.outcome === 'cancelled')
+            this.manual.recovered()
+          else if (result.outcome === 'installed') this.manual.supersede(undefined)
+        } catch (error) {
+          // The recovery action has already settled; publish its actual runtime/install result.
+          this.log.warn('manual update recovery could not be persisted', error)
+        }
         this.applying = false
         this.setStatus({ ...this.status, state: 'ready', ...result })
       } catch (error) {
@@ -999,7 +1013,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
           return this.status
         }
       } catch (error) {
-        this.manual.failed('install')
+        this.recordManualFailure('install')
         this.releaseAbortedInstallHandoff()
         this.applying = false
         this.setStatus({
@@ -1101,7 +1115,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     try {
       await this.installationHooks.beforeInstallHandoff?.(this.status)
     } catch (error) {
-      this.manual.failed('install')
+      this.recordManualFailure('install')
       this.releaseAbortedInstallHandoff()
       this.applying = false
       this.setLifecycleFailure(error)
@@ -1135,7 +1149,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.releaseAbortedInstallHandoff()
       this.applying = false
       this.installerStarted = false
-      if (!nativeSubmissionStarted) this.manual.failed('install')
+      if (!nativeSubmissionStarted) this.recordManualFailure('install')
       this.setStatus({
         ...this.status,
         state: 'error',

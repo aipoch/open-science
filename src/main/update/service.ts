@@ -221,6 +221,15 @@ export class UpdateService implements UpdateStrategy {
     return this.status
   }
 
+  private recordManualFailure(kind: 'download' | 'install'): void {
+    try {
+      this.manual.failed(kind)
+    } catch (error) {
+      // Auxiliary failure bookkeeping must not interrupt the owning update lifecycle.
+      this.log.warn('manual update failure could not be persisted', error)
+    }
+  }
+
   // Manifest flow always applies via an installer, so stamp applyKind here so every broadcast status
   // carries it (the renderer picks the "Open installer" vs "Restart" action off this field).
   private blockForInstallation(interactive: boolean): boolean {
@@ -291,7 +300,7 @@ export class UpdateService implements UpdateStrategy {
               )
             : undefined
         )
-        if (!download) this.manual.failed('install')
+        if (!download) this.recordManualFailure('install')
         this.setStatus({
           state: 'available',
           current: this.currentVersion,
@@ -505,7 +514,7 @@ export class UpdateService implements UpdateStrategy {
         // an error the user can retry from. Caught here so the lifecycle never rejects and can't poison
         // the next download()'s drain.
         if (!abort.signal.aborted) {
-          this.manual.failed('download')
+          this.recordManualFailure('download')
           this.setStatus({
             ...this.status,
             state: 'error',
@@ -608,7 +617,7 @@ export class UpdateService implements UpdateStrategy {
           await this.manual.beforeHandoff()
           nativeSubmissionStarted = true
           const error = await this.openPath(localPath)
-          if (error) this.manual.failed('install')
+          if (error) this.recordManualFailure('install')
           if (this.status === ownedStatus) {
             this.setStatus({
               ...admittedStatus,
@@ -647,7 +656,7 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     } catch (error) {
       if (this.status === ownedStatus && ownedStatus.state === 'applying') {
-        if (!nativeSubmissionStarted) this.manual.failed('install')
+        if (!nativeSubmissionStarted) this.recordManualFailure('install')
         this.setStatus({
           ...admittedStatus,
           state: 'ready',
