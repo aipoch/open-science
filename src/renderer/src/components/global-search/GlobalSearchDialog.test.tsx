@@ -7,6 +7,7 @@ import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
 import { useProjectStore } from '@/stores/project-store'
 import { useSearchMessageFocusStore } from '@/stores/search-message-focus-store'
 import { useSessionStore } from '@/stores/session-store'
+import { useSettingsStore } from '@/stores/settings-store'
 import { fireEvent, screen, waitFor } from '@testing-library/react'
 import { act } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -81,6 +82,30 @@ vi.mock('@/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog', () => ({
 }))
 beforeEach(setupSearch)
 afterEach(teardownSearch)
+
+it('opens the shared archived settings route from an empty search without broadening live results', async () => {
+  const openArchived = vi.spyOn(useSettingsStore.getState(), 'openSettingsToPanel')
+  vi.mocked(window.api.sessions.searchMessages).mockResolvedValue({
+    items: [],
+    totalCount: 0,
+    isComplete: true
+  })
+  vi.mocked(window.api.projectFiles.searchArtifacts).mockResolvedValue({
+    primary: { items: [], totalCount: 0 },
+    other: [],
+    isIndexComplete: true
+  })
+  vi.mocked(window.api.literature.search).mockResolvedValue({ entries: [], totalCount: 0 })
+  await renderSearch()
+  await search('no-such-research-archive-title')
+  await waitFor(() =>
+    expect(screen.getByRole('button', { name: 'Find archived work' })).toBeDefined()
+  )
+  await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Find archived work' })))
+  expect(openArchived).toHaveBeenCalledWith('archived')
+  expect(onClose).toHaveBeenCalledWith(false)
+  openArchived.mockRestore()
+})
 
 it('explains blocked search without presenting unavailable category counts as zero', async () => {
   await renderSearch(true, { isSessionPersistenceReady: false })

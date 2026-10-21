@@ -200,6 +200,8 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
 ] as const
 
 const WEB_UNAVAILABLE_CHANNELS = [
+  'file:artifact-save-progress',
+  'file:cancel-artifact-save',
   'file:save-blob',
   'file:save-managed',
   'file:save-project-artifacts',
@@ -350,6 +352,8 @@ const REMOTE_LOCAL_ONLY_CHANNELS: GroupedInventory = {
 }
 
 const ELECTRON_ONLY_CALLABLE_PATHS = [
+  'getArtifactSaveProgress',
+  'cancelArtifactSave',
   ...GENERATED_SOURCE_OMISSIONS.filter((path) => path !== 'getRuntimeVersions'),
   'saveSessionArtifacts',
   'sessions.cancelDiagnostics',

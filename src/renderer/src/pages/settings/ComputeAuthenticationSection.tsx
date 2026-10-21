@@ -21,6 +21,8 @@ type AuthenticationFieldProps = Readonly<{
   password: string
   onUserChange(value: string): void
   onPortChange(value: string): void
+  onPortBlur?(): void
+  portError?: string
   onIdentityFileChange(value: string): void
   onPasswordChange(value: string): void
 }>
@@ -61,11 +63,19 @@ const SshConfigAuthenticationFields = (props: AuthenticationFieldProps): React.J
           inputMode="numeric"
           value={props.port}
           onChange={(event) => props.onPortChange(event.target.value)}
+          onBlur={props.onPortBlur}
+          aria-invalid={Boolean(props.portError) || undefined}
+          aria-describedby={props.portError ? 'compute-port-error' : undefined}
           placeholder="22"
         />
         <span className="text-xs text-muted-foreground">
           {t('Leave empty for 22 or Port from ~/.ssh/config.')}
         </span>
+        {props.portError ? (
+          <p id="compute-port-error" role="alert" className="text-xs text-destructive">
+            {props.portError}
+          </p>
+        ) : null}
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="compute-identity" className="text-sm font-medium text-foreground">
@@ -113,9 +123,17 @@ const PasswordAuthenticationFields = (props: AuthenticationFieldProps): React.JS
           inputMode="numeric"
           value={props.port}
           onChange={(event) => props.onPortChange(event.target.value)}
+          onBlur={props.onPortBlur}
+          aria-invalid={Boolean(props.portError) || undefined}
+          aria-describedby={props.portError ? 'compute-port-error' : undefined}
           placeholder="22"
           required
         />
+        {props.portError ? (
+          <p id="compute-port-error" role="alert" className="text-xs text-destructive">
+            {props.portError}
+          </p>
+        ) : null}
       </div>
       <div className="flex flex-col gap-1.5">
         <Label htmlFor="compute-password" className="text-sm font-medium">
@@ -224,6 +242,9 @@ const ComputeAdvancedSettings = (props: ComputeAdvancedSettingsProps): React.JSX
           aria-hidden="true"
         />
         {t('Advanced settings')}
+        {!props.open && props.portError ? (
+          <span className="text-xs text-destructive">{props.portError}</span>
+        ) : null}
       </button>
       <div
         id="compute-advanced-settings"

@@ -643,7 +643,7 @@ describe('StorageMigrationModal', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
-  it('swallows a rejected cancelMigrate instead of throwing an unhandled rejection', async () => {
+  it('reports a rejected cancellation and permits a retry without claiming the move stopped', async () => {
     const api = installApi({
       migrate: vi.fn(() => new Promise<MigrationOutcome>(() => {})),
       cancelMigrate: vi.fn().mockRejectedValue(new Error('cancel failed'))
@@ -664,5 +664,26 @@ describe('StorageMigrationModal', () => {
     await act(async () => {
       await Promise.resolve()
     })
+    expect(document.body.textContent).toContain(
+      'Cancellation failed. The move is still running. Try again.'
+    )
+    let resolveCancel!: () => void
+    api.cancelMigrate.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          resolveCancel = resolve
+        })
+    )
+    clickButton((button) => button.textContent?.trim() === 'Retry cancellation')
+    expect(document.body.textContent).toContain('Requesting cancellation…')
+    const pending = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) =>
+      button.textContent?.includes('Requesting cancellation')
+    )!
+    expect(pending.disabled).toBe(true)
+    pending.click()
+    expect(api.cancelMigrate).toHaveBeenCalledTimes(2)
+    await act(async () => resolveCancel())
+    expect(document.body.textContent).toContain('Moving app data…')
+    expect(pending.disabled).toBe(true)
   })
 })

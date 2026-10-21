@@ -3,7 +3,7 @@ import { InlineNotice } from '@/components/ui/inline-notice'
 import { ErrorNotice } from '@/components/error-notice'
 import { ChevronDown, Copy } from 'lucide-react'
 import { RadioGroup } from 'radix-ui'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import type {
@@ -26,6 +26,7 @@ import {
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { useSettingsStore } from '@/stores/settings-store'
+import type { SettingsEditorLeaveState } from './SettingsLayout'
 import { useFileCredentialNotice } from './use-file-credential-notice'
 import { localizeConnectorError } from './connector-error-message'
 import { ConnectorOAuthSignInDialog } from './ConnectorOAuthSignInDialog'
@@ -110,6 +111,7 @@ const COMMAND_OPTIONS = [
 ] as const satisfies { value: string; labelKey: string }[]
 
 type ConnectorAddFormProps = {
+  active?: boolean
   initialTransport?: ConnectorMode
   initialTemplate?: ConnectorTemplateDefinition
   // When set, the form edits this custom server instead of adding a new one. Its name is immutable.
@@ -122,6 +124,7 @@ type ConnectorAddFormProps = {
   // Called after the custom server has been added/updated successfully.
   onDone: () => void
   onCancel: () => void
+  onLeaveStateChange?: (state: SettingsEditorLeaveState | null) => void
 }
 
 // Maps a stored transport to the form's local/remote mode.
@@ -131,6 +134,7 @@ const modeForTransport = (transport: CustomServerTransport): ConnectorMode =>
 // Add or edit a custom MCP server ("custom connector"): a local stdio command or a remote HTTP/SSE
 // server, gated behind an explicit trust confirmation the way Claude Science's "Add connector" flow is.
 export function ConnectorAddForm({
+  active = true,
   initialTransport,
   initialTemplate,
   editServer,
@@ -138,8 +142,18 @@ export function ConnectorAddForm({
   credentialViewOpen,
   onCredentialViewChange,
   onDone,
-  onCancel
+  onCancel,
+  onLeaveStateChange
 }: ConnectorAddFormProps): React.JSX.Element {
+  const mounted = useRef(false)
+  const operationGeneration = useRef(0)
+  useLayoutEffect(() => {
+    mounted.current = active
+    return () => {
+      mounted.current = false
+      operationGeneration.current += 1
+    }
+  }, [active])
   const { t } = useTranslation()
   const { t: tCommon } = useTranslation()
   const addCustomServer = useSettingsStore((s) => s.addCustomServer)
@@ -331,6 +345,47 @@ export function ConnectorAddForm({
     useState<StaticCredentialTarget>()
   const [oauthCredentialId, setOAuthCredentialId] = useState(editServer?.oauthCredentialId ?? '')
   const [localCredentialViewOpen, setLocalCredentialViewOpen] = useState(false)
+  // The baseline is only in memory; it never contains a decrypted stored credential.
+  const draft = JSON.stringify({
+    mode,
+    displayName,
+    name,
+    nameTouched,
+    id,
+    idTouched,
+    description,
+    commandChoice,
+    customCommand,
+    argsDraft,
+    envText,
+    environmentUpdateMode,
+    url,
+    remoteTransport,
+    remoteAuth,
+    oauthScopesText,
+    authorizationServerUrl,
+    clientMetadataUrl,
+    clientId,
+    redirectUri,
+    usePreRegisteredOAuthClient,
+    clientSecret,
+    removeClientSecret,
+    headersText,
+    headerUpdateMode,
+    trusted,
+    credentialBindings,
+    oauthCredentialId
+  })
+  const [savedDraft, setSavedDraft] = useState(draft)
+  const dirty = draft !== savedDraft
+  useLayoutEffect(() => {
+    onLeaveStateChange?.(active ? { dirty, busy: submitting } : null)
+  }, [active, dirty, submitting, onLeaveStateChange])
+  useLayoutEffect(() => () => onLeaveStateChange?.(null), [onLeaveStateChange])
+  const markSaved = (): void => {
+    setSavedDraft(draft)
+    onLeaveStateChange?.(null)
+  }
   const creatingCredential = credentialViewOpen ?? localCredentialViewOpen
   const setCreatingCredential = (open: boolean): void => {
     if (onCredentialViewChange) onCredentialViewChange(open)
@@ -454,7 +509,7 @@ export function ConnectorAddForm({
     (mode !== 'remote' ||
       remoteAuth !== 'headers' ||
       (headerErrors.length === 0 && headerDuplicateErrors.length === 0))
-  const canSubmit = requiredFilled && trusted && !submitting && !editTargetMissing
+  const canSubmit = active && requiredFilled && trusted && !submitting && !editTargetMissing
 
   const switchMode = (next: ConnectorMode): void => {
     setMode(next)
@@ -513,6 +568,8 @@ export function ConnectorAddForm({
 
   const handleSubmit = async (): Promise<void> => {
     if (!canSubmit) return
+    const generation = operationGeneration.current
+    const isCurrent = (): boolean => mounted.current && generation === operationGeneration.current
     setSubmitting(true)
     setError(null)
     try {
@@ -601,6 +658,8 @@ export function ConnectorAddForm({
           }
         }
         await updateCustomServer(request)
+        if (!isCurrent()) return
+        markSaved()
         if (
           usesSharedOAuthCredential &&
           oauthCredentialId !== editServer?.oauthCredentialId &&
@@ -642,6 +701,8 @@ export function ConnectorAddForm({
             : {})
         }
         const created = await addCustomServer(request)
+        if (!isCurrent()) return
+        markSaved()
         if (request.oauthCredentialId && selectedOAuthCredential?.status !== 'connected') {
           setOAuthSignInServer(created)
         } else {
@@ -649,10 +710,11 @@ export function ConnectorAddForm({
         }
       }
     } catch (err) {
+      if (!isCurrent()) return
       const message = err instanceof Error ? err.message : undefined
       setError(message ? localizeConnectorError(message, t) : t('Failed to save connector.'))
     } finally {
-      setSubmitting(false)
+      if (isCurrent()) setSubmitting(false)
     }
   }
 

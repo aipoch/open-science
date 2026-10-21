@@ -18,7 +18,9 @@
     "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
     "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
     "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-    "src/renderer/src/pages/workspace/project-artifact-download-data.ts"
+    "src/renderer/src/pages/workspace/project-artifact-download-data.ts",
+    "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx",
+    "src/renderer/src/pages/workspace/use-artifact-save-progress.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
@@ -50,7 +52,8 @@
       "src/renderer/src/pages/workspace/artifact-preview.test.tsx",
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
-      "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts"
+      "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
+      "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx"
     ],
     "contract": [],
     "consumer": [

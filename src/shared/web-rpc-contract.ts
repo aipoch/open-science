@@ -28,6 +28,8 @@ export type WebRpcErrorCode = (typeof WEB_RPC_ERROR_CODES)[number]
 // methods have browser adapters or require native WebContents/filesystem capabilities and therefore
 // remain outside the Web RPC seam.
 export const WEB_RPC_UNAVAILABLE_CHANNELS = [
+  'file:artifact-save-progress',
+  'file:cancel-artifact-save',
   'file:save-blob',
   'file:save-managed',
   'sessions:export-conversation',

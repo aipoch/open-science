@@ -33,6 +33,7 @@ import { useShallow } from 'zustand/react/shallow'
 import * as Dialog from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { useSettingsStore } from '@/stores/settings-store'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -1187,6 +1188,15 @@ export const GlobalSearchDialog = ({
                           }}
                         >
                           {t('Clear filters')}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            close()
+                            useSettingsStore.getState().openSettingsToPanel('archived')
+                          }}
+                        >
+                          {t('Find archived work')}
                         </button>
                       </div>
                     )}

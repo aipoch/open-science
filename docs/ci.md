@@ -61,6 +61,8 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+The Notebook macOS isolation suite allows one fresh-process retry, retaining both attempts in CI
+logs. A repeated failure remains blocking; release verification keeps its single-attempt policy.
 Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles

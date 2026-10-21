@@ -150,6 +150,8 @@ describe('workspace page architecture', () => {
       'pages/workspace/workspace-conversation-controller.ts'
     ])
     expect(importersOf(ownerPaths.messageQueueOwner)).toEqual([
+      'components/CloseConfirmModal.tsx',
+      'hooks/useQuitPersistenceFlush.ts',
       'pages/workspace/workspace-message-queue-admission.ts',
       'pages/workspace/workspace-message-queue-controller.ts',
       'pages/workspace/workspace-message-queue-drain.ts',
