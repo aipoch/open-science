@@ -79,6 +79,8 @@ type ComputeStoreData = {
   loadError: string | undefined
   // Selectable Host aliases parsed from ~/.ssh/config, loaded lazily when the Add form opens.
   sshAliases: string[]
+  isLoadingSshAliases: boolean
+  sshAliasesLoadFailed: boolean
   // Tracks which hosts are currently being probed so the UI can show a Probing... state.
   probingIds: Set<string>
   // Pending compute approval requests, oldest first. Answered one at a time.
@@ -150,6 +152,8 @@ export const createInitialComputeState = (): ComputeStoreData => ({
   isLoaded: false,
   loadError: undefined,
   sshAliases: [],
+  isLoadingSshAliases: false,
+  sshAliasesLoadFailed: false,
   probingIds: new Set(),
   pendingApprovals: []
 })
@@ -186,15 +190,18 @@ export const useComputeStore = create<ComputeStore>((set, get) => ({
     return trackedRequest
   },
 
-  // Loads ~/.ssh/config aliases for the Add form dropdown. A failure degrades to an empty list (the
-  // user can still type an alias), so this never throws.
+  // Keep read failures distinct from a successfully empty SSH configuration.
   loadSshAliases: async () => {
+    if (get().isLoadingSshAliases) return
+    set({ isLoadingSshAliases: true, sshAliasesLoadFailed: false })
     try {
       const sshAliases = await window.api.compute.sshConfigAliases()
 
-      set({ sshAliases })
+      set({ sshAliases, sshAliasesLoadFailed: false })
     } catch {
-      set({ sshAliases: [] })
+      set({ sshAliasesLoadFailed: true })
+    } finally {
+      set({ isLoadingSshAliases: false })
     }
   },
 

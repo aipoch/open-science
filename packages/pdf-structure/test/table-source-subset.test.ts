@@ -84,6 +84,128 @@ it('removes only an equivalent whole-source candidate and preserves the captione
   }
 })
 
+it('removes a source-equivalent uncaptioned duplicate with an obsolete detector shape warning', () => {
+  const { tokens, complete, caption } = example()
+  const captioned = { ...structuredClone(complete), id: 'captioned', caption }
+  const duplicate = { ...complete, issues: ['missing-row-or-column'] }
+  for (const candidates of [
+    [duplicate, captioned],
+    [captioned, duplicate]
+  ]) {
+    const result = regions.deduplicateSourceOwnedTableSubsets(candidates, tokens)
+    expect(result).toEqual([captioned])
+    expect(result[0]).toBe(captioned)
+  }
+})
+
+it('keeps source-equivalent candidates when the captioned owner still has a shape warning', () => {
+  const { tokens, complete, caption } = example()
+  const captioned = {
+    ...structuredClone(complete),
+    id: 'captioned',
+    caption,
+    issues: ['missing-row-or-column']
+  }
+  expect(regions.deduplicateSourceOwnedTableSubsets([complete, captioned], tokens)).toEqual([
+    complete,
+    captioned
+  ])
+})
+
+it('removes measured word-rectangle duplicates only when their other caption survives on a disjoint table', () => {
+  const { tokens, complete, caption } = example()
+  tokens[0].text = tokens[0].sourceItem.text = 'Field name'
+  complete.cells[0].text = complete.grid[0][0] = 'Field name'
+  complete.cells[0].sourceItems[0].text = 'Field name'
+  const retained = { ...complete, caption }
+  const otherCaption = { ...caption, text: 'Table 2. Other', rect: [10, 100, 120, 110] }
+  const duplicate = { ...structuredClone(complete), id: 'duplicate', caption: otherCaption }
+  duplicate.cells[0].sourceRects = [
+    [10, 30, 20, 40],
+    [25, 30, 40, 40]
+  ]
+  const other = structuredClone(retained)
+  other.id = 'other'
+  other.caption = otherCaption
+  other.cropRect = [5, 115, 170, 175]
+  for (const c of other.cells) {
+    c.sourceItems[0].index += 100
+    c.sourceRects[0][1] += 90
+    c.sourceRects[0][3] += 90
+  }
+  const inventory = [
+    ...tokens,
+    ...other.cells.map((c) => ({
+      text: c.text,
+      horizontal: true,
+      rect: c.sourceRects[0],
+      sourceItem: c.sourceItems[0]
+    }))
+  ]
+  const measured = [
+    {
+      text: tokens[0].text,
+      rect: tokens[0].rect,
+      gaps: [{ index: 5, left: 20, right: 25 }]
+    }
+  ]
+  const tables = [retained, duplicate, other]
+  expect(regions.deduplicateSourceOwnedTableSubsets(tables, inventory, measured)).toEqual([
+    retained,
+    other
+  ])
+  expect(regions.deduplicateSourceOwnedTableSubsets(tables, inventory)).toEqual(tables)
+  expect(regions.deduplicateSourceOwnedTableSubsets(tables.slice(0, 2), tokens, measured)).toEqual(
+    tables.slice(0, 2)
+  )
+  measured[0].gaps[0].left = 19
+  expect(regions.deduplicateSourceOwnedTableSubsets(tables, inventory, measured)).toEqual(tables)
+})
+
+it('does not use an already removed caption owner to justify another deletion', () => {
+  const { tokens, complete, caption } = example()
+  const shared = { ...caption, text: 'Table 2. Other', rect: [10, 100, 120, 110] }
+  const first = { ...complete, caption }
+  const removed = { ...structuredClone(complete), id: 'duplicate-first', caption: shared }
+  const second = { ...structuredClone(complete), id: 'second', caption: shared }
+  second.cropRect = [5, 115, 170, 175]
+  for (const c of second.cells) {
+    c.sourceItems[0].index += 100
+    c.sourceRects[0][1] += 90
+    c.sourceRects[0][3] += 90
+  }
+  const unresolved = {
+    ...structuredClone(second),
+    id: 'duplicate-second',
+    caption: { ...shared, text: 'Table 3. Unresolved' }
+  }
+  const inventory = [
+    ...tokens,
+    ...second.cells.map((c) => ({
+      text: c.text,
+      horizontal: true,
+      rect: c.sourceRects[0],
+      sourceItem: c.sourceItems[0]
+    }))
+  ]
+  expect(
+    regions.deduplicateSourceOwnedTableSubsets([first, removed, second, unresolved], inventory)
+  ).toEqual([first, second, unresolved])
+})
+
+it.each(['native-table-structure-ambiguous', 'text-crosses-crop-boundary'])(
+  'retains an equivalent duplicate with an unresolved %s issue',
+  (issue) => {
+    const { tokens, complete, caption } = example()
+    const captioned = { ...structuredClone(complete), id: 'captioned', caption }
+    const duplicate = { ...complete, issues: ['missing-row-or-column', issue] }
+    expect(regions.deduplicateSourceOwnedTableSubsets([duplicate, captioned], tokens)).toEqual([
+      duplicate,
+      captioned
+    ])
+  }
+)
+
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 function equivalentCandidates() {
   const { tokens, complete, caption } = example()

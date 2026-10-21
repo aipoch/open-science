@@ -6,6 +6,7 @@ import { RestrictedInferenceRunner } from '../acp/restricted-inference-runner'
 import { isPathInsideWorkspace } from '../acp/workspace-path'
 import type { ApplicationEvents } from '../application-events'
 import { type ApplicationModuleBuilder } from '../application-runtime'
+import { QUIT_SHUTDOWN_BUDGET_MS } from '../lifecycle-shutdown'
 import { BookmarkRepository } from '../bookmarks/repository'
 import { BookmarkService } from '../bookmarks/service'
 import { registerLocalModelIpcHandlers } from '../desktop-surface-declarations'
@@ -246,6 +247,9 @@ export async function composeDocumentReading({
       name: 'pdf-translation',
       capability: owner,
       start: () => owner.sweepStaleProfiles(),
+      // Cancellation drains inference and its owned process before releasing profiles and usage.
+      // The generic one-second module cap can expire before that existing shutdown finishes.
+      disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS,
       dispose: () => owner.shutdown()
     }
   })

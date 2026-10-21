@@ -25,6 +25,7 @@ import {
   frontmatterBlock
 } from './user-skill-repository'
 import { parseFrontmatter } from './frontmatter'
+import { mergeSkillCatalog } from './catalog'
 import { SKILL_IMPORT_LIMITS } from './import-limits'
 import type { FetchLike } from './github-import'
 
@@ -642,23 +643,138 @@ describe('UserSkillRepository', () => {
     ).resolves.toBe('guide')
   })
 
-  it.each(['os-reserved', 'mcp-reserved'])(
-    'rejects reserved imported name %s before GitHub or archive content is written',
+  it.each(['mcp-builder', 'os-example'])(
+    'imports a discoverable external GitHub skill named %s (issue #3619)',
     async (name) => {
       const storage = await makeStorage()
-      const repo = new UserSkillRepository(storage)
-      const skillMd = `---\nname: ${name}\ndescription: Reserved.\n---\nbody`
+      try {
+        const repo = new UserSkillRepository(storage)
+        // The reported anthropics/skills repository contains name: mcp-builder.
+        const skillMd = `---\nname: ${name}\ndescription: External skill.\n---\nExternal body.\n`
+        const fetcher = fakeFetch(skillMd)
+        expect(await repo.previewGitHubSkill(SKILL_URL, fetcher)).toMatchObject({ name })
 
-      await expect(repo.importFromGitHub(SKILL_URL, fakeFetch(skillMd))).rejects.toThrow(
-        /os- or mcp-/
-      )
-      await expect(
-        repo.importFromZip(buildZip([{ path: 'SKILL.md', content: Buffer.from(skillMd) }]))
-      ).rejects.toThrow(/os- or mcp-/)
-      expect(await repo.list()).toEqual([])
-      await expect(readdir(join(storage, 'skills', 'imported'))).rejects.toMatchObject({
-        code: 'ENOENT'
-      })
+        const outcome = await repo.importFromGitHub(SKILL_URL, fetcher)
+        const localName = `external-${name}`
+        expect(outcome).toEqual({ status: 'imported', id: `imported-${localName}` })
+        const skills = await repo.list()
+        expect(mergeSkillCatalog([], skills)).toEqual([
+          expect.objectContaining({ id: outcome.id, name: localName, source: 'imported' })
+        ])
+        const installed = await readFile(join(skills[0].sourceDir, 'SKILL.md'), 'utf8')
+        expect(parseFrontmatter(installed).fields.name).toBe(localName)
+        expect(installed).toContain('External body.\n')
+        expect(
+          JSON.parse(await readFile(join(skills[0].sourceDir, '.source.json'), 'utf8'))
+        ).toMatchObject({
+          url: SKILL_URL
+        })
+
+        const reopened = new UserSkillRepository(storage)
+        await expect(reopened.importFromGitHub(SKILL_URL, fetcher)).resolves.toEqual({
+          status: 'unchanged',
+          id: outcome.id
+        })
+        await expect(
+          reopened.importFromGitHub(
+            SKILL_URL,
+            fakeFetch(skillMd.replace('External body.', 'Updated body.'))
+          )
+        ).resolves.toEqual({ status: 'updated', id: outcome.id })
+        expect(await readFile(join(skills[0].sourceDir, 'SKILL.md'), 'utf8')).toContain(
+          'Updated body.\n'
+        )
+        expect(await reopened.list()).toHaveLength(1)
+      } finally {
+        await rm(storage, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each(['os-reserved', 'mcp-reserved'])(
+    'imports archive skill %s under a safe local name (issue #3619)',
+    async (name) => {
+      const storage = await makeStorage()
+      try {
+        const repo = new UserSkillRepository(storage)
+        const skillMd = `---\nname: ${name}\ndescription: External.\n---\nbody`
+        const zip = buildZip([
+          { path: 'SKILL.md', content: Buffer.from(skillMd) },
+          { path: 'references/guide.md', content: Buffer.from('reference') }
+        ])
+        expect((await repo.previewZip(zip)).previews).toEqual([expect.objectContaining({ name })])
+        const id = `imported-external-${name}`
+        expect(await repo.importFromZip(zip)).toEqual({ status: 'imported', id })
+        const [skill] = mergeSkillCatalog([], await repo.list())
+        expect(skill).toMatchObject({ id, name: `external-${name}` })
+        expect(
+          parseFrontmatter(await readFile(join(skill.sourceDir, 'SKILL.md'), 'utf8')).fields.name
+        ).toBe(`external-${name}`)
+        expect(await readFile(join(skill.sourceDir, 'references', 'guide.md'), 'utf8')).toBe(
+          'reference'
+        )
+        await expect(repo.importFromZip(zip)).resolves.toEqual({ status: 'unchanged', id })
+        const update = buildZip([
+          { path: 'SKILL.md', content: Buffer.from(skillMd.replace('\nbody', '\nupdated body')) },
+          { path: 'references/guide.md', content: Buffer.from('updated reference') }
+        ])
+        const [preview] = (await repo.previewZip(update)).previews
+        expect(preview).toMatchObject({
+          replaceableId: id,
+          replacement: { targetId: id, modified: ['SKILL.md', 'references/guide.md'] }
+        })
+        await expect(
+          repo.importFromZip(update, { replaceId: preview.replaceableId })
+        ).resolves.toEqual({ status: 'updated', id })
+        expect(await repo.list()).toHaveLength(1)
+        expect(await readFile(join(skill.sourceDir, 'references', 'guide.md'), 'utf8')).toBe(
+          'updated reference'
+        )
+        await expect(readdir(join(storage, 'skills', 'imported'))).resolves.not.toContain(name)
+      } finally {
+        await rm(storage, { recursive: true, force: true })
+      }
+    }
+  )
+
+  it.each([
+    ['mcp-builder', 'external-mcp-builder', 'external-mcp-builder-3'],
+    [
+      `mcp-${'a'.repeat(50)}-suffix`,
+      `external-mcp-${'a'.repeat(50)}`,
+      `external-mcp-${'a'.repeat(49)}-3`
+    ],
+    [
+      `mcp-${'a'.repeat(48)}-suffix`,
+      `external-mcp-${'a'.repeat(48)}-su`,
+      `external-mcp-${'a'.repeat(48)}-3`
+    ]
+  ])(
+    'allocates a bounded, collision-free local name for %s (issue #3619)',
+    async (name, localName, expectedName) => {
+      const storage = await makeStorage()
+      try {
+        const repo = new UserSkillRepository(storage)
+        await repo.createPersonal({ name: localName, description: 'Existing', body: 'keep me' })
+        const bundledName = expectedName.replace(/-3$/, '-2')
+        const result = await repo.importFromGitHub(
+          SKILL_URL,
+          fakeFetch(`---\nname: ${name}\n---\nimported body`),
+          [bundledName]
+        )
+        expect(result).toEqual({ status: 'imported', id: `imported-${expectedName}` })
+        const skills = mergeSkillCatalog([], await repo.list())
+        expect(skills.map((skill) => skill.name).sort()).toEqual([localName, expectedName].sort())
+        const imported = skills.find((skill) => skill.id === result.id)!
+        expect(
+          parseFrontmatter(await readFile(join(imported.sourceDir, 'SKILL.md'), 'utf8')).fields.name
+        ).toBe(expectedName)
+        expect(
+          await readFile(join(storage, 'skills', 'personal', localName, 'SKILL.md'), 'utf8')
+        ).toContain('keep me')
+      } finally {
+        await rm(storage, { recursive: true, force: true })
+      }
     }
   )
 

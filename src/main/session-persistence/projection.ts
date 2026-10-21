@@ -1,4 +1,5 @@
-import type { Prisma, PrismaClient } from '@prisma/client'
+import { Prisma, type PrismaClient } from '@prisma/client'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import { sessionUsageMessages, sessionUsageRuns } from '../../shared/session-usage'
 
@@ -19,10 +20,35 @@ import { deriveSessionAttention } from '../../shared/session-persistence'
 // shared single-connection SQLite client. Keep transaction admission bounded, but allow the
 // Windows disk contention seen during large upload batches to drain before failing the save.
 // Execution deadlines and rollback behavior remain Prisma defaults.
-const runProjectionTransaction = <Result>(
+const runProjectionTransaction = async <Result>(
   client: Pick<PrismaClient, '$transaction'>,
   operation: (transaction: Prisma.TransactionClient) => Promise<Result>
-): Promise<Result> => client.$transaction(operation, { maxWait: 30_000 })
+): Promise<Result> => {
+  const startedAt = performance.now()
+  let admittedAt: number | undefined
+  try {
+    return await client.$transaction(
+      (transaction) => {
+        admittedAt = performance.now()
+        return operation(transaction)
+      },
+      { maxWait: 30_000 }
+    )
+  } catch (error) {
+    const failedAt = performance.now()
+    // Messages, query metadata and stacks can contain Session content or filesystem paths.
+    createLogger('session-persistence').error('projection transaction failed', {
+      ...diagnosticErrorFields(error),
+      transactionStarted: admittedAt !== undefined,
+      admissionMs: Math.round((admittedAt ?? failedAt) - startedAt),
+      elapsedMs: Math.round(failedAt - startedAt),
+      ...(error instanceof Prisma.PrismaClientKnownRequestError && /^P\d{4}$/.test(error.code)
+        ? { prismaCode: error.code }
+        : {})
+    })
+    throw error
+  }
+}
 
 const PROJECTION_STATE_ID = 'session-projection'
 const PROJECTION_VERSION = 7

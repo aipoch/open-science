@@ -222,6 +222,7 @@ describe('complete module ownership', () => {
       graph
     )
     expect(catalog.testFiles).toEqual([
+      'scripts/build-backend.integration.test.ts',
       'src/main/locale/owner.test.ts',
       'src/renderer/src/i18n/resources.test.ts'
     ])

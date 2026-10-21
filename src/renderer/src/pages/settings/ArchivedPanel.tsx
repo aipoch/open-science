@@ -5,6 +5,7 @@ import { useId, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { ProjectDeletionCleanupNotice } from '@/components/ProjectDeletionCleanupNotice'
 import { SessionPersistenceAlert } from '@/components/SessionPersistenceAlert'
 import { SessionCatalogRecoveryAlert } from '@/components/SessionCatalogRecoveryAlert'
@@ -58,6 +59,12 @@ const ArchivedPanel = ({
   const [sessionToDelete, setSessionToDelete] = useState<ChatSession | undefined>()
   const [busyKeys, setBusyKeys] = useState<Set<string>>(() => new Set())
   const [panelError, setPanelError] = useState<string | undefined>()
+  const [query, setQuery] = useState('')
+  const searchTerm = query.trim().toLocaleLowerCase()
+  const matches = (text: string): boolean => text.toLocaleLowerCase().includes(searchTerm)
+  const matchesSession = (session: ChatSession): boolean =>
+    matches(session.title) ||
+    matches(projects.find((project) => project.id === session.projectId)?.name ?? '')
   const [projectDeleteError, setProjectDeleteError] = useState<string | undefined>()
   const [sessionDeleteError, setSessionDeleteError] = useState<
     'runtime' | 'persistence' | 'unknown' | undefined
@@ -71,6 +78,11 @@ const ArchivedPanel = ({
     view.kind === 'project'
       ? archivedProjects.find((project) => project.id === view.projectId)
       : undefined
+  const visibleArchivedProjects = archivedProjects.filter(
+    (project) =>
+      matches(project.name) ||
+      sessions.some((session) => session.projectId === project.id && matches(session.title))
+  )
   const selectedProjectSessions = useMemo(
     () => sessions.filter((session) => session.projectId === selectedProject?.id),
     [selectedProject?.id, sessions]
@@ -255,6 +267,12 @@ const ArchivedPanel = ({
 
   return (
     <div className="space-y-5 p-5">
+      <Input
+        aria-label={t('Search archived work')}
+        placeholder={t('Search by title or project…')}
+        value={query}
+        onChange={(event) => setQuery(event.target.value)}
+      />
       {sessionLoadError && catalogRecovery.kind === 'ready' ? (
         <SessionPersistenceAlert
           inline
@@ -338,11 +356,15 @@ const ArchivedPanel = ({
                 {t('Restore the project first.')}
               </p>
             ) : null}
-            {selectedProjectSessions.length > 0 ? (
-              selectedProjectSessions.map((session) => sessionRow(session, true))
+            {selectedProjectSessions.filter(matchesSession).length > 0 ? (
+              selectedProjectSessions
+                .filter(matchesSession)
+                .map((session) => sessionRow(session, true))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                {t('This project has no saved sessions.')}
+                {searchTerm
+                  ? t('No matching archived work.')
+                  : t('This project has no saved sessions.')}
               </p>
             )}
           </section>
@@ -357,8 +379,8 @@ const ArchivedPanel = ({
           </div>
           <section className="space-y-2" data-settings-anchor="archived.list">
             <h4 className="text-sm font-medium text-foreground">{t('Projects')}</h4>
-            {archivedProjects.length > 0 ? (
-              archivedProjects.map((project) => (
+            {visibleArchivedProjects.length > 0 ? (
+              visibleArchivedProjects.map((project) => (
                 <button
                   key={project.id}
                   type="button"
@@ -381,17 +403,21 @@ const ArchivedPanel = ({
               ))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                {t('No archived projects.')}
+                {searchTerm ? t('No matching archived work.') : t('No archived projects.')}
               </p>
             )}
           </section>
           <section className="space-y-2">
             <h4 className="text-sm font-medium text-foreground">{t('Sessions')}</h4>
-            {individuallyArchivedSessions.length > 0 ? (
-              individuallyArchivedSessions.map((session) => sessionRow(session, false))
+            {individuallyArchivedSessions.filter(matchesSession).length > 0 ? (
+              individuallyArchivedSessions
+                .filter(matchesSession)
+                .map((session) => sessionRow(session, false))
             ) : (
               <p className="rounded-lg border border-dashed border-border p-4 text-sm text-muted-foreground">
-                {t('No individually archived sessions.')}
+                {searchTerm
+                  ? t('No matching archived work.')
+                  : t('No individually archived sessions.')}
               </p>
             )}
           </section>

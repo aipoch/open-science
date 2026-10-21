@@ -61,6 +61,8 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+The Notebook macOS isolation suite allows one fresh-process retry, retaining both attempts in CI
+logs. A repeated failure remains blocking; release verification keeps its single-attempt policy.
 Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles
@@ -271,6 +273,35 @@ The consumer-coverage guard requires reachable coverage and a fresh derived inde
 require deleting conservative explicit consumers. A newly complete dependency graph can prove
 current independence without proving historical reachability. Only the trusted base/head
 retirement checks described below authorize removing those existing obligations.
+
+## Actions cache maintenance
+
+The **Clean up closed PR caches** workflow sweeps `refs/pull/<number>/merge` caches after
+PR Gate completes for a PR or merge group. It checks each PR's current state and deletes
+only closed-PR caches, including fork PRs. Open-PR, main, branch and tag caches are preserved;
+a reopened PR may need to populate its cache again.
+
+The privileged workflow uses
+[`workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+so both its definition and cleanup script come from main. It does not execute upstream code,
+restore caches or download artifacts. This applies GitHub's
+[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches)
+without granting write access to a PR-controlled workflow.
+
+A PR closed after its last Gate run is swept by the next Gate completion or a manual run.
+For immediate recovery, run a manual sweep on main. Inspect the dry-run logs before enabling deletion:
+
+```bash
+gh workflow run cache-cleanup.yml --ref main -f dry_run=true
+gh workflow run cache-cleanup.yml --ref main -f dry_run=false
+```
+
+If the shared Windows Notebook runtime cache has already been evicted, run
+`gh workflow run windows-notebook-runtime.yml --ref main` after cleanup. This reuses the
+existing compiler and verification workflow to restore main's cache; PR-scoped caches cannot
+warm main or other PRs. Cache keys and validation remain unchanged. Cleanup reduces quota
+pressure but cannot guarantee retention; a missing runtime cache still triggers compilation.
+No Release assets, Deployments or periodic compiler runs are used.
 
 ## CI control-plane approval
 

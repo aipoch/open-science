@@ -3013,13 +3013,15 @@ describe('ProjectFilesView', () => {
       source: 'artifact',
       projectId: 'default',
       fileId: 'artifact-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'default',
       fileId: 'upload-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
     expect(
       vi
@@ -3107,7 +3109,8 @@ describe('ProjectFilesView', () => {
       source: 'artifact',
       projectId: 'default',
       fileId: 'artifact-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
   })
 

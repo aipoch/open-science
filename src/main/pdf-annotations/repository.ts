@@ -1,6 +1,6 @@
 import { previewSharing, commitSharing } from './sharing'
 import { registerVerifiedPdfContent } from '../pdf-documents/identity'
-import type { PdfNativeAnnotationDraft } from './native-import-core'
+import type { PdfNativeAnnotationDraft } from './native-import'
 import type { PdfSharingPreview, PdfSharingDecision } from '../../shared/pdf-annotations'
 import {
   bindingId,

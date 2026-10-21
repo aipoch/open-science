@@ -366,6 +366,7 @@ describe('module impact shadow', () => {
         modules: ['i18n_catalog']
       })
       expect(report.shadow.testFiles).toEqual([
+        'scripts/build-backend.integration.test.ts',
         'src/main/locale/owner.test.ts',
         'src/renderer/src/i18n/resources.test.ts'
       ])

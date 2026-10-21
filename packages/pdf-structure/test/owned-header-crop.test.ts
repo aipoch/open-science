@@ -298,6 +298,95 @@ it('keeps recovered side paint inside the source page', () => {
   expect(recoverOwnedTableCrop(table, rules, [280, 400], items)).toEqual([39.5, 96, 280, 174])
 })
 
+const distantFrame = (): ReturnType<typeof JSON.parse> => {
+  const f = framedFixture()
+  for (const [index, item] of f.items.entries()) {
+    item.sourceItem = { pageNumber: 1, index, text: item.text }
+  }
+  for (const cell of f.table.cells)
+    cell.sourceItems = cell.sourceRects.map(
+      (r: number[]) =>
+        f.items.find((i: { rect: number[] }) => i.rect.join(',') === r.join(',')).sourceItem
+    )
+  f.fonts = structuredClone(f.items)
+  f.rules = f.rules.map((r: number[]) => r.map((v, i) => (i % 2 === 0 && v >= 279.6 ? v + 90 : v)))
+  f.paint = new Map(
+    f.rules.map((r: number[]) => [
+      r.join(','),
+      r[0] === r[2] ? [r[0] - 0.3, r[1], r[2] + 0.3, r[3]] : [r[0], r[1] - 0.3, r[2], r[3] + 0.3]
+    ])
+  )
+  return f
+}
+it('recovers a distant closed outer side from complete unique native owners and painted edges', () => {
+  const f = distantFrame(),
+    before = structuredClone(f.table)
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual([39.5, 96, 370.5, 174])
+  expect(f.table).toEqual(before)
+})
+it('completes a closed two-row table whose exact native title is unassigned', () => {
+  const f = distantFrame()
+  f.table.cells = f.table.cells.filter((c: { row: number }) => c.row > 0)
+  f.items = f.items.slice(3)
+  const title = {
+    text: 'Measurements',
+    rect: [100, 108, 200, 118],
+    height: 10,
+    baseline: 118,
+    horizontal: true,
+    sourceItem: { pageNumber: 1, index: 30, text: 'Measurements' }
+  }
+  f.items.push(title)
+  f.fonts = structuredClone(f.items)
+  f.table.unassigned = [title.text]
+  const before = structuredClone(f.table)
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual([39.5, 96, 370.5, 174])
+  expect(f.table).toEqual(before)
+  f.fonts.at(-1).sourceItem.text = 'Different'
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual(f.table.cropRect)
+})
+it.each([
+  'foreign-interior',
+  'foreign-strip',
+  'missing-paint',
+  'duplicate-font',
+  'wrong-literal',
+  'partial-source',
+  'segment-alias',
+  'mixed-pages',
+  'malformed-font',
+  'wrong-font-height',
+  'unclosed-side'
+])('does not use a distant border without complete %s evidence', (mode) => {
+  const f = distantFrame()
+  if (mode === 'foreign-interior')
+    f.fonts.push({
+      text: 'Separate',
+      rect: [200, 125, 220, 135],
+      sourceItem: { pageNumber: 1, index: 100, text: 'Separate' }
+    })
+  if (mode === 'foreign-strip') f.items.push({ text: 'Adjacent', rect: [300, 125, 320, 135] })
+  if (mode === 'missing-paint') f.paint.clear()
+  if (mode === 'duplicate-font') f.fonts.push(structuredClone(f.fonts[0]))
+  if (mode === 'wrong-literal') f.fonts[0].sourceItem.text = 'Other'
+  if (mode === 'partial-source') f.table.cells[0].sourceItems = []
+  if (mode === 'segment-alias') f.table.cells[0].sourceItems[0].start = 0
+  if (mode === 'mixed-pages') f.items[0].sourceItem.pageNumber = 2
+  if (mode === 'malformed-font') f.fonts.push(null)
+  if (mode === 'wrong-font-height') f.fonts[0].height = 15
+  if (mode === 'unclosed-side')
+    f.rules = f.rules.filter((r: number[]) => r.join(',') !== '370,120.4,370,139.6')
+  expect(
+    recoverOwnedTableCrop(f.table, f.rules, [400, 400], f.items, f.paint, [], f.fonts)
+  ).toEqual(f.table.cropRect)
+})
+
 it.each(['open side', 'missing opening', 'foreign text', 'missing source', 'ambiguous source'])(
   'keeps side bounds without a uniquely owned closed native frame: %s',
   (guard) => {

@@ -16,6 +16,7 @@ const ZoomableImage = ({
   url,
   name,
   onError,
+  sourceSize,
   annotationItem,
   activeAnnotations = [],
   onAddAnnotation,
@@ -26,6 +27,7 @@ const ZoomableImage = ({
   url: string
   name: string
   onError: () => void
+  sourceSize?: { width: number; height: number }
   annotationItem?: PreviewFileItem
   activeAnnotations?: readonly Annotation[]
   onAddAnnotation?: (annotation: Annotation) => AnnotationValidationError | undefined
@@ -39,6 +41,7 @@ const ZoomableImage = ({
         <ImagePointAnnotationSurface
           item={annotationItem}
           src={url}
+          sourceSize={sourceSize}
           activeAnnotations={activeAnnotations}
           onAdd={onAddAnnotation}
           onUpdateNote={onUpdateAnnotationNote}
@@ -143,7 +146,9 @@ export const PreviewImageContent = ({
       <PreviewFallbackCard
         icon={ImageOff}
         name={name}
-        message={t("Image couldn't be loaded for preview")}
+        message={t(
+          'The browser could not display this image. It may be damaged, unsupported, or exceed available memory. Download the original to view it.'
+        )}
         retryable
       />
     )
@@ -155,6 +160,9 @@ export const PreviewImageContent = ({
         url={state.url}
         name={name}
         onError={() => setFailedRequestKey(requestKey)}
+        sourceSize={
+          state.width && state.height ? { width: state.width, height: state.height } : undefined
+        }
         annotationItem={annotationItem}
         activeAnnotations={activeAnnotations}
         onAddAnnotation={onAddAnnotation}

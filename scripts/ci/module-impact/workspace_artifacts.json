@@ -23,7 +23,9 @@
     "src/renderer/src/pages/workspace/use-artifact-hidden-state.ts",
     "src/renderer/web/project-archive.test.ts",
     "src/renderer/web/project-archive.ts",
-    "src/renderer/src/pages/workspace/ArtifactHideButton.tsx"
+    "src/renderer/src/pages/workspace/ArtifactHideButton.tsx",
+    "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx",
+    "src/renderer/src/pages/workspace/use-artifact-save-progress.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.tsx",
@@ -57,7 +59,8 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
       "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
-      "src/renderer/web/project-archive.test.ts"
+      "src/renderer/web/project-archive.test.ts",
+      "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx"
     ],
     "contract": [],
     "consumer": [

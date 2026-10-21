@@ -1,11 +1,14 @@
-import { mkdtemp, rm, writeFile } from 'node:fs/promises'
+import type { ChildProcess } from 'node:child_process'
+import { once } from 'node:events'
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, win32 } from 'node:path'
 import { installManagedCodex, managedCodexBinary } from './managed-codex'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { warnLogSpy } = vi.hoisted(() => ({
-  warnLogSpy: vi.fn()
+const { warnLogSpy, errorLogSpy } = vi.hoisted(() => ({
+  warnLogSpy: vi.fn(),
+  errorLogSpy: vi.fn()
 }))
 
 vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
@@ -14,7 +17,7 @@ vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
     debug: vi.fn(),
     info: vi.fn(),
     warn: warnLogSpy,
-    error: vi.fn()
+    error: errorLogSpy
   })
 }))
 
@@ -327,7 +330,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
   // without a package.json type declaration.
   const writeFakeAdapter = async (
     name: string,
-    behavior: { protocolVersion?: number; exitWithoutReply?: boolean }
+    behavior: { protocolVersion?: number; exitWithoutReply?: boolean; stderr?: string }
   ): Promise<string> => {
     const scriptPath = join(tempRoot, name)
     const reply = behavior.exitWithoutReply
@@ -347,7 +350,11 @@ describe('codex-detect: real ACP initialize smoke', () => {
           '  } catch {}',
           '})'
         ].join('\n')
-    await writeFile(scriptPath, reply, 'utf8')
+    await writeFile(
+      scriptPath,
+      `process.stderr.write(${JSON.stringify(behavior.stderr ?? '')})\n${reply}`,
+      'utf8'
+    )
     return scriptPath
   }
 
@@ -379,12 +386,16 @@ describe('codex-detect: real ACP initialize smoke', () => {
   afterEach(async () => {
     await rm(tempRoot, { recursive: true, force: true }).catch(() => undefined)
     warnLogSpy.mockClear()
+    errorLogSpy.mockClear()
     terminateProcessTreeSpy.mockClear()
     terminateProcessTreeSpy.mockImplementation(() => Promise.resolve({ reaped: true }))
   })
 
   it('reports an adapter whose real initialize handshake returns protocolVersion 1 as ready', async () => {
-    const adapterPath = await writeFakeAdapter('ready-adapter.js', { protocolVersion: 1 })
+    const adapterPath = await writeFakeAdapter('ready-adapter.js', {
+      protocolVersion: 1,
+      stderr: 'Startup warning that does not prevent initialization\n'
+    })
 
     const result = await detectWithRealSmoke(adapterPath)
 
@@ -396,6 +407,7 @@ describe('codex-detect: real ACP initialize smoke', () => {
     })
     // The smoke reaped the tree cleanly, so it must not emit the degraded-reap warning.
     expect(warnLogSpy).not.toHaveBeenCalled()
+    expect(errorLogSpy).not.toHaveBeenCalled()
   })
 
   it('holds installation admission through an unconfirmed detection tree teardown', async () => {
@@ -458,6 +470,183 @@ describe('codex-detect: real ACP initialize smoke', () => {
     const result = await detectWithRealSmoke(adapterPath)
 
     expect(result).toBeUndefined()
+  })
+
+  it('records the adapter startup error when initialization fails before replying', async () => {
+    const adapterPath = join(tempRoot, 'missing-native-adapter.js')
+    const diagnostic = "Error: Cannot find module '@openai/codex/bin/codex.js'"
+    await writeFile(
+      adapterPath,
+      `process.stderr.write(${JSON.stringify(diagnostic + '\n')}, () => process.exit(1))`,
+      'utf8'
+    )
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'ACP initialize check failed',
+      expect.objectContaining({ status: 1, stderr: expect.stringContaining(diagnostic) })
+    )
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+  })
+
+  it('redacts and bounds adapter stderr without losing the startup diagnostic', async () => {
+    const adapterPath = join(tempRoot, 'verbose-failure.js')
+    const diagnostic = [
+      'Native Codex failed to start',
+      'Authorization: Bearer smoke-bearer-secret',
+      '{"api_key":"smoke-json-secret"}',
+      'https://smoke-user:smoke-password@example.invalid/?key=smoke-query-secret',
+      'x'.repeat(20_000)
+    ].join('\n')
+    await writeFile(
+      adapterPath,
+      `process.stderr.write(${JSON.stringify(diagnostic)}, () => process.exit(1))`,
+      'utf8'
+    )
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    const detail = errorLogSpy.mock.calls[0][1]
+    expect(detail).toMatchObject({ status: 1, timedOut: false, stderrTruncated: true })
+    expect(detail.stderr).toContain('Native Codex failed to start')
+    expect(detail.stderr.length).toBeLessThanOrEqual(7_800)
+    for (const secret of [
+      'smoke-bearer-secret',
+      'smoke-json-secret',
+      'smoke-user',
+      'smoke-password',
+      'smoke-query-secret'
+    ]) {
+      expect(JSON.stringify(errorLogSpy.mock.calls)).not.toContain(secret)
+    }
+  })
+
+  it.each(['exceeds', 'reaches'] as const)(
+    'does not expose a quoted credential when stderr %s the capture limit',
+    async (boundary) => {
+      const adapterPath = join(tempRoot, 'truncated-credential.js')
+      const prefix = 'Native Codex failed to start\n'
+      const credential = '"OPENAI_API_KEY":"smoke-secret-at-boundary"'
+      // Put the closing quote just beyond the raw capture limit. Sanitizing this partial
+      // JSON value cannot recognize it as the complete quoted credential.
+      const fullDiagnostic =
+        prefix + 'x'.repeat(8_192 - prefix.length - credential.length + 1) + credential + '\n'
+      const diagnostic = boundary === 'reaches' ? fullDiagnostic.slice(0, 8_192) : fullDiagnostic
+      await writeFile(
+        adapterPath,
+        `process.stderr.write(${JSON.stringify(diagnostic)}, () => process.exit(1))`,
+        'utf8'
+      )
+
+      expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+      expect(errorLogSpy).toHaveBeenCalledTimes(1)
+      expect(JSON.stringify(errorLogSpy.mock.calls)).not.toContain('smoke-secret-at-boundary')
+      expect(errorLogSpy.mock.calls[0][1]).toMatchObject({
+        stderr: expect.stringContaining('Native Codex failed to start'),
+        stderrTruncated: true
+      })
+    }
+  )
+
+  it('records a sanitized initialize error response without logging its data payload', async () => {
+    const adapterPath = join(tempRoot, 'initialize-error.js')
+    const response = JSON.stringify({
+      jsonrpc: '2.0',
+      id: 1,
+      error: {
+        code: -32000,
+        message: 'Native Codex unavailable; api_key=smoke-rpc-secret',
+        data: { diagnostic: 'private-response-payload' }
+      }
+    })
+    await writeFile(
+      adapterPath,
+      `process.stdout.write(${JSON.stringify(response + '\n')}, () => process.exit(1))`,
+      'utf8'
+    )
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'ACP initialize check failed',
+      expect.objectContaining({
+        timedOut: false,
+        initializeError: {
+          code: -32000,
+          message: { text: 'Native Codex unavailable; api_key=[redacted]', truncated: false }
+        }
+      })
+    )
+    expect(JSON.stringify(errorLogSpy.mock.calls)).not.toContain('smoke-rpc-secret')
+    expect(JSON.stringify(errorLogSpy.mock.calls)).not.toContain('private-response-payload')
+  })
+
+  it('records the launch error when the adapter executable is missing', async () => {
+    const adapterPath = join(tempRoot, 'missing-adapter-executable')
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'ACP initialize check failed',
+      expect.objectContaining({
+        timedOut: false,
+        processError: expect.objectContaining({ code: 'ENOENT' })
+      })
+    )
+  })
+
+  const killWaitingAdapter = async (value: unknown): Promise<{ reaped: boolean }> => {
+    const child = value as ChildProcess
+    const closed = once(child, 'close')
+    child.kill()
+    await closed
+    return { reaped: true }
+  }
+
+  it('records an initialize timeout without attributing its own kill to the failure', async () => {
+    const adapterPath = join(tempRoot, 'unresponsive-adapter.js')
+    await writeFile(adapterPath, 'setInterval(() => {}, 1000)\n')
+    terminateProcessTreeSpy.mockImplementation(killWaitingAdapter)
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    expect(errorLogSpy).toHaveBeenCalledWith(
+      'ACP initialize check failed',
+      expect.objectContaining({ status: null, signal: null, timedOut: true })
+    )
+    expect(terminateProcessTreeSpy).toHaveBeenCalledTimes(1)
+  }, 25_000)
+
+  it('cleans up a cancelled initialize without reporting an installation failure', async () => {
+    const adapterPath = join(tempRoot, 'cancelled-adapter.js')
+    const readyPath = join(tempRoot, 'adapter-started')
+    await writeFile(
+      adapterPath,
+      `require('node:fs').writeFileSync(${JSON.stringify(readyPath)}, 'ready')\nsetInterval(() => {}, 1000)\n`
+    )
+    terminateProcessTreeSpy.mockImplementation(killWaitingAdapter)
+    const controller = new AbortController()
+    const outcome = runAcpInitializeSmoke(process.platform)(
+      adapterPath,
+      {},
+      controller.signal
+    ).then(
+      () => 'resolved',
+      (error: Error) => error.name
+    )
+
+    try {
+      await vi.waitFor(async () => expect(await readFile(readyPath, 'utf8')).toBe('ready'), {
+        timeout: 5_000
+      })
+      controller.abort()
+      expect(await outcome).toBe('AbortError')
+      expect(terminateProcessTreeSpy).toHaveBeenCalledTimes(1)
+      expect(errorLogSpy).not.toHaveBeenCalled()
+    } finally {
+      controller.abort()
+      await outcome
+    }
   })
 })
 

@@ -101,6 +101,8 @@ export type AppLifecycleDeps = {
   // A failed remote preparation/stop must leave the desktop alive instead of orphaning its server.
   requireCleanBackendShutdown?: boolean
   onQuitError?: (error: unknown) => void
+  // Transfers an interrupted ordinary quit to the desktop's existing disconnected decision.
+  handleDisconnectedQuit?: () => boolean
   // Snapshot of sessions with running work (in-flight agent prompt or a notebook cell mid-execution),
   // used to populate the confirmation list and to skip the quit dialog when nothing is running.
   detectActiveSessions: () => ActiveSessionInfo[]
@@ -705,8 +707,9 @@ export const installAppLifecycle = (
           } else {
             clearApplicationShutdownTrigger()
             showMainWindow()
-            if (backendFailure) deps.onQuitError?.(backendFailure)
-            if (persistenceFailureNeedsConsent && !confirmInFlight) {
+            const disconnectedQuitHandled = ordinaryQuit && deps.handleDisconnectedQuit?.()
+            if (backendFailure && !disconnectedQuitHandled) deps.onQuitError?.(backendFailure)
+            if (persistenceFailureNeedsConsent && !disconnectedQuitHandled && !confirmInFlight) {
               confirmInFlight = true
               try {
                 let choice: CloseConfirmChoice

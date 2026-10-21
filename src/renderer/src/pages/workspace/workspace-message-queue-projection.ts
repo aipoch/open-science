@@ -1,5 +1,5 @@
 import type { MessageQueueItem } from './composer-contract'
-import { queueItemIsBusy } from './workspace-message-queue-admission'
+import { queueItemContextError, queueItemIsBusy } from './workspace-message-queue-admission'
 import {
   MESSAGE_QUEUE_ANNOUNCEMENTS,
   queuedMessageMovedAnnouncement
@@ -11,7 +11,7 @@ import {
 
 type MessageQueueItemView = Pick<
   MessageQueueItem,
-  'id' | 'text' | 'attachmentCount' | 'phase' | 'error' | 'deferredUntilIdle'
+  'id' | 'text' | 'attachmentCount' | 'phase' | 'error' | 'deferredUntilIdle' | 'messageAppended'
 >
 
 type MessageQueueOptionsRef = { current: WorkspaceMessageQueueControllerOptions }
@@ -31,12 +31,13 @@ const projectActiveQueueItems = (
   const activeItems = activeSessionId ? (queues.get(activeSessionId) ?? []) : []
   return activeItems
     .filter((item) => item.kind === 'user' && !(item.phase === 'sending' && item.messageAppended))
-    .map(({ id, text, attachmentCount, phase, error, deferredUntilIdle }) => ({
+    .map(({ id, text, attachmentCount, phase, error, deferredUntilIdle, messageAppended }) => ({
       id,
       text,
       attachmentCount,
       phase,
       error,
+      ...(messageAppended ? { messageAppended: true } : {}),
       ...(deferredUntilIdle ? { deferredUntilIdle: true } : {})
     }))
 }
@@ -92,11 +93,34 @@ const removeQueuedItem = (
   if (!queue) return
   const item = queue.items.find((candidate) => candidate.id === itemId)
   if (!item?.snapshot || queueItemIsBusy(item)) return
-  optionsRef.current.composer.discardSnapshot(item.snapshot)
+  const discard = optionsRef.current.composer.discardSnapshot
+  owner.retainRemoved(item, queue.items.indexOf(item), () => discard(item.snapshot!))
   const remaining = queue.items.filter((candidate) => candidate.id !== itemId)
   if (remaining.length === 0) owner.queues.delete(queue.sessionId)
   else owner.queues.set(queue.sessionId, remaining)
   owner.emit(MESSAGE_QUEUE_ANNOUNCEMENTS.removed)
+}
+
+const undoRemovedQueuedItem = (
+  owner: WorkspaceMessageQueueOwner,
+  optionsRef: MessageQueueOptionsRef,
+  itemId: string
+): void => {
+  const item = owner.removedItem(itemId)
+  if (!item) return
+  const options = owner.resolveOptions(optionsRef.current)
+  const session = options.getSession(item.sessionId)
+  if (
+    !session ||
+    session.projectId !== item.projectId ||
+    session.archivedAt !== undefined ||
+    !(options.isProjectActive?.(item.projectId) ?? true) ||
+    queueItemContextError(session, item)
+  ) {
+    owner.markRemovedUnavailable(itemId)
+    return
+  }
+  owner.restoreRemoved(itemId)
 }
 
 const editQueuedItem = (
@@ -159,6 +183,7 @@ export {
   moveQueuedItem,
   moveQueuedItemTo,
   projectActiveQueueItems,
-  removeQueuedItem
+  removeQueuedItem,
+  undoRemovedQueuedItem
 }
 export type { MessageQueueItemView }

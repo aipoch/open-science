@@ -29,6 +29,7 @@ import {
 } from '../../../../shared/session-persistence'
 import { createInitialSettingsState, useSettingsStore } from '../../stores/settings-store'
 import { pendingSessionConversationCommands } from '../../stores/session-conversation-intents'
+import { resetSessionPersistenceWriteFailuresForTests } from '../session-persistence/session-persistence'
 import { resetDeferredArtifactEventsForTests } from './workspace-events'
 import { acceptAcpRuntimeSnapshotRevision } from './runtime-snapshot-revision-owner'
 import { useWorkspaceOperationErrors } from './workspace-operation-error'
@@ -188,6 +189,7 @@ describe('workspace Agent Runtime hook contract', () => {
   }
 
   beforeEach(() => {
+    resetSessionPersistenceWriteFailuresForTests()
     resetDeferredArtifactEventsForTests()
     resetWorkspaceRuntimeEventOwnerForTests()
     useSessionStore.setState(createInitialSessionState())
@@ -220,6 +222,7 @@ describe('workspace Agent Runtime hook contract', () => {
   afterEach(() => {
     act(() => root.unmount())
     container.remove()
+    vi.restoreAllMocks()
   })
 
   it('projects an already pending live approval after the Session loads without a new runtime snapshot', async () => {
@@ -754,7 +757,150 @@ describe('workspace Agent Runtime hook contract', () => {
     expect(runtime.sendPrompt).toHaveBeenCalledOnce()
   })
 
-  it('routes live events into Workspace before snapshot reconciliation', async () => {
+  describe.each([
+    ['claude-code', 'claude-code', 'messages'],
+    ['opencode', 'opencode', 'chat-completions'],
+    ['codex-response', 'codex', 'responses'],
+    ['codex-bridge', 'codex', 'chat-completions']
+  ] as const)('send selection with %s', (executionPath, frameworkId, endpoint) => {
+    it.each([
+      ['completed-session', false, 'success'],
+      [undefined, false, 'success'],
+      ['sending-session', false, 'success'],
+      ['completed-session', true, 'success'],
+      ['completed-session', true, 'rejection'],
+      ['completed-session', true, 'cancellation']
+    ] as const)(
+      'retains %s (away and back: %s) after send preparation %s',
+      async (selectedSessionId, navigateAwayAndBack, outcome) => {
+        useSettingsStore.setState({
+          activeProviderId: 'session-provider',
+          activeModel: 'session-model',
+          agentFrameworkId: frameworkId,
+          agentFrameworks: [
+            {
+              id: frameworkId,
+              displayName: frameworkId,
+              supportsSkills: true,
+              supportedApiTypes: [frameworkId === 'codex' ? 'responses' : endpoint]
+            }
+          ],
+          providers: [
+            {
+              id: 'session-provider',
+              type: 'custom',
+              name: 'Session',
+              apiEndpoints: [endpoint],
+              baseUrl: 'https://example.test/v1',
+              model: 'session-model',
+              models: ['session-model'],
+              supportsImageInput: false,
+              hasKey: true,
+              needsKey: false
+            }
+          ]
+        })
+        for (const sessionId of ['completed-session', 'sending-session']) {
+          useSessionStore.getState().appendUserMessage({
+            sessionId,
+            content: 'Earlier turn',
+            cwd: workspacePath,
+            projectId: 'project-1',
+            agentFrameworkId: frameworkId,
+            agentConfiguration: {
+              providerId: 'session-provider',
+              model: 'session-model',
+              reasoningEffort: 'low'
+            }
+          })
+          useSessionStore.getState().finishRun(sessionId)
+        }
+        const runtime = createRuntime(createSnapshot({ sessionIds: ['sending-session'] }))
+        runtimeMock.current = runtime
+        const preparationEntered = createDeferred<void>()
+        const releasePreparation = createDeferred<void>()
+        const saveSession = vi.mocked(window.api.sessions.saveSession)
+        const acknowledgeSave = saveSession.getMockImplementation()!
+        saveSession.mockImplementation(async (...args) => {
+          if (args[1]?.conversationCommands?.some(({ kind }) => kind === 'prepare-prompt')) {
+            preparationEntered.resolve()
+            await releasePreparation.promise
+            if (outcome === 'rejection') throw new Error('Preparation save failed')
+          }
+          return acknowledgeSave(...args)
+        })
+        await render()
+        expect(
+          latest.resolveSessionRuntimeSelection('sending-session').historyReplayDescriptor.target
+        ).toBe(executionPath)
+
+        if (navigateAwayAndBack) {
+          await act(async () => useSessionStore.getState().selectSession('completed-session'))
+        }
+        const unsubscribes: Mock[] = []
+        const subscribe = useSessionStore.subscribe
+        const subscriptionSpy = vi
+          .spyOn(useSessionStore, 'subscribe')
+          .mockImplementation((listener) => {
+            const unsubscribe = vi.fn(subscribe(listener))
+            unsubscribes.push(unsubscribe)
+            return unsubscribe
+          })
+        const onPreparationRejected = vi.fn()
+        let sending!: ReturnType<typeof latest.sendMessage>
+        await act(async () => {
+          sending = latest.sendMessage({
+            sessionId: 'sending-session',
+            text: 'Continue the analysis.',
+            onPreparationRejected
+          })
+          await preparationEntered.promise
+        })
+        await act(async () => {
+          if (navigateAwayAndBack) useSessionStore.getState().clearSelection()
+          if (selectedSessionId) useSessionStore.getState().selectSession(selectedSessionId)
+          else useSessionStore.getState().clearSelection()
+        })
+        expect(useSessionStore.getState().selectedSessionId).toBe(selectedSessionId)
+
+        await act(async () => {
+          const cancellation =
+            outcome === 'cancellation' ? latest.cancelRun('sending-session') : undefined
+          releasePreparation.resolve()
+          await Promise.all([sending, cancellation])
+        })
+
+        expect(runtime.sendPrompt).toHaveBeenCalledTimes(outcome === 'success' ? 1 : 0)
+        expect(
+          useSessionStore
+            .getState()
+            .sessions.find(({ id }) => id === 'sending-session')
+            ?.messages.at(-1)?.content
+        ).toBe(outcome === 'success' ? 'Continue the analysis.' : 'Earlier turn')
+        expect(useSessionStore.getState().selectedSessionId).toBe(selectedSessionId)
+        if (outcome === 'rejection') {
+          expect(onPreparationRejected).toHaveBeenCalledWith(
+            'Preparation save failed',
+            'sending-session',
+            undefined
+          )
+        }
+        subscriptionSpy.mockRestore()
+        expect(unsubscribes.length).toBeGreaterThan(0)
+        for (const unsubscribe of unsubscribes) expect(unsubscribe).toHaveBeenCalledOnce()
+      }
+    )
+  })
+
+  it('routes background live events before snapshot reconciliation without switching Sessions', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'completed-session',
+      content: 'Earlier question',
+      cwd: workspacePath,
+      projectId: 'project-1',
+      agentFrameworkId: 'claude-code'
+    })
+    useSessionStore.getState().finishRun('completed-session')
     const pending = useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
       content: 'Stream the answer',
@@ -778,6 +924,7 @@ describe('workspace Agent Runtime hook contract', () => {
     runtime.currentRuntimeEvents = () => []
     runtimeMock.current = runtime
     await render()
+    await act(async () => useSessionStore.getState().selectSession('completed-session'))
 
     const events: AcpRuntimeEvent[] = Array.from({ length: 8 }, (_, index) => ({
       id: `runtime-1:acp-event-${index + 1}`,
@@ -808,6 +955,7 @@ describe('workspace Agent Runtime hook contract', () => {
       .map((message) => message.content)
       .join('')
     expect(agentText).toBe('x'.repeat(8))
+    expect(useSessionStore.getState().selectedSessionId).toBe('completed-session')
     expect(
       useSessionStore.getState().sessions.find((session) => session.id === 'session-1')
         ?.awaitingFirstAgentOutput

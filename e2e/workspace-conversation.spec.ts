@@ -291,6 +291,8 @@ test('explains disabled revision navigation while a turn is running', async ({ a
     // Scroll back like a reader before focusing: a focus-induced scroll dismisses Radix tooltips.
     await conversation.hover()
     await page.mouse.wheel(0, -100_000)
+    await expect.poll(() => conversation.evaluate((viewport) => viewport.scrollTop)).toBeLessThan(1)
+    await expect(trigger).toBeInViewport()
     await trigger.hover()
     await trigger.focus()
     await expect(page.getByRole('tooltip', { name: explanation })).toBeVisible()

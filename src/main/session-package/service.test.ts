@@ -41,7 +41,7 @@ import {
   resolveActiveConversationMessages,
   projectConversationMessage
 } from '../../shared/conversation-graph'
-import { SessionPackageService } from './service'
+import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
 import * as selection from './selection'
 import * as fsPromises from 'node:fs/promises'
 import * as storageUsage from '../storage/usage'
@@ -1908,13 +1908,27 @@ it.each(['readable', 'unavailable'] as const)(
       getClient: async () => target.client
     })
     if (witness === 'unavailable') {
-      vi.spyOn(target.client.fileOriginSession, 'findUnique').mockRejectedValueOnce(
-        new Error('Commit witness unavailable')
-      )
-      await expect(importer.importFrom(archive)).rejects.toThrow('Commit witness unavailable')
+      const witnessRead = vi
+        .spyOn(target.client.fileOriginSession, 'findUnique')
+        .mockRejectedValueOnce(new Error('Commit witness unavailable'))
+        .mockRejectedValueOnce(new Error('Commit witness still unavailable'))
+      const error = await importer.importFrom(archive).catch((cause: unknown) => cause)
+      expect(error).toBeInstanceOf(PackageImportRecoveryRequiredError)
+      const recovery = error as PackageImportRecoveryRequiredError
+      expect(recovery.cause).toMatchObject({ message: 'Commit witness unavailable' })
+      await expect(recovery.resume()).rejects.toMatchObject({
+        identity: recovery.identity,
+        cause: expect.objectContaining({ message: 'Commit witness still unavailable' })
+      })
+      expect(await target.client.fileOriginSession.count()).toBe(1)
+      expect(await target.client.session.count()).toBe(0)
       expect(
         await fsPromises.readdir(join(target.storageRoot, 'session-package-imports'))
       ).toHaveLength(1)
+      witnessRead.mockRestore()
+      await expect(recovery.resume()).resolves.toEqual(recovery.identity)
+      expect(await target.client.fileOriginSession.count()).toBe(1)
+      expect(await target.client.session.count()).toBe(1)
     } else {
       await expect(importer.importFrom(archive)).resolves.toEqual({
         projectId: expect.any(String),
@@ -1930,7 +1944,14 @@ it.each(['readable', 'unavailable'] as const)(
   }
 )
 
-it.each(['organized', 'deleted', 'projection-pending'] as const)(
+it.each([
+  'organized',
+  'deleted',
+  'projection-pending',
+  'owner-direct',
+  'owner-error',
+  'owner-identity-mismatch'
+] as const)(
   'preserves an already-published Session during staging recovery (%s)',
   async (state) => {
     const source = await createProvenanceTestFixture()
@@ -1956,7 +1977,7 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
       getClient: async () => source.client
     }).exportTo({ projectId: 'source', sessionId: 'original' }, archive)
     const configRoot = join(target.storageRoot, 'config')
-    const options = {
+    const options: ConstructorParameters<typeof SessionPackageService>[0] = {
       configRoot,
       storageRoot: target.storageRoot,
       getClient: async () => target.client
@@ -1989,8 +2010,10 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
     )
     if (state === 'projection-pending') {
       const error = await importPromise.catch((cause: unknown) => cause)
-      expect(error).toBeInstanceOf(SessionProjectionAfterCommitError)
-      expect(error).toMatchObject({
+      expect(error).toBeInstanceOf(PackageImportRecoveryRequiredError)
+      const recovery = error as PackageImportRecoveryRequiredError
+      expect(recovery.cause).toBeInstanceOf(SessionProjectionAfterCommitError)
+      expect(recovery.cause).toMatchObject({
         committedSession: {
           projectId: 'target',
           title: 'Original title',
@@ -2008,14 +2031,60 @@ it.each(['organized', 'deleted', 'projection-pending'] as const)(
     )
     const [published] = (await repository.loadAll()).sessions
     expect(published.packageOrigin).toBeDefined()
-    if (state === 'organized')
+    if (state === 'organized' || state === 'owner-direct')
       await repository.saveSession({ ...published, title: 'My organized research', pinned: true })
     else if (state === 'deleted') await repository.deleteSession(published.projectId, published.id)
+    const publication = vi.fn().mockResolvedValue(undefined)
+    options.onSessionPublished = publication
+    const publicationWork = vi.fn<NonNullable<typeof options.runSessionPublication>>(
+      async (_projectId, _sessionId, work) => work()
+    )
+    if (state === 'owner-direct') options.runSessionPublication = publicationWork
+    else if (state === 'owner-error')
+      options.runSessionPublication = async () => {
+        throw new Error('Live owner unavailable')
+      }
+    else if (state === 'owner-identity-mismatch') {
+      const read = SessionRepository.prototype.loadSessionWithDiagnostics
+      vi.spyOn(SessionRepository.prototype, 'loadSessionWithDiagnostics').mockImplementation(
+        async function (this: SessionRepository, ...args) {
+          const loaded = await Reflect.apply(read, this, args)
+          return loaded.status === 'found' &&
+            args[0] === published.projectId &&
+            args[1] === published.id
+            ? {
+                ...loaded,
+                session: {
+                  ...loaded.session,
+                  packageOrigin: { ...published.packageOrigin!, importId: 'another-import' }
+                }
+              }
+            : loaded
+        }
+      )
+    }
     const recovery = new SessionPackageService(options)
+    if (['owner-error', 'owner-identity-mismatch'].includes(state)) {
+      const save = vi.spyOn(SessionRepository.prototype, 'saveSession')
+      await expect(recovery.recover()).rejects.toThrow(
+        state === 'owner-error'
+          ? 'Live owner unavailable'
+          : 'Import publication Session identity mismatch.'
+      )
+      expect(save).not.toHaveBeenCalled()
+      expect(publication).not.toHaveBeenCalled()
+      expect(await readdir(join(configRoot, 'session-package-imports'))).toHaveLength(1)
+      if (state === 'owner-identity-mismatch')
+        vi.mocked(SessionRepository.prototype.loadSessionWithDiagnostics).mockRestore()
+      expect(await repository.loadSession(published.projectId, published.id)).toEqual(published)
+      await recovery.close()
+      return
+    }
     await expect(recovery.recover()).resolves.toBeUndefined()
     await expect(recovery.recover()).resolves.toBeUndefined()
     const current = await repository.loadSession(published.projectId, published.id)
-    if (state === 'organized')
+    if (state === 'owner-direct') expect(publicationWork).toHaveBeenCalledTimes(1)
+    if (state === 'organized' || state === 'owner-direct')
       expect(current).toMatchObject({
         title: 'My organized research',
         pinned: true,

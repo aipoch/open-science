@@ -8,7 +8,7 @@ import {
 } from './application-shutdown-trigger'
 import type { ActiveSessionInfo } from '../shared/storage'
 import type { RendererSessionPersistenceFlushOutcome } from './session-persistence/renderer-flush'
-import type { ShutdownStepOutcome } from './lifecycle-shutdown'
+import { BackendShutdownCoordinator, type ShutdownStepOutcome } from './lifecycle-shutdown'
 import type {
   CloseClassification,
   CloseConfirmChoice,
@@ -156,6 +156,7 @@ const setup = (
       | 'refreshQuitState'
       | 'requireCleanBackendShutdown'
       | 'onQuitError'
+      | 'handleDisconnectedQuit'
       | 'shutdownBackends'
       | 'beforeExit'
       | 'prepareForQuit'
@@ -224,6 +225,7 @@ const setup = (
       refreshQuitState: overrides.refreshQuitState,
       requireCleanBackendShutdown: overrides.requireCleanBackendShutdown,
       onQuitError: overrides.onQuitError,
+      handleDisconnectedQuit: overrides.handleDisconnectedQuit,
       shutdownBackends,
       prepareForQuit,
       holdSettingsInstallAdmission:
@@ -1858,7 +1860,90 @@ describe('installAppLifecycle', () => {
   })
 })
 
+it('quits once without an error dialog when Windows backend cleanup takes longer than five seconds', async () => {
+  vi.useFakeTimers()
+  let finishCleanup!: (result: { reaped: boolean }) => void
+  const cleanup = new Promise<{ reaped: boolean }>((resolve) => {
+    finishCleanup = resolve
+  })
+  const coordinator = new BackendShutdownCoordinator({
+    runtime: {
+      shutdownForQuit: async () => ({ reaped: true }),
+      shutdownForUpdateGate: async () => ({ reaped: true })
+    },
+    notebook: {
+      shutdownAll: () => cleanup,
+      dispose: async () => ({ reaped: true })
+    },
+    sideChat: {
+      shutdown: async () => undefined,
+      suspendAll: async () => undefined
+    }
+  })
+  const onQuitError = vi.fn()
+  const h = setup({
+    platform: 'win32',
+    requireCleanBackendShutdown: true,
+    onQuitError,
+    prepareForQuit: () => coordinator.runForQuitPreparation()
+  })
+  try {
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.advanceTimersByTimeAsync(7500)
+    finishCleanup({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+
+    expect(onQuitError.mock.calls.map(([error]) => (error as Error).message)).toEqual([])
+    expect(h.app.exit).toHaveBeenCalledExactlyOnceWith(0)
+    expect(h.abortQuitPreparation).not.toHaveBeenCalled()
+    expect(h.shutdownBackends).toHaveBeenCalledOnce()
+  } finally {
+    finishCleanup({ reaped: true })
+    await vi.advanceTimersByTimeAsync(0)
+    vi.useRealTimers()
+  }
+})
+
 // A desktop client cannot treat remote preparation errors as a successful local best-effort quit.
+it.each(['preflight', 'prepare', 'final-flush', 'shutdown'] as const)(
+  'hands a disconnected %s failure to one quit decision after rollback',
+  async (stage) => {
+    const onQuitError = vi.fn()
+    const abortQuitPreparation = vi.fn()
+    const release = vi.fn()
+    const handleDisconnectedQuit = vi.fn(() => {
+      expect(abortQuitPreparation).toHaveBeenCalledOnce()
+      expect(release).toHaveBeenCalledOnce()
+      return true
+    })
+    const flushSessionPersistence = vi
+      .fn<() => Promise<RendererSessionPersistenceFlushOutcome>>()
+      .mockResolvedValue('completed')
+    if (stage === 'preflight') flushSessionPersistence.mockResolvedValueOnce('send-failed')
+    if (stage === 'final-flush')
+      flushSessionPersistence
+        .mockResolvedValueOnce('completed')
+        .mockResolvedValueOnce('send-failed')
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      handleDisconnectedQuit,
+      abortQuitPreparation,
+      holdSettingsInstallAdmission: () => release,
+      flushSessionPersistence,
+      prepareForQuit: async () => (stage === 'prepare' ? 'failed' : 'completed'),
+      shutdownBackends: async () => (stage === 'shutdown' ? 'failed' : 'completed')
+    })
+    h.closeOpts[0].requestQuit(true)
+    h.app.emit('before-quit')
+    await vi.waitFor(() => expect(handleDisconnectedQuit).toHaveBeenCalledOnce())
+    expect(onQuitError).not.toHaveBeenCalled()
+    expect(h.confirmClose).not.toHaveBeenCalled()
+    expect(h.app.exit).not.toHaveBeenCalled()
+  }
+)
+
 it.each(['timeout', 'failed', 'degraded'] as const)(
   'keeps the remote backend connected after %s preparation and allows a clean retry',
   async (outcome) => {
@@ -1867,7 +1952,12 @@ it.each(['timeout', 'failed', 'degraded'] as const)(
       .fn<() => Promise<ShutdownStepOutcome>>()
       .mockResolvedValueOnce(outcome)
       .mockResolvedValueOnce('completed')
-    const h = setup({ requireCleanBackendShutdown: true, onQuitError, prepareForQuit })
+    const h = setup({
+      requireCleanBackendShutdown: true,
+      onQuitError,
+      prepareForQuit,
+      handleDisconnectedQuit: () => false
+    })
     h.closeOpts[0].requestQuit(true)
     h.app.emit('before-quit')
     await vi.waitFor(() => expect(onQuitError).toHaveBeenCalledOnce())
@@ -1936,6 +2026,7 @@ it.each(['timeout', 'failed', 'degraded', 'rejected', 'stop'] as const)(
   'finishes system shutdown once after remote %s failure without a modal or retry',
   async (failure) => {
     const onQuitError = vi.fn()
+    const handleDisconnectedQuit = vi.fn(() => true)
     const prepareForQuit = vi.fn(async (): Promise<ShutdownStepOutcome> => {
       if (failure === 'rejected') throw new Error('unreachable runtime')
       return failure === 'stop' ? 'completed' : failure
@@ -1946,6 +2037,7 @@ it.each(['timeout', 'failed', 'degraded', 'rejected', 'stop'] as const)(
     const h = setup({
       requireCleanBackendShutdown: true,
       onQuitError,
+      handleDisconnectedQuit,
       prepareForQuit,
       shutdownBackends
     })
@@ -1955,6 +2047,7 @@ it.each(['timeout', 'failed', 'degraded', 'rejected', 'stop'] as const)(
     expect(h.quit).toHaveBeenCalledOnce()
     expect(h.abortQuitPreparation).toHaveBeenCalledOnce()
     expect(onQuitError).not.toHaveBeenCalled()
+    expect(handleDisconnectedQuit).not.toHaveBeenCalled()
     expect(h.confirmClose).not.toHaveBeenCalled()
     expect(shutdownBackends).toHaveBeenCalledTimes(failure === 'stop' ? 1 : 0)
   }

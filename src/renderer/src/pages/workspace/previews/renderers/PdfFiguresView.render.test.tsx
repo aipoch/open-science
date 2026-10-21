@@ -325,6 +325,47 @@ it('shows one cached table with independently copyable parts, shared notes and o
   expect(api.pdfStructure.parse).not.toHaveBeenCalled()
 })
 
+it.each(['part', 'element', 'none'])(
+  'keeps grouped-table warnings visible at their own scope: %s',
+  async (scope) => {
+    const issue = { code: 'native-table-structure-ambiguous', detail: 'Ambiguous structure' }
+    api.pdfStructure.readCached.mockResolvedValue({
+      ...result,
+      elements: [
+        {
+          ...result.elements[0],
+          table: undefined,
+          issues: scope === 'element' ? [issue] : [],
+          tableParts: ['First', 'Second'].map((title, index) => ({
+            title,
+            table: {
+              ...result.elements[0].table!,
+              issues: scope === 'part' && index === 0 ? [issue] : []
+            }
+          }))
+        }
+      ]
+    })
+    await act(async () =>
+      root.render(
+        <PdfFiguresView
+          source={{ attachmentVersionId: 'version-1' }}
+          pageCount={1}
+          onNavigate={navigate}
+        />
+      )
+    )
+    expect(container.querySelectorAll('table')).toHaveLength(2)
+    expect(
+      container.textContent?.includes('Check extracted content against the original PDF.')
+    ).toBe(scope !== 'none')
+    await click('Image')
+    expect(
+      container.textContent?.includes('Check extracted content against the original PDF.')
+    ).toBe(scope !== 'none')
+  }
+)
+
 it('renders a small P-value marker as superscript while allele stars stay full size', async () => {
   const element = result.elements[0]
   api.pdfStructure.readCached.mockResolvedValue({

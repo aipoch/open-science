@@ -7,7 +7,7 @@ import type {
   PdfSharingDecision
 } from '../../shared/pdf-annotations'
 import { pdfNativeImportReceiptSchema } from '../../shared/pdf-annotations'
-import type { PdfNativeAnnotationDraft } from './native-import-core'
+import type { PdfNativeAnnotationDraft } from './native-import'
 import {
   bindingId,
   bindingSource,

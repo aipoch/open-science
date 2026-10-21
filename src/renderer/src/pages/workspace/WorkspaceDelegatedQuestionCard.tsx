@@ -5,6 +5,7 @@ import { Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import { cn } from '@/lib/utils'
+import { ChoiceKindChip } from './ChoiceKindChip'
 import type { ElicitationResponse } from '../../../../shared/acp'
 import type {
   DelegatedQuestionAnswer,
@@ -176,9 +177,12 @@ const WorkspaceDelegatedQuestionCard = ({
         {t('Asked by {{name}}', { name: request.sourceName })}
       </p>
       <div className="flex items-start justify-between gap-3">
-        <h3 className="min-w-0 flex-1 whitespace-pre-wrap text-base font-semibold">
-          {question.question}
-        </h3>
+        <div className="flex min-w-0 flex-1 items-start gap-2">
+          <ChoiceKindChip kind={question.kind} />
+          <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold">
+            {question.question}
+          </h3>
+        </div>
         <span className="shrink-0 text-xs text-text-300">
           {t('{{current}} of {{total}}', {
             current: questionIndex + 1,
@@ -186,9 +190,6 @@ const WorkspaceDelegatedQuestionCard = ({
           })}
         </span>
       </div>
-      {question.kind === 'multi-select' ? (
-        <p className="mt-1 text-xs text-text-300">{t('Select one or more options')}</p>
-      ) : null}
       <div className="mt-3 max-h-[min(24rem,50vh)] overflow-y-auto">
         {question.options.map((option, index) => {
           const selected = Array.isArray(currentAnswer)

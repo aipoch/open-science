@@ -8,6 +8,8 @@ import { Switch } from '@/components/ui/switch'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 
+export type SettingsEditorLeaveState = { dirty: boolean; busy: boolean }
+
 type SettingsSectionProps = Omit<ComponentProps<'section'>, 'title'> & {
   title: ReactNode
   titleId?: string

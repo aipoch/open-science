@@ -209,7 +209,11 @@ describe('installWebRendererContracts', () => {
     const invoke = vi.fn()
 
     installWebRendererContracts(api, {
-      availableRpcChannels: new Set(['file:save-project-artifacts']),
+      availableRpcChannels: new Set([
+        'file:save-project-artifacts',
+        'file:artifact-save-progress',
+        'file:cancel-artifact-save'
+      ]),
       restrictedRpcChannels: new Set(),
       invoke,
       subscribe: vi.fn(),
@@ -217,6 +221,8 @@ describe('installWebRendererContracts', () => {
     })
 
     expect(methodAt(api, 'saveProjectArtifacts')).toBeUndefined()
+    expect(methodAt(api, 'getArtifactSaveProgress')).toBeUndefined()
+    expect(methodAt(api, 'cancelArtifactSave')).toBeUndefined()
     expect(invoke).not.toHaveBeenCalled()
   })
 

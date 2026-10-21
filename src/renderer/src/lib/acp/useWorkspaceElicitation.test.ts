@@ -4,6 +4,7 @@ import { cleanup, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { SESSION_SIZE_LIMIT_ERROR_CODE } from '../../../../shared/session-persistence'
+import { createInitialSessionState, useSessionStore } from '../../stores/session-store'
 
 const respondToWorkspaceElicitation = vi.hoisted(() => vi.fn())
 
@@ -98,7 +99,7 @@ it('keeps imported pending questions as recorded evidence without reconstructing
     projectId: 'project',
     title: 'Imported',
     cwd: '',
-    status: 'idle' as const,
+    status: 'waiting-for-user' as const,
     messages: [],
     createdAt: 1,
     updatedAt: 1,
@@ -135,4 +136,54 @@ it('keeps imported pending questions as recorded evidence without reconstructing
     })
   ).toEqual([])
   expect(session.activities[0].elicitation.state).toBe('pending')
+})
+
+it('releases a running observer composer when the live wait ends before its activity updates', () => {
+  const session = {
+    id: 'observer-session',
+    projectId: 'project',
+    title: 'Export analysis',
+    cwd: '/workspace',
+    status: 'running' as const,
+    messages: [],
+    activeRun: { promptMessageId: 'prompt-1', startedAt: 1 },
+    createdAt: 1,
+    updatedAt: 1,
+    activities: [
+      {
+        id: 'choice-tool',
+        kind: 'tool' as const,
+        title: 'Choose',
+        status: 'in_progress' as const,
+        eventIds: [],
+        sortIndex: 1,
+        createdAt: 1,
+        updatedAt: 1,
+        elicitation: {
+          message: 'Choose an approach',
+          fields: [],
+          state: 'pending' as const,
+          durable: { kind: 'agent-user-choice' as const, requestId: 'choice-1' }
+        }
+      }
+    ]
+  }
+  useSessionStore.setState({ ...createInitialSessionState(), sessions: [session] })
+  const requests = (): ReturnType<typeof pendingWorkspaceElicitations> =>
+    pendingWorkspaceElicitations(useSessionStore.getState().sessions[0])
+
+  expect(requests()).toEqual([])
+  useSessionStore.getState().setElicitationPending(session.id, true, { liveProjection: 'observer' })
+  expect(requests()).toMatchObject([{ requestId: 'choice-1' }])
+  expect(useSessionStore.getState().sessions[0].status).toBe('running')
+
+  useSessionStore
+    .getState()
+    .setElicitationPending(session.id, false, { liveProjection: 'observer' })
+  expect(requests()).toEqual([])
+  expect(useSessionStore.getState().sessions[0]).toMatchObject({
+    status: 'running',
+    activeRun: session.activeRun,
+    activities: session.activities
+  })
 })

@@ -330,6 +330,7 @@ if (backgroundMode) {
         onChanged: () => noop
       },
       sessions: {
+        importPackage: async () => null,
         packageOperation: async (request: { action: string }) => {
           const current = usePackageOperationStore.getState().operation!
           if (request.action === 'cancel')

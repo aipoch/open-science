@@ -770,6 +770,15 @@ it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
     ({ name }) => name === 'Test scheduled regression fixes'
   )!
   expect(step.if).toContain("matrix.group == 'scheduled-fixes'")
+  expect(scheduled.on.workflow_dispatch).toHaveProperty(
+    'inputs.test_pattern',
+    expect.objectContaining({
+      type: 'string',
+      default: ''
+    })
+  )
+  expect(step.env?.TEST_PATTERN).toBe('${{ inputs.test_pattern }}')
+  expect(step.run).toContain('--grep "$TEST_PATTERN"')
   for (const file of [
     'session-turn-outcome',
     'auto-review-stop-resume',

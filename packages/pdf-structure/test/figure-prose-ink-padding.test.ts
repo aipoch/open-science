@@ -2,9 +2,8 @@ import { expect, it } from 'vitest'
 import { resolve } from './paths'
 import { pathToFileURL } from 'node:url'
 
-const { nativeProseInkTopLimit, nativeOwnedFigureInkBottom } = await import(
-  pathToFileURL(resolve('resources/literature-pdf-figure-crop-geometry.mjs')).href
-)
+const { nativeProseInkTopLimit, nativeOwnedFigureInkBottom, nativeFigureLabelBounds } =
+  await import(pathToFileURL(resolve('resources/literature-pdf-figure-crop-geometry.mjs')).href)
 const fixture = (): ReturnType<typeof JSON.parse> => ({
   figure: {
     rect: [10, 100, 200, 250],
@@ -119,3 +118,35 @@ it.each([
   }
   expect(nativeOwnedFigureInkBottom(x.figure, x.tokens)).toBe(x.figure.rect[3])
 })
+
+it.each(['complete owner', 'unclaimed font', 'foreign text'])(
+  'keeps the verified source label em box without borrowing unowned ink: %s',
+  (variant) => {
+    const token = {
+      text: 'native label',
+      sourceItem: { pageNumber: 1, index: 7, text: 'native label' },
+      horizontal: true,
+      rect: [20, 190, 90, 200],
+      baseline: 200,
+      height: 10,
+      fontAscent: 0.65,
+      fontDescent: -0.2,
+      nativeLabelRect: nativeFigureLabelBounds(
+        { dir: 'ltr', width: 70, height: 10, transform: [10, 0, 0, 10, 20, 300] },
+        { ascent: 0.65, descent: -0.2, vertical: false },
+        { convertToViewportPoint: (x: number, y: number): number[] => [x, 500 - y] }
+      )
+    }
+    const figure: ReturnType<typeof JSON.parse> = {
+      rect: [10, 100, 200, 200],
+      sourceItems: [token.sourceItem]
+    }
+    const tokens: ReturnType<typeof JSON.parse> = [token]
+    if (variant === 'unclaimed font') figure.sourceItems = []
+    if (variant === 'foreign text')
+      tokens.push({ text: 'body', rect: [110, 202.8, 160, 213], horizontal: true })
+    expect(nativeOwnedFigureInkBottom(figure, tokens)).toBe(
+      variant === 'complete owner' ? 203.5 : variant === 'unclaimed font' ? 202.5 : 200
+    )
+  }
+)

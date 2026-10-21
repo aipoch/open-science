@@ -368,6 +368,10 @@ const CandidateDetails = ({
   const hasUnassigned =
     table?.unassignedText.length ||
     element.tableParts?.some((part) => part.table.unassignedText.length)
+  const hasIssues =
+    element.issues.length > 0 ||
+    (table?.issues.length ?? 0) > 0 ||
+    element.tableParts?.some((part) => part.table.issues.length > 0)
   const needsImage = !hasTable || showImage
   const thumbnail = result.thumbnails.find(({ id }) => id === element.thumbnailId)
   const region = element.regions[0]
@@ -625,7 +629,7 @@ const CandidateDetails = ({
           {element.caption?.text ?? t('No reliable caption association.')}
         </p>
       ) : null}
-      {element.issues.length > 0 ? (
+      {hasIssues ? (
         <p className="text-xs text-status-warning-foreground">
           {hasTable && !showImage && hasUnassigned
             ? t('Some text could not be placed in the table. Review it below before copying.')

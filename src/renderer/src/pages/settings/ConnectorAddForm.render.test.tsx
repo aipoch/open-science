@@ -1910,3 +1910,72 @@ describe('ConnectorAddForm (edit)', () => {
     expect(document.body.querySelector('[aria-label="Headers"]')).toBeNull()
   })
 })
+
+describe('Connector draft leave state', () => {
+  it('tracks changes and reversions without treating detail expansion as an edit', async () => {
+    const onLeaveStateChange = vi.fn()
+    await act(async () =>
+      root.render(
+        <ConnectorAddForm
+          initialTransport="remote"
+          onDone={vi.fn()}
+          onCancel={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    setValue('Display name', 'Research source')
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    setValue('Display name', '')
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+  })
+})
+
+it.each(['closed', 'replaced'] as const)(
+  'does not clear another editor guard or navigate after a pending Connector save is %s',
+  async (exit) => {
+    let resolve!: () => void
+    const add = vi.fn(
+      () =>
+        new Promise<void>((done) => {
+          resolve = done
+        })
+    )
+    useSettingsStore.setState({ addCustomServer: add as never })
+    const onDone = vi.fn()
+    const onLeaveStateChange = vi.fn()
+    const render = (key: string, active = true): void =>
+      root.render(
+        <ConnectorAddForm
+          key={key}
+          active={active}
+          initialTransport="remote"
+          onDone={onDone}
+          onCancel={vi.fn()}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    await act(async () => render('old'))
+    setValue('Display name', 'Saved research server')
+    setValue('Server URL', 'https://example.com/mcp')
+    checkTrust()
+    await act(async () =>
+      [...document.querySelectorAll<HTMLButtonElement>('button')]
+        .find((button) => button.textContent?.trim() === 'Add connector')!
+        .click()
+    )
+    expect(add).toHaveBeenCalledOnce()
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: true })
+    await act(async () => render(exit === 'closed' ? 'old' : 'new', exit !== 'closed'))
+    if (exit === 'replaced') setValue('Display name', 'New draft')
+    onLeaveStateChange.mockClear()
+    await act(async () => resolve())
+    expect(onLeaveStateChange).not.toHaveBeenCalled()
+    expect(onDone).not.toHaveBeenCalled()
+    if (exit === 'replaced')
+      expect(document.querySelector<HTMLInputElement>('[aria-label="Display name"]')?.value).toBe(
+        'New draft'
+      )
+  }
+)

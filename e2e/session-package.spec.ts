@@ -707,7 +707,7 @@ for (const launch of ['cold', 'warm'] as const) {
         true
       )
       const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
-      await expect(dialog.getByText('study.science', { exact: true })).toBeVisible()
+      await expect(dialog.getByTitle('study.science', { exact: true })).toBeVisible()
       await dialog.getByRole('button', { name: 'New project', exact: true }).click()
       await dialog.getByRole('textbox', { name: 'Project name' }).fill(`Browser ${launch}`)
       await dialog.getByRole('button', { name: 'Continue', exact: true }).click()
@@ -765,7 +765,7 @@ for (const launch of ['cold', 'warm'] as const) {
         await expect(
           restarted
             .getByRole('dialog', { name: 'Import Session package', exact: true })
-            .getByText('again.science', { exact: true })
+            .getByTitle('again.science', { exact: true })
         ).toBeVisible()
       }
     } finally {
