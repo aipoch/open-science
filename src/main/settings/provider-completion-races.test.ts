@@ -280,7 +280,8 @@ describe('provider completion races', () => {
         })
       )
       await accounts.beginXaiOAuthLogin()
-      await expect(accounts.waitXaiOAuthLogin()).resolves.toEqual({
+      await expect(accounts.waitXaiOAuthLogin()).resolves.toMatchObject({
+        validation: { ok: status === 200, applied: true },
         accountEmail: 'test@example.com'
       })
       expect(probe).toHaveBeenCalledOnce()
@@ -329,7 +330,7 @@ describe('provider completion races', () => {
     await entered.promise
     await accounts.logoutXaiOAuth()
     probe.resolve(Response.json({}))
-    await pending
+    await expect(pending).resolves.toMatchObject({ validation: { applied: false } })
     const stored = (await repository.getSettings()).providers[0]
     expect(stored.keyRef).toBeUndefined()
     expect(stored.lastValidatedAt).toBeUndefined()

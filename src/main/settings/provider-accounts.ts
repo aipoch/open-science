@@ -19,6 +19,7 @@ import type {
   UpsertProviderRequest,
   ValidateProviderRequest,
   ValidateProviderResult,
+  XaiOAuthLoginResult,
   XaiOAuthDeviceAuthorization
 } from '../../shared/settings'
 import {
@@ -512,10 +513,10 @@ class ProviderAccountsModule {
     return this.xai.beginLogin()
   }
 
-  async waitXaiOAuthLogin(): Promise<{ accountEmail?: string }> {
+  async waitXaiOAuthLogin(): Promise<XaiOAuthLoginResult> {
     const account = await this.xai.waitForLogin()
-    await this.validateProvider({ providerId: XAI_SUBSCRIPTION_PROVIDER_ID })
-    return account
+    const validation = await this.validateProvider({ providerId: XAI_SUBSCRIPTION_PROVIDER_ID })
+    return { ...account, validation }
   }
 
   cancelXaiOAuthLogin(): void {

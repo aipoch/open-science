@@ -1862,7 +1862,8 @@ describe('ProviderAccountsModule', () => {
     })
     expect(stored.keyRef).toBeUndefined()
     await expect(module.beginXaiOAuthLogin()).resolves.toMatchObject({ userCode: 'GROK-1234' })
-    await expect(module.waitXaiOAuthLogin()).resolves.toEqual({
+    await expect(module.waitXaiOAuthLogin()).resolves.toMatchObject({
+      validation: { ok: true },
       accountEmail: 'researcher@example.com'
     })
     await expect(module.getXaiOAuthAccessToken()).resolves.toBe('access-token')

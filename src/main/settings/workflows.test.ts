@@ -100,7 +100,9 @@ const fakeStore = () => {
     logoutIsolatedClaude: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     loginIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
     logoutIsolatedCodex: vi.fn().mockResolvedValue({ ok: true, category: 'ok' }),
-    waitXaiOAuthLogin: vi.fn().mockResolvedValue({ ok: true }),
+    waitXaiOAuthLogin: vi
+      .fn()
+      .mockResolvedValue({ validation: { ok: true, category: 'ok', applied: true } }),
     logoutXaiOAuth: vi.fn().mockResolvedValue(snapshot()),
     switchLocalShellToPowerShell: vi.fn().mockResolvedValue({
       result: {
@@ -394,11 +396,18 @@ describe('SettingsWorkflows authentication follow-up', () => {
   it('reconnects targeted XAI Sessions after login even when another provider is active', async () => {
     const { store, capability } = fakeStore()
     store.getSettingsView.mockResolvedValue(snapshot({ activeProviderId: 'other' }))
+    const result = {
+      accountEmail: 'test@example.com',
+      validation: { ok: false, category: 'network', applied: true }
+    }
+    store.waitXaiOAuthLogin.mockResolvedValue(result)
     const requestProviderReconnect = vi.fn()
-    await createSettingsWorkflows(
-      capability,
-      testEffects({ requestProviderReconnect })
-    ).runtime.waitXaiOAuthLogin()
+    await expect(
+      createSettingsWorkflows(
+        capability,
+        testEffects({ requestProviderReconnect })
+      ).runtime.waitXaiOAuthLogin()
+    ).resolves.toEqual(result)
     expect(requestProviderReconnect).toHaveBeenCalledWith([XAI_SUBSCRIPTION_PROVIDER_ID], false)
   })
 
