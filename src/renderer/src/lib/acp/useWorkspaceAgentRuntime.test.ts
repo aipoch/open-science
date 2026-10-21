@@ -7874,6 +7874,130 @@ describe('workspace agent message sending', () => {
     }
   )
 
+  it.each([
+    ['existing', 'async'],
+    ['existing', 'sync'],
+    ['new', 'async'],
+    ['new', 'sync']
+  ] as const)(
+    'retains the requested target after %s prompt dispatch rejects %s',
+    async (kind, timing) => {
+      const target = {
+        providerId: 'requested-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
+      const sessionId = 'transport-session-1'
+      if (kind === 'existing') {
+        useSessionStore.getState().appendUserMessage({
+          sessionId,
+          content: 'Previous prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentConfiguration: target
+        })
+        useSessionStore.getState().finishRun(sessionId)
+      }
+      const gate = createDeferred<void>()
+      const switchSelection = (): void =>
+        useSessionStore.getState().setAgentConfiguration(sessionId, {
+          providerId: 'new-selection',
+          model: 'new-model',
+          reasoningEffort: 'default'
+        })
+      const runtime = {
+        state: createSnapshot(kind === 'existing' ? [sessionId] : []),
+        createSession: vi.fn().mockResolvedValue({ sessionId, cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn(() => {
+          if (timing === 'sync') {
+            switchSelection()
+            throw new Error('Authentication required')
+          }
+          return gate.promise.then(() => {
+            throw new Error('Authentication required')
+          })
+        })
+      }
+      await sendWorkspaceMessage(runtime, {
+        ...(kind === 'existing' ? { sessionId } : {}),
+        text: 'New prompt',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentConfiguration: target
+      })
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+      if (timing === 'async') {
+        switchSelection()
+        gate.resolve()
+      }
+      await vi.waitFor(() =>
+        expect(useWorkspaceOperationErrors.getState().errors[sessionId]).toBe(
+          'Authentication required'
+        )
+      )
+      expect(useWorkspaceOperationErrors.getState().providerTargets[sessionId]).toEqual({
+        providerId: target.providerId,
+        model: target.model
+      })
+    }
+  )
+
+  it.each(['seed', 'policy'] as const)(
+    'retains the pending request target when %s preparation fails',
+    async (stage) => {
+      const target = {
+        providerId: 'requested-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
+      const sessions = createSessionPolicyApi()
+      const fail = (): never => {
+        const pending = useSessionStore.getState().sessions.find(({ isPending }) => isPending)!
+        useSessionStore.getState().setAgentConfiguration(pending.id, {
+          providerId: 'new-selection',
+          model: 'new-model',
+          reasoningEffort: 'default'
+        })
+        throw new Error('Authentication required')
+      }
+      if (stage === 'seed') sessions.saveSession.mockImplementationOnce(async () => fail())
+      else sessions.setDelegationPolicy.mockImplementationOnce(async () => fail())
+      vi.stubGlobal('window', { api: { sessions } })
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'transport-session-1', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
+        sendPrompt: vi.fn()
+      }
+      await sendWorkspaceMessage(
+        runtime,
+        {
+          text: 'New prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentConfiguration: target,
+          ...(stage === 'policy' ? { delegationPolicy: 'deny' as const } : {})
+        },
+        { awaitPendingPreparation: true }
+      )
+      const failedSession = useSessionStore.getState().sessions[0]
+      expect(useWorkspaceOperationErrors.getState().errors[failedSession.id]).toBe(
+        'Authentication required'
+      )
+      expect(useWorkspaceOperationErrors.getState().providerTargets[failedSession.id]).toEqual({
+        providerId: target.providerId,
+        model: target.model
+      })
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
+
   it('uses a generic creation error when IPC supplies no downstream detail', async () => {
     const runtime = {
       state: createSnapshot(),
