@@ -265,7 +265,6 @@ export function ComputeAddForm({
             const strategy = getComputeAuthenticationStrategy(mode)
             setAuthenticationMode(mode)
             setAdvancedOpen(false)
-            setPortTouched(false)
             if (!strategy.usesPassword) setPassword('')
           }}
         />

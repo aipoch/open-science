@@ -397,6 +397,35 @@ describe('ComputeAddForm completion navigation', () => {
 })
 
 describe('Compute setup recovery', () => {
+  it('keeps an invalid port visible when switching authentication modes', async () => {
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    act(() => container.querySelector<HTMLInputElement>('input[value="password"]')?.click())
+    act(() => enter('compute-password-port', '70000'))
+    act(() =>
+      container
+        .querySelector('#compute-password-port')
+        ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    )
+    expect(container.querySelector('#compute-password-port')?.getAttribute('aria-invalid')).toBe(
+      'true'
+    )
+
+    act(() => container.querySelector<HTMLInputElement>('input[value="ssh_config"]')?.click())
+    expect(
+      container.querySelector('[aria-controls="compute-advanced-settings"]')?.textContent
+    ).toContain('Enter a whole number from 1 to 65535.')
+
+    act(() => container.querySelector<HTMLInputElement>('input[value="password"]')?.click())
+    expect(container.querySelector('#compute-password-port')?.getAttribute('aria-invalid')).toBe(
+      'true'
+    )
+    act(() => enter('compute-password-port', '22'))
+    expect(container.querySelector('#compute-password-port')?.hasAttribute('aria-invalid')).toBe(
+      false
+    )
+    expect(container.querySelector('#compute-port-error')).toBeNull()
+  })
+
   it('shows failed SSH discovery and lets the user retry without clearing a typed alias', async () => {
     useComputeStore.setState({ sshAliasesLoadFailed: true })
     await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
