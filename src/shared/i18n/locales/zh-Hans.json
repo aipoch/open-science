@@ -6166,6 +6166,7 @@
     "Could not cancel diagnostic export.": "无法取消诊断导出。",
     "Diagnostic export failed.": "诊断导出失败。",
     "Diagnostic package exported successfully.": "诊断包已成功导出。",
+    "Diagnostic package partially exported.": "诊断包已部分导出。",
     "Some selected material could not be included in full.": "部分所选材料未能完整收集。",
     "Export cancelled.": "导出已取消。",
     "Could not show the exported file.": "无法显示导出的文件。",

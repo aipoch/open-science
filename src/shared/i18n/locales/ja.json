@@ -6166,6 +6166,7 @@
     "Could not cancel diagnostic export.": "診断情報のエクスポートをキャンセルできませんでした。",
     "Diagnostic export failed.": "診断情報のエクスポートに失敗しました。",
     "Diagnostic package exported successfully.": "診断パッケージを正常にエクスポートしました。",
+    "Diagnostic package partially exported.": "診断パッケージを一部エクスポートしました。",
     "Some selected material could not be included in full.": "選択した資料の一部を完全には含められませんでした。",
     "Export cancelled.": "エクスポートをキャンセルしました。",
     "Could not show the exported file.": "エクスポートしたファイルを表示できませんでした。",

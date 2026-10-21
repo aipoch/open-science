@@ -6627,6 +6627,7 @@
     "Could not cancel diagnostic export.": "Не удалось отменить экспорт диагностики.",
     "Diagnostic export failed.": "Ошибка экспорта диагностики.",
     "Diagnostic package exported successfully.": "Диагностический пакет успешно экспортирован.",
+    "Diagnostic package partially exported.": "Диагностический пакет экспортирован частично.",
     "Some selected material could not be included in full.": "Некоторые выбранные материалы не удалось включить полностью.",
     "Export cancelled.": "Экспорт отменён.",
     "Could not show the exported file.": "Не удалось показать экспортированный файл.",

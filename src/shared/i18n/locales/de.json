@@ -6324,6 +6324,7 @@
     "Could not cancel diagnostic export.": "Der Diagnoseexport konnte nicht abgebrochen werden.",
     "Diagnostic export failed.": "Diagnoseexport fehlgeschlagen.",
     "Diagnostic package exported successfully.": "Diagnosepaket erfolgreich exportiert.",
+    "Diagnostic package partially exported.": "Diagnosepaket teilweise exportiert.",
     "Some selected material could not be included in full.": "Einige ausgewählte Inhalte konnten nicht vollständig aufgenommen werden.",
     "Export cancelled.": "Export abgebrochen.",
     "Could not show the exported file.": "Die exportierte Datei konnte nicht angezeigt werden.",

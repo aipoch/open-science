@@ -6490,6 +6490,7 @@
     "Could not cancel diagnostic export.": "Impossible d’annuler l’exportation des diagnostics.",
     "Diagnostic export failed.": "Échec de l’exportation des diagnostics.",
     "Diagnostic package exported successfully.": "Paquet de diagnostic exporté avec succès.",
+    "Diagnostic package partially exported.": "Le paquet de diagnostic a été partiellement exporté.",
     "Some selected material could not be included in full.": "Certains éléments sélectionnés n’ont pas pu être inclus intégralement.",
     "Export cancelled.": "Exportation annulée.",
     "Could not show the exported file.": "Impossible d’afficher le fichier exporté.",

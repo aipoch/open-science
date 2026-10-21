@@ -6164,6 +6164,7 @@
     "Could not cancel diagnostic export.": "진단 정보 내보내기를 취소하지 못했습니다.",
     "Diagnostic export failed.": "진단 정보 내보내기에 실패했습니다.",
     "Diagnostic package exported successfully.": "진단 패키지를 성공적으로 내보냈습니다.",
+    "Diagnostic package partially exported.": "진단 패키지를 일부 내보냈습니다.",
     "Some selected material could not be included in full.": "선택한 자료 중 일부를 완전히 포함하지 못했습니다.",
     "Export cancelled.": "내보내기가 취소되었습니다.",
     "Could not show the exported file.": "내보낸 파일을 표시하지 못했습니다.",
