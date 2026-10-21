@@ -67,6 +67,7 @@ type NativeResponsesCompatibilityTarget = {
   key?: string
   resolveKey?: (forceRefresh?: boolean) => Promise<string>
   sanitizeRequest?: (body: JsonObject) => JsonObject
+  vendorId?: string
   model?: string
   reviewerScope?: {
     namespacedTools: ResponsesNamespacedTool[]
@@ -954,7 +955,7 @@ export class NativeResponsesCompatibilityProxy {
             }
           : body
       const routedBody = target.model ? { ...scopedBody, model: target.model } : scopedBody
-      const aliases = prepareNativeResponsesRequest(routedBody)
+      const aliases = prepareNativeResponsesRequest(routedBody, target.vendorId)
       const flattenedRequest = aliases.request
       const compatibilityRequest =
         Array.isArray(flattenedRequest.tools) &&

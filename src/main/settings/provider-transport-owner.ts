@@ -608,6 +608,7 @@ class ProviderTransportOwner {
       return {
         ...this.healthObservation(candidate),
         baseUrl: targetBaseUrl,
+        vendorId: candidate.provider.vendorId,
         key: candidate.provider.key,
         ...(candidate.provider.type === 'xai-subscription'
           ? {

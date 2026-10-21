@@ -26,6 +26,62 @@ afterEach(() => {
 })
 
 describe('native Responses compatibility', () => {
+  it('normalizes MiniMax M3.1 effort on the forwarded model and stops after retargeting', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ id: 'resp-minimax', status: 'completed', output: [] }), {
+          headers: { 'content-type': 'application/json' }
+        })
+    )
+    const proxy = new NativeResponsesCompatibilityProxy(
+      {
+        baseUrl: 'https://api.minimaxi.com/v1',
+        vendorId: 'minimax',
+        model: 'MiniMax-M3.1-Flash'
+      },
+      fetchImpl
+    )
+    try {
+      const connection = await proxy.start()
+      const send = async (): Promise<void> => {
+        const response = await fetch(`${connection.baseUrl}/responses`, {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${connection.token}`,
+            'content-type': 'application/json'
+          },
+          body: JSON.stringify({
+            model: 'stale-codex-model',
+            input: 'Hello',
+            reasoning: { effort: 'none' },
+            stream: false
+          })
+        })
+        expect(response.status).toBe(200)
+        await response.json()
+      }
+      await send()
+      expect(JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))).toMatchObject({
+        model: 'MiniMax-M3.1-Flash',
+        reasoning: { effort: 'low' }
+      })
+      proxy.setModelTarget({ model: 'MiniMax-M3' })
+      await send()
+      expect(JSON.parse(String(fetchImpl.mock.calls[1][1]?.body))).toMatchObject({
+        model: 'MiniMax-M3',
+        reasoning: { effort: 'none' }
+      })
+      proxy.setTarget({ baseUrl: 'https://custom.example/v1', model: 'MiniMax-M3.1-Flash' })
+      await send()
+      expect(JSON.parse(String(fetchImpl.mock.calls[2][1]?.body))).toMatchObject({
+        model: 'MiniMax-M3.1-Flash',
+        reasoning: { effort: 'none' }
+      })
+    } finally {
+      await proxy.close()
+    }
+  })
+
   it('decodes upstream compression when the client accepts zstd', async () => {
     const payload = { id: 'resp-fixture', object: 'response', status: 'completed', output: [] }
     // Zstandard frame for JSON.stringify(payload), including the 0x28 magic byte.
