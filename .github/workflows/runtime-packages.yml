@@ -223,8 +223,8 @@ jobs:
       - name: Verify complete npm version and integrity set without publication
         if: inputs.distribution == 'npm'
         env:
-          GITHUB_SHA: ${{ inputs.source_sha || github.sha }}
-        run: npm run publish:npm-release -- out/distributions --dry-run
+          SOURCE_SHA: ${{ inputs.source_sha || github.sha }}
+        run: GITHUB_SHA="$SOURCE_SHA" npm run publish:npm-release -- out/distributions --dry-run
       - name: Verify all five standalone archives
         if: inputs.distribution == 'archive'
         run: npm run verify:runtime-archives -- out/distributions

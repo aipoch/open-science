@@ -190,7 +190,7 @@ describe('runtime distribution boundary', () => {
     expect(
       flow.jobs['publication-check'].steps.find(
         (s: any) => s.name === 'Verify complete npm version and integrity set without publication'
-      ).env.GITHUB_SHA
+      ).env.SOURCE_SHA
     ).toBe('${{ inputs.source_sha || github.sha }}')
     expect(
       steps.find((s: any) => s.name === 'Download certified desktop payload').with['run-id']
@@ -204,6 +204,31 @@ describe('runtime distribution boundary', () => {
       expect(step.if, step.name).toContain('!inputs.verify_desktop_only')
     expect(flow.jobs['publication-check'].if).toContain('!inputs.verify_desktop_only')
   })
+  it.skipIf(process.platform === 'win32')(
+    'passes the certified source to the Ubuntu publication check',
+    () => {
+      const step = workflow('runtime-packages.yml').jobs['publication-check'].steps.find(
+        (s: any) => s.name === 'Verify complete npm version and integrity set without publication'
+      )
+      // The runner owns GITHUB_* defaults; YAML env cannot override GITHUB_SHA.
+      expect(step.env.GITHUB_SHA).toBeUndefined()
+      for (const sourceSha of ['a'.repeat(40), 'b'.repeat(40)]) {
+        const output = execFileSync(
+          'bash',
+          [
+            '-c',
+            `npm() { printf '%s' "$GITHUB_SHA"; }
+${step.run}`
+          ],
+          {
+            env: { ...process.env, GITHUB_SHA: 'b'.repeat(40), SOURCE_SHA: sourceSha },
+            encoding: 'utf8'
+          }
+        )
+        expect(output).toBe(sourceSha)
+      }
+    }
+  )
   it('shares native build/extraction while testing both distributions without publication', () => {
     const flow = workflow('runtime-packages.yml')
     expect(flow.permissions).toEqual({ contents: 'read', actions: 'read' })
