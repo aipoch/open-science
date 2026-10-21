@@ -1,9 +1,7 @@
 {
   "schemaVersion": 1,
   "modules": {
-    "artifact_content_contracts": [
-      "src/main/session-package/literature-source.test.ts"
-    ],
+    "artifact_content_contracts": ["src/main/session-package/literature-source.test.ts"],
     "artifact_reproducibility_contract": [
       "src/main/session-package/literature-source.test.ts",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
@@ -76,12 +74,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
-    "artifact_storage_validation": [
-      "src/main/session-package/literature-source.test.ts"
-    ],
-    "cli_sdk": [
-      "src/main/session-package/desktop.test.ts"
-    ],
+    "artifact_storage_validation": ["src/main/session-package/literature-source.test.ts"],
+    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": [
       "src/main/session-package/literature-source.test.ts",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
@@ -160,22 +154,14 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "environment_engine": [
-      "src/main/session-package/literature-source.test.ts"
-    ],
-    "host_bounded_io": [
-      "src/main/image-preview-resize.test.ts"
-    ],
-    "host_runtime_lifecycle": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
+    "environment_engine": ["src/main/session-package/literature-source.test.ts"],
+    "host_bounded_io": ["src/main/image-preview-resize.test.ts"],
+    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
     "host_runtime_ports": [
       "src/main/cli-install/launcher.test.ts",
       "src/main/update/windows-update-handoff.test.ts"
     ],
-    "host_value_guards": [
-      "src/main/update/windows-update-handoff.test.ts"
-    ],
+    "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts"
@@ -503,9 +489,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": [
-      "src/renderer/src/pages/literature/renderer-host.test.tsx"
-    ],
+    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotations": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -617,9 +601,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "project_files_view": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
-    ],
+    "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "providers_package": [
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-recovery-readiness.test.ts",
@@ -682,12 +664,8 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_app_icons": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
-    ],
-    "renderer_assets": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_app_icons": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "renderer_assets": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_compute": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -726,9 +704,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_job_surfaces": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_job_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_model_selection": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -760,9 +736,7 @@
     "renderer_package_transport": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_permission_state": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_permission_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_preferences": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -782,9 +756,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_review_card": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_review_card": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_runtime_errors": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -836,16 +808,12 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_storage_surfaces": [
-      "src/renderer/src/components/SessionPackageOperation.test.tsx"
-    ],
+    "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
     "renderer_streamdown": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_tag_state": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_tag_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_ui": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -1101,12 +1069,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
-    "session_diagnostics": [
-      "src/main/session-package/desktop.test.ts"
-    ],
-    "session_persistence": [
-      "src/main/session-details/owner.test.ts"
-    ],
+    "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
+    "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1141,12 +1105,8 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
-    "settings_repository": [
-      "src/main/settings/workflows/local-shell.test.ts"
-    ],
-    "shared_fuzzy_match": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
+    "shared_fuzzy_match": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "shared_promise_identity": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1225,12 +1185,8 @@
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
     ],
-    "upload_file_transport": [
-      "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
-    ],
-    "upload_repository": [
-      "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
-    ],
+    "upload_file_transport": ["src/renderer/src/components/ProjectPackageDropZone.test.tsx"],
+    "upload_repository": ["src/renderer/src/components/ProjectPackageDropZone.test.tsx"],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1291,15 +1247,11 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_environment_controls": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_environment_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_environment_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_error_reporting": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_error_reporting": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1312,9 +1264,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "workspace_folder_access": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_folder_access": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_job_presentation": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1347,9 +1297,7 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
     ],
-    "workspace_pdf_reading_controls": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_pdf_reading_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_permissions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1385,9 +1333,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_reproducibility_surfaces": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_reproducibility_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_run_marks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1414,12 +1360,8 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_skill_document": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
-    "workspace_tool_blocks": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_skill_document": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_tool_blocks": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_tool_model": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1433,8 +1375,6 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_version_workflow": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ]
+    "workspace_version_workflow": ["src/renderer/src/lib/literature-renderer-host.test.ts"]
   }
 }
