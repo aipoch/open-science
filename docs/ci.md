@@ -187,6 +187,21 @@ Publishing runs from `main` through the `npm` environment using npm Trusted Publ
 First publication requires explicit bootstrap credentials; remove them after configuring trust.
 Build jobs and dry-runs receive no npm credentials.
 
+#### Updating the npm package documentation
+
+Edit `packages/open-science/README.md` for the npm package page and
+`packages/open-science/CLI.md` for the command reference. npm staging copies these files into
+the entry package; the repository-root README remains the broader product overview.
+Keep installation requirements and examples aligned with the standalone runtime guide and
+the published manifest, whose version and Node requirement come from the standalone build.
+
+[npm updates a package-page README only when a new version is published](https://docs.npmjs.com/about-package-readme-files).
+Merging documentation into `main` does not update an already published package page. Include
+the changes in a new stable Release source and let the existing npm publication workflow
+publish that version. Re-running publication for an old Release uses its old source and cannot
+replace an immutable published version. Do not publish the development package directory
+directly: it lacks the generated platform dependency manifest.
+
 ## Supplemental desktop coverage
 
 Complete Mac regression and Delegation suites run in Source Regression at 01:37 and 13:37

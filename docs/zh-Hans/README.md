@@ -102,6 +102,16 @@ brew install aipoch/tap/open-science
 
 该 Formula 自带 Node，无需启动桌面应用；其版本可能与桌面 Cask 不同。前提条件与升级方式见[独立运行时指南](../standalone-runtime.md)。
 
+如需独立 CLI 和 Web 界面，可使用 **Node.js 22.13.0 或更高版本**安装已发布的 [npm 软件包](https://www.npmjs.com/package/@aipoch/open-science)：
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+打开输出的 URL 完成配置，或按照[命令行配置指南](../../packages/open-science/CLI.md#first-run-setup-codex)操作。npm 支持 macOS ARM64/x64、使用 glibc 的 Linux ARM64/x64 和 Windows x64，无需安装桌面应用。请保留 npm 可选依赖，并查看 [Linux 前置条件和升级说明](../standalone-runtime.md#install-from-npm)。该 URL 包含身份验证令牌，请勿分享。
+
 Windows 重装会保留研究数据；如需彻底清理，请参阅[数据重置工具](../../scripts/windows-reset/README.md)，确认后会永久删除本地数据。
 
 ### 2. 完成首次设置
@@ -331,7 +341,7 @@ npm run pack:backend
 
 Web 界面运行在普通 Node 后端上，无需 Electron 或图形显示。`npm run dev:web` 和 `npm run dev:headless` 会构建并启动后端及 Web 界面，不启动桌面或托盘。`OPEN_SCIENCE_WEB_PORT` 选择端口（默认 `44100`）；Ctrl+C 正常关闭前台服务。
 
-源码开发需要 Node.js 24。独立 npm 软件包需要 Node >=22.13.0，轻量 CLI/SDK 需要 Node >=22.5。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
+源码开发需要 Node.js 24。已发布的 npm 软件包和本地构建的独立 tarball 均需要 Node.js >=22.13.0。Release 压缩包、Homebrew Formula 和桌面命令启动器自带运行时。
 
 桌面与浏览器共享同一服务。退出桌面只会停止它自行启动的后端；若连接的是 CLI 启动的服务，则只断开桌面连接。
 

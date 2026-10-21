@@ -103,6 +103,16 @@ brew install aipoch/tap/open-science
 
 La fórmula incluye Node y no necesita la aplicación de escritorio en ejecución; su versión puede diferir del Cask de escritorio. Consulte los requisitos y las actualizaciones en la [guía del entorno independiente](../standalone-runtime.md).
 
+Para el CLI independiente y la interfaz web, instale el [paquete npm publicado](https://www.npmjs.com/package/@aipoch/open-science) con **Node.js 22.13.0 o posterior**:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Abra la URL indicada para completar la configuración o siga la [guía de configuración desde el terminal](../../packages/open-science/CLI.md#first-run-setup-codex). npm admite macOS ARM64/x64, Linux ARM64/x64 con glibc y Windows x64; no requiere la aplicación de escritorio. Mantenga las dependencias opcionales de npm y consulte los [requisitos de Linux y las instrucciones de actualización](../standalone-runtime.md#install-from-npm). La URL contiene un token de autenticación; manténgala privada.
+
 En Windows, reinstalar conserva los datos de investigación. Para una limpieza completa, consulte la [herramienta de restablecimiento](../../scripts/windows-reset/README.md), que elimina permanentemente los datos locales tras la confirmación.
 
 ### 2. Complete la configuración inicial
@@ -332,7 +342,7 @@ npm run pack:backend
 
 La interfaz web funciona con un backend Node independiente, sin Electron ni entorno gráfico. `npm run dev:web` y `npm run dev:headless` compilan e inician el backend y la interfaz web; no inician el escritorio ni la bandeja. `OPEN_SCIENCE_WEB_PORT` selecciona el puerto (predeterminado `44100`); Ctrl+C cierra el servicio en primer plano de forma ordenada.
 
-El desarrollo desde el código fuente requiere Node.js 24. El tarball npm independiente requiere Node >=22.13.0; el CLI/SDK ligero requiere Node >=22.5. Los archivos de Release, la fórmula Homebrew y el lanzador del escritorio incluyen su propio entorno de ejecución.
+El desarrollo desde el código fuente requiere Node.js 24. El paquete npm publicado y el tarball independiente compilado localmente requieren Node.js >=22.13.0. Los archivos de Release, la fórmula Homebrew y el lanzador del escritorio incluyen su propio entorno de ejecución.
 
 El escritorio y el navegador comparten el servicio. Al salir, el escritorio detiene solo el backend que inició; si se conectó a un servicio del CLI, únicamente se desconecta.
 

@@ -103,6 +103,16 @@ brew install aipoch/tap/open-science
 
 Die Formula enthält Node und benötigt keine laufende Desktop-App; ihre Version kann vom Desktop-Cask abweichen. Voraussetzungen und Upgrades stehen im [Leitfaden zur eigenständigen Laufzeit](../standalone-runtime.md).
 
+Für die eigenständige CLI und Web-Oberfläche installieren Sie das veröffentlichte [npm-Paket](https://www.npmjs.com/package/@aipoch/open-science) mit **Node.js 22.13.0 oder neuer**:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Öffnen Sie die ausgegebene URL, um die Einrichtung abzuschließen, oder folgen Sie der [Terminal-Einrichtungsanleitung](../../packages/open-science/CLI.md#first-run-setup-codex). npm unterstützt macOS ARM64/x64, glibc-Linux ARM64/x64 und Windows x64; die Desktop-App ist nicht erforderlich. Lassen Sie optionale npm-Abhängigkeiten aktiviert und beachten Sie die [Linux-Voraussetzungen und Aktualisierungshinweise](../standalone-runtime.md#install-from-npm). Die URL enthält ein Authentifizierungstoken; halten Sie sie geheim.
+
 Unter Windows bleiben Forschungsdaten bei einer Neuinstallation erhalten. Für eine vollständige Bereinigung nutzen Sie das [Werkzeug zum Zurücksetzen](../../scripts/windows-reset/README.md), das lokale Daten nach Bestätigung dauerhaft löscht.
 
 ### 2. Schließen Sie die Ersteinrichtung ab
@@ -332,7 +342,7 @@ npm run pack:backend
 
 Die Web-Oberfläche läuft mit einem gewöhnlichen Node-Backend, ohne Electron oder grafische Anzeige. `npm run dev:web` und `npm run dev:headless` bauen und starten Backend und Web-Oberfläche; sie starten weder Desktop noch Infobereich. `OPEN_SCIENCE_WEB_PORT` wählt den Port (Standard `44100`); Strg+C beendet den Vordergrunddienst geordnet.
 
-Quellentwicklung benötigt Node.js 24. Ein lokal gebautes eigenständiges npm-Tarball benötigt Node >=22.13.0; das leichte CLI/SDK benötigt Node >=22.5. Release-Archive, Homebrew-Formula und Desktop-Befehlsstarter enthalten ihre eigene Laufzeit.
+Quellentwicklung benötigt Node.js 24. Das veröffentlichte npm-Paket und das lokal gebaute eigenständige npm-Tarball benötigen Node.js >=22.13.0. Release-Archive, Homebrew-Formula und Desktop-Befehlsstarter enthalten ihre eigene Laufzeit.
 
 Desktop und Browser teilen denselben Dienst. Beim Beenden stoppt der Desktop nur ein selbst gestartetes Backend; bei einem CLI-Dienst trennt er lediglich die Verbindung.
 

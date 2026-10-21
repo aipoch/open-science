@@ -44,6 +44,40 @@ retains the host's configured permissions and data recipients; absence of a desk
 establish isolation or offline operation. Protect its profile and service credentials, and confirm
 task/job cancellation separately from stopping a client wait.
 
+## Install from npm
+
+The published [@aipoch/open-science](https://www.npmjs.com/package/@aipoch/open-science) package
+provides the CLI, backend, Web UI and SDK. Install Node.js **22.13.0 or later**, then run:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Open the printed authenticated URL to configure an Agent runtime, model provider and optional
+Python/R Notebook runtime. For terminal setup and a first task, see the
+[CLI guide](../packages/open-science/CLI.md#first-run-setup-codex).
+
+npm selects a matching optional platform package for macOS ARM64/x64, glibc Linux ARM64/x64
+or Windows x64. The package includes backend resources and native dependencies; it uses your
+installed Node and does not require Electron. Linux musl and Windows ARM64 are unsupported.
+The [Linux prerequisites](#linux-prerequisites) still apply. Do not omit optional dependencies;
+reinstall with `npm install --global @aipoch/open-science --include=optional` if the matching
+native package is missing. Use the public entry package rather than installing a platform
+package directly; the CLI requires its platform package to have the same version.
+
+Stop all profiles started by the installation before upgrading with
+`npm install --global @aipoch/open-science@latest`, then restart with the same profile.
+Use `--config-root /absolute/path` to select a custom profile. Stop those profiles before
+`npm uninstall --global @aipoch/open-science` as well. Updates and uninstall retain the existing
+research data and credential locations; consult [release compatibility](compatibility.md)
+before downgrading. Package removal is not a data reset.
+
+When multiple installers provide `open-science`, check which command your shell resolves
+(`type -a open-science` on macOS/Linux or `Get-Command open-science -All` in PowerShell).
+Update or remove a launcher through the installer that owns it.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on
