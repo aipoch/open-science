@@ -363,7 +363,7 @@ export function retainLinkedPages(retained, links, units) {
 }
 
 export function mapReflowLinks(
-  { links, geometry, outlines, outlineCount, showOutlines },
+  { links, geometry, outlines, outlineCount, showOutlines, catalogDestinations = [] },
   input,
   { originals, lines, crops, placements, sourcePages },
   measure
@@ -500,7 +500,19 @@ export function mapReflowLinks(
     if (outline.destination && !target) failed.add(outline.destination.pageNumber)
     return { ...outline, target }
   })
-  return { failed, mapped, outlines: mappedOutlines, outlineCount, showOutlines }
+  const mappedCatalog = catalogDestinations.map((entry) => {
+    const target = destination(entry.destination)
+    if (!target) failed.add(entry.destination.pageNumber)
+    return { ...entry, target }
+  })
+  return {
+    failed,
+    mapped,
+    outlines: mappedOutlines,
+    outlineCount,
+    showOutlines,
+    catalogDestinations: mappedCatalog
+  }
 }
 
 export function writeReflowLinks(document, navigation, originals) {

@@ -145,41 +145,44 @@ describe('ImagePointAnnotationSurface', () => {
     )
   })
 
-  it('requires a note and saves normalized coordinates with natural dimensions and fixed Version', async () => {
-    const image = await renderSurface()
-    await pointer(image, 'pointerdown', 210, 220)
-    await pointer(image, 'pointerup', 210, 220)
+  it.each([undefined, { width: 8000, height: 4000 }])(
+    'saves original dimensions and normalized coordinates for source size %j',
+    async (sourceSize) => {
+      const image = await renderSurface({ sourceSize })
+      await pointer(image, 'pointerdown', 210, 220)
+      await pointer(image, 'pointerup', 210, 220)
 
-    const annotate = (): HTMLButtonElement | undefined =>
-      Array.from(document.querySelectorAll('button')).find(
-        (button) => button.textContent === 'Annotate'
-      )
-    await act(async () => annotate()?.click())
-    expect(document.body.textContent).toContain('Add a note for this image annotation')
-    expect(onAdd).not.toHaveBeenCalled()
+      const annotate = (): HTMLButtonElement | undefined =>
+        Array.from(document.querySelectorAll('button')).find(
+          (button) => button.textContent === 'Annotate'
+        )
+      await act(async () => annotate()?.click())
+      expect(document.body.textContent).toContain('Add a note for this image annotation')
+      expect(onAdd).not.toHaveBeenCalled()
 
-    const note = document.querySelector('textarea')!
-    await act(async () => {
-      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
-      setter?.call(note, 'Inspect this peak.')
-      note.dispatchEvent(new Event('input', { bubbles: true }))
-    })
-    await act(async () => annotate()?.click())
+      const note = document.querySelector('textarea')!
+      await act(async () => {
+        const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')?.set
+        setter?.call(note, 'Inspect this peak.')
+        note.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => annotate()?.click())
 
-    expect(onAdd).toHaveBeenCalledWith({
-      id: expect.stringMatching(/^annotation-/),
-      kind: 'image-point',
-      target: 'agent',
-      note: 'Inspect this peak.',
-      source: expect.objectContaining({
-        kind: 'artifact-version',
-        versionId: 'version-1',
-        path: expect.stringMatching(/^artifact-version:/)
-      }),
-      point: { x: 0.5, y: 0.5 },
-      naturalSize: { width: 800, height: 400 }
-    })
-  })
+      expect(onAdd).toHaveBeenCalledWith({
+        id: expect.stringMatching(/^annotation-/),
+        kind: 'image-point',
+        target: 'agent',
+        note: 'Inspect this peak.',
+        source: expect.objectContaining({
+          kind: 'artifact-version',
+          versionId: 'version-1',
+          path: expect.stringMatching(/^artifact-version:/)
+        }),
+        point: { x: 0.5, y: 0.5 },
+        naturalSize: sourceSize ?? { width: 800, height: 400 }
+      })
+    }
+  )
 
   it('does not create a point when pointer movement exceeds the click threshold', async () => {
     const image = await renderSurface()

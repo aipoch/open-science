@@ -18,6 +18,7 @@ import {
 import { useTranslation } from 'react-i18next'
 
 import { ErrorNotice } from '@/components/error-notice'
+import { ConfirmActionDialog } from '@/components/ui/confirm-action-dialog'
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable'
 import {
   Select,
@@ -529,6 +530,8 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
   const [actionError, setActionError] = useState<string | null>(null)
   const [isAbortingWrite, setIsAbortingWrite] = useState(false)
   const [isRestarting, setIsRestarting] = useState(false)
+  const [restartConfirmation, setRestartConfirmation] = useState<string>()
+  const restartTrigger = useRef<HTMLButtonElement>(null)
   const [activeKind, setActiveKind] = useState<NotebookKernelKind>('python')
   const [frameFilter, setFrameFilter] = useState<NotebookFrameFilterValue>()
   const viewSelectionVersion = useRef(0)
@@ -851,6 +854,12 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
 
   // R-only restart prompt: an R install/uninstall flags the active R env until its kernel restarts.
   const activeEnvName = effectiveActiveEnv
+  const restartOwner = `${item.notebook.sessionId}:${activeEnvName ?? ''}`
+  const [restartConfirmationOwner, setRestartConfirmationOwner] = useState(restartOwner)
+  if (restartConfirmationOwner !== restartOwner) {
+    setRestartConfirmationOwner(restartOwner)
+    setRestartConfirmation(undefined)
+  }
   const restartRecommended =
     activeDataLanguage === 'r' &&
     (notebookState?.environments.find((entry) => {
@@ -1404,11 +1413,6 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
           className="min-h-0 overflow-hidden"
         >
           <div className="flex h-full min-h-0 flex-col bg-bg-000" data-testid="kernel-terminal">
-            {actionError ? (
-              <InlineNotice tone="red" role="alert" className="m-2 font-mono text-xs">
-                {actionError}
-              </InlineNotice>
-            ) : null}
             <TerminalScrollback
               runs={visibleRuns}
               language={activeDataLanguage}
@@ -1665,14 +1669,50 @@ const NotebookPreview = ({ item }: NotebookPreviewProps): React.JSX.Element => {
             <button
               type="button"
               disabled={isRestarting}
-              onClick={() => void handleRestart()}
+              onClick={() => setRestartConfirmation(activeEnvName)}
               className="shrink-0 rounded-md border border-border-200 px-2 py-0.5 font-medium text-text-100 transition-colors hover:bg-bg-200 disabled:opacity-50"
               data-testid="r-restart-button"
+              ref={restartTrigger}
             >
               {isRestarting ? t('Restarting…') : t('Restart R kernel')}
             </button>
           </div>
         ) : null}
+
+        {actionError && !initialStateError ? (
+          <ErrorNotice
+            inline
+            role="alert"
+            tone="red"
+            className="max-h-32 shrink-0 overflow-auto px-3 py-2"
+            description={actionError}
+            data-testid="notebook-action-error"
+          />
+        ) : null}
+
+        <ConfirmActionDialog
+          open={Boolean(
+            restartConfirmation && restartConfirmation === activeEnvName && restartRecommended
+          )}
+          title={t('Restart R kernel?')}
+          description={t(
+            'Restarting {{environment}} clears its live variables and loaded packages after current execution finishes. Saved files and Notebook history are kept.',
+            { environment: environmentLabel(restartConfirmation ?? '') }
+          )}
+          cancelLabel={t('Cancel')}
+          confirmLabel={t('Restart R kernel')}
+          onCancel={() => setRestartConfirmation(undefined)}
+          onConfirm={() => {
+            setRestartConfirmation(undefined)
+            void handleRestart()
+          }}
+          onCloseAutoFocus={(event) => {
+            if (restartTrigger.current && !restartTrigger.current.disabled) {
+              event.preventDefault()
+              restartTrigger.current.focus()
+            }
+          }}
+        />
 
         {initialStateError ? (
           <div

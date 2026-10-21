@@ -34,6 +34,32 @@ afterEach(() => {
 })
 
 describe('WorkspaceDelegatedQuestionCard', () => {
+  it('defaults legacy questions to single select and updates the chip when advancing to multi select', async () => {
+    render(
+      <WorkspaceDelegatedQuestionCard
+        projectId="project-1"
+        sessionId="session-1"
+        request={{
+          ...request,
+          questions: [request.questions[0], { ...request.questions[1], kind: 'multi-select' }]
+        }}
+        onRespond={async () => undefined}
+      />
+    )
+    expect(screen.getByTestId('choice-kind-chip').textContent).toBe('Single select')
+    fireEvent.click(screen.getByRole('button', { name: 'Strict' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }))
+    expect(screen.getByTestId('choice-kind-chip').textContent).toBe('Multi select')
+    fireEvent.click(screen.getByRole('button', { name: '30 days' }))
+    fireEvent.click(screen.getByRole('button', { name: '90 days' }))
+    expect(screen.getByRole('button', { name: '30 days' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+    expect(screen.getByRole('button', { name: '90 days' }).getAttribute('aria-pressed')).toBe(
+      'true'
+    )
+  })
+
   it('toggles all 16 choices, restores drafts and submits an ordered array', async () => {
     const onRespond = vi.fn<(response: ElicitationResponse) => Promise<void>>(async () => undefined)
     const labels = Array.from({ length: 16 }, (_, i) => `Option ${i + 1}`)

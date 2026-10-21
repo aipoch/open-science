@@ -443,6 +443,22 @@ export async function applyCachedPdfTableSources({
           if (
             table.cells.some((cell) => {
               const origins = cell.sourceItems
+              // Several word boxes do not prove a character split of a shared
+              // native parent. Retain its whole connected component rather
+              // than treating that structural ambiguity as a document failure.
+              // proveBlockedUnits still checks every original native identity.
+              if (
+                !cell.sourceSegments &&
+                origins?.length === 1 &&
+                cell.regions.length > 1 &&
+                (occurrences.get(`${origins[0].pageNumber}:${origins[0].index}`) ?? 0) > 1 &&
+                normalizeSourceText(cell.text) !== normalizeSourceText(origins[0].text) &&
+                countSubstring(
+                  normalizeSourceText(origins[0].text),
+                  normalizeSourceText(cell.text)
+                ) === 1
+              )
+                return true
               if (cell.sourceSegments || !origins || origins.length < 2) return false
               // Two unmeasured native parents consumed by multiple cells do not
               // establish unique character boundaries. Retain the connected

@@ -57,7 +57,7 @@ export async function composeSessionPackages({
   sessionPackageDesktopLifecycle: { close: () => Promise<void>; isActive: () => boolean }
   packageHandoffHeld: { current: boolean }
   packagePublicationOwner: {
-    current?: Pick<SessionPersistenceCommands, 'adoptPublishedSession'>
+    current?: Pick<SessionPersistenceCommands, 'adoptPublishedSession' | 'runSessionMutation'>
   }
   sessionPackageService: import('../session-package/service').SessionPackageService
   previewStateRepository: ReturnType<typeof createDefaultPreviewStateRepository>
@@ -71,7 +71,7 @@ export async function composeSessionPackages({
   // Startup package recovery precedes catalog construction. After construction every live
   // publication must update the same owner consulted by resume/save admission.
   const packagePublicationOwner: {
-    current?: Pick<SessionPersistenceCommands, 'adoptPublishedSession'>
+    current?: Pick<SessionPersistenceCommands, 'adoptPublishedSession' | 'runSessionMutation'>
   } = {}
   const sessionPackageService = await modules.add(undefined, () => {
     const service = new SessionPackageService({
@@ -80,6 +80,10 @@ export async function composeSessionPackages({
       ),
       getDefaultPermissionProfile: async () =>
         getDefaultPermissionProfile(await settingsRepository.getSettings()),
+      runSessionPublication: async (projectId, sessionId, work) => {
+        const owner = packagePublicationOwner.current
+        return owner ? owner.runSessionMutation(projectId, sessionId, work) : work()
+      },
       onSessionPublished: async (publication) => {
         await packagePublicationOwner.current?.adoptPublishedSession(publication)
       },

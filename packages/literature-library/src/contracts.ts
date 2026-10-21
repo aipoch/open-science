@@ -629,17 +629,29 @@ const literatureFormatDocumentResultSchema = z.discriminatedUnion('mode', [
     .strict()
 ])
 
+// Indices in parsed items, not error rows; omission preserves whole-file imports.
+const literatureImportSelectionSchema = z
+  .array(z.number().int().nonnegative())
+  .min(1)
+  .max(LITERATURE_RECORD_IMPORT_MAX_RECORDS)
+  .refine(
+    (indexes) => new Set(indexes).size === indexes.length,
+    'Import selection contains duplicate indices.'
+  )
+
 const literatureRecordImportRequestSchema = z.discriminatedUnion('mode', [
   z
     .object({
       mode: z.literal('preview'),
-      content: z.string().min(1).max(LITERATURE_RECORD_IMPORT_MAX_BYTES)
+      content: z.string().min(1).max(LITERATURE_RECORD_IMPORT_MAX_BYTES),
+      selectedItemIndexes: literatureImportSelectionSchema.optional()
     })
     .strict(),
   z
     .object({
       mode: z.literal('commit'),
       content: z.string().min(1).max(LITERATURE_RECORD_IMPORT_MAX_BYTES),
+      selectedItemIndexes: literatureImportSelectionSchema.optional(),
       duplicatePolicy: literatureDuplicatePolicySchema.optional(),
       collectionId: nonEmptyTextSchema.optional()
     })

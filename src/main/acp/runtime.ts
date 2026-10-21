@@ -12,6 +12,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
+  ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
@@ -685,11 +686,20 @@ class AcpRuntime {
     }))
   }
 
-  // A permission-blocked prompt whose authority reached durable storage is quiescent for app quit:
-  // teardown loses only the dead provider RPC, while the card remains actionable after restart.
+  // Durable human decisions survive quit; closing their provider RPC must not cancel the card.
   getQuitBlockingPromptSessions(): { projectId: string; sessionId: string }[] {
+    const durableQuestionSessions = new Set(
+      this.elicitationOwner
+        .getPendingRequests()
+        .filter((request) => request.durable)
+        .map((request) => request.sessionId)
+    )
     return this.getInFlightSessionIds()
-      .filter((sessionId) => !this.permissionContext.hasDurablePendingForSession(sessionId))
+      .filter(
+        (sessionId) =>
+          !this.permissionContext.hasDurablePendingForSession(sessionId) &&
+          !durableQuestionSessions.has(sessionId)
+      )
       .map((sessionId) => ({
         projectId: this.resolveSessionProjectId(sessionId),
         sessionId
@@ -2580,7 +2590,7 @@ class AcpRuntime {
         level: 'error',
         sessionId,
         ...(continuation.request.provenanceContext ?? {}),
-        title: 'Could not continue the Agent task',
+        title: ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
         text: errorMessage(error)
       })
       this.emitState()

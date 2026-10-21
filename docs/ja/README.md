@@ -51,7 +51,7 @@ AIPOCH Open-Science は、機械学習、統計学、生命科学、化学、材
 
 完了した研究セッションは、選択した会話分岐、ファイルバージョン、Notebook 記録、検証証拠を含む持ち運び可能な `.science` パッケージとして、レビュー、引き継ぎ、アーカイブのためにエクスポートできます。
 
-> 💡 **AIPOCH Open-Science v1.0.0** _（2026年10月更新）_。この節目では、ローカル優先の研究ワークスペース、科学エージェント、Python/R Notebook の実行、文献ツール、持ち運び可能な `.science` 研究パッケージをまとめています。v0.37.2 以降の改善と CLI のアップグレードに関する変更は、[1.0.0 のリリースノート](../../release-notes/1.0.0/ja.md)をご覧ください。ダウンロードは引き続き[最新の公開済みリリース](https://github.com/aipoch/open-science/releases/latest)に対応します。
+> 💡 **AIPOCH Open-Science v1.0.1** _（2026年10月更新）_。このパッチでは、ブラウザから `.science` パッケージをワンクリックでインポートできるようになったこと、より分かりやすく信頼性の高いアプリ内アップデーター（特に Windows）、常に表示されるセッションの待機状態、MCP OAuth 認証情報の取り扱いに関するセキュリティ修正、PDF・文献・セッションパッケージに関する一連の修正を含みます。詳細は [1.0.1 のリリースノート](../../release-notes/1.0.1/ja.md)をご覧ください。ダウンロードは引き続き[最新の公開済みリリース](https://github.com/aipoch/open-science/releases/latest)に対応します。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science のヒーローバナー：Science, Open to All — オープンソース、モデル非依存、セルフホスト対応の科学 AI 研究ワークベンチ" src="../images/readme/open-science-banner.png" />

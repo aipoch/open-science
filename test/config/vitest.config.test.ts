@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 import { availableParallelism, cpus } from 'node:os'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import WindowsTestSequencer from '../../scripts/ci/windows-test-sequencer'
 
@@ -508,7 +509,7 @@ it.each(['all', 'host', 'excluded'])(
     }
     expect(result.projects).toHaveLength(literaturePackages.length)
     expect(result.expected.length).toBeGreaterThan(600)
-    expect(result.specs.map(({ path }: { path: string }) => path).sort()).toEqual(
+    expect(result.specs.map(({ path }: { path: string }) => resolve(path)).sort()).toEqual(
       result.expected.sort()
     )
     for (const { name, path } of result.specs) {

@@ -1205,6 +1205,7 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
     beginPdfImport,
     closeItemEditor,
     previewRecordImport,
+    previewRecordSelection,
     commitRecordImport,
     trackNewMetadataDirty,
     beginManualImport,
@@ -2475,7 +2476,8 @@ const LiteratureLibraryPage = (): React.JSX.Element => {
             onClose={() => {
               closeRecordImport()
             }}
-            onImport={() => void commitRecordImport()}
+            onPreviewSelection={previewRecordSelection}
+            onImport={(indexes) => void commitRecordImport(indexes)}
           />
         ) : null}
 

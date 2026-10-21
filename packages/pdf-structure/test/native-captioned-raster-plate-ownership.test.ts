@@ -637,6 +637,32 @@ it('preserves every complete adjacent vector Form and its native text packets', 
   expect(JSON.stringify(f)).toBe(before)
 })
 it.each([
+  ['default', [10], true],
+  ['non-default', [9], false],
+  ['missing', [], false],
+  ['extra', [10, 10], false],
+  ['non-numeric', ['10'], false],
+  ['restored non-default', [10], false],
+  ['GState miter', [10], false]
+] as const)('requires a proved default miter history: %s', (change, args, accepted) => {
+  const f = vectorFormStack(),
+    o = f.context.operators
+  o.fnArray.unshift(OPS.setMiterLimit)
+  o.argsArray.unshift([...args])
+  for (const g of [...f.page.graphicsBounds, ...f.context.graphicsBounds]) g.operationIndex++
+  if (change === 'restored non-default') {
+    o.fnArray.push(OPS.save, OPS.setMiterLimit, OPS.restore, OPS.setMiterLimit)
+    o.argsArray.push([], [5], [], [10])
+  }
+  if (change === 'GState miter') {
+    o.fnArray.push(OPS.setGState)
+    o.argsArray.push([[['ML', 10]]])
+  }
+  const before = JSON.stringify(f)
+  expect(proveVectorStack(f)?.rect).toEqual(accepted ? [50, 100, 400, 326] : undefined)
+  expect(JSON.stringify(f)).toBe(before)
+})
+it.each([
   'caption',
   'table',
   'missing-paint',

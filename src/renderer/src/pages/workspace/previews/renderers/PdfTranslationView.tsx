@@ -151,6 +151,9 @@ function LayoutFailureDetails({
 }): React.JSX.Element {
   const { t } = useTranslation()
   const descriptions: Record<PdfTranslationLayoutFailure['code'], string> = {
+    'document-structure': t(
+      'The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.'
+    ),
     'unsupported-layout': t(
       'This layout could not be preserved safely. The text translation is still available.'
     ),

@@ -4,6 +4,7 @@ import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-han
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { continueInterruptedTurn } from './interrupted-turn-continuation'
 import { applySessionConversationCommands } from '../../shared/session-conversation-command'
+import { applyRuntimeSessionEvents } from '../../shared/runtime-session-projection'
 import {
   CompletionHandoffLifecycle,
   InMemoryCompletionHandoffRepository
@@ -95,6 +96,7 @@ import {
 import {
   materializeSessionConversationGraph,
   normalizeSessionFile,
+  type PersistedChatMessage,
   type PersistedChatSession,
   type SessionRuntimeContext
 } from '../../shared/session-persistence'
@@ -7361,6 +7363,110 @@ describe('ACP runtime session management', () => {
     )
   })
 
+  it.each(
+    RESTORED_CONTINUATION_FRAMEWORKS.flatMap(([name, framework, modelRoute, backendId]) =>
+      [
+        { nativeChoice: true, action: 'quit' },
+        { nativeChoice: true, action: 'stop' },
+        { nativeChoice: false, action: 'quit' }
+      ].map((scenario) => ({ name, framework, modelRoute, backendId, ...scenario }))
+    )
+  )(
+    'settles native-question lifecycle through $name (nativeChoice: $nativeChoice, action: $action)',
+    async ({ framework, modelRoute, backendId, nativeChoice, action }) => {
+      const process = new FakeAgentProcess()
+      const fakeAgent = startFakeAgent(process, ['native-quit-session'], {
+        ...(framework.id === 'codex'
+          ? { modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent') }
+          : {}),
+        elicitationForPrompt: ({ sessionId }) => ({
+          mode: 'form',
+          sessionId,
+          toolCallId: 'native-quit-question',
+          message: 'Choose an approach',
+          requestedSchema: {
+            type: 'object',
+            properties: {
+              question_0: { type: 'string', title: 'Approach', enum: ['Focused', 'Broad'] },
+              ...(nativeChoice ? { question_0_custom: { type: 'string', title: 'Other' } } : {})
+            }
+          }
+        })
+      })
+      const bridgeLease =
+        modelRoute === 'codex-bridge' ? createBackendLeaseHarness().lease : undefined
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) =>
+          new AcpRuntime({
+            appVersion: '0.1.0',
+            defaultCwd: '/workspace',
+            callbacks,
+            resolveBackend: () => ({
+              framework: { ...framework, spawn: () => asAgentProcess(process) },
+              backendId,
+              modelRoute,
+              executablePath: '/bin/agent',
+              env: {},
+              ...(bridgeLease ? { responsesTransportLease: bridgeLease } : {})
+            })
+          })
+      )
+      let prompting: Promise<unknown> | undefined
+      try {
+        const session = await coordinator.createSession({
+          cwd: '/workspace',
+          projectId: 'project-1'
+        })
+        prompting = coordinator.sendPrompt({
+          sessionId: session.sessionId,
+          text: 'Ask before proceeding',
+          provenanceContext: { promptMessageId: 'prompt-native-quit' }
+        })
+        void prompting.catch(() => undefined)
+        await vi.waitFor(() =>
+          expect(coordinator.getSnapshot().pendingElicitations).toHaveLength(1)
+        )
+        const request = coordinator.getSnapshot().pendingElicitations![0]
+        expect(Boolean(request.durable)).toBe(nativeChoice)
+        expect(coordinator.getActivePromptSessions()).toEqual([
+          { projectId: 'project-1', sessionId: session.sessionId }
+        ])
+
+        if (action === 'quit') await expect(coordinator.prepareForQuit()).resolves.toBe('completed')
+        else await coordinator.cancelPrompt({ sessionId: session.sessionId })
+
+        const preserved = nativeChoice && action === 'quit'
+        expect(
+          coordinator
+            .getSnapshot()
+            .events.filter((event) => event.toolCallId === 'native-quit-question')
+            .at(-1)?.elicitation?.state
+        ).toBe(preserved ? 'pending' : 'cancelled')
+        if (preserved) {
+          expect(fakeAgent.cancelledSessions).toEqual([])
+          expect(coordinator.getQuitBlockingPromptSessions()).toEqual([])
+          expect(coordinator.getActivePromptSessions()).toHaveLength(1)
+          coordinator.abortQuitPreparation()
+          await coordinator.respondToElicitation({
+            requestId: request.requestId,
+            action: 'accept',
+            answers: [{ fieldId: 'question_0', value: 'Focused' }]
+          })
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([
+            { action: 'accept', content: { question_0: 'Focused' } }
+          ])
+        } else {
+          await prompting
+          expect(fakeAgent.elicitationResponses).toEqual([{ action: 'cancel' }])
+        }
+      } finally {
+        await coordinator.shutdownForQuit()
+        await prompting?.catch(() => undefined)
+      }
+    }
+  )
+
   it('makes a provider-native AskUserQuestion form durable for restore and revision', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['native-choice-session'], {
@@ -8569,6 +8675,18 @@ describe('ACP runtime session management', () => {
     })
     expect(fakeAgent.prompts).toHaveLength(0)
     expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+    expect(runtime.getSnapshot().events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Could not continue the Agent task',
+        text: 'temporary admission failure',
+        promptMessageId: 'prompt-restored-1',
+        agentFrameId: persisted.conversationGraph!.activeFrameId,
+        messageBranchId: persisted.conversationGraph!.frames.find(
+          ({ id }) => id === persisted.conversationGraph!.activeFrameId
+        )!.activeBranchId
+      })
+    )
     await runtime.respondToElicitation(response)
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
     await vi.waitFor(() => {
@@ -26223,6 +26341,167 @@ describe('ACP runtime skill force-load + nudge', () => {
     ])
     expect(hooks.namesForIds).not.toHaveBeenCalled()
   })
+
+  it.each([
+    { edited: true, legacy: false },
+    { edited: true, legacy: true },
+    { edited: false, legacy: false }
+  ])(
+    'persists skill events after runtime recreation (edited: $edited, legacy: $legacy) and accepts another prompt',
+    async ({ edited, legacy }) => {
+      const sessionId = 'codex-session-1'
+      const message = (id: string, timestamp: number): PersistedChatMessage => ({
+        id,
+        role: 'user' as const,
+        content: 'Analyze the data',
+        status: 'complete' as const,
+        eventIds: [],
+        createdAt: timestamp,
+        updatedAt: timestamp
+      })
+      const runWithFreshRuntime = async (): Promise<AcpRuntimeEvent[]> => {
+        const process = new FakeAgentProcess()
+        startFakeAgent(process, [sessionId], {
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'read-only')
+        })
+        const events: AcpRuntimeEvent[] = []
+        const runtime = new AcpRuntime({
+          appVersion: 'test',
+          defaultCwd: '/workspace',
+          spawnAgent: () => asAgentProcess(process),
+          framework: { ...codexFramework, buildSessionSetup: () => ({}) },
+          skills: createSkillsHooks({
+            needForceLoad: [],
+            descriptors: { research: { name: 'research', path: '/skills/research/SKILL.md' } }
+          }),
+          callbacks: { onEvent: (event) => events.push(event) }
+        })
+        try {
+          await runtime.createSession({ cwd: '/workspace' })
+          await runtime.sendPrompt({
+            sessionId,
+            text: 'Analyze the data',
+            forcedSkillIds: ['research']
+          })
+          const skills = events.filter(
+            (event) => event.kind === 'tool' && event.providerToolName === 'skill'
+          )
+          expect(skills.map(({ status }) => status)).toEqual(['in_progress', 'completed'])
+          expect(skills[0].toolCallId).toBe(skills[1].toolCallId)
+          return skills
+        } finally {
+          await runtime.shutdown()
+        }
+      }
+      const originalEvents = (await runWithFreshRuntime()).map((event) =>
+        legacy ? { ...event, toolCallId: 'open-science-skill-1-0' } : event
+      )
+      const first = message('original', 1)
+      const graph = createLinearConversationGraph({
+        sessionId,
+        messages: [first],
+        frameworkId: 'codex',
+        createdAt: 1,
+        updatedAt: 1
+      })
+      const originalScope = {
+        agentFrameId: graph.rootFrameId,
+        messageBranchId: graph.branches[0].id,
+        runtimeSegmentId: graph.runtimeSegments[0].id,
+        promptMessageId: first.id
+      }
+      const original = applyRuntimeSessionEvents(
+        {
+          id: sessionId,
+          projectId: 'project-1',
+          title: 'Research',
+          cwd: '/workspace',
+          status: 'idle',
+          agentFrameworkId: 'codex',
+          messages: [first],
+          conversationGraph: graph,
+          createdAt: 1,
+          updatedAt: 1
+        },
+        originalScope,
+        originalEvents
+      )
+      const branchId = edited ? 'edited-branch' : originalScope.messageBranchId
+      const restored = JSON.parse(JSON.stringify(original)) as PersistedChatSession
+      const forked = edited
+        ? applySessionConversationCommands(restored, [
+            {
+              id: 'fork',
+              kind: 'fork-message',
+              timestamp: 2,
+              branchId: 'edited-branch',
+              parentBranchId: originalScope.messageBranchId,
+              messageId: first.id
+            }
+          ])
+        : restored
+      const restarted = applySessionConversationCommands(forked, [
+        {
+          id: 'append-edited',
+          kind: 'append-user',
+          timestamp: 3,
+          branchId,
+          parentMessageId: edited ? undefined : first.id,
+          message: message('edited', 3)
+        },
+        {
+          id: 'start-edited',
+          kind: 'start-run',
+          timestamp: 3,
+          run: { promptMessageId: 'edited', startedAt: 3 }
+        }
+      ])
+      const restartedEvents = await runWithFreshRuntime()
+      const restartedScope = {
+        ...originalScope,
+        messageBranchId: branchId,
+        promptMessageId: 'edited'
+      }
+      // Persist the real public runtime events; duplicate activity ids reject the whole batch.
+      const settled = applyRuntimeSessionEvents(restarted, restartedScope, [
+        ...restartedEvents,
+        {
+          id: 'analysis-failed',
+          sessionId,
+          kind: 'error',
+          level: 'error',
+          timestamp: Date.now(),
+          text: 'Analysis failed',
+          providerError: true
+        }
+      ])
+      expect(settled.activeRun).toBeUndefined()
+      expect(settled.conversationGraph!.activities).toHaveLength(2)
+      expect(settled.conversationGraph!.activities[0]).toEqual(
+        original.conversationGraph!.activities[0]
+      )
+      expect(
+        applyRuntimeSessionEvents(settled, restartedScope, restartedEvents).conversationGraph
+      ).toEqual(settled.conversationGraph)
+      const continued = applySessionConversationCommands(settled, [
+        {
+          id: 'append-next',
+          kind: 'append-user',
+          timestamp: Date.now(),
+          branchId,
+          parentMessageId: 'edited',
+          message: message('next', Date.now())
+        },
+        {
+          id: 'start-next',
+          kind: 'start-run',
+          timestamp: Date.now(),
+          run: { promptMessageId: 'next', startedAt: Date.now() }
+        }
+      ])
+      expect(continued.activeRun?.promptMessageId).toBe('next')
+    }
+  )
 
   it('selects a bridged Codex Skill from current user text and attaches native-input metadata', async () => {
     const process = new FakeAgentProcess()

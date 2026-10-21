@@ -1,5 +1,7 @@
 {
   "ownerPaths": [
+    "src/main/image-preview-resize.ts",
+    "src/main/image-preview-resize.test.ts",
     "src/main/managed-file-preview.test.ts",
     "src/main/managed-file-preview.ts",
     "src/main/managed-preview-ipc.test.ts",
@@ -22,6 +24,7 @@
   "consumerModules": [],
   "testFiles": {
     "owner": [
+      "src/main/image-preview-resize.test.ts",
       "src/main/managed-file-preview.test.ts",
       "src/main/managed-preview-ipc.test.ts",
       "src/main/managed-preview-protocol.test.ts",

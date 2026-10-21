@@ -22,11 +22,15 @@ beforeEach(() => {
     compute: { replayApproval: vi.fn(async () => null) }
   } as unknown as Window['api']
   useNotificationInboxStore.setState({
+    markRead: useNotificationInboxStore.getInitialState().markRead,
+    markAllRead: useNotificationInboxStore.getInitialState().markAllRead,
     revision: 1,
     unreadCount: 1,
     latestSequence: 7,
     status: 'ready',
     error: undefined,
+    markAllReadPending: false,
+    markAllReadError: undefined,
     items: [
       {
         id: 'message-1',
@@ -1070,4 +1074,49 @@ describe('NotificationBell', () => {
     await act(async () => trigger?.focus())
     expect(dialog?.contains(document.activeElement)).toBe(true)
   })
+})
+
+it('shows a failed mark-all action and retries without losing unread messages', async () => {
+  const markAllRead = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(undefined)
+  window.api.notifications = {
+    markAllRead,
+    getSnapshot: vi
+      .fn()
+      .mockResolvedValueOnce({
+        revision: 1,
+        unreadCount: 1,
+        latestSequence: 7,
+        items: useNotificationInboxStore.getState().items
+      })
+      .mockResolvedValue({ revision: 2, unreadCount: 0, latestSequence: 7, items: [] })
+  } as unknown as Window['api']['notifications']
+  await act(async () => {
+    root.render(<NotificationBell />)
+  })
+  await act(async () => {
+    container.querySelector<HTMLButtonElement>('button')?.click()
+  })
+  const button = (): HTMLButtonElement | undefined =>
+    [...document.body.querySelectorAll('button')].find(
+      (node) => node.textContent === 'Mark all read'
+    )
+  await act(async () => {
+    button()?.click()
+    await Promise.resolve()
+  })
+  expect(document.body.textContent).toContain('Could not mark messages as read.')
+  expect(useNotificationInboxStore.getState().unreadCount).toBe(1)
+  const retry = [...document.body.querySelectorAll('button')].find(
+    (node) => node.textContent === 'Retry'
+  )
+  await act(async () => {
+    retry?.click()
+    await Promise.resolve()
+  })
+  expect(markAllRead).toHaveBeenCalledTimes(2)
+  expect(document.body.textContent).not.toContain('Could not mark messages as read.')
+  expect(button()?.disabled).toBe(true)
 })

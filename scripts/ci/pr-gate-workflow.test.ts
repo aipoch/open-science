@@ -1843,11 +1843,13 @@ describe('PR Gate workflow', () => {
     const unfilteredNative = native?.run?.split(
       'npx vitest run src/main/notebook/kernel-executor.test.ts'
     )[0]
-    for (const testFile of [
-      'src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts',
+    expect(unfilteredNative).toContain(
+      'src/main/notebook/network-sandbox-owner.macos-isolation.integration.test.ts'
+    )
+    expect(unfilteredNative).toContain('node scripts/ci/run-notebook-isolation.mjs')
+    expect(unfilteredNative).not.toContain(
       'src/main/notebook/runtime-service.macos-isolation.integration.test.ts'
-    ])
-      expect(unfilteredNative).toContain(testFile)
+    )
     expect(unfilteredNative).not.toContain('-t ')
     expect(unfilteredNative).toContain('set -euo pipefail')
     expect(unfilteredNative).toContain(

@@ -4,6 +4,8 @@ import * as Dialog from '@/components/ui/dialog'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 
+import { useArtifactSaveProgress } from './use-artifact-save-progress'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
   dialogCancelButtonClassName,
@@ -75,6 +77,7 @@ const DownloadProjectArtifactsDialog = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [downloadError, setDownloadError] = useState<DownloadError>()
   const [isDownloading, setIsDownloading] = useState(false)
+  const transfer = useArtifactSaveProgress()
   const [retryVersion, setRetryVersion] = useState(0)
   const projectId = project?.id
   const requestKey = projectId ? `${projectId}\u0000${retryVersion}` : undefined
@@ -157,11 +160,13 @@ const DownloadProjectArtifactsDialog = ({
 
   const downloadSelected = async (): Promise<void> => {
     if (!project || selectedFiles.length === 0 || isDownloading) return
+    const operationId = transfer.begin(selectedFiles.length)
     setIsDownloading(true)
     onDownloadingChange?.(true)
     setDownloadError(undefined)
     try {
       const result = await window.api.saveProjectArtifacts({
+        operationId,
         projectId: project.id,
         suggestedArchiveName: project.name,
         files: selectedFiles.map((file) => ({
@@ -172,7 +177,14 @@ const DownloadProjectArtifactsDialog = ({
           suggestedName: file.name
         }))
       })
-      if (!result.saved) return
+      if (!result.saved) {
+        if (result.cancelled)
+          setDownloadError({
+            kind: 'raw',
+            message: t('Download cancelled. No archive was replaced.')
+          })
+        return
+      }
       if (result.failures?.length) {
         // A retry replaces the whole ZIP, so retain successful files in the selection too.
         setDownloadError({
@@ -187,6 +199,7 @@ const DownloadProjectArtifactsDialog = ({
     } catch (error) {
       setDownloadError({ kind: 'raw', message: getErrorMessage(error) })
     } finally {
+      transfer.end()
       setIsDownloading(false)
       onDownloadingChange?.(false)
     }
@@ -289,6 +302,7 @@ const DownloadProjectArtifactsDialog = ({
                       >
                         <input
                           type="checkbox"
+                          disabled={isDownloading}
                           checked={selectedIds.has(file.id)}
                           onChange={() => toggleFile(file.id)}
                           className="size-4 cursor-pointer accent-primary"
@@ -309,6 +323,42 @@ const DownloadProjectArtifactsDialog = ({
               </div>
             )}
           </div>
+
+          {isDownloading ? (
+            <div className="shrink-0 space-y-2 border-t border-border-300/90 px-5 py-3 text-sm">
+              <p role="status" aria-live="polite">
+                {transfer.cancelPending
+                  ? t('Cancelling download…')
+                  : transfer.progress?.phase === 'preparing'
+                    ? t('Choose a destination to start the download.')
+                    : t('Processed {{completed}} of {{total}} files.', {
+                        completed: transfer.progress?.completedFiles ?? 0,
+                        total: transfer.progress?.totalFiles ?? 0
+                      })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t('Cancellation takes effect at the next safe stopping point.')}
+              </p>
+              {transfer.progressUnavailable ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  description={t(
+                    'Download progress is temporarily unavailable. The download is still running.'
+                  )}
+                />
+              ) : null}
+              {transfer.cancelError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  description={t(
+                    'Could not cancel the download. It is still running; try Cancel again.'
+                  )}
+                />
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5">
             <Button
@@ -339,10 +389,16 @@ const DownloadProjectArtifactsDialog = ({
                 variant="ghost"
                 className={dialogCancelButtonClassName}
                 size="sm"
-                disabled={isDownloading}
-                onClick={onClose}
+                disabled={
+                  isDownloading &&
+                  (transfer.cancelPending || typeof window.api.cancelArtifactSave !== 'function')
+                }
+                onClick={() => {
+                  if (isDownloading) void transfer.cancel()
+                  else onClose()
+                }}
               >
-                {t('Cancel')}
+                {transfer.cancelPending ? t('Cancelling download…') : t('Cancel')}
               </Button>
               <Button
                 type="button"

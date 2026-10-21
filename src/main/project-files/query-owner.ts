@@ -396,6 +396,118 @@ class ProjectFilesQueryOwner {
     }
   }
 
+  // Exact-version batch for the reviewer staleness pass. The project catalog only projects each
+  // lineage's current version, while a reviewed turn may reference any historical finalized version.
+  // This keeps the visibility gates of isExplicitVersionVisible but resolves every requested version
+  // in a constant number of queries instead of one catalog lookup per version.
+  async readHostArtifactVersionRecords(request: {
+    projectId: string
+    versionIds: readonly string[]
+  }): Promise<HostArtifactVersionRecord[]> {
+    requireIdentifier(request.projectId, 'projectId')
+    const versionIds = [...new Set(request.versionIds)]
+    if (versionIds.length === 0) return []
+    for (const versionId of versionIds) requireIdentifier(versionId, 'versionId')
+    const client = await this.getClient()
+    const rows = await client.artifactVersion.findMany({
+      where: {
+        id: { in: versionIds },
+        state: 'finalized',
+        artifact: { is: { projectId: request.projectId, currentVersionId: { not: null } } },
+        OR: [{ originKind: { not: 'agent_generated' } }, { managedVisibleAt: { not: null } }]
+      },
+      select: {
+        id: true,
+        artifactId: true,
+        checksum: true,
+        sizeBytes: true,
+        contentStorageKey: true,
+        contentType: true,
+        filename: true,
+        artifact: { select: { projectId: true, sessionId: true, createdAt: true } }
+      }
+    })
+    if (rows.length === 0) return []
+
+    const sessionIds = [...new Set(rows.map((row) => row.artifact.sessionId))]
+    const sourceFileIds = [...new Set(rows.map((row) => row.artifactId))]
+    const [project, deletionIntent, origins, syncs, projections, uploads] = await Promise.all([
+      client.project.findUnique({
+        where: { id: request.projectId },
+        select: { archivedAt: true }
+      }),
+      client.projectDeletionIntent.findUnique({
+        where: { projectId: request.projectId },
+        select: { projectId: true }
+      }),
+      client.fileOriginSession.findMany({
+        where: { projectId: request.projectId, sessionId: { in: sessionIds } },
+        select: {
+          sessionId: true,
+          state: true,
+          deletionOperationId: true
+        }
+      }),
+      client.managedFileSessionSync.findMany({
+        where: { projectId: request.projectId, sessionId: { in: sessionIds } },
+        select: { sessionId: true, deletedAt: true, deleteOperationId: true }
+      }),
+      client.managedFile.findMany({
+        where: {
+          projectId: request.projectId,
+          source: 'artifact',
+          sourceFileId: { in: sourceFileIds }
+        },
+        select: { sourceFileId: true, deletedAt: true, deleteOperationId: true }
+      }),
+      client.uploadVersion.findMany({
+        where: {
+          id: { in: rows.map((row) => row.id) },
+          state: 'ready',
+          uploadFile: { is: { projectId: request.projectId } }
+        },
+        select: { id: true }
+      })
+    ])
+    if (!project || project.archivedAt || deletionIntent) return []
+
+    // Ambiguous ids must use the single-version resolver, which rejects source collisions.
+    const ambiguousIds = new Set(uploads.map((upload) => upload.id))
+    const originBySession = new Map(origins.map((origin) => [origin.sessionId, origin]))
+    const blockedSessions = new Set(
+      syncs.filter((sync) => sync.deletedAt || sync.deleteOperationId).map((sync) => sync.sessionId)
+    )
+    const blockedFiles = new Set(
+      projections
+        .filter((projection) => projection.deletedAt || projection.deleteOperationId)
+        .map((projection) => projection.sourceFileId)
+    )
+    return rows
+      .filter((row) => {
+        const origin = originBySession.get(row.artifact.sessionId)
+        return !(
+          ambiguousIds.has(row.id) ||
+          !origin ||
+          origin.state === 'deleting' ||
+          origin.deletionOperationId ||
+          blockedSessions.has(row.artifact.sessionId) ||
+          blockedFiles.has(row.artifactId)
+        )
+      })
+      .map((row) => ({
+        source: 'artifact' as const,
+        sourceFileId: row.artifactId,
+        versionId: row.id,
+        checksum: row.checksum,
+        contentStorageKey: row.contentStorageKey,
+        projectId: row.artifact.projectId,
+        sessionId: row.artifact.sessionId,
+        filename: row.filename,
+        contentType: row.contentType ?? undefined,
+        sizeBytes: toSafeCount(row.sizeBytes, 'host Artifact size')
+      }))
+  }
+
   async readHostArtifactCatalog(request: {
     projectId: string
     versionId?: string
@@ -639,3 +751,18 @@ class ProjectFilesQueryOwner {
 
 export { ProjectFilesQueryOwner }
 export type { ProjectFilesIndexCompletenessReader }
+
+// Exact finalized Artifact Version metadata used by reviewer staleness. Deliberately independent of
+// the published catalog projection, which only exposes each lineage's current version.
+export type HostArtifactVersionRecord = {
+  source: 'artifact'
+  sourceFileId: string
+  versionId: string
+  checksum: string
+  contentStorageKey: string
+  projectId: string
+  sessionId: string
+  filename: string
+  contentType?: string
+  sizeBytes: number
+}

@@ -79,6 +79,199 @@ const nativeProseItem = (...args: Parameters<typeof item>) => ({
   fontDescent: 0
 })
 
+const closedReferenceItem = (...args: Parameters<typeof item>): PdfLayoutTextItem => ({
+  ...nativeProseItem(...args),
+  fontName: 'Body'
+})
+
+test.each([
+  'complete',
+  'missing-font',
+  'missing-metrics',
+  'wrong-number',
+  'vertical-scale',
+  'previous-vertical-scale',
+  'foreign-ink',
+  'different-column'
+])('requires complete native context for short closed proof references: %s', (fault) => {
+  const previous = closedReferenceItem(
+    '(2) By the preceding lemma the asserted bound follows immediately.',
+    60,
+    180,
+    400
+  )
+  const current = closedReferenceItem('(3) Follows from (2).', 60, 192, 100)
+  const parts = [previous, current]
+  if (fault === 'missing-font') delete current.fontName
+  if (fault === 'missing-metrics') delete (current as PdfLayoutTextItem).fontAscent
+  if (fault === 'wrong-number')
+    previous.str = '(1) By the preceding lemma the asserted bound follows immediately.'
+  if (fault === 'different-column') previous.transform[4] = 300
+  if (fault === 'vertical-scale') current.transform[3] = 20
+  if (fault === 'previous-vertical-scale') previous.transform[3] = 20
+  if (fault === 'foreign-ink') parts.push(closedReferenceItem('x', 80, 192, 8))
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly === true).toBe(
+    fault !== 'complete'
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => '1:' + i))
+})
+
+test.each([
+  'complete',
+  'missing-font',
+  'missing-metrics',
+  'unclosed-citation',
+  'different-baseline',
+  'foreign-ink',
+  'no-hyphen',
+  'vertical-scale',
+  'previous-vertical-scale'
+])('requires a full native paragraph before a split citation tail: %s', (fault) => {
+  const parts = [
+    closedReferenceItem(
+      'The complete argument now recalls the relevant assumptions and observa-',
+      60,
+      180,
+      450
+    ),
+    closedReferenceItem('tions from [', 60, 192, 55, 10, false),
+    { ...closedReferenceItem('12', 115, 192, 10, 10, false), fontName: 'Citation' },
+    closedReferenceItem('].', 125, 192, 8)
+  ]
+  if (fault === 'missing-font') delete parts[2].fontName
+  if (fault === 'missing-metrics') delete (parts[2] as PdfLayoutTextItem).fontDescent
+  if (fault === 'unclosed-citation') parts[3].str = '.'
+  if (fault === 'different-baseline') parts[2].transform[5] -= 5
+  if (fault === 'vertical-scale') parts[2].transform[3] = 20
+  if (fault === 'previous-vertical-scale') parts[0].transform[3] = 20
+  if (fault === 'foreign-ink') parts.push(closedReferenceItem('x', 75, 192, 8))
+  if (fault === 'no-hyphen')
+    parts[0].str = 'The complete argument now recalls the relevant assumptions and observations.'
+  const result = extractDocument(document([page(parts)]))
+  expect(result.units.find((unit) => unit.items.includes('1:1'))?.sourceOnly === true).toBe(
+    fault !== 'complete'
+  )
+  expect(result.units.flatMap((unit) => unit.items).sort()).toEqual(parts.map((_, i) => '1:' + i))
+})
+
+test.each([
+  'complete',
+  'bibliography-entry',
+  'missing-font',
+  'same-font',
+  'unfinished',
+  'mixed-page'
+])('requires a complete native caption-only page after references: %s', (fault) => {
+  const caption = [
+    { ...nativeProseItem('Figure 1.', 60, 400, 50, 10, false), fontName: 'Label' },
+    {
+      ...nativeProseItem(
+        'The measured response remains stable across all independently sampled groups.',
+        112,
+        400,
+        420
+      ),
+      fontName: 'Body'
+    }
+  ]
+  if (fault === 'bibliography-entry') caption[0].str = '[1] Figure'
+  if (fault === 'missing-font') caption[1].fontName = ''
+  if (fault === 'same-font') caption[0].fontName = 'Body'
+  if (fault === 'unfinished') caption[1].str = caption[1].str.slice(0, -1)
+  if (fault === 'mixed-page')
+    caption.push({
+      ...nativeProseItem(
+        '[2] Another author and an independent bibliographic entry.',
+        60,
+        500,
+        420
+      ),
+      fontName: 'Body'
+    })
+  const result = extractDocument({
+    pages: [
+      page([
+        item('References', 60, 80, 100, 12),
+        item('[1] A. Writer. A complete synthetic citation.', 60, 120, 420)
+      ]),
+      page(caption, 2)
+    ]
+  })
+  expect(result.units.find((u) => u.items.includes('2:0'))?.sourceOnly === true).toBe(
+    fault !== 'complete'
+  )
+  expect(result.units.find((u) => u.source.startsWith('[1] A.'))?.sourceOnly).toBe(true)
+  expect(result.units.find((u) => u.source.startsWith('[1] A.'))?.preserve).toBe('reference')
+  if (fault === 'complete')
+    expect(result.units.find((u) => u.items.includes('2:0'))?.preserve).toBeUndefined()
+})
+
+test.each(['complete', 'no-caption', 'missing-font', 'unclosed', 'math'])(
+  'restores an ordinary wrapped caption noun only with repeated native panel labels: %s',
+  (fault) => {
+    const parts = [
+      {
+        ...nativeProseItem(
+          'Figure 1. The complete comparison is summarized in the following panels.',
+          60,
+          88,
+          480
+        ),
+        fontName: 'Body'
+      },
+      {
+        ...nativeProseItem(
+          'The measured signal is shown with the corresponding recorded',
+          60,
+          100,
+          480
+        ),
+        fontName: 'Body'
+      },
+      { ...nativeProseItem('responses (', 60, 112, 58, 10, false), fontName: 'Body' },
+      { ...nativeProseItem('A', 118, 112, 7, 10, false), fontName: 'Label' },
+      {
+        ...nativeProseItem(
+          '). The independent groups were measured using the same procedure and',
+          125,
+          112,
+          415
+        ),
+        fontName: 'Body'
+      },
+      { ...nativeProseItem('the comparison groups (', 60, 124, 110, 10, false), fontName: 'Body' },
+      { ...nativeProseItem('B', 170, 124, 7, 10, false), fontName: 'Label' },
+      {
+        ...nativeProseItem(
+          ') demonstrate the stability of these complete observations.',
+          177,
+          124,
+          363
+        ),
+        fontName: 'Body'
+      }
+    ]
+    if (fault === 'no-caption')
+      parts[0].str = 'The measured signal is shown with the corresponding recorded'
+    if (fault === 'missing-font') parts[3].fontName = ''
+    if (fault === 'unclosed')
+      parts[4].str = 'The independent groups were measured using the same procedure.'
+    if (fault === 'math') parts[3].str = 'x+y'
+    const result = extractDocument({ pages: [page(parts)] })
+    const owner = result.units.find((u) => u.items.includes('1:2'))!
+    if (fault === 'complete')
+      expect(
+        owner.sourceOnly,
+        JSON.stringify(result.units.map((u) => ({ s: u.source, so: u.sourceOnly, items: u.items })))
+      ).not.toBe(true)
+    else expect(result.units.some((u) => u.sourceOnly && u.items.includes('1:3'))).toBe(true)
+    expect(result.units.flatMap((u) => u.items).sort()).toEqual(
+      parts.map((_, i) => '1:' + i).sort()
+    )
+  }
+)
+
 test('keeps an ordinary native noun before a parenthesized document path translatable', () => {
   const parts = [
     {
@@ -3885,6 +4078,194 @@ test('preserves indented quoted continuations in a Python API listing', () => {
   assert.ok(result.units.some((unit) => unit.source.startsWith('The library') && !unit.sourceOnly))
   assert.equal(result.units.flatMap((unit) => unit.items).length, items.length)
 })
+
+test.each(['code', 'ordinary-list', 'broken-gutter', 'unknown-font'])(
+  'requires native gutter and syntax evidence for numbered listings: %s',
+  (fault) => {
+    const caption = [
+      item('Listing 1: Example configuration chosen after inspection', 50, 100, 430),
+      item('with parameters supplied using independent knowledge', 50, 112, 280)
+    ].map((part) => ({ ...part, fontName: 'caption' }))
+    const body = [
+      'result = execute_workflow(',
+      'input_data = values,',
+      'output_path = "results",',
+      'maximum_lag = 5,',
+      ')'
+    ].flatMap((text, i) => [
+      {
+        ...item(
+          String(i + 1 + (fault === 'broken-gutter' && i > 1 ? 1 : 0)),
+          38,
+          127 + i * 11,
+          3,
+          5
+        ),
+        fontName: 'caption'
+      },
+      {
+        ...item(
+          fault === 'ordinary-list' ? 'This sentence explains the next experimental step.' : text,
+          50,
+          127 + i * 11,
+          300,
+          9
+        ),
+        fontName: fault === 'unknown-font' ? undefined : 'code'
+      }
+    ])
+    const items = [...caption, ...body]
+    const result = extractDocument(document([page(items)]))
+    const ownsBody = (unit: (typeof result.units)[number]) =>
+      unit.items.some((key) => Number(key.split(':')[1]) >= caption.length)
+    if (fault === 'code') {
+      assert.ok(result.units.filter(ownsBody).every((unit) => unit.sourceOnly))
+      assert.ok(result.units.every((unit) => !unit.items.includes('1:1') || !ownsBody(unit)))
+    } else {
+      assert.ok(result.units.some((unit) => ownsBody(unit) && !unit.sourceOnly))
+    }
+    assert.ok(result.units.some((unit) => unit.source.startsWith('Listing 1') && !unit.sourceOnly))
+    assert.equal(result.units.flatMap((unit) => unit.items).length, items.length)
+  }
+)
+
+test('keeps an algorithm title separate from its independently printed requirements', () => {
+  const items = [
+    { ...item('Algorithm 1', 320, 100, 55, 10, false), fontName: 'label' },
+    { ...item('Example routing procedure', 378, 100, 160), fontName: 'body' },
+    { ...item('Require:', 320, 115.4, 40, 10, false), fontName: 'label' },
+    { ...item('input values and a finite budget', 363, 115.4, 180), fontName: 'body' }
+  ]
+  const result = extractDocument(document([page(items)]))
+  assert.ok(
+    result.units.every((unit) => !(unit.items.includes('1:0') && unit.items.includes('1:2')))
+  )
+  assert.ok(result.units.some((unit) => unit.source.startsWith('Algorithm 1') && !unit.sourceOnly))
+  assert.ok(result.units.some((unit) => unit.source.startsWith('Require:') && !unit.sourceOnly))
+  assert.equal(result.units.flatMap((unit) => unit.items).length, items.length)
+})
+
+test('keeps disjoint numbered listing frames from creating nested empty owners', () => {
+  const items = [{ ...item('Listing 1: Example program.', 50, 100), fontName: 'caption' }]
+  for (const [i, text] of [
+    'x = compute(values)',
+    'y = 2',
+    'z = 3',
+    'a = compute(values)',
+    'b = 4',
+    'c = 5'
+  ].entries()) {
+    const y = i < 3 ? 120 + i * 10 : 168 + (i - 3) * 10
+    items.push(
+      { ...item(String(i + 1), 38, y, 3, 5), fontName: 'gutter' },
+      { ...item(text, 50, y, 150), fontName: 'code' }
+    )
+  }
+  const result = extractDocument(document([page(items)]))
+  assert.ok(result.units.every((unit) => unit.source.trim()))
+  assert.ok(
+    result.units.filter((unit) => !unit.items.includes('1:0')).every((unit) => unit.sourceOnly)
+  )
+  assert.ok(result.units.some((unit) => unit.source.startsWith('Listing 1') && !unit.sourceOnly))
+  assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
+})
+
+test('does not absorb a separate same-font prose column into numbered code', () => {
+  const items = ['x = calculate(values)', 'y = 2', 'z = 3'].flatMap((text, i) => [
+    { ...item(String(i + 1), 38, 120 + i * 12, 3, 5), fontName: 'gutter' },
+    { ...item(text, 50, 120 + i * 12, 160), fontName: 'body' },
+    {
+      ...item('This separate sentence explains an experimental step.', 350, 120 + i * 12, 240),
+      fontName: 'body'
+    }
+  ])
+  const result = extractDocument(document([page(items)]))
+  for (const key of ['1:2', '1:5', '1:8'])
+    assert.ok(result.units.some((unit) => unit.items.includes(key) && !unit.sourceOnly))
+  assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
+})
+
+test('does not borrow a later control condition to close an incomplete function declaration', () => {
+  const items = [
+    { ...item('Listing 1: Example function.', 180, 100, 260, 11), fontName: 'caption' },
+    ...[
+      'def compute(values',
+      'x = values.copy()',
+      'y = norm(x)',
+      'if ready(x):',
+      'return x, y'
+    ].map((text, i) => ({
+      ...item(text, i ? 92 : 72, 116 + [0, 12, 36, 48, 60][i], 300),
+      fontName: 'code'
+    }))
+  ]
+  const result = extractDocument(document([page(items)]))
+  assert.ok(result.units.some((unit) => unit.items.includes('1:1') && !unit.sourceOnly))
+  assert.equal(new Set(result.units.flatMap((unit) => unit.items)).size, items.length)
+})
+
+test.each(
+  ['python', 'matlab'].flatMap((language) =>
+    ['complete', 'missing-close', 'unknown-font', 'intervening-prose', 'irregular-gap'].map(
+      (fault) => ({ language, fault })
+    )
+  )
+)(
+  'requires complete native evidence for a captioned function across blank lines: %j',
+  ({ language, fault }) => {
+    const rows =
+      language === 'python'
+        ? ([
+            [0, 0, 'import numeric as np'],
+            [0, 36, 'def compute(values):'],
+            [20, 48, 'x = values.copy()'],
+            [20, 72, 'y = np.norm(x)'],
+            [20, 84, 'return x, y']
+          ] as const)
+        : ([
+            [0, 0, 'function [x, y] = compute(values)'],
+            [0, 12, '% Preserve the input values.'],
+            [20, 36, 'x = values;'],
+            [20, 48, 'if isempty(x)'],
+            [40, 60, 'y = 0;'],
+            [20, 72, 'end'],
+            [20, 96, 'y = norm(x);'],
+            [0, 108, 'end']
+          ] as const)
+    const items: PdfLayoutPage['items'] = [
+      { ...item('Listing 1: A numerical example.', 180, 100, 260, 11), fontName: 'caption' },
+      ...rows.map(([indent, y, text]) => ({
+        ...item(text, 72 + indent, 116 + y, 300),
+        fontName: text.startsWith('%') ? 'comment' : 'code'
+      })),
+      {
+        ...item('The surrounding explanation remains available for translation.', 72, 250, 450, 11),
+        fontName: 'caption'
+      }
+    ]
+    if (fault === 'missing-close') items[rows.length].str = 'Unfinished example'
+    if (fault === 'unknown-font') items[2].fontName = undefined
+    if (fault === 'intervening-prose') items[3].str = 'This ordinary sentence explains the method.'
+    if (fault === 'irregular-gap') items[3].transform[5] -= 3
+    const result = extractDocument(document([page(items)]))
+    assert.ok(
+      result.units
+        .filter((unit) =>
+          unit.items.some((key) => {
+            const n = Number(key.split(':')[1])
+            return n > 0 && n <= rows.length
+          })
+        )
+        .every((unit) => unit.sourceOnly) ===
+        (fault === 'complete')
+    )
+    if (fault === 'complete') assert.ok(result.units[0].source.startsWith('Listing 1'))
+    assert.ok(
+      result.units.some((unit) => unit.source.startsWith('The surrounding') && !unit.sourceOnly)
+    )
+    assert.equal(result.units.flatMap((unit) => unit.items).length, items.length)
+  }
+)
 
 test.each([true, false])(
   'preserves C++ listings with repeated include and statement evidence: %s',

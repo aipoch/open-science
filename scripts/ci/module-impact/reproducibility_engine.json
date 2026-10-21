@@ -34,7 +34,10 @@
     "packages/reproducibility/README.md",
     "packages/reproducibility/src/output-files.test.ts"
   ],
-  "interfacePaths": ["packages/reproducibility/src/index.ts"],
+  "interfacePaths": [
+    "packages/reproducibility/src/index.ts",
+    "packages/reproducibility/src/helper-identity.ts"
+  ],
   "consumerModules": [
     "notebook_execution",
     "artifact_provenance",
@@ -55,6 +58,7 @@
     ],
     "contract": [],
     "consumer": [
+      "src/main/notebook/package-boundaries.architecture.test.ts",
       "src/main/application-command-wiring.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/artifacts/artifact-provenance-graph.test.ts",

@@ -155,6 +155,8 @@ describe('desktop utilities Electron production surface', () => {
     const installed = await install(owners)
     expect([...native.handlers.keys()]).toEqual([
       'test:external',
+      'file:artifact-save-progress',
+      'file:cancel-artifact-save',
       'file:save-blob',
       'file:save-managed',
       'file:save-session-artifacts',
@@ -288,6 +290,8 @@ describe('desktop utilities Electron production surface', () => {
   })
 
   it.each([
+    'file:artifact-save-progress',
+    'file:cancel-artifact-save',
     'file:save-managed',
     'logs:open-file',
     'cli:install',

@@ -18,6 +18,9 @@ import { analyzeRNotebookSource } from './index'
 
 import { analyzeNotebookSourceFileAccess } from './index'
 
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 const cells = readFileSync(join(__dirname, 'reported-r-circlize.fixture.R'), 'utf8')
   .trim()
   .split('\n\n# %%\n\n')
@@ -77,12 +80,14 @@ it.each([0, 1, 3, 4])('analyzes reported circlize cell %s', async (index) => {
   const script = cells[index]!
   const result = await project([script])
   const files = await analyzeNotebookSourceFileAccess('r', script)
-  expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
+  expect(result.stalenessByRunId['run-0']).toMatchObject({
+    state: index >= 1 ? 'unknown' : 'clear'
+  })
   expect(files).toMatchObject({
     reads: ['inputs/edge-weights-222222222222.xlsx'],
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete'
+    readState: index >= 1 ? 'partial' : 'complete',
+    writeState: index >= 1 ? 'partial' : 'complete',
+    externalState: index >= 1 ? 'partial' : 'complete'
   })
   if (index >= 3)
     expect(files.writes).toEqual(
@@ -102,11 +107,13 @@ it.each([0, 1, 2, 3, 4, 5, 6, 8, 9])(
           ? [explorationCells[0]!, explorationCells[index]!]
           : [explorationCells[0]!, explorationCells[2]!, explorationCells[index]!]
     const result = await project(scripts)
-    expect(result.stalenessByRunId[`run-${scripts.length - 1}`]).toEqual({ state: 'clear' })
+    expect(result.stalenessByRunId[`run-${scripts.length - 1}`]).toMatchObject({
+      state: index >= 3 ? 'unknown' : 'clear'
+    })
     expect(await analyzeNotebookSourceFileAccess('r', scripts.join('\n'))).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete',
+      readState: index >= 3 ? 'partial' : 'complete',
+      writeState: index >= 3 ? 'partial' : 'complete',
+      externalState: index >= 3 ? 'partial' : 'complete',
       reads: ['inputs/edge-weights-222222222222.xlsx']
     })
   }
@@ -116,12 +123,14 @@ it.each([0, 3, 4, 7])('captures reported device-copy cell %s', async (index) => 
   const script = deviceCopyCells[index]!
   const result = await project([script])
   const files = await analyzeNotebookSourceFileAccess('r', script)
-  expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
+  expect(result.stalenessByRunId['run-0']).toMatchObject({
+    state: index >= 4 ? 'unknown' : 'clear'
+  })
   expect(files).toMatchObject({
     reads: ['inputs/edge-weights-222222222222.xlsx'],
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete'
+    readState: index >= 4 ? 'partial' : 'complete',
+    writeState: index >= 4 ? 'partial' : 'complete',
+    externalState: index >= 4 ? 'partial' : 'complete'
   })
   if (index >= 4) expect(files.writes).toEqual(['chord_diagram.png'])
 })
@@ -162,22 +171,31 @@ it.each([
   })
 })
 
-it('does not make a self-contained device export depend on older redraws or a failed attempt', async () => {
+it('keeps mean-based device export uncertain after older redraws or a failed attempt', async () => {
   const result = await project([deviceCopyCells[4]!, deviceCopyCells[6]!, deviceCopyCells[7]!], 1)
-  expect(result.stalenessByRunId['run-2']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-2']).toEqual([])
+  expect(result.stalenessByRunId['run-2']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-2']).toBeUndefined()
 })
 
-it('retains the package-loading run for the reported redraw', async () => {
+it('keeps a redraw with unproven mean callbacks uncertain after package loading', async () => {
   const result = await project(packageReplayCells)
-  expect(result.dependenciesByRunId?.['run-6']).toContain('run-2')
+  expect(result.stalenessByRunId['run-6']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-6']).toBeUndefined()
 })
 
 it.each([0, 2, 4, 6])('analyzes reported package replay cell %s', async (index) => {
   const files = await analyzeNotebookSourceFileAccess('r', packageReplayCells[index]!)
   const result = await project([packageReplayCells[index]!])
-  expect(result.stalenessByRunId['run-0']).toEqual({ state: 'clear' })
-  expect(files.readState).toBe('complete')
+  expect(result.stalenessByRunId['run-0']).toMatchObject({
+    state: index >= 4 ? 'unknown' : 'clear'
+  })
+  expect(files.readState).toBe(index >= 4 ? 'partial' : 'complete')
 })
 
 it.each([
@@ -224,28 +242,38 @@ it('does not discard writes inside a filesystem diagnostic branch', async () => 
   expect(files.externalState).toBe('partial')
 })
 
-it('does not link a self-contained redraw to the previous outputs or variables', async () => {
+it('does not certify mean-based redraw dependencies from previous outputs', async () => {
   const result = await project([cells[3]!, cells[4]!])
-  expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-1']).toEqual([])
+  expect(result.stalenessByRunId['run-1']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-1']).toBeUndefined()
 })
 
-it('keeps the complete redraw independent after the failed mixedsort cell', async () => {
+it('keeps unproven mean redraw uncertain after a failed mixedsort cell', async () => {
   const result = await project([cells[2]!, cells[4]!], 0)
-  expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-1']).toEqual([])
+  expect(result.stalenessByRunId['run-1']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-1']).toBeUndefined()
 })
 
-it('carries a drawing wrapper and its paths across cells', async () => {
+it('retains drawing wrapper paths without certifying unproven mean effects', async () => {
   const source = cells[3]!
   const split = source.indexOf('draw_chord(out_png,')
   const setup = source.slice(0, split)
   const invocation = source.slice(split)
   const result = await project([setup, invocation])
-  expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-1']).toContain('run-0')
+  expect(result.stalenessByRunId['run-1']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-1']).toBeUndefined()
   const capture = await analyzeRNotebookSource(setup)
   const files = await analyzeNotebookSourceFileAccess('r', invocation, capture.fileAccess!.context)
+  // Path-only extraction retains destinations; the full projection above remains unknown.
   expect(files).toMatchObject({
     writeState: 'complete',
     writes: ['chord_diagram.pdf', 'chord_diagram.png']
@@ -315,23 +343,30 @@ it.each([
   expect([files.readState, files.writeState, files.externalState]).toContain('partial')
 })
 
-it('keeps exploration out of the required data-to-plot chain', async () => {
+it('retains the preparation chain while leaving mean-based drawing uncertain', async () => {
   const result = await project([
     explorationCells[0]!,
     explorationCells[1]!,
     explorationCells[2]!,
     explorationCells[3]!
   ])
-  expect(result.stalenessByRunId['run-3']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-3']).toContain('run-2')
-  expect(result.dependenciesByRunId?.['run-3']).not.toContain('run-1')
+  expect(result.stalenessByRunId['run-3']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-3']).toBeUndefined()
+  const drawFacts = (await analyzeRNotebookSource(explorationCells[3]!)).facts
+  expect(drawFacts.state === 'unknown' ? drawFacts.reasons : []).toContain('opaque-call')
   expect(result.dependenciesByRunId?.['run-2']).toContain('run-0')
 })
 
-it('keeps a self-contained redraw independent of a failed palette cell', async () => {
+it('keeps mean-based redraw uncertain after a failed palette cell', async () => {
   const result = await project([explorationCells[3]!, explorationCells[8]!], 0)
-  expect(result.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
-  expect(result.dependenciesByRunId?.['run-1']).toEqual([])
+  expect(result.stalenessByRunId['run-1']).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
+  expect(result.dependenciesByRunId?.['run-1']).toBeUndefined()
 })
 
 it('does not invent values from a failed palette cell', async () => {

@@ -1,9 +1,10 @@
-import { mkdtemp, rename, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, rename, rm, stat, truncate, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { deflateSync } from 'node:zlib'
 
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import sharp from 'sharp'
 
 import {
   MANAGED_PREVIEW_SCHEME,
@@ -125,8 +126,46 @@ describe('ManagedPreviewResources', () => {
     })
   })
 
+  it.each([
+    [9_456, 2_800],
+    [9_496, 2_028],
+    [4_000, 4_000],
+    [8_000, 8_000]
+  ])('previews a %i × %i scientific figure within the pixel budget', async (width, height) => {
+    const png = createCompressedPng(width, height)
+    const filePath = await createFile(png, 'figure.png')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+
+    const resource = await resources.acquire(17, {
+      source: 'local',
+      path: filePath,
+      mimeType: 'image/png',
+      imagePreview: true
+    })
+
+    expect(resource).toMatchObject({ width, height, mimeType: 'image/png' })
+    const preview = await resources.readRange(17, {
+      resourceId: resource.id,
+      begin: 0,
+      end: resource.size
+    })
+    const metadata = await sharp(preview.data).metadata()
+    expect(metadata.width * metadata.height).toBeLessThanOrEqual(16_000_000)
+    expect(metadata.width / metadata.height).toBeCloseTo(width / height, 2)
+    if (width * height <= 16_000_000) expect(preview.data).toEqual(new Uint8Array(png))
+    expect(await readFile(filePath)).toEqual(png)
+    const stream = await resources.resolveProtocolResource(resource.id)
+    resources.release(17, { resourceId: resource.id })
+    await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/not available/)
+    if (!('fileHandle' in stream)) throw new Error('Expected pinned image bytes')
+    const streamed = Buffer.alloc(resource.size)
+    await readExactRange(stream.fileHandle, streamed, 0)
+    expect(streamed).toEqual(Buffer.from(preview.data))
+    await stream.fileHandle.close()
+  })
+
   it('rejects an ordinary image preview above the decoded pixel budget before minting a URL', async () => {
-    const filePath = await createFile(createCompressedPng(5_000, 5_000), 'large.png')
+    const filePath = await createFile(createCompressedPng(8_001, 8_000), 'large.png')
     const createId = vi.fn(() => 'unsafe-image-resource')
     const resources = new ManagedPreviewResources({
       resolvePath: async () => filePath,
@@ -134,9 +173,136 @@ describe('ManagedPreviewResources', () => {
     })
 
     await expect(
-      resources.acquire(17, { source: 'local', path: filePath, mimeType: 'image/png' })
-    ).rejects.toThrow(/16,000,000.*pixel/i)
+      resources.acquire(17, {
+        source: 'local',
+        path: filePath,
+        mimeType: 'image/png',
+        imagePreview: true
+      })
+    ).rejects.toThrow(/64,000,000.*pixel/i)
     expect(createId).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [9_456, 2_800, true],
+    [8_000, 8_000, true],
+    [8_001, 8_000, false]
+  ])(
+    'applies the preview budget to a managed %i × %i artifact',
+    async (width, height, admitted) => {
+      const png = createCompressedPng(width, height)
+      const close = vi.fn().mockResolvedValue(undefined)
+      const createId = vi.fn(() => 'figure-resource')
+      const lease = {
+        path: '/managed/figure.png',
+        size: png.length,
+        versionToken: 1,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(png.length), mtimeNs: 3n },
+        readRange: vi.fn(async (begin: number, end: number) => png.subarray(begin, end)),
+        verifyUnchanged: vi.fn().mockResolvedValue(undefined),
+        close
+      }
+      const resources = new ManagedPreviewResources({
+        resolvePath: vi.fn(),
+        openLatestManagedFile: vi.fn().mockResolvedValue(lease),
+        createId
+      })
+      const pending = resources.acquire(17, {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'figure-1',
+        imagePreview: true
+      })
+
+      if (admitted) {
+        const resource = await pending
+        expect(resource).toMatchObject({ width, height, mimeType: 'image/png' })
+        const response = await resources.resolveProtocolResource(resource.id)
+        resources.release(17, { resourceId: resource.id })
+        expect(close).not.toHaveBeenCalled()
+        if (!('fileHandle' in response)) throw new Error('Expected pinned preview')
+        const bytes = Buffer.alloc(resource.size)
+        await readExactRange(response.fileHandle, bytes, 0)
+        const metadata = await sharp(bytes).metadata()
+        expect(metadata.width * metadata.height).toBeLessThanOrEqual(16_000_000)
+        await response.fileHandle.close()
+        await expect(response.fileHandle.read(Buffer.alloc(1), 0, 1, 0)).rejects.toThrow(/closed/)
+      } else {
+        await expect(pending).rejects.toThrow(/64,000,000.*pixel/i)
+        expect(createId).not.toHaveBeenCalled()
+      }
+      expect(close).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps raw acquisition at 16 MP', async () => {
+    const filePath = await createFile(createCompressedPng(9_456, 2_800), 'figure.png')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+    await expect(resources.acquire(17, { source: 'local', path: filePath })).rejects.toThrow(
+      /16,000,000/
+    )
+  })
+
+  it('orients a large JPEG while retaining original geometry for image annotations', async () => {
+    const jpeg = await sharp({
+      create: { width: 4000, height: 5000, channels: 3, background: '#ff0000' }
+    })
+      .jpeg()
+      .withMetadata({ orientation: 6 })
+      .toBuffer()
+    const path = await createFile(jpeg, 'portrait.jpg')
+    const resources = new ManagedPreviewResources({ resolvePath: async () => path })
+    const resource = await resources.acquire(17, { source: 'local', path, imagePreview: true })
+    try {
+      expect(resource).toMatchObject({ width: 5000, height: 4000, mimeType: 'image/png' })
+      const preview = await resources.readRange(17, {
+        resourceId: resource.id,
+        begin: 0,
+        end: resource.size
+      })
+      const result = await sharp(preview.data).metadata()
+      expect(result.width * result.height).toBeLessThanOrEqual(16_000_000)
+      expect(result.width / result.height).toBeCloseTo(1.25, 2)
+      expect(result.orientation).toBeUndefined()
+      expect(await readFile(path)).toEqual(jpeg)
+    } finally {
+      resources.releaseOwner(17)
+    }
+  })
+
+  it('rejects a large compressed source before reading its full body', async () => {
+    const filePath = await createFile(createCompressedPng(9_456, 2_800), 'figure.png')
+    await truncate(filePath, 50 * 1024 * 1024 + 1)
+    const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })
+    await expect(
+      resources.acquire(17, { source: 'local', path: filePath, imagePreview: true })
+    ).rejects.toThrow(/50 MiB/)
+  })
+
+  it('closes a managed source lease when decoding a large malformed image fails', async () => {
+    const png = createCompressedPng(9_456, 2_800).subarray(0, 33)
+    const close = vi.fn().mockResolvedValue(undefined)
+    const resources = new ManagedPreviewResources({
+      resolvePath: vi.fn(),
+      openLatestManagedFile: vi.fn().mockResolvedValue({
+        path: '/managed/broken.png',
+        size: png.length,
+        versionToken: 1,
+        snapshot: { dev: 1n, ino: 2n, size: BigInt(png.length), mtimeNs: 3n },
+        readRange: async (begin: number, end: number) => png.subarray(begin, end),
+        verifyUnchanged: vi.fn(),
+        close
+      })
+    })
+    await expect(
+      resources.acquire(17, {
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'figure-1',
+        imagePreview: true
+      })
+    ).rejects.toThrow(/could not be decoded or resized/)
+    expect(close).toHaveBeenCalledOnce()
   })
 
   it.each([undefined, '', 'fingerprint', 'A'.repeat(64), 123, 'a'.repeat(64)])(

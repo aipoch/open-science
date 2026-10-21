@@ -6,6 +6,7 @@ import { expect, it } from 'vitest'
 
 const {
   collectTableRules,
+  collectClosedFigureFrames,
   collectGraphicsBounds,
   excludeRepeatedMarginContent,
   excludeRemovedMarginTokens
@@ -21,6 +22,84 @@ const {
   matchNativeFigureRenderContext,
   recordNativeFigurePaths
 } = await import(pathToFileURL(resolve('resources/literature-pdf-render-bounds.mjs')).href)
+
+it.each(['closeFillStroke', 'closeEOFillStroke'])(
+  'accepts an explicitly closed native rectangle painted with %s',
+  (paint) => {
+    const path = Float32Array.from([0, 10, 10, 1, 30, 10, 1, 30, 20, 1, 10, 20, 4])
+    const operators = {
+      fnArray: [OPS.transform, OPS.constructPath],
+      argsArray: [
+        [2, 0, 0, 2, 5, 7],
+        [OPS[paint], [path], [10, 10, 30, 20]]
+      ]
+    }
+    const viewport = { width: 100, height: 100, transform: [1, 0, 0, -1, 0, 100] }
+    expect(collectClosedFigureFrames(operators, viewport)).toEqual([[25, 53, 65, 73]])
+  }
+)
+
+it.each(['closeFillStroke', 'closeEOFillStroke'])(
+  'does not let %s bypass explicit contour or paint-domain proof',
+  (paint) => {
+    const rectangle = [0, 10, 10, 1, 30, 10, 1, 30, 20, 1, 10, 20, 4]
+    const cases = [
+      { name: 'implicit closure only', path: rectangle.slice(0, -1) },
+      { name: 'closed non-rectangular contour', path: [0, 10, 10, 1, 30, 10, 1, 30, 20, 4] },
+      { name: 'unknown path command', path: [0, 10, 10, 9, ...rectangle.slice(4)] },
+      { name: 'extra painted subpath', path: [0, 1, 1, 1, 5, 5, ...rectangle] },
+      { name: 'clipped perimeter', width: 25 },
+      { name: 'invisible stroke', op: OPS.setGState, args: [[['CA', 0]]] },
+      { name: 'zero stroke width', op: OPS.setLineWidth, args: [0] },
+      { name: 'sheared perimeter', op: OPS.transform, args: [1, 0.2, 0, 1, 0, 0] }
+    ]
+    for (const sample of cases) {
+      const operators = {
+        fnArray: [...(sample.op === undefined ? [] : [sample.op]), OPS.constructPath],
+        argsArray: [
+          ...(sample.args === undefined ? [] : [sample.args]),
+          [OPS[paint], [Float32Array.from(sample.path ?? rectangle)], [10, 10, 30, 20]]
+        ]
+      }
+      expect(
+        collectClosedFigureFrames(operators, {
+          width: sample.width ?? 100,
+          height: 100,
+          transform: [1, 0, 0, 1, 0, 0]
+        }),
+        sample.name
+      ).toEqual([])
+    }
+  }
+)
+
+it('accepts equivalent rounded contours with or without a trailing unpainted move', () => {
+  const closed = [
+    0, 15, 10, 1, 85, 10, 2, 90, 10, 90, 10, 90, 15, 1, 90, 35, 2, 90, 40, 90, 40, 85, 40, 1, 15,
+    40, 2, 10, 40, 10, 40, 10, 35, 1, 10, 15, 2, 10, 10, 10, 10, 15, 10, 4
+  ]
+  const run = (path: number[], width = 100): number[][] =>
+    collectClosedFigureFrames(
+      {
+        fnArray: [OPS.constructPath],
+        argsArray: [[OPS.closeFillStroke, [Float32Array.from(path)], [10, 10, 90, 40]]]
+      },
+      { width, height: 100, transform: [1, 0, 0, 1, 0, 0] }
+    )
+  expect(run([...closed, 0, 2, 2])).toEqual([[10, 10, 90, 40]])
+  expect(run(closed)).toEqual([[10, 10, 90, 40]])
+  expect(run(closed.slice(0, -1))).toEqual([])
+  for (const [index, value] of [
+    [41, 16],
+    [16, 9],
+    [7, 95],
+    [14, 89]
+  ]) {
+    expect(run(closed.map((n, i) => (i === index ? value : n)))).toEqual([])
+  }
+  expect(run([...closed, 0, 2, 2, 1, 4, 4])).toEqual([])
+  expect(run(closed, 85)).toEqual([])
+})
 
 const renderContextInput = (): ReturnType<typeof JSON.parse> => {
   const viewport = {
@@ -1290,6 +1369,113 @@ it('observes pre-execution path arrays and empty clips at their original chunk i
   expect([resumed, previous]).toEqual([1, 1])
 })
 
+it('observes appended paths while a render continuation is already pending', () => {
+  const f = renderContextInput(),
+    internal = f.render._internalRenderTask,
+    ops = internal.operatorList,
+    paths = [new Float32Array([0, 10, 20, 1, 30, 20]), new Float32Array([0, 10, 40, 1, 30, 40])],
+    calls: unknown[][] = [],
+    result = {}
+  let pending: (() => void) | undefined
+  f.render.onContinue = function (resume: () => void): void {
+    expect(this).toBe(f.render)
+    pending = resume
+  }
+  internal.operatorListChanged = function (...args: unknown[]): object {
+    calls.push([this, ...args])
+    return result
+  }
+  ops.fnArray.push(OPS.constructPath)
+  ops.argsArray.push([OPS.stroke, [paths[0]], [10, 20, 30, 20]])
+  recordNativeFigurePaths(f.render)
+  const installed = internal.operatorListChanged
+  recordNativeFigurePaths(f.render)
+  expect(internal.operatorListChanged).toBe(installed)
+  f.render.onContinue(() => {
+    for (const index of [4, 5]) ops.argsArray[index][1][0] = new (class OpaquePath {})()
+  })
+  // PDF.js appends before notifying the running task. Its pending execution
+  // consumes the new tail without another onContinue callback.
+  ops.fnArray.push(OPS.constructPath)
+  ops.argsArray.push([OPS.stroke, [paths[1]], [10, 40, 30, 40]])
+  expect(internal.operatorListChanged('tail', 2)).toBe(result)
+  expect(calls).toEqual([[internal, 'tail', 2]])
+  pending!()
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(snapshot?.operators.argsArray.slice(4).map((args) => args[1][0])).toEqual(paths)
+})
+
+it.each(['empty-clip', 'pattern'])('observes an appended %s before immediate execution', (mode) => {
+  const f = renderContextInput(),
+    internal = f.render._internalRenderTask,
+    ops = internal.operatorList,
+    path = new Float32Array([0, 0, 0, 1, 8, 8]),
+    tile = { fnArray: [OPS.constructPath], argsArray: [[OPS.stroke, [path], [0, 0, 8, 8]]] }
+  internal.operatorListChanged = (): void => {
+    if (mode === 'pattern')
+      tile.argsArray[0][1][0] = new (class OpaquePath {})() as unknown as Float32Array
+  }
+  recordNativeFigurePaths(f.render)
+  f.render.onContinue(() => {})
+  ops.fnArray.push(mode === 'pattern' ? OPS.setFillColorN : OPS.constructPath)
+  const args =
+    mode === 'pattern'
+      ? ['TilingPattern', '#000000', tile, [1, 0, 0, 1, 0, 0], [0, 0, 8, 8], 8, 8, 2, 1]
+      : [OPS.endPath, [null], null]
+  const expected = structuredClone(args)
+  ops.argsArray.push(args)
+  internal.operatorListChanged()
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(snapshot?.operators.argsArray[4]).toEqual(expected)
+})
+
+it.each(['oversized', 'opaque'])(
+  'still refuses an unsafe %s path appended during a pending render',
+  (mode) => {
+    const f = renderContextInput(),
+      internal = f.render._internalRenderTask,
+      ops = internal.operatorList
+    let notified = 0
+    internal.operatorListChanged = (): void => {
+      notified++
+    }
+    recordNativeFigurePaths(f.render)
+    f.render.onContinue(() => {})
+    const path =
+      mode === 'oversized'
+        ? new Float32Array(new ArrayBuffer(17 * 1024 * 1024), 0, 6)
+        : new (class OpaquePath {})()
+    ops.fnArray.push(OPS.constructPath)
+    ops.argsArray.push([OPS.stroke, [path], [10, 20, 30, 20]])
+    internal.operatorListChanged()
+    expect(notified).toBe(1)
+    expect(
+      captureNativeFigureRenderContext(
+        f.render,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      )
+    ).toBeUndefined()
+  }
+)
+
 it('counts a typed view entire backing store before cloning the native render snapshot', () => {
   const f = renderContextInput()
   f.render._internalRenderTask.operatorList.argsArray[0] = [
@@ -1306,6 +1492,87 @@ it('counts a typed view entire backing store before cloning the native render sn
     )
   ).toBeUndefined()
 })
+
+it('preserves nested tiling-pattern commands before the renderer replaces their paths', () => {
+  const f = renderContextInput(),
+    ops = f.render._internalRenderTask.operatorList
+  const path = new Float32Array([0, 0, 0, 1, 8, 8])
+  const tile = { fnArray: [OPS.constructPath], argsArray: [[OPS.stroke, [path], [0, 0, 8, 8]]] }
+  ops.fnArray.push(OPS.setFillColorN)
+  ops.argsArray.push([
+    'TilingPattern',
+    '#000000',
+    tile,
+    [1, 0, 0, 1, 0, 0],
+    [0, 0, 8, 8],
+    8,
+    8,
+    2,
+    1
+  ])
+  recordNativeFigurePaths(f.render)
+  f.render.onContinue(() => {
+    tile.argsArray[0][1][0] = new (class OpaquePath {})() as unknown as Float32Array
+  })
+  const snapshot = captureNativeFigureRenderContext(
+    f.render,
+    f.page,
+    f.content,
+    f.viewport,
+    f.graphics,
+    f.checksum
+  )
+  expect(snapshot?.operators.argsArray[4][2].argsArray[0][1][0]).toEqual(path)
+  expect(
+    matchNativeFigureRenderContext(snapshot, f.page, f.content, f.viewport, f.graphics, f.checksum)
+  ).toBeDefined()
+  expect(
+    matchNativeFigureRenderContext(
+      snapshot,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      'b'.repeat(64)
+    )
+  ).toBeUndefined()
+})
+
+it.each(['oversized', 'nonplain'])(
+  'declines an unsafe %s tiling-pattern snapshot without interrupting rendering',
+  (mode) => {
+    const f = renderContextInput(),
+      ops = f.render._internalRenderTask.operatorList
+    const value =
+      mode === 'oversized'
+        ? new Uint8Array(new ArrayBuffer(17 * 1024 * 1024), 0, 1)
+        : new (class OpaquePath {})()
+    ops.fnArray.push(OPS.setStrokeColorN)
+    ops.argsArray.push([
+      'TilingPattern',
+      '#000000',
+      { fnArray: [OPS.constructPath], argsArray: [[OPS.stroke, [value], [0, 0, 8, 8]]] }
+    ])
+    recordNativeFigurePaths(f.render)
+    let resumed = false
+    expect(() =>
+      f.render.onContinue(() => {
+        resumed = true
+      })
+    ).not.toThrow()
+    expect(resumed).toBe(true)
+    expect(
+      captureNativeFigureRenderContext(
+        f.render,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      )
+    ).toBeUndefined()
+  }
+)
 it('stops observing an excessive native stream but still resumes rendering', () => {
   const f = renderContextInput(),
     ops = f.render._internalRenderTask.operatorList
@@ -1399,5 +1666,66 @@ it.each(['missing-font', 'invalid-bounds', 'over-budget'])(
     expect(snapshot).toBeDefined()
     expect(snapshot.glyphBounds).toBeUndefined()
     expect(snapshot.content).toEqual(f.content)
+  }
+)
+
+it.each(['type3-glyph', 'missing-font', 'invalid-glyph'])(
+  'keeps whole valid fonts separate from an unavailable font proof: %s',
+  (failure) => {
+    const f = renderContextInput(),
+      ops = f.render._internalRenderTask.operatorList,
+      glyph = (fontChar: string): unknown => ({ fontChar, unicode: fontChar, width: 500 })
+    ops.fnArray.push(OPS.setFont, OPS.showText, OPS.setFont, OPS.showText)
+    ops.argsArray.push(['first-font', 10], [[glyph('A')]], ['other-font', 10], [[glyph('B')]])
+    if (failure === 'type3-glyph') ops.argsArray.at(-1)[0][0].fontChar = ''
+    const objects = {
+      get: (name: string): unknown => ({
+        loadedName: name,
+        missingFile: failure === 'missing-font' && name === 'other-font',
+        getPathGenerator: (): unknown => ({
+          getBounds: (): number[] =>
+            failure === 'invalid-glyph' && name === 'other-font'
+              ? [0, NaN, 1, 1]
+              : [0, -0.2, 0.5, 0.8]
+        })
+      })
+    }
+    const snapshot = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum,
+      objects
+    )
+    expect(snapshot.glyphBounds).toBeUndefined()
+    expect(snapshot.partialFontGlyphBounds).toEqual([
+      { fontName: 'first-font', glyphs: [{ fontChar: 'A', bounds: [0, -0.2, 0.5, 0.8] }] }
+    ])
+    expect(
+      matchNativeFigureRenderContext(
+        snapshot,
+        f.page,
+        f.content,
+        f.viewport,
+        f.graphics,
+        f.checksum
+      ).partialFontGlyphBounds
+    ).toEqual(snapshot.partialFontGlyphBounds)
+    // A malformed native state cannot bind even an otherwise usable font.
+    ops.fnArray.push(OPS.restore)
+    ops.argsArray.push([])
+    const malformed = captureNativeFigureRenderContext(
+      f.render,
+      f.page,
+      f.content,
+      f.viewport,
+      f.graphics,
+      f.checksum,
+      objects
+    )
+    expect(malformed.glyphBounds).toBeUndefined()
+    expect(malformed.partialFontGlyphBounds).toBeUndefined()
   }
 )

@@ -57,8 +57,14 @@ it.each([false, true])(
       })
       expect(p.dependenciesByRunId?.['11']).toBeUndefined()
       for (const runId of ['2', '4']) {
+        // Correcting the parse record does not prove the classes passed to
+        // quantile in cell 4; its output must still retain dispatch uncertainty.
         expect(p.stalenessByRunId[runId], JSON.stringify(p)).toEqual(
-          corrected ? { state: 'clear' } : { state: 'unknown', reasons: ['parse-error'] }
+          !corrected
+            ? { state: 'unknown', reasons: ['parse-error'] }
+            : runId === '2'
+              ? { state: 'clear' }
+              : { state: 'unknown', reasons: ['external-state', 'opaque-call'] }
         )
       }
       expect(runs.find((run) => run.runId === '6')?.status).toBe(corrected ? 'failed' : 'completed')

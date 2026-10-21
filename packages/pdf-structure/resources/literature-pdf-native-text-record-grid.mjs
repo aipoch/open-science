@@ -1,4 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import {
+  refineNativeTableBoundaryInk,
+  recoverNativeClippedHeaderCrop
+} from './literature-pdf-native-table-boundary-ink.mjs'
 import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { hasDisjointNativeTableSlots } from './literature-pdf-native-table-ambiguity.mjs'
 import { captionKind } from './literature-pdf-caption-group.mjs'
@@ -748,6 +752,8 @@ export function proveNativeTableReadingOrder(table, wholeProof, items, rules, co
 }
 
 export function completeNativeTableVisualCrop(table, wholeProof, items, rules, context) {
+  const header = recoverNativeClippedHeaderCrop(table, context)
+  if (header) return { ...table, cropRect: header }
   const valid = (r) =>
     Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
   if (
@@ -769,6 +775,8 @@ export function completeNativeTableVisualCrop(table, wholeProof, items, rules, c
     typeof context.viewport?.convertToViewportPoint !== 'function'
   )
     return
+  const boundary = refineNativeTableBoundaryInk(table, rules, context)
+  if (boundary) return boundary
   const glyphTrim = trimNativeCaptionGlyphInk(table, context)
   if (glyphTrim) return glyphTrim
   const simple =

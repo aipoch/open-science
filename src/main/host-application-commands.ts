@@ -56,6 +56,8 @@ import type {
   ReviewRunRequest,
   ReviewRunResult,
   ReviewSessionRequest,
+  ReviewLogRequest,
+  ReviewerLogEntry,
   ReviewWithChecks
 } from '../shared/reviewer'
 import type { SessionPersistenceFlushResponse } from '../shared/session-persistence-flush'
@@ -289,6 +291,11 @@ const reviewerCommands = Object.freeze({
     readonly [request: ReviewSessionRequest],
     ReviewWithChecks[]
   >('reviewer:get-for-session'),
+  getReviewLog: defineApplicationCommand<
+    'reviewer:get-review-log',
+    readonly [request: ReviewLogRequest],
+    ReviewerLogEntry[]
+  >('reviewer:get-review-log'),
   run: defineApplicationCommand<
     'reviewer:run',
     readonly [request: ReviewRunRequest],
@@ -579,7 +586,10 @@ type HostApplicationCommandDependencies = Readonly<{
     | 'revoke'
     | 'revokeBrowsers'
   >
-  reviewer: Pick<ReviewerCommandOwner, 'run' | 'getForSession' | 'abort' | 'abortFixLoop'>
+  reviewer: Pick<
+    ReviewerCommandOwner,
+    'run' | 'getForSession' | 'getReviewLog' | 'abort' | 'abortFixLoop'
+  >
   storage: Readonly<{
     acceptMissingDataRoot: () => Promise<void>
     acknowledgeDataRootHandoffFlush: (
@@ -776,6 +786,7 @@ const registerHostApplicationCommands = (
       'reviewer:abort': ({ args }) => dependencies.reviewer.abort(args[0]),
       'reviewer:abort-fix-loop': ({ args }) => dependencies.reviewer.abortFixLoop(args[0]),
       'reviewer:get-for-session': ({ args }) => dependencies.reviewer.getForSession(args[0]),
+      'reviewer:get-review-log': ({ args }) => dependencies.reviewer.getReviewLog(args[0]),
       'reviewer:run': ({ args }) => dependencies.reviewer.run(args[0])
     })
     scope.registerGroup(hostApplicationCommandGroups[7], {

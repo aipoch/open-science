@@ -25,6 +25,10 @@
     "./execution-context": {
       "types": "./dist/execution-context.d.ts",
       "default": "./dist/execution-context.js"
+    },
+    "./helper-identity": {
+      "types": "./dist/helper-identity.d.ts",
+      "default": "./dist/helper-identity.js"
     }
   },
   "files": [

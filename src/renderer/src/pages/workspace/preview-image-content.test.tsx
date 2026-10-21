@@ -202,7 +202,8 @@ describe('PreviewImageContent', () => {
     expect(window.api.previewResources.acquire).toHaveBeenCalledWith({
       source: 'upload',
       projectId: 'project-1',
-      fileId: 'upload-1'
+      fileId: 'upload-1',
+      imagePreview: true
     })
     expect(container.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
   })
@@ -218,6 +219,29 @@ describe('PreviewImageContent', () => {
     expect(container.textContent).toContain("Image couldn't be loaded for preview")
   })
 
+  it('caches display bytes instead of the original size and evicts by decoded memory', async () => {
+    vi.mocked(window.api.previewResources.acquire).mockResolvedValue({
+      id: 'large-image',
+      url: 'open-science-preview://large-image/figure.png',
+      size: 1000,
+      mimeType: 'image/png',
+      version: 1,
+      width: 8000,
+      height: 4000
+    })
+    root = createRoot(container)
+    const preview = (
+      <PreviewImageContent path="/workspace/large.png" name="large.png" size={80 * 1024 * 1024} />
+    )
+    await act(async () => root.render(preview))
+    expect(fetch).toHaveBeenCalled()
+    expect(container.querySelector('img')?.getAttribute('src')).toMatch(/^blob:/)
+    await act(async () => root.unmount())
+    root = createRoot(container)
+    await act(async () => root.render(preview))
+    expect(window.api.previewResources.acquire).toHaveBeenCalledTimes(2)
+  })
+
   it('falls back when the managed image URL cannot be decoded', async () => {
     root = createRoot(container)
     await act(async () => {
@@ -229,7 +253,7 @@ describe('PreviewImageContent', () => {
     })
 
     expect(container.querySelector('img')).toBeNull()
-    expect(container.textContent).toContain("Image couldn't be loaded for preview")
+    expect(container.textContent).toContain('The browser could not display this image')
     expect(window.api.previewResources.release).toHaveBeenCalledWith({
       resourceId: 'resource-1'
     })
@@ -347,7 +371,7 @@ describe('PreviewImageContent', () => {
     })
 
     expect(container.querySelector('[aria-label="Zoom in"]')).toBeNull()
-    expect(container.textContent).toContain("Image couldn't be loaded for preview")
+    expect(container.textContent).toContain('The browser could not display this image')
     expect(window.api.previewResources.release).toHaveBeenCalledWith({ resourceId: 'resource-1' })
   })
 })

@@ -817,10 +817,10 @@ export function deduplicateTableRegions(tables, items, captions = []) {
   return tables.filter((table) => kept.includes(table))
 }
 
-// Equal cell inventories may survive model-crop deduplication. This proof only
-// removes the uncaptioned duplicate; the retained object (including its caption,
-// thumbnail and metadata) is not rewritten or assigned a new caption owner.
-function deduplicateEquivalentSourceTables(tables, tokens) {
+// Equal cell inventories may survive model-crop deduplication. Remove an uncaptioned
+// duplicate, or one whose caption remains on a separate proven owner. Retained
+// objects, including their captions, thumbnails and metadata, are not rewritten.
+function deduplicateEquivalentSourceTables(tables, tokens, measuredWhitespace) {
   const key = (s) => `${s.pageNumber}:${s.index}`
   const eq = (a, b) => JSON.stringify(a) === JSON.stringify(b)
   const rect = (r) =>
@@ -854,7 +854,10 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
       t.unassigned?.length ||
       t.clipped?.length ||
       t.notes?.length ||
-      t.issues?.length ||
+      // A detector shape warning is obsolete only for the uncaptioned copy:
+      // the complete native grid below must still equal a clean captioned owner.
+      (t.issues?.length &&
+        (t.caption || t.issues.some((issue) => issue !== 'missing-row-or-column'))) ||
       !rect(t.cropRect) ||
       !t.grid?.length ||
       !t.grid[0]?.length ||
@@ -879,13 +882,14 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
       slots.add(`${c.row}:${c.column}`)
       if (
         !c.sourceItems?.length ||
-        c.sourceRects?.length !== c.sourceItems.length ||
+        !c.sourceRects?.length ||
         c.sourceItems
           .map((s) => s.text)
           .join('')
           .replace(/\s/gu, '') !== c.text.replace(/\s/gu, '')
       )
         return
+      const cellOwners = []
       for (let j = 0; j < c.sourceItems.length; j++) {
         let s = c.sourceItems[j],
           k = key(s),
@@ -898,11 +902,33 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
           !rect(g[0].token.rect) ||
           g[0].token.text !== s.text ||
           g[0].source.text !== s.text ||
-          !eq(c.sourceRects[j], g[0].token.rect) ||
           !contains(t.cropRect, g[0].token.rect)
         )
           return
         seen.add(k)
+        cellOwners.push({ native: g[0].token, rects: [] })
+      }
+      for (const r of c.sourceRects) {
+        if (!rect(r)) return
+        const candidates = cellOwners.filter(
+          ({ native }) =>
+            contains(native.rect, r) &&
+            Math.abs(native.rect[1] - r[1]) < 1e-6 &&
+            Math.abs(native.rect[3] - r[3]) < 1e-6
+        )
+        if (candidates.length !== 1) return
+        candidates[0].rects.push(r)
+      }
+      for (const { native, rects } of cellOwners) {
+        rects.sort((a, b) => a[0] - b[0])
+        if (
+          !rects.length ||
+          rects[0][0] !== native.rect[0] ||
+          rects.at(-1)[2] !== native.rect[2] ||
+          rects.some((r, i) => i && r[0] < rects[i - 1][2]) ||
+          (rects.length > 1 && !measuredWhitespace(native, rects))
+        )
+          return
       }
     }
     if (slots.size !== t.grid.length * t.grid[0].length) return
@@ -922,6 +948,8 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
       delete semantic.rect
       delete semantic.origin
       delete semantic.sourceTokens
+      // Word rectangles are equivalent only after the measured whitespace proof.
+      semantic.sourceRects = cell.sourceItems.map((s) => global.get(key(s))[0].token.rect)
       return semantic
     })
     return { keys: seen, cells: cells.toSorted((a, b) => a.row - b.row || a.column - b.column) }
@@ -940,8 +968,6 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
         A.page !== B.page ||
         !eq(A.grid, B.grid) ||
         !eq(pa.cells, pb.cells) ||
-        [A, B].filter((t) => t.caption?.text && t.caption.page === t.page && rect(t.caption.rect))
-          .length !== 1 ||
         [A, B].some(
           (t) =>
             t.caption && (!t.caption.text || t.caption.page !== t.page || !rect(t.caption.rect))
@@ -963,7 +989,37 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
         )
       )
         continue
-      removed.add(A.caption ? b : a)
+      const validCaption = (t) =>
+        t.caption?.text && t.caption.page === t.page && rect(t.caption.rect)
+      if ([A, B].filter(validCaption).length === 1) {
+        removed.add(A.caption ? b : a)
+      } else if (validCaption(A) && validCaption(B) && !eq(A.caption, B.caption)) {
+        // A duplicate may also carry the caption of a different, disjoint table.
+        // Remove it only if that exact caption remains on that independent owner.
+        const preservedElsewhere = (candidate) =>
+          tables.filter(
+            (t, i) =>
+              i !== a &&
+              i !== b &&
+              !removed.has(i) &&
+              t.page === candidate.page &&
+              validCaption(t) &&
+              eq(t.caption, candidate.caption) &&
+              rect(t.cropRect) &&
+              !intersects(t.cropRect, candidate.cropRect) &&
+              t.cells?.some((c) => c.sourceItems?.length) &&
+              [t, ...(t.parts ?? [])].every((part) =>
+                part.cells?.every((c) =>
+                  [...(c.sourceItems ?? []), ...(c.sourceSegments ?? [])].every(
+                    (s) => !pa.keys.has(key(s))
+                  )
+                )
+              )
+          ).length === 1
+        const dropA = preservedElsewhere(A),
+          dropB = preservedElsewhere(B)
+        if (dropA !== dropB) removed.add(dropA ? a : b)
+      }
     }
   return tables.filter((_, i) => !removed.has(i))
 }
@@ -972,7 +1028,6 @@ function deduplicateEquivalentSourceTables(tables, tokens) {
 // because the latter owns an additional column. Compare original PDF identities
 // only after cell assembly; equal strings or overlapping crops are not owners.
 export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measuredRuns = []) {
-  tables = deduplicateEquivalentSourceTables(tables, nativeTokens)
   const key = (source) => `${source.pageNumber}:${source.index}`
   const normalize = (text) => text.replace(/\s/gu, '')
   const originals = new Map()
@@ -1018,6 +1073,7 @@ export function deduplicateSourceOwnedTableSubsets(tables, nativeTokens, measure
       )
     })
   }
+  tables = deduplicateEquivalentSourceTables(tables, nativeTokens, measuredWhitespace)
   const prove = (table) => {
     if (
       table.parts ||

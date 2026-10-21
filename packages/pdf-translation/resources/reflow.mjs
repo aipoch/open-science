@@ -5,6 +5,7 @@ import { deflateSync } from 'node:zlib'
 import * as fontkit from 'fontkit'
 import { PDFDocument, rgb } from 'pdf-lib'
 import { engine } from './pdfium.mjs'
+import { readReflowCatalog, writeReflowCatalog } from './reflow-catalog.mjs'
 import {
   readReflowLinks,
   retainLinkedPages,
@@ -115,7 +116,7 @@ function png(pixels, stride, x, y, w, h) {
 }
 
 export async function generateReflow(input, retainedLinkPages = new Set()) {
-  const document = await PDFDocument.create(),
+  const document = await PDFDocument.create({ updateMetadata: false }),
     bytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url)),
     face = fontkit.create(bytes)
   document.registerFontkit({
@@ -273,10 +274,14 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       })
     if (p.FPDF_GetPageCount(source.doc) !== input.pages.length) throw Error('Source pages changed')
     originalDocument = await PDFDocument.load(input.data, { updateMetadata: false })
-    const sourceLinks = readReflowLinks(native, source, input, originalDocument)
+    const catalog = readReflowCatalog(originalDocument)
+    const sourceLinks = catalog.wholeDocument
+      ? {}
+      : readReflowLinks(native, source, input, originalDocument)
+    sourceLinks.catalogDestinations = catalog.destinations ?? []
     // Unsupported actions and unresolved destinations can depend on document-
     // level structures that copying individual pages cannot preserve safely.
-    if (sourceLinks.wholeDocument)
+    if (catalog.wholeDocument || sourceLinks.wholeDocument)
       return {
         data: input.data.slice(),
         layoutFailures: input.units.flatMap((unit, unitIndex) =>
@@ -285,7 +290,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
             : [
                 {
                   unitIndex,
-                  code: 'annotations',
+                  code: catalog.wholeDocument ? 'document-structure' : 'annotations',
                   phase: 'planning',
                   pageNumbers: [...new Set(unit.fragments.map((f) => f.pageNumber))],
                   fragmentCount: unit.fragments.length
@@ -719,6 +724,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
       return generateReflow(input, retainedLinkPages)
     }
     writeReflowLinks(document, links, originalPlacements)
+    writeReflowCatalog(originalDocument, document, catalog, links, sourcePageNumbers, sourcePages)
     const data = await document.save()
     if (data.length > 64 * 1024 ** 2) throw Error('Reflow output size')
     return {

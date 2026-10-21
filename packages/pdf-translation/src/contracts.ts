@@ -277,6 +277,7 @@ export type PdfTranslationPdfRequest = Readonly<{
 export const pdfTranslationLayoutFailureSchema = z
   .object({
     code: z.enum([
+      'document-structure',
       'annotations',
       'overflow',
       'unsupported-layout',

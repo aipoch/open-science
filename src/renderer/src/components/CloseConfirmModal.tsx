@@ -1,5 +1,5 @@
 import * as AlertDialog from '@/components/ui/alert-dialog'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
@@ -18,6 +18,11 @@ import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-valu
 import { resolveActiveSessionDisplay, truncateLabel } from '@/lib/active-session-display'
 import { cn } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
+import {
+  pendingWorkspaceQueueCount,
+  pendingWorkspaceQueueTarget,
+  subscribeWorkspaceQueueChanges
+} from '@/pages/workspace/workspace-message-queue-owner'
 import { hasDelegatedActiveSession, type ActiveSessionInfo } from '../../../shared/storage'
 import type {
   CloseConfirmChoice,
@@ -47,6 +52,10 @@ export const CloseConfirmModal = ({
   const [request, setRequest] = useState<ActiveRequest | undefined>(undefined)
   const activeRequestId = useRef<string | undefined>(undefined)
   const [remember, setRemember] = useState(true)
+  const queuedCount = useSyncExternalStore(
+    subscribeWorkspaceQueueChanges,
+    pendingWorkspaceQueueCount
+  )
 
   useEffect(() => {
     const windowApi = window.api.window
@@ -88,29 +97,37 @@ export const CloseConfirmModal = ({
 
   const isQuitVariant = dialogRequest.variant === 'quit'
   const isPersistenceFailure = dialogRequest.variant === 'persistence-failed'
+  const hasUnsentQueue = isPersistenceFailure && queuedCount > 0
   const hasSessions = dialogRequest.sessions.length > 0
   const hasDelegatedWork = hasDelegatedActiveSession(dialogRequest.sessions)
-  const title = isPersistenceFailure
-    ? t('Saving is not finished', { ns: 'common' })
-    : t(
-        hasDelegatedWork
-          ? 'Subagents are still running'
-          : isQuitVariant
-            ? 'Quit Open-Science?'
-            : 'Minimize or quit?'
-      )
-  const description = isPersistenceFailure
+  const title = hasUnsentQueue
+    ? t('Queued messages have not been sent')
+    : isPersistenceFailure
+      ? t('Saving is not finished', { ns: 'common' })
+      : t(
+          hasDelegatedWork
+            ? 'Subagents are still running'
+            : isQuitVariant
+              ? 'Quit Open-Science?'
+              : 'Minimize or quit?'
+        )
+  const description = hasUnsentQueue
     ? t(
-        'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
-        { ns: 'common' }
+        'Unsent messages: {{number}}. Quitting discards them. Return to the conversation to send, edit or remove them.',
+        { number: queuedCount }
       )
-    : t(
-        hasDelegatedWork
-          ? 'Return to the listed tasks and stop their subagents before quitting Open-Science.'
-          : isQuitVariant
-            ? 'Work is still running and will be interrupted if you quit.'
-            : 'This app can keep running in the tray, or you can quit.'
-      )
+    : isPersistenceFailure
+      ? t(
+          'Open-Science could not confirm that all recent changes were saved. Retry saving, or force quit and risk losing recent changes.',
+          { ns: 'common' }
+        )
+      : t(
+          hasDelegatedWork
+            ? 'Return to the listed tasks and stop their subagents before quitting Open-Science.'
+            : isQuitVariant
+              ? 'Work is still running and will be interrupted if you quit.'
+              : 'This app can keep running in the tray, or you can quit.'
+        )
 
   return (
     <AlertDialog.Root
@@ -191,14 +208,32 @@ export const CloseConfirmModal = ({
           <div className={cn(dialogFooterClassName, 'shrink-0 flex-wrap')}>
             {isPersistenceFailure ? (
               <>
-                <AlertDialog.Cancel asChild>
-                  <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
-                    {t('Stay', { ns: 'common' })}
+                {hasUnsentQueue ? (
+                  <Button
+                    type="button"
+                    onClick={() => {
+                      const target = pendingWorkspaceQueueTarget()
+                      reply('cancel')
+                      if (target)
+                        useNavigationStore
+                          .getState()
+                          .openSession(target.projectId, target.sessionId, 'user')
+                    }}
+                  >
+                    {t('Review queued messages')}
                   </Button>
-                </AlertDialog.Cancel>
-                <Button type="button" onClick={() => reply('retry')}>
-                  {t('Retry saving', { ns: 'common' })}
-                </Button>
+                ) : (
+                  <AlertDialog.Cancel asChild>
+                    <Button type="button" variant="ghost" className={dialogCancelButtonClassName}>
+                      {t('Stay', { ns: 'common' })}
+                    </Button>
+                  </AlertDialog.Cancel>
+                )}
+                {!hasUnsentQueue ? (
+                  <Button type="button" onClick={() => reply('retry')}>
+                    {t('Retry saving', { ns: 'common' })}
+                  </Button>
+                ) : null}
                 <Button type="button" variant="destructive" onClick={() => reply('force-quit')}>
                   {t('Force quit', { ns: 'common' })}
                 </Button>

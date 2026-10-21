@@ -27,6 +27,8 @@ import { reproductionRecipes } from '../artifacts/reproducibility-host'
 
 import { projectArtifactReproducibility } from '@aipoch/reproducibility'
 import {
+  maintainWorkingFileEvidence,
+  withWorkingFileEvidenceRead,
   batchComputeProjectEvidenceRequests,
   beginComputeJobFileEvidence,
   completeWorkingFileEvidence,
@@ -81,6 +83,180 @@ afterEach(async () => {
 })
 
 describe('working-file evidence', () => {
+  it.each([
+    'unused',
+    'duplicate',
+    'unresolved',
+    'corrupt',
+    'pending',
+    'symlink',
+    'unknown',
+    'cross-session',
+    'export-read',
+    'different-content',
+    'unowned-project',
+    'unknown-relation',
+    'unknown-generation',
+    'interrupted-compaction',
+    'imported-sibling',
+    'imported-reference',
+    'pending-import',
+    'invalid-import-marker',
+    'misplaced-import-marker'
+  ] as const)('maintains historical evidence conservatively: %s', async (condition) => {
+    const { sessionRoot, dataRoot } = await createRoots()
+    const projectRoot = join(storageRoot!, 'execution-file-evidence', 'history-project')
+    const location = {
+      storageRoot: storageRoot!,
+      root: join(projectRoot, 'session-1'),
+      storageKeyPrefix: 'execution-file-evidence/history-project/session-1'
+    }
+    const content = 'retained data'
+    await writeFile(join(dataRoot, 'keep.txt'), content)
+    const observation = await startWorkingFileObservation(
+      {
+        dataRoot,
+        notebookSessionRoot: sessionRoot,
+        cwd: dataRoot,
+        language: 'python',
+        code: "open('keep.txt').read()",
+        runId: 'history-run',
+        fileEvidenceStorageRoot: storageRoot,
+        fileEvidenceRoot: location.root,
+        fileEvidenceStoragePrefix: location.storageKeyPrefix
+      },
+      { watchDirectory: watcherUnavailable }
+    )
+    const result = await observation.finish()
+    await completeWorkingFileEvidence(location, {
+      runId: 'history-run',
+      fileEvidence: result.fileEvidence
+    })
+    const key = result.fileEvidence.storageKey!
+    const path = join(storageRoot!, key)
+    const sidecar = JSON.parse(await readFile(path, 'utf8'))
+    const activity = dirname(path)
+    const retainedPath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
+    const retainedPool = join(
+      projectRoot,
+      'blobs',
+      `sha256-${sidecar.relations[0].generation.checksum}`
+    )
+    const orphanContent = 'old unused capture'
+    const orphanHash = createHash('sha256').update(orphanContent).digest('hex')
+    const orphanPool = join(projectRoot, 'blobs', `sha256-${orphanHash}`)
+    const orphanPath = join(activity, 'blobs', `sha256-${orphanHash}`)
+    await writeFile(orphanPool, orphanContent)
+    await link(orphanPool, orphanPath)
+    const owner = {
+      receiptName: 'receipt-history-run.json',
+      finalName: 'activity-history-run',
+      activityId: 'history-run',
+      activityKind: 'notebook-run' as const,
+      evidenceId: result.fileEvidence.evidenceId!,
+      checksum: result.fileEvidence.checksum!,
+      storageKey: key
+    }
+    if (condition === 'duplicate' || condition === 'interrupted-compaction') {
+      await unlink(retainedPath)
+      await writeFile(retainedPath, content)
+      expect((await stat(retainedPath)).ino).not.toBe((await stat(retainedPool)).ino)
+    }
+    if (condition === 'interrupted-compaction')
+      await link(
+        retainedPool,
+        join(dirname(retainedPath), `.compact-sha256-${sidecar.relations[0].generation.checksum}`)
+      )
+    if (condition === 'unowned-project')
+      await unlink(join(projectRoot, '..', '.project-ownership-history-project.json'))
+    if (condition === 'unknown-relation' || condition === 'unknown-generation') {
+      if (condition === 'unknown-relation') sidecar.relations[0].relation = 'future-reference'
+      else sidecar.relations[0].generation.futureReference = 'unknown'
+      const bytes = JSON.stringify(sidecar)
+      await writeFile(path, bytes)
+      owner.checksum = createHash('sha256').update(bytes).digest('hex')
+    }
+    if (condition === 'unresolved') {
+      sidecar.relations[0].previousGenerationId = 'lost-generation'
+      const bytes = JSON.stringify(sidecar)
+      await writeFile(path, bytes)
+      owner.checksum = createHash('sha256').update(bytes).digest('hex')
+    }
+    if (condition === 'corrupt') await writeFile(path, '{broken')
+    if (condition === 'pending') await writeFile(join(location.root, 'receipt-running.json'), '{}')
+    if (condition === 'unknown') await writeFile(join(projectRoot, 'unknown-format'), 'retain')
+    if (condition === 'symlink') await symlink(dataRoot, join(projectRoot, 'outside'), 'junction')
+    if (condition === 'different-content') {
+      await unlink(orphanPath)
+      await writeFile(orphanPath, 'unexpected occupant')
+    }
+    if (
+      [
+        'imported-sibling',
+        'imported-reference',
+        'pending-import',
+        'invalid-import-marker',
+        'misplaced-import-marker'
+      ].includes(condition)
+    ) {
+      const imported = join(projectRoot, 'session-2')
+      await mkdir(imported, { recursive: true })
+      const operation = '00000000-0000-4000-8000-000000000001'
+      await writeFile(
+        join(
+          condition === 'misplaced-import-marker' ? activity : imported,
+          '.session-package-owner'
+        ),
+        condition === 'invalid-import-marker' ? 'unverified' : operation
+      )
+      if (condition === 'pending-import')
+        await mkdir(join(storageRoot!, 'session-package-imports', operation), { recursive: true })
+    }
+    if (condition === 'cross-session' || condition === 'imported-reference') {
+      const other = join(projectRoot, 'session-2', 'frames', 'frame-2', 'activity-other')
+      await mkdir(other, { recursive: true })
+      await writeFile(
+        join(other, 'evidence.json'),
+        JSON.stringify({
+          schemaVersion: 1,
+          evidenceId: 'other',
+          state: 'available',
+          activityId: 'other',
+          activityKind: 'notebook-run',
+          relations: [
+            {
+              relation: 'present-before',
+              generation: {
+                generationId: 'other',
+                checksum: orphanHash,
+                sizeBytes: orphanContent.length,
+                contentStorageKey: `${location.storageKeyPrefix}/activity-history-run/blobs/sha256-${orphanHash}`
+              }
+            }
+          ]
+        })
+      )
+    }
+    if (condition === 'export-read') {
+      await withWorkingFileEvidenceRead(storageRoot!, 'history-project', async () => {
+        await maintainWorkingFileEvidence(location, [owner])
+        await expect(readFile(orphanPath, 'utf8')).resolves.toBe(orphanContent)
+      })
+    }
+    await maintainWorkingFileEvidence(location, [owner])
+    if (
+      ['unused', 'duplicate', 'export-read', 'interrupted-compaction', 'imported-sibling'].includes(
+        condition
+      )
+    ) {
+      await expect(stat(orphanPath)).rejects.toMatchObject({ code: 'ENOENT' })
+      await expect(stat(orphanPool)).rejects.toMatchObject({ code: 'ENOENT' })
+      expect((await stat(retainedPath)).ino).toBe((await stat(retainedPool)).ino)
+      await maintainWorkingFileEvidence(location, [owner])
+    } else await expect(stat(orphanPath)).resolves.toBeDefined()
+    await expect(readFile(retainedPath, 'utf8')).resolves.toBe(content)
+  })
+
   it('recovers many empty Session directories with one worker per Project', async () => {
     await createRoots()
     const evidenceRoot = join(storageRoot!, 'execution-file-evidence')
@@ -885,6 +1061,102 @@ describe('working-file evidence', () => {
     })
   })
 
+  it.each(['cross-project', 'missing', 'replaced', 'corrupt', 'symlink', 'working-file'] as const)(
+    'freezes an isolated input when immutable sharing is unsafe: %s',
+    async (condition) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      const content = 'x\n1\n'
+      const checksum = createHash('sha256').update(content).digest('hex')
+      const inputPath = `inputs/input-${checksum.slice(0, 12)}.csv`
+      const workingPath = join(dataRoot, inputPath)
+      const projectId = condition === 'cross-project' ? 'project-2' : 'project-1'
+      const storageKey = `uploads/${projectId}/source-session/version/content`
+      const originalPath = join(storageRoot!, storageKey)
+      await mkdir(dirname(workingPath), { recursive: true })
+      await mkdir(dirname(originalPath), { recursive: true })
+      await writeFile(workingPath, content)
+      await writeFile(originalPath, content)
+      const original = await stat(originalPath)
+      const working = await stat(workingPath)
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code: `open('${inputPath}').read()`,
+          language: 'python',
+          runId: 'sharing-fallback',
+          fileEvidenceStorageRoot: storageRoot!,
+          fileEvidenceRoot: join(storageRoot!, 'execution-file-evidence', 'project-1', 'session-1'),
+          fileEvidenceStoragePrefix: 'execution-file-evidence/project-1/session-1',
+          registeredInputFiles: [
+            {
+              inputFileVersionId: 'version',
+              sourceKind: 'upload-version',
+              sourceFileId: 'input',
+              sourceProjectId: projectId,
+              sourceSessionId: 'source-session',
+              filename: 'input.csv',
+              sizeBytes: content.length,
+              checksum,
+              storageKey,
+              association: 'turn-attached'
+            }
+          ]
+        },
+        {
+          watchDirectory: watcherUnavailable,
+          runEvidenceWorker: async (root, request, signal) => {
+            if (request.operation === 'begin') {
+              const item = request.initialFiles[0]!
+              // Windows file IDs can exceed the worker protocol's safe integer range. The
+              // owner then deliberately omits sharing and freezes the working input instead.
+              if (
+                condition === 'cross-project' ||
+                !Number.isSafeInteger(original.dev) ||
+                !Number.isSafeInteger(original.ino)
+              )
+                expect(item.immutableSource).toBeUndefined()
+              else expect(item.immutableSource).toMatchObject({ physicalPath: originalPath })
+              // Keep the old inode allocated so Linux cannot reuse it for the frozen copy.
+              if (condition === 'missing') await rename(originalPath, `${originalPath}.old`)
+              if (condition === 'replaced') {
+                await rename(originalPath, `${originalPath}.old`)
+                await writeFile(originalPath, content)
+              }
+              if (condition === 'corrupt') await writeFile(originalPath, 'x\n2\n')
+              if (condition === 'symlink') {
+                await rename(originalPath, `${originalPath}.old`)
+                await symlink(workingPath, originalPath)
+              }
+              if (
+                condition === 'working-file' &&
+                Number.isSafeInteger(working.dev) &&
+                Number.isSafeInteger(working.ino)
+              )
+                item.immutableSource = {
+                  physicalPath: workingPath,
+                  dev: working.dev,
+                  ino: working.ino
+                }
+            }
+            return runEvidenceWorker(root, request, signal)
+          }
+        }
+      )
+      const result = await observation.finish()
+      expect(result.fileEvidence.fileReads).toBe('complete')
+      const sidecar = JSON.parse(
+        await readFile(join(storageRoot!, result.fileEvidence.storageKey!), 'utf8')
+      )
+      const frozenPath = join(storageRoot!, sidecar.relations[0].generation.contentStorageKey)
+      const frozen = await stat(frozenPath)
+      expect([frozen.dev, frozen.ino]).not.toEqual([original.dev, original.ino])
+      expect([frozen.dev, frozen.ino]).not.toEqual([working.dev, working.ino])
+      await expect(readFile(frozenPath, 'utf8')).resolves.toBe(content)
+    }
+  )
+
   it('does not persist files returned by an R directory listing as content reads', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
     await Promise.all([
@@ -1166,39 +1438,207 @@ describe('working-file evidence', () => {
     expect(result.fileEvidence.state).not.toBe('available')
   })
 
-  it('does not make a write-only overwrite depend on the previous file generation', async () => {
+  it.each(['python', 'r'] as const)(
+    'does not make a %s write-only overwrite depend on the previous file generation',
+    async (language) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      await writeFile(join(dataRoot, 'result.csv'), 'old result'.padEnd(4000, '.'))
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code:
+            language === 'python'
+              ? "import pandas as pd\npd.DataFrame({'x': [1]}).to_csv('result.csv', index=False)"
+              : 'write.csv(data.frame(x=1), "result.csv", row.names=FALSE)',
+          language,
+          runId: 'run-corroborated-overwrite'
+        },
+        { watchDirectory: watcherUnavailable, maxActivityBytes: 4096 }
+      )
+      await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
+
+      const result = await observation.finish()
+      const evidence = JSON.parse(
+        await readFile(
+          join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+          'utf8'
+        )
+      ) as { relations: Array<Record<string, unknown>> }
+
+      expect(result.fileEvidence).toMatchObject({ state: 'available', relationCount: 1 })
+      expect(evidence.relations).toEqual([
+        expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
+      ])
+      expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
+      const outputName = `sha256-${createHash('sha256').update('x\n1\n').digest('hex')}`
+      await expect(
+        readdir(
+          join(
+            storageRoot!,
+            'execution-file-evidence',
+            'activity-run-corroborated-overwrite',
+            'blobs'
+          )
+        )
+      ).resolves.toEqual([outputName])
+      await expect(readdir(join(storageRoot!, 'execution-file-evidence-blobs'))).resolves.toEqual([
+        outputName
+      ])
+    }
+  )
+
+  it('does not capture unrelated files when only write destinations are uncertain', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
-    await writeFile(join(dataRoot, 'result.csv'), 'old result')
+    await writeFile(join(dataRoot, 'input.csv'), 'x\n1\n')
+    await writeFile(join(dataRoot, 'unrelated.bin'), Buffer.alloc(1024 * 1024))
+    let capturedPaths: string[] = []
     const observation = await startWorkingFileObservation(
       {
         dataRoot,
         notebookSessionRoot: sessionRoot,
         cwd: dataRoot,
-        code: "import pandas as pd\npd.DataFrame({'x': [1]}).to_csv('result.csv', index=False)",
-        language: 'python',
-        runId: 'run-corroborated-overwrite'
+        language: 'r',
+        code: 'values <- read.csv("input.csv"); draw <- function(file) { png(file); plot(1); dev.off() }; draw("page-%03d.png")',
+        runId: 'uncertain-write-path'
       },
-      { watchDirectory: watcherUnavailable }
+      {
+        watchDirectory: watcherUnavailable,
+        runEvidenceWorker: async (root, request, signal) => {
+          if (request.operation === 'begin') {
+            capturedPaths = request.initialFiles.map(({ file }) => file.relativePath)
+          }
+          return runEvidenceWorker(root, request, signal)
+        }
+      }
     )
-    await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
-
+    await writeFile(join(dataRoot, 'page-001.png'), 'new plot')
     const result = await observation.finish()
-    const evidence = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
-        'utf8'
-      )
-    ) as { relations: Array<Record<string, unknown>> }
-
-    expect(result.fileEvidence).toMatchObject({ state: 'available', relationCount: 1 })
-    expect(evidence.relations).toEqual([
-      expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
-    ])
-    expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
+    expect(result.fileEvidence.fileReads).toBe('complete')
+    expect(result.fileEvidence.writerAttribution).toBe('partial')
+    expect(capturedPaths).toEqual(['data/input.csv'])
   })
 
+  it.each(['unused', 'read', 'predecessor', 'shared'] as const)(
+    'retains only needed initial content after publication: %s',
+    async (usage) => {
+      const { dataRoot } = await createRoots()
+      const evidenceRoot = join(storageRoot!, 'execution-file-evidence')
+      await mkdir(evidenceRoot)
+      const root = await stat(evidenceRoot)
+      const blobPool = await createWorkerBlobPool()
+      const retainedNames: string[] = []
+      for (let index = 0; index < 3; index++) {
+        const path = join(dataRoot, 'changing.csv')
+        const content = `same large body, different revision ${usage === 'shared' ? 0 : index}`
+        const retainedRead = usage === 'read' || (usage === 'shared' && index === 0)
+        const retained = retainedRead || usage === 'predecessor'
+        await writeFile(path, content)
+        const metadata = await stat(path)
+        const file = {
+          physicalPath: path,
+          path,
+          relativePath: 'data/changing.csv',
+          kind: 'other' as const,
+          size: metadata.size,
+          mtimeMs: metadata.mtimeMs,
+          ctimeMs: metadata.ctimeMs,
+          dev: metadata.dev,
+          ino: metadata.ino
+        }
+        const request = {
+          ...blobPool,
+          expectedRootIdentity: { dev: root.dev, ino: root.ino },
+          receiptName: `receipt-retention-${index}.json`,
+          stagingName: `staging-retention-${index}`,
+          finalName: `activity-retention-${index}`,
+          activityId: `retention-${index}`,
+          activityKind: 'notebook-run' as const,
+          evidenceId: `execution-file-evidence-retention-${index}`,
+          storageKeyPrefix: 'execution-file-evidence',
+          maxGenerationBytes: 1024,
+          maxActivityBytes: 64 * 1024,
+          diskReserveBytes: 0,
+          availableBytes: 1024 * 1024,
+          captureCancelled: false
+        }
+        await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'begin',
+          initialViewState: 'complete',
+          initialFiles: [
+            {
+              file,
+              generation: {
+                generationId: `generation-${index}`,
+                capturedAt: '2026-10-20T00:00:00.000Z'
+              }
+            }
+          ]
+        })
+        const result = await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'persist',
+          rootKinds: ['data'],
+          rootsAvailable: true,
+          fileReads: 'complete',
+          readPaths: retainedRead ? [file.relativePath] : [],
+          reasonCodes: [],
+          scientificOutputs: [],
+          changes:
+            usage === 'predecessor'
+              ? [
+                  {
+                    change: { relation: 'deleted', relativePath: file.relativePath, before: file },
+                    generation: { generationId: '', capturedAt: '2026-10-20T00:00:00.000Z' }
+                  }
+                ]
+              : []
+        })
+        if (!('fileEvidence' in result)) throw new Error('Missing published evidence')
+        await runEvidenceWorker(evidenceRoot, {
+          ...request,
+          operation: 'complete',
+          checksum: result.fileEvidence.checksum!,
+          storageKey: result.fileEvidence.storageKey!
+        })
+        const sidecar = JSON.parse(
+          await readFile(join(evidenceRoot, request.finalName, 'evidence.json'), 'utf8')
+        )
+        expect(sidecar.relations).toHaveLength(retained ? 1 : 0)
+        if (usage === 'predecessor') {
+          expect(sidecar.relations[0].previousGenerationId).toBe(`generation-${index}`)
+          expect(sidecar.predecessorGenerations).toEqual([
+            expect.objectContaining({
+              generationId: `generation-${index}`,
+              checksum: createHash('sha256').update(content).digest('hex')
+            })
+          ])
+        }
+        const name = `sha256-${createHash('sha256').update(content).digest('hex')}`
+        const expected = retained ? [name] : []
+        await expect(readdir(join(evidenceRoot, request.finalName, 'blobs'))).resolves.toEqual(
+          expected
+        )
+        retainedNames.push(...expected)
+        expect((await readdir(blobPool.blobRoot)).sort()).toEqual([...retainedNames].sort())
+        if (retained) {
+          await expect(
+            readFile(join(evidenceRoot, request.finalName, 'blobs', name), 'utf8')
+          ).resolves.toBe(content)
+        }
+      }
+      if (usage === 'shared') {
+        await expect(
+          readFile(join(evidenceRoot, 'activity-retention-0', 'blobs', retainedNames[0]), 'utf8')
+        ).resolves.toBe('same large body, different revision 0')
+      }
+    }
+  )
+
   it.each(volcanoCells.filter((cell) => ['20', '21', '22', '25'].includes(cell.runId)))(
-    'captures the RDS input without chaining earlier PNG generations for volcano run $runId',
+    'captures RDS bytes and retains the previous PNG when ordering is unproven for volcano run $runId',
     async ({ script, runId }) => {
       const { sessionRoot, dataRoot } = await createRoots()
       // The observer snapshots bytes; the analyzer must never deserialize RDS.
@@ -1219,11 +1659,14 @@ describe('working-file evidence', () => {
       const result = await observation.finish()
       const evidence = JSON.parse(
         await readFile(join(storageRoot!, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
-      ) as { relations: Array<Record<string, unknown>> }
+      ) as {
+        relations: Array<Record<string, unknown>>
+      }
       expect(result.fileEvidence).toMatchObject({
-        state: 'available',
-        fileReads: 'complete',
-        writerAttribution: 'complete'
+        state: 'partial',
+        fileReads: 'partial',
+        writerAttribution: 'partial',
+        reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
       })
       expect(evidence.relations).toEqual(
         expect.arrayContaining([
@@ -1237,12 +1680,23 @@ describe('working-file evidence', () => {
           })
         ])
       )
-      expect(
-        evidence.relations.find((relation) => relation.relation === 'modified')
-      ).not.toHaveProperty('previousGenerationId')
+      // An unproven method may read the old PNG before the observed overwrite.
+      // Preserve its bytes rather than asserting a write-only generation boundary.
+      const modified = evidence.relations.find((relation) => relation.relation === 'modified')
+      expect(modified?.previousGenerationId).toEqual(expect.any(String))
+      expect(evidence.relations).toContainEqual(
+        expect.objectContaining({
+          relation: 'present-before',
+          relativePath: 'data/diagonal_volcano.png',
+          generation: expect.objectContaining({
+            generationId: modified!.previousGenerationId,
+            checksum: createHash('sha256').update('earlier plot').digest('hex')
+          })
+        })
+      )
       expect(
         evidence.relations.filter((relation) => relation.relation === 'present-before')
-      ).toHaveLength(1)
+      ).toHaveLength(2)
     }
   )
 

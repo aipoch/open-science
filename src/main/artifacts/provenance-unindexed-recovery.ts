@@ -1,4 +1,4 @@
-import { bindManagedPdfVersion } from '../pdf-annotations/document-store'
+import { bindManagedPdfVersion } from '../pdf-annotations/source-bindings'
 import type { Dirent } from 'node:fs'
 import { mkdir, readFile, readdir, rename } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
@@ -59,8 +59,10 @@ const validRecoveryFilename = (value: string): boolean =>
   !value.includes('/') &&
   !value.includes('\\')
 
-const assertSafeSegment = (value: string, label: string): string => {
-  if (!SAFE_SEGMENT_PATTERN.test(value)) throw new Error(`Invalid ${label}: ${value}`)
+const assertSafeSegment = (value: unknown, label: string): string => {
+  if (typeof value !== 'string' || value.length === 0 || !SAFE_SEGMENT_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}: ${String(value)}`)
+  }
   return value
 }
 

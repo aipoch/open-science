@@ -27,6 +27,8 @@ import {
 import { drainQueuedSessions, sendQueuedItemNow } from './workspace-message-queue-drain'
 import {
   WorkspaceMessageQueueOwner,
+  registerWorkspaceQueueExitGuard,
+  type RemovedQueueItemView,
   type ApplicationMessageQueueAdmission,
   type MessageQueueAdmission,
   type WorkspaceMessageQueueControllerOptions
@@ -37,6 +39,7 @@ import {
   moveQueuedItemTo,
   projectActiveQueueItems,
   removeQueuedItem,
+  undoRemovedQueuedItem,
   type MessageQueueItemView
 } from './workspace-message-queue-projection'
 import {
@@ -52,12 +55,15 @@ type WorkspaceMessageQueueController = {
   items: MessageQueueItemView[]
   hasPendingWork: boolean
   announcement: string
+  removed?: RemovedQueueItemView[]
   actions: {
     move: (itemId: string, direction: 'up' | 'down') => void
     moveTo: (itemId: string, targetId: string, edge: 'before' | 'after') => void
     remove: (itemId: string) => void
     edit: (itemId: string) => void
     sendNow: (itemId: string) => Promise<void>
+    undoRemove?: (itemId: string) => void
+    dismissRemoved?: (itemId: string) => void
   }
   lifecycle: {
     enqueue: (admission: MessageQueueAdmission) => boolean
@@ -106,9 +112,18 @@ const useWorkspaceApplicationMessageAdmission =
 const WorkspaceMessageQueueProvider = ({ children }: PropsWithChildren): ReactElement => {
   const [owner] = useState(() => new WorkspaceMessageQueueOwner())
   useEffect(() => {
+    const unregisterExitGuard = registerWorkspaceQueueExitGuard(owner)
+    const beforeUnload = (event: BeforeUnloadEvent): void => {
+      if (owner.pendingUserCount() === 0) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', beforeUnload)
     const unsubscribeBarriers = subscribeWorkspaceSpecialistBarriers(owner.requestDrain)
     const unsubscribePresentation = subscribeWorkspacePresentationRevealing(owner.requestDrain)
     return () => {
+      window.removeEventListener('beforeunload', beforeUnload)
+      unregisterExitGuard()
       unsubscribeBarriers()
       unsubscribePresentation()
       owner.dispose()
@@ -214,11 +229,11 @@ const useWorkspaceMessageQueueController = (
   useLayoutEffect(() => {
     optionsRef.current = options
   }, [options])
-  const { queues: queueSnapshot, announcement } = useSyncExternalStore(
-    owner.subscribe,
-    owner.getSnapshot,
-    owner.getSnapshot
-  )
+  const {
+    queues: queueSnapshot,
+    announcement,
+    removed
+  } = useSyncExternalStore(owner.subscribe, owner.getSnapshot, owner.getSnapshot)
 
   const enqueue = useCallback(
     (admission: MessageQueueAdmission): boolean =>
@@ -268,6 +283,10 @@ const useWorkspaceMessageQueueController = (
     (itemId: string): Promise<void> => sendQueuedItemNow(owner, optionsRef, itemId),
     [owner]
   )
+  const undoRemove = useCallback(
+    (itemId: string): void => undoRemovedQueuedItem(owner, optionsRef, itemId),
+    [owner]
+  )
 
   useEffect(
     () => owner.connect(subscribeSessionChanges, drainQueues, options.composer.discardSnapshot),
@@ -277,7 +296,16 @@ const useWorkspaceMessageQueueController = (
 
   return {
     lifecycle: { enqueue, enqueueApplication, blocksImmediateSend },
-    actions: { move, moveTo, remove, edit, sendNow },
+    actions: {
+      move,
+      moveTo,
+      remove,
+      edit,
+      sendNow,
+      undoRemove,
+      dismissRemoved: owner.dismissRemoved
+    },
+    removed: removed.filter((item) => item.sessionId === options.activeSession?.id),
     items: projectActiveQueueItems(queueSnapshot, options.activeSession?.id),
     hasPendingWork: Boolean(
       options.activeSession && (queueSnapshot.get(options.activeSession.id)?.length ?? 0) > 0

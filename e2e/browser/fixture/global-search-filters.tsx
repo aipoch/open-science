@@ -2,6 +2,8 @@ import '@/assets/main.css'
 import { useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { GlobalSearchDialog } from '@/components/global-search/GlobalSearchDialog'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { initI18n, prepareI18nLocale } from '@/i18n'
 import { useProjectStore } from '@/stores/project-store'
 import { useNavigationStore } from '@/stores/navigation-store'
@@ -72,5 +74,9 @@ export function Fixture(): React.JSX.Element {
 }
 void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
-  createRoot(document.getElementById('root')!).render(<Fixture />)
+  createRoot(document.getElementById('root')!).render(
+    <LiteratureRendererProvider host={literatureRendererHost}>
+      <Fixture />
+    </LiteratureRendererProvider>
+  )
 })

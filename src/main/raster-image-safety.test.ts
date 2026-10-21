@@ -1,6 +1,25 @@
 import { describe, expect, it } from 'vitest'
 
-import { readRasterImageDimensions } from './raster-image-safety'
+import { exceedsDecodedImagePixelLimit, readRasterImageDimensions } from './raster-image-safety'
+
+describe('exceedsDecodedImagePixelLimit', () => {
+  it('preserves the default model attachment processing budget', () => {
+    expect(exceedsDecodedImagePixelLimit({ width: 4_000, height: 4_000 })).toBe(false)
+    expect(exceedsDecodedImagePixelLimit({ width: 4_001, height: 4_000 })).toBe(true)
+  })
+
+  it.each([
+    [9_456, 2_800, false],
+    [9_496, 2_028, false],
+    [8_000, 8_000, false],
+    [8_001, 8_000, true],
+    [8_000, 8_001, true],
+    [0, 8_000, true],
+    [8_000, 0, true]
+  ])('checks %i × %i against a caller-selected pixel budget', (width, height, exceeds) => {
+    expect(exceedsDecodedImagePixelLimit({ width, height }, 64_000_000)).toBe(exceeds)
+  })
+})
 
 // APP1 EXIF segment carrying a single IFD0 orientation entry, followed by a SOF0 frame header.
 const jpegWithExif = (

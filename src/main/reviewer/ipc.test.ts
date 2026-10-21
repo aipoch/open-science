@@ -44,6 +44,8 @@ vi.mock('./orchestrator', () => ({
 // invoke it directly and observe which storageRoot the thunk was constructed against.
 const reviewRepositoryThunks: Array<() => unknown> = []
 const getReviewsForSession = vi.fn().mockResolvedValue([])
+const getReviewSummariesForProjectSession = vi.fn()
+const getReviewLog = vi.fn()
 const recoverInterruptedReviews = vi.fn().mockResolvedValue(0)
 vi.mock('./repository', () => ({
   ReviewRepository: class {
@@ -51,6 +53,8 @@ vi.mock('./repository', () => ({
       reviewRepositoryThunks.push(thunk)
     }
     getReviewsForSession = getReviewsForSession
+    getReviewSummariesForProjectSession = getReviewSummariesForProjectSession
+    getReviewLog = getReviewLog
     recoverInterruptedReviews = recoverInterruptedReviews
     getReviewsForProjectSession = getReviewsForSession
   }
@@ -113,6 +117,11 @@ vi.mock('../renderer-broadcast', async (importOriginal) => ({
 // repository-driven setup, not this stubbed path. The mock forwards ALL args so the spy records the
 // full call (reviews, session, dataRoot) the way the production function receives it.
 const flagStaleReviews = vi.fn(async (reviews: unknown) => reviews)
+type StaleResolver = (request: {
+  projectId: string
+  sessionId?: string
+  versionId: string
+}) => Promise<{ filename?: string; checksum?: string }>
 vi.mock('./stale-reviews', () => ({
   flagStaleReviews: (...args: unknown[]) =>
     (flagStaleReviews as unknown as (...a: unknown[]) => unknown)(...args)
@@ -147,6 +156,11 @@ beforeEach(() => {
   // Default: the requested session exists, so triggerReview proceeds to runReview.
   sessionLoadOne.mockResolvedValue({ id: 'session-1' })
   getReviewsForSession.mockReset()
+  getReviewSummariesForProjectSession.mockReset()
+  getReviewLog.mockReset()
+  getReviewSummariesForProjectSession.mockImplementation((...args: unknown[]) =>
+    getReviewsForSession(...args)
+  )
   recoverInterruptedReviews.mockReset()
   recoverInterruptedReviews.mockResolvedValue(0)
   // Default: no prior review for the turn, so the auto-idempotency check lets the run proceed.
@@ -711,6 +725,17 @@ describe('reviewer IPC handlers', () => {
     )
   })
 
+  it('reads a scoped log through the detail IPC without loading the Session history', async () => {
+    const request = { projectId: 'project-1', appSessionId: 'session-1', reviewId: 'review-1' }
+    const log = [{ kind: 'message', text: 'stored log' }]
+    getReviewLog.mockResolvedValue(log)
+    registerReviewerIpcHandlers({ acpRuntime, managedFileVersions })
+    await expect(handlers.get(REVIEWER_IPC.GET_REVIEW_LOG)?.({}, request)).resolves.toEqual(log)
+    expect(getReviewLog).toHaveBeenCalledExactlyOnceWith(request)
+    expect(getReviewSummariesForProjectSession).not.toHaveBeenCalled()
+    expect(sessionLoadOne).not.toHaveBeenCalled()
+  })
+
   describe('reviewer:get-for-session handler', () => {
     it('loads persisted reviews and runs them through the stale-review detector', async () => {
       const reviews = [
@@ -737,7 +762,7 @@ describe('reviewer IPC handlers', () => {
         }
       )
 
-      expect(getReviewsForSession).toHaveBeenCalledWith('project-1', 'session-1')
+      expect(getReviewSummariesForProjectSession).toHaveBeenCalledWith('project-1', 'session-1')
       expect(flagStaleReviews).toHaveBeenCalledWith(
         reviews,
         expect.objectContaining({ id: 'session-1' }),
@@ -745,6 +770,178 @@ describe('reviewer IPC handlers', () => {
         expect.any(Function)
       )
       expect(result).toEqual(flagged)
+    })
+
+    it('loads the renderer list through the log-free summary projection', async () => {
+      const summaries = [
+        {
+          id: 'review-summary',
+          turnMessageId: 'message-1',
+          lifecycle: 'complete',
+          outcome: 'pass',
+          reviewerLog: [],
+          checks: [],
+          submittedChecks: []
+        }
+      ]
+      getReviewSummariesForProjectSession.mockResolvedValue(summaries)
+      registerReviewerIpcHandlers({ acpRuntime, managedFileVersions })
+
+      const getHandler = handlers.get(REVIEWER_IPC.GET_FOR_SESSION)
+      const result = await getHandler?.(
+        {},
+        {
+          projectId: 'project-1',
+          appSessionId: 'session-1'
+        }
+      )
+
+      expect(getReviewSummariesForProjectSession).toHaveBeenCalledWith('project-1', 'session-1')
+      expect(getReviewsForSession).not.toHaveBeenCalled()
+      expect(result).toEqual(summaries)
+    })
+
+    it('resolves staleness through one exact-version batch and preserves the lease contract', async () => {
+      const review = {
+        id: 'review-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        turnMessageId: 'message-1',
+        scope: { turnMessageId: 'message-1', blocks: [], artifactVersionIds: ['artifact-v1'] },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        reviewerLog: [],
+        checks: [],
+        submittedChecks: []
+      }
+      const record = {
+        source: 'artifact' as const,
+        sourceFileId: 'artifact-a',
+        versionId: 'artifact-v1',
+        checksum: 'checksum-v1',
+        contentStorageKey: 'artifacts/project-1/session-1/artifact-v1/content',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        filename: 'artifact-a.csv',
+        contentType: 'text/csv',
+        sizeBytes: 10
+      }
+      const readHostArtifactVersionRecords = vi.fn().mockResolvedValue([record])
+      const readHostArtifactCatalog = vi.fn()
+      const openVersion = vi.fn()
+      const openExactVersionContent = vi.fn().mockResolvedValue({
+        path: '/tmp/artifact-v1',
+        filename: 'artifact-a.csv',
+        contentType: 'text/csv',
+        checksum: 'checksum-v1',
+        size: 10,
+        readRange: vi.fn(),
+        verifyUnchanged: vi.fn(),
+        close: vi.fn()
+      })
+      getReviewSummariesForProjectSession.mockResolvedValue([review])
+      let resolved: { filename?: string; checksum?: string } | undefined
+      flagStaleReviews.mockImplementationOnce((async (
+        reviews: unknown,
+        _session: unknown,
+        _root: unknown,
+        resolve?: StaleResolver
+      ) => {
+        resolved = await resolve?.({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          versionId: 'artifact-v1'
+        })
+        return reviews as never
+      }) as never)
+      const owner = createReviewerCommandOwner({
+        acpRuntime,
+        artifactCatalog: { readHostArtifactCatalog, readHostArtifactVersionRecords },
+        managedFileVersions: { openVersion, openExactVersionContent }
+      })
+
+      const result = await owner.getForSession({
+        projectId: 'project-1',
+        appSessionId: 'session-1'
+      })
+
+      expect(result).toEqual([review])
+      expect(readHostArtifactVersionRecords).toHaveBeenCalledWith({
+        projectId: 'project-1',
+        versionIds: ['artifact-v1']
+      })
+      expect(readHostArtifactCatalog).not.toHaveBeenCalled()
+      expect(openVersion).not.toHaveBeenCalled()
+      expect(openExactVersionContent).toHaveBeenCalledWith(record)
+      expect(resolved).toMatchObject({
+        filename: 'artifact-a.csv',
+        checksum: 'checksum-v1'
+      })
+    })
+
+    it('falls back to the per-version resolver when the exact-version batch misses', async () => {
+      const review = {
+        id: 'review-1',
+        projectId: 'project-1',
+        sessionId: 'session-1',
+        turnMessageId: 'message-1',
+        scope: { turnMessageId: 'message-1', blocks: [], artifactVersionIds: ['artifact-v1'] },
+        lifecycle: 'complete',
+        outcome: 'pass',
+        reviewerLog: [],
+        checks: [],
+        submittedChecks: []
+      }
+      const readHostArtifactVersionRecords = vi.fn().mockResolvedValue([])
+      const readHostArtifactCatalog = vi.fn().mockResolvedValue([
+        {
+          source: 'artifact',
+          sourceFileId: 'artifact-a',
+          sessionId: 'session-1',
+          versionId: 'artifact-v1'
+        }
+      ])
+      const openVersion = vi.fn().mockResolvedValue({
+        path: '/tmp/artifact-v1',
+        size: 10,
+        version: { filename: 'artifact-a.csv', contentType: 'text/csv', checksum: 'checksum-v1' },
+        readRange: vi.fn(),
+        verifyUnchanged: vi.fn(),
+        close: vi.fn()
+      })
+      const openExactVersionContent = vi.fn()
+      getReviewSummariesForProjectSession.mockResolvedValue([review])
+      let resolved: { filename?: string; checksum?: string } | undefined
+      flagStaleReviews.mockImplementationOnce((async (
+        reviews: unknown,
+        _session: unknown,
+        _root: unknown,
+        resolve?: StaleResolver
+      ) => {
+        resolved = await resolve?.({
+          projectId: 'project-1',
+          sessionId: 'session-1',
+          versionId: 'artifact-v1'
+        })
+        return reviews as never
+      }) as never)
+      const owner = createReviewerCommandOwner({
+        acpRuntime,
+        artifactCatalog: { readHostArtifactCatalog, readHostArtifactVersionRecords },
+        managedFileVersions: { openVersion, openExactVersionContent }
+      })
+
+      await owner.getForSession({ projectId: 'project-1', appSessionId: 'session-1' })
+
+      expect(openExactVersionContent).not.toHaveBeenCalled()
+      expect(openVersion).toHaveBeenCalledWith(
+        { source: 'artifact', projectId: 'project-1', fileId: 'artifact-a' },
+        'artifact-v1'
+      )
+      expect(resolved).toMatchObject({
+        filename: 'artifact-a.csv',
+        checksum: 'checksum-v1'
+      })
     })
 
     it('returns unflagged reviews when the session is not in the loaded list', async () => {

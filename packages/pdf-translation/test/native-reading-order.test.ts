@@ -7,6 +7,87 @@ import { PdfTranslationWriter } from '../src/writer.js'
 import { extractPdfTranslationSource } from '../src/reader/extraction.js'
 import { readPdfTranslationCases } from './fixtures/read-cases.js'
 import { verifyPdfPreservation } from './support/pdf-translation-preservation.js'
+import { groupPdfTranslationPages, type PdfLayoutTextItem } from '../src/reader/layout.js'
+
+function numberedReferenceColumns(fault = ''): PdfLayoutTextItem[] {
+  const items = [40, 296].flatMap((x, lane) =>
+    [120, 180, 600, 660].flatMap((y, row) => {
+      const number = lane * 4 + row + 1
+      return [
+        `[${number}] A. Author, An independent research article,`,
+        'Synthetic Journal 12 (2024), complete publication details.'
+      ].map((str, line) => ({
+        str,
+        width: 220,
+        height: 10,
+        dir: 'ltr',
+        hasEOL: true,
+        transform: [10, 0, 0, 10, x + line * 12, 800 - y - line * 12],
+        fontName: 'Reference',
+        fontAscent: 0.78,
+        fontDescent: -0.22
+      }))
+    })
+  )
+  items.push({ ...items[0], str: '1', width: 10, transform: [10, 0, 0, 10, 279, 96] })
+  if (fault === 'missing-number') items[4].str = items[4].str.replace('[3]', '[9]')
+  if (fault === 'duplicate-number') items[8].str = items[8].str.replace('[5]', '[4]')
+  if (fault === 'missing-font') items[5].fontName = ''
+  if (fault === 'foreign-block') items[4].str = 'Independent section of ordinary explanatory text.'
+  if (fault === 'missing-date') items[5].str = items[5].str.replace('(2024)', '(n.d.)')
+  if (fault === 'cross-gutter') items[5].width = 400
+  if (fault === 'footer-font') items.at(-1)!.fontName = 'Unknown'
+  if (fault === 'foreign-page') items.at(-1)!.str = '2'
+  if (fault === 'footer-overlap') items.at(-1)!.transform[5] = 130
+  if (fault === 'native-band-order')
+    return [...items.slice(0, 4), ...items.slice(8, 12), ...items.slice(4, 8), ...items.slice(12)]
+  return items
+}
+
+it('keeps complete consecutive native bibliography columns across a shared paragraph gap', () => {
+  const items = numberedReferenceColumns()
+  const result = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+  })
+  expect(result.units.map((unit) => /^\[(\d+)\]/u.exec(unit.source)?.[1]).filter(Boolean)).toEqual([
+    '1',
+    '2',
+    '3',
+    '4',
+    '5',
+    '6',
+    '7',
+    '8'
+  ])
+  expect(result.units.flatMap((unit) => unit.items).toSorted()).toEqual(
+    items.map((_, index) => `1:${index}`).toSorted()
+  )
+})
+
+it.each([
+  'missing-number',
+  'duplicate-number',
+  'missing-font',
+  'foreign-block',
+  'missing-date',
+  'cross-gutter',
+  'footer-font',
+  'foreign-page',
+  'footer-overlap',
+  'native-band-order'
+])('does not override section order without complete bibliography evidence: %s', (fault) => {
+  const items = numberedReferenceColumns(fault)
+  const result = groupPdfTranslationPages({
+    pages: [{ page: 1, width: 600, height: 800, rotation: 0, items }]
+  })
+  const starts = result.units.map((unit) => /^\[(\d+)\]/u.exec(unit.source)?.[1]).filter(Boolean)
+  expect(starts.indexOf('5') >= 0 ? starts.indexOf('5') : starts.indexOf('4')).toBeLessThan(
+    starts.lastIndexOf('4')
+  )
+  expect(result.units.flatMap((unit) => unit.items).toSorted()).toEqual(
+    items.map((_, index) => `1:${index}`).toSorted()
+  )
+})
 
 const cases = readPdfTranslationCases<{
   name: string

@@ -77,14 +77,16 @@ describe('image annotation source preflight', () => {
       projectId: 'project-1',
       fileId: 'artifact-1',
       versionId: 'artifact-v1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
     expect(resources.acquire).toHaveBeenNthCalledWith(2, {
       source: 'upload',
       projectId: 'project-1',
       fileId: 'upload-1',
       versionId: 'upload-v1',
-      mimeType: 'image/avif'
+      mimeType: 'image/avif',
+      imagePreview: true
     })
     expect(resources.release).toHaveBeenCalledTimes(2)
   })

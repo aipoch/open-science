@@ -1,5 +1,3 @@
-import { createArtifactVersionLocator } from '../../shared/artifact-version-locator'
-import { createUploadVersionReference } from '../../shared/uploads'
 import { randomUUID } from 'node:crypto'
 import { findVerifiedPdfDocument } from '../pdf-documents/identity'
 import type { Prisma, PdfAnnotation, PdfAnnotationSourceBinding, PdfDocument } from '@prisma/client'
@@ -177,54 +175,4 @@ export const removeDocumentSources = async (
     removed += rows.length
   }
   return removed
-}
-
-// Publication/recovery owners call this after their version becomes durable. Notes remain
-// accessible from another project's Files/search before somebody first opens that PDF.
-export const bindManagedPdfVersion = async (
-  tx: DocumentTransaction,
-  kind: 'upload-version' | 'artifact-version',
-  versionId: string
-): Promise<void> => {
-  const upload =
-    kind === 'upload-version'
-      ? await tx.uploadVersion.findUnique({
-          where: { id: versionId },
-          include: { uploadFile: true }
-        })
-      : null
-  const artifact =
-    kind === 'artifact-version'
-      ? await tx.artifactVersion.findUnique({
-          where: { id: versionId },
-          include: { artifact: true }
-        })
-      : null
-  const version = upload ?? artifact
-  const owner = upload?.uploadFile ?? artifact?.artifact
-  if (!version || !owner) return
-  const source: PdfAnnotationSource = {
-    kind,
-    projectId: owner.projectId,
-    sessionId: owner.sessionId,
-    sourceFileId: owner.id,
-    versionId,
-    checksum: version.checksum,
-    name: version.filename,
-    path:
-      kind === 'upload-version'
-        ? createUploadVersionReference(versionId, {
-            projectId: owner.projectId,
-            sessionId: owner.sessionId,
-            fileId: owner.id
-          })
-        : createArtifactVersionLocator({
-            projectId: owner.projectId,
-            appSessionId: owner.sessionId,
-            artifactId: owner.id,
-            versionId
-          })
-  }
-  const document = await findVerifiedPdfDocument(tx, source)
-  if (document) await ensureBinding(tx, source, document)
 }

@@ -1,5 +1,6 @@
 import {
   PDFDocument,
+  PDFArray,
   PDFDict,
   PDFHexString,
   PDFName,
@@ -1353,3 +1354,285 @@ it.each([false, true])(
     }
   }
 )
+
+it('preserves ordinary document metadata and attachments while translating the paper', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.setTitle('Ordinary academic paper')
+  pdf.setAuthor('Paper author')
+  pdf.setSubject('Reflow preservation')
+  const info = pdf.context.lookup(pdf.context.trailerInfo.Info, PDFDict)
+  info.set(PDFName.of('CustomResearchId'), PDFHexString.fromText('研究-123'))
+  const xmp =
+    '<?xpacket begin=""?><x:xmpmeta xmlns:x="adobe:ns:meta/"><description>Research metadata</description></x:xmpmeta><?xpacket end="w"?>'
+  pdf.catalog.set(
+    PDFName.of('Metadata'),
+    pdf.context.register(pdf.context.stream(xmp, { Type: 'Metadata', Subtype: 'XML' }))
+  )
+  pdf.catalog.set(PDFName.of('Lang'), PDFString.of('en-US'))
+  pdf.catalog.set(PDFName.of('MarkInfo'), pdf.context.obj({ Marked: false }))
+  pdf.catalog.getOrCreateViewerPreferences().setDisplayDocTitle(true)
+  const attachment = new TextEncoder().encode('Supplementary results: 123')
+  await pdf.attach(attachment, '补充材料.txt', { mimeType: 'text/plain' })
+  pdf.addPage([400, 500]).drawText('Original paper body.', { font, x: 40, y: 440, size: 12 })
+  // Exercise nested name trees and the shared Names/EmbeddedFiles + AF file specification.
+  await pdf.save()
+  const names = pdf.catalog.lookup(PDFName.of('Names'), PDFDict)
+  const files = names.lookup(PDFName.of('EmbeddedFiles'), PDFDict)
+  names.set(PDFName.of('EmbeddedFiles'), pdf.context.obj({ Kids: [pdf.context.register(files)] }))
+  const output = await generate(pdf, [
+    {
+      source: 'Original paper body.',
+      translation: 'Translated paper body.',
+      fragments: [fragment(1, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow?.originalPageNumbers).toEqual([])
+  const saved = await PDFDocument.load(output.data, { updateMetadata: false })
+  expect(saved.getTitle()).toBe('Ordinary academic paper')
+  expect(saved.getAuthor()).toBe('Paper author')
+  expect(saved.getSubject()).toBe('Reflow preservation')
+  expect(
+    saved.context
+      .lookup(saved.context.trailerInfo.Info, PDFDict)
+      .lookup(PDFName.of('CustomResearchId'), PDFHexString)
+      .decodeText()
+  ).toBe('研究-123')
+  const savedNames = saved.catalog.lookup(PDFName.of('Names'), PDFDict)
+  const savedFiles = savedNames
+    .lookup(PDFName.of('EmbeddedFiles'), PDFDict)
+    .lookup(PDFName.of('Kids'), PDFArray)
+    .lookup(0, PDFDict)
+  const fileRef = savedFiles.lookup(PDFName.of('Names'), PDFArray).get(1)
+  expect(saved.catalog.lookup(PDFName.of('AF'), PDFArray).get(0)).toEqual(fileRef)
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const doc = await task.promise
+    expect((await doc.getMetadata()).metadata?.getRaw()).toContain('Research metadata')
+    const attachments = Object.values((await doc.getAttachments())!)
+    expect(attachments).toHaveLength(1)
+    expect(attachments[0].filename).toBe('补充材料.txt')
+    expect(attachments[0].content).toEqual(attachment)
+    expect((await doc.getViewerPreferences())?.DisplayDocTitle).toBe(true)
+    expect(
+      (await (await doc.getPage(1)).getTextContent()).items
+        .flatMap((item) => ('str' in item ? [item.str] : []))
+        .join(' ')
+    ).toContain('Translated paper body.')
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('remaps page labels, print ranges, unreferenced named destinations and opening targets after expansion', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const source of ['First paragraph.', 'Second paragraph.'])
+    pdf.addPage([400, 500]).drawText(source, { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(
+    PDFName.of('PageLabels'),
+    pdf.context.obj({
+      Kids: [
+        pdf.context.obj({ Nums: [0, { S: 'r' }, 1, { S: 'D', P: PDFString.of('Paper-'), St: 7 }] })
+      ]
+    })
+  )
+  pdf.catalog.set(PDFName.of('ViewerPreferences'), pdf.context.obj({ PrintPageRange: [1, 1] }))
+  const target = [pdf.getPage(1).ref, 'XYZ', 40, 450, null]
+  pdf.catalog.set(
+    PDFName.of('Names'),
+    pdf.context.obj({ Dests: { Names: [PDFHexString.fromText('目标'), { D: target }] } })
+  )
+  pdf.catalog.set(PDFName.of('Dests'), pdf.context.obj({ legacy: [pdf.getPage(0).ref, 'Fit'] }))
+  pdf.catalog.set(
+    PDFName.of('OpenAction'),
+    pdf.context.obj({ S: 'GoTo', D: PDFHexString.fromText('目标') })
+  )
+  const output = await generate(pdf, [
+    {
+      source: 'First paragraph.',
+      translation: 'Expanded translated paragraph. '.repeat(500),
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Second paragraph.',
+      translation: 'Translated second paragraph.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow?.originalPageNumbers).toEqual([])
+  const primary = output.reflow!.sourcePageNumbers
+  expect(primary.filter((number) => number === 1).length).toBeGreaterThan(1)
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const doc = await task.promise
+    expect(await doc.getPageLabels()).toEqual(
+      primary.map((number) => (number === 1 ? 'i' : 'Paper-7'))
+    )
+    expect((await doc.getViewerPreferences())?.PrintPageRange).toEqual([
+      1,
+      primary.lastIndexOf(1) + 1
+    ])
+    const named = await doc.getDestination('目标')
+    expect(await doc.getPageIndex(named![0])).toBe(
+      output.reflow!.sourcePages!.findIndex((pages) => pages.includes(2))
+    )
+    const legacy = await doc.getDestination('legacy')
+    expect(await doc.getPageIndex(legacy![0])).toBe(0)
+    const open = await doc.getOpenAction()
+    expect(await doc.getPageIndex(open!.dest![0])).toBe(
+      output.reflow!.sourcePages!.findIndex((pages) => pages.includes(2))
+    )
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('preserves a named FitR target on its original page with a valid output page reference', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const source of ['First paragraph.', 'Second paragraph.'])
+    pdf.addPage([400, 500]).drawText(source, { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(
+    PDFName.of('Names'),
+    pdf.context.obj({
+      Dests: { Names: [PDFString.of('target'), [pdf.getPage(1).ref, 'FitR', 10, 20, 300, 450]] }
+    })
+  )
+  const output = await generate(pdf, [
+    {
+      source: 'First paragraph.',
+      translation: 'Expanded translated paragraph. '.repeat(500),
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Second paragraph.',
+      translation: 'Translated second paragraph.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const doc = await task.promise,
+      dest = (await doc.getDestination('target'))!
+    expect(dest.slice(1)).toEqual([{ name: 'FitR' }, 10, 20, 300, 450])
+    const number = (await doc.getPageIndex(dest[0])) + 1
+    expect(number).toBeGreaterThan(2)
+    expect(output.reflow!.originalPageNumbers).toContain(number)
+  } finally {
+    await task.destroy()
+  }
+})
+
+it.each([
+  'StructTreeRoot',
+  'OCProperties',
+  'UnknownCatalogFeature',
+  'OpenAction',
+  'Names',
+  'MarkInfo',
+  'PageLabels'
+])(
+  'keeps the exact original document with a structural diagnostic for unsupported %s',
+  async (key) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica)
+    pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+    const value =
+      key === 'OpenAction'
+        ? { S: 'JavaScript', JS: PDFString.of('void 0') }
+        : key === 'Names'
+          ? { JavaScript: { Names: [] } }
+          : key === 'MarkInfo'
+            ? { Marked: true }
+            : key === 'PageLabels'
+              ? { Nums: [0, { S: 'InvalidStyle' }] }
+              : { Source: pdf.getPage(0).ref }
+    pdf.catalog.set(PDFName.of(key), pdf.context.obj(value))
+    const original = await pdf.save()
+    const output = await generate(pdf, [
+      { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+    ])
+    expect(output.data).toEqual(original)
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({ code: 'document-structure', unitIndex: 0 })
+    ])
+  }
+)
+
+it('rejects page references hidden inside nominally independent metadata without copying the source page tree', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+  pdf.context
+    .lookup(pdf.context.trailerInfo.Info, PDFDict)
+    .set(PDFName.of('CustomPage'), pdf.getPage(0).ref)
+  const output = await generate(pdf, [
+    { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.data).toEqual(await pdf.save())
+  expect(output.layoutFailures[0].code).toBe('document-structure')
+})
+
+it('bounds cyclic catalog name trees and preserves their original bytes', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+  const tree = pdf.context.obj({}),
+    ref = pdf.context.register(tree)
+  tree.set(PDFName.of('Kids'), pdf.context.obj([ref]))
+  pdf.catalog.set(PDFName.of('Names'), pdf.context.obj({ EmbeddedFiles: ref }))
+  const output = await generate(pdf, [
+    { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.data).toEqual(await pdf.save())
+  expect(output.layoutFailures[0].code).toBe('document-structure')
+})
+
+it('uses the primary source label and includes a shared output page when a print range selects its other source', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  for (const source of ['First paragraph.', 'Second paragraph.'])
+    pdf.addPage([400, 500]).drawText(source, { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(
+    PDFName.of('PageLabels'),
+    pdf.context.obj({ Nums: [0, { S: 'r' }, 1, { S: 'D', St: 7 }] })
+  )
+  pdf.catalog.set(PDFName.of('ViewerPreferences'), pdf.context.obj({ PrintPageRange: [2, 2] }))
+  const output = await generate(pdf, [
+    {
+      source: 'First paragraph.',
+      translation: 'Translated first paragraph.',
+      fragments: [fragment(1, 0.08)]
+    },
+    {
+      source: 'Second paragraph.',
+      translation: 'Translated second paragraph.',
+      fragments: [fragment(2, 0.08)]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow!.sourcePages).toEqual([[1, 2]])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const doc = await task.promise
+    expect(await doc.getPageLabels()).toEqual(['i'])
+    expect((await doc.getViewerPreferences())?.PrintPageRange).toEqual([1, 1])
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('retains nonstandard zero-based print ranges instead of guessing their intended pages', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica)
+  pdf.addPage([400, 500]).drawText('Original.', { font, x: 40, y: 440, size: 12 })
+  pdf.catalog.set(PDFName.of('ViewerPreferences'), pdf.context.obj({ PrintPageRange: [0, 0] }))
+  const output = await generate(pdf, [
+    { source: 'Original.', translation: 'Translated.', fragments: [fragment(1, 0.08)] }
+  ])
+  expect(output.data).toEqual(await pdf.save())
+  expect(output.layoutFailures[0].code).toBe('document-structure')
+})

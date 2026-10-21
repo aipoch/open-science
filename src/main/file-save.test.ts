@@ -2857,3 +2857,222 @@ describe('shared file export document lifetime', () => {
     }
   })
 })
+
+describe('artifact export progress and cancellation', () => {
+  const identity = (): Pick<
+    ApplicationInvocation<readonly unknown[]>,
+    'callerContext' | 'callerLease'
+  > => {
+    const controller = new AbortController()
+    return {
+      callerContext: createElectronCallerContext(7621),
+      callerLease: {
+        leaseId: 'artifact-save-test',
+        generation: 1,
+        signal: controller.signal,
+        isCurrent: () => !controller.signal.aborted
+      }
+    }
+  }
+  const artifact = (
+    fileId: string
+  ): { fileId: string; versionId: string; suggestedName: string } => ({
+    fileId,
+    versionId: 'v1',
+    suggestedName: `${fileId}.txt`
+  })
+
+  it('isolates progress and cancellation by caller lease and cleans up after cancellation', async () => {
+    const caller = identity()
+    const other = identity()
+    let choose!: (value: { canceled: boolean; filePath: string }) => void
+    showSaveDialog.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          choose = resolve
+        })
+    )
+    const openManagedFileVersion = vi.fn()
+    const owner = createFileSaveCommands({ openManagedFileVersion })
+    const running = owner['file:save-session-artifacts']({
+      ...caller,
+      args: [
+        { operationId: 'operation-1', projectId: 'p', sessionId: 's', files: [artifact('first')] }
+      ]
+    })
+    await vi.waitFor(() => expect(choose).toBeTypeOf('function'))
+    const request = [{ operationId: 'operation-1' }] as const
+    expect(await owner['file:artifact-save-progress']({ ...caller, args: request })).toEqual({
+      phase: 'preparing',
+      completedFiles: 0,
+      totalFiles: 1
+    })
+    expect(await owner['file:artifact-save-progress']({ ...other, args: request })).toBeUndefined()
+    await owner['file:cancel-artifact-save']({ ...other, args: request })
+    expect((await owner['file:artifact-save-progress']({ ...caller, args: request }))?.phase).toBe(
+      'preparing'
+    )
+    await expect(
+      owner['file:save-session-artifacts']({
+        ...caller,
+        args: [
+          { operationId: 'operation-1', projectId: 'p', sessionId: 's', files: [artifact('first')] }
+        ]
+      })
+    ).rejects.toThrow('already running')
+    await owner['file:cancel-artifact-save']({ ...caller, args: request })
+    choose({ canceled: false, filePath: '/unused.txt' })
+    await expect(running).resolves.toEqual({ saved: false, cancelled: true })
+    expect(openManagedFileVersion).not.toHaveBeenCalled()
+    expect(await owner['file:artifact-save-progress']({ ...caller, args: request })).toBeUndefined()
+    await expect(
+      owner['file:artifact-save-progress']({ ...caller, args: [{ operationId: '../bad' }] })
+    ).rejects.toThrow('identity')
+  })
+
+  it('keeps already published session files and cancels before publishing the next file', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'session-save-cancel-'))
+    try {
+      const caller = identity()
+      let release!: () => void
+      let secondOpened = false
+      const openManagedFileVersion = vi.fn(async (_source, request) => {
+        if (request.fileId === 'second') {
+          secondOpened = true
+          await new Promise<void>((resolve) => {
+            release = resolve
+          })
+        }
+        return managedVersionHandle('contents', {
+          copyTo: async (path) => {
+            await writeFile(path, 'contents')
+          }
+        })
+      })
+      showOpenDialog.mockResolvedValueOnce({ canceled: false, filePaths: [directory] })
+      const owner = createFileSaveCommands({ openManagedFileVersion })
+      const running = owner['file:save-session-artifacts']({
+        ...caller,
+        args: [
+          {
+            operationId: 'batch',
+            projectId: 'p',
+            sessionId: 's',
+            files: [artifact('first'), artifact('second'), artifact('third')]
+          }
+        ]
+      })
+      await vi.waitFor(() => expect(secondOpened).toBe(true))
+      expect(
+        await owner['file:artifact-save-progress']({ ...caller, args: [{ operationId: 'batch' }] })
+      ).toEqual({ phase: 'running', completedFiles: 1, totalFiles: 3 })
+      await owner['file:cancel-artifact-save']({ ...caller, args: [{ operationId: 'batch' }] })
+      release()
+      await expect(running).resolves.toEqual({
+        saved: true,
+        cancelled: true,
+        completedFileIds: ['first'],
+        filePaths: [join(directory, 'first.txt')]
+      })
+      expect(await readdir(directory)).toEqual(['first.txt'])
+      expect(openManagedFileVersion).toHaveBeenCalledTimes(2)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('cancels ZIP streaming without replacing the destination or retaining temporary files', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'project-save-cancel-'))
+    try {
+      const caller = identity()
+      const destination = join(directory, 'existing.zip')
+      await writeFile(destination, 'original')
+      showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: destination })
+      const lease = managedVersionHandle('contents', {
+        readRange: async () => {
+          await owner['file:cancel-artifact-save']({ ...caller, args: [{ operationId: 'zip' }] })
+          return new Uint8Array(8)
+        }
+      })
+      const owner = createFileSaveCommands({
+        openManagedFileVersion: async () => lease,
+        createProjectArtifactTemporaryRoot: () => mkdtemp(join(directory, 'temporary-'))
+      })
+      await expect(
+        owner['file:save-project-artifacts']({
+          ...caller,
+          args: [
+            {
+              operationId: 'zip',
+              projectId: 'p',
+              suggestedArchiveName: 'archive',
+              files: [{ ...artifact('first'), source: 'artifact', sessionId: 's' }]
+            }
+          ]
+        })
+      ).resolves.toEqual({ saved: false, cancelled: true })
+      expect(await readFile(destination, 'utf8')).toBe('original')
+      expect(await readdir(directory)).toEqual(['existing.zip'])
+      expect(lease.close).toHaveBeenCalledOnce()
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+})
+
+it('cancels a replacement retry before it can overwrite the existing destination', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'artifact-save-retry-cancel-'))
+  try {
+    const destination = join(directory, 'result.txt')
+    await writeFile(destination, 'original')
+    const controller = new AbortController()
+    const caller = {
+      callerContext: createElectronCallerContext(8761),
+      callerLease: {
+        leaseId: 'retry',
+        generation: 1,
+        signal: controller.signal,
+        isCurrent: () => true
+      }
+    }
+    const replace = vi.fn().mockRejectedValue(Object.assign(new Error('busy'), { code: 'EBUSY' }))
+    const owner = createFileSaveCommands({
+      openManagedFileVersion: async () =>
+        managedVersionHandle('replacement', {
+          copyTo: async (path) => {
+            await writeFile(path, 'replacement')
+          }
+        }),
+      publishUserFile: (path, write, options) =>
+        productionPublishUserFile(path, write, {
+          ...options,
+          replace,
+          wait: async () => {
+            await owner['file:cancel-artifact-save']({
+              ...caller,
+              args: [{ operationId: 'retry' }]
+            })
+          }
+        })
+    })
+    showSaveDialog.mockResolvedValueOnce({ canceled: false, filePath: destination })
+    await expect(
+      owner['file:save-session-artifacts']({
+        ...caller,
+        args: [
+          {
+            operationId: 'retry',
+            projectId: 'p',
+            sessionId: 's',
+            files: [{ fileId: 'file', versionId: 'v1', suggestedName: 'result.txt' }]
+          }
+        ]
+      })
+    ).resolves.toEqual({ saved: false, cancelled: true })
+    expect(replace).toHaveBeenCalledOnce()
+    expect(await readFile(destination, 'utf8')).toBe('original')
+    expect(await readdir(directory)).toEqual(['result.txt'])
+  } finally {
+    await rm(directory, { recursive: true, force: true })
+  }
+})

@@ -1,6 +1,10 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import {
   backendDependencyIncludes,
+  createDesktopDependencyFilter,
+  desktopBackendDependencies,
+  desktopBackendPeerDependencies,
+  desktopBundledDependencies,
   isBackendRuntimeDependency,
   isElectronPackage,
   prismaEngineFilenames
@@ -8,17 +12,27 @@ import {
 import { cp, mkdir, readFile, readdir, realpath, rm, stat, writeFile } from 'node:fs/promises'
 import { createRequire } from 'node:module'
 import { dirname, join, resolve, relative, sep } from 'node:path'
+import { parseArgs } from 'node:util'
 
 const root = resolve(import.meta.dirname, '..')
-const stage = join(root, 'out/standalone')
+const { values } = parseArgs({ options: { desktop: { type: 'boolean', default: false } } })
+const stage = join(root, values.desktop ? 'out/desktop-backend' : 'out/standalone')
+const backend = join(root, values.desktop ? 'out/desktop-backend-build' : 'out/backend')
 const manifest = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'))
 const cliManifest = JSON.parse(
   await readFile(join(root, 'packages/open-science/package.json'), 'utf8')
 )
 const forbidden = isElectronPackage
+const metadata = values.desktop
+  ? JSON.parse(await readFile(join(backend, 'dependencies.json'), 'utf8'))
+  : []
+const bundledDependencies = desktopBundledDependencies(metadata)
+const dependencyRoots = values.desktop
+  ? desktopBackendDependencies(manifest.dependencies, metadata)
+  : Object.keys(manifest.dependencies)
 await rm(stage, { recursive: true, force: true })
 await mkdir(stage, { recursive: true })
-await cp(join(root, 'out/backend'), join(stage, 'out/backend'), { recursive: true })
+await cp(backend, join(stage, 'out/backend'), { recursive: true })
 await cp(join(root, 'out/web'), join(stage, 'out/web'), { recursive: true })
 await cp(join(root, 'resources'), join(stage, 'resources'), {
   recursive: true,
@@ -74,6 +88,10 @@ async function packageDirectory(name, from) {
 }
 async function copyDependency(name, from, destinationParent = stage) {
   if (forbidden(name)) throw new Error(`Standalone dependency closure includes ${name}`)
+  if (bundledDependencies.has(name))
+    throw new Error(
+      `External dependency at ${from} requires bundled ${name}; keep it external instead.`
+    )
   const source = await packageDirectory(name, from)
   const pkg = JSON.parse(await readFile(join(source, 'package.json'), 'utf8'))
   let destination = join(destinationParent, 'node_modules', name)
@@ -82,10 +100,17 @@ async function copyDependency(name, from, destinationParent = stage) {
   if (!atRoot) destination = join(stage, 'node_modules', name)
   if (installed.get(destination) === pkg.version) return
   installed.set(destination, pkg.version)
+  const desktopIncludes = values.desktop ? createDesktopDependencyFilter(pkg) : undefined
   await cp(source, destination, {
     recursive: true,
     dereference: true,
-    filter: (path) => backendDependencyIncludes(pkg, relative(source, path))
+    filter: async (path) => {
+      const file = relative(source, path)
+      return (
+        backendDependencyIncludes(pkg, file) &&
+        (!desktopIncludes || desktopIncludes(file, (await stat(path)).isDirectory()))
+      )
+    }
   })
   // These are prebuilt target artifacts. npm must not reinterpret them as a source installation.
   if (name.startsWith('@aipoch/') || name === '@prisma/client') {
@@ -105,7 +130,10 @@ async function copyDependency(name, from, destinationParent = stage) {
         throw error
     }
   }
-  for (const dependency of Object.keys(pkg.peerDependencies ?? {})) {
+  const peerDependencies = values.desktop
+    ? desktopBackendPeerDependencies(pkg)
+    : Object.keys(pkg.peerDependencies ?? {})
+  for (const dependency of peerDependencies) {
     if (!isBackendRuntimeDependency(dependency, name)) continue
     try {
       await copyDependency(dependency, source, destination)
@@ -119,7 +147,7 @@ async function copyDependency(name, from, destinationParent = stage) {
   }
 }
 const dependencies = {}
-for (const name of Object.keys(manifest.dependencies)) {
+for (const name of dependencyRoots) {
   if (forbidden(name) || name === '@aipoch/notebook-network-sandbox') continue
   await copyDependency(name, root)
   dependencies[name] = installed.get(join(stage, 'node_modules', name))
@@ -200,5 +228,5 @@ await writeFile(
   ) + '\n'
 )
 console.log(
-  `Staged ${process.platform}/${process.arch} standalone artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
+  `Staged ${process.platform}/${process.arch} ${values.desktop ? 'desktop' : 'standalone'} artifact at ${stage}; ${installed.size} dependency placements, no Electron.`
 )

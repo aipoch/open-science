@@ -12,7 +12,8 @@ import { LITERATURE_RECORD_IMPORT_MAX_BYTES } from '@aipoch/literature-citations
 import type {
   LiteratureCollectionView,
   LiteratureDuplicatePolicy,
-  LiteratureItemView
+  LiteratureItemView,
+  LiteratureRecordImportResult
 } from '@aipoch/literature-library/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 
@@ -114,7 +115,11 @@ export function useLiteratureImport({
   beginPdfImport: (file: File | PdfAnnotationSource) => void
   closeItemEditor: () => void
   previewRecordImport: (file: File) => Promise<void>
-  commitRecordImport: () => Promise<void>
+  previewRecordSelection: (
+    content: string,
+    selectedItemIndexes: number[]
+  ) => Promise<LiteratureRecordImportResult>
+  commitRecordImport: (selectedItemIndexes?: number[]) => Promise<void>
   trackNewMetadataDirty: (dirty: boolean) => void
   beginManualImport: (resetDraft?: boolean) => void
   closeRecordImport: () => void
@@ -367,7 +372,13 @@ export function useLiteratureImport({
     }
   }
 
-  const commitRecordImport = async (): Promise<void> => {
+  const previewRecordSelection = useCallback(
+    (content: string, selectedItemIndexes: number[]): Promise<LiteratureRecordImportResult> =>
+      hostApi.literature.importRecords({ mode: 'preview', content, selectedItemIndexes }),
+    [hostApi]
+  )
+
+  const commitRecordImport = async (selectedItemIndexes?: number[]): Promise<void> => {
     if (
       importingRecordsRef.current ||
       !recordImport?.preview ||
@@ -384,10 +395,23 @@ export function useLiteratureImport({
       const imported = await hostApi.literature.importRecords({
         mode: 'commit',
         content: recordImport.content,
+        ...(selectedItemIndexes ? { selectedItemIndexes } : {}),
         ...(duplicatePolicy === 'reuse' ? {} : { duplicatePolicy }),
         ...(collectionId ? { collectionId } : {})
       })
-      setRecordImport((current) => (current ? { ...current, preview: imported } : current))
+      setRecordImport((current) =>
+        current
+          ? {
+              ...current,
+              preview: {
+                ...imported,
+                entries: current.preview!.entries.map(
+                  (entry) => imported.entries.find((next) => next.index === entry.index) ?? entry
+                )
+              }
+            }
+          : current
+      )
       if (projectId && imported.imported?.itemIds.length) {
         for (
           let offset = 0;
@@ -414,15 +438,29 @@ export function useLiteratureImport({
     } catch (error) {
       if (error instanceof Error && error.message.includes(LITERATURE_IMPORT_IDENTITY_CONFLICT)) {
         const preview = await hostApi.literature
-          .importRecords({ mode: 'preview', content: recordImport.content })
+          .importRecords({
+            mode: 'preview',
+            content: recordImport.content,
+            ...(selectedItemIndexes ? { selectedItemIndexes } : {})
+          })
           .catch(() => undefined)
         setRecordImport((current) =>
           current
             ? {
                 ...current,
-                ...(preview ? { preview } : {}),
+                ...(preview
+                  ? {
+                      preview: {
+                        ...preview,
+                        entries: current.preview!.entries.map(
+                          (entry) =>
+                            preview.entries.find((next) => next.index === entry.index) ?? entry
+                        )
+                      }
+                    }
+                  : {}),
                 error: t(
-                  'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                  'Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.'
                 )
               }
             : current
@@ -438,7 +476,9 @@ export function useLiteratureImport({
                     'References were saved, but the destination could not be updated. You can find them in All references.'
                   )
                 : t('Reference import failed. Please try again.'),
-              failedCount: current.preview?.imported ? 0 : (current.preview?.items.length ?? 0)
+              failedCount: current.preview?.imported
+                ? 0
+                : (selectedItemIndexes?.length ?? current.preview?.items.length ?? 0)
             }
           : current
       )
@@ -476,6 +516,7 @@ export function useLiteratureImport({
     beginPdfImport,
     closeItemEditor,
     previewRecordImport,
+    previewRecordSelection,
     commitRecordImport,
     trackNewMetadataDirty,
     beginManualImport,

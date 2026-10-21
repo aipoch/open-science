@@ -63,6 +63,47 @@ type WorkspaceMessageQueueControllerOptions = {
 type MessageQueueSnapshot = {
   queues: Map<string, MessageQueueItem[]>
   announcement: string
+  removed: RemovedQueueItemView[]
+}
+
+type RemovedQueueItemView = {
+  id: string
+  sessionId: string
+  text: string
+  expiresAt: number
+  unavailable?: boolean
+}
+
+const QUEUED_MESSAGE_UNDO_MS = 8_000
+// Once appended, the normal conversation persistence owns recovery, even if sending later fails.
+const isUnsentUserItem = (item: MessageQueueItem): boolean =>
+  item.kind === 'user' && !item.messageAppended
+const exitGuardOwners = new Set<WorkspaceMessageQueueOwner>()
+const exitGuardListeners = new Set<() => void>()
+const subscribeWorkspaceQueueChanges = (listener: () => void): (() => void) => {
+  exitGuardListeners.add(listener)
+  return () => {
+    exitGuardListeners.delete(listener)
+  }
+}
+const pendingWorkspaceQueueCount = (): number =>
+  [...exitGuardOwners].reduce((count, owner) => count + owner.pendingUserCount(), 0)
+const pendingWorkspaceQueueTarget = (): { projectId: string; sessionId: string } | undefined => {
+  for (const owner of exitGuardOwners) {
+    for (const items of owner.queues.values()) {
+      const item = items.find(isUnsentUserItem)
+      if (item) return { projectId: item.projectId, sessionId: item.sessionId }
+    }
+  }
+  return undefined
+}
+const registerWorkspaceQueueExitGuard = (owner: WorkspaceMessageQueueOwner): (() => void) => {
+  exitGuardOwners.add(owner)
+  for (const listener of exitGuardListeners) listener()
+  return () => {
+    exitGuardOwners.delete(owner)
+    for (const listener of exitGuardListeners) listener()
+  }
 }
 
 type WorkspaceMessageQueueRuntimeOptions = Pick<
@@ -87,7 +128,18 @@ class WorkspaceMessageQueueOwner {
   readonly dispatches = new Map<string, MessageQueueDispatch>()
   private nextQueueId = 0
   private listeners = new Set<() => void>()
-  private snapshot: MessageQueueSnapshot = { queues: new Map(), announcement: '' }
+  private snapshot: MessageQueueSnapshot = { queues: new Map(), announcement: '', removed: [] }
+  private removed = new Map<
+    string,
+    {
+      item: MessageQueueItem
+      index: number
+      expiresAt: number
+      timer: ReturnType<typeof setTimeout>
+      discard: () => void
+      unavailable?: boolean
+    }
+  >()
   private sessionSubscription:
     | {
         source: WorkspaceMessageQueueControllerOptions['subscribeSessionChanges']
@@ -123,6 +175,58 @@ class WorkspaceMessageQueueOwner {
 
   itemsFor = (sessionId: string): MessageQueueItem[] => this.queues.get(sessionId) ?? []
 
+  pendingUserCount = (): number =>
+    [...this.queues.values()].reduce(
+      (count, items) => count + items.filter(isUnsentUserItem).length,
+      0
+    )
+
+  retainRemoved(item: MessageQueueItem, index: number, discard: () => void): void {
+    this.removed.set(item.id, {
+      item,
+      index,
+      discard,
+      expiresAt: Date.now() + QUEUED_MESSAGE_UNDO_MS,
+      timer: setTimeout(() => this.dismissRemoved(item.id), QUEUED_MESSAGE_UNDO_MS)
+    })
+  }
+
+  removedItem(id: string): MessageQueueItem | undefined {
+    const receipt = this.removed.get(id)
+    if (receipt && receipt.expiresAt <= Date.now()) {
+      this.dismissRemoved(id)
+      return undefined
+    }
+    return receipt?.item
+  }
+
+  markRemovedUnavailable(id: string): void {
+    const receipt = this.removed.get(id)
+    if (!receipt) return
+    receipt.unavailable = true
+    this.emit()
+  }
+
+  restoreRemoved(id: string): void {
+    const receipt = this.removed.get(id)
+    if (!receipt || !this.removedItem(id)) return
+    clearTimeout(receipt.timer)
+    this.removed.delete(id)
+    const items = [...this.itemsFor(receipt.item.sessionId)]
+    items.splice(Math.min(receipt.index, items.length), 0, receipt.item)
+    this.queues.set(receipt.item.sessionId, items)
+    this.emit()
+  }
+
+  dismissRemoved = (id: string): void => {
+    const receipt = this.removed.get(id)
+    if (!receipt) return
+    clearTimeout(receipt.timer)
+    this.removed.delete(id)
+    receipt.discard()
+    this.emit()
+  }
+
   replaceItem = (
     sessionId: string,
     itemId: string,
@@ -148,15 +252,26 @@ class WorkspaceMessageQueueOwner {
       item.application?.resolve(undefined)
     }
     this.queues.delete(sessionId)
+    for (const [id, receipt] of this.removed) {
+      if (receipt.item.sessionId === sessionId) this.dismissRemoved(id)
+    }
     this.emit()
   }
 
   emit = (announcement?: string): void => {
     this.snapshot = {
       queues: new Map(this.queues),
+      removed: [...this.removed.values()].map(({ item, expiresAt, unavailable }) => ({
+        id: item.id,
+        sessionId: item.sessionId,
+        text: item.text,
+        expiresAt,
+        unavailable
+      })),
       announcement: announcement ?? this.snapshot.announcement
     }
     for (const listener of this.listeners) listener()
+    if (exitGuardOwners.has(this)) for (const listener of exitGuardListeners) listener()
   }
 
   connect(
@@ -197,6 +312,8 @@ class WorkspaceMessageQueueOwner {
   }
 
   dispose(): void {
+    exitGuardOwners.delete(this)
+    for (const id of this.removed.keys()) this.dismissRemoved(id)
     this.sessionSubscription?.unsubscribe()
     this.sessionSubscription = undefined
     this.runtimeOptions = undefined
@@ -213,7 +330,14 @@ class WorkspaceMessageQueueOwner {
   }
 }
 
-export { WorkspaceMessageQueueOwner }
+export {
+  WorkspaceMessageQueueOwner,
+  QUEUED_MESSAGE_UNDO_MS,
+  pendingWorkspaceQueueCount,
+  pendingWorkspaceQueueTarget,
+  registerWorkspaceQueueExitGuard,
+  subscribeWorkspaceQueueChanges
+}
 export type {
   ApplicationMessageQueueAdmission,
   MessageQueueAdmission,
@@ -222,6 +346,7 @@ export type {
   MessageQueueItem,
   MessageQueuePhase,
   MessageQueueSnapshot,
+  RemovedQueueItemView,
   WorkspaceMessageQueueControllerOptions,
   WorkspaceMessageQueueRuntimeOptions
 }

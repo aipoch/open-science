@@ -1,0 +1,117 @@
+name: Windows Upgrade Diagnostics
+
+# Maintained diagnostic tools only. No release, signing, or required-gate changes.
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/windows-upgrade-diagnostics.yml'
+      - 'scripts/windows-upgrade-diagnostics/**'
+      - 'build/windows-install-publication.*'
+      - 'build/compile-windows-install-publication.cjs'
+      - 'build/stage-windows-extractor.cjs'
+      - 'scripts/windows-install-publication.test.ts'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  observer:
+    runs-on: windows-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Exercise native process observation
+        run: node --test scripts/windows-upgrade-diagnostics/observer.node-test.mjs
+      - name: Exercise direct PowerShell invocation
+        run: powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File scripts/windows-upgrade-diagnostics/test-observer-operation.ps1 -Output test-results/upgrade-diagnostics/direct-operation.json
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: upgrade-observer-evidence
+          path: test-results/upgrade-diagnostics
+          if-no-files-found: error
+          retention-days: 7
+
+  account-preflight:
+    runs-on: windows-latest
+    timeout-minutes: 12
+    strategy:
+      fail-fast: false
+      matrix:
+        probe: [basic, wininet]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - name: Observe isolated ordinary-user environment
+        shell: powershell
+        run: ./scripts/windows-upgrade-diagnostics/run-in-standard-account.ps1 -OutputDirectory evidence -Probe '${{ matrix.probe }}'
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: upgrade-account-${{ matrix.probe }}
+          path: evidence
+          if-no-files-found: error
+          retention-days: 7
+
+  installer-publication:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+          cache: npm
+      - name: Install dependencies
+        run: node scripts/ci/npm-ci.mjs
+      - name: Prepare production installer tools
+        shell: bash
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs')
+          const path = require('node:path')
+          const { getMakeNsisPath } = require('app-builder-lib/out/toolsets/windows')
+          async function prepare() {
+            const compiler = await getMakeNsisPath()
+            await require('./build/stage-windows-extractor.cjs')({
+              electronPlatformName: 'win32',
+              arch: require('builder-util').Arch.x64,
+              appOutDir: path.resolve('tmp/installer-tools'),
+              packager: { projectDir: process.cwd(), signIf: async () => {} }
+            })
+            const env = {
+              ...compiler.env,
+              OPEN_SCIENCE_MAKENSIS: compiler.path,
+              OPEN_SCIENCE_7ZA: path.resolve('out/windows-installer/x64/7za.exe')
+            }
+            for (const [key, value] of Object.entries(env)) {
+              fs.appendFileSync(process.env.GITHUB_ENV, `${key}=${value}\n`)
+            }
+          }
+          prepare().catch(error => { console.error(error); process.exitCode = 1 })
+          NODE
+      # This elevated runner covers Unicode profiles, copy publication and extractor failures.
+      # Move-only and absolute-path-boundary fixtures require their ordinary-user environment.
+      - name: Test native installer publication
+        run: >-
+          npx vitest run scripts/windows-install-publication.test.ts
+          -t "real Windows payload publication|handles (unicode-profile|valid|copy-fallback|truncated|corrupt|warning|cancelled|launch-failure|universal-x64) archives"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        if: always()
+        with:
+          name: installer-publication-evidence
+          path: tmp/install-publication-tests
+          if-no-files-found: warn
+          retention-days: 7

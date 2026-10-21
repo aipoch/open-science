@@ -2,6 +2,11 @@ import { getPdfTranslationTextContent } from './text-content.js'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { createPdfTranslationSource, type PdfTranslationSource } from './source.js'
 import { groupPdfTranslationPages, type PdfLayoutPage, type PdfLayoutTextItem } from './layout.js'
+import {
+  readPdfMathDiagrams,
+  preservePdfMathDiagrams,
+  type PdfMathDiagram
+} from './math-diagram.js'
 
 export type PdfTranslationExclusionReason =
   'invalid-geometry' | 'unsupported-orientation' | 'outside-page'
@@ -42,18 +47,33 @@ function independentRect(
     font = Math.hypot(c, d)
   if (advance <= 0 || font <= 0 || item.width <= 0) return undefined
   const quarter = ((Math.round(Math.atan2(-b, a) / (Math.PI / 2)) % 4) + 4) % 4
-  const [ux, uy] = [
+  let [ux, uy] = [
     [1, 0],
     [0, 1],
     [-1, 0],
     [0, -1]
   ][quarter]
-  if (
-    Math.hypot(a / advance - ux, -b / advance - uy) > 0.0001 ||
-    Math.abs((a * c + b * d) / (advance * font)) > 0.0001 ||
-    a * d - b * c <= 0
-  )
-    return undefined
+  if (Math.abs((a * c + b * d) / (advance * font)) > 0.0001 || a * d - b * c <= 0) return undefined
+  if (Math.hypot(a / advance - ux, -b / advance - uy) > 0.0001) {
+    // Arbitrary angles have no metric fallback: admit only an explicit native
+    // horizontal font and finite ascent/descent. The result remains a separate
+    // original-only navigation anchor, never a glyph-ink or repaint claim.
+    if (
+      style?.vertical !== false ||
+      !Number.isFinite(style.ascent) ||
+      !Number.isFinite(style.descent) ||
+      style.ascent! <= style.descent! ||
+      style.ascent! <= 0 ||
+      style.ascent! > 1 ||
+      style.descent! > 0 ||
+      style.descent! < -1 ||
+      !item.fontName ||
+      item.height <= 0
+    )
+      return undefined
+    ux = a / advance
+    uy = -b / advance
+  }
   const ascent = style?.ascent || (style?.descent ? 1 + style.descent : 0.8)
   const points = [
     [0, -ascent * font],
@@ -97,6 +117,7 @@ export async function extractPdfTranslationSource({
   if (!fingerprint || !Number.isInteger(document.numPages) || document.numPages < 1)
     throw new Error('Invalid PDF source identity')
   const pages: PdfLayoutPage[] = []
+  const mathDiagrams: PdfMathDiagram[] = []
   const styles: Record<string, TextStyle>[] = []
   const pagesWithoutText: number[] = []
   const exclusions: PdfTranslationExtraction['coverage']['exclusions'][number][] = []
@@ -177,6 +198,8 @@ export async function extractPdfTranslationSource({
       }
     })
     styles.push(content.styles ?? {})
+    mathDiagrams.push(...(await readPdfMathDiagrams(page, pageNumber, content)))
+    signal.throwIfAborted()
     if (pageTextItems === 0) pagesWithoutText.push(pageNumber)
     pages.push({
       page: pageNumber,
@@ -193,7 +216,7 @@ export async function extractPdfTranslationSource({
     signal.throwIfAborted()
   }
   // ponytail: grouping is synchronous; move it to a worker if long-document profiling requires it.
-  const layout = groupPdfTranslationPages({ pages })
+  const layout = preservePdfMathDiagrams(groupPdfTranslationPages({ pages }), mathDiagrams)
   const units: PdfTranslationSource['units'][number][] = []
   const independent: PdfTranslationSource['units'][number][] = []
   const warnings: PdfTranslationExtraction['coverage']['warnings'][number][] = []

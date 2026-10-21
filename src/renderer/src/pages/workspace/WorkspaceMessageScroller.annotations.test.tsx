@@ -637,7 +637,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     await act(async () => answerRows()[0]?.click())
 
     const firstQuestionDescription = Array.from(
-      container.querySelectorAll<HTMLElement>('[data-annotation-surface] p')
+      container.querySelectorAll<HTMLElement>('[data-annotation-surface] h3')
     ).find((element) => element.textContent === 'Which analysis method should the report use?')!
     expect(firstQuestionDescription.textContent).toBe(
       'Which analysis method should the report use?'
@@ -672,7 +672,7 @@ describe('WorkspaceMessageScroller annotation prop sync', () => {
     expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('false')
 
     await act(async () => requestAnnotationReveal(secondQuestionAnnotation))
-    expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('true')
+    expect(answerRows()[1]?.getAttribute('aria-expanded')).toBe('false')
     expect(
       Array.from(highlights.get('agent-annotation-reveal') ?? []).map((range) => range.toString())
     ).toContain('Who will read the report?')

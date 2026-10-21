@@ -2,6 +2,7 @@ import { prefetchSystemBootIdentity } from '../system-boot-identity'
 import { afterEach, beforeAll, expect, it } from 'vitest'
 import {
   copyFileSync,
+  symlinkSync,
   mkdtempSync,
   mkdirSync,
   writeFileSync,
@@ -113,7 +114,10 @@ it.each([
     requestSha256: createHash('sha256').update(bytes).digest('hex')
   })
   if (fault === 'kill-after-rename' || fault === 'cancel-before-start') {
-    copyFileSync(process.execPath, join(executor, 'node'))
+    // Homebrew Node needs libraries relative to its original executable on macOS.
+    // These recovery fixtures exercise the executor, not runtime relocation.
+    if (process.platform === 'darwin') symlinkSync(process.execPath, join(executor, 'node'))
+    else copyFileSync(process.execPath, join(executor, 'node'))
     // These fixtures exercise the macOS executor contract on every host. Windows
     // resolves its extensionless launch path to node.exe; no symlink privilege is needed.
     if (process.platform === 'win32') copyFileSync(process.execPath, join(executor, 'node.exe'))

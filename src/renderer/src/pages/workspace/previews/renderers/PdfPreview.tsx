@@ -3202,6 +3202,11 @@ export const PdfPreviewContent = ({
     : t(
         'PDF generation is unavailable for this language. Saved text translations remain available.'
       )
+  const outputLayout = (switchingEdition ? verifiedTranslation?.contentFirst : contentFirst)
+    ? 'reflow'
+    : !translationJob.state.options && !recoveryCheckpoint
+      ? translationLayout
+      : undefined
   const translatedDocument = usePdfTranslationDocument(
     document,
     // Keep the last verified snapshot readable while newly completed paragraphs are checked.
@@ -3211,11 +3216,7 @@ export const PdfPreviewContent = ({
     translationArtifact,
     resourceRequestKey,
     captureViewportAnchor,
-    (switchingEdition ? verifiedTranslation?.contentFirst : contentFirst)
-      ? 'reflow'
-      : !translationJob.state.options && !recoveryCheckpoint
-        ? translationLayout
-        : undefined,
+    outputLayout,
     translationStatus === 'running'
   )
   const pairedDocument = translatedDocument.ready
@@ -4085,8 +4086,12 @@ export const PdfPreviewContent = ({
   )
   const pdfRefreshControl =
     supportsTranslatedPdf &&
-    pairedDocument &&
-    (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading') ? (
+    (outputLayout === 'reflow'
+      ? !switchingEdition &&
+        Boolean(currentTranslation?.units.length || translation?.failedUnitIds?.length) &&
+        (translatedDocument.state.status !== 'error' || canRetryPdfGeneration)
+      : pairedDocument &&
+        (translatedDocument.updateAvailable || translatedDocument.state.status === 'loading')) ? (
       <TooltipProvider delayDuration={100}>
         <Tooltip>
           <TooltipTrigger asChild>
@@ -4108,7 +4113,8 @@ export const PdfPreviewContent = ({
                     'animate-spin motion-reduce:animate-none'
                 )}
               />
-              {translatedDocument.state.status !== 'loading' ? (
+              {translatedDocument.updateAvailable &&
+              translatedDocument.state.status !== 'loading' ? (
                 <span
                   aria-hidden="true"
                   className="absolute right-1 top-1 size-1.5 rounded-full bg-primary"
@@ -4121,13 +4127,17 @@ export const PdfPreviewContent = ({
               ? translatedDocument.state.phase === 'validating'
                 ? t('Checking translated PDF…')
                 : t('Preparing translated PDF…')
-              : t('New translations are available. Update the PDF when you are ready.')}
+              : translatedDocument.updateAvailable
+                ? t('New translations are available. Update the PDF when you are ready.')
+                : t('Update PDF preview')}
           </TooltipContent>
         </Tooltip>
         <span role="status" className="sr-only">
           {translatedDocument.state.status === 'loading'
             ? t('Preparing translated PDF…')
-            : t('New translations are available. Update the PDF when you are ready.')}
+            : translatedDocument.updateAvailable
+              ? t('New translations are available. Update the PDF when you are ready.')
+              : t('Update PDF preview')}
         </span>
       </TooltipProvider>
     ) : null
@@ -5564,7 +5574,11 @@ export const PdfPreviewContent = ({
                     }
                     layoutFailures={translatedDocument.layoutFailures}
                     unchangedLayoutUnitIds={translatedDocument.unchangedLayoutUnitIds}
-                    onRetryLayout={supportsTranslatedPdf ? refreshTranslationPdf : undefined}
+                    onRetryLayout={
+                      supportsTranslatedPdf && outputLayout !== 'reflow'
+                        ? refreshTranslationPdf
+                        : undefined
+                    }
                     layoutBusy={translatedDocument.state.status === 'loading' || switchingEdition}
                     layoutPending={
                       preparingFirstTranslationPdf ||

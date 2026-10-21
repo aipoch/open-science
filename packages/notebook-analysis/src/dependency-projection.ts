@@ -1297,15 +1297,29 @@ class NotebookDependencyProjector {
         keyword: NonNullable<NotebookDependencyReceiverCall['keywordArguments']>[number]
       ): NonNullable<typeof keyword.callableReferences> =>
         (keyword.callableReferences ?? []).flatMap((reference) => {
-          if (!libraryEffect?.callbackContainerKeywords?.includes(keyword.name)) return [reference]
-          if (reference.member !== undefined || reference.container !== undefined)
+          const recordKeyword = libraryEffect?.callbackRecordKeywords?.[keyword.name]
+          if (!libraryEffect?.callbackContainerKeywords?.includes(keyword.name) && !recordKeyword)
+            return [reference]
+          if (
+            recordKeyword &&
+            reference.container !== 'dict' &&
+            callbackContainers.get(reference.root)?.container !== 'constraint-records'
+          )
+            return [reference]
+          if (
+            reference.member !== undefined ||
+            (reference.container !== undefined && !recordKeyword)
+          )
             return [reference]
           const candidate = callbackContainers.get(reference.root)
-          if (!candidate) return [reference]
+          if (!candidate) return recordKeyword ? [] : [reference]
           const container = candidate.container ?? 'list'
           // Named mappings have only the conservative converters contract.
           // Existing inline formatter/aggregator mappings remain independent.
-          if (
+          if (container === 'constraint-records') {
+            if (!recordKeyword) return []
+          } else if (
+            recordKeyword ||
             (container === 'dict' && keyword.name !== 'converters') ||
             !acceptsPythonCallbackContainer(libraryEffect, keyword.name, container)
           )
@@ -1374,7 +1388,10 @@ class NotebookDependencyProjector {
             return [reference]
           }
           namedCallbackContainersUsed.add(reference.root)
-          return callbacks.map((root) => ({ root, container }))
+          return callbacks.map((root) => ({
+            root,
+            ...(container === 'constraint-records' ? {} : { container })
+          }))
         })
       // Visit every contracted callback before aggregating uncertainty: a
       // dynamic callback must not hide the known captures of later callbacks.
@@ -1482,7 +1499,12 @@ class NotebookDependencyProjector {
         typeAwareReasons.push('opaque-call')
       }
       for (const container of namedCallbackContainersUsed) {
-        if ((facts.possiblyMutatedNames ?? []).some((name) => receiversMayAlias(name, container)))
+        // Opaque constraint callbacks may retain or alter their record container.
+        // Recovering the current invocation does not prove identity for a later one.
+        if (
+          callbackContainers.get(container)?.container === 'constraint-records' ||
+          (facts.possiblyMutatedNames ?? []).some((name) => receiversMayAlias(name, container))
+        )
           callbackContainers.delete(container)
       }
       if (libraryEffect?.mutatesReceiverUnlessKeywordFalse) {
@@ -1936,7 +1958,14 @@ class NotebookDependencyProjector {
         }
       }
       if (rebind) {
-        for (const dependentRunId of safeCallConsumers.get(name) ?? []) {
+        // Rebinding an assumed builtin also invalidates results already derived
+        // from its consumers, just as rebinding an explicit input does.
+        const affectedRuns = new Set<string>()
+        for (const consumer of safeCallConsumers.get(name) ?? []) {
+          affectedRuns.add(consumer)
+          for (const descendant of descendantsOf(consumer, downstream)) affectedRuns.add(descendant)
+        }
+        for (const dependentRunId of affectedRuns) {
           if (dependentRunId === run.runId) continue
           const reasons = ['opaque-call']
           if (stalenessByRunId[dependentRunId]?.state !== 'stale') {

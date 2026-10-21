@@ -61,8 +61,10 @@ const SAFE_SEGMENT_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]*$/
 
 class UnsupportedMessageSnapshotVersionError extends Error {}
 
-const assertSafeSegment = (value: string, label: string): string => {
-  if (!SAFE_SEGMENT_PATTERN.test(value)) throw new Error(`Invalid ${label}: ${value}`)
+const assertSafeSegment = (value: unknown, label: string): string => {
+  if (typeof value !== 'string' || value.length === 0 || !SAFE_SEGMENT_PATTERN.test(value)) {
+    throw new Error(`Invalid ${label}: ${String(value)}`)
+  }
   return value
 }
 

@@ -19,14 +19,22 @@ import {
 
 const pendingWorkspaceElicitations = (
   session: ChatSession | undefined
-): PendingElicitationRequest[] =>
-  (session?.packageOrigin ? [] : (session?.activities ?? [])).flatMap((activity) => {
+): PendingElicitationRequest[] => {
+  if (!session || session.packageOrigin) return []
+  // A recorded pending projection can outlive its request. Only a live wait or a
+  // recoverable Session wait may reserve the composer; running/idle history cannot.
+  const waiting =
+    session.liveInteractionState?.elicitation ||
+    ((session.status === 'waiting-for-user' || session.status === 'waiting-permission') &&
+      session.interactionState?.elicitation !== false)
+  if (!waiting) return []
+  return (session.activities ?? []).flatMap((activity) => {
     const elicitation = activity.elicitation
     return elicitation?.state === 'pending' && elicitation.durable
       ? [
           {
             requestId: elicitation.durable.requestId,
-            sessionId: session!.id,
+            sessionId: session.id,
             toolCallId: activity.id,
             message: elicitation.message,
             fields: elicitation.fields,
@@ -35,6 +43,7 @@ const pendingWorkspaceElicitations = (
         ]
       : []
   })
+}
 
 const createWorkspaceElicitationRuntime = async (): Promise<WorkspaceElicitationRuntime> => ({
   state: await window.api.acp.getState(),

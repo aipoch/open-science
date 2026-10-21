@@ -1,3 +1,7 @@
+import { createHash } from 'node:crypto'
+import { executionEvidenceKeys } from './execution-evidence'
+import { COLUMNS, type PackageRecords } from './records-contract'
+import type { NotebookRunDocument } from '../../shared/notebook'
 import { configureTestElectronHost } from '../../../test/runtime-host'
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
@@ -723,3 +727,66 @@ it.each(['message', 'file'] as const)(
 )
 
 await configureTestElectronHost(await import('electron'))
+
+it.each(['legacy', 'mapped', 'corrupt'] as const)(
+  'preserves predecessor content during export: %s',
+  async (condition) => {
+    const fixture = await createProvenanceTestFixture()
+    try {
+      const prefix = 'execution-file-evidence/project-1/session-1/activity-run'
+      const hash = (text: string): string => createHash('sha256').update(text).digest('hex')
+      await mkdir(join(fixture.storageRoot, prefix, 'blobs'), { recursive: true })
+      const generations = ['before', 'after', 'unused'].map((text) => ({
+        generationId: text,
+        checksum: hash(text),
+        sizeBytes: text.length,
+        contentStorageKey: `${prefix}/blobs/sha256-${hash(text)}`
+      }))
+      for (const generation of generations)
+        await writeFile(
+          join(fixture.storageRoot, generation.contentStorageKey),
+          generation.generationId
+        )
+      if (condition === 'corrupt')
+        await writeFile(join(fixture.storageRoot, generations[0]!.contentStorageKey), 'broken')
+      const sidecar = JSON.stringify({
+        schemaVersion: 1,
+        evidenceId: 'run',
+        activityId: 'run',
+        activityKind: 'notebook-run',
+        relations: [{ previousGenerationId: 'before', generation: generations[1] }],
+        ...(condition === 'mapped' ? { predecessorGenerations: [generations[0]] } : {})
+      })
+      const key = `${prefix}/evidence.json`
+      await writeFile(join(fixture.storageRoot, key), sidecar)
+      const records = {
+        schemaVersion: 1,
+        tables: Object.fromEntries(Object.keys(COLUMNS).map((name) => [name, []]))
+      } as unknown as PackageRecords
+      const notebooks = [
+        {
+          runs: [
+            {
+              fileEvidence: {
+                storageKey: key,
+                checksum: hash(sidecar),
+                evidenceId: 'run',
+                activityId: 'run'
+              }
+            }
+          ]
+        }
+      ] as unknown as NotebookRunDocument[]
+      const reading = executionEvidenceKeys(fixture.storageRoot, records, notebooks)
+      if (condition === 'corrupt') await expect(reading).rejects.toThrow('checksum mismatch')
+      else {
+        const keys = await reading
+        expect(keys).toContain(generations[0]!.contentStorageKey)
+        expect(keys).toContain(generations[1]!.contentStorageKey)
+        expect(keys.includes(generations[2]!.contentStorageKey)).toBe(condition === 'legacy')
+      }
+    } finally {
+      await fixture.dispose()
+    }
+  }
+)

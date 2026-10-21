@@ -9,7 +9,7 @@
 
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { ReviewWithChecks } from '../../../../shared/reviewer'
 import type { ReviewerLogEntry } from '../../../../shared/reviewer'
@@ -54,8 +54,11 @@ const sampleLog: ReviewerLogEntry[] = [
 
 let container: HTMLDivElement
 let root: Root
+const getReviewLog = vi.fn()
 
 beforeEach(() => {
+  getReviewLog.mockReset().mockResolvedValue([])
+  vi.stubGlobal('api', { reviewer: { getReviewLog } })
   container = document.createElement('div')
   document.body.appendChild(container)
   root = createRoot(container)
@@ -64,12 +67,98 @@ beforeEach(() => {
 afterEach(() => {
   act(() => root.unmount())
   container.remove()
+  vi.unstubAllGlobals()
 })
 
 // Lazy-import the component under test.
 const { SessionReviewerPanel } = await import('./SessionReviewerPanel')
 
 describe('SessionReviewerPanel — Reviewer log section (issue 13/15)', () => {
+  it('loads a persisted log when the detail opens after a cold history load', async () => {
+    getReviewLog.mockResolvedValue(sampleLog)
+    await act(async () =>
+      root.render(<SessionReviewerPanel review={makeReview()} activeFindingId={undefined} />)
+    )
+    expect(getReviewLog).toHaveBeenCalledExactlyOnceWith({
+      projectId: 'project-1',
+      appSessionId: 'session-1',
+      reviewId: 'review-1'
+    })
+    expect(container.querySelector('[data-testid="reviewer-log-toggle"]')).not.toBeNull()
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="reviewer-log-toggle"]')!.click()
+    )
+    expect(container.textContent).toContain('Let me read the turn first.')
+  })
+
+  it('keeps an empty loaded log settled and retries a failed detail read', async () => {
+    getReviewLog.mockRejectedValueOnce(new Error('offline')).mockResolvedValue([])
+    await act(async () =>
+      root.render(<SessionReviewerPanel review={makeReview()} activeFindingId={undefined} />)
+    )
+    expect(container.textContent).toContain('Could not load Reviewer log.')
+    await act(async () =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent === 'Retry')!
+        .click()
+    )
+    expect(container.querySelector('[role="alert"]')).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+    expect(container.querySelector('[data-testid="reviewer-log-toggle"]')).toBeNull()
+    await act(async () =>
+      root.render(<SessionReviewerPanel review={makeReview()} activeFindingId={undefined} />)
+    )
+    expect(getReviewLog).toHaveBeenCalledTimes(2)
+  })
+
+  it('discards a delayed log after navigation and prefers a live pushed log', async () => {
+    let finish!: (log: ReviewerLogEntry[]) => void
+    getReviewLog.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    await act(async () =>
+      root.render(<SessionReviewerPanel review={makeReview()} activeFindingId={undefined} />)
+    )
+    await act(async () =>
+      root.render(
+        <SessionReviewerPanel
+          review={makeReview({
+            id: 'review-2',
+            reviewerLog: [{ kind: 'message', text: 'live log' }]
+          })}
+          activeFindingId={undefined}
+        />
+      )
+    )
+    await act(async () => finish(sampleLog))
+    await act(async () =>
+      container.querySelector<HTMLButtonElement>('[data-testid="reviewer-log-toggle"]')!.click()
+    )
+    expect(container.textContent).toContain('live log')
+    expect(container.textContent).not.toContain('Let me read the turn first.')
+    expect(getReviewLog).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not fetch live logs or replay evidence', async () => {
+    await act(async () =>
+      root.render(
+        <SessionReviewerPanel
+          review={makeReview({ reviewerLog: sampleLog })}
+          activeFindingId={undefined}
+        />
+      )
+    )
+    await act(async () =>
+      root.render(
+        <SessionReviewerPanel review={makeReview()} historical activeFindingId={undefined} />
+      )
+    )
+    expect(getReviewLog).not.toHaveBeenCalled()
+  })
+
   it('shows a "Reviewer log" section heading', () => {
     act(() => {
       root.render(

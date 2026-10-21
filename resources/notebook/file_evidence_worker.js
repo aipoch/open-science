@@ -923,6 +923,326 @@ const bindRunBlob = (blobPath, contentName, expectedSize, expectedChecksum) => {
   }
   return activityBlobPath
 }
+
+const releaseUnusedInitialBlobs = (initialRelations, retainedGenerations, blobPool, request) => {
+  const retainedChecksums = new Set(retainedGenerations.map((generation) => generation.checksum))
+  const unused = new Map(
+    initialRelations.flatMap(({ generation }) =>
+      generation && !retainedChecksums.has(generation.checksum)
+        ? [[generation.checksum, generation]]
+        : []
+    )
+  )
+  if (unused.size === 0) return
+  const directoryIdentity = entryIdentity(ACTIVITY_BLOBS_DIRECTORY)
+  if (!directoryIdentity) throw new Error('File-evidence Activity blob directory is unsafe.')
+  for (const generation of unused.values()) {
+    const name = `sha256-${generation.checksum}`
+    if (
+      !BLOB_NAME.test(name) ||
+      generation.contentStorageKey !==
+        `${request.storageKeyPrefix}/${request.finalName}/${ACTIVITY_BLOBS_DIRECTORY}/${name}`
+    ) {
+      throw new Error('Unused file-evidence generation has an invalid storage key.')
+    }
+    const path = join(ACTIVITY_BLOBS_DIRECTORY, name)
+    const metadata = lstatSync(path)
+    const pooled = lstatSync(join(blobPool.path, name))
+    if (
+      !sameIdentity(entryIdentity(ACTIVITY_BLOBS_DIRECTORY), directoryIdentity) ||
+      !sameIdentity(entryIdentity(blobPool.path), blobPool.identity) ||
+      metadata.isSymbolicLink() ||
+      !metadata.isFile() ||
+      pooled.isSymbolicLink() ||
+      !pooled.isFile() ||
+      !sameIdentity(identity(metadata), identity(pooled))
+    ) {
+      throw new Error('Unused file-evidence blob no longer matches its owned pool.')
+    }
+    rmSync(path)
+  }
+  syncDirectoryPath(ACTIVITY_BLOBS_DIRECTORY)
+  sweepBlobPool(blobPool)
+}
+// Maintenance consumes completed owner records, never directory names as deletion authority.
+// Every native sidecar in the Project participates in the reference set, including other lanes.
+const compactHistory = (request) => {
+  assertBoundRoot(request.expectedRootIdentity)
+  const pool = bindBlobPool(request)
+  const prefix = pool.storageKeyPrefix.replace(/\/blobs$/, '')
+  if (!/^execution-file-evidence\/[^/]+$/.test(prefix)) return { ok: true, maintainedFiles: 0 }
+  const projectRoot = join(pool.path, '..')
+  const references = new Set()
+  const sidecars = new Map()
+  const directories = []
+  const metadataSnapshots = []
+  let entries = 0
+  let metadataBytes = 0
+  const started = Date.now()
+  const projectName = prefix.split('/')[1]
+  try {
+    const receiptPath = join(projectRoot, '..', projectOwnershipReceipt(projectName))
+    const metadata = lstatSync(receiptPath)
+    const receipt = JSON.parse(readRegularFile(receiptPath, MAX_REQUEST_BYTES).toString('utf8'))
+    if (!projectOwnershipShape(receipt, projectName) || receipt.phase !== 'owned')
+      return { ok: true, maintainedFiles: 0 }
+    verifyProjectMarker(projectRoot, receipt.ownershipToken)
+    if (fingerprint(lstatSync(receiptPath)) !== fingerprint(metadata))
+      return { ok: true, maintainedFiles: 0 }
+    metadataSnapshots.push([receiptPath, fingerprint(metadata)])
+  } catch {
+    return { ok: true, maintainedFiles: 0 }
+  }
+  const scan = (directory, key, depth) => {
+    if (depth > 5 || Date.now() - started > 1000) throw new Error('History scan budget exceeded.')
+    const before = lstatSync(directory)
+    if (!before.isDirectory() || before.isSymbolicLink())
+      throw new Error('Unsafe history directory.')
+    directories.push([directory, identity(before)])
+    for (const entry of readdirSync(directory, { withFileTypes: true })) {
+      if (++entries > 10000) throw new Error('History entry budget exceeded.')
+      if (entry.isSymbolicLink()) throw new Error('History contains a symbolic link.')
+      if (RECEIPT_NAME.test(entry.name) || /^(staging-|deleting-)/.test(entry.name))
+        throw new Error('History contains unfinished work.')
+      const path = join(directory, entry.name)
+      if (entry.isDirectory()) {
+        if (entry.name !== 'blobs') scan(path, `${key}/${entry.name}`, depth + 1)
+      } else if (entry.name === 'evidence.json') {
+        const beforeRead = lstatSync(path)
+        const bytes = readRegularFile(path, 8 * 1024 * 1024 - metadataBytes)
+        if (fingerprint(lstatSync(path)) !== fingerprint(beforeRead))
+          throw new Error('History changed while reading.')
+        metadataSnapshots.push([path, fingerprint(beforeRead)])
+        metadataBytes += bytes.length
+        const value = JSON.parse(bytes.toString('utf8'))
+        const onlyFields = (object, fields) =>
+          object &&
+          typeof object === 'object' &&
+          !Array.isArray(object) &&
+          Object.keys(object).every((field) => fields.includes(field))
+        if (
+          !onlyFields(value, [
+            'schemaVersion',
+            'evidenceId',
+            'activityId',
+            'activityKind',
+            'parentActivityId',
+            'state',
+            'observedRoots',
+            'initialViewState',
+            'managedRootsFinalState',
+            'fileReads',
+            'externalPaths',
+            'writerAttribution',
+            'reasonCodes',
+            'scientificOutputs',
+            'relations',
+            'predecessorGenerations'
+          ])
+        )
+          throw new Error('Unknown history fields.')
+        if (
+          value.schemaVersion !== 1 ||
+          !ACTIVITY_KINDS.has(value.activityKind) ||
+          !['available', 'partial', 'unavailable'].includes(value.state) ||
+          !Array.isArray(value.relations) ||
+          (value.predecessorGenerations !== undefined &&
+            !Array.isArray(value.predecessorGenerations))
+        )
+          throw new Error('Unknown historical evidence format.')
+        if (
+          value.relations.some(
+            (relation) =>
+              !onlyFields(relation, [
+                'relation',
+                'relativePath',
+                'pathPortability',
+                'authority',
+                'before',
+                'previousGenerationId',
+                'previousReasonCode',
+                'generation',
+                'reasonCode',
+                'registeredInput'
+              ]) ||
+              ![
+                'present-before',
+                'staged-input',
+                'created',
+                'modified',
+                'deleted',
+                'harvested-output',
+                'remote-input-reference'
+              ].includes(relation.relation)
+          )
+        )
+          throw new Error('Unknown history relation fields.')
+        const generations = [
+          ...value.relations.flatMap((relation) =>
+            relation.generation ? [relation.generation] : []
+          ),
+          ...(value.predecessorGenerations ?? [])
+        ]
+        const ids = new Set()
+        for (const generation of generations) {
+          if (
+            !onlyFields(generation, [
+              'generationId',
+              'relativePath',
+              'checksum',
+              'sizeBytes',
+              'contentStorageKey',
+              'capturedAt'
+            ]) ||
+            typeof generation.generationId !== 'string' ||
+            !/^[a-f0-9]{64}$/.test(generation.checksum) ||
+            !Number.isSafeInteger(generation.sizeBytes) ||
+            generation.sizeBytes < 0 ||
+            typeof generation.contentStorageKey !== 'string' ||
+            !generation.contentStorageKey.startsWith(`${prefix}/`) ||
+            !generation.contentStorageKey.endsWith(`/blobs/sha256-${generation.checksum}`) ||
+            generation.contentStorageKey.split('/').some((part) => !SAFE_NAME.test(part))
+          )
+            throw new Error('Invalid historical generation.')
+          ids.add(generation.generationId)
+          if (generation.contentStorageKey.startsWith(`${pool.storageKeyPrefix}/`))
+            throw new Error('Pool-addressed legacy content needs a separate migration.')
+          references.add(generation.contentStorageKey)
+        }
+        // Historical filtering could discard the predecessor mapping. Its bytes are unproven.
+        if (
+          value.relations.some(
+            (relation) => relation.previousGenerationId && !ids.has(relation.previousGenerationId)
+          )
+        )
+          throw new Error('Unresolved historical predecessor.')
+        sidecars.set(`${key}/evidence.json`, {
+          value,
+          checksum: createHash('sha256').update(bytes).digest('hex')
+        })
+      } else if (entry.name === '.session-package-owner' && depth === 1 && entry.isFile()) {
+        const metadata = lstatSync(path)
+        const operation = readRegularFile(path, 36).toString('utf8')
+        if (
+          !/^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/.test(operation) ||
+          fingerprint(lstatSync(path)) !== fingerprint(metadata)
+        )
+          throw new Error('Invalid package ownership marker.')
+        // A surviving import stage also protects publication interrupted by a host restart.
+        if (entryExists(join(projectRoot, '..', '..', 'session-package-imports', operation)))
+          throw new Error('History contains an unfinished import.')
+        metadataSnapshots.push([path, fingerprint(metadata)])
+      } else if (!/^\.ownership-[A-Za-z0-9-]+$/.test(entry.name) || !entry.isFile()) {
+        throw new Error('Unknown history entry.')
+      }
+    }
+  }
+  try {
+    scan(projectRoot, prefix, 0)
+  } catch {
+    return { ok: true, maintainedFiles: 0 }
+  }
+  let maintainedFiles = 0
+  let measuredBytes = 0
+  for (const owner of request.retained.slice(0, 32)) {
+    const record = sidecars.get(owner.storageKey)
+    if (
+      !record ||
+      record.checksum !== owner.checksum ||
+      record.value.evidenceId !== owner.evidenceId ||
+      record.value.activityId !== owner.activityId ||
+      record.value.activityKind !== owner.activityKind
+    )
+      continue
+    const expectedKey = `${request.storageKeyPrefix}/${assertSafeName(owner.finalName)}/evidence.json`
+    if (owner.storageKey !== expectedKey) continue
+    const activity = owner.finalName
+    const marker = readdirSync(activity).filter((name) => /^\.ownership-[A-Za-z0-9-]+$/.test(name))
+    if (marker.length !== 1 || lstatSync(join(activity, marker[0])).size !== 0) continue
+    const blobs = join(activity, ACTIVITY_BLOBS_DIRECTORY)
+    if (!entryIdentity(blobs)) continue
+    const blobDirectory = entryIdentity(blobs)
+    for (const name of readdirSync(blobs)) {
+      if (
+        maintainedFiles >= 64 ||
+        measuredBytes >= 256 * 1024 * 1024 ||
+        Date.now() - started > 3000
+      )
+        return { ok: true, maintainedFiles }
+      if (!BLOB_NAME.test(name)) continue
+      const path = join(blobs, name)
+      const pooledPath = join(pool.path, name)
+      const before = lstatSync(path)
+      if (!before.isFile() || before.isSymbolicLink() || !entryExists(pooledPath)) continue
+      const pooled = lstatSync(pooledPath)
+      if (!pooled.isFile() || pooled.isSymbolicLink() || pooled.size !== before.size) continue
+      const referenced =
+        references.has(`${request.storageKeyPrefix}/${activity}/blobs/${name}`) ||
+        references.has(`${pool.storageKeyPrefix}/${name}`)
+      if (referenced && sameIdentity(identity(before), identity(pooled))) continue
+      if (before.size > 1024 * 1024 * 1024) continue
+      measuredBytes += before.size
+      // Filenames alone never prove equality or ownership. Revalidate immediately before mutation.
+      try {
+        verifyBlob(path, before.size, name.slice(7))
+        verifyBlob(pooledPath, pooled.size, name.slice(7))
+        for (const [directory, expected] of directories)
+          if (!sameIdentity(entryIdentity(directory), expected)) throw new Error('History moved.')
+        for (const [metadataPath, expected] of metadataSnapshots)
+          if (fingerprint(lstatSync(metadataPath)) !== expected)
+            throw new Error('History references changed.')
+        if (
+          !sameIdentity(entryIdentity(blobs), blobDirectory) ||
+          fingerprint(lstatSync(path)) !== fingerprint(before) ||
+          fingerprint(lstatSync(pooledPath)) !== fingerprint(pooled) ||
+          createHash('sha256')
+            .update(readRegularFile(join(activity, 'evidence.json'), MAX_INTERNAL_JSON_BYTES))
+            .digest('hex') !== owner.checksum
+        )
+          throw new Error('History changed.')
+        if (!referenced) {
+          rmSync(path)
+        } else {
+          // Atomic replacement preserves every logical path and the old bytes until publication.
+          const temporary = join(blobs, `.compact-${name}`)
+          // Resume only our verified hardlink left by an interrupted atomic replacement.
+          if (entryExists(temporary)) {
+            const stale = lstatSync(temporary)
+            if (
+              !stale.isFile() ||
+              stale.isSymbolicLink() ||
+              !sameIdentity(identity(stale), identity(pooled))
+            )
+              continue
+            rmSync(temporary)
+          }
+          try {
+            linkSync(pooledPath, temporary)
+            verifyBlob(temporary, before.size, name.slice(7))
+            if (
+              !sameIdentity(identity(lstatSync(temporary)), identity(pooled)) ||
+              fingerprint(lstatSync(path)) !== fingerprint(before) ||
+              !sameIdentity(entryIdentity(blobs), blobDirectory)
+            )
+              throw new Error('History changed before replacement.')
+            renameSync(temporary, path)
+          } finally {
+            rmSync(temporary, { force: true })
+          }
+        }
+        syncDirectoryPath(blobs)
+        maintainedFiles++
+      } catch {
+        // A failed optimization never authorizes removal of the original content.
+        continue
+      }
+    }
+  }
+  // The existing pool sweeper only unlinks verified objects with no remaining hardlink owner.
+  sweepBlobPool(pool)
+  return { ok: true, maintainedFiles }
+}
+
 const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   const hash = createHash('sha256')
   let position = 0
@@ -948,6 +1268,36 @@ const streamDescriptor = (sourceDescriptor, size, targetDescriptor) => {
   return { bytesRead: position, checksum: hash.digest('hex') }
 }
 
+// The host supplies only a verified same-Project Version identity, never the mutable input.
+// Keep the private link only when it still identifies those exact bytes; otherwise copy normally.
+const linkImmutableInput = (source, temporaryName, size, checksum) => {
+  if (!source || typeof source.physicalPath !== 'string' || !validIdentity(source)) return false
+  let linked = false
+  try {
+    const metadata = lstatSync(source.physicalPath)
+    if (
+      !metadata.isFile() ||
+      metadata.isSymbolicLink() ||
+      !sameIdentity(identity(metadata), source)
+    )
+      return false
+    linkSync(source.physicalPath, temporaryName)
+    linked = true
+    const retained = lstatSync(temporaryName)
+    if (
+      !retained.isFile() ||
+      retained.isSymbolicLink() ||
+      !sameIdentity(identity(retained), source)
+    )
+      throw new Error('Immutable input changed before retention.')
+    verifyBlob(temporaryName, size, checksum)
+    return true
+  } catch {
+    if (linked) rmSync(temporaryName)
+    return false
+  }
+}
+
 const copyGeneration = (
   source,
   generation,
@@ -956,7 +1306,8 @@ const copyGeneration = (
   runBytesUsed,
   newBytesUsed,
   blobPool,
-  existingBlobBytes
+  existingBlobBytes,
+  immutableSource
 ) => {
   if (request.captureCancelled) {
     return { state: 'unavailable', reason: 'generation-freeze-failed' }
@@ -998,39 +1349,46 @@ const copyGeneration = (
     const contentName = `sha256-${checksum}`
     const blobPath = join(blobPool.path, contentName)
     let publishedNewBlob = false
+    let sharedImmutable = false
     if (existsSync(blobPath)) {
       verifyBlob(blobPath, before.size, checksum)
       bindRunBlob(blobPath, contentName, before.size, checksum)
     } else {
-      const filesystem = statfsSync(blobPool.path)
-      const currentAvailableBytes = Math.min(
-        request.availableBytes - newBytesUsed,
-        filesystem.bavail * filesystem.bsize
-      )
-      if (
-        existingBlobBytes + newBytesUsed + before.size > request.maxEvidenceBytes ||
-        currentAvailableBytes - before.size < request.diskReserveBytes
-      ) {
+      if (existingBlobBytes + before.size > request.maxEvidenceBytes) {
         return { state: 'unavailable', reason: 'generation-budget-exceeded' }
       }
-      targetDescriptor = openSync(
-        temporaryName,
-        constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
-        0o600
-      )
-      const copied = streamDescriptor(sourceDescriptor, before.size, targetDescriptor)
+      sharedImmutable =
+        !sameIdentity(identity(before), immutableSource) &&
+        linkImmutableInput(immutableSource, temporaryName, before.size, checksum)
+      if (!sharedImmutable) {
+        const filesystem = statfsSync(blobPool.path)
+        const currentAvailableBytes = Math.min(
+          request.availableBytes - newBytesUsed,
+          filesystem.bavail * filesystem.bsize
+        )
+        if (currentAvailableBytes - before.size < request.diskReserveBytes) {
+          return { state: 'unavailable', reason: 'generation-budget-exceeded' }
+        }
+        targetDescriptor = openSync(
+          temporaryName,
+          constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | constants.O_NOFOLLOW,
+          0o600
+        )
+        const copied = streamDescriptor(sourceDescriptor, before.size, targetDescriptor)
+        if (copied.bytesRead !== before.size || copied.checksum !== checksum) {
+          return { state: 'unavailable', reason: 'generation-freeze-failed' }
+        }
+        fsyncSync(targetDescriptor)
+        closeSync(targetDescriptor)
+        targetDescriptor = undefined
+      }
       const afterCopy = fstatSync(sourceDescriptor)
       if (
-        copied.bytesRead !== before.size ||
-        copied.checksum !== checksum ||
         fingerprint(before) !== fingerprint(afterCopy) ||
         fingerprint(afterCopy) !== fingerprint(source)
       ) {
         return { state: 'unavailable', reason: 'generation-freeze-failed' }
       }
-      fsyncSync(targetDescriptor)
-      closeSync(targetDescriptor)
-      targetDescriptor = undefined
       try {
         linkSync(temporaryName, blobPath)
         syncDirectoryPath(blobPool.path)
@@ -1046,7 +1404,8 @@ const copyGeneration = (
     publishedBlobPath = undefined
     return {
       state: 'available',
-      newBytes: publishedNewBlob ? before.size : 0,
+      newBytes: publishedNewBlob && !sharedImmutable ? before.size : 0,
+      newPoolBytes: publishedNewBlob ? before.size : 0,
       generation: {
         generationId: generation.generationId,
         relativePath,
@@ -1073,7 +1432,7 @@ const copyGeneration = (
 const begin = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
-  const existingBlobBytes = blobPoolBytes(blobPool)
+  let existingBlobBytes = blobPoolBytes(blobPool)
   if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
     throw new Error('Invalid file-evidence Project budget.')
   }
@@ -1135,7 +1494,8 @@ const begin = (request) => {
         bytesUsed,
         newBytesUsed,
         blobPool,
-        existingBlobBytes
+        existingBlobBytes,
+        registeredInput ? item.immutableSource : undefined
       )
       const relation = {
         relation: item.relation === 'staged-input' ? 'staged-input' : 'present-before',
@@ -1151,6 +1511,7 @@ const begin = (request) => {
         if (registeredInput) relation.registeredInput = registeredInput
         bytesUsed += frozen.generation.sizeBytes
         newBytesUsed += frozen.newBytes
+        existingBlobBytes += frozen.newPoolBytes
       } else {
         relation.reasonCode = frozen.reason
         reasons.push(frozen.reason)
@@ -1253,7 +1614,7 @@ const ensureCapture = (request) => {
 const persist = (request) => {
   assertBoundRoot(request.expectedRootIdentity)
   const blobPool = bindBlobPool(request)
-  const existingBlobBytes = blobPoolBytes(blobPool)
+  let existingBlobBytes = blobPoolBytes(blobPool)
   if (!Number.isFinite(request.maxEvidenceBytes) || request.maxEvidenceBytes < 0) {
     throw new Error('Invalid file-evidence Project budget.')
   }
@@ -1371,7 +1732,21 @@ const persist = (request) => {
         ? ['initial-file-generations-not-captured']
         : [])
     ]
-    let bytesUsed = Number(capture.bytesUsed) || 0
+    // Keep predecessor bytes even when the final read set excludes their initial relation.
+    const retainedInitialIds = new Set([
+      ...relations.flatMap(({ generation }) => (generation ? [generation.generationId] : [])),
+      ...request.changes.flatMap(({ change }) => {
+        const previous = change.before && baselineByPath.get(change.relativePath)
+        return previous ? [previous.generationId] : []
+      })
+    ])
+    const retainedInitialGenerations = capture.relations.flatMap(({ generation }) =>
+      generation && retainedInitialIds.has(generation.generationId) ? [generation] : []
+    )
+    let bytesUsed = retainedInitialGenerations.reduce(
+      (sum, generation) => sum + generation.sizeBytes,
+      0
+    )
     let newBytesUsed = 0
     for (const item of request.changes) {
       const change = item.change
@@ -1411,6 +1786,7 @@ const persist = (request) => {
           relation.generation = frozen.generation
           bytesUsed += frozen.generation.sizeBytes
           newBytesUsed += frozen.newBytes
+          existingBlobBytes += frozen.newPoolBytes
           generations.push({
             path: change.after.path,
             generationId: frozen.generation.generationId,
@@ -1436,6 +1812,17 @@ const persist = (request) => {
       requestedEvidenceState === 'available' && reasonCodes.length > 0
         ? 'partial'
         : requestedEvidenceState
+    const relationGenerationIds = new Set(
+      relations.map((relation) => relation.generation?.generationId)
+    )
+    const previousGenerationIds = new Set(
+      relations.map((relation) => relation.previousGenerationId)
+    )
+    const predecessorGenerations = retainedInitialGenerations.filter(
+      (generation) =>
+        previousGenerationIds.has(generation.generationId) &&
+        !relationGenerationIds.has(generation.generationId)
+    )
     const sidecar = {
       schemaVersion: 1,
       evidenceId: request.evidenceId,
@@ -1462,6 +1849,7 @@ const persist = (request) => {
         : 'unavailable',
       reasonCodes,
       scientificOutputs: request.scientificOutputs,
+      ...(predecessorGenerations.length ? { predecessorGenerations } : {}),
       relations
     }
     const serialized = `${JSON.stringify(sidecar, null, 2)}\n`
@@ -1475,6 +1863,16 @@ const persist = (request) => {
     rmSync(CAPTURE_FILE, { force: true })
     writeExclusiveFile('evidence.json', serialized)
     syncDirectory()
+
+    releaseUnusedInitialBlobs(
+      capture.relations,
+      [
+        ...retainedInitialGenerations,
+        ...relations.flatMap(({ generation }) => (generation ? [generation] : []))
+      ],
+      blobPool,
+      request
+    )
 
     process.chdir('..')
     assertBoundRoot(request.expectedRootIdentity)
@@ -1879,31 +2277,33 @@ process.stdin.on('end', () => {
   try {
     const request = JSON.parse(requestText)
     const result =
-      request.operation === 'begin'
-        ? begin(request)
-        : request.operation === 'ensure-capture'
-          ? ensureCapture(request)
-          : request.operation === 'ensure-project'
-            ? ensureProject(request)
-            : request.operation === 'persist'
-              ? persist(request)
-              : request.operation === 'recover-published'
-                ? recoverPublished(request)
-                : request.operation === 'complete'
-                  ? complete(request)
-                  : request.operation === 'cleanup'
-                    ? cleanup(request)
-                    : request.operation === 'delete-project'
-                      ? deleteProject(request)
-                      : request.operation === 'reconcile-compute-project'
-                        ? reconcileComputeProject(request)
-                        : request.operation === 'reconcile'
-                          ? reconcile(request)
-                          : request.operation === 'reconcile-legacy-notebook'
-                            ? reconcileLegacyNotebook(request)
-                            : (() => {
-                                throw new Error('Unsupported file-evidence worker operation.')
-                              })()
+      request.operation === 'compact-history'
+        ? compactHistory(request)
+        : request.operation === 'begin'
+          ? begin(request)
+          : request.operation === 'ensure-capture'
+            ? ensureCapture(request)
+            : request.operation === 'ensure-project'
+              ? ensureProject(request)
+              : request.operation === 'persist'
+                ? persist(request)
+                : request.operation === 'recover-published'
+                  ? recoverPublished(request)
+                  : request.operation === 'complete'
+                    ? complete(request)
+                    : request.operation === 'cleanup'
+                      ? cleanup(request)
+                      : request.operation === 'delete-project'
+                        ? deleteProject(request)
+                        : request.operation === 'reconcile-compute-project'
+                          ? reconcileComputeProject(request)
+                          : request.operation === 'reconcile'
+                            ? reconcile(request)
+                            : request.operation === 'reconcile-legacy-notebook'
+                              ? reconcileLegacyNotebook(request)
+                              : (() => {
+                                  throw new Error('Unsupported file-evidence worker operation.')
+                                })()
     process.stdout.write(`${JSON.stringify(result)}\n`)
   } catch (error) {
     fail(error instanceof Error ? error.message : String(error))

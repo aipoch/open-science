@@ -427,6 +427,11 @@ const ProviderStep = ({
             'Choose your provider. Use Custom Gateway for a compatible endpoint or a local model server.'
           )}
         </CardDescription>
+        <p className="text-xs leading-5 text-muted-foreground">
+          {t(
+            'Connect and test a model to finish setup. The agent needs this connection to respond to your requests.'
+          )}
+        </p>
       </CardHeader>
       <Separator className="bg-border-200" />
 

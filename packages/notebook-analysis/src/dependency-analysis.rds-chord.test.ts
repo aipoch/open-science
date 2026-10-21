@@ -8,9 +8,12 @@ import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import cells from './reported-mixed-rds-chord.fixture.json'
 import { analyzeRNotebookSource } from './dependency-analysis-r'
 
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 const resetPlot = cells[4]!.script.replace('circos.par(', 'circos.clear()\ncircos.par(')
 
-it('reconstructs the reported RDS plot when its plotting parameters are reset before drawing', async () => {
+it('keeps unproven mean drawing uncertain after resetting graphics parameters', async () => {
   const root = await mkdtemp(join(tmpdir(), 'rds-chord-reset-'))
   try {
     const run: NotebookRunRecord = {
@@ -31,13 +34,16 @@ it('reconstructs the reported RDS plot when its plotting parameters are reset be
       storageRoot: root,
       repository: { readSessionRuns: async () => [run] }
     }).project({ projectId: 'p', sessionId: 's', completedRun: run })
-    expect(projection.stalenessByRunId.plot).toEqual({ state: 'clear' })
+    expect(projection.stalenessByRunId.plot).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
     expect(await analyzeNotebookSourceFileAccess('r', resetPlot)).toMatchObject({
       reads: ['chord_matrix.rds'],
       writes: ['chord_diagram.png'],
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete'
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
     })
   } finally {
     await rm(root, { recursive: true, force: true })
@@ -90,7 +96,7 @@ it('does not mistake resetting after drawing for a self-contained plot', async (
     state: 'unknown',
     reasons: expect.arrayContaining(['graphics-state-unavailable'])
   })
-  expect(facts.state === 'unknown' ? facts.reasons : []).not.toContain('function-scope')
+  expect(facts.state === 'unknown' ? facts.reasons : []).toContain('opaque-call')
 })
 
 it('captures the reported Excel inspection and RDS plotting workflow', async () => {
@@ -123,21 +129,24 @@ it('captures the reported Excel inspection and RDS plotting workflow', async () 
       completedRun: runs[4]!
     })
     for (const index of [0, 1, 3, 4]) {
-      expect
-        .soft(projection.stalenessByRunId[`run-${index}`], `run-${index}`)
-        .toEqual(
-          index === 4
-            ? { state: 'unknown', reasons: ['graphics-state-unavailable'] }
+      expect.soft(projection.stalenessByRunId[`run-${index}`], `run-${index}`).toMatchObject(
+        index === 4
+          ? {
+              state: 'unknown',
+              reasons: expect.arrayContaining(['graphics-state-unavailable', 'opaque-call'])
+            }
+          : index === 3
+            ? { state: 'unknown', reasons: expect.arrayContaining(['opaque-call']) }
             : { state: 'clear' }
-        )
+      )
       const files = await analyzeNotebookSourceFileAccess(
         runs[index]!.kernelKind === 'r' ? 'r' : 'python',
         cells[index]!.script
       )
       expect.soft(files, `files-${index}`).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        externalState: 'complete',
+        readState: index >= 3 ? 'partial' : 'complete',
+        writeState: index >= 3 ? 'partial' : 'complete',
+        externalState: index >= 3 ? 'partial' : 'complete',
         reads: [index === 4 ? 'chord_matrix.rds' : 'inputs/edge-weights-222222222222.xlsx'],
         writes: index === 3 ? ['chord_matrix.rds'] : index === 4 ? ['chord_diagram.png'] : []
       })

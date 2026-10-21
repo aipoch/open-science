@@ -236,3 +236,28 @@ Application tests cover source/model/error conversion, real caller disconnection
 transactions and source bindings, data-root migration, usage projection, IPC and ASAR resource
 loading. A representative cache/output round trip checks the adapter; the domain-case matrix stays
 here. Renaming a host file to `*.integration.test.ts` does not transfer these responsibilities.
+
+### Document information and content-first regeneration
+
+Content-first output preserves ordinary document Info (including custom fields), XMP metadata,
+language, independent viewer preferences and embedded files. Attachment file specifications shared
+by `Names/EmbeddedFiles` and `AF` stay shared. Ordinary metadata alone does not retain the original
+paper: translated body text still reflows. Named destinations (including unreferenced names and
+legacy destination dictionaries) and supported opening destinations use the same verified mapping
+as links and bookmarks. Page labels follow each output page's primary source page; continuations
+keep that source label, and a page combining sources uses its primary source's label. Print ranges
+use standard one-based page numbers and include all output pages containing the selected sources.
+
+Structures that cannot be preserved safely retain the exact original PDF with a
+`document-structure` layout diagnostic: tagged structure trees, optional-content layers, unsupported
+catalog/name-tree features or actions, ambiguous/malformed destinations, invalid page labels or
+print ranges, and hidden source-page dependencies in otherwise independent metadata. Nonstandard
+zero-based print ranges are not guessed. The existing annotation/form and signature policies still
+apply. Text translations remain available in the sidebar after a structural fallback.
+
+Content-first mode does not offer per-paragraph PDF-layout retry. The existing **Update PDF preview**
+action can regenerate the whole document from accepted translations, including when the preview
+is already current; it does not call a translation model. Text-translation retry and fixed-layout
+placement retry keep their existing behavior. The additive diagnostic is saved in the existing
+checkpoint layout reports; existing records need no migration. Previously exported PDFs are not
+rewritten and must be regenerated to gain this preservation behavior.

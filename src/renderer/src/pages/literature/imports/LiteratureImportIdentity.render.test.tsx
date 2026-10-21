@@ -3,8 +3,9 @@ import {
   LITERATURE_ITEM_TYPES,
   type LiteratureItemType
 } from '@aipoch/literature-citations/contracts'
+import type { LiteratureRecordImportResult } from '@aipoch/literature-library/contracts'
 import { literatureItemInputSchema } from '@aipoch/literature-library/item'
-import { cleanup, fireEvent, render, screen } from '@testing-library/react'
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { LiteratureMetadataEditor } from '../detail/LiteratureMetadataEditor'
 import { LiteratureRecordImportDialog } from './LiteratureRecordImportDialog'
@@ -58,7 +59,8 @@ it('blocks conflicting reuse and supplementation, exposes matches, and permits e
     >,
     onClose: vi.fn(),
     onDuplicatePolicyChange: vi.fn(),
-    onImport
+    onImport,
+    onPreviewSelection: vi.fn()
   }
   const { rerender } = render(<LiteratureRecordImportDialog {...props} duplicatePolicy="reuse" />)
   const submit = (): HTMLButtonElement =>
@@ -75,6 +77,12 @@ it('blocks conflicting reuse and supplementation, exposes matches, and permits e
   expect(submit().disabled).toBe(false)
   fireEvent.click(submit())
   expect(onImport).toHaveBeenCalledOnce()
+  expect(onImport).toHaveBeenCalledWith(undefined)
+  fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference 1: Imported paper' }))
+  expect(submit().disabled).toBe(true)
+  expect(screen.getByText('0 of 1 selected')).not.toBeNull()
+  fireEvent.click(screen.getByRole('button', { name: 'Check all' }))
+  expect(submit().disabled).toBe(false)
 })
 
 it('selects a preferred DOI without clearing the preferred PMID', () => {
@@ -110,3 +118,85 @@ it('selects a preferred DOI without clearing the preferred PMID', () => {
     })
   )
 })
+
+it.each(['existing', 'conflict'] as const)(
+  'rechecks selected references after excluding a preceding %s identity source',
+  async (status) => {
+    const second = { ...item, title: 'Second paper' }
+    const preview: LiteratureRecordImportResult = {
+      format: 'nbib',
+      items: [item, second],
+      errors: [],
+      scannedEntries: 2,
+      truncated: false,
+      entries: [
+        { index: 0, title: item.title, item, status: 'ready', warnings: [] },
+        {
+          index: 1,
+          title: second.title,
+          item: second,
+          status,
+          warnings: [],
+          ...(status === 'conflict'
+            ? {
+                conflict: {
+                  identifiers: second.identifiers,
+                  matches: [{ inputIndex: 0, title: item.title }]
+                }
+              }
+            : {})
+        }
+      ]
+    }
+    const completions: Array<(result: LiteratureRecordImportResult) => void> = []
+    const onPreviewSelection = vi.fn(
+      () =>
+        new Promise<LiteratureRecordImportResult>((resolve) => {
+          completions.push(resolve)
+        })
+    )
+    const onImport = vi.fn()
+    render(
+      <LiteratureRecordImportDialog
+        recordImport={{ fileName: 'batch.nbib', content: 'source', preview }}
+        isImportingRecords={false}
+        destination="Library"
+        itemDescription={() => ''}
+        itemTypeLabels={
+          Object.fromEntries(LITERATURE_ITEM_TYPES.map((type) => [type, type])) as Record<
+            LiteratureItemType,
+            string
+          >
+        }
+        onClose={vi.fn()}
+        duplicatePolicy="reuse"
+        onDuplicatePolicyChange={vi.fn()}
+        onImport={onImport}
+        onPreviewSelection={onPreviewSelection}
+      />
+    )
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference 1: Imported paper' }))
+    const submit = screen.getByRole('button', { name: 'Import references' }) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    expect(screen.getByText('Loading…')).not.toBeNull()
+    expect(screen.queryByText('New references')).toBeNull()
+    expect(onPreviewSelection).toHaveBeenCalledWith('source', [1])
+    fireEvent.click(screen.getByRole('button', { name: 'Check all' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select reference 1: Imported paper' }))
+    expect(onPreviewSelection).toHaveBeenCalledTimes(2)
+    await act(async () => completions[0]({ ...preview, entries: [] }))
+    expect(submit.disabled).toBe(true)
+    await act(async () =>
+      completions[1]({
+        ...preview,
+        entries: [{ ...preview.entries[1], status: 'ready', conflict: undefined }]
+      })
+    )
+    await waitFor(() => expect(submit.disabled).toBe(false))
+    expect(screen.getByText('New references').parentElement?.textContent).toBe('1New references')
+    expect(screen.getByText('Existing').parentElement?.textContent).toBe('0Existing')
+    expect(screen.queryByText('File reference 1: Imported paper')).toBeNull()
+    fireEvent.click(submit)
+    expect(onImport).toHaveBeenCalledWith([1])
+  }
+)

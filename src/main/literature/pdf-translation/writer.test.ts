@@ -51,7 +51,7 @@ it.each(['installed', '安装 package'])(
   'generates a readable translated PDF from the configured physical backend boundary (%s)',
   async (installationDirectory) => {
     const root = await mkdtemp(join(tmpdir(), 'pdf-translation-backend-')),
-      source = join(root, 'out/standalone'),
+      source = join(root, 'out/desktop-backend'),
       resources = join(root, installationDirectory, 'resources'),
       backend = join(resources, 'backend'),
       copied = new Set<string>(),

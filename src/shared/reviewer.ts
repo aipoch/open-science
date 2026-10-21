@@ -377,6 +377,8 @@ export type ReviewSessionRequest = {
   appSessionId: string
 }
 
+export type ReviewLogRequest = ReviewSessionRequest & { reviewId: string }
+
 export type ReviewSuppressionEvent = ReviewSessionRequest & { clear?: boolean }
 
 // Why a review did not start (set on ReviewRunResult when started is false). The auto-review caller
@@ -430,6 +432,7 @@ export const REVIEWER_IPC = {
   UPDATED: 'reviewer:updated',
   // Renderer → main: load existing reviews for a session.
   GET_FOR_SESSION: 'reviewer:get-for-session',
+  GET_REVIEW_LOG: 'reviewer:get-review-log',
   // Main → renderer: suppress the next triggerAutoReview call for a session (loop guard).
   // Broadcast just before an [Auditor] correction prompt is sent so the correction turn's
   // stop event does not spawn a second review run.

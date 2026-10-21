@@ -32,6 +32,10 @@ vi.mock('../lib/session-persistence/session-persistence', () => ({
 
 import { completeQuitPersistenceFlush, useQuitPersistenceFlush } from './useQuitPersistenceFlush'
 import {
+  WorkspaceMessageQueueOwner,
+  registerWorkspaceQueueExitGuard
+} from '../pages/workspace/workspace-message-queue-owner'
+import {
   configureComposerDraftStorage,
   registerComposerDraftWriter,
   revokeComposerDraftStorage,
@@ -49,6 +53,34 @@ afterEach(() => {
 })
 
 describe('completeQuitPersistenceFlush', () => {
+  it('refuses orderly quit while unsent queued messages remain and succeeds once handled', async () => {
+    const owner = new WorkspaceMessageQueueOwner()
+    const pending = vi.spyOn(owner, 'pendingUserCount').mockReturnValue(2)
+    const unregister = registerWorkspaceQueueExitGuard(owner)
+    const deps = {
+      suppressAutoReviews: vi.fn(),
+      drainRuntimeEvents: async () => undefined,
+      flushPersistence: async () => undefined,
+      flushPreviewPersistence: async () => undefined,
+      acknowledge: vi.fn()
+    }
+    try {
+      await expect(completeQuitPersistenceFlush({ requestId: 'queue' }, deps)).rejects.toThrow(
+        'Queued messages'
+      )
+      expect(deps.acknowledge).toHaveBeenLastCalledWith({ requestId: 'queue', status: 'failed' })
+      pending.mockReturnValue(0)
+      await completeQuitPersistenceFlush({ requestId: 'queue-cleared' }, deps)
+      expect(deps.acknowledge).toHaveBeenLastCalledWith({
+        requestId: 'queue-cleared',
+        status: 'completed'
+      })
+    } finally {
+      unregister()
+      owner.dispose()
+    }
+  })
+
   it('refuses the update handoff if the live composer draft cannot be saved', async () => {
     configureComposerDraftStorage('desktop-profile', 'profile')
     const unregister = registerComposerDraftWriter(() => {

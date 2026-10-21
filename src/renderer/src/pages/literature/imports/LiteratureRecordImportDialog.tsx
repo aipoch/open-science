@@ -12,7 +12,7 @@ import type {
 } from '@aipoch/literature-library/contracts'
 import type { LiteratureItemInput } from '@aipoch/literature-library/item'
 import { Check, Info, LoaderCircle, Upload } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { LiteratureErrorNotice } from '../LiteratureErrorNotice'
 import { LiteratureDuplicatePolicyField } from './LiteratureDuplicatePolicyField'
@@ -36,7 +36,8 @@ export const LiteratureRecordImportDialog = ({
   onClose,
   duplicatePolicy,
   onDuplicatePolicyChange,
-  onImport
+  onImport,
+  onPreviewSelection
 }: {
   recordImport: RecordImportDraft
   isImportingRecords: boolean
@@ -46,22 +47,91 @@ export const LiteratureRecordImportDialog = ({
   onClose: () => void
   duplicatePolicy: LiteratureDuplicatePolicy
   onDuplicatePolicyChange: (value: LiteratureDuplicatePolicy) => void
-  onImport: () => void
+  onImport: (selectedItemIndexes?: number[]) => void
+  onPreviewSelection: (
+    content: string,
+    selectedItemIndexes: number[]
+  ) => Promise<LiteratureRecordImportResult>
 }): React.JSX.Element => {
   const { t } = useTranslation()
   const [recordImportVisibleCount, setRecordImportVisibleCount] = useState(
     LITERATURE_IMPORT_PREVIEW_PAGE_SIZE
   )
+  const [selectionSource, setSelectionSource] = useState(recordImport.content)
+  const [excludedIndexes, setExcludedIndexes] = useState<Set<number>>(new Set())
+  if (selectionSource !== recordImport.content) {
+    setSelectionSource(recordImport.content)
+    setExcludedIndexes(new Set())
+  }
+  const selectedIndexes = (recordImport.preview?.items ?? [])
+    .map((_, index) => index)
+    .filter((index) => !excludedIndexes.has(index))
+  const selectionKey = JSON.stringify(selectedIndexes)
+  const needsPreview =
+    excludedIndexes.size > 0 && selectedIndexes.length > 0 && !recordImport.preview?.imported
+  const [selectionResult, setSelectionResult] = useState<{
+    key: string
+    content: string
+    basePreview?: LiteratureRecordImportResult
+    preview?: LiteratureRecordImportResult
+    failed?: boolean
+  }>()
+  const [previousSelectionKey, setPreviousSelectionKey] = useState(selectionKey)
+  if (previousSelectionKey !== selectionKey) {
+    setPreviousSelectionKey(selectionKey)
+    setSelectionResult(undefined)
+  }
+  const [retrySelection, setRetrySelection] = useState(0)
+  const currentSelectionResult =
+    selectionResult?.key === selectionKey &&
+    selectionResult.content === recordImport.content &&
+    selectionResult.basePreview === recordImport.preview
+      ? selectionResult
+      : undefined
+  const selectionFailed = needsPreview && Boolean(currentSelectionResult?.failed)
+  const selectionPending = needsPreview && !currentSelectionResult
+  useEffect(() => {
+    if (!needsPreview) return
+    let active = true
+    const content = recordImport.content
+    const basePreview = recordImport.preview
+    void onPreviewSelection(content, JSON.parse(selectionKey) as number[]).then(
+      (preview) => {
+        if (active) setSelectionResult({ key: selectionKey, content, basePreview, preview })
+      },
+      () => {
+        if (active) setSelectionResult({ key: selectionKey, content, basePreview, failed: true })
+      }
+    )
+    return () => {
+      active = false
+    }
+  }, [
+    needsPreview,
+    selectionKey,
+    recordImport.content,
+    recordImport.preview,
+    onPreviewSelection,
+    retrySelection
+  ])
+  const entries = (recordImport.preview?.entries ?? []).map((entry) =>
+    needsPreview && !excludedIndexes.has(entry.index)
+      ? (currentSelectionResult?.preview?.entries.find((next) => next.index === entry.index) ??
+        entry)
+      : entry
+  )
+  const selectedEntries = entries.filter((entry) => entry.item && !excludedIndexes.has(entry.index))
+  const allConflictCount =
+    recordImport.preview?.entries.filter((entry) => entry.status === 'conflict').length ?? 0
+  const selectionLocked = isImportingRecords || Boolean(recordImport.preview?.imported)
   const invalidImportCount =
     recordImport.preview?.entries.filter((entry) => entry.status === 'invalid').length ?? 0
   const truncatedImportCount = recordImport.preview
     ? Math.max(0, recordImport.preview.scannedEntries - recordImport.preview.entries.length)
     : 0
-  const skippedImportCount = invalidImportCount + truncatedImportCount
-  const existingCount =
-    recordImport.preview?.entries.filter((entry) => entry.status === 'existing').length ?? 0
-  const conflictCount =
-    recordImport.preview?.entries.filter((entry) => entry.status === 'conflict').length ?? 0
+  const skippedImportCount = invalidImportCount + truncatedImportCount + excludedIndexes.size
+  const existingCount = selectedEntries.filter((entry) => entry.status === 'existing').length
+  const conflictCount = selectedEntries.filter((entry) => entry.status === 'conflict').length
   const blockedByConflict = conflictCount > 0 && duplicatePolicy !== 'separate'
   return (
     <LiteratureImportDialogFrame
@@ -90,10 +160,12 @@ export const LiteratureRecordImportDialog = ({
                 disabled={
                   isImportingRecords ||
                   blockedByConflict ||
+                  selectionPending ||
+                  selectionFailed ||
                   !recordImport.preview ||
-                  recordImport.preview.items.length === 0
+                  selectedIndexes.length === 0
                 }
-                onClick={() => onImport()}
+                onClick={() => onImport(excludedIndexes.size ? selectedIndexes : undefined)}
                 aria-busy={Boolean(isImportingRecords)}
               >
                 <span key={String(isImportingRecords)} className="button-feedback">
@@ -144,7 +216,79 @@ export const LiteratureRecordImportDialog = ({
               <span className="shrink-0 text-muted-foreground">{t('Import to')}</span>
               <span className="min-w-0 font-medium [overflow-wrap:anywhere]">{destination}</span>
             </div>
-            {!recordImport.preview.imported && recordImport.failedCount === undefined ? (
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <span role="status">
+                {t('{{selected}} of {{total}} selected', {
+                  selected: selectedIndexes.length,
+                  total: recordImport.preview.items.length
+                })}
+              </span>
+              {!recordImport.preview.imported ? (
+                <>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    disabled={isImportingRecords}
+                    onClick={() =>
+                      setExcludedIndexes(
+                        excludedIndexes.size
+                          ? new Set()
+                          : new Set(recordImport.preview!.items.map((_, index) => index))
+                      )
+                    }
+                  >
+                    {excludedIndexes.size ? t('Check all') : t('Uncheck all')}
+                  </Button>
+                  {allConflictCount > 0 ? (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      disabled={
+                        isImportingRecords ||
+                        selectionPending ||
+                        selectionFailed ||
+                        conflictCount === 0
+                      }
+                      onClick={() =>
+                        setExcludedIndexes(
+                          (current) =>
+                            new Set([
+                              ...current,
+                              ...entries
+                                .filter((entry) => entry.status === 'conflict')
+                                .map((entry) => entry.index)
+                            ])
+                        )
+                      }
+                    >
+                      {t('Exclude conflicting references')}
+                    </Button>
+                  ) : null}
+                </>
+              ) : null}
+            </div>
+            {excludedIndexes.size > 0 && recordImport.preview.imported ? (
+              <p role="status" className="text-sm text-muted-foreground">
+                {t('Excluded references were not imported. Their details remain below.')}
+              </p>
+            ) : null}
+            {selectionPending ? <p role="status">{t('Loading…')}</p> : null}
+            {selectionFailed ? (
+              <LiteratureErrorNotice
+                title={t('Reference import failed. Please try again.')}
+                primaryButton={{
+                  label: t('Retry'),
+                  onClick: () => {
+                    setSelectionResult(undefined)
+                    setRetrySelection((value) => value + 1)
+                  }
+                }}
+              />
+            ) : null}
+            {!selectionPending &&
+            !selectionFailed &&
+            !recordImport.preview.imported &&
+            recordImport.failedCount === undefined ? (
               <div
                 className={cn(
                   'grid divide-x divide-border-300/80 border-y border-border-300/80 py-3 text-center',
@@ -153,7 +297,7 @@ export const LiteratureRecordImportDialog = ({
               >
                 <div>
                   <strong className="block text-xl tabular-nums">
-                    {recordImport.preview.items.length -
+                    {selectedIndexes.length -
                       (duplicatePolicy === 'separate' ? 0 : existingCount + conflictCount)}
                   </strong>
                   <span className="text-xs text-muted-foreground">{t('New references')}</span>
@@ -183,11 +327,14 @@ export const LiteratureRecordImportDialog = ({
                 disabled={isImportingRecords}
               />
             ) : null}
-            {conflictCount > 0 && !recordImport.preview.imported ? (
+            {!selectionPending &&
+            !selectionFailed &&
+            conflictCount > 0 &&
+            !recordImport.preview.imported ? (
               <LiteratureErrorNotice
                 title={t('Conflicting identifiers')}
                 description={t(
-                  'Some identifiers disagree or match different references. Correct the source file or keep separate copies of every reference in this import.'
+                  'Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.'
                 )}
               />
             ) : null}
@@ -260,6 +407,13 @@ export const LiteratureRecordImportDialog = ({
                             </Button>
                           </TooltipTrigger>
                           <TooltipContent side="top" className="max-w-72 space-y-1 p-2">
+                            {excludedIndexes.size > 0 ? (
+                              <p>
+                                {t(
+                                  'Excluded references were not imported. Their details remain below.'
+                                )}
+                              </p>
+                            ) : null}
                             {truncatedImportCount > 0 ? (
                               <p>{t('References after the first 1,000 were skipped.')}</p>
                             ) : null}
@@ -284,24 +438,46 @@ export const LiteratureRecordImportDialog = ({
             ) : null}
             <details
               key={recordImport.preview.imported ? 'imported' : 'preview'}
-              open={!recordImport.preview.imported}
+              open={!recordImport.preview.imported || excludedIndexes.size > 0}
               className="overflow-hidden rounded-lg border border-border-300/80"
             >
               <summary className="cursor-pointer bg-bg-100 px-3 py-2.5 text-sm font-medium hover:bg-bg-200 focus-visible:outline-2 focus-visible:outline-ring active:bg-bg-300">
                 {t('View details')} · {recordImport.preview.entries.length}
               </summary>
               <div className="max-h-[min(38vh,360px)] overflow-y-auto overscroll-contain divide-y divide-border-300/80 border-t border-border-300/80">
-                {recordImport.preview.entries.slice(0, recordImportVisibleCount).map((entry) => (
+                {entries.slice(0, recordImportVisibleCount).map((entry) => (
                   <div
                     key={`${entry.index}:${entry.title}`}
                     className="grid grid-cols-[1.75rem_minmax(0,1fr)] items-start gap-2 px-3 py-2.5"
                   >
-                    <span
-                      className="pt-0.5 text-xs tabular-nums text-muted-foreground"
-                      aria-hidden="true"
-                    >
-                      {entry.index + 1}
-                    </span>
+                    {entry.item ? (
+                      <input
+                        type="checkbox"
+                        className="mt-1 size-4 accent-primary"
+                        checked={!excludedIndexes.has(entry.index)}
+                        disabled={selectionLocked}
+                        aria-label={t('Select reference {{number}}: {{title}}', {
+                          number: entry.index + 1,
+                          title: entry.title
+                        })}
+                        onChange={(event) => {
+                          const included = event.target.checked
+                          setExcludedIndexes((current) => {
+                            const next = new Set(current)
+                            if (included) next.delete(entry.index)
+                            else next.add(entry.index)
+                            return next
+                          })
+                        }}
+                      />
+                    ) : (
+                      <span
+                        className="pt-0.5 text-xs tabular-nums text-muted-foreground"
+                        aria-hidden="true"
+                      >
+                        {entry.index + 1}
+                      </span>
+                    )}
                     <div className="min-w-0">
                       <div className="flex items-start gap-2">
                         <p
@@ -310,6 +486,9 @@ export const LiteratureRecordImportDialog = ({
                         >
                           {entry.title || t('Unknown')}
                         </p>
+                        {excludedIndexes.has(entry.index) ? (
+                          <span className="text-xs text-muted-foreground">{t('Excluded')}</span>
+                        ) : null}
                         {entry.status !== 'ready' ? (
                           <span className="shrink-0 rounded bg-bg-200 px-2 py-0.5 text-[11px] text-muted-foreground">
                             {entry.status === 'conflict'

@@ -269,6 +269,31 @@ it.each([
   ).toBeUndefined()
 })
 
+it.each(['valid', 'missing', 'duplicate', 'different-paint', 'wrong-domain', 'wrong-kind'])(
+  'binds a painted raster inset to its complete native image domain: %s',
+  (evidence) => {
+    const f = nativeContiguousStack([100, 120])
+    for (const g of f.page.graphicsBounds)
+      g.paintedNormalizedRect = g.normalizedRect.map(
+        (n: number, i: number) => n + (i < 2 ? 9 : -9) / (i % 2 ? 800 : 600)
+      )
+    f.context.graphicsBounds = structuredClone(f.page.graphicsBounds)
+    if (evidence === 'missing') f.context.graphicsBounds = []
+    if (evidence === 'duplicate') f.context.graphicsBounds.push(f.context.graphicsBounds[0])
+    if (evidence === 'different-paint') f.context.graphicsBounds[0].paintedNormalizedRect[0] += 0.01
+    if (evidence === 'wrong-domain') f.context.graphicsBounds[0].normalizedRect[0] += 0.1
+    if (evidence === 'wrong-kind') f.context.graphicsBounds[0].kind = 'path'
+    const before = structuredClone(f)
+    const found = stackAssociation(f)
+    if (evidence === 'valid') {
+      expect(found[0].rect).toEqual([60, 60, 260, 281])
+      expect(found[0].graphicsCount).toBe(2)
+    } else expect(found[0].rect[1]).toBeGreaterThan(150)
+    expect(found[0].sourceItems).toBeUndefined()
+    expect(f).toEqual(before)
+  }
+)
+
 it.each([
   'table',
   'malformed-table',

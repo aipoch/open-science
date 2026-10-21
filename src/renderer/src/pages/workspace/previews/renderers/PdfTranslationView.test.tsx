@@ -762,6 +762,10 @@ it('withholds unknown PDF placement counts until validation and keeps a verified
 
 it.each([
   [
+    'document-structure',
+    'The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.'
+  ],
+  [
     'unsupported-layout',
     'These source pages were kept in their original form because their text direction or layout could not be reflowed safely.'
   ],

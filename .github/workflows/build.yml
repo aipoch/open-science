@@ -100,18 +100,18 @@ jobs:
         run: npm run check:cli-package
 
   verify_tests:
-    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/4)
+    name: Full portable tests (Ubuntu, shard ${{ matrix.shard }}/6)
     if: ${{ !inputs.skip_verify }}
     runs-on: ubuntu-latest
     env:
       VITEST_DEFER_COVERAGE_THRESHOLDS: '1'
       VITEST_PORTABLE_CI: '1'
-    # Three-shard runs reached ~36m; leave headroom for coverage and runner load.
+    # Six shards reduce per-runner load; retain headroom for coverage and runner variability.
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4]
+        shard: [1, 2, 3, 4, 5, 6]
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -135,7 +135,7 @@ jobs:
           --coverage
           --coverage.reporter=text-summary
           --testTimeout=60000
-          --shard=${{ matrix.shard }}/4
+          --shard=${{ matrix.shard }}/6
           --reporter=blob
           --reporter=github-actions
           --outputFile=vitest-reports/blob-${{ matrix.shard }}.json
@@ -191,7 +191,7 @@ jobs:
           SHARDS_RESULT: ${{ needs.verify_tests.result }}
         run: |
           test "$SHARDS_RESULT" = success
-          for shard in 1 2 3 4; do
+          for shard in 1 2 3 4 5 6; do
             test -s "vitest-reports/blob-$shard.json"
           done
       - name: Merge test reports and enforce coverage

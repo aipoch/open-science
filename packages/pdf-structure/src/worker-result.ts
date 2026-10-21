@@ -8,6 +8,7 @@ import {
   checkPdfStructureDecodingBudget,
   pdfTextRunsSchema,
   pdfTableSourceItemsSchema,
+  pdfNativeBodySchema,
   pdfTableSourceSegmentSchema
 } from './result.js'
 import {
@@ -40,7 +41,8 @@ const candidate = z.object({
   region: rect.optional(),
   thumbnail: z.string().optional(),
   caption,
-  issue: z.string().optional()
+  issue: z.string().optional(),
+  nativeBody: pdfNativeBodySchema.optional()
 })
 const rawNote = z.object({ text: z.string(), rect, page: z.number().int().positive().optional() })
 const rawTableData = z.object({
@@ -121,7 +123,9 @@ function fitSourceMetadataBudget(input: unknown): unknown {
   } catch {
     const withoutOrigins: unknown = JSON.parse(
       JSON.stringify(input, (key, value) =>
-        key === 'sourceItems' || key === 'sourceSegments' ? undefined : value
+        key === 'sourceItems' || key === 'sourceSegments' || key === 'nativeBody'
+          ? undefined
+          : value
       )
     )
     check(withoutOrigins)
@@ -248,6 +252,7 @@ export const readWorkerResult = async (
         regions: [region(item.page, item.region)],
         thumbnailId: item.id,
         ...('sourceItems' in item && item.sourceItems ? { sourceItems: item.sourceItems } : {}),
+        ...(item.nativeBody ? { nativeBody: item.nativeBody } : {}),
         ...(item.caption
           ? {
               caption: {
@@ -326,9 +331,8 @@ export const readWorkerResult = async (
           table: convertTable(part)
         }))
         element.tableNotes = item.notes?.map(convertNote)
-        element.issues = element.tableParts.flatMap((part) =>
-          part.table.issues.map((issue) => ({ ...issue }))
-        )
+        // Each part owns its uncertainty. Copying it to the parent would turn
+        // a local conflict into a group-wide veto in downstream readers.
       } else if ('cells' in item) {
         element.issues = item.issues.map((code) => ({ code, detail: code }))
         if (item.captionIssue)

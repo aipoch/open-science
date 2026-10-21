@@ -2,7 +2,7 @@
 import { resolve } from 'node:path'
 import { PDFDocument, StandardFonts, degrees } from 'pdf-lib'
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs'
-import { renderHook, waitFor } from '@testing-library/react'
+import { act, renderHook, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
 import { PdfTranslationWriter } from '@aipoch/pdf-translation/writer'
 import {
@@ -102,6 +102,18 @@ it.each([
         expect(hook.result.current.ready!.unitFragments?.a.length).toBeGreaterThan(1)
       }
       expect(generatePdf).toHaveBeenCalledTimes(1)
+      const previous = hook.result.current.ready
+      act(() => hook.result.current.refresh())
+      expect(hook.result.current.ready).toBe(previous)
+      await waitFor(() => expect(generatePdf).toHaveBeenCalledTimes(2), { timeout: 15000 })
+      await waitFor(
+        () => expect(hook.result.current.state.status).toBe(corrupted ? 'error' : 'ready'),
+        {
+          timeout: 15000
+        }
+      )
+      expect(generatePdf.mock.calls[1][0].units).toEqual(generatePdf.mock.calls[0][0].units)
+      if (!corrupted) expect(hook.result.current.ready!.document).not.toBe(previous!.document)
     } finally {
       hook.unmount()
       await originalTask.destroy()
@@ -152,9 +164,9 @@ it.each(['rotated-page', 'tilted-text', 'historical-source'])(
         signal: new AbortController().signal
       })
       if (kind === 'tilted-text')
-        expect(
-          extraction.coverage.exclusions.some((e) => e.reason === 'unsupported-orientation')
-        ).toBe(true)
+        expect(extraction.source.units).toContainEqual(
+          expect.objectContaining({ source: 'IMPORTANT EXCLUDED EVIDENCE', sourceOnly: true })
+        )
       rememberPdfTranslationExtraction({ source, coverage: extraction.coverage })
     }
     const writer = new PdfTranslationWriter(() =>
