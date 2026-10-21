@@ -16,6 +16,7 @@ import {
 } from './history-preamble'
 import { syncWorkspaceInteractionStateFromSnapshot } from './useWorkspaceAgentRuntime'
 import { acquireWorkspacePromptPreparation } from './workspace-prompt-preparation-lock'
+import { clearWorkspaceOperationError } from './workspace-operation-error'
 
 type WorkspaceElicitationRuntime = Pick<
   ReturnType<typeof useAcpRuntime>,
@@ -297,6 +298,12 @@ const respondToWorkspaceElicitation = async (
   response: ElicitationResponse,
   options: WorkspaceElicitationOptions = {}
 ): Promise<void> => {
+  const sessionId =
+    response.request?.sessionId ??
+    response.delegatedQuestion?.sessionId ??
+    runtime.state.pendingElicitations?.find(({ requestId }) => requestId === response.requestId)
+      ?.sessionId
+  if (sessionId) clearWorkspaceOperationError(sessionId)
   if (response.replacePreviousAnswer) {
     await reviseWorkspaceElicitation(runtime, response, options)
     return
@@ -385,10 +392,6 @@ const respondToWorkspaceElicitation = async (
 
   const snapshot = await runtime.respondToElicitation(responseToSend)
   const acceptedSnapshot = syncWorkspaceInteractionStateFromSnapshot(snapshot)
-  const sessionId =
-    response.request?.sessionId ??
-    runtime.state.pendingElicitations?.find((request) => request.requestId === response.requestId)
-      ?.sessionId
   if (
     acceptedSnapshot &&
     sessionId &&

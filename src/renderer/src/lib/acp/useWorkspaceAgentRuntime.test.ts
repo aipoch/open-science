@@ -1469,6 +1469,73 @@ describe('workspace durable elicitation', () => {
     vi.unstubAllGlobals()
   })
 
+  it.each([false, true])(
+    'clears the prior question error before retry (new failure: %s)',
+    async (fails) => {
+      useWorkspaceOperationErrors.setState({
+        errors: { 'session-choice-1': 'Previous failure', 'another-session': 'Unrelated failure' },
+        diagnostics: {}
+      })
+      const promptMessageId = useSessionStore.getState().sessions[0].messages[0].id
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({ ...session, runtimeTranscriptOwner: 'main' }))
+      }))
+      useSessionStore.getState().upsertToolActivity({
+        sessionId: 'session-choice-1',
+        toolCallId: 'tool-choice-1',
+        eventId: 'pending-choice',
+        promptMessageId,
+        status: 'in_progress',
+        elicitation: {
+          message: 'Continue?',
+          fields: [],
+          state: 'pending',
+          durable: { kind: 'agent-user-choice', requestId: 'choice-1', promptMessageId }
+        }
+      })
+      await respondToWorkspaceElicitation(
+        {
+          state: createSnapshot(['session-choice-1']),
+          resumeSession: vi.fn(),
+          respondToElicitation: async () => {
+            expect(
+              useWorkspaceOperationErrors.getState().errors['session-choice-1']
+            ).toBeUndefined()
+            if (fails) {
+              await applyWorkspaceRuntimeEvent({
+                id: 'retry-failed',
+                timestamp: Date.now(),
+                kind: 'error',
+                level: 'error',
+                sessionId: 'session-choice-1',
+                promptMessageId,
+                title: 'Could not continue the Agent task',
+                text: 'Retry failed'
+              })
+            }
+            return createSnapshot(['session-choice-1'])
+          }
+        },
+        {
+          requestId: 'choice-1',
+          action: 'accept',
+          answers: [],
+          request: {
+            requestId: 'choice-1',
+            sessionId: 'session-choice-1',
+            toolCallId: 'tool-choice-1',
+            message: 'Continue?',
+            fields: []
+          }
+        }
+      )
+      expect(useWorkspaceOperationErrors.getState().errors).toEqual({
+        'another-session': 'Unrelated failure',
+        ...(fails ? { 'session-choice-1': 'Retry failed' } : {})
+      })
+    }
+  )
+
   it('keeps another session waiting on a restored permission after answering a durable question', async () => {
     const permissionRequest: AcpPermissionRequest = {
       requestId: 'permission-restored',
