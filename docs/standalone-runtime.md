@@ -245,9 +245,9 @@ Development commands:
 
 Desktop packaging's `beforePack` hook builds/stages the backend and ordinary Node, even when CI
 invokes electron-builder directly. It refuses cross-OS/architecture packaging. The pinned executable
-and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.3 to retain the
+and SHA-256 values are in `build/node-runtime.json`; the runtime is Node 22.23.4 to retain the
 application's macOS deployment range. Only the executable and license are staged, not npm/headers.
-The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.3/SHASUMS256.txt).
+The source Node metadata comes from [official Node checksums](https://nodejs.org/dist/v22.23.4/SHASUMS256.txt).
 
 `OPEN_SCIENCE_WEB_PORT` selects the Web port. CLI/Web starts default to 44100; desktop-owned
 backends default to a system-assigned free port so independent profiles can run concurrently.
