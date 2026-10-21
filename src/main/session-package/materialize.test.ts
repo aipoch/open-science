@@ -141,16 +141,21 @@ it.each(['ArtifactMessageSnapshot', 'ReviewScopeSnapshot'] as const)(
 )
 
 it.each(['notebook-file-evidence', 'file-evidence'])(
-  'shares verified %s legacy blobs',
+  'shares verified %s legacy run and project-pool blobs within one-copy capacity',
   async (namespace) => {
+    vi.mocked(usage.availableBytes).mockResolvedValue(
+      LOCAL_RESOURCE_BUDGETS.diskReserveBytes + payload.length
+    )
     const entries = ['one', 'two'].map((run) =>
       entry(`${namespace}/project/session/frames/frame/run-${run}/blobs/sha256-${checksum}`)
     )
+    entries.push(entry(`${namespace}/project/blobs/sha256-${checksum}`))
     const copy = await createPackageMaterializer(source, destination, entries)
     for (const item of entries) await copy(item)
-    expect(await inode(join(destination, entries[0].storageKey!))).toBe(
-      await inode(join(destination, entries[1].storageKey!))
-    )
+    expect(
+      new Set(await Promise.all(entries.map((item) => inode(join(destination, item.storageKey!)))))
+        .size
+    ).toBe(1)
   }
 )
 

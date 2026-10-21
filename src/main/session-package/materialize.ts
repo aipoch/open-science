@@ -9,7 +9,7 @@ import { packageCapacityChecker } from './capacity'
 // Only immutable execution blobs may share an inode. Working files and metadata are rewritten.
 const blobIdentity = (entry: SessionPackageInventoryEntry): string | undefined => {
   const match =
-    /^(?:execution-file-evidence\/([^/]+)\/(?:[^/]+\/(?:frames\/[^/]+\/)?activity-[^/]+\/)?|(?:notebook-file-evidence|file-evidence)\/([^/]+)\/[^/]+\/(?:frames\/[^/]+\/)?run-[^/]+\/)blobs\/sha256-([a-f0-9]{64})$/.exec(
+    /^(?:execution-file-evidence\/([^/]+)\/(?:[^/]+\/(?:frames\/[^/]+\/)?activity-[^/]+\/)?|(?:notebook-file-evidence|file-evidence)\/([^/]+)\/(?:[^/]+\/(?:frames\/[^/]+\/)?run-[^/]+\/)?)blobs\/sha256-([a-f0-9]{64})$/.exec(
       entry.storageKey ?? ''
     )
   return entry.kind === 'file' && match && match[3] === entry.checksum
