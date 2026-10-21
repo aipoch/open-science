@@ -25,7 +25,7 @@ export type ManualInstallerOptions = {
   manualInstallStorePath?: string | null
   revealManualInstallerFile?: (path: string) => void | Promise<void>
   verifyManualInstallerSignature?: (artifact: ManualInstallerArtifact) => Promise<void>
-  inspectManualInstallSafety?: () => Promise<boolean>
+  inspectManualInstallSafety?: () => Promise<boolean | 'quit-required'>
   // Native result/process evidence is required. An unchanged running version is never failure proof.
   observeManualInstallHandoff?: (
     artifact: ManualInstallerArtifact,
@@ -69,6 +69,21 @@ export function manualInstallIsSafe(status: UpdateStatus): boolean {
         recovery.installation === 'unchanged' &&
         recovery.phase === 'preparing' &&
         !recovery.detail))
+  )
+}
+
+// A pre-native occupancy refusal may expose instructions, never installation authority. The
+// persisted native-attempt gate and the live main-process safety hook must still authorize it.
+export function manualInstallRequiresQuit(status: UpdateStatus): boolean {
+  return (
+    (status.state === 'ready' || status.state === 'error' || status.state === 'available') &&
+    !status.blockedBy?.length &&
+    !status.cliConfirmation &&
+    status.reason === 'installation-busy' &&
+    status.recovery?.phase === 'preparing' &&
+    status.recovery.runtime === 'running' &&
+    status.recovery.installation === 'unchanged' &&
+    status.recovery.detail === 'other-runtime'
   )
 }
 
@@ -117,6 +132,7 @@ export class ManualInstallerFallback {
   private checkSnapshot?: string
   private formatHint?: ManualInstallerFormat
   private reveal?: Promise<ManualInstallInfo>
+  private qualification?: { snapshot: string; revision: number; info: ManualInstallInfo }
   private readonly options: ManualInstallerOptions
   constructor(
     private readonly platform: ManualInstallInfo['platform'],
@@ -256,6 +272,7 @@ export class ManualInstallerFallback {
   async beforeHandoff(operationId: string = randomUUID()): Promise<void> {
     const artifact = this.stored.artifact
     if (!artifact) throw new Error('Verified update artifact provenance is unavailable.')
+    ++this.revision
     this.stored.attempt = {
       identity: artifact.identity,
       version: artifact.version,
@@ -284,12 +301,24 @@ export class ManualInstallerFallback {
   }
   entry(): ManualInstallInfo | undefined {
     if (
-      !this.stored.failure ||
-      !manualInstallIsSafe(this.status()) ||
+      (!this.stored.failure && !manualInstallRequiresQuit(this.status())) ||
+      (!manualInstallIsSafe(this.status()) && !manualInstallRequiresQuit(this.status())) ||
       this.stored.attempt?.state === 'pending'
     )
       return undefined
     return this.website(this.stored.failure === 'download' ? 'download-failed' : 'unavailable')
+  }
+  isCurrent(info: ManualInstallInfo | undefined): boolean {
+    return (
+      !!info &&
+      this.qualification?.info === info &&
+      this.qualification.revision === this.revision &&
+      this.qualification.snapshot === snapshotKey(this.status())
+    )
+  }
+  private publishQualified(info: ManualInstallInfo): void {
+    this.qualification = { snapshot: snapshotKey(this.status()), revision: this.revision, info }
+    this.publish(info)
   }
   private base(): Pick<ManualInstallInfo, 'identity' | 'platform' | 'arch' | 'version'> {
     return {
@@ -301,7 +330,9 @@ export class ManualInstallerFallback {
       version: this.status().latest
     }
   }
-  private website(reason: 'download-failed' | 'unavailable' | 'not-standalone'): ManualInstallInfo {
+  private website(
+    reason: 'download-failed' | 'unavailable' | 'not-standalone'
+  ): Extract<ManualInstallInfo, { kind: 'website' }> {
     return {
       ...this.base(),
       kind: 'website',
@@ -376,7 +407,7 @@ export class ManualInstallerFallback {
     const blocked = (): ManualInstallInfo => {
       const result = this.blocked()
       if (revision === this.revision && snapshotKey(this.status()) === snapshot)
-        this.publish(result)
+        this.publishQualified(result)
       return result
     }
     const artifact = this.stored.artifact
@@ -404,7 +435,7 @@ export class ManualInstallerFallback {
       const eligible =
         manualInstallIsSafe({ ...current, recovery: undefined, reason: undefined }) &&
         (!this.options.inspectManualInstallSafety ||
-          (await this.options.inspectManualInstallSafety().catch(() => false)))
+          (await this.options.inspectManualInstallSafety().catch(() => false)) === true)
       if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
       if (!eligible) return blocked()
       this.publishRecovery?.({
@@ -415,12 +446,20 @@ export class ManualInstallerFallback {
       })
       snapshot = snapshotKey(this.status())
     }
-    const safe = async (): Promise<boolean> =>
-      manualInstallIsSafe(this.status()) &&
-      (!this.options.inspectManualInstallSafety ||
-        (await this.options.inspectManualInstallSafety().catch(() => false)))
-    if (!this.stored.failure || this.stored.attempt?.state === 'pending' || !(await safe()))
-      return blocked()
+    const safe = async (): Promise<boolean | 'quit-required'> => {
+      const requiresQuit = manualInstallRequiresQuit(this.status())
+      if (this.hasPendingAttempt() || (!manualInstallIsSafe(this.status()) && !requiresQuit))
+        return false
+      // The narrow occupancy exception always requires live main-process proof. A status snapshot
+      // alone, or a missing desktop hook, cannot grant access to manual installer instructions.
+      if (!this.options.inspectManualInstallSafety) return !requiresQuit
+      const result = await this.options.inspectManualInstallSafety().catch(() => false)
+      if (this.hasPendingAttempt()) return false
+      return result && (requiresQuit || result === 'quit-required') ? 'quit-required' : result
+    }
+    if (!this.stored.failure && !manualInstallRequiresQuit(this.status())) return blocked()
+    const eligibility = await safe()
+    if (!eligibility) return blocked()
     let result: ManualInstallInfo
     if (this.stored.failure === 'download') result = this.website('download-failed')
     else if (!artifact || artifact.version !== this.status().latest)
@@ -440,10 +479,13 @@ export class ManualInstallerFallback {
         result = this.website('unavailable')
       }
     }
-    if (revision !== this.revision || snapshotKey(this.status()) !== snapshot || !(await safe()))
+    const finalEligibility = await safe()
+    if (revision !== this.revision || snapshotKey(this.status()) !== snapshot || !finalEligibility)
       return blocked()
     if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
-    this.publish(result)
+    if (eligibility === 'quit-required' || finalEligibility === 'quit-required')
+      result = { ...result, requiresQuitAndReleaseOccupancy: true }
+    this.publishQualified(result)
     return result
   }
   revealInstaller(): Promise<ManualInstallInfo> {
@@ -470,7 +512,7 @@ export class ManualInstallerFallback {
         )
           return checked
         const failed = { ...checked, revealError: true }
-        this.publish(failed)
+        this.publishQualified(failed)
         return failed
       }
       if (revision !== this.revision || snapshotKey(this.status()) !== snapshot)

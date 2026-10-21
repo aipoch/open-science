@@ -25,6 +25,7 @@ import {
   type InstallationUpdateRecord
 } from './update/installation-protection'
 import type { InstallReadiness } from './update/strategy'
+import { manualInstallRequiresQuit } from './update/manual-install'
 
 /** A cancelled read must not keep its caller or a subsequent recovery action waiting. */
 async function boundedRead<T>(read: Promise<T>, signal: AbortSignal): Promise<T> {
@@ -85,6 +86,7 @@ export function createDesktopUpdateIntegration(options: {
   let legacy: { config: RuntimeStartupOptions; stopped: boolean; stopping: boolean } | undefined
   let consent: { token: string; generation: string } | undefined
   let pending: Promise<unknown> | undefined
+  let actionRevision = 0
   let cancellation = new AbortController()
   let cancelRequested = false
   const checkCancellation = (): void => {
@@ -117,6 +119,7 @@ export function createDesktopUpdateIntegration(options: {
         'An installation action is still running.',
         recovery()
       )
+    ++actionRevision
     const operation = run()
     pending = operation
     try {
@@ -375,34 +378,69 @@ export function createDesktopUpdateIntegration(options: {
   return {
     inspectManualInstallSafety: async () => {
       if (pending) await pending.catch(() => undefined)
-      if (pending || pendingRestart || record || legacy) return false
       try {
-        const client = options.client()
-        const info = await client.refreshControl()
-        if (info.control !== 'granted') return false
-        options.validateConfiguration(info.startupOptions)
-        await inspectInstallationAvailability({
-          ...options.location,
-          runtime: {
-            pid: client.processId(),
-            generation: info.generation,
-            configRoot: info.startupOptions.configRoot
-          },
-          allowedProcessIds: options.allowedProcessIds()
-        })
-        // Manual instructions also lead to quitting: prove renderer persistence before offering them.
-        await options.flushRenderer?.('preflight')
-        const readiness = (await client.invokeHost('desktop:update-inspect')) as InstallReadiness
-        return (
+        const revision = actionRevision
+        const idle = (): boolean =>
+          revision === actionRevision &&
           !pending &&
           !pendingRestart &&
           !record &&
           !legacy &&
-          !readiness.reason &&
-          !readiness.blockedBy?.length &&
-          // Inspection does not stop or reap the running service. Occupancy was checked above.
-          readiness.completed === true
+          // The in-memory record was captured at construction. Another process may have since
+          // created an update-in-progress record, including an unresolved native installer.
+          !inspectInstallationUpdate(options.location)
+        if (!idle()) return false
+        const client = options.client()
+        const info = await client.refreshControl()
+        if (info.control !== 'granted') return false
+        options.validateConfiguration(info.startupOptions)
+        const pid = client.processId()
+        const inspectOccupancy = async (): Promise<boolean> => {
+          try {
+            await inspectInstallationAvailability({
+              ...options.location,
+              runtime: {
+                pid,
+                generation: info.generation,
+                configRoot: info.startupOptions.configRoot
+              },
+              allowedProcessIds: options.allowedProcessIds()
+            })
+            return false
+          } catch (error) {
+            if (
+              error instanceof UpdateLifecycleError &&
+              manualInstallRequiresQuit({
+                state: 'ready',
+                current: options.currentVersion,
+                reason: error.reason,
+                recovery: error.recovery
+              })
+            )
+              return true
+            throw error
+          }
+        }
+        let requiresQuit = await inspectOccupancy()
+        if (!idle()) return false
+        // Manual instructions also lead to quitting: prove renderer persistence before offering them.
+        await options.flushRenderer?.('preflight')
+        const readiness = (await client.invokeHost('desktop:update-inspect')) as InstallReadiness
+        if (readiness.reason || readiness.blockedBy?.length || readiness.completed !== true)
+          return false
+        const current = await client.refreshControl()
+        if (
+          current.control !== 'granted' ||
+          client.processId() !== pid ||
+          current.generation !== info.generation ||
+          JSON.stringify(current.startupOptions) !== JSON.stringify(info.startupOptions)
         )
+          return false
+        // Recheck after saves/readiness/control awaits: neither an old occupancy exception nor an
+        // old task result may hide a newly pending operation or uncertain process inspection.
+        requiresQuit = (await inspectOccupancy()) || requiresQuit
+        if (!idle()) return false
+        return requiresQuit ? 'quit-required' : true
       } catch {
         return false
       }

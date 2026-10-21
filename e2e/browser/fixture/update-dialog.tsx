@@ -175,7 +175,8 @@ if (params.has('manual')) {
     version: '0.29.0',
     format: platform === 'darwin' ? 'zip' : platform === 'linux' ? 'deb' : 'nsis',
     fileName: `Open-Science-${'long-file-name-'.repeat(12)}setup.exe`,
-    size: 314 * 1024 * 1024
+    size: 314 * 1024 * 1024,
+    ...(params.has('occupancy') ? { requiresQuitAndReleaseOccupancy: true as const } : {})
   }
   let checks = 0,
     reveals = 0
@@ -196,14 +197,17 @@ if (params.has('manual')) {
         : info,
     ...(params.has('runtime') && !params.has('download-failed')
       ? {
-          reason: 'install-failed' as const,
+          reason: params.has('occupancy')
+            ? ('installation-busy' as const)
+            : ('install-failed' as const),
           recovery: {
             phase: 'preparing' as const,
             runtime: 'running' as const,
             installation: 'unchanged' as const,
             canCancel: true,
             canRetryInstall: true,
-            canRecover: false
+            canRecover: false,
+            ...(params.has('occupancy') ? { detail: 'other-runtime' as const } : {})
           }
         }
       : {})
@@ -235,6 +239,22 @@ if (params.has('manual')) {
       ...status,
       latest: '0.30.0',
       manualInstall: { ...info, identity: 'manual-fixture-3' }
+    }
+    useUpdateStore.setState({ status })
+  })
+  document.addEventListener('manual-fixture-native-pending', () => {
+    status = {
+      ...status,
+      reason: 'install-failed',
+      recovery: {
+        phase: 'install-check',
+        runtime: 'unknown',
+        installation: 'pending',
+        canCancel: false,
+        canRecover: true,
+        canRetryInstall: false
+      },
+      manualInstall: { ...info, kind: 'blocked' }
     }
     useUpdateStore.setState({ status })
   })

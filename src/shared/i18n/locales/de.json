@@ -7667,6 +7667,9 @@
     "Linux": "Linux",
     "Your changes could not be saved": "Ihre Änderungen konnten nicht gespeichert werden",
     "Keep Open-Science open. Return to your work and save your changes before trying the update again.": "Lassen Sie Open-Science geöffnet. Kehren Sie zu Ihrer Arbeit zurück und speichern Sie Ihre Änderungen, bevor Sie das Update erneut versuchen.",
-    "Check installation": "Installation prüfen"
+    "Check installation": "Installation prüfen",
+    "Quit Open-Science and release file access before installing": "Open-Science vor der Installation beenden und Dateisperren aufheben",
+    "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "Speichern Sie Ihre Arbeit und stoppen Sie laufende Aufgaben. Beenden Sie Open-Science vollständig und schließen Sie andere Instanzen oder stoppen Sie Dienste, die diese Installation verwenden, bevor Sie das Installationsprogramm ausführen. Eine manuelle Installation hebt bestehende Dateisperren nicht auf.",
+    "Verified installer": "Überprüftes Installationsprogramm"
   }
 }

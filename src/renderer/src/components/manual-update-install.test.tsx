@@ -59,6 +59,93 @@ const enter = async (): Promise<void> => {
 }
 
 describe('manual update instructions', () => {
+  it.each([false, true])(
+    'explains the occupancy prerequisite without installing or quitting (%s)',
+    async (runtime) => {
+      const conditional = { ...local, requiresQuitAndReleaseOccupancy: true as const }
+      const apply = vi.fn(async () => {})
+      const cancel = vi.fn(async () => {})
+      useUpdateStore.setState({
+        apply,
+        cancel,
+        status: status({
+          manualInstall: conditional,
+          ...(runtime
+            ? {
+                reason: 'installation-busy' as const,
+                recovery: {
+                  phase: 'preparing' as const,
+                  runtime: 'running' as const,
+                  installation: 'unchanged' as const,
+                  detail: 'other-runtime' as const,
+                  canCancel: true,
+                  canRecover: false,
+                  canRetryInstall: false
+                }
+              }
+            : {})
+        })
+      })
+      getManualInstall.mockResolvedValue(conditional)
+      revealManualInstaller.mockResolvedValue(conditional)
+      render()
+      await enter()
+      expect(document.body.textContent).toContain('Completely quit Open-Science')
+      expect(document.body.textContent).toContain('close other instances or stop services')
+      expect(document.body.textContent).toContain('Manual installation does not release files')
+      expect(document.body.textContent).toContain('Verified installer')
+      expect(document.body.textContent).not.toContain('Ready for manual installation')
+      await act(async () => button('Show in File Explorer').click())
+      expect(revealManualInstaller).toHaveBeenCalledExactlyOnceWith()
+      expect(apply).not.toHaveBeenCalled()
+      expect(cancel).not.toHaveBeenCalled()
+      act(() => button('Use a new download instead').click())
+      expect(document.body.textContent).toContain('Manual installation does not release files')
+    }
+  )
+  it('discards an in-flight unqualified response when the occupancy prerequisite changes', async () => {
+    let finish!: (info: ManualInstallInfo) => void
+    getManualInstall.mockImplementation(() => new Promise((resolve) => (finish = resolve)))
+    render()
+    act(() => button('Install manually…').click())
+    act(() =>
+      useUpdateStore.setState({
+        status: status({ manualInstall: { ...local, requiresQuitAndReleaseOccupancy: true } })
+      })
+    )
+    await act(async () => finish(local))
+    expect(button('Show in File Explorer')).toBeUndefined()
+    expect(document.body.textContent).not.toContain('Ready for manual installation')
+  })
+  it.each(['pending', 'unknown'] as const)(
+    'withdraws conditional instructions when main reports native installation %s',
+    async (installation) => {
+      const conditional = { ...local, requiresQuitAndReleaseOccupancy: true as const }
+      useUpdateStore.setState({ status: status({ manualInstall: conditional }) })
+      getManualInstall.mockResolvedValue(conditional)
+      render()
+      await enter()
+      act(() =>
+        useUpdateStore.setState({
+          status: status({
+            manualInstall: { ...local, kind: 'blocked' },
+            reason: 'install-failed',
+            recovery: {
+              phase: 'install-check',
+              runtime: 'unknown',
+              installation,
+              canCancel: false,
+              canRecover: true,
+              canRetryInstall: false
+            }
+          })
+        })
+      )
+      expect(button('Show in File Explorer')).toBeUndefined()
+      expect(button('Install manually…')).toBeUndefined()
+      expect(revealManualInstaller).not.toHaveBeenCalled()
+    }
+  )
   it.each([undefined, { ...local, kind: 'blocked' } as ManualInstallInfo])(
     'requires an explicit main-process grant (%s)',
     (manualInstall) => {

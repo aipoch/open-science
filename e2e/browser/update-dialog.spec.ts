@@ -1,5 +1,37 @@
 import { expect, test } from '@playwright/test'
 
+for (const runtime of [false, true]) {
+  test(`pre-install occupancy instructions retain the quit warning (${runtime ? 'runtime' : 'legacy'})`, async ({
+    page
+  }, testInfo) => {
+    await page.goto(`/update-dialog.html?manual&occupancy${runtime ? '&runtime' : ''}`)
+    const entry = page.getByRole('button', { name: 'Install manually…', exact: true })
+    await entry.click()
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toHaveAccessibleName('Install manually')
+    const warning = dialog.getByRole('alert')
+    await expect(warning).toContainText('Completely quit Open-Science')
+    await expect(warning).toContainText('close other instances or stop services')
+    await expect(warning).toContainText('Manual installation does not release files')
+    await expect(dialog).not.toContainText('Ready for manual installation')
+    await dialog.getByRole('button', { name: 'Show in File Explorer', exact: true }).click()
+    await expect(page.locator('body')).toHaveAttribute('data-manual-reveals', '1')
+    await page.screenshot({
+      path: testInfo.outputPath(`occupancy-${runtime ? 'runtime' : 'legacy'}.png`)
+    })
+    await dialog.getByRole('button', { name: 'Use a new download instead' }).click()
+    await expect(warning).toContainText('Completely quit Open-Science')
+    await page.keyboard.press('Escape')
+    await expect(entry).toBeFocused()
+    await entry.click()
+    await expect(dialog.getByRole('button', { name: 'Show in File Explorer' })).toBeEnabled()
+    await page.evaluate(() => document.dispatchEvent(new Event('manual-fixture-native-pending')))
+    await expect(page.getByRole('button', { name: 'Show in File Explorer' })).toHaveCount(0)
+    await expect(entry).toHaveCount(0)
+    expect(page.context().pages()).toHaveLength(1)
+  })
+}
+
 test('recovers historical records only after confirmation in the update dialog', async ({
   page
 }, testInfo) => {

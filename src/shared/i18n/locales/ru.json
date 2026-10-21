@@ -7974,6 +7974,9 @@
     "Linux": "Linux",
     "Your changes could not be saved": "Не удалось сохранить изменения",
     "Keep Open-Science open. Return to your work and save your changes before trying the update again.": "Не закрывайте Open-Science. Вернитесь к работе и сохраните изменения, прежде чем повторить обновление.",
-    "Check installation": "Проверить установку"
+    "Check installation": "Проверить установку",
+    "Quit Open-Science and release file access before installing": "Перед установкой закройте Open-Science и освободите файлы",
+    "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "Сохраните работу и остановите выполняющиеся задачи. Перед запуском установщика полностью закройте Open-Science и другие экземпляры приложения или остановите службы, использующие эту установленную копию. Ручная установка не освобождает занятые файлы.",
+    "Verified installer": "Проверенный установщик"
   }
 }

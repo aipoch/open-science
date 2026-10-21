@@ -7507,6 +7507,9 @@
     "Linux": "Linux",
     "Your changes could not be saved": "変更を保存できませんでした",
     "Keep Open-Science open. Return to your work and save your changes before trying the update again.": "Open-Science を開いたままにしてください。作業に戻って変更を保存してから、更新を再試行してください。",
-    "Check installation": "インストールを確認"
+    "Check installation": "インストールを確認",
+    "Quit Open-Science and release file access before installing": "インストール前に Open-Science を終了し、ファイルの使用を解除してください",
+    "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "作業を保存し、実行中のタスクを停止してください。インストーラーを実行する前に、Open-Science を完全に終了し、このインストール先を使用している他のインスタンスを閉じるか、関連サービスを停止してください。手動インストールでは、使用中のファイルは解放されません。",
+    "Verified installer": "検証済みのインストーラー"
   }
 }

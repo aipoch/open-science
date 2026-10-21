@@ -241,9 +241,12 @@ export class UpdateService implements UpdateStrategy {
 
   private setStatus(next: UpdateStatus): void {
     this.status = { ...next, applyKind: 'installer' }
-    this.status.manualInstall = this.manual?.entry() ? next.manualInstall : undefined
+    this.status.manualInstall =
+      this.manual?.entry() && this.manual.isCurrent(next.manualInstall)
+        ? next.manualInstall
+        : undefined
     this.broadcast('update:status', this.status)
-    if (this.manual?.entry() && !next.manualInstall)
+    if (this.manual?.entry() && !this.status.manualInstall)
       void this.manual
         .get()
         .catch((error) => this.log.warn('manual update eligibility check failed', error))

@@ -7,6 +7,7 @@ import { afterEach, expect, it, vi } from 'vitest'
 import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
 import { UpdateService } from './service'
 import { ManualInstallerFallback } from './manual-install'
+import { UpdateLifecycleError } from '../../shared/update'
 
 vi.mock('electron-updater', () => ({
   AppImageUpdater: class {},
@@ -119,6 +120,70 @@ async function setupManifest(download = true) {
   if (download) await service.download()
   return { ...f, service, configuration, fetchImpl, receipt: configuration.manualInstallStorePath! }
 }
+
+it('offers warned verified instructions after a real SDK prepare refusal without launching the installer', async () => {
+  const f = await setup(false)
+  let safe: boolean | 'quit-required' = 'quit-required'
+  const prepareInstall = vi.fn(async () => {
+    throw new UpdateLifecycleError('installation-busy', 'Another runtime uses this installation', {
+      phase: 'preparing',
+      runtime: 'running',
+      installation: 'unchanged',
+      canCancel: true,
+      canRetryInstall: false,
+      canRecover: false,
+      detail: 'other-runtime'
+    })
+  })
+  const strategy = new ElectronUpdaterStrategy({
+    ...f.common,
+    prepareInstall,
+    inspectManualInstallSafety: async () => safe
+  })
+  await strategy.check()
+  await strategy.download()
+  await strategy.apply()
+  expect(strategy.getStatus()).toMatchObject({
+    state: 'ready',
+    reason: 'installation-busy',
+    recovery: { phase: 'preparing', installation: 'unchanged', detail: 'other-runtime' }
+  })
+  const offer = await strategy.getManualInstall()
+  expect(offer).toMatchObject({ kind: 'local', requiresQuitAndReleaseOccupancy: true })
+  expect(strategy.getStatus().manualInstall).toEqual(offer)
+  expect(await strategy.revealManualInstaller()).toMatchObject({
+    kind: 'local',
+    requiresQuitAndReleaseOccupancy: true
+  })
+  expect(f.reveal).toHaveBeenCalledExactlyOnceWith(f.path)
+  expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
+  expect(
+    JSON.parse(await readFile(f.common.manualInstallStorePath!, 'utf8')).attempt
+  ).toBeUndefined()
+  safe = false
+  strategy.publishLifecycleStatus({ blockedBy: ['agent'] })
+  // Do not broadcast a spread-carried local result from the prior qualification while new checks run.
+  expect(strategy.getStatus().manualInstall).toBeUndefined()
+  expect((await strategy.revealManualInstaller()).kind).toBe('blocked')
+  expect(f.reveal).toHaveBeenCalledOnce()
+})
+
+it('does not classify generic SDK installation-busy as pre-native occupancy', async () => {
+  const f = await setup(false)
+  const strategy = new ElectronUpdaterStrategy({
+    ...f.common,
+    prepareInstall: async () => {
+      throw new UpdateLifecycleError('installation-busy', 'An update is in progress')
+    },
+    inspectManualInstallSafety: async () => 'quit-required'
+  })
+  await strategy.check()
+  await strategy.download()
+  await strategy.apply()
+  expect((await strategy.getManualInstall()).kind).toBe('blocked')
+  expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
+  expect(f.reveal).not.toHaveBeenCalled()
+})
 
 it.each(['rejection', 'error event'] as const)(
   'settles an Electron download %s when the failure receipt cannot be persisted',

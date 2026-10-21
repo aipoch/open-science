@@ -7505,6 +7505,9 @@
     "Linux": "Linux",
     "Your changes could not be saved": "변경 사항을 저장하지 못했습니다",
     "Keep Open-Science open. Return to your work and save your changes before trying the update again.": "Open-Science를 열어 두세요. 작업으로 돌아가 변경 사항을 저장한 후 업데이트를 다시 시도하세요.",
-    "Check installation": "설치 확인"
+    "Check installation": "설치 확인",
+    "Quit Open-Science and release file access before installing": "설치하기 전에 Open-Science를 종료하고 파일 사용을 해제하세요",
+    "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "작업을 저장하고 실행 중인 작업을 중지하세요. 설치 프로그램을 실행하기 전에 Open-Science를 완전히 종료하고 이 설치 경로를 사용하는 다른 인스턴스를 닫거나 관련 서비스를 중지하세요. 수동 설치는 사용 중인 파일을 해제하지 않습니다.",
+    "Verified installer": "검증된 설치 프로그램"
   }
 }

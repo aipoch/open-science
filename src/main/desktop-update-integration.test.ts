@@ -2,6 +2,7 @@ import { RuntimeStopError } from './runtime-stop-confirmation'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DesktopRuntimeClient } from './desktop-runtime-client'
 import type { UpdateStatus } from '../shared/update'
+import { UpdateLifecycleError } from '../shared/update'
 import type { InstallationUpdateRecord } from './update/installation-protection'
 const state = vi.hoisted(() => ({
   record: undefined as InstallationUpdateRecord | undefined,
@@ -594,6 +595,64 @@ it.each([true, false])(
   }
 )
 describe('manual installer live safety gate', () => {
+  const occupied = (): UpdateLifecycleError =>
+    new UpdateLifecycleError('installation-busy', 'Another runtime', {
+      phase: 'preparing',
+      runtime: 'running',
+      installation: 'unchanged',
+      canCancel: true,
+      canRetryInstall: false,
+      canRecover: false,
+      detail: 'other-runtime'
+    })
+  it('permits instructions only for exact live other-runtime occupancy after save and task checks', async () => {
+    const flushRenderer = vi.fn(async () => {})
+    const h = setup('desktop', undefined, () => true, { flushRenderer })
+    state.availability.mockRejectedValue(occupied())
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe('quit-required')
+    expect(state.availability).toHaveBeenCalledTimes(2)
+    expect(flushRenderer).toHaveBeenCalledWith('preflight')
+    expect(h.invoke).toHaveBeenCalledWith('desktop:update-inspect')
+    expect(h.stop).not.toHaveBeenCalled()
+    h.invoke.mockResolvedValue({ completed: false, blockedBy: ['notebook'] })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('blocks a durable pending record created after integration construction or during readiness', async () => {
+    const h = setup()
+    state.record = { ...base, phase: 'handoff' }
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    state.record = undefined
+    state.availability.mockRejectedValue(occupied())
+    h.invoke.mockImplementationOnce(async () => {
+      state.record = { ...base, phase: 'handoff' }
+      return { completed: true }
+    })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    expect(h.stop).not.toHaveBeenCalled()
+  })
+  it('rejects uncertain occupancy or lost control discovered after the first occupancy exception', async () => {
+    const h = setup()
+    state.availability
+      .mockRejectedValueOnce(occupied())
+      .mockRejectedValueOnce(new Error('process inspection failed'))
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    state.availability.mockRejectedValue(occupied())
+    const control = { control: 'granted', generation: 'gen', startupOptions: config }
+    h.refresh
+      .mockResolvedValueOnce(control)
+      .mockResolvedValueOnce({ ...control, control: 'denied' })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+  })
+  it('rejects a concurrent prepare/cancel lifecycle even if it settles during the save await', async () => {
+    const h = setup('desktop', undefined, () => true)
+    h.invoke.mockImplementationOnce(async () => {
+      await h.hooks.prepareInstall!(status, {})
+      await h.hooks.cancelInstall!()
+      return { completed: true }
+    })
+    expect(await h.hooks.inspectManualInstallSafety!()).toBe(false)
+    expect(h.stop).not.toHaveBeenCalled()
+  })
   it('checks current runtime control, installation occupancy and active work without stopping services', async () => {
     const { hooks, invoke, stop } = setup()
     // The real inspectDesktopUpdate contract reports reaped:false because it never stops Node.

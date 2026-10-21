@@ -623,9 +623,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       current: this.currentVersion,
       applyKind: 'restart'
     }
-    this.status.manualInstall = this.manual?.entry() ? partial.manualInstall : undefined
+    this.status.manualInstall =
+      this.manual?.entry() && this.manual.isCurrent(partial.manualInstall)
+        ? partial.manualInstall
+        : undefined
     this.broadcast('update:status', this.status)
-    if (this.manual?.entry() && !partial.manualInstall)
+    if (this.manual?.entry() && !this.status.manualInstall)
       void this.manual
         .get()
         .catch((error) => this.log.warn('manual update eligibility check failed', error))

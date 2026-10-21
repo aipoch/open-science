@@ -9,7 +9,20 @@ import { formatBytes, type ManualInstallInfo, type UpdateStatus } from '../../..
 
 type VisibleInfo = Exclude<ManualInstallInfo, { kind: 'blocked' }>
 const targetIdentity = (status: UpdateStatus): string =>
-  `${status.current}:${status.latest}:${status.state}:${status.manualInstall?.identity}:${status.localPath}:${status.artifactSha512}:${status.manualInstall?.kind === 'blocked' ? 'blocked' : 'eligible'}`
+  JSON.stringify([
+    status.current,
+    status.latest,
+    status.state,
+    status.manualInstall?.identity,
+    status.localPath,
+    status.artifactSha512,
+    status.manualInstall?.kind === 'blocked' ? 'blocked' : 'eligible',
+    status.manualInstall?.kind !== 'blocked'
+      ? status.manualInstall?.requiresQuitAndReleaseOccupancy
+      : undefined,
+    status.reason,
+    status.recovery
+  ])
 
 // Main owns eligibility and file access. This view only accepts replies for the currently displayed
 // artifact, and a synchronous lock coalesces pointer/keyboard requests before React renders busy.
@@ -244,6 +257,17 @@ export const useManualUpdateInstall = (
         ) : null}
         {info ? (
           <>
+            {info.requiresQuitAndReleaseOccupancy ? (
+              <ErrorNotice
+                inline
+                role="alert"
+                level="warning"
+                title={t('Quit Open-Science and release file access before installing')}
+                description={t(
+                  'Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.'
+                )}
+              />
+            ) : null}
             <p className="text-xs text-muted-foreground">
               {platform === 'darwin' ? 'macOS' : platform === 'win32' ? t('Windows') : t('Linux')}
               {' · '}
@@ -271,7 +295,9 @@ export const useManualUpdateInstall = (
                   {local.version ? `v${local.version} · ` : ''}
                   {formatBytes(local.size)}
                   {' · '}
-                  {t('Verified · Ready for manual installation')}
+                  {local.requiresQuitAndReleaseOccupancy
+                    ? t('Verified installer')
+                    : t('Verified · Ready for manual installation')}
                 </p>
               </div>
             ) : null}

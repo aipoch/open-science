@@ -79,6 +79,116 @@ async function fixture(options: ManualInstallerOptions = {}) {
 }
 
 describe('manual installer qualification and continuity', () => {
+  const occupancy: Partial<UpdateStatus> = {
+    reason: 'installation-busy',
+    recovery: {
+      phase: 'preparing',
+      runtime: 'running',
+      installation: 'unchanged',
+      canCancel: true,
+      canRetryInstall: false,
+      canRecover: false,
+      detail: 'other-runtime'
+    }
+  }
+  it('offers verified reveal with a quit warning for a live-confirmed pre-native occupancy refusal', async () => {
+    const safety = vi.fn().mockResolvedValue('quit-required')
+    const f = await fixture({ inspectManualInstallSafety: safety })
+    // No failed installer record: the updater was refused before any native handoff.
+    f.setStatus(occupancy)
+    expect(f.owner.entry()?.kind).toBe('website')
+    expect(await f.owner.get()).toMatchObject({
+      kind: 'local',
+      requiresQuitAndReleaseOccupancy: true
+    })
+    expect(f.signature).toHaveBeenCalledOnce()
+    expect(await f.owner.revealInstaller()).toMatchObject({
+      kind: 'local',
+      requiresQuitAndReleaseOccupancy: true
+    })
+    expect(f.reveal).toHaveBeenCalledExactlyOnceWith(f.path)
+    expect(safety).toHaveBeenCalledTimes(4)
+  })
+  it('keeps the occupancy warning on a website fallback without trusting an invalid file', async () => {
+    const f = await fixture({ inspectManualInstallSafety: async () => 'quit-required' })
+    f.setStatus(occupancy)
+    await writeFile(f.path, Buffer.alloc(f.bytes.length, 42))
+    expect(await f.owner.revealInstaller()).toMatchObject({
+      kind: 'website',
+      reason: 'unavailable',
+      requiresQuitAndReleaseOccupancy: true
+    })
+    expect(f.reveal).not.toHaveBeenCalled()
+  })
+  it('requires the live hook for the occupancy exception and still checks the publisher', async () => {
+    const missing = await fixture()
+    missing.setStatus(occupancy)
+    expect((await missing.owner.get()).kind).toBe('blocked')
+    const f = await fixture({
+      inspectManualInstallSafety: async () => 'quit-required',
+      verifyManualInstallerSignature: async () => {
+        throw new Error('invalid publisher')
+      }
+    })
+    f.setStatus(occupancy)
+    expect(await f.owner.get()).toMatchObject({
+      kind: 'website',
+      requiresQuitAndReleaseOccupancy: true
+    })
+  })
+  it.each([
+    { detail: 'operation-pending' },
+    { detail: 'occupancy-unknown' },
+    { detail: 'save-failed' },
+    { detail: 'controller-held' },
+    { installation: 'pending' },
+    { installation: 'unknown' },
+    { phase: 'stopping' },
+    { phase: 'handoff' },
+    { runtime: 'unknown' }
+  ] as Partial<NonNullable<UpdateStatus['recovery']>>[])(
+    'does not broaden the exception to unsafe recovery fields: %j',
+    async (recovery) => {
+      const f = await fixture({ inspectManualInstallSafety: async () => 'quit-required' })
+      f.setStatus({ ...occupancy, recovery: { ...occupancy.recovery!, ...recovery } })
+      expect((await f.owner.revealInstaller()).kind).toBe('blocked')
+      expect(f.reveal).not.toHaveBeenCalled()
+    }
+  )
+  it('rejects an old qualification and in-flight signature when native handoff starts', async () => {
+    let release!: () => void
+    const signature = vi.fn().mockResolvedValue(undefined)
+    const f = await fixture({
+      inspectManualInstallSafety: async () => 'quit-required',
+      verifyManualInstallerSignature: signature
+    })
+    f.setStatus(occupancy)
+    const offer = await f.owner.get()
+    expect(f.owner.isCurrent(offer)).toBe(true)
+    signature.mockImplementationOnce(() => new Promise<void>((resolve) => (release = resolve)))
+    const pending = f.owner.revealInstaller()
+    await vi.waitFor(() => expect(signature).toHaveBeenCalledTimes(2))
+    await f.owner.beforeHandoff('native-operation')
+    expect(f.owner.isCurrent(offer)).toBe(false)
+    release()
+    expect((await pending).kind).toBe('blocked')
+    expect(f.reveal).not.toHaveBeenCalled()
+    // A stale other-runtime UI snapshot cannot override a durable pending attempt on restart.
+    expect((await f.create().get()).kind).toBe('blocked')
+  })
+  it('rechecks live safety after signature verification and invalidates old lifecycle offers', async () => {
+    const safety = vi.fn().mockResolvedValueOnce('quit-required').mockResolvedValue(false)
+    const f = await fixture({ inspectManualInstallSafety: safety })
+    f.setStatus(occupancy)
+    expect((await f.owner.revealInstaller()).kind).toBe('blocked')
+    expect(f.signature).toHaveBeenCalledOnce()
+    expect(f.reveal).not.toHaveBeenCalled()
+    safety.mockResolvedValue('quit-required')
+    const offer = await f.owner.get()
+    expect(f.owner.isCurrent(offer)).toBe(true)
+    f.setStatus({ blockedBy: ['agent'] })
+    expect(f.owner.isCurrent(offer)).toBe(false)
+  })
   it('keeps the normal ready flow free of fallback and only reveals a verified failed install', async () => {
     const f = await fixture()
     expect(f.owner.entry()).toBeUndefined()

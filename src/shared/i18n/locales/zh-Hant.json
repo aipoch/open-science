@@ -7507,6 +7507,9 @@
     "Linux": "Linux",
     "Your changes could not be saved": "無法儲存變更",
     "Keep Open-Science open. Return to your work and save your changes before trying the update again.": "請保持 Open-Science 開啟。返回工作並儲存變更，然後再重試更新。",
-    "Check installation": "檢查安裝"
+    "Check installation": "檢查安裝",
+    "Quit Open-Science and release file access before installing": "安裝前請完全結束 Open-Science 並解除檔案占用",
+    "Save your work and stop running tasks. Completely quit Open-Science and close other instances or stop services using this installation before running the installer. Manual installation does not release files that are in use.": "請儲存工作並停止執行中的工作。在執行安裝程式之前，請完全結束 Open-Science，並關閉使用此安裝目錄的其他執行個體或停止相關服務。手動安裝不會解除檔案占用。",
+    "Verified installer": "已驗證的安裝程式"
   }
 }

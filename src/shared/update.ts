@@ -30,11 +30,14 @@ export type ManualInstallInfo = {
       fileName: string
       size: number
       revealError?: boolean
+      // Instructions/file reveal only: quit this app and release installation occupancy first.
+      requiresQuitAndReleaseOccupancy?: true
     }
   | {
       kind: 'website'
       reason: 'download-failed' | 'unavailable' | 'not-standalone'
       format?: ManualInstallerFormat
+      requiresQuitAndReleaseOccupancy?: true
     }
   | { kind: 'blocked' }
 )
