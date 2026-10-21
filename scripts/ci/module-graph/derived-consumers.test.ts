@@ -4,22 +4,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
-import type { ModuleImpactManifest } from './load-module-impact.mjs'
+import type { ModuleImpactManifest } from '../load-module-impact.mjs'
 import {
+  checkDerivedConsumerRevisions,
+  checkDerivedConsumers,
+  consumerDependencyGraph,
   derivedConsumersPath,
+  generateDerivedConsumers,
   loadDerivedConsumers,
+  runDerivedConsumersCli,
   validateDerivedConsumers,
   withDerivedConsumers
-} from './module-derived-consumers.mjs'
-import {
-  consumerDependencyGraph,
-  generateDerivedConsumers,
-  checkDerivedConsumers,
-  checkDerivedConsumerRevisions,
-  runDerivedConsumersCli
-} from './generate-module-derived-consumers.mjs'
-import { createModuleTestPlan, createAffectedTestPlan } from './module-test-impact.mjs'
-import { additiveModuleImpact } from './module-impact-inputs.mjs'
+} from './index.mjs'
+import { createModuleTestPlan, createAffectedTestPlan } from '../module-test-impact.mjs'
+import { additiveModuleImpact } from '../module-impact-inputs.mjs'
 
 const owner = 'src/main/owner.ts'
 const ownerTest = 'src/main/owner.test.ts'
@@ -319,6 +317,21 @@ function repository() {
   return { root, git, put, commit }
 }
 
+it('writes the index in the repository Prettier style so regenerating it passes the format check', () => {
+  const index = join(process.cwd(), derivedConsumersPath)
+  const prettier = join(process.cwd(), 'node_modules/prettier/bin/prettier.cjs')
+  const result = spawnSync(process.execPath, [prettier, '--check', index], { encoding: 'utf8' })
+  expect(result.status, result.stdout + result.stderr).toBe(0)
+  const f = repository()
+  f.put(consumer, "import './bridge'")
+  runDerivedConsumersCli(['--write'], f.root)
+  const written = join(f.root, derivedConsumersPath)
+  const text = readFileSync(written, 'utf8')
+  // Short arrays collapse to one line only when the formatter ran; plain stringify never does.
+  expect(text).not.toBe(JSON.stringify(JSON.parse(text), null, 2) + '\n')
+  expect(text.endsWith('\n')).toBe(true)
+})
+
 it('generates deterministically and validates immutable candidate blobs without executing them', () => {
   const f = repository()
   const legacy = f.commit()
@@ -333,7 +346,7 @@ it('generates deterministically and validates immutable candidate blobs without 
   const added = f.commit()
   expect(() => checkDerivedConsumerRevisions(legacy, added, f.root)).not.toThrow()
   // Forged candidate policy is data too, never imported by the trusted checker.
-  f.put('scripts/ci/generate-module-derived-consumers.mjs', "throw Error('untrusted checker')")
+  f.put('scripts/ci/module-graph/derived-consumers.mjs', "throw Error('untrusted checker')")
   f.put(derivedConsumersPath, JSON.stringify({ schemaVersion: 1, modules: {} }))
   const forged = f.commit()
   expect(() => checkDerivedConsumerRevisions(added, forged, f.root)).toThrow('Stale')
@@ -433,7 +446,7 @@ it.each([
   'package.json',
   'package-lock.json',
   'tsconfig.json',
-  'scripts/ci/generate-module-derived-consumers.mjs',
+  'scripts/ci/module-graph/derived-consumers.mjs',
   'scripts/ci/module-runtime-consumers.json',
   'scripts/ci/module-impact.json',
   derivedConsumersPath

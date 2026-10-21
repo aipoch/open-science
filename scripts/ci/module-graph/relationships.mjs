@@ -2,11 +2,11 @@
 import { execFileSync } from 'node:child_process'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { sourceSnapshot, createConsumerDependencyReader } from './consumer-retirement.mjs'
-import { loadModuleImpactManifestAtRevision } from './load-module-impact.mjs'
-
-import { dependencyLayer, usesDependencyConsumers } from './module-derived-consumers.mjs'
-export { dependencyLayer, boundaryViolations } from './module-derived-consumers.mjs'
+import { loadModuleImpactManifestAtRevision } from '../load-module-impact.mjs'
+import { usesReviewedBoundary } from './boundaries.mjs'
+import { createDependencyReader } from './dependency-reader.mjs'
+import { dependencyLayer } from './layers.mjs'
+import { sourceSnapshot } from './source.mjs'
 
 export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
   const sha = execFileSync(
@@ -21,8 +21,8 @@ export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
       module.ownerPaths.map((path) => [path, id])
     )
   )
-  const structural = createConsumerDependencyReader(source, [])
-  const runtime = createConsumerDependencyReader(source, [], { runtimeOnly: true })
+  const structural = createDependencyReader(source, [])
+  const runtime = createDependencyReader(source, [], { runtimeOnly: true })
   const relations = new Map()
   const add = (kind, from, to, sourcePath, targetPath) => {
     if (!from || !to || from === to) return
@@ -54,7 +54,7 @@ export function moduleRelationships(revision = 'HEAD', cwd = process.cwd()) {
       add('dynamic-contract', owners.get(consumer), owners.get(target), consumer, target)
   for (const [id, module] of Object.entries(manifest.modules))
     for (const consumer of module.consumerModules)
-      add(usesDependencyConsumers(id, module) ? 'capability-routing' : 'test-routing', id, consumer)
+      add(usesReviewedBoundary(id, module) ? 'capability-routing' : 'test-routing', id, consumer)
   return {
     revision: sha,
     directions: {

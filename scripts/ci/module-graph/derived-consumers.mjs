@@ -1,19 +1,23 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
-import { existsSync, lstatSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, lstatSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { isDeepStrictEqual } from 'node:util'
 import {
-  createConsumerDependencyReader,
-  isConsumerSourcePath,
-  sourceSnapshot
-} from './consumer-retirement.mjs'
-import {
   loadModuleImpactManifest,
   loadModuleImpactManifestAtRevision
-} from './load-module-impact.mjs'
-import { derivedConsumersPath, validateDerivedConsumers } from './module-derived-consumers.mjs'
+} from '../load-module-impact.mjs'
+import assert from 'node:assert/strict'
+import { dependencyBoundaryViolations } from './boundary-evidence.mjs'
+import {
+  derivedConsumersPath,
+  loadDerivedConsumers,
+  validateDerivedConsumers,
+  withDerivedConsumers
+} from './derived-index.mjs'
+import { createDependencyReader } from './dependency-reader.mjs'
+import { isSourcePath, sourceSnapshot, workingTreeSource } from './source.mjs'
 
 const isTest = (path) => /\.(test|spec)\.[cm]?[jt]sx?$/.test(path) && !path.startsWith('e2e/')
 
@@ -26,7 +30,7 @@ export function consumerDependencyGraph(source, runtimeEdges) {
     )
       throw Error(`Invalid runtime consumer edge: ${target}`)
   }
-  const inspect = createConsumerDependencyReader(source, runtimeEdges)
+  const inspect = createDependencyReader(source, runtimeEdges)
   const reverse = new Map()
   for (const path of source.files) {
     if (!/\.[cm]?[jt]sx?$/.test(path)) continue
@@ -95,7 +99,7 @@ function derivedConsumerInputsUnchanged(base, head, cwd) {
   const paths = git('diff', '--no-renames', '--name-only', '-z', base, head)
     .split('\0')
     .filter(Boolean)
-  if (!paths.length || paths.some(isConsumerSourcePath)) return false
+  if (!paths.length || paths.some(isSourcePath)) return false
 
   // Reuse the reader's input boundary, not a documentation directory/extension allowlist.
   // Source text, JSON configuration, registrations and the index itself are unchanged.
@@ -129,29 +133,71 @@ export function checkDerivedConsumerRevisions(base, head, cwd = process.cwd()) {
   }
 }
 
-export function workingConsumerSource(cwd = process.cwd()) {
-  const files = new Set(
-    execFileSync('git', ['ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
-      cwd,
-      encoding: 'utf8',
-      maxBuffer: 16 * 1024 * 1024
-    })
-      .split('\0')
-      .filter((path) => path && existsSync(resolve(cwd, path)))
+// This guard supplements the explicit IPC/behavioral contracts in the manifest. It does not
+// claim that imports can discover event dispatch, filesystem protocols or dynamic strings.
+export function checkModuleConsumerCoverage({
+  source = workingTreeSource(),
+  manifest = loadModuleImpactManifest(),
+  derived = loadDerivedConsumers()
+} = {}) {
+  assert.deepEqual(
+    dependencyBoundaryViolations(source, manifest),
+    [],
+    'Source-derived module boundary changed'
   )
-  return {
-    files,
-    read: (path) => {
-      const full = resolve(cwd, path)
-      return files.has(path) && lstatSync(full).isFile() ? readFileSync(full, 'utf8') : undefined
-    }
+  const { reverse } = checkDerivedConsumers(source, manifest)
+  const { modules } = withDerivedConsumers(manifest, derived)
+  for (const [path, consumers] of reverse) {
+    if (!isTest(path) || consumers.size === 0 || !/^(src|packages)\//.test(path)) continue
+    assert.ok(
+      Object.values(modules).some(
+        (module) => module.ownerPaths.includes(path) && module.interfacePaths.includes(path)
+      ),
+      `${path} exports shared test contracts; register it as an interface to retain consumers`
+    )
   }
+  const missing = []
+  for (const [id, module] of Object.entries(modules)) {
+    if (module.fullTestReason || id === 'i18n_catalog') continue
+    const visited = new Set(
+      module.ownerPaths.filter((path) => !isTest(path) || module.interfacePaths.includes(path))
+    )
+    const pending = [...visited]
+    while (pending.length) {
+      for (const consumer of reverse.get(pending.pop()) ?? []) {
+        if (visited.has(consumer)) continue
+        visited.add(consumer)
+        pending.push(consumer)
+      }
+    }
+    // Require complete coverage, not minimal coverage. Only trusted base/head evidence can
+    // authorize retirement; current independence alone cannot remove historical host contracts.
+    const declared = new Set(Object.values(module.testFiles).flat())
+    for (const path of visited)
+      if (isTest(path) && !declared.has(path)) missing.push(`${id} -> ${path}`)
+  }
+  assert.deepEqual(missing, [], 'Regenerate derived consumers or add explicit behavioral contracts')
 }
 
+// The index is formatted like every other committed JSON file, so that regenerating it can never
+// fail the repository format check. Prettier is a devDependency, never part of trusted preflight.
+function formatIndexJson(text, destination) {
+  const prettier = fileURLToPath(
+    new URL('../../../node_modules/prettier/bin/prettier.cjs', import.meta.url)
+  )
+  return execFileSync(process.execPath, [prettier, '--stdin-filepath', destination], {
+    input: text,
+    encoding: 'utf8',
+    maxBuffer: 64 * 1024 * 1024
+  })
+}
+
+// --write regenerates the index; --check validates it; --coverage runs the whole-tree guard.
 export function runDerivedConsumersCli(args = process.argv.slice(2), cwd = process.cwd()) {
+  if (args.length === 1 && args[0] === '--coverage') return checkModuleConsumerCoverage()
   if (args.length !== 1 || !['--write', '--check'].includes(args[0]))
     throw Error('Use --write or --check')
-  const source = workingConsumerSource(cwd)
+  const source = workingTreeSource(cwd)
   const manifest = loadModuleImpactManifest(resolve(cwd, 'scripts/ci/module-impact.json'))
   if (args[0] === '--check') checkDerivedConsumers(source, manifest)
   else {
@@ -162,7 +208,7 @@ export function runDerivedConsumersCli(args = process.argv.slice(2), cwd = proce
     const destination = resolve(cwd, derivedConsumersPath)
     if (existsSync(destination) && !lstatSync(destination).isFile())
       throw Error('Index must be a regular file')
-    writeFileSync(destination, JSON.stringify(index, null, 2) + '\n')
+    writeFileSync(destination, formatIndexJson(JSON.stringify(index, null, 2) + '\n', destination))
   }
 }
 

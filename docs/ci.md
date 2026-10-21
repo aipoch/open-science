@@ -279,6 +279,31 @@ uses the same repository-owned dependency reader as package tiering, without ext
 tools. Platform capabilities and typechecks remain unchanged. Mixed host/package/policy edits,
 destructive changes, dirty checkouts and missing evidence retain the broad selection.
 
+## Module graph engine
+
+`scripts/ci/module-graph/` owns source evidence and the proofs built on it. Each file has one role:
+
+| File                    | Responsibility                                                      |
+| ----------------------- | ------------------------------------------------------------------- |
+| `source.mjs`            | Git snapshots and working-tree reads; never executes candidate code |
+| `dependency-reader.mjs` | The single TypeScript-based import reader                           |
+| `boundaries.mjs`        | Loads and validates `scripts/ci/module-boundaries.json`             |
+| `layers.mjs`            | File roles and layer rules                                          |
+| `derived-index.mjs`     | Reads and applies `module-derived-consumers.json`                   |
+| `derived-consumers.mjs` | Generates/checks the index and runs the coverage guard (CLI)        |
+| `boundary-evidence.mjs` | Verifies reviewed boundaries; rejections name the unmet condition   |
+| `retirement.mjs`        | Trusted base/head consumer and package-evidence retirement proofs   |
+| `relationships.mjs`     | Exports the module relationship report (CLI)                        |
+
+Other scripts import only `index.mjs`, or `policy.mjs` when they must stay dependency-free:
+trusted preflight runs from an exported base tree without installed packages.
+`module-graph/boundaries.test.ts` enforces both rules. Data files stay at their existing
+`scripts/ci/` paths because base-revision checkers read them from candidate revisions.
+
+PR Gate preflight exports the complete base `scripts/ci/` tree with `git archive`, so moving
+internal files never requires a workflow change. A base without `module-impact-authority.mjs`
+bootstraps a full plan.
+
 ## Derived consumer evidence
 
 The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
