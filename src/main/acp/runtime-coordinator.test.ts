@@ -489,9 +489,13 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it.each([false, true])(
-    'releases only the failed Codex writer before switching models (draining: %s)',
-    async (draining) => {
+  it.each(
+    [false, true].flatMap((draining) =>
+      ['direct', 'background', 'reviewer'].map((route) => ({ draining, route }))
+    )
+  )(
+    'releases only the failed Codex writer before switching models ($route, draining: $draining)',
+    async ({ draining, route }) => {
       let writer: AcpRuntime | undefined
       const created: ReturnType<typeof createFakeRuntime>[] = []
       const coordinator = new AcpRuntimeCoordinator((callbacks) => {
@@ -536,11 +540,27 @@ describe('AcpRuntimeCoordinator', () => {
           ? [session.sessionId, sibling.sessionId]
           : [sibling.sessionId]
       })
-      const resume = coordinator.resumeSession({
+      const request = {
         sessionId: session.sessionId,
         cwd: '/workspace',
         agentTarget: { ...target, model: 'working-model' }
-      })
+      }
+      const resume =
+        route === 'direct'
+          ? coordinator.resumeSession(request)
+          : coordinator.withActivity({ session: request }, (runtime) =>
+              route === 'background'
+                ? runtime.sendPrompt({ sessionId: session.sessionId, text: 'continue' })
+                : runtime.sendApplicationPrompt(
+                    { sessionId: session.sessionId, text: 'correct' },
+                    {
+                      kind: 'application',
+                      feature: 'reviewer',
+                      purpose: 'correction',
+                      causeReviewId: 'review-1'
+                    }
+                  )
+            )
       if (draining) {
         await vi.waitFor(() => expect(created.at(-1)).not.toBe(owner))
         expect(owner.runtime.releaseSessionForTransfer).not.toHaveBeenCalled()
@@ -6305,81 +6325,85 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it('lazily adopts the main session on the pinned runtime only when an activity sends a prompt', async () => {
-    const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: created.length === 0 ? 'claude-code' : 'codex',
-        sessionIds: created.length === 0 ? ['old-session'] : ['unused-session'],
-        callbacks
+  it.each([false, true])(
+    'lazily adopts the main session on the pinned runtime (retired=%s)',
+    async (retired) => {
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: created.length === 0 ? 'claude-code' : 'codex',
+          sessionIds: created.length === 0 ? ['old-session'] : ['unused-session'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
       })
-      created.push(fake)
-      return fake.runtime
-    })
-    await coordinator.createSession({ cwd: '/workspace' })
-    await coordinator.requestAgentFrameworkSwitch()
-    const resumeObserver = vi.fn(async () => undefined)
-    const admissionGuard = vi.fn(async () => undefined)
-    coordinator.setSessionResumeObserver(resumeObserver)
-    coordinator.setPromptAdmissionGuard(admissionGuard)
+      await coordinator.createSession({ cwd: '/workspace' })
+      await coordinator.requestAgentFrameworkSwitch()
+      const resumeObserver = vi.fn(async () => undefined)
+      const admissionGuard = vi.fn(async () => undefined)
+      coordinator.setSessionResumeObserver(resumeObserver)
+      coordinator.setPromptAdmissionGuard(admissionGuard)
 
-    await coordinator.withActivity(
-      {
-        session: {
-          sessionId: 'old-session',
-          cwd: '/workspace',
-          projectId: 'project-1',
-          memoryEnabled: false,
-          previousFrameworkId: 'claude-code',
-          specialistId: 'specialist-new',
-          specialistBindingPending: true,
-          historyPreamble: 'prior transcript'
-        }
-      },
-      async (runtime) => {
-        await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
-        expect(vi.mocked(created[1].runtime.resumeSession)).not.toHaveBeenCalled()
-        await runtime.sendApplicationPrompt(
-          { sessionId: 'old-session', text: '[Auditor] fix this' },
-          {
-            kind: 'application',
-            feature: 'reviewer',
-            purpose: 'correction',
-            causeReviewId: 'review-1'
+      await coordinator.withActivity(
+        {
+          session: {
+            sessionId: 'old-session',
+            cwd: '/workspace',
+            projectId: 'project-1',
+            memoryEnabled: false,
+            previousFrameworkId: 'claude-code',
+            specialistId: 'specialist-new',
+            specialistBindingPending: true,
+            historyPreamble: 'prior transcript'
           }
-        )
-      }
-    )
+        },
+        async (runtime) => {
+          await runtime.buildReviewerSession({ cwd: '/workspace', mcpServers: [] })
+          expect(vi.mocked(created[1].runtime.resumeSession)).not.toHaveBeenCalled()
+          if (retired) await coordinator.requestAgentFrameworkSwitch()
+          await runtime.sendApplicationPrompt(
+            { sessionId: 'old-session', text: '[Auditor] fix this' },
+            {
+              kind: 'application',
+              feature: 'reviewer',
+              purpose: 'correction',
+              causeReviewId: 'review-1'
+            }
+          )
+        }
+      )
 
-    expect(vi.mocked(created[1].runtime.resumeSession)).toHaveBeenCalledWith({
-      sessionId: 'old-session',
-      cwd: '/workspace',
-      projectId: 'project-1',
-      memoryEnabled: false,
-      previousFrameworkId: 'claude-code',
-      specialistId: 'specialist-new',
-      specialistBindingPending: true
-    })
-    expect(resumeObserver).toHaveBeenCalledOnce()
-    expect(admissionGuard).toHaveBeenCalledWith('old-session')
-    expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledWith(
-      {
+      expect(vi.mocked(created[1].runtime.resumeSession)).toHaveBeenCalledWith({
         sessionId: 'old-session',
-        text: '[Auditor] fix this',
-        historyPreamble: 'prior transcript',
-        contextReset: true,
-        provenanceContext: { promptMessageId: expect.stringMatching(/^prompt-/u) }
-      },
-      {
-        kind: 'application',
-        feature: 'reviewer',
-        purpose: 'correction',
-        causeReviewId: 'review-1'
-      },
-      { promptAttemptId: 'prompt-attempt-1', onPromptAdmitted: undefined }
-    )
-    expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
-  })
+        cwd: '/workspace',
+        projectId: 'project-1',
+        memoryEnabled: false,
+        previousFrameworkId: 'claude-code',
+        specialistId: 'specialist-new',
+        specialistBindingPending: true
+      })
+      expect(resumeObserver).toHaveBeenCalledOnce()
+      expect(admissionGuard).toHaveBeenCalledWith('old-session')
+      expect(vi.mocked(created[1].runtime.sendApplicationPrompt)).toHaveBeenCalledWith(
+        {
+          sessionId: 'old-session',
+          text: '[Auditor] fix this',
+          historyPreamble: 'prior transcript',
+          contextReset: true,
+          provenanceContext: { promptMessageId: expect.stringMatching(/^prompt-/u) }
+        },
+        {
+          kind: 'application',
+          feature: 'reviewer',
+          purpose: 'correction',
+          causeReviewId: 'review-1'
+        },
+        { promptAttemptId: 'prompt-attempt-1', onPromptAdmitted: undefined }
+      )
+      expect(vi.mocked(created[0].runtime.sendPrompt)).not.toHaveBeenCalled()
+    }
+  )
 
   it('blocks a scoped application prompt when an attached Session still has a pending binding', async () => {
     let created!: ReturnType<typeof createFakeRuntime>

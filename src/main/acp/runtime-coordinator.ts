@@ -624,6 +624,13 @@ class AcpRuntimeCoordinator {
   }
 
   async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+    return this.resumeSessionOnRuntime(request)
+  }
+
+  private async resumeSessionOnRuntime(
+    request: AcpResumeSessionRequest,
+    pinnedRuntime?: AcpRuntime
+  ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const retainedProviderId = this.transferProviderIds.get(request.sessionId)
     if (!request.providerSessionId && retainedProviderId) {
@@ -649,6 +656,7 @@ class AcpRuntimeCoordinator {
     const ownerTarget = owner && this.runtimeTargets.get(owner)
     const reuseCodexSession = Boolean(
       owner &&
+      (!pinnedRuntime || pinnedRuntime === owner) &&
       !this.retiredRuntimes.has(owner) &&
       target?.frameworkId === 'codex' &&
       ownerTarget?.frameworkId === 'codex' &&
@@ -674,11 +682,13 @@ class AcpRuntimeCoordinator {
         )
       }
     }
-    const targetedRuntime = reuseCodexSession
-      ? owner
-      : target
-        ? await this.runtimeForTarget(target, request.sessionId, request.cwd)
-        : undefined
+    const targetedRuntime =
+      pinnedRuntime ??
+      (reuseCodexSession
+        ? owner
+        : target
+          ? await this.runtimeForTarget(target, request.sessionId, request.cwd)
+          : undefined)
     const runtime =
       targetedRuntime ??
       (owner && !this.retiredRuntimes.has(owner)
@@ -749,7 +759,7 @@ class AcpRuntimeCoordinator {
       transfersOwnership &&
       (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption ||
         !this.runtimes.has(runtime) ||
-        this.retiredRuntimes.has(runtime))
+        (this.retiredRuntimes.has(runtime) && !pinnedRuntime))
     ) {
       if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
@@ -1958,12 +1968,11 @@ class AcpRuntimeCoordinator {
             : {}),
           ...(session.agentTarget ? { agentTarget: session.agentTarget } : {})
         }
-        resumeInFlight = runtime.resumeSession(resumeRequest).then(async (response) => {
-          this.bindSessionRuntime(response.sessionId, runtime)
-          this.lastRuntime = runtime
-          await this.sessionResumeObserver?.(resumeRequest, response)
-          return Boolean(response.contextReset)
-        })
+        // Background work remains pinned to its admitted generation, but writer release,
+        // adoption, retry identity, and persistence observation belong to the coordinator.
+        resumeInFlight = this.resumeSessionOnRuntime(resumeRequest, runtime).then((response) =>
+          Boolean(response.contextReset)
+        )
       }
 
       return resumeInFlight
