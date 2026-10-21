@@ -238,7 +238,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
   )
 
   it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
-    'passes published OpenAI context limits through to Codex for %s',
+    'requests published OpenAI windows while leaving native caps to Codex for %s',
     (type) => {
       const owner = new ProviderRuntimeProjectionOwner()
       const provider: StoredProvider = {
@@ -271,7 +271,7 @@ describe('ProviderRuntimeProjectionOwner', () => {
         expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
           model,
           model_context_window: contextWindow,
-          model_auto_compact_token_limit: contextWindow * 0.95
+          model_auto_compact_token_limit: contextWindow * 0.9
         })
       }
       expect(provider).toEqual(before)

@@ -56,6 +56,7 @@ const CODEX_PROVIDER_ID = 'open-science'
 // filters, so file edits route through shell rather than the dedicated patch tool.)
 export const CODEX_BRIDGE_MODEL = 'gpt-5.4'
 const CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT = 95
+const CODEX_AUTO_COMPACT_CONTEXT_WINDOW_PERCENT = 90
 const CODEX_NATIVE_MODEL_CATALOG_FILENAME_PREFIX = 'model-catalog-'
 const CODEX_BUNDLED_MODEL_IDS_BY_VERSION = {
   // Existing installations keep their verified catalog until the user explicitly updates.
@@ -235,8 +236,9 @@ const buildCodexModelOptions = (input: {
     ...(contextWindow
       ? {
           model_context_window: contextWindow,
+          // Override stale profile thresholds; Codex clamps this again after its model-window cap.
           model_auto_compact_token_limit: Math.floor(
-            (contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100
+            (contextWindow * CODEX_AUTO_COMPACT_CONTEXT_WINDOW_PERCENT) / 100
           )
         }
       : {})

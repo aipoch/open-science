@@ -707,7 +707,7 @@ describe('codexFramework', () => {
         }
       },
       model_context_window: 128_000,
-      model_auto_compact_token_limit: 121_600,
+      model_auto_compact_token_limit: 115_200,
       model_provider: 'open-science',
       model_providers: {
         'open-science': {
@@ -793,7 +793,7 @@ describe('codexFramework', () => {
       model: 'MiniMax-M3',
       model_reasoning_effort: 'none',
       model_context_window: 1_000_000,
-      model_auto_compact_token_limit: 950_000,
+      model_auto_compact_token_limit: 900_000,
       model_providers: {
         'open-science': {
           base_url: 'https://api.minimaxi.com/v1',
