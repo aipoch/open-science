@@ -59,6 +59,8 @@ const BASE_VITEST_EXCLUDE_PATTERNS = [
   'docs/internal/**',
   '**/.claude/**',
   '**/.codex/**',
+  // Local validation and profiling snapshots contain stale copies of repository tests.
+  '**/.scratch/**',
   '**/.pnpm-store/**',
   '**/tmp/**',
   '**/.worktrees/**',

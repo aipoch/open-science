@@ -73,5 +73,5 @@ export const createUpdateStrategy = (
   if (platform === 'darwin' && macCanAutoUpdate(isPackaged, version)) {
     return createInPlaceStrategy()
   }
-  return new UpdateService({ log, translate: opts.translate })
+  return new UpdateService({ ...opts, log, translate: opts.translate })
 }

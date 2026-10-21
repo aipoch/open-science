@@ -107,6 +107,18 @@ if (params.has('refused-restart')) {
   const update: typeof window.api.update = {
     getAppInfo: async () => ({ name: 'Open-Science', version: '0.28.0', copyright: '' }),
     getStatus: async () => status,
+    getManualInstall: async () => ({
+      kind: 'blocked',
+      identity: 'fixture-blocked',
+      platform: 'darwin',
+      arch: 'arm64'
+    }),
+    revealManualInstaller: async () => ({
+      kind: 'blocked',
+      identity: 'fixture-blocked',
+      platform: 'darwin',
+      arch: 'arm64'
+    }),
     check: async () => status,
     recheck: async () => status,
     recover: async () => status,
@@ -145,3 +157,85 @@ void Promise.resolve(prepareI18nLocale(locale)).then(() => {
   initI18n(locale)
   createRoot(document.getElementById('root')!).render(<UpdateDialog />)
 })
+
+// Browser fixtures test presentation and bridge calls; installer eligibility remains main-owned.
+if (params.has('manual')) {
+  if (params.has('dark')) document.documentElement.classList.add('dark')
+  const platform =
+    params.get('platform') === 'darwin'
+      ? 'darwin'
+      : params.get('platform') === 'linux'
+        ? 'linux'
+        : 'win32'
+  const info: import('../../../src/shared/update').ManualInstallInfo = {
+    kind: 'local',
+    identity: 'manual-fixture-2',
+    platform,
+    arch: 'x64',
+    version: '0.29.0',
+    format: platform === 'darwin' ? 'zip' : platform === 'linux' ? 'deb' : 'nsis',
+    fileName: `Open-Science-${'long-file-name-'.repeat(12)}setup.exe`,
+    size: 314 * 1024 * 1024
+  }
+  let checks = 0,
+    reveals = 0
+  let status: UpdateStatus = {
+    state: params.has('download-failed') ? 'error' : 'ready',
+    current: '0.28.0',
+    latest: '0.29.0',
+    applyKind: params.has('runtime') ? 'restart' : 'installer',
+    notes,
+    error: 'The automatic installation could not finish.',
+    manualInstall:
+      params.has('website') || params.has('download-failed')
+        ? {
+            ...info,
+            kind: 'website',
+            reason: params.has('download-failed') ? 'download-failed' : 'not-standalone'
+          }
+        : info,
+    ...(params.has('runtime') && !params.has('download-failed')
+      ? {
+          reason: 'install-failed' as const,
+          recovery: {
+            phase: 'preparing' as const,
+            runtime: 'running' as const,
+            installation: 'unchanged' as const,
+            canCancel: true,
+            canRetryInstall: true,
+            canRecover: false
+          }
+        }
+      : {})
+  }
+  window.api = {
+    update: {
+      getManualInstall: async () => {
+        document.body.dataset.manualChecks = String(++checks)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        return params.has('website') || params.has('download-failed')
+          ? {
+              ...info,
+              kind: 'website',
+              reason: params.has('download-failed') ? 'download-failed' : 'not-standalone'
+            }
+          : info
+      },
+      revealManualInstaller: async () => {
+        document.body.dataset.manualReveals = String(++reveals)
+        await new Promise((resolve) => setTimeout(resolve, 150))
+        return params.has('invalid') ? { ...info, kind: 'website', reason: 'unavailable' } : info
+      },
+      cancel: async () => status
+    }
+  } as typeof window.api
+  useUpdateStore.setState({ status, cancel: async () => {} })
+  document.addEventListener('manual-fixture-target-change', () => {
+    status = {
+      ...status,
+      latest: '0.30.0',
+      manualInstall: { ...info, identity: 'manual-fixture-3' }
+    }
+    useUpdateStore.setState({ status })
+  })
+}

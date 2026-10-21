@@ -16,7 +16,21 @@
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
+    "cli_sdk": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/session-package/desktop.test.ts",
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/ipc.test.ts",
+      "src/main/update/legacy-shell-recovery.integration.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/update/service.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts"
+    ],
     "connector_core": [
       "packages/connector-builtins/src/optional-research.test.ts",
       "packages/connector-builtins/src/scientific-expansion.test.ts"
@@ -24,12 +38,15 @@
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
     "durable_files": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/credential-identity/recovery.test.ts",
+      "src/main/local-update-validation/adapter.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/create-strategy.test.ts",
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
@@ -47,12 +64,40 @@
       "src/main/image-preview-resize.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
+    "host_credential_identity": ["src/main/local-update-validation/credential-sandbox.test.ts"],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
-    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_http_transport": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts"
+    ],
+    "host_installation": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts"
+    ],
+    "host_process_runtime": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts"
+    ],
+    "host_runtime_lifecycle": [
+      "scripts/local-update-validation/shutdown-fault.integration.test.ts",
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts",
+      "src/main/update/windows-update-handoff.test.ts"
+    ],
+    "host_runtime_ports": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts"
+    ],
     "host_value_guards": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "i18n_main_adapter": ["src/main/update/manual-install-strategy.test.ts"],
     "i18n_renderer_adapter": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
@@ -63,6 +108,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
     "i18n_shared_runtime": [
+      "src/main/update/manual-install-strategy.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -97,10 +143,23 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "main_database": ["src/main/session-package/materialize.test.ts"],
+    "main_database": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
-    "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_storage": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_update": [
+      "scripts/build-backend.integration.test.ts",
+      "scripts/dev-build-watch.test.ts",
+      "scripts/electron-vite-config.test.ts",
+      "test/config/electron.vite.config.test.ts"
+    ],
     "managed_version_files": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -167,7 +226,9 @@
       "src/main/skills/catalog.registered-helpers.test.ts",
       "src/main/skills/registered-helper-catalog.test.ts"
     ],
+    "native_credential_identity": ["src/main/local-update-validation/credential-sandbox.test.ts"],
     "native_file_publisher": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
@@ -210,6 +271,19 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
+    "native_process_tree": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/create-strategy.test.ts",
+      "src/main/update/electron-updater-provider-regressions.test.ts",
+      "src/main/update/electron-updater-strategy.test.ts",
+      "src/main/update/ipc.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts",
+      "src/main/update/service.save-dialog.test.ts",
+      "src/main/update/service.test.ts",
+      "src/main/update/update-integrity-regressions.test.ts"
+    ],
     "notebook_analysis": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -217,9 +291,15 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "notebook_analysis_engine": ["src/main/session-package/materialize.test.ts"],
-    "notebook_execution_model": ["src/main/session-package/materialize.test.ts"],
+    "notebook_execution_model": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "notebook_input_materialization": ["src/main/session-package/materialize.test.ts"],
-    "notebook_repository": ["src/main/session-package/materialize.test.ts"],
+    "notebook_repository": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "notebook_syntax": ["src/main/session-package/materialize.test.ts"],
     "package_journal_catalog": [
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
@@ -235,9 +315,11 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_citations": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -261,9 +343,11 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_library": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/renderer-host.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -303,6 +387,7 @@
     "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
     "pdf_annotations": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -314,7 +399,10 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "pdf_documents": ["src/main/session-package/materialize.test.ts"],
+    "pdf_documents": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -327,14 +415,19 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "pdf_text": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/session-package/materialize.test.ts",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "project_database": ["src/main/session-package/materialize.test.ts"],
+    "project_database": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "project_file_mentions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -342,11 +435,13 @@
     ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "providers_package": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -381,6 +476,7 @@
     ],
     "renderer_desktop_recovery": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
@@ -389,6 +485,7 @@
     ],
     "renderer_diagnostics": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/workspace-operation-error.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -450,6 +547,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_package_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -464,6 +562,7 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "renderer_preferences": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -480,6 +579,7 @@
     ],
     "renderer_preview_state": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -512,6 +612,7 @@
     ],
     "renderer_settings_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/lib/acp/workspace-events.test.ts",
@@ -539,6 +640,7 @@
     ],
     "renderer_settings_state": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/acp/runtime-observer.test.ts",
       "src/renderer/src/lib/acp/runtime-writer-takeover.test.ts",
       "src/renderer/src/lib/acp/workspace-events.test.ts",
@@ -563,6 +665,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -571,6 +674,7 @@
     ],
     "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
     "renderer_streamdown": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -581,6 +685,7 @@
     ],
     "renderer_ui": [
       "src/renderer/src/components/FileDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/LiteratureToolReferenceList.test.tsx",
@@ -594,6 +699,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_update_state": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_upload_transfer": [
@@ -601,6 +707,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_utilities": [
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
@@ -613,7 +720,11 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "reproducibility_engine": ["src/main/session-package/materialize.test.ts"],
+    "reproducibility_engine": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "resilient_download": ["src/main/update/manual-install-strategy.test.ts"],
     "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
     "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
     "reviewer_tool_contracts": ["src/main/session-package/materialize.test.ts"],
@@ -621,6 +732,7 @@
     "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -835,6 +947,7 @@
       "src/renderer/src/components/UpdateDialog.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -1049,6 +1162,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -1430,6 +1544,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -1762,6 +1877,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -1997,6 +2113,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -2251,6 +2368,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -2595,6 +2713,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -3751,6 +3870,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -3955,6 +4075,7 @@
     "shared_notebook_runtime_contracts": [
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
       "src/main/acp/artifact-turn-owner.test.ts",
@@ -4432,6 +4553,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -4790,6 +4912,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -5048,6 +5171,8 @@
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
     "shared_promise_identity": [
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
@@ -5170,6 +5295,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -5454,6 +5580,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -5764,6 +5891,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -6436,6 +6564,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -6667,6 +6796,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -6977,6 +7107,7 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -7697,6 +7828,7 @@
       "src/main/ipc-surfaces/settings.test.ts",
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/pdf-attachment-reliability.test.ts",
+      "src/main/local-update-validation/adapter.test.ts",
       "src/main/net/network-info.test.ts",
       "src/main/network-ipc.test.ts",
       "src/main/node-entry.test.ts",
@@ -7839,6 +7971,9 @@
       "src/main/update/installation-reboot-recovery.test.ts",
       "src/main/update/ipc.test.ts",
       "src/main/update/legacy-shell-recovery.integration.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts",
       "src/main/update/service.save-dialog.test.ts",
       "src/main/update/service.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
@@ -7869,6 +8004,7 @@
       "src/renderer/src/components/components-i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.streaming.render.test.tsx",
@@ -8110,6 +8246,7 @@
       "scripts/electron-app-fixture.test.ts",
       "scripts/electron-fixture-teardown.test.ts",
       "scripts/electron-session-revision-retry.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/acp/application-commands.test.ts",
       "src/main/acp/approved-handoff-outcome.integration.test.ts",
       "src/main/acp/artifact-code-reconstruction-runner.test.ts",
@@ -8507,6 +8644,7 @@
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/components/notification-inbox-presentation.test.ts",
       "src/renderer/src/components/streamdown/AgentMarkdown.lazy-failure.test.tsx",
       "src/renderer/src/components/streamdown/AgentMarkdown.media.test.tsx",
@@ -8808,12 +8946,17 @@
     ],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": ["src/main/session-package/materialize.test.ts"],
-    "storage_state": ["src/main/session-package/materialize.test.ts"],
+    "storage_state": [
+      "scripts/local-update-validation/fixture.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "upload_file_transport": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
     "upload_repository": [
+      "scripts/local-update-validation/fixture.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
@@ -8967,6 +9110,7 @@
     ],
     "workspace_plan_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/components/manual-update-install.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

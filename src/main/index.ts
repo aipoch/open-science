@@ -56,7 +56,10 @@ import type { LocalePreferenceSnapshot } from '../shared/locale'
 import { acquireCredentialBootstrapLease, type RuntimeDirectoryLease } from './runtime-ownership'
 import { createDesktopUpdateIntegration } from './desktop-update-integration'
 import { prefetchSystemBootIdentity } from './system-boot-identity'
-import { installationRootForEntry } from './update/installation-protection'
+import {
+  installationRootForEntry,
+  inspectInstallationAvailability
+} from './update/installation-protection'
 import {
   discardPreparedMacInstallation,
   prepareSupervisedMacInstallation,
@@ -206,7 +209,22 @@ const buildZoomSafeApplicationMenu = (
   return MenuConstructor.buildFromTemplate(template)
 }
 
+declare const __OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION__: boolean
+
 async function startDesktop(): Promise<void> {
+  let localValidation:
+    | ReturnType<typeof import('./local-update-validation/adapter').initializeLocalUpdateValidation>
+    | undefined
+  if (
+    typeof __OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION__ !== 'undefined' &&
+    __OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION__
+  ) {
+    const path = process.env.OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION_CONFIG
+    if (!path)
+      throw new Error('This local validation build requires its isolated run configuration.')
+    const { initializeLocalUpdateValidation } = await import('./local-update-validation/adapter')
+    localValidation = initializeLocalUpdateValidation(path)
+  }
   const { headless } = parseWebModeOptions(process.argv)
   configureRuntimeMetadata(() => ({
     version: app.getVersion(),
@@ -405,7 +423,13 @@ async function startDesktop(): Promise<void> {
     prefetchSystemBootIdentity().catch((error: unknown) =>
       bootstrapLog.warn('boot identity prefetch failed', { error: String(error) })
     )
-  app.setName(app.isPackaged ? APP_NAME : `${APP_NAME} (DEV)`)
+  app.setName(
+    localValidation?.config.credentialMode === 'sandbox'
+      ? `Open-Science Validation ${localValidation.config.runId}`
+      : app.isPackaged
+        ? APP_NAME
+        : `${APP_NAME} (DEV)`
+  )
   app.setAppLogsPath(join(profilePath, 'desktop-logs'))
   const diagnostics = initializeApplicationDiagnostics({
     logDir: app.getPath('logs'),
@@ -672,6 +696,8 @@ async function startDesktop(): Promise<void> {
     'update:cancel',
     'update:apply',
     'update:recheck',
+    'update:get-manual-install',
+    'update:reveal-manual-installer',
     'update:recover'
   ])
   const recoveryReadChannels = new Set([
@@ -1388,7 +1414,9 @@ async function startDesktop(): Promise<void> {
   const flushUpdateRenderer = createElectronSessionPersistenceFlush(() => getMainWindow())
   let preparedMacInstallation: PreparedMacInstallation | undefined
   const isLegacyInstall = (status: { localPath?: string }): boolean =>
-    !status.localPath || !usesSupervisedInstall(process.platform, status.localPath)
+    !!localValidation ||
+    !status.localPath ||
+    !usesSupervisedInstall(process.platform, status.localPath)
   const updateIntegration = createDesktopUpdateIntegration({
     location: { installationRoot: installationRootForEntry(backendPaths.entry) },
     client: () => client!,
@@ -1409,7 +1437,16 @@ async function startDesktop(): Promise<void> {
       if (outcome !== 'completed')
         throw new UpdateLifecycleError(
           'install-failed',
-          'Your changes could not be saved. The update was stopped; keep the app open and try again.'
+          'Your changes could not be saved. The update was stopped; keep the app open and try again.',
+          {
+            phase: 'preparing',
+            runtime: 'running',
+            installation: 'unchanged',
+            canCancel: true,
+            canRetryInstall: false,
+            canRecover: false,
+            detail: 'save-failed'
+          }
         )
       rendererPreparedForUpdate = phase === 'final'
     },
@@ -1496,6 +1533,7 @@ async function startDesktop(): Promise<void> {
       )
     },
     validateConfiguration: (config) => {
+      localValidation?.assertConfiguration(config)
       // Attachment permits file-backed credentials, but an interactive replacement Desktop cannot
       // silently change their storage mode or the Chromium profile selected during preflight.
       if (
@@ -1519,6 +1557,15 @@ async function startDesktop(): Promise<void> {
     retainLease: retainShutdownLease,
     onProgress: (status) => update.publishLifecycleStatus?.(status),
     onStopped: () => {
+      const info = client!.runtimeInfo()
+      localValidation?.runtimeStopped({
+        pid: client!.processId(),
+        generation: info.generation,
+        configRoot: info.startupOptions.configRoot,
+        processExited: true,
+        lockHeld: true,
+        exitRecord: 'clean'
+      })
       runtimeStopped = true
     },
     onHandoff: () => {
@@ -1564,6 +1611,16 @@ async function startDesktop(): Promise<void> {
       client = await attach()
       notifications = makeNotifications()
       await verifyDesktopRecoveryReadiness(client, config)
+      localValidation?.assertConfiguration(client.runtimeInfo().startupOptions)
+      localValidation?.runtimeRecovered({
+        pid: client.processId(),
+        generation: client.runtimeInfo().generation,
+        ready: true,
+        serviceReady: true,
+        port: client.runtimeInfo().startupOptions.port,
+        version: app.getVersion(),
+        dataRoot: client.runtimeInfo().startupOptions.dataRoot
+      })
       runtimeStopped = false
       updateCommitted = false
       recovery = makeRecovery()
@@ -1573,10 +1630,39 @@ async function startDesktop(): Promise<void> {
         if (isMainWindow(window)) window.webContents.reload()
     }
   })
-  const update = createUpdateStrategy(process.platform, {
+  const makeUpdateStrategy = localValidation
+    ? (
+        _platform: NodeJS.Platform,
+        options: import('./update/create-strategy').CreateStrategyOptions
+      ) => localValidation!.createStrategy(options)
+    : createUpdateStrategy
+  const { createNativeInstallObservation } = await import('./update/native-install-observation')
+  const nativeInstallObservation =
+    app.isPackaged && !localValidation
+      ? createNativeInstallObservation({
+          path: join(profilePath, 'updates', 'native-install-observation.json'),
+          installationRoot: installationRootForEntry(backendPaths.entry),
+          currentVersion: app.getVersion(),
+          inspectOccupancy: () => {
+            const info = client!.runtimeInfo()
+            return inspectInstallationAvailability({
+              installationRoot: installationRootForEntry(backendPaths.entry),
+              runtime: {
+                pid: client!.processId(),
+                generation: info.generation,
+                configRoot: info.startupOptions.configRoot
+              },
+              allowedProcessIds: allowedInstallationProcessIds()
+            })
+          }
+        })
+      : {}
+  const update = makeUpdateStrategy(process.platform, {
     translate,
     getStartupOptions: () => client!.runtimeInfo().startupOptions,
     ...updateIntegration,
+    ...nativeInstallObservation,
+    ...localValidation?.manualInstallerOptions,
     cancelInstall: async () => {
       if (preparedMacInstallation?.debGate)
         await cancelDebSystemdGate(preparedMacInstallation.debGate)

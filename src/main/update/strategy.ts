@@ -1,4 +1,5 @@
 import type {
+  ManualInstallInfo,
   UpdateApplyOptions,
   UpdateBlocker,
   UpdateDownloadOptions,
@@ -130,6 +131,8 @@ export const toAvailableUpdateStatus = ({
 // UpdateService (dev/nightly macOS + any other fallback — manifest download + manual reinstall). Both
 // broadcast the same UpdateStatus. See create-strategy.ts for how the host is routed.
 export interface UpdateStrategy {
+  getManualInstall?(): Promise<ManualInstallInfo>
+  revealManualInstaller?(): Promise<ManualInstallInfo>
   publishLifecycleStatus?(status: Partial<UpdateStatus>): void
   recheck?(): Promise<UpdateStatus>
   recover?(): Promise<UpdateStatus>

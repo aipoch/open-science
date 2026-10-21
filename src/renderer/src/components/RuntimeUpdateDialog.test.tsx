@@ -622,7 +622,7 @@ describe('update check and download admission', () => {
       }
     })
     act(() => root.render(<UpdateDialog />))
-    await act(async () => buttons('Download update')[0].click())
+    await act(async () => buttons('Retry download')[0].click())
     expect(download).toHaveBeenCalledOnce()
     expect(check).not.toHaveBeenCalled()
     expect(apply).not.toHaveBeenCalled()

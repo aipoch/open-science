@@ -146,7 +146,11 @@ describe('UpdateService.check', () => {
     const status = await service.check()
     expect(status).toMatchObject({ state: 'available', applyKind: 'installer', latest: '0.3.0' })
     expect(status.download).toBeUndefined()
-    expect(await service.download()).toBe(status)
+    expect(await service.download()).toMatchObject({ state: 'available', latest: status.latest })
+    expect(await service.getManualInstall()).toMatchObject({
+      kind: 'website',
+      reason: 'unavailable'
+    })
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(promptSavePath).not.toHaveBeenCalled()
     expect(openExternal).not.toHaveBeenCalled()
@@ -1472,7 +1476,7 @@ describe('UpdateService.apply', () => {
     expect(openPath).toHaveBeenCalledTimes(1)
   })
 
-  it('does not let an older apply overwrite a newer manifest check', async () => {
+  it('preserves native handoff until it settles, then allows a newer manifest offer', async () => {
     dir = await mkdtemp(join(tmpdir(), 'apply-refresh-'))
     const target = join(dir, 'installer.dmg')
     const body = Buffer.from('installer-bytes')
@@ -1508,11 +1512,12 @@ describe('UpdateService.apply', () => {
 
     const applying = service.apply()
     await vi.waitFor(() => expect(openPath).toHaveBeenCalledTimes(1))
-    await expect(service.check()).resolves.toMatchObject({ state: 'available', latest: '0.4.0' })
+    await expect(service.check()).resolves.toMatchObject({ state: 'applying', latest: '0.3.0' })
+    expect(manifestChecks).toBe(1)
     resolveOpen('No application is associated with this file')
     await applying
 
-    expect(service.getStatus()).toMatchObject({ state: 'available', latest: '0.4.0' })
+    await expect(service.check()).resolves.toMatchObject({ state: 'available', latest: '0.4.0' })
     expect(service.getStatus().error).toBeUndefined()
   })
 

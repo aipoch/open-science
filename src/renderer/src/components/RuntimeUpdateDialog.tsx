@@ -17,8 +17,7 @@ import {
 import { useUpdateStore } from '@/stores/update-store'
 import { DownloadProgressLine } from './DownloadProgressLine'
 import { UpdateReleaseNotes } from './UpdateReleaseNotes'
-import { ExternalTextLink } from './ExternalTextLink'
-import { APP } from '../../../shared/app-config'
+import { useManualUpdateInstall } from './manual-update-install'
 import { formatBytes } from '../../../shared/update'
 import { RuntimeDiagnostics } from './runtime-diagnostics'
 import { runtimeUpdateCopy } from './runtime-update-copy'
@@ -91,8 +90,16 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const blocked = Boolean(status.reason && status.reason !== 'user-cancelled' && id !== 'S10')
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
+  const manual = useManualUpdateInstall(status, open && !confirming)
+  const saveFailed = status.recovery?.detail === 'save-failed'
   const standardFlow =
-    !confirming && !blocked && !recovery && !legacyRecords && !status.error && !checkFailed
+    !manual.visible &&
+    !confirming &&
+    !blocked &&
+    !recovery &&
+    !legacyRecords &&
+    !status.error &&
+    !checkFailed
   const StatusIcon = busy ? LoaderCircle : downloading || needsDownload ? Download : Check
   const statusTitle = checking
     ? t('Checking for updates…')
@@ -183,6 +190,10 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
     <Dialog.Root
       open={open}
       onOpenChange={(next) => {
+        if (!next && manual.visible) {
+          manual.back()
+          return
+        }
         if (!next && !recovery && !cliOpen && !forceConfirmation) cancelUpdate()
       }}
     >
@@ -197,6 +208,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
           onInteractOutside={(event) => event.preventDefault()}
           onEscapeKeyDown={(event) => {
             event.preventDefault()
+            if (manual.back()) return
             if (confirming) {
               cancelConfirmation()
               return
@@ -206,7 +218,11 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
         >
           <div className={`${dialogHeaderClassName} flex-wrap gap-y-1`}>
             <Dialog.Title className={dialogTitleClassName}>
-              {confirming ? t('Update Open-Science now?') : t('Update')}
+              {manual.visible
+                ? manual.title
+                : confirming
+                  ? t('Update Open-Science now?')
+                  : t('Update')}
             </Dialog.Title>
             <Dialog.Description className="text-xs text-muted-foreground tabular-nums">
               {status.latest
@@ -258,7 +274,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
             data-testid="update-scroll-body"
             className={`${dialogBodyClassName} min-h-0 overflow-y-auto overscroll-contain ${standardFlow ? 'max-h-80' : ''}`}
           >
-            {confirming ? (
+            {manual.visible ? (
+              manual.body
+            ) : confirming ? (
               <section
                 data-runtime-update-state={
                   cliOpen ? (cli?.source === 'this-installation' ? 'S03' : 'S02') : undefined
@@ -317,16 +335,24 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     title={
                       legacyRecords
                         ? t('Old Shell launch records are blocking this update.')
-                        : copy.title
+                        : saveFailed
+                          ? t('Your changes could not be saved')
+                          : copy.title
                     }
                     description={
                       legacyRecords
                         ? t(
                             'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
                           )
-                        : copy.description
+                        : saveFailed
+                          ? t(
+                              'Keep Open-Science open. Return to your work and save your changes before trying the update again.'
+                            )
+                          : copy.description
                     }
-                  />
+                  >
+                    {manual.entry}
+                  </ErrorNotice>
                 ) : null}
                 {status.error || checkFailed ? (
                   <ErrorNotice
@@ -340,11 +366,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                         : t('The operation could not be completed. Try again.')
                     }
                   >
-                    {needsDownload || checkFailed ? (
-                      <ExternalTextLink href={APP.update.downloadPage} className="mt-1 text-xs">
-                        {t('Download manually')}
-                      </ExternalTextLink>
-                    ) : null}
+                    {needsDownload || checkFailed ? manual.entry : null}
                   </ErrorNotice>
                 ) : null}
                 {recoveryAttempted && recovery && !busy && !status.error ? (
@@ -392,13 +414,11 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                     </Button>
                   </details>
                 ) : null}
-                {!recovery && !checkFailed && !checking ? (
-                  <UpdateReleaseNotes status={status} />
-                ) : null}
+                {!checkFailed && !checking ? <UpdateReleaseNotes status={status} /> : null}
               </>
             )}
           </div>
-          {downloading && !standardFlow ? (
+          {!manual.visible && downloading && !standardFlow ? (
             <div className="shrink-0 px-5 pb-5">
               <DownloadProgressLine
                 progress={
@@ -414,7 +434,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
               />
             </div>
           ) : null}
-          {confirming ? (
+          {manual.visible ? (
+            <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>{manual.footer}</div>
+          ) : confirming ? (
             <div className={`${dialogFooterClassName} shrink-0`}>
               <Button variant="ghost" onClick={cancelConfirmation}>
                 {t('Cancel')}
@@ -466,7 +488,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                   >
                     {!status.recovery?.canRecover
                       ? t('Quit', { context: 'verb', ns: 'common' })
-                      : t('Retry')}
+                      : id === 'S13'
+                        ? t('Check installation')
+                        : t('Retry')}
                   </Button>
                 </>
               ) : (
@@ -491,11 +515,13 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                       {needsDownload
                         ? downloading || requestPending
                           ? t('Downloading {{percent}}%', { percent: status.progress ?? 0 })
-                          : status.totalBytes
-                            ? t('Download update ({{size}})', {
-                                size: formatBytes(status.totalBytes)
-                              })
-                            : t('Download update')
+                          : status.state === 'error'
+                            ? t('Retry download')
+                            : status.totalBytes
+                              ? t('Download update ({{size}})', {
+                                  size: formatBytes(status.totalBytes)
+                                })
+                              : t('Download update')
                         : busy
                           ? t('Checking…')
                           : status.legacyShellRecovery

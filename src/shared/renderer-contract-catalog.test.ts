@@ -13,6 +13,19 @@ const paths = (
 ): string[] => RENDERER_CONTRACT_CATALOG.filter(predicate).map(({ publicPath }) => publicPath)
 
 describe('renderer contract catalog', () => {
+  it('keeps manual installer inspection and reveal local-only', () => {
+    for (const publicPath of ['update.getManualInstall', 'update.revealManualInstaller']) {
+      expect(
+        RENDERER_CONTRACT_CATALOG.find((contract) => contract.publicPath === publicPath)
+      ).toMatchObject({
+        surfaceInstallation: {
+          electron: 'preload',
+          localWeb: 'web-rpc',
+          remoteWeb: 'rejecting-stub'
+        }
+      })
+    }
+  })
   it('installs bulk browser revocation on every renderer with caller authorization in the owner', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.find(

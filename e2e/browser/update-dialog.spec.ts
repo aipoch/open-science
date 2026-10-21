@@ -278,3 +278,145 @@ test('keeps provider check feedback visible without download or installation act
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click()
   await expect(dialog).toBeHidden()
 })
+for (const runtime of [false, true]) {
+  test(`manual instructions restore entry focus with Back and Escape (${runtime ? 'runtime' : 'legacy'})`, async ({
+    page
+  }) => {
+    await page.goto(`/update-dialog.html?manual${runtime ? '&runtime' : ''}`)
+    const entry = page.getByRole('button', { name: 'Install manually…', exact: true })
+    await entry.click()
+    const manual = page.getByRole('dialog', { name: 'Install manually', exact: true })
+    await expect(manual).toBeVisible()
+    await expect(manual.locator('ol li')).toHaveCount(3)
+    await expect(
+      manual.getByRole('button', { name: 'Show in File Explorer', exact: true })
+    ).toBeEnabled()
+    await manual.getByRole('button', { name: 'Back to update', exact: true }).click()
+    await expect(entry).toBeFocused()
+    await entry.click()
+    await expect(
+      manual.getByRole('button', { name: 'Show in File Explorer', exact: true })
+    ).toBeEnabled()
+    await page.keyboard.press('Escape')
+    await expect(entry).toBeFocused()
+    await expect(page.getByRole('dialog')).toHaveCount(1)
+  })
+}
+
+for (const dark of [false, true]) {
+  test(`manual instructions wrap long filenames and keep actions fixed (${dark ? 'dark' : 'light'})`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: 560, height: 420 })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto(`/update-dialog.html?manual${dark ? '&dark' : ''}`)
+    await page.getByRole('button', { name: 'Install manually…', exact: true }).click()
+    const dialog = page.getByRole('dialog', { name: 'Install manually', exact: true })
+    const reveal = dialog.getByRole('button', { name: 'Show in File Explorer', exact: true })
+    await expect(reveal).toBeEnabled()
+    await expect(reveal).toBeInViewport()
+    await page.screenshot({
+      path: testInfo.outputPath(`manual-${dark ? 'dark' : 'light'}-filename.png`)
+    })
+    const before = await reveal.boundingBox()
+    const scroll = dialog.locator('[data-slot="scroll-area-viewport"]')
+    expect(
+      await scroll.evaluate((node) => node.scrollWidth - node.clientWidth)
+    ).toBeLessThanOrEqual(1)
+    await scroll.hover()
+    await page.mouse.wheel(0, 1000)
+    await expect.poll(() => scroll.evaluate((node) => node.scrollTop)).toBeGreaterThan(0)
+    expect(await reveal.boundingBox()).toEqual(before)
+    await expect(
+      dialog.getByRole('button', { name: 'Use a new download instead' })
+    ).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath(`manual-${dark ? 'dark' : 'light'}.png`) })
+    await reveal.click()
+    await expect(page.locator('body')).toHaveAttribute('data-manual-reveals', '1')
+    await expect(reveal).toBeEnabled()
+    expect(page.context().pages()).toHaveLength(1)
+  })
+}
+
+test('manual checks coalesce and old artifact replies cannot replace a new target', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?manual')
+  await page.getByRole('button', { name: 'Install manually…', exact: true }).dblclick()
+  await expect(page.locator('body')).toHaveAttribute('data-manual-checks', '1')
+  await expect(
+    page.getByRole('button', { name: 'Checking installer…', exact: true })
+  ).toBeDisabled()
+  await page.evaluate(() => document.dispatchEvent(new Event('manual-fixture-target-change')))
+  await expect(page.getByRole('dialog')).toContainText('v0.30.0')
+  await expect(page.getByRole('button', { name: 'Install manually…', exact: true })).toBeVisible()
+  // Resolve the fixture's delayed reply before asserting the obsolete instructions stay absent.
+  await page.waitForTimeout(200)
+  await expect(
+    page.getByRole('button', { name: 'Show in File Explorer', exact: true })
+  ).toHaveCount(0)
+})
+
+test('invalidated cached installer switches to complete website instructions without opening a browser', async ({
+  page
+}) => {
+  await page.goto('/update-dialog.html?manual&invalid')
+  await page.getByRole('button', { name: 'Install manually…', exact: true }).click()
+  await page.getByRole('button', { name: 'Show in File Explorer', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'Download the full installer', exact: true })
+  const download = dialog.getByRole('link', { name: 'Download from website', exact: true })
+  await expect(download).toHaveAttribute('href', 'https://www.aipoch.com/open-science/download')
+  await expect(dialog.locator('ol li')).toHaveCount(3)
+  await expect(
+    dialog.getByRole('button', { name: 'Show in File Explorer', exact: true })
+  ).toHaveCount(0)
+  expect(page.context().pages()).toHaveLength(1)
+})
+
+for (const failure of ['website', 'download-failed']) {
+  test(`website fallback stays in app until explicit download (${failure})`, async ({
+    page,
+    context
+  }) => {
+    await page.goto(`/update-dialog.html?manual&${failure}`)
+    await page
+      .getByRole('button', {
+        name: failure === 'website' ? 'Get the full installer…' : 'Download manually…',
+        exact: true
+      })
+      .click()
+    const dialog = page.getByRole('dialog', { name: 'Download the full installer', exact: true })
+    await expect(dialog.locator('ol li')).toHaveCount(3)
+    await expect(dialog.getByText('Quit Open-Science', { exact: true })).toBeVisible()
+    await expect(
+      dialog.getByRole('button', { name: 'Show in File Explorer', exact: true })
+    ).toHaveCount(0)
+    expect(context.pages()).toHaveLength(1)
+    await context.route('https://www.aipoch.com/open-science/download', (route) =>
+      route.fulfill({ body: 'Download page' })
+    )
+    const popup = page.waitForEvent('popup')
+    await dialog.getByRole('link', { name: 'Download from website', exact: true }).click()
+    await expect(await popup).toHaveURL('https://www.aipoch.com/open-science/download')
+  })
+}
+
+// The restart channel owns download failures in the unified RuntimeUpdateDialog.
+test('restart download failure enters manual instructions in the same dialog', async ({ page }) => {
+  await page.goto('/update-dialog.html?manual&runtime&download-failed')
+  const dialog = page.getByTestId('runtime-update-dialog')
+  const original = await dialog.elementHandle()
+  await expect(dialog.getByRole('button', { name: 'Retry download', exact: true })).toBeVisible()
+  const entry = dialog.getByRole('button', { name: 'Download manually…', exact: true })
+  await entry.click()
+  await expect(
+    dialog.getByRole('link', { name: 'Download from website', exact: true })
+  ).toBeVisible()
+  expect(
+    await original!.evaluate((node) => node === document.querySelector('[role="dialog"]'))
+  ).toBe(true)
+  expect(page.context().pages()).toHaveLength(1)
+  await dialog.getByRole('button', { name: 'Back to update', exact: true }).click()
+  await expect(entry).toBeFocused()
+  await expect(dialog.getByRole('button', { name: 'Retry download', exact: true })).toBeVisible()
+})

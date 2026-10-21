@@ -78,6 +78,7 @@ import type {
 import type {
   AppInfo,
   UpdateApplyOptions,
+  ManualInstallInfo,
   UpdateDownloadOptions,
   UpdateStatus
 } from '../shared/update'
@@ -372,6 +373,16 @@ const storageCommands = Object.freeze({
 })
 
 const updateCommands = Object.freeze({
+  getManualInstall: defineApplicationCommand<
+    'update:get-manual-install',
+    readonly [],
+    ManualInstallInfo
+  >('update:get-manual-install'),
+  revealManualInstaller: defineApplicationCommand<
+    'update:reveal-manual-installer',
+    readonly [],
+    ManualInstallInfo
+  >('update:reveal-manual-installer'),
   apply: defineApplicationCommand<
     'update:apply',
     readonly [options?: UpdateApplyOptions],
@@ -850,6 +861,14 @@ const registerHostApplicationCommands = (
         )
     })
     scope.registerGroup(hostApplicationCommandGroups[8], {
+      'update:get-manual-install': ({ callerContext }) =>
+        localCommand(callerContext, 'update:get-manual-install', () =>
+          dependencies.update.getManualInstall()
+        ),
+      'update:reveal-manual-installer': ({ callerContext }) =>
+        localCommand(callerContext, 'update:reveal-manual-installer', () =>
+          dependencies.update.revealManualInstaller()
+        ),
       'update:apply': ({ args, callerContext }) =>
         localCommand(callerContext, 'update:apply', () => dependencies.update.apply(args[0])),
       'update:cancel': ({ callerContext }) =>

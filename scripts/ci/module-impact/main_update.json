@@ -49,7 +49,24 @@
     "src/main/update/windows-update-handoff.ts",
     "src/main/update/windows-update-handoff.test.ts",
     "scripts/windows-install-publication.test.ts",
-    "scripts/windows-installer-extractor.test.ts"
+    "scripts/windows-installer-extractor.test.ts",
+    "src/main/local-update-validation/adapter.test.ts",
+    "src/main/local-update-validation/adapter.ts",
+    "src/main/local-update-validation/build-boundary.test.ts",
+    "src/main/local-update-validation/config.test.ts",
+    "src/main/local-update-validation/config.ts",
+    "src/main/local-update-validation/credentials.test.ts",
+    "src/main/local-update-validation/credentials.ts",
+    "src/main/local-update-validation/manual-installer.ts",
+    "src/main/update/manual-install.test.ts",
+    "src/main/update/manual-install.ts",
+    "src/main/update/native-install-observation.test.ts",
+    "src/main/update/native-install-observation.ts",
+    "src/main/update/manual-install-strategy.test.ts",
+    "src/main/local-update-validation/credential-sandbox.ts",
+    "src/main/local-update-validation/credential-sandbox.test.ts",
+    "scripts/local-update-validation/credential-build.mjs",
+    "scripts/local-update-validation/credential-build.d.mts"
   ],
   "interfacePaths": [
     "src/main/update/create-strategy.ts",
@@ -67,7 +84,13 @@
     "src/main/update/installation-protection.ts",
     "src/main/update/installation-reboot-recovery.ts",
     "src/main/update/verification-process.ts",
-    "src/main/update/windows-update-handoff.ts"
+    "src/main/update/windows-update-handoff.ts",
+    "src/main/local-update-validation/adapter.ts",
+    "src/main/local-update-validation/config.ts",
+    "src/main/local-update-validation/credentials.ts",
+    "src/main/local-update-validation/manual-installer.ts",
+    "src/main/update/manual-install.ts",
+    "src/main/update/native-install-observation.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -100,7 +123,21 @@
       "src/main/update/installation-preparation.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "scripts/windows-install-publication.test.ts",
-      "scripts/windows-installer-extractor.test.ts"
+      "scripts/windows-installer-extractor.test.ts",
+      "src/main/local-update-validation/adapter.test.ts",
+      "src/main/local-update-validation/build-boundary.test.ts",
+      "src/main/local-update-validation/config.test.ts",
+      "src/main/local-update-validation/credentials.test.ts",
+      "src/main/update/manual-install.test.ts",
+      "src/main/update/native-install-observation.test.ts",
+      "scripts/local-update-validation/artifact-fault.test.ts",
+      "scripts/local-update-validation/fixture.test.ts",
+      "scripts/local-update-validation/keychain.test.ts",
+      "scripts/local-update-validation/production-package.test.ts",
+      "scripts/local-update-validation/runner.test.ts",
+      "scripts/local-update-validation/shutdown-fault.integration.test.ts",
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/main/local-update-validation/credential-sandbox.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
