@@ -138,7 +138,7 @@ if (mode) {
       }
     ]
   }
-  const operation: PackageOperationSnapshot = {
+  let operation: PackageOperationSnapshot = {
     id: 'import-fixture',
     kind: 'import',
     state:
@@ -181,12 +181,13 @@ if (mode) {
     pendingImports: [{ id: 'next', filename: 'follow-up-study.science' }]
   }
   window.addEventListener('package-fixture-inspected', () => {
-    Object.assign(operation, {
+    operation = {
+      ...operation,
       state: 'awaiting-selection',
       importPreview: preview,
       progress: { phase: 'confirming' }
-    })
-    usePackageOperationStore.getState().receive({ ...operation })
+    }
+    usePackageOperationStore.getState().receive(operation)
   })
   useProjectStore.setState({
     projects,
@@ -258,6 +259,12 @@ if (mode) {
   usePackageOperationStore.getState().receive(operation)
 }
 const exportMode = new URLSearchParams(location.search).get('export')
+// Feed consecutive owner snapshots to exercise the real dialog without native filesystem writes.
+window.addEventListener('package-fixture-export-progress', (event) => {
+  const current = usePackageOperationStore.getState().operation!
+  const update = (event as CustomEvent<Partial<PackageOperationSnapshot>>).detail
+  usePackageOperationStore.getState().receive({ ...current, ...update })
+})
 if (exportMode) {
   const current = usePackageOperationStore.getState().operation!
   usePackageOperationStore.getState().receive({
@@ -309,6 +316,30 @@ if (new URLSearchParams(location.search).has('evidence')) {
 if (menuMode) usePackageOperationStore.getState().setOpen(false)
 const background = new URLSearchParams(location.search)
 const backgroundMode = background.has('background')
+if (!mode && !backgroundMode) {
+  Object.defineProperty(window, 'api', {
+    configurable: true,
+    value: {
+      sessions: {
+        packageOperation: async (request: { action: string; bytesPerSecond?: number | null }) => {
+          const current = usePackageOperationStore.getState().operation!
+          const operation: PackageOperationSnapshot = {
+            ...current,
+            ...(request.action === 'select'
+              ? { state: 'running', files: undefined, progress: { phase: 'choosing-location' } }
+              : request.action === 'cancel'
+                ? { state: 'cancelling', progress: { phase: 'cleaning' } }
+                : request.action === 'set-speed'
+                  ? { transferBytesPerSecond: request.bytesPerSecond ?? undefined }
+                  : {})
+          }
+          usePackageOperationStore.getState().receive(operation)
+          return operation
+        }
+      }
+    }
+  })
+}
 const homeSurface = background.get('surface') === 'home'
 const newConversationSurface = background.get('surface') === 'new-conversation'
 if (backgroundMode) {

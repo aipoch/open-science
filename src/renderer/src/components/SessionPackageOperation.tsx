@@ -93,8 +93,9 @@ const PackageOperationSteps = ({
   if (
     operation.browserReceiptOnly ||
     operation.kind === 'fork' ||
-    !['running', 'awaiting-selection'].includes(operation.state) ||
-    operation.progress.phase === 'cleaning'
+    (operation.kind !== 'export' &&
+      (!['running', 'awaiting-selection'].includes(operation.state) ||
+        operation.progress.phase === 'cleaning'))
   )
     return null
   const importing = operation.kind === 'import'
@@ -108,17 +109,25 @@ const PackageOperationSteps = ({
       : phase === 'confirming'
         ? 1
         : 0
-    : phase === 'saving'
-      ? 2
-      : ['preparing', 'selecting', 'choosing-location'].includes(phase)
-        ? 0
-        : 1
+    : operation.state === 'succeeded'
+      ? steps.length
+      : phase === 'cleaning'
+        ? -1
+        : phase === 'saving'
+          ? 2
+          : ['preparing', 'selecting', 'choosing-location'].includes(phase)
+            ? 0
+            : 1
   return (
     <ol aria-label={t('Package steps')} className="flex shrink-0 items-start text-xs">
       {steps.map((label, index) => (
         <li
           key={label}
-          aria-current={index === current ? 'step' : undefined}
+          aria-current={
+            index === current && ['running', 'awaiting-selection'].includes(operation.state)
+              ? 'step'
+              : undefined
+          }
           className="flex min-w-0 flex-auto items-start last:flex-none"
         >
           <span
@@ -897,7 +906,11 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             }}
             className={dialogPanelClassName(
               'flex max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0 [@media(max-height:500px)]:[&>div]:py-3',
-              selecting && 'h-[min(85svh,560px)]'
+              selecting
+                ? 'h-[min(85svh,560px)]'
+                : operation.kind === 'export' && 'h-[min(85svh,400px)]',
+              operation.kind === 'export' &&
+                'transition-[height] duration-200 ease-out motion-reduce:transition-none'
             )}
           >
             <div className={`${dialogHeaderClassName} flex-col items-stretch gap-3`}>
@@ -948,16 +961,15 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 ) : null}
                 <Dialog.Description
                   className={
-                    (active && !selecting) ||
-                    (operation.kind === 'import' && !operation.importPreview)
+                    operation.kind !== 'export' &&
+                    ((active && !selecting) ||
+                      (operation.kind === 'import' && !operation.importPreview))
                       ? 'sr-only'
                       : 'text-sm leading-relaxed text-muted-foreground'
                   }
                 >
                   {operation.kind === 'export'
-                    ? active && operation.progress.phase !== 'cleaning'
-                      ? t('Research history is always included.')
-                      : t('The Session is unlocked. You can continue your research.')
+                    ? t('Research history is always included.')
                     : operation.kind === 'fork'
                       ? t(
                           'Fork creates an independent Session with all branches and research data. No code runs automatically.'
@@ -994,9 +1006,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                             <p role="status" className="text-base font-semibold leading-6">
                               {status}
                             </p>
-                            {description ? (
+                            {description || (operation.kind === 'export' && !active) ? (
                               <p className="text-sm leading-relaxed text-muted-foreground">
-                                {description}
+                                {description ??
+                                  t('The Session is unlocked. You can continue your research.')}
                               </p>
                             ) : null}
                           </div>

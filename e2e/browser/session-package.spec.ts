@@ -1,5 +1,146 @@
 import { expect, test, type Locator } from '@playwright/test'
 import { mkdir } from 'node:fs/promises'
+import type { PackageOperationSnapshot } from '../../src/shared/session-package'
+
+for (const viewport of [
+  { width: 1280, height: 900 },
+  { width: 320, height: 740 },
+  { width: 640, height: 360 }
+]) {
+  test(`export retains one dialog and stable progress geometry at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?retained&pdf-notes')
+    const dialog = page.getByRole('dialog', { name: 'Export Session package', exact: true })
+    const steps = dialog.getByRole('list', { name: 'Package steps' })
+    await expect(dialog).toBeVisible()
+    const original = await dialog.elementHandle()
+    const selectionBounds = await dialog.boundingBox()
+    await page.screenshot({ path: testInfo.outputPath('export-selection.png') })
+    await dialog.getByRole('button', { name: 'Choose save location…', exact: true }).click()
+    await expect(dialog.getByRole('status')).toHaveText('Waiting for a save location…')
+    const bounds = await dialog.boundingBox()
+    const stepBounds = await steps.boundingBox()
+    expect(bounds!.height).toBe(Math.min(400, viewport.height * 0.85))
+    expect(bounds!.width).toBe(selectionBounds!.width)
+    const stages: Partial<PackageOperationSnapshot>[] = [
+      { state: 'running', progress: { phase: 'choosing-location' } },
+      { state: 'running', progress: { phase: 'copying', totalBytes: 100, completedBytes: 40 } },
+      { state: 'running', progress: { phase: 'validating' } },
+      { state: 'running', progress: { phase: 'compressing' } },
+      { state: 'running', progress: { phase: 'saving', totalBytes: 100, completedBytes: 70 } },
+      { state: 'running', progress: { phase: 'cleaning' } },
+      { state: 'cancelling', progress: { phase: 'cleaning' } },
+      { state: 'cancelled', progress: { phase: 'cleaning' } },
+      { state: 'failed', progress: { phase: 'saving' }, error: 'Disk full' },
+      {
+        state: 'succeeded',
+        progress: { phase: 'cleaning' },
+        error: undefined,
+        result: { filePath: '/Users/researcher/Documents/research.science' }
+      }
+    ]
+    for (const stage of stages) {
+      await page.evaluate((detail) => {
+        window.dispatchEvent(new CustomEvent('package-fixture-export-progress', { detail }))
+      }, stage)
+      await expect(dialog).toBeVisible()
+      await expect(async () => {
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        expect(await dialog.boundingBox()).toEqual(bounds)
+        expect(await steps.boundingBox()).toEqual(stepBounds)
+      }).toPass()
+      await expect(
+        dialog.getByRole('button', { name: /^(Cancel|Close|Run in background)$/ }).last()
+      ).toBeInViewport()
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      await page.screenshot({
+        path: testInfo.outputPath(`export-${stage.state}-${stage.progress!.phase}.png`)
+      })
+    }
+    await expect(steps.locator('svg')).toHaveCount(3)
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click()
+    await expect(dialog).toHaveCount(0)
+    await page.evaluate(() => {
+      window.dispatchEvent(
+        new CustomEvent('package-fixture-export-progress', {
+          detail: { ioBytesPerSecond: 1024 }
+        })
+      )
+    })
+    await expect(dialog).toHaveCount(0)
+  })
+}
+
+test('export smoothly contracts once after selection and honors reduced motion', async ({
+  page
+}) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await page.emulateMedia({ reducedMotion: 'no-preference' })
+  await page.goto('/session-package.html')
+  const dialog = page.getByRole('dialog')
+  await expect(dialog).toHaveCSS('height', '560px')
+  await expect(dialog).toHaveCSS('transition-property', 'height')
+  await expect(dialog).toHaveCSS('transition-duration', '0.2s')
+  await dialog.evaluate((element) => {
+    const heights: number[] = []
+    element.addEventListener(
+      'transitionrun',
+      () => {
+        const sample = (): void => {
+          heights.push(element.getBoundingClientRect().height)
+          if (getComputedStyle(element).height !== '400px') requestAnimationFrame(sample)
+          else element.setAttribute('data-height-samples', JSON.stringify(heights))
+        }
+        requestAnimationFrame(sample)
+      },
+      { once: true }
+    )
+  })
+  await dialog.getByRole('button', { name: 'Choose save location…', exact: true }).click()
+  await expect(dialog).toHaveCSS('height', '400px')
+  await expect(dialog).toHaveAttribute('data-height-samples')
+  const heights = JSON.parse((await dialog.getAttribute('data-height-samples'))!) as number[]
+  expect(heights.some((height) => height > 400 && height < 560)).toBe(true)
+  expect(heights.at(-1)).toBe(400)
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await expect(dialog).toHaveCSS('transition-property', 'none')
+})
+
+test('hidden export stays hidden through progress and completion until explicitly opened', async ({
+  page
+}) => {
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/session-package.html')
+  const dialog = page.getByRole('dialog')
+  await dialog.getByRole('button', { name: 'Hide progress', exact: true }).click()
+  for (const detail of [
+    { ioBytesPerSecond: 1024 },
+    { state: 'running', progress: { phase: 'compressing' } },
+    { state: 'running', progress: { phase: 'saving' } },
+    { state: 'succeeded', progress: { phase: 'cleaning' } }
+  ]) {
+    await page.evaluate((detail) => {
+      window.dispatchEvent(new CustomEvent('package-fixture-export-progress', { detail }))
+    }, detail)
+    await expect(dialog).toHaveCount(0)
+  }
+  await page.evaluate(() => {
+    window.dispatchEvent(
+      new CustomEvent('package-fixture-export-progress', {
+        detail: { presentationRevision: 1 }
+      })
+    )
+  })
+  await expect(dialog).toBeVisible()
+  await expect(dialog.getByRole('status')).toHaveText('Session package exported')
+  await page.keyboard.press('Escape')
+  await expect(dialog).toHaveCount(0)
+})
 
 test('rejects a real native folder drop before package import', async ({ page }, testInfo) => {
   await page.goto('/session-package.html?background=running&surface=home&locale=zh-Hans')

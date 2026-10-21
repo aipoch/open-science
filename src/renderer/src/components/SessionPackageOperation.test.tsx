@@ -1405,6 +1405,68 @@ it('restores a hidden transfer only for an explicit presentation request', () =>
   expect(usePackageOperationStore.getState().open).toBe(true)
 })
 
+it('keeps a hidden selection closed across snapshots and opens a newly required step', () => {
+  const store = usePackageOperationStore.getState()
+  store.receive(snapshot)
+  store.setOpen(false)
+  store.receive({ ...snapshot, ioBytesPerSecond: 1024 })
+  expect(usePackageOperationStore.getState().open).toBe(false)
+  const presented = { ...snapshot, presentationRevision: 1 }
+  store.receive(presented)
+  expect(usePackageOperationStore.getState().open).toBe(true)
+  store.setOpen(false)
+  store.receive({ ...presented, state: 'running', progress: { phase: 'preparing' } })
+  expect(usePackageOperationStore.getState().open).toBe(false)
+  store.receive(presented)
+  expect(usePackageOperationStore.getState().open).toBe(true)
+  store.setOpen(false)
+  store.receive({ ...presented, progress: { phase: 'confirming' } })
+  expect(usePackageOperationStore.getState().open).toBe(true)
+})
+
+it('retains one export dialog and its task context through completion and cleanup', async () => {
+  usePackageOperationStore.getState().receive(snapshot)
+  await act(async () => root.render(<SessionPackageOperation />))
+  const dialog = document.querySelector('[role="dialog"]')!
+  const steps = dialog.querySelector('ol')!
+  const description = document.getElementById(dialog.getAttribute('aria-describedby')!)!
+  for (const next of [
+    { state: 'running', progress: { phase: 'choosing-location' } },
+    { state: 'running', progress: { phase: 'copying' } },
+    { state: 'running', progress: { phase: 'validating' } },
+    { state: 'running', progress: { phase: 'compressing' } },
+    { state: 'running', progress: { phase: 'saving' } },
+    { state: 'running', progress: { phase: 'cleaning' } },
+    { state: 'succeeded', progress: { phase: 'cleaning' } }
+  ] satisfies Partial<PackageOperationSnapshot>[]) {
+    await act(async () => usePackageOperationStore.getState().receive({ ...snapshot, ...next }))
+    expect(document.querySelector('[role="dialog"]')).toBe(dialog)
+    expect(dialog.querySelector('ol')).toBe(steps)
+    expect(description.textContent).toBe('Research history is always included.')
+    expect(usePackageOperationStore.getState().open).toBe(true)
+  }
+  expect(steps.querySelector('[aria-current]')).toBeNull()
+  expect(steps.querySelectorAll('svg')).toHaveLength(3)
+  expect(dialog.textContent).toContain('The Session is unlocked. You can continue your research.')
+})
+
+it.each(['failed', 'cancelled', 'cancelling'] as const)(
+  'keeps export steps visible without claiming completion when %s',
+  async (state) => {
+    usePackageOperationStore.getState().receive({
+      ...snapshot,
+      state,
+      progress: { phase: 'cleaning' }
+    })
+    usePackageOperationStore.getState().setOpen(true)
+    await act(async () => root.render(<SessionPackageOperation />))
+    const steps = document.querySelector('ol')!
+    expect(steps).not.toBeNull()
+    expect(steps.querySelector('[aria-current]')).toBeNull()
+    expect(steps.querySelectorAll('svg')).toHaveLength(0)
+  }
+)
+
 it.each([
   { state: 'running' as const, cleanupPending: false, canOpenNext: false },
   { state: 'succeeded' as const, cleanupPending: true, canOpenNext: false },

@@ -102,7 +102,10 @@ export const usePackageOperationStore = create<{
           : same && state.dismissedId === operation?.id
             ? false
             : (same && operation?.presentationRevision !== state.operation?.presentationRevision) ||
-                operation?.state === 'awaiting-selection' ||
+                (operation?.state === 'awaiting-selection' &&
+                  (!same ||
+                    state.operation?.state !== 'awaiting-selection' ||
+                    operation.progress.phase !== state.operation.progress.phase)) ||
                 (!same && operation?.state === 'running')
               ? true
               : state.open
