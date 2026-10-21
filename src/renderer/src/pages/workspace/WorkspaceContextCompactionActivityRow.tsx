@@ -5,7 +5,7 @@
  */
 import { MessageScrollerItem } from '@/components/ui/message-scroller'
 import { cn } from '@/lib/utils'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { CircleAlert, CircleMinus, LoaderCircle, Minimize2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 

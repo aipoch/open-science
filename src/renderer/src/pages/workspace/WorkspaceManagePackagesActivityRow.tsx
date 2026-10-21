@@ -2,7 +2,7 @@
  * structure: result-led package ledger · states: loading · warning · error · success
  * contrast: pass · pre-emit critique: P5 H5 E5 S5 R5 V5
  */
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { cn } from '@/lib/utils'
 import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'

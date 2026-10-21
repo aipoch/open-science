@@ -29,7 +29,8 @@ import {
   useSearchMessageFocusStore,
   type SearchMessageFocus
 } from '@/stores/search-message-focus-store'
-import { useSessionStore, type ChatMessage, type ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { ArrowDownIcon } from 'lucide-react'
 import {

@@ -5,7 +5,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { formatDisplayNumber } from '@/lib/locale-format'
 import { cn, formatByteSize } from '@/lib/utils'
 import { useNavigationStore } from '@/stores/navigation-store'
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import { useSessionStore } from '@/stores/session-store'
 import { useSettingsStore } from '@/stores/settings-store'
 import {

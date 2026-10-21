@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 import { isActivityActive } from './workspace-conversation-items'
 import type { ToolExecutionPhase } from './tool-execution-phase'

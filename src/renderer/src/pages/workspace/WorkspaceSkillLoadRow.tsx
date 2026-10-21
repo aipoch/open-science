@@ -1,6 +1,6 @@
 import { useTranslation } from 'react-i18next'
 
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { PresentedAgentMarkdown } from '@/components/streamdown/AgentMarkdown'
 import { cn } from '@/lib/utils'
 

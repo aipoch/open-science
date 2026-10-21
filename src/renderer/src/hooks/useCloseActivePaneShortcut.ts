@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react'
 
 import { useNavigationStore, type NavigationView } from '@/stores/navigation-store'
-import { usePreviewWorkbenchStore, type PreviewPanelState } from '@/stores/preview-workbench-store'
+import { usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PreviewPanelState } from '@/stores/preview-workbench-contract'
 
 export type CloseActivePaneAction = 'close-active-tab' | 'collapse-pane' | 'close-window'
 export type AppShellCloseRequest = 'handled' | 'close-preview' | 'close-base'

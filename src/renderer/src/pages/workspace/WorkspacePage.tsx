@@ -49,11 +49,10 @@ import {
 import {
   projectSessionActionability,
   resolveRootPermissionPending,
-  sessionAwaitsHistoryReplay,
-  toPersistedSession,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
+  sessionAwaitsHistoryReplay
+} from '@/stores/session-actionability'
+import { toPersistedSession, useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import {
   selectProjectSessionReviewLoadError,

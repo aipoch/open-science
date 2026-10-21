@@ -7,7 +7,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 
 type SessionInfoPopoverProps = {

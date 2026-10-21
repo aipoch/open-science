@@ -30,7 +30,7 @@
       "src/renderer/src/components/global-search/global-search-catalog.test.ts",
       "src/renderer/src/components/global-search/search-loading.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/main.render.test.tsx",

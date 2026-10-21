@@ -29,7 +29,7 @@
       "src/renderer/src/pages/workspace/managed-version-diff-presentation.test.ts",
       "src/renderer/src/pages/workspace/useManagedVersionWorkflow.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/LifecycleToast.test.tsx",

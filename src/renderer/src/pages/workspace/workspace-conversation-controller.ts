@@ -4,10 +4,9 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { WorkspaceAgentRuntime } from '@/lib/acp/useWorkspaceAgentRuntime'
 import {
   projectSessionActionability,
-  type ChatMessage,
-  type ChatSession,
   type SessionActionabilityProjection
-} from '@/stores/session-store'
+} from '@/stores/session-actionability'
+import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 import type { Annotation } from '../../../../shared/annotation-contract'
 import {
   annotationRequiresImageInput,

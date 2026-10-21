@@ -15,7 +15,7 @@ import {
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 import { resolveDataKernelForTab } from '../../../../shared/notebook'
 import type {

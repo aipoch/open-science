@@ -17,7 +17,7 @@ import {
   type TagView,
   type UpdateTagRequest
 } from '../../shared/tags'
-import type { TagResourceCatalogSnapshot } from './resource-catalog'
+import type { TagResourceCatalogSnapshot } from './resource-contract'
 
 type TagClient = Pick<PrismaClient, 'tag' | 'tagAssignment' | 'pdfAnnotation' | '$transaction'>
 type TagClientProvider = () => Promise<TagClient>

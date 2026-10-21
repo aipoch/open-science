@@ -1,7 +1,13 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { execFileSync } from 'node:child_process'
+import { isDeepStrictEqual } from 'node:util'
 import { posix, resolve } from 'node:path'
 import ts from 'typescript'
+import {
+  boundaryViolations,
+  dependencyConsumerBoundaries,
+  usesDependencyConsumers
+} from './module-derived-consumers.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { createPackageTestPlan, validatePackageTestRegistry } from './package-test-impact.mjs'
 
@@ -86,7 +92,15 @@ export function isTypeOnlyDependency(node) {
 export function createConsumerDependencyReader(
   source,
   runtimeEdges,
-  { staticOnly = false, runtimeOnly = false } = {}
+  {
+    staticOnly = false,
+    runtimeOnly = false,
+    externalImports = [],
+    literalLoaders = false,
+    strictExternalImports = false,
+    resourceImports = [],
+    reviewedSyntax = false
+  } = {}
 ) {
   const root = resolve('/__module_evidence__').replaceAll('\\', '/')
   const key = (path) => posix.relative(root, path.replaceAll('\\', '/'))
@@ -133,6 +147,9 @@ export function createConsumerDependencyReader(
       '@aipoch/notebook-network-sandbox': ['packages/notebook-network-sandbox/src/index.ts'],
       '@aipoch/process-tree-native': ['packages/process-tree-native/index.d.ts'],
       '@aipoch/safe-file-publisher-native': ['packages/safe-file-publisher-native/index.d.ts'],
+      '@aipoch/credential-identity-probe-native': [
+        'packages/credential-identity-probe-native/index.d.ts'
+      ],
       '@/*': ['src/renderer/src/*'],
       '@renderer/*': ['src/renderer/src/*']
     }
@@ -144,8 +161,11 @@ export function createConsumerDependencyReader(
       /^([^?#]+\.(?:svg|png|jpe?g|gif|webp|avif|ico|css))(?:\?(?:raw|url|inline|no-inline))?(?:#[^?]*)?$/.exec(
         specifier
       )
-    if (!match) return undefined
-    const path = match[1]
+    const reviewed = resourceImports.length
+      ? /^([^?#]+)(?:\?(?:raw|url|inline|no-inline|asset))?(?:#[^?]*)?$/.exec(specifier)
+      : undefined
+    if (!match && !reviewed) return undefined
+    const path = (match ?? reviewed)[1]
     const candidate = path.startsWith('@/')
       ? posix.join('src/renderer/src', path.slice(2))
       : path.startsWith('@renderer/')
@@ -153,7 +173,11 @@ export function createConsumerDependencyReader(
         : path.startsWith('.')
           ? posix.join(posix.dirname(importer), path)
           : undefined
-    return candidate && source.files.has(candidate) ? candidate : undefined
+    return candidate &&
+      source.files.has(candidate) &&
+      (match || resourceImports.includes(candidate))
+      ? candidate
+      : undefined
   }
   const explicit = new Map()
   for (const [target, consumers] of runtimeEdges) {
@@ -189,6 +213,7 @@ export function createConsumerDependencyReader(
     // Only known read-only introspection is safe to exclude from opaque loading.
     const harmlessModuleMembers = new Set(['builtinModules', 'isBuiltin'])
     const importedLoaders = new Set()
+    const requireFactories = new Set()
     const moduleNamespaces = new Set()
     for (const statement of ast.statements) {
       if (
@@ -215,14 +240,152 @@ export function createConsumerDependencyReader(
       const bindings = clause?.namedBindings
       if (bindings && ts.isNamespaceImport(bindings)) moduleNamespaces.add(bindings.name.text)
       if (bindings && ts.isNamedImports(bindings))
-        for (const binding of bindings.elements)
+        for (const binding of bindings.elements) {
+          if (
+            literalLoaders &&
+            !binding.isTypeOnly &&
+            (binding.propertyName ?? binding.name).text === 'createRequire'
+          )
+            requireFactories.add(binding.name.text)
           if (
             !binding.isTypeOnly &&
             !harmlessModuleMembers.has((binding.propertyName ?? binding.name).text)
           )
             importedLoaders.add(binding.name.text)
+        }
     }
+    const requireFactory = (node) =>
+      literalLoaders &&
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      requireFactories.has(node.expression.text) &&
+      node.arguments.length === 1 &&
+      node.arguments[0].getText(ast) === 'import.meta.url'
+    const localRequires = new Set()
+    const collectRequires = (node) => {
+      if (
+        literalLoaders &&
+        ts.isIdentifier(node) &&
+        node.text === 'process' &&
+        node.parent.name === node &&
+        (ts.isVariableDeclaration(node.parent) ||
+          ts.isParameter(node.parent) ||
+          ts.isBindingElement(node.parent) ||
+          ts.isFunctionDeclaration(node.parent) ||
+          ts.isFunctionExpression(node.parent) ||
+          ts.isClassDeclaration(node.parent) ||
+          ts.isClassExpression(node.parent) ||
+          ts.isEnumDeclaration(node.parent) ||
+          ts.isModuleDeclaration(node.parent) ||
+          ts.isImportSpecifier(node.parent) ||
+          ts.isImportClause(node.parent) ||
+          ts.isNamespaceImport(node.parent) ||
+          ts.isImportEqualsDeclaration(node.parent))
+      )
+        result.complete = false
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.initializer &&
+        requireFactory(node.initializer) &&
+        node.parent.flags & ts.NodeFlags.Const &&
+        !node.parent.parent.modifiers?.some(
+          (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword
+        )
+      )
+        localRequires.add(node.name.text)
+      ts.forEachChild(node, collectRequires)
+    }
+    collectRequires(ast)
+    const requireValue = (node) =>
+      requireFactory(node) || (ts.isIdentifier(node) && localRequires.has(node.text))
+    const literalLoaderCall = (node) =>
+      literalLoaders &&
+      ts.isCallExpression(node) &&
+      node.arguments.length === 1 &&
+      (requireValue(node.expression) ||
+        (ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === 'resolve' &&
+          requireValue(node.expression.expression)) ||
+        node.expression.getText(ast) === 'process.getBuiltinModule')
+    const loaderUse = (node) =>
+      (literalLoaderCall(node.parent) && node.parent.expression === node) ||
+      (ts.isPropertyAccessExpression(node.parent) &&
+        node.parent.expression === node &&
+        literalLoaderCall(node.parent.parent))
+    const containsProcess = (node) =>
+      (ts.isIdentifier(node) && node.text === 'process') || ts.forEachChild(node, containsProcess)
+    // Boundary review may distinguish ordinary parameter/property names from ambient
+    // loaders. Keep the independent-history proof reader conservative by default.
+    let localChecker
+    const localValueName = (node) => {
+      if (!reviewedSyntax || !ts.isIdentifier(node)) return false
+      if (!localChecker) {
+        // Bind only this already-parsed candidate file; never resolve or execute imports.
+        const options = { noLib: true, noResolve: true, target: ts.ScriptTarget.Latest }
+        const host = ts.createCompilerHost(options)
+        host.getSourceFile = (name) => (name === path ? ast : undefined)
+        host.readFile = () => undefined
+        host.fileExists = (name) => name === path
+        localChecker = ts.createProgram([path], options, host).getTypeChecker()
+      }
+      const symbol = ts.isShorthandPropertyAssignment(node.parent)
+        ? localChecker.getShorthandAssignmentValueSymbol(node.parent)
+        : localChecker.getSymbolAtLocation(node)
+      const declaration = symbol?.valueDeclaration
+      return (
+        !!declaration &&
+        (ts.isParameter(declaration) ||
+          ts.isVariableDeclaration(declaration) ||
+          ts.isBindingElement(declaration))
+      )
+    }
+    const propertyName = (node) =>
+      reviewedSyntax &&
+      node.parent.name === node &&
+      ((ts.isPropertyAccessExpression(node.parent) && localValueName(node.parent.expression)) ||
+        ts.isPropertyAssignment(node.parent) ||
+        ts.isMethodDeclaration(node.parent) ||
+        ts.isPropertyDeclaration(node.parent))
     const visit = (node) => {
+      if (
+        literalLoaders &&
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment &&
+        node.operatorToken.kind <= ts.SyntaxKind.LastAssignment &&
+        containsProcess(node.left)
+      )
+        result.complete = false
+      // An opted-in loader must remain a local const used only for literal calls/resolution.
+      // Never accept aliases escaping into another function, assignments or shadow bindings.
+      if (literalLoaders && ts.isIdentifier(node)) {
+        if (
+          localRequires.has(node.text) &&
+          !loaderUse(node) &&
+          !(
+            ts.isVariableDeclaration(node.parent) &&
+            node.parent.name === node &&
+            node.parent.initializer &&
+            requireFactory(node.parent.initializer) &&
+            node.parent.parent.flags & ts.NodeFlags.Const &&
+            !node.parent.parent.parent.modifiers?.some(
+              (modifier) => modifier.kind === ts.SyntaxKind.ExportKeyword
+            )
+          )
+        )
+          result.complete = false
+        if (
+          requireFactories.has(node.text) &&
+          !ts.isImportSpecifier(node.parent) &&
+          !(
+            requireFactory(node.parent) &&
+            (loaderUse(node.parent) ||
+              (ts.isVariableDeclaration(node.parent.parent) &&
+                localRequires.has(node.parent.parent.name.text)))
+          )
+        )
+          result.complete = false
+      }
       // Keep value imports conservative, including mixed named type/value imports and export *.
       // Type references still belong to the default structural graph and typecheck scope.
       if (runtimeOnly) {
@@ -254,6 +417,7 @@ export function createConsumerDependencyReader(
         [
           'window',
           'globalThis',
+          'global',
           'process',
           'fetch',
           'Worker',
@@ -265,7 +429,9 @@ export function createConsumerDependencyReader(
           'document',
           'navigator',
           'self'
-        ].includes(node.text)
+        ].includes(node.text) &&
+        !(node.text === 'document' && propertyName(node)) &&
+        !(node.text === 'document' && localValueName(node))
       )
         result.complete = false
       // A loader passed as a value escapes literal-call import discovery. Without scope
@@ -274,6 +440,7 @@ export function createConsumerDependencyReader(
         ts.isIdentifier(node) &&
         (['require', 'eval', 'Function', 'getBuiltinModule', 'mainModule'].includes(node.text) ||
           (node.text === 'module' &&
+            !localValueName(node) &&
             !(
               (ts.isPropertyAccessExpression(node.parent) ||
                 ts.isPropertyAssignment(node.parent)) &&
@@ -303,7 +470,26 @@ export function createConsumerDependencyReader(
           ts.isPropertyAccessExpression(parent) &&
           parent.expression === node &&
           harmlessModuleMembers.has(parent.name.text)
-        if (!directRequire && !assertion && !moduleProperty) result.complete = false
+        const reviewedFactory =
+          requireFactories.has(node.text) &&
+          requireFactory(node.parent) &&
+          (loaderUse(node.parent) ||
+            (ts.isVariableDeclaration(node.parent.parent) &&
+              localRequires.has(node.parent.parent.name.text)))
+        const reviewedBuiltin =
+          node.text === 'getBuiltinModule' &&
+          ts.isPropertyAccessExpression(parent) &&
+          literalLoaderCall(parent.parent)
+        const reviewedRequire = literalLoaders && localRequires.has(node.text)
+        if (
+          !directRequire &&
+          !assertion &&
+          !moduleProperty &&
+          !reviewedFactory &&
+          !reviewedBuiltin &&
+          !reviewedRequire
+        )
+          result.complete = false
       }
       if (
         ts.isElementAccessExpression(node) &&
@@ -312,7 +498,9 @@ export function createConsumerDependencyReader(
             node.argumentExpression.text
           )) ||
           (ts.isIdentifier(node.expression) &&
-            ['globalThis', 'window', 'global'].includes(node.expression.text) &&
+            ['globalThis', 'window', 'global', ...(literalLoaders ? ['process'] : [])].includes(
+              node.expression.text
+            ) &&
             !ts.isStringLiteral(node.argumentExpression)))
       )
         result.complete = false
@@ -320,6 +508,7 @@ export function createConsumerDependencyReader(
         const expression = node.expression.getText(ast)
         if (
           node.expression.kind === ts.SyntaxKind.ImportKeyword ||
+          literalLoaderCall(node) ||
           [
             'require',
             'require.resolve',
@@ -346,7 +535,9 @@ export function createConsumerDependencyReader(
       const asset = assetPath(spec, path)
       if (asset) {
         result.paths.add(asset)
-        result.complete = false
+        // Only reviewed boundary selection may rely on separately pinned resource coverage.
+        // Independent-history proofs never opt in: CSS/HTML can contain further references.
+        if (!resourceImports.includes(asset)) result.complete = false
         continue
       }
       const resolved = ts.resolveModuleName(
@@ -359,21 +550,25 @@ export function createConsumerDependencyReader(
       if (resolved && source.files.has(key(resolved))) result.paths.add(key(resolved))
       else if (
         ((staticOnly || runtimeOnly) &&
-          ![
-            'vitest',
-            'react',
-            'react/jsx-runtime',
-            'react-dom',
-            'react-dom/client',
-            'react-dom/server',
-            '@testing-library/react',
-            '@testing-library/user-event',
-            'node:path',
-            'node:url',
-            'node:util',
-            'node:assert',
-            'node:assert/strict'
-          ].includes(spec)) ||
+          !externalImports.includes(spec) &&
+          !(
+            !strictExternalImports &&
+            [
+              'vitest',
+              'react',
+              'react/jsx-runtime',
+              'react-dom',
+              'react-dom/client',
+              'react-dom/server',
+              '@testing-library/react',
+              '@testing-library/user-event',
+              'node:path',
+              'node:url',
+              'node:util',
+              'node:assert',
+              'node:assert/strict'
+            ].includes(spec)
+          )) ||
         spec.startsWith('.') ||
         spec.startsWith('/') ||
         spec.startsWith('@/') ||
@@ -435,6 +630,51 @@ export function verifiedConsumerRetirements(
     })
     const previousDependencies = createConsumerDependencyReader(before, runtimeEdges)
     const currentDependencies = createConsumerDependencyReader(after, runtimeEdges)
+    // Already-independent host history can retire only in a consumer-removal-only change.
+    // Do not let concurrent source, test, runtime-edge or checker edits manufacture evidence.
+    let registrationOnly
+    const isRegistrationOnly = () => {
+      if (registrationOnly === undefined) {
+        const changed = execFileSync(
+          'git',
+          ['diff', '--no-renames', '--name-only', '-z', base, head],
+          { cwd, encoding: 'utf8' }
+        )
+          .split('\0')
+          .filter(Boolean)
+        registrationOnly =
+          changed.length > 0 &&
+          changed.every((path) =>
+            /^scripts\/ci\/module-impact(?:\.json|\/[a-z][a-z0-9_]*\.json)$/.test(path)
+          ) &&
+          Object.keys(baseManifest.modules).length === Object.keys(headManifest.modules).length &&
+          Object.entries(baseManifest.modules).every(([id, original]) => {
+            const current = headManifest.modules[id]
+            return (
+              current &&
+              current.testFiles.consumer.every((test) =>
+                original.testFiles.consumer.includes(test)
+              ) &&
+              isDeepStrictEqual(
+                {
+                  ...original,
+                  testFiles: { ...original.testFiles, consumer: current.testFiles.consumer }
+                },
+                current
+              )
+            )
+          })
+      }
+      return registrationOnly
+    }
+    const previousRuntimeDependencies = createConsumerDependencyReader(before, runtimeEdges, {
+      staticOnly: true,
+      runtimeOnly: true
+    })
+    const currentRuntimeDependencies = createConsumerDependencyReader(after, runtimeEdges, {
+      staticOnly: true,
+      runtimeOnly: true
+    })
     const retired = new Set()
     for (const { id, test, owner, current } of candidates) {
       if (
@@ -446,26 +686,53 @@ export function verifiedConsumerRetirements(
         continue
       const owners = new Set([...owner.ownerPaths, ...current.ownerPaths])
       const previous = previousDependencies(test, owners)
-      // Historical foreign-package entries can also be stale on both revisions.
-      // This is narrower than accepting arbitrary unproven host contracts: retain
-      // the test's unique original package owner, and demand complete evidence on
-      // BOTH revisions with all historical runtime edges included.
+      // Already-independent history needs complete evidence in both revisions and
+      // a retained original test owner; host cleanup additionally excludes code edits.
       if (!previous.reachable) {
-        const root = /^packages\/[^/]+\//.exec(test)?.[0]
-        const packageOwners = Object.entries(baseManifest.modules).filter(
-          ([, module]) => module.ownerPaths.includes(test) && module.testFiles.owner.includes(test)
-        )
-        if (
-          !root ||
-          !previous.complete ||
-          !before.files.has(`${root}package.json`) ||
-          !after.files.has(`${root}package.json`) ||
-          [...owners].some((path) => path.startsWith(root)) ||
-          packageOwners.length !== 1 ||
-          !headManifest.modules[packageOwners[0][0]]?.ownerPaths.includes(test) ||
-          !headManifest.modules[packageOwners[0][0]]?.testFiles.owner.includes(test)
-        )
-          continue
+        if (/^src\/(?:main|renderer)\/.*\.(?:test|spec)\.[cm]?[jt]sx?$/.test(test)) {
+          const testOwners = (manifest) =>
+            Object.entries(manifest.modules).filter(([, module]) =>
+              module.ownerPaths.includes(test)
+            )
+          // Structural evidence still protects type dependencies; erased type bodies do not
+          // execute opaque filesystem/IPC access. Require strict evidence for the runtime cone.
+          const previousRuntime = previousRuntimeDependencies(test, owners)
+          const currentRuntime = currentRuntimeDependencies(test, owners)
+          const originalOwners = testOwners(baseManifest)
+          const currentOwners = testOwners(headManifest)
+          if (
+            !previous.complete ||
+            !previousRuntime.complete ||
+            previousRuntime.reachable ||
+            !currentRuntime.complete ||
+            currentRuntime.reachable ||
+            !isRegistrationOnly() ||
+            originalOwners.length !== 1 ||
+            currentOwners.length !== 1 ||
+            originalOwners[0][0] === id ||
+            originalOwners[0][0] !== currentOwners[0][0] ||
+            !originalOwners[0][1].testFiles.owner.includes(test) ||
+            !currentOwners[0][1].testFiles.owner.includes(test)
+          )
+            continue
+        } else {
+          const root = /^packages\/[^/]+\//.exec(test)?.[0]
+          const packageOwners = Object.entries(baseManifest.modules).filter(
+            ([, module]) =>
+              module.ownerPaths.includes(test) && module.testFiles.owner.includes(test)
+          )
+          if (
+            !root ||
+            !previous.complete ||
+            !before.files.has(`${root}package.json`) ||
+            !after.files.has(`${root}package.json`) ||
+            [...owners].some((path) => path.startsWith(root)) ||
+            packageOwners.length !== 1 ||
+            !headManifest.modules[packageOwners[0][0]]?.ownerPaths.includes(test) ||
+            !headManifest.modules[packageOwners[0][0]]?.testFiles.owner.includes(test)
+          )
+            continue
+        }
       }
       const result = currentDependencies(test, owners)
       if (result.complete && !result.reachable) retired.add(`${id}:${test}`)
@@ -729,6 +996,231 @@ export function verifiedExcludedPackageTests(
       const result = currentDependencies(test, owners)
       if (previous.complete && !previous.reachable && result.complete && !result.reachable)
         retired.add(`${id}:contract:${test}`)
+    }
+    return retired
+  } catch {
+    return new Set()
+  }
+}
+
+// This is an explicit dependency-model policy, NOT a proof that opaque consumer cones are
+// independent. Only reviewed source boundaries may trade inherited history for known edges.
+export function dependencyBoundaryViolations(
+  source,
+  manifest,
+  baseManifest = manifest,
+  runtimeEdges
+) {
+  let edges, strict, inspect
+  try {
+    edges =
+      runtimeEdges ??
+      Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}'))
+    strict = createConsumerDependencyReader(source, edges, {
+      staticOnly: true,
+      runtimeOnly: true
+    })
+    inspect = createConsumerDependencyReader(source, edges)
+  } catch (error) {
+    return [
+      {
+        path: 'scripts/ci/module-impact.json',
+        rule: 'dependency-consumer-boundary',
+        message: `Cannot validate dependency evidence: ${error.message}`
+      }
+    ]
+  }
+  const violations = []
+  // Inspect structural edges too: erased type imports must not reverse a layer.
+  const structuralEdges = new Map()
+  const pending = Object.entries(dependencyConsumerBoundaries).flatMap(([id, boundary]) =>
+    manifest.modules[id] && !manifest.modules[id].fullTestReason ? boundary.sources : []
+  )
+  while (pending.length) {
+    const path = pending.pop()
+    if (structuralEdges.has(path) || !source.files.has(path)) continue
+    const targets = inspect.dependencies(path).paths
+    structuralEdges.set(path, targets)
+    pending.push(...targets)
+  }
+  for (const message of boundaryViolations(structuralEdges, manifest.modules))
+    violations.push({
+      path: 'scripts/ci/module-impact.json',
+      rule: 'dependency-consumer-boundary',
+      message
+    })
+  for (const [id, boundary] of Object.entries(dependencyConsumerBoundaries)) {
+    const module = manifest.modules[id]
+    if (!module || module.fullTestReason) continue
+    const reject = (message) =>
+      violations.push({
+        path: `scripts/ci/module-impact/${id}.json`,
+        rule: 'dependency-consumer-boundary',
+        message
+      })
+    const directRuntime = createConsumerDependencyReader(source, edges, {
+      runtimeOnly: true,
+      externalImports: boundary.externalImports,
+      literalLoaders: boundary.literalLoaders,
+      resourceImports: boundary.resourceImports,
+      reviewedSyntax: true
+    })
+    const directCodec = createConsumerDependencyReader(source, edges, {
+      runtimeOnly: true,
+      staticOnly: true,
+      reviewedSyntax: true,
+      externalImports: boundary.externalImports
+    })
+    // Low-level files in a mixed owner cannot borrow its filesystem/process permissions.
+    const policyReaders = new Map()
+    const directPolicy = (path) => {
+      const imports = boundary.pureExternalImports?.[path] ?? []
+      const key = JSON.stringify(imports)
+      if (!policyReaders.has(key))
+        policyReaders.set(
+          key,
+          createConsumerDependencyReader(source, edges, {
+            runtimeOnly: true,
+            staticOnly: true,
+            strictExternalImports: true,
+            reviewedSyntax: true,
+            externalImports: [
+              'zod',
+              'node:buffer',
+              'node:path',
+              'node:url',
+              'node:util',
+              ...imports
+            ]
+          })
+        )
+      return policyReaders.get(key)
+    }
+
+    if (
+      !usesDependencyConsumers(id, module) ||
+      // Resource inputs keep exact ownership and explicit behavior/packaging tests. A new
+      // asset or fixture cannot silently inherit approval from a directory-wide pattern.
+      [...(boundary.resourcePaths ?? []), ...(boundary.resourceImports ?? [])].some(
+        (path) => !source.files.has(path)
+      ) ||
+      ((boundary.resourcePaths?.length || boundary.resourceImports?.length) &&
+        (!boundary.resourceTests?.length ||
+          boundary.resourceTests.some((test) => !boundary.requiredTests?.includes(test)))) ||
+      Object.entries(boundary.pureExternalImports ?? {}).some(
+        ([path, imports]) =>
+          !boundary.sources.includes(path) ||
+          !Array.isArray(imports) ||
+          imports.some(
+            (specifier) =>
+              !['clsx', 'tailwind-merge', 'diff', 'marked', 'parse5'].includes(specifier)
+          )
+      ) ||
+      boundary.sources.some((path) =>
+        boundary.externalImports
+          ? !(
+              ['policy', 'domain-contract', 'presentation-model'].includes(
+                boundary.sourceLayers?.[path] ?? boundary.layer
+              )
+                ? directPolicy(path)
+                : ['record-codec', 'record-contract', 'bootstrap-state'].includes(
+                      boundary.sourceLayers?.[path] ?? boundary.layer
+                    )
+                  ? directCodec
+                  : directRuntime
+            ).dependencies(path).complete
+          : !strict(path, new Set()).complete
+      ) ||
+      (boundary.requiredTests ?? []).some(
+        (test) =>
+          source.read(test) === undefined || !Object.values(module.testFiles).flat().includes(test)
+      )
+    ) {
+      reject(
+        `${id}: source-derived selection requires its reviewed sources, runtime imports and behavioral contracts; restore it or register fullTestReason for reclassification.`
+      )
+      continue
+    }
+    const original = baseManifest.modules[id]
+    const owners = new Set(module.ownerPaths)
+    for (const test of module.testFiles.consumer) {
+      if (original?.testFiles.consumer.includes(test)) continue
+      if (!inspect(test, owners).reachable)
+        reject(
+          `${id}: ${test} has no known dependency; register an explicit behavioral contract or runtime edge instead of inherited consumers.`
+        )
+    }
+  }
+  return violations
+}
+
+export function dependencyBasedConsumerRetirements(
+  base,
+  head,
+  baseManifest,
+  headManifest,
+  { cwd = process.cwd() } = {}
+) {
+  try {
+    // Cleanup must not change the code, contracts, platform routing or policy that authorizes it.
+    const changed = execFileSync('git', ['diff', '--no-renames', '--name-only', '-z', base, head], {
+      cwd,
+      encoding: 'utf8'
+    })
+      .split('\0')
+      .filter(Boolean)
+    if (
+      !changed.length ||
+      changed.some(
+        (path) => !/^scripts\/ci\/module-impact(?:\.json|\/[a-z][a-z0-9_]*\.json)$/.test(path)
+      )
+    )
+      return new Set()
+    if (
+      Object.keys(baseManifest.modules).length !== Object.keys(headManifest.modules).length ||
+      Object.entries(baseManifest.modules).some(([id, original]) => {
+        const current = headManifest.modules[id]
+        return (
+          !current ||
+          !isDeepStrictEqual(
+            {
+              ...original,
+              testFiles: { ...original.testFiles, consumer: current.testFiles.consumer }
+            },
+            current
+          ) ||
+          current.testFiles.consumer.some((test) => !original.testFiles.consumer.includes(test))
+        )
+      })
+    )
+      return new Set()
+    const sources = [sourceSnapshot(base, cwd), sourceSnapshot(head, cwd)]
+    const edges = sources.flatMap((source) =>
+      Object.entries(JSON.parse(source.read('scripts/ci/module-runtime-consumers.json') ?? '{}'))
+    )
+    const manifests = [baseManifest, headManifest]
+    if (
+      sources.some(
+        (source, i) =>
+          dependencyBoundaryViolations(source, manifests[i], manifests[i], edges).length
+      )
+    )
+      return new Set()
+    const inspectors = sources.map((source) => createConsumerDependencyReader(source, edges))
+    const retired = new Set()
+    for (const [id, original] of Object.entries(baseManifest.modules)) {
+      const current = headManifest.modules[id]
+      if (!usesDependencyConsumers(id, original) || !usesDependencyConsumers(id, current)) continue
+      const owners = new Set(original.ownerPaths)
+      for (const test of original.testFiles.consumer) {
+        if (
+          current.testFiles.consumer.includes(test) ||
+          !sources.every((source) => source.read(test) !== undefined) ||
+          inspectors.some((inspect) => inspect(test, owners).reachable)
+        )
+          continue
+        retired.add(`${id}:${test}`)
+      }
     }
     return retired
   } catch {

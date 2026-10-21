@@ -102,6 +102,16 @@ brew install aipoch/tap/open-science
 
 이 Formula는 Node를 포함하고 데스크톱 앱 없이 실행됩니다. 버전은 데스크톱 Cask와 다를 수 있습니다. 전제 조건과 업그레이드는 [독립 실행 환경 가이드](../standalone-runtime.md)를 참고하세요.
 
+독립 CLI와 웹 UI는 **Node.js 22.13.0 이상**에서 배포된 [npm 패키지](https://www.npmjs.com/package/@aipoch/open-science)로 설치할 수 있습니다:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+출력된 URL을 열어 설정을 완료하거나 [터미널 설정 가이드](../../packages/open-science/CLI.md#first-run-setup-codex)를 따르세요. npm은 macOS ARM64/x64, glibc 기반 Linux ARM64/x64 및 Windows x64를 지원하며 데스크톱 앱은 필요하지 않습니다. npm 선택적 의존성을 활성화하고 [Linux 사전 요구 사항 및 업그레이드 안내](../standalone-runtime.md#install-from-npm)를 확인하세요. URL에는 인증 토큰이 포함되므로 공유하지 마세요.
+
 Windows 재설치 시 연구 데이터는 유지됩니다. 완전히 초기화하려면 확인 후 로컬 데이터를 영구 삭제하는 [데이터 초기화 도구](../../scripts/windows-reset/README.md)를 참고하세요.
 
 ### 2. 최초 설정 완료
@@ -331,7 +341,7 @@ npm run pack:backend
 
 웹 UI는 일반 Node 백엔드에서 실행되며 Electron이나 그래픽 화면이 필요하지 않습니다. `npm run dev:web`와 `npm run dev:headless`는 백엔드와 웹 UI를 빌드하고 실행하며 데스크톱이나 트레이를 시작하지 않습니다. `OPEN_SCIENCE_WEB_PORT`로 포트를 선택합니다(기본값 `44100`). Ctrl+C는 전경 서비스를 정상 종료합니다.
 
-소스 개발에는 Node.js 24가 필요합니다. 독립 npm tarball에는 Node >=22.13.0, 경량 CLI/SDK에는 Node >=22.5가 필요합니다. Release 압축 파일, Homebrew Formula, 데스크톱 명령 실행기는 런타임을 포함합니다.
+소스 개발에는 Node.js 24가 필요합니다. 배포된 npm 패키지와 로컬에서 빌드한 독립 tarball에는 Node.js >=22.13.0이 필요합니다. Release 압축 파일, Homebrew Formula, 데스크톱 명령 실행기는 런타임을 포함합니다.
 
 데스크톱과 브라우저는 같은 서비스를 공유합니다. 데스크톱을 종료하면 직접 시작한 백엔드만 중지하며, CLI가 시작한 서비스에서는 연결만 해제합니다.
 

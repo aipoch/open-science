@@ -13,6 +13,10 @@ on:
         type: string
         description: Published stable Release to repack for linux-packages only.
         default: v0.37.1
+      release_run_id:
+        type: string
+        description: Optional certified Release push run for historical npm dry-run (v1.0.1 is 39409106648).
+        default: ''
       desktop_run_id:
         type: string
         description: Existing desktop artifact run to verify without rebuilding or repackaging.
@@ -38,11 +42,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  source:
+    if: inputs.distribution != 'linux-packages'
+    runs-on: ubuntu-latest
+    outputs:
+      source_sha: ${{ steps.source.outputs.source_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - id: source
+        if: inputs.release_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_RELEASE_RUN_ID: ${{ inputs.release_run_id }}
+          DISTRIBUTION: ${{ inputs.distribution }}
+        run: |
+          test "$DISTRIBUTION" = npm
+          node scripts/publish-npm-release.mjs --plan-release
+
   verify:
+    needs: source
     if: inputs.distribution != 'linux-packages'
     uses: ./.github/workflows/runtime-packages.yml
     with:
       distribution: ${{ inputs.distribution }}
+      source_sha: ${{ needs.source.outputs.source_sha }}
       target: ${{ inputs.target }}
       desktop_run_id: ${{ inputs.desktop_run_id }}
       verify_desktop_only: ${{ inputs.desktop_run_id != '' }}

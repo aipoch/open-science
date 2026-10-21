@@ -1,5 +1,5 @@
 import { cn } from '@/lib/utils'
-import type { ChatMessage } from '@/stores/session-store'
+import type { ChatMessage } from '@/stores/session-store-contract'
 
 import { isHiddenControlMessage, isHumanUserMessage } from '../../../../shared/session-persistence'
 import type { WorkspaceConversationTimelineItem } from './workspace-conversation-timeline'

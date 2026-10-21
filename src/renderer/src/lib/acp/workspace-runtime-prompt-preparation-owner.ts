@@ -14,11 +14,10 @@ import type { AgentFrameworkId, SessionAgentConfiguration } from '../../../../sh
 import { imageAttachmentMimeType, type UploadedAttachment } from '../../../../shared/uploads'
 import {
   projectSessionActionability,
-  resolveRootPermissionPending,
-  useSessionStore,
-  type ChatMessage,
-  type ChatSession
-} from '../../stores/session-store'
+  resolveRootPermissionPending
+} from '../../stores/session-actionability'
+import { useSessionStore } from '../../stores/session-store'
+import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import {
   buildWorkspaceHistoryReplay,
   resolveHistoryReplayTarget,

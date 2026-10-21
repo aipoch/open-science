@@ -4,7 +4,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Button } from '@/components/ui/button'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
-import type { PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import { PreviewErrorCard, PreviewLoadingContent } from '../PreviewFallback'
 import { usePreviewResourceKey } from '../usePreviewResourceGeneration'

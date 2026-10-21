@@ -13,7 +13,8 @@ import {
   selectVisionRelayAvailable,
   useSettingsStore
 } from '@/stores/settings-store'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 const useWorkspaceSessionAgentConfiguration = (
   activeSession: ChatSession | undefined

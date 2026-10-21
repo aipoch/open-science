@@ -6,7 +6,7 @@ import {
   isProviderAuthenticationRestored
 } from './agent-authentication-error'
 import { i18next } from '@/i18n'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
 
 import type {
