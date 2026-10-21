@@ -84,6 +84,51 @@ Replace `open-science` in the examples below with:
 node packages/open-science/cli.mjs
 ```
 
+## Local information and help
+
+These commands work without starting or connecting to the service:
+
+```bash
+open-science --version
+open-science -v
+open-science version --json
+open-science help
+open-science help run
+open-science paths --json
+open-science paths --profile /absolute/path/to/profile
+```
+
+`--version`, `-v`, and `version` print the invoked CLI's application version, including any
+nightly suffix. `version --json` prints `{ "version": "..." }`. Source checkouts use the root
+application version; installed distributions use their own release metadata. This is not the
+version of a running service. The version flags are standalone commands, not options for `run`,
+`start`, or other commands.
+
+`help` is equivalent to `--help`; `help <command>` is equivalent to `<command> --help`.
+For example, `help project` lists Project commands. Unknown command names and unsupported
+arguments fail with the existing usage-error exit code `2`.
+
+`paths` prints human-readable locations; `paths --json` prints one object with:
+
+| Field                  | Meaning                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------- |
+| `cliPath`              | The CLI implementation file used by this invocation.                                     |
+| `nodePath`             | The Node executable running the CLI.                                                     |
+| `startupConfigRoot`    | The configuration directory selected by the installation's default or explicit override. |
+| `discoveryConfigRoots` | Ordered candidate configuration directories searched for an existing service.            |
+
+Source checkouts default to `~/.open-science-project` for startup; installations default to
+`~/.open-science`. Without an override, service discovery checks the development directory first,
+then the production directory. `--config-root` (or `--profile`) takes precedence over
+`OPEN_SCIENCE_CONFIG_ROOT`, then `OPEN_SCIENCE_STORAGE_ROOT`; an override selects a single
+absolute directory for both startup and discovery. Paths are reported even when they do not exist.
+The output does not identify an active service or a research-data directory, which may differ.
+
+These commands do not create profiles, modify settings, read credentials, or print authenticated
+URLs. Successful queries exit `0`; missing or invalid version metadata produces an error rather
+than a fallback version. `paths` accepts only the profile, JSON, and help options; `version`
+accepts only JSON and help options, and `help` accepts only one optional command name and help flags.
+
 ## Service lifecycle
 
 Initialize the local configuration directory from a terminal. This is safe to repeat and does not
