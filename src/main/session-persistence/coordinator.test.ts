@@ -7113,6 +7113,36 @@ describe('SessionPersistenceCoordinator', () => {
     expect(fileIndex.reconcileActiveSessions).toHaveBeenCalledWith([survivor])
   })
 
+  it.each(['session-2', undefined])(
+    'reloads manifest selection %s after a cached authority scan',
+    async (lastSessionId) => {
+      const root = await mkdtemp(join(tmpdir(), 'open-science-manifest-cache-'))
+      try {
+        initDataRoot(root)
+        const repository = new SessionRepository(root)
+        await repository.saveSession(createSession())
+        await repository.saveSession(createSession({ id: 'session-2' }))
+        await repository.saveManifest({ lastSessionId: 'session-1' })
+        const scan = vi.spyOn(repository, 'loadAllWithDiagnostics')
+        const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())
+        expect((await coordinator.loadAll()).manifest.lastSessionId).toBe('session-1')
+        await coordinator.loadAll()
+        expect(scan).toHaveBeenCalledTimes(1)
+
+        const saving = coordinator.saveManifest({ lastSessionId })
+        const loading = coordinator.loadAll()
+        await saving
+        expect((await repository.loadManifest()).lastSessionId).toBe(lastSessionId)
+        expect((await loading).manifest.lastSessionId).toBe(lastSessionId)
+        expect(scan).toHaveBeenCalledTimes(2)
+        await coordinator.loadAll()
+        expect(scan).toHaveBeenCalledTimes(2)
+      } finally {
+        await rm(root, { recursive: true, force: true })
+      }
+    }
+  )
+
   it('routes manifest writes through the same mutation queue', async () => {
     const repository = createSessionRepository()
     const coordinator = new SessionPersistenceCoordinator(repository, createFileIndex())

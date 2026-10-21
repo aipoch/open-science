@@ -60,6 +60,7 @@ import {
 } from '../../stores/preview-workbench-store'
 import {
   saveSessionInOrder,
+  resetSessionContentCacheForTests,
   resetSessionPersistenceWriteFailuresForTests
 } from '../session-persistence/session-persistence'
 import { applyWorkspaceRuntimeEvent } from './workspace-events'
@@ -382,6 +383,7 @@ beforeEach(() => {
   testPreparationBaselines.clear()
   testDurableSessions.clear()
   resetSessionConversationIntentsForTests()
+  resetSessionContentCacheForTests()
   resetSessionPersistenceWriteFailuresForTests()
   useWorkspaceOperationErrors.setState({ errors: {} })
   vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi() } })
