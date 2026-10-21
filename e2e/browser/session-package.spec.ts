@@ -58,6 +58,10 @@ for (const viewport of [
       expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
         true
       )
+      if (['failed', 'cancelled', 'cancelling'].includes(stage.state!)) {
+        await expect(steps.locator('[aria-current]')).toHaveCount(0)
+        await expect(steps.locator('svg')).toHaveCount(0)
+      }
       await page.screenshot({
         path: testInfo.outputPath(`export-${stage.state}-${stage.progress!.phase}.png`)
       })

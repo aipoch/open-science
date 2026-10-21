@@ -111,7 +111,7 @@ const PackageOperationSteps = ({
         : 0
     : operation.state === 'succeeded'
       ? steps.length
-      : phase === 'cleaning'
+      : !['running', 'awaiting-selection'].includes(operation.state) || phase === 'cleaning'
         ? -1
         : phase === 'saving'
           ? 2
