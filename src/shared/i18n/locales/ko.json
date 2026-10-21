@@ -7435,6 +7435,18 @@
     "Retrieve an RNAcentral sequence record.": "RNAcentral 서열 레코드를 조회합니다.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral 식별자를 원본 데이터베이스에 페이지별로 매핑합니다.",
     "Retrieve rare-disease gene associations from Orphadata.": "Orphadata에서 희귀 질환과 유전자의 연관성을 조회합니다.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Orphadata에서 희귀 질환 표현형과 빈도를 조회합니다."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Orphadata에서 희귀 질환 표현형과 빈도를 조회합니다.",
+    "Drug name resolution and concept properties from RxNorm.": "RxNorm의 약물 이름 식별 및 개념 속성 조회.",
+    "Drug label identities and version history from DailyMed.": "DailyMed의 의약품 라벨 식별 정보 및 버전 기록.",
+    "Public sample metadata and cross-references from BioSamples.": "BioSamples의 공개 시료 메타데이터 및 상호 참조.",
+    "Pathway discovery, metadata and revisions from WikiPathways.": "WikiPathways의 경로 검색, 메타데이터 및 개정 정보.",
+    "Resolve drug names to RxNorm identifiers.": "약물 이름을 RxNorm 식별자로 변환합니다.",
+    "Retrieve active RxNorm concept properties.": "활성 RxNorm 개념 속성을 조회합니다.",
+    "Search DailyMed drug label metadata.": "DailyMed 의약품 라벨 메타데이터를 검색합니다.",
+    "Retrieve DailyMed label version history.": "DailyMed 라벨 버전 기록을 조회합니다.",
+    "Search BioSamples metadata, one cursor page at a time.": "커서로 BioSamples 메타데이터를 한 페이지씩 검색합니다.",
+    "Retrieve a BioSamples record and external references.": "BioSamples 레코드 및 외부 참조를 조회합니다.",
+    "Find WikiPathways by name and species.": "이름과 종으로 WikiPathways를 검색합니다.",
+    "Retrieve WikiPathways metadata and revision dates.": "WikiPathways 메타데이터 및 개정 날짜를 조회합니다."
   }
 }

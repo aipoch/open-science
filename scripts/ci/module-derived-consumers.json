@@ -151,7 +151,10 @@
       "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
       "src/renderer/src/stores/session-store.test.ts"
     ],
-    "connector_core": ["packages/connector-builtins/src/scientific-expansion.test.ts"],
+    "connector_core": [
+      "packages/connector-builtins/src/optional-research.test.ts",
+      "packages/connector-builtins/src/scientific-expansion.test.ts"
+    ],
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
     "delegation_execution_contracts": [

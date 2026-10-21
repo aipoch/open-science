@@ -1,3 +1,7 @@
+import { RXNORM_TOOLS } from '@aipoch/connector-builtins/rxnorm'
+import { DAILYMED_TOOLS } from '@aipoch/connector-builtins/dailymed'
+import { BIOSAMPLES_TOOLS } from '@aipoch/connector-builtins/biosamples'
+import { WIKIPATHWAYS_TOOLS } from '@aipoch/connector-builtins/wikipathways'
 import { MOLECULE_PREVIEW_TOOL } from './molecule-artifact-adapter'
 import { ConnectorArgumentsError, createConnectorRegistry } from '@aipoch/connector-core'
 import { ALLIANCE_TOOLS } from '@aipoch/connector-builtins/alliance'
@@ -42,6 +46,11 @@ import { ZINC_TOOLS } from '@aipoch/connector-builtins/zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...RXNORM_TOOLS,
+  ...DAILYMED_TOOLS,
+  ...BIOSAMPLES_TOOLS,
+  ...WIKIPATHWAYS_TOOLS,
+
   ...ALLIANCE_TOOLS,
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,

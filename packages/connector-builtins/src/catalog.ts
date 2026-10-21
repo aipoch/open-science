@@ -16,6 +16,54 @@ export type ConnectorMeta = {
 // Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
+    id: 'rxnorm',
+    displayName: 'RxNorm / RxNav',
+    aliases: ['RxNorm', 'RxNav', 'RxCUI'],
+    description: 'Drug name resolution and concept properties from RxNorm.',
+    useWhen:
+      'Use to resolve drug names to RxCUIs and retrieve active RxNorm concept names and term types.',
+    sources: ['RxNorm', 'RxNav'],
+    termsUrl: 'https://lhncbc.nlm.nih.gov/RxNav/TermsofService.html',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'dailymed',
+    displayName: 'DailyMed',
+    aliases: ['DailyMed', 'SPL history'],
+    description: 'Drug label identities and version history from DailyMed.',
+    useWhen:
+      'Use to discover DailyMed Structured Product Labels by drug name and retrieve publication and version history by SPL SET ID.',
+    sources: ['DailyMed'],
+    termsUrl: 'https://dailymed.nlm.nih.gov/dailymed/about-dailymed.cfm',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'biosamples',
+    displayName: 'BioSamples',
+    aliases: ['BioSamples', 'EBI BioSamples'],
+    description: 'Public sample metadata and cross-references from BioSamples.',
+    useWhen:
+      'Use to search public EMBL-EBI BioSamples records or retrieve sample characteristics, ontology terms, external references and provenance dates by accession.',
+    sources: ['EMBL-EBI BioSamples'],
+    termsUrl: 'https://www.ebi.ac.uk/about/terms-of-use',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
+    id: 'wikipathways',
+    displayName: 'WikiPathways',
+    aliases: ['WikiPathways', 'WP pathways'],
+    description: 'Pathway discovery, metadata and revisions from WikiPathways.',
+    useWhen:
+      'Use to find WikiPathways by name and species or retrieve metadata, authors and revision dates by WP identifier.',
+    sources: ['WikiPathways'],
+    termsUrl: 'https://www.wikipathways.org/json/',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
+  {
     id: 'orphadata',
     displayName: 'Orphadata',
     aliases: ['Orphanet', 'ORPHAcode'],

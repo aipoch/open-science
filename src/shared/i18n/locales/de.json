@@ -7597,6 +7597,18 @@
     "Retrieve an RNAcentral sequence record.": "Einen RNAcentral-Sequenzdatensatz abrufen.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral-Kennungen seitenweise den Quelldatenbanken zuordnen.",
     "Retrieve rare-disease gene associations from Orphadata.": "Genassoziationen seltener Erkrankungen aus Orphadata abrufen.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Phänotypen und Häufigkeiten seltener Erkrankungen aus Orphadata abrufen."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Phänotypen und Häufigkeiten seltener Erkrankungen aus Orphadata abrufen.",
+    "Drug name resolution and concept properties from RxNorm.": "Auflösung von Arzneimittelnamen und Konzepteigenschaften aus RxNorm.",
+    "Drug label identities and version history from DailyMed.": "Kennungen und Versionsverlauf von Arzneimittelinformationen aus DailyMed.",
+    "Public sample metadata and cross-references from BioSamples.": "Öffentliche Probenmetadaten und Querverweise aus BioSamples.",
+    "Pathway discovery, metadata and revisions from WikiPathways.": "Suche nach Signalwegen, Metadaten und Revisionen aus WikiPathways.",
+    "Resolve drug names to RxNorm identifiers.": "Arzneimittelnamen in RxNorm-Kennungen auflösen.",
+    "Retrieve active RxNorm concept properties.": "Eigenschaften aktiver RxNorm-Konzepte abrufen.",
+    "Search DailyMed drug label metadata.": "Metadaten zu Arzneimittelinformationen in DailyMed suchen.",
+    "Retrieve DailyMed label version history.": "Versionsverlauf von Arzneimittelinformationen aus DailyMed abrufen.",
+    "Search BioSamples metadata, one cursor page at a time.": "BioSamples-Metadaten mit Cursor seitenweise suchen.",
+    "Retrieve a BioSamples record and external references.": "Einen BioSamples-Datensatz und externe Referenzen abrufen.",
+    "Find WikiPathways by name and species.": "WikiPathways nach Namen und Spezies durchsuchen.",
+    "Retrieve WikiPathways metadata and revision dates.": "Metadaten und Revisionsdaten aus WikiPathways abrufen."
   }
 }

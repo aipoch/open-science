@@ -7765,6 +7765,18 @@
     "Retrieve an RNAcentral sequence record.": "Récupérer un enregistrement de séquence RNAcentral.",
     "Map RNAcentral identifiers to source databases, one page at a time.": "Associer les identifiants RNAcentral aux bases de données sources, une page à la fois.",
     "Retrieve rare-disease gene associations from Orphadata.": "Récupérer les associations entre maladies rares et gènes dans Orphadata.",
-    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Récupérer les phénotypes et fréquences des maladies rares dans Orphadata."
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Récupérer les phénotypes et fréquences des maladies rares dans Orphadata.",
+    "Drug name resolution and concept properties from RxNorm.": "Résolution des noms de médicaments et propriétés des concepts de RxNorm.",
+    "Drug label identities and version history from DailyMed.": "Identifiants et historique des versions des notices de médicaments de DailyMed.",
+    "Public sample metadata and cross-references from BioSamples.": "Métadonnées publiques des échantillons et références croisées de BioSamples.",
+    "Pathway discovery, metadata and revisions from WikiPathways.": "Recherche de voies, métadonnées et révisions de WikiPathways.",
+    "Resolve drug names to RxNorm identifiers.": "Résoudre les noms de médicaments en identifiants RxNorm.",
+    "Retrieve active RxNorm concept properties.": "Récupérer les propriétés des concepts RxNorm actifs.",
+    "Search DailyMed drug label metadata.": "Rechercher les métadonnées des notices de médicaments dans DailyMed.",
+    "Retrieve DailyMed label version history.": "Récupérer l’historique des versions des notices de DailyMed.",
+    "Search BioSamples metadata, one cursor page at a time.": "Rechercher les métadonnées de BioSamples, une page à la fois avec un curseur.",
+    "Retrieve a BioSamples record and external references.": "Récupérer une fiche BioSamples et ses références externes.",
+    "Find WikiPathways by name and species.": "Rechercher dans WikiPathways par nom et espèce.",
+    "Retrieve WikiPathways metadata and revision dates.": "Récupérer les métadonnées et dates de révision de WikiPathways."
   }
 }
