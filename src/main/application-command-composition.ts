@@ -252,7 +252,6 @@ const ELECTRON_NATIVE_COMMAND_NAMES = Object.freeze([
   'locale:set-preference',
   'network:get-info',
   'network:check-connectivity',
-  'managed-file-versions:inspect',
   'managed-file-versions:save-text-edit',
   'managed-file-versions:diff-text',
   'managed-file-versions:cancel-diff',

@@ -1,5 +1,4 @@
-import { prefetchSystemBootIdentity } from '../system-boot-identity'
-import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { cp, mkdtemp, mkdir, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises'
 import { createHash } from 'node:crypto'
 import { EventEmitter } from 'node:events'
@@ -53,10 +52,11 @@ vi.mock('./verification-process', () => ({
   verificationDirectoryIsSettled: mocks.settled
 }))
 
-// Match startup's asynchronous Windows boot query before creating durable update records.
-beforeAll(async () => {
-  await prefetchSystemBootIdentity()
-})
+// Boot-query failures are covered separately; preparation fixtures need a stable boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
 
 let root: string
 beforeEach(async () => {

@@ -1303,8 +1303,23 @@ const registerDataContentApplicationCommands = (
       'uploads:transfer-status': (invocation) => dependencies.uploads.transferStatus(invocation)
     })
     scope.registerGroup(dataContentApplicationCommandGroups[8], {
-      'managed-file-versions:inspect': ({ args }) =>
-        dependencies.managedFileVersions.inspect(args[0]),
+      'managed-file-versions:inspect': async (invocation) => {
+        const [request] = invocation.args
+        const result = await dependencies.managedFileVersions.inspect(request)
+        // The command may be reached from a remote Web caller. Never return a Version whose
+        // resolved Project or logical File identity differs from the requested scope.
+        if (
+          result.ok &&
+          (result.value.projectId !== request.projectId || result.value.fileId !== request.fileId)
+        ) {
+          throw new Error('Managed file version identity does not match the requested scope.')
+        }
+        // Web can inspect versions, but its renderer has no edit or diff commands.
+        if (result.ok && invocation.callerContext.surface === 'web') {
+          return { ...result, value: { ...result.value, canEdit: false, canDiff: false } }
+        }
+        return result
+      },
       'managed-file-versions:save-text-edit': ({ args }) =>
         dependencies.managedFileVersions.saveTextEdit(args[0]),
       'managed-file-versions:diff-text': (invocation) =>

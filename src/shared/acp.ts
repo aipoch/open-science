@@ -129,6 +129,9 @@ export type AcpHandoffFailure = {
 // both sides at once.
 export const ACP_PROMPT_FAILED_EVENT_TITLE = 'Prompt failed'
 
+// An application continuation can fail before acquiring a durable turn outcome.
+export const ACP_APP_CONTINUATION_FAILED_EVENT_TITLE = 'Could not continue the Agent task'
+
 // Live, non-terminal notice that Artifact cleanup failed after the turn settled. It never rewrites
 // the Turn Outcome and is not an Artifact publication failure.
 export const ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE = 'Artifact cleanup failed'
@@ -471,6 +474,10 @@ type AcpRuntimeEventBase = {
   // user turn. App-owned continuations retain it after the renderer's ordinary active run has settled.
   runId?: string
   promptMessageId?: string
+  // Existing application-continuation provenance, copied from AgentTurnProvenanceContext by Main.
+  // Optional for provider events and older snapshots that only carry the prompt identity.
+  agentFrameId?: string
+  messageBranchId?: string
   // Mid-turn injected user messages persist composer uploads/parts without opening a new run.
   uploads?: PersistedUploadedAttachment[]
   parts?: MessagePart[]

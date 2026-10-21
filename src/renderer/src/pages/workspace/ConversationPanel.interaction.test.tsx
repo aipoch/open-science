@@ -1,8 +1,10 @@
 import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
 import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
+import { applyWorkspaceRuntimeEvent } from '@/lib/acp/workspace-events'
 import {
   reportWorkspaceOperationError,
-  clearWorkspaceOperationError
+  clearWorkspaceOperationError,
+  useWorkspaceOperationErrors
 } from '@/lib/acp/workspace-operation-error'
 import { annotationTransfers, ANNOTATION_DRAG_TYPE } from './annotations/annotation-transfer'
 import { parseSideChatAnnotationText, type Annotation } from '../../../../shared/annotations'
@@ -33,7 +35,8 @@ import { AcpDurableContinuationContextOwner } from '../../../../main/acp/durable
 import { recordRestartTurnOutcome } from '../../../../main/session-persistence/turn-outcome-authority'
 import {
   materializeSessionConversationGraph,
-  normalizeSessionAfterRestore
+  normalizeSessionAfterRestore,
+  rearmUnacceptedElicitationContinuations
 } from '../../../../shared/session-persistence'
 import type { SessionConversationCommand } from '../../../../shared/session-conversation-command'
 import { HistoricalTurnOutcome, type TurnOutcomeActions } from './TurnOutcomeNotice'
@@ -3368,6 +3371,134 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().hidden).toBe(false)
     expect(container.textContent).not.toContain('Waiting for a response')
   })
+
+  it.each(
+    (['before-rearm', 'after-rearm'] as const).flatMap((order) =>
+      [false, true].map((previousFailure) => ({ order, previousFailure }))
+    )
+  )(
+    'shows the question continuation failure when the error arrives $order (previous failure: $previousFailure)',
+    async ({ order, previousFailure }) => {
+      // This tests failure disclosure, not the still-unknown cause of the reported
+      // admission rejection. Feed the public event contract emitted by AcpRuntime.
+      const failure = 'Runtime Session turn is already owned by another execution.'
+      const answered = materializeSessionConversationGraph({
+        id: `question-continuation-${order}-${previousFailure}`,
+        projectId: 'project-a',
+        title: 'Confirm the report',
+        cwd: '/workspace',
+        status: 'waiting-for-user',
+        runtimeTranscriptOwner: 'main',
+        messages: [
+          {
+            id: 'report-prompt',
+            role: 'user',
+            content: 'Prepare the report.',
+            ...(previousFailure
+              ? {
+                  turnOutcome: {
+                    kind: 'failed' as const,
+                    settledAt: 2,
+                    error: 'Previous attempt failed'
+                  }
+                }
+              : {}),
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        activities: [
+          {
+            id: 'report-question',
+            kind: 'tool',
+            title: 'Confirm the report',
+            status: 'completed',
+            promptMessageId: 'report-prompt',
+            eventIds: ['question-answered'],
+            sortIndex: 2,
+            createdAt: 2,
+            updatedAt: 3,
+            elicitation: {
+              message: 'Confirm the report?',
+              fields: [
+                {
+                  id: 'question_0',
+                  label: 'Confirmation',
+                  kind: 'single-select',
+                  options: [{ value: 'confirm', label: 'Confirm' }]
+                },
+                { id: 'question_0_custom', label: 'Other', kind: 'text' }
+              ],
+              state: 'answered',
+              answers: [{ fieldId: 'question_0', value: 'confirm' }],
+              respondedAt: 3,
+              continuationPending: true,
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'report-choice',
+                promptMessageId: 'report-prompt'
+              }
+            }
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      })
+      const projected = hydrateSession(answered)
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [projected] })
+      useWorkspaceOperationErrors.setState({ errors: {}, diagnostics: {} })
+      renderPanel({ view: { activeSession: projected }, elicitation: { requests: [] } })
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+      const receiveError = async (): Promise<void> => {
+        await applyWorkspaceRuntimeEvent({
+          id: 'continuation-failed',
+          timestamp: 4,
+          kind: 'error',
+          level: 'error',
+          sessionId: answered.id,
+          promptMessageId: 'report-prompt',
+          title: 'Could not continue the Agent task',
+          text: failure
+        })
+      }
+      if (order === 'before-rearm') await receiveError()
+      const rearmed = rearmUnacceptedElicitationContinuations(answered, 'report-prompt', {
+        requestId: 'report-choice',
+        toolCallId: 'report-question'
+      })
+      useSessionStore.getState().applyDurableSessionProjection({
+        source: useSessionStore.getState().sessions[0],
+        session: rearmed,
+        mode: 'runtime-transcript-authority'
+      })
+      if (order === 'after-rearm') await receiveError()
+      const current = useSessionStore.getState().sessions[0]
+      expect(current.status).toBe('waiting-for-user')
+      expect(pendingWorkspaceElicitations(current)[0]?.requestId).toBe('report-choice')
+      const view = { activeSession: current }
+      // Control: the existing error surface can display this failure beside a
+      // pending question; the event consumer must deliver it to that surface.
+      renderPanel({ view: { ...view, actionError: failure }, elicitation: { requests: [] } })
+      expect(container.textContent).toContain(failure)
+      renderPanel({
+        view: {
+          ...view,
+          actionError: useWorkspaceOperationErrors.getState().errors[current.id] ?? null
+        },
+        elicitation: { requests: [] }
+      })
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).not.toBeNull()
+      expect(
+        current.activities?.find(({ id }) => id === 'report-question')?.elicitation?.draftAnswers
+      ).toEqual([{ fieldId: 'question_0', value: 'confirm' }])
+      expect(
+        container.textContent,
+        'The retryable question must explain why confirmation did not continue the task'
+      ).toContain(failure)
+    }
+  )
 
   it.each(['running', 'idle'] as const)(
     'does not restore an orphaned durable question that Main rejects while the task is %s',

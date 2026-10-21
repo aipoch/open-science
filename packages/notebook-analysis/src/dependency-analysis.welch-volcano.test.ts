@@ -61,7 +61,8 @@ it.each(
       kernelEpochId: 'epoch'
     })
     const { facts } = await analyzeRNotebookSource(script, context)
-    if (name === 'BH companion' && ['6', '7'].includes(runId)) {
+    // p.adjust inside compute_diff lacks primitive callback argument evidence.
+    if (name === 'BH companion' && ['4', '6', '7'].includes(runId)) {
       expect(facts, JSON.stringify(facts)).toMatchObject({
         state: 'unknown',
         reasons: expect.arrayContaining(['opaque-call'])
@@ -107,16 +108,16 @@ it.each(variants)(
         completedRun: producer
       })
       if (name === 'BH companion') {
-        for (const runId of ['6', '7']) {
+        for (const runId of ['4', '6', '7']) {
           expect(projection.stalenessByRunId[runId], JSON.stringify(projection)).toMatchObject({
             state: 'unknown',
             reasons: expect.arrayContaining(['opaque-call'])
           })
           expect(projection.dependenciesByRunId?.[runId]).toBeUndefined()
         }
-        expect(projection.stalenessByRunId['4']).toEqual({ state: 'clear' })
-        expect(projection.dependenciesByRunId?.['3']).toEqual(['2'])
-        expect(projection.dependenciesByRunId?.['4']).toEqual(['3'])
+        // Unproven callback effects also prevent certifying earlier aliases.
+        expect(projection.stalenessByRunId['3']).toMatchObject({ state: 'unknown' })
+        expect(projection.dependenciesByRunId?.['3']).toBeUndefined()
       } else {
         expect(projection.stalenessByRunId[producer.runId], JSON.stringify(projection)).toEqual({
           state: 'clear'

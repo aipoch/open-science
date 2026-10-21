@@ -17,6 +17,9 @@ async function preparedContext(): Promise<NotebookSourceFileAccessContext | unde
   return projectNotebookFileContext('r', [{ facts, fileContext: fileAccess!.context }])
 }
 
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 it.each([
   'f <- function(mat) apply(mat, 1, function(row) { writeLines("hidden", "side.txt"); sum(row) }); f(matrix(1:4, 2))',
   'f <- function(x) tryCatch(suppressWarnings(t.test(y ~ group)$p.value), error=function(e) NA_real_); f(1)',
@@ -76,6 +79,12 @@ it.each(cells.filter((cell) => cell.language === 'r' && cell.status === 'complet
   async ({ script, runId }) => {
     const context = await preparedContext()
     const { facts } = await analyzeRNotebookSource(script, context)
+    // These producers call sd inside row callbacks. No primitive argument
+    // evidence reaches that scope, so coercion effects remain uncertain.
+    const unprovenCoercion = ['10', '11', '19'].includes(runId)
+    // Owned frames do not prove primitive columns for cor's coercion path.
+    const unprovenCorrelation = ['15', '18'].includes(runId)
+    const unprovenOrdering = ['13', '20', '21', '22', '25'].includes(runId)
     expect
       .soft(
         facts.state === 'unknown'
@@ -83,12 +92,21 @@ it.each(cells.filter((cell) => cell.language === 'r' && cell.status === 'complet
           : [],
         `variables in run ${runId}`
       )
-      .toEqual([])
+      .toEqual(
+        unprovenCoercion
+          ? ['dynamic-namespace', 'opaque-call']
+          : unprovenCorrelation || unprovenOrdering
+            ? ['opaque-call']
+            : []
+      )
     const files = await analyzeNotebookSourceFileAccess('r', script, context)
     expect.soft(files, `files in run ${runId}`).toMatchObject({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete'
+      readState:
+        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete',
+      writeState:
+        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete',
+      externalState:
+        unprovenCoercion || unprovenCorrelation || unprovenOrdering ? 'partial' : 'complete'
     })
     if (['20', '21', '22', '25'].includes(runId)) {
       expect(files.reads).toEqual(['diff_final.rds'])
@@ -97,7 +115,7 @@ it.each(cells.filter((cell) => cell.language === 'r' && cell.status === 'complet
   }
 )
 
-it('recovers a self-contained producer after failed attempts in the reported history', async () => {
+it('retains uncertain sd callbacks and their downstream outputs after retry', async () => {
   const root = await mkdtemp(join(tmpdir(), 'volcano-history-'))
   const runs: NotebookRunRecord[] = cells
     .filter((cell) => cell.language === 'r')
@@ -121,8 +139,14 @@ it('recovers a self-contained producer after failed attempts in the reported his
       storageRoot: root,
       repository: { readSessionRuns: async () => runs }
     }).project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
-    expect(projection.stalenessByRunId['19']).toEqual({ state: 'clear' })
-    expect(projection.stalenessByRunId['25']).toEqual({ state: 'clear' })
+    for (const runId of ['19', '25'])
+      expect(projection.stalenessByRunId[runId]).toEqual({
+        state: 'unknown',
+        reasons:
+          runId === '19'
+            ? ['dynamic-namespace', 'external-state', 'opaque-call']
+            : ['external-state', 'opaque-call']
+      })
     for (const priorPlot of ['20', '21', '22'])
       expect(projection.dependenciesByRunId?.['25'] ?? []).not.toContain(priorPlot)
   } finally {

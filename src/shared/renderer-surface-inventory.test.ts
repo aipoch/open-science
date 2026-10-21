@@ -95,7 +95,6 @@ const GENERATED_SOURCE_OMISSIONS = [
   'locale.setPreference',
   'managedFileVersions.cancelDiff',
   'managedFileVersions.diffText',
-  'managedFileVersions.inspect',
   'managedFileVersions.saveTextEdit',
   'network.checkConnectivity',
   'network.getInfo',

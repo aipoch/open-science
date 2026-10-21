@@ -1489,50 +1489,56 @@ describe('working-file evidence', () => {
     expect(result.fileEvidence.state).not.toBe('available')
   })
 
-  it('does not make a write-only overwrite depend on the previous file generation', async () => {
-    const { sessionRoot, dataRoot } = await createRoots()
-    await writeFile(join(dataRoot, 'result.csv'), 'old result'.padEnd(4000, '.'))
-    const observation = await startWorkingFileObservation(
-      {
-        dataRoot,
-        notebookSessionRoot: sessionRoot,
-        cwd: dataRoot,
-        code: "import pandas as pd\npd.DataFrame({'x': [1]}).to_csv('result.csv', index=False)",
-        language: 'python',
-        runId: 'run-corroborated-overwrite'
-      },
-      { watchDirectory: watcherUnavailable, maxActivityBytes: 4096 }
-    )
-    await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
-
-    const result = await observation.finish()
-    const evidence = JSON.parse(
-      await readFile(
-        join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
-        'utf8'
+  it.each(['python', 'r'] as const)(
+    'does not make a %s write-only overwrite depend on the previous file generation',
+    async (language) => {
+      const { sessionRoot, dataRoot } = await createRoots()
+      await writeFile(join(dataRoot, 'result.csv'), 'old result'.padEnd(4000, '.'))
+      const observation = await startWorkingFileObservation(
+        {
+          dataRoot,
+          notebookSessionRoot: sessionRoot,
+          cwd: dataRoot,
+          code:
+            language === 'python'
+              ? "import pandas as pd\npd.DataFrame({'x': [1]}).to_csv('result.csv', index=False)"
+              : 'write.csv(data.frame(x=1), "result.csv", row.names=FALSE)',
+          language,
+          runId: 'run-corroborated-overwrite'
+        },
+        { watchDirectory: watcherUnavailable, maxActivityBytes: 4096 }
       )
-    ) as { relations: Array<Record<string, unknown>> }
+      await writeFile(join(dataRoot, 'result.csv'), 'x\n1\n')
 
-    expect(result.fileEvidence).toMatchObject({ state: 'available', relationCount: 1 })
-    expect(evidence.relations).toEqual([
-      expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
-    ])
-    expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
-    const outputName = `sha256-${createHash('sha256').update('x\n1\n').digest('hex')}`
-    await expect(
-      readdir(
-        join(
-          storageRoot!,
-          'execution-file-evidence',
-          'activity-run-corroborated-overwrite',
-          'blobs'
+      const result = await observation.finish()
+      const evidence = JSON.parse(
+        await readFile(
+          join(storageRoot as string, ...result.fileEvidence.storageKey!.split('/')),
+          'utf8'
         )
-      )
-    ).resolves.toEqual([outputName])
-    await expect(readdir(join(storageRoot!, 'execution-file-evidence-blobs'))).resolves.toEqual([
-      outputName
-    ])
-  })
+      ) as { relations: Array<Record<string, unknown>> }
+
+      expect(result.fileEvidence).toMatchObject({ state: 'available', relationCount: 1 })
+      expect(evidence.relations).toEqual([
+        expect.objectContaining({ relation: 'modified', relativePath: 'data/result.csv' })
+      ])
+      expect(evidence.relations[0]).not.toHaveProperty('previousGenerationId')
+      const outputName = `sha256-${createHash('sha256').update('x\n1\n').digest('hex')}`
+      await expect(
+        readdir(
+          join(
+            storageRoot!,
+            'execution-file-evidence',
+            'activity-run-corroborated-overwrite',
+            'blobs'
+          )
+        )
+      ).resolves.toEqual([outputName])
+      await expect(readdir(join(storageRoot!, 'execution-file-evidence-blobs'))).resolves.toEqual([
+        outputName
+      ])
+    }
+  )
 
   it('does not capture unrelated files when only write destinations are uncertain', async () => {
     const { sessionRoot, dataRoot } = await createRoots()
@@ -1683,7 +1689,7 @@ describe('working-file evidence', () => {
   )
 
   it.each(volcanoCells.filter((cell) => ['20', '21', '22', '25'].includes(cell.runId)))(
-    'captures the RDS input without chaining earlier PNG generations for volcano run $runId',
+    'captures RDS bytes and retains the previous PNG when ordering is unproven for volcano run $runId',
     async ({ script, runId }) => {
       const { sessionRoot, dataRoot } = await createRoots()
       // The observer snapshots bytes; the analyzer must never deserialize RDS.
@@ -1704,11 +1710,14 @@ describe('working-file evidence', () => {
       const result = await observation.finish()
       const evidence = JSON.parse(
         await readFile(join(storageRoot!, ...result.fileEvidence.storageKey!.split('/')), 'utf8')
-      ) as { relations: Array<Record<string, unknown>> }
+      ) as {
+        relations: Array<Record<string, unknown>>
+      }
       expect(result.fileEvidence).toMatchObject({
-        state: 'available',
-        fileReads: 'complete',
-        writerAttribution: 'complete'
+        state: 'partial',
+        fileReads: 'partial',
+        writerAttribution: 'partial',
+        reasonCodes: expect.arrayContaining(['source-analysis-unsupported-call'])
       })
       expect(evidence.relations).toEqual(
         expect.arrayContaining([
@@ -1722,12 +1731,23 @@ describe('working-file evidence', () => {
           })
         ])
       )
-      expect(
-        evidence.relations.find((relation) => relation.relation === 'modified')
-      ).not.toHaveProperty('previousGenerationId')
+      // An unproven method may read the old PNG before the observed overwrite.
+      // Preserve its bytes rather than asserting a write-only generation boundary.
+      const modified = evidence.relations.find((relation) => relation.relation === 'modified')
+      expect(modified?.previousGenerationId).toEqual(expect.any(String))
+      expect(evidence.relations).toContainEqual(
+        expect.objectContaining({
+          relation: 'present-before',
+          relativePath: 'data/diagonal_volcano.png',
+          generation: expect.objectContaining({
+            generationId: modified!.previousGenerationId,
+            checksum: createHash('sha256').update('earlier plot').digest('hex')
+          })
+        })
+      )
       expect(
         evidence.relations.filter((relation) => relation.relation === 'present-before')
-      ).toHaveLength(1)
+      ).toHaveLength(2)
     }
   )
 

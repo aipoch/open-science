@@ -422,6 +422,96 @@ describe('application command composition', () => {
     expect(listProjects).toHaveBeenCalledOnce()
   })
 
+  it('lets remote Web inspect managed files and rejects identity drift', async () => {
+    const inspect = vi.fn(async (request: { projectId: string; fileId: string }) => ({
+      ok: true as const,
+      value: {
+        source: 'artifact',
+        projectId: request.projectId,
+        fileId: request.fileId,
+        sessionId: 'session-1'
+      }
+    }))
+    const composition = createApplicationCommandComposition({
+      ...dependencies(),
+      dataContent: {
+        managedFileVersions: { inspect },
+        projects: { list: vi.fn() },
+        withDataRootWrite: async (operation: () => Promise<unknown>) => operation()
+      } as never
+    })
+    const request = { source: 'artifact', projectId: 'project-1', fileId: 'file-1' }
+
+    expect(composition.remoteWeb.commandNames()).toContain('managed-file-versions:inspect')
+    expect(composition.remoteWeb.rejectedCommandNames()).not.toContain(
+      'managed-file-versions:inspect'
+    )
+    await expect(
+      composition.remoteWeb.invoke('managed-file-versions:inspect', {
+        ...invocation('remote'),
+        args: [request]
+      })
+    ).resolves.toMatchObject({ ok: true, value: { projectId: 'project-1', fileId: 'file-1' } })
+
+    inspect.mockResolvedValueOnce({
+      ok: true,
+      value: {
+        source: 'artifact',
+        projectId: 'project-2',
+        fileId: 'file-1',
+        sessionId: 'session-1'
+      }
+    })
+    await expect(
+      composition.remoteWeb.invoke('managed-file-versions:inspect', {
+        ...invocation('remote'),
+        args: [request]
+      })
+    ).rejects.toThrow('identity')
+    await composition.dispose()
+  })
+
+  it.each([
+    ['localWeb', 'web', 'local'],
+    ['remoteWeb', 'web', 'remote'],
+    ['desktop', 'electron', 'local']
+  ] as const)(
+    'limits managed file inspection capabilities for %s',
+    async (view, surface, location) => {
+      const value = Object.freeze({
+        source: 'artifact',
+        projectId: 'project-1',
+        fileId: 'file-1',
+        sessionId: 'session-1',
+        headVersionId: 'version-2',
+        headVersion: { id: 'version-2', checksum: 'sha256' },
+        text: 'second\n',
+        canEdit: true,
+        canDiff: true
+      })
+      const inspect = vi.fn().mockResolvedValue({ ok: true, value })
+      const composition = createApplicationCommandComposition({
+        ...dependencies(),
+        dataContent: { managedFileVersions: { inspect } } as never
+      })
+      const base = invocation(location)
+      const request = { source: 'artifact', projectId: value.projectId, fileId: value.fileId }
+
+      await expect(
+        composition[view].invoke('managed-file-versions:inspect', {
+          ...base,
+          callerContext: createCallerContext({ ...base.callerContext, surface }),
+          args: [request]
+        })
+      ).resolves.toEqual({
+        ok: true,
+        value: { ...value, canEdit: surface === 'electron', canDiff: surface === 'electron' }
+      })
+      expect(inspect).toHaveBeenCalledWith(request)
+      await composition.dispose()
+    }
+  )
+
   it('exposes only Reviewer run and reads to Task automation', () => {
     const composition = createApplicationCommandComposition(dependencies())
     const reviewerCommands = ['reviewer:abort-fix-loop', 'reviewer:get-for-session', 'reviewer:run']

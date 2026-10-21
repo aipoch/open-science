@@ -70,6 +70,27 @@ describe('renderer contract catalog', () => {
       })
     }
   })
+  it('exposes managed file inspection to remote Web without exposing edits', () => {
+    const contracts = new Map(
+      RENDERER_CONTRACT_CATALOG.map((contract) => [contract.publicPath, contract])
+    )
+
+    expect(contracts.get('managedFileVersions.inspect')).toMatchObject({
+      surfaceInstallation: { electron: 'preload', localWeb: 'web-rpc', remoteWeb: 'web-rpc' }
+    })
+    for (const publicPath of [
+      'managedFileVersions.saveTextEdit',
+      'managedFileVersions.diffText',
+      'managedFileVersions.cancelDiff'
+    ]) {
+      expect(contracts.get(publicPath)?.surfaceInstallation.remoteWeb).not.toBe('web-rpc')
+    }
+    expect(WEB_INVOKE_CHANNELS['managedFileVersions.inspect']).toBe('managed-file-versions:inspect')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:save-text-edit')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:diff-text')
+    expect(Object.values(WEB_INVOKE_CHANNELS)).not.toContain('managed-file-versions:cancel-diff')
+  })
+
   it('does not expose the retired Runtime Selection API', () => {
     expect(
       RENDERER_CONTRACT_CATALOG.filter(({ publicPath }) =>

@@ -117,6 +117,7 @@ export const WEB_INVOKE_CHANNELS = {
   'logs.getStatus': 'logs:get-status',
   'logs.openFile': 'logs:open-file',
   'logs.revealInFolder': 'logs:reveal-in-folder',
+  'managedFileVersions.inspect': 'managed-file-versions:inspect',
   'memory.clearAll': 'memory:clear-all',
   'memory.createCategory': 'memory:create-category',
   'memory.createEntry': 'memory:create-entry',

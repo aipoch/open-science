@@ -31,6 +31,8 @@ export type PythonLibraryMethodEffect = {
   callbackKeywords?: string[]
   callbackPositionalKeywords?: Record<number, string>
   callbackContainerKeywords?: string[]
+  // Literal records (or sequences of records) invoke only these named fields.
+  callbackRecordKeywords?: Record<string, readonly string[]>
   callbackStringValues?: Record<string, readonly string[]>
   callbackAllKeywords?: boolean
   possiblyMutatesFirstArgument?: boolean
@@ -942,6 +944,7 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
       },
       read_csv: {
         effect: 'read',
+        callbackKeywords: ['converters', 'usecols', 'skiprows', 'on_bad_lines'],
         callbackContainerKeywords: ['converters'],
         returnType: 'pandas.DataFrame',
         possiblyMutatesFirstArgument: true,
@@ -1264,23 +1267,32 @@ const PYTHON_LIBRARY_EFFECTS: PythonLibraryEffects = {
     kind: 'module',
     methods: {
       minimize: {
-        // Objective and gradient callbacks may perform I/O or mutate captures.
-        // Preserve these known dependencies without certifying solver results
-        // or complete coverage of its other callback-capable options.
+        // Objective, derivatives, custom methods and progress callbacks may
+        // perform I/O or mutate captures. Literal constraint records expose
+        // fun/jac callbacks; stored records and constraint objects remain opaque.
         effect: 'unknown',
         scopedOpaque: true,
         externalState: true,
-        callbackKeywords: ['fun', 'jac'],
-        callbackPositionalKeywords: { 0: 'fun', 4: 'jac' }
+        callbackKeywords: ['fun', 'method', 'jac', 'hess', 'hessp', 'callback', 'constraints'],
+        callbackRecordKeywords: { constraints: ['fun', 'jac'] },
+        callbackPositionalKeywords: {
+          0: 'fun',
+          3: 'method',
+          4: 'jac',
+          5: 'hess',
+          6: 'hessp',
+          8: 'constraints',
+          10: 'callback'
+        }
       },
       root_scalar: {
-        // The objective can read files or mutate arguments and captured state.
+        // The objective and derivative callbacks can read files or mutate captures.
         // Preserve known captures without certifying results or complete callback I/O.
         effect: 'unknown',
         scopedOpaque: true,
         externalState: true,
-        callbackKeywords: ['f'],
-        callbackPositionalKeywords: { 0: 'f' }
+        callbackKeywords: ['f', 'fprime', 'fprime2'],
+        callbackPositionalKeywords: { 0: 'f', 4: 'fprime', 5: 'fprime2' }
       },
       curve_fit: {
         // Model and Jacobian callbacks may perform I/O or mutate captures.

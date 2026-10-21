@@ -3,18 +3,18 @@ import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 it.each(['mutate', 'summarise'])(
-  'shares ownership rules between direct, piped and qualified %s calls',
+  'keeps unproven mean callbacks uncertain in direct, piped and qualified %s calls',
   async (verb) => {
     for (const reducer of ['mean', 'base::mean', 'function(x) mean(x)']) {
       for (const pipe of [false, true]) {
         const args = `dplyr::across(dplyr::everything(), ${reducer})`
         const script = `d<-read.csv("data.csv"); out<-${pipe ? `d |> dplyr::${verb}(${args})` : `dplyr::${verb}(d,${args})`};head(out)`
         const { facts } = await analyzeRNotebookSource(script)
-        expect(facts.copyOnModifyNames, script).toContain('out')
+        expect(facts.copyOnModifyNames ?? [], script).not.toContain('out')
         expect(await analyzeNotebookSourceFileAccess('r', script), script).toMatchObject({
-          readState: 'complete',
-          writeState: 'complete',
-          externalState: 'complete',
+          readState: 'partial',
+          writeState: 'partial',
+          externalState: 'partial',
           reads: ['data.csv']
         })
       }
