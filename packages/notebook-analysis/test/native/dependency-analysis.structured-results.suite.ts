@@ -32,7 +32,7 @@ df.to_csv(("unused.csv", "copy.csv")[-1], index=False)`
         cwd: dataRoot,
         timeout: 30_000
       })
-      outputs.push(await readFile(join(dataRoot, 'copy.csv'), 'utf8'))
+      outputs.push((await readFile(join(dataRoot, 'copy.csv'), 'utf8')).replaceAll('\r\n', '\n'))
     }
     expect(outputs).toEqual(['group\nCtrl\nIRI\n', 'group\nCtrl\nIRI\n'])
   } finally {
@@ -63,7 +63,7 @@ write.csv(counts, list(csv="counts.csv", ignored="unused-output.csv")["csv"][[1]
       ['--vanilla', '-e', `cat(c(${expressions.join(',')}), sep="\\n")`],
       { timeout: 30_000 }
     )
-    expect(stdout.trim().split('\n')).toEqual(expressions.map(() => 'inputs/groups.csv'))
+    expect(stdout.trim().split(/\r?\n/)).toEqual(expressions.map(() => 'inputs/groups.csv'))
     for (const expression of expressions) {
       expect((await analyzeNotebookSourceFileAccess('r', `read.csv(${expression})`)).reads).toEqual(
         ['inputs/groups.csv']

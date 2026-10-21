@@ -11,16 +11,14 @@ import cells from './reported-rds-envelope-volcano.fixture.json'
 it.each([4, 7, 8])('captures RDS envelope cell %s', async (index) => {
   const { facts } = await analyzeRNotebookSource(cells[index].script)
   const access = await analyzeNotebookSourceFileAccess('r', cells[index].script)
-  if (index !== 4) {
-    expect(facts, JSON.stringify(facts)).toMatchObject({
-      state: 'unknown',
-      reasons: expect.arrayContaining(['opaque-call'])
-    })
-  }
+  expect(facts, JSON.stringify(facts)).toMatchObject({
+    state: 'unknown',
+    reasons: expect.arrayContaining(['opaque-call'])
+  })
   expect(access, JSON.stringify(facts)).toMatchObject({
-    readState: index === 4 ? 'complete' : 'partial',
-    writeState: index === 4 ? 'complete' : 'partial',
-    externalState: index === 4 ? 'complete' : 'partial'
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
   })
   expect([...access.reads].sort()).toEqual(
     index === 4
@@ -33,7 +31,7 @@ it.each([4, 7, 8])('captures RDS envelope cell %s', async (index) => {
   expect(access.writes).toEqual(index === 4 ? ['merged_diff_expr.rds'] : ['diagonal_volcano.png'])
 })
 
-it('keeps unproven RDS envelope plots uncertified while preserving preparation', async () => {
+it('keeps unproven envelope aggregation and downstream plots uncertified', async () => {
   const runs: NotebookRunRecord[] = cells
     .filter((c) => c.language === 'r')
     .map((c) => ({
@@ -59,8 +57,11 @@ it('keeps unproven RDS envelope plots uncertified while preserving preparation',
       repository: { readSessionRuns: async () => runs }
     })
     const p = await analyzer.project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
-    expect(p.stalenessByRunId['4']).toEqual({ state: 'clear' })
-    expect(p.dependenciesByRunId?.['4']).toEqual([])
+    expect(p.stalenessByRunId['4']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(p.dependenciesByRunId?.['4']).toBeUndefined()
     for (const runId of ['7', '8']) {
       expect(p.stalenessByRunId[runId], JSON.stringify(p)).toMatchObject({
         state: 'unknown',

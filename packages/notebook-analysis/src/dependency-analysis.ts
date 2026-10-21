@@ -407,12 +407,35 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
         entries.push({ key: entry.key, value: entry.value })
       }
     }
+    let tupleRows: string[][] | undefined
+    if (collection.tupleRows !== undefined) {
+      if (
+        collection.entries !== undefined ||
+        collection.rKind !== undefined ||
+        !Array.isArray(collection.tupleRows) ||
+        !collection.tupleRows.length ||
+        collection.tupleRows.length > MAX_STATIC_COLLECTION_VALUES ||
+        collection.tupleRows.some(
+          (row) => !Array.isArray(row) || !row.length || row.length > MAX_STATIC_COLLECTION_VALUES
+        )
+      )
+        return undefined
+      const flattened = collection.tupleRows.flat()
+      const values = collection.values
+      if (
+        flattened.length !== values.length ||
+        flattened.some((value, index) => value !== values[index])
+      )
+        return undefined
+      tupleRows = collection.tupleRows.map((row) => [...row]) as string[][]
+    }
     names.add(collection.name)
     staticCollections.push({
       name: collection.name,
       values: [...(collection.values as string[])],
       ...(collection.rKind ? { rKind: collection.rKind } : {}),
-      ...(entries ? { entries } : {})
+      ...(entries ? { entries } : {}),
+      ...(tupleRows ? { tupleRows } : {})
     })
   }
   for (const candidate of record.localFileWrappers) {
@@ -431,6 +454,15 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       (wrapper.inputForm !== undefined &&
         wrapper.inputForm !== 'paths' &&
         wrapper.inputForm !== 'lines') ||
+      (wrapper.pythonStreamingChecksum !== undefined &&
+        ((wrapper.pythonStreamingChecksum !== 'sha256' &&
+          wrapper.pythonStreamingChecksum !== 'md5') ||
+          wrapper.kind !== 'read' ||
+          wrapper.position !== 0 ||
+          keywords.length !== 1 ||
+          wrapper.inputForm !== undefined ||
+          dependencyNames.length !== 3 ||
+          !['hashlib', 'open', 'iter'].every((name) => dependencyNames.includes(name)))) ||
       names.has(wrapper.name)
     ) {
       return undefined
@@ -442,10 +474,23 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
       position: wrapper.position as number,
       keywords,
       ...(wrapper.inputForm ? { inputForm: wrapper.inputForm } : {}),
+      ...(wrapper.pythonStreamingChecksum
+        ? { pythonStreamingChecksum: wrapper.pythonStreamingChecksum as 'sha256' | 'md5' }
+        : {}),
       dependencyNames
     })
   }
+  const pythonInvalidatedChecksumNames =
+    record.pythonInvalidatedChecksumNames === undefined
+      ? []
+      : stringArray(record.pythonInvalidatedChecksumNames)
+  if (!pythonInvalidatedChecksumNames) return undefined
   const pythonBindings: NonNullable<NotebookSourceFileAccessContext['pythonBindings']> = []
+  if (
+    record.pythonMayHaveWritableMappings !== undefined &&
+    record.pythonMayHaveWritableMappings !== true
+  )
+    return undefined
   const pythonTaintedNamespaces =
     record.pythonTaintedNamespaces === undefined ? [] : stringArray(record.pythonTaintedNamespaces)
   if (
@@ -503,6 +548,10 @@ const fileContextValue = (value: unknown): NotebookSourceFileAccessContext | und
     return undefined
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
+    ...(pythonInvalidatedChecksumNames.length ? { pythonInvalidatedChecksumNames } : {}),
+    ...(record.pythonMayHaveWritableMappings
+      ? { pythonMayHaveWritableMappings: true as const }
+      : {}),
     ...(pythonBindings.length
       ? { pythonBindings: pythonBindings.sort((a, b) => a.name.localeCompare(b.name)) }
       : {}),
@@ -1168,7 +1217,9 @@ const callbackContainerSummaryArray = (
     if (
       typeof record.name !== 'string' ||
       !record.name ||
-      (record.container !== undefined && record.container !== 'dict') ||
+      (record.container !== undefined &&
+        record.container !== 'dict' &&
+        record.container !== 'constraint-records') ||
       record.name.length > MAX_STATIC_STRING_LENGTH ||
       seen.has(record.name) ||
       !callbackNames?.length ||
@@ -1183,7 +1234,9 @@ const callbackContainerSummaryArray = (
     summaries.push({
       name: record.name,
       callbackNames,
-      ...(record.container === 'dict' ? { container: 'dict' as const } : {})
+      ...(record.container === 'dict' || record.container === 'constraint-records'
+        ? { container: record.container }
+        : {})
     })
   }
   return summaries
@@ -1223,6 +1276,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     const memberWrites = memberWriteArray(record.memberWrites ?? [])
     const copyOnModifyNames = stringArray(record.copyOnModifyNames ?? [])
     const rAtomicValueNames = stringArray(record.rAtomicValueNames ?? [])
+    const rAtomicTableNames = stringArray(record.rAtomicTableNames ?? [])
     const serializedValueWrites = serializedValueDescriptors(record.serializedValueWrites ?? [])
     const serializedValueReads = stringArray(record.serializedValueReads ?? [])
     const rPackageLoads = stringArray(record.rPackageLoads ?? [])
@@ -1239,6 +1293,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
       !memberWrites ||
       !copyOnModifyNames ||
       !rAtomicValueNames ||
+      !rAtomicTableNames ||
       !serializedValueWrites ||
       !serializedValueReads ||
       !rPackageLoads ||
@@ -1275,6 +1330,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
         : {}),
       copyOnModifyNames,
       ...(rAtomicValueNames.length ? { rAtomicValueNames } : {}),
+      ...(rAtomicTableNames.length ? { rAtomicTableNames } : {}),
       ...(serializedValueWrites.length ? { serializedValueWrites } : {}),
       ...(serializedValueReads.length ? { serializedValueReads } : {}),
       ...(rPackageLoads.length ? { rPackageLoads } : {}),
@@ -1310,6 +1366,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
   const builtinContainerNames = stringArray(record.builtinContainerNames ?? [])
   const copyOnModifyNames = stringArray(record.copyOnModifyNames ?? [])
   const rAtomicValueNames = stringArray(record.rAtomicValueNames ?? [])
+  const rAtomicTableNames = stringArray(record.rAtomicTableNames ?? [])
   const serializedValueWrites = serializedValueDescriptors(record.serializedValueWrites ?? [])
   const serializedValueReads = stringArray(record.serializedValueReads ?? [])
   const rPackageLoads = stringArray(record.rPackageLoads ?? [])
@@ -1335,6 +1392,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
     builtinContainerNames &&
     copyOnModifyNames &&
     rAtomicValueNames &&
+    rAtomicTableNames &&
     serializedValueWrites &&
     serializedValueReads &&
     rPackageLoads &&
@@ -1359,6 +1417,7 @@ const normalizeFacts = (value: unknown): NotebookRunDependencyFacts => {
         ...(builtinContainerNames?.length ? { builtinContainerNames } : {}),
         copyOnModifyNames,
         ...(rAtomicValueNames.length ? { rAtomicValueNames } : {}),
+        ...(rAtomicTableNames.length ? { rAtomicTableNames } : {}),
         ...(serializedValueWrites.length ? { serializedValueWrites } : {}),
         ...(serializedValueReads.length ? { serializedValueReads } : {}),
         ...(rPackageLoads.length ? { rPackageLoads } : {}),
@@ -1404,6 +1463,15 @@ const boundedFileContext = (
       !collection.values.length ||
       collection.values.length > MAX_STATIC_COLLECTION_VALUES ||
       collection.values.some((value) => value.length > MAX_STATIC_STRING_LENGTH) ||
+      (collection.tupleRows &&
+        (collection.entries !== undefined ||
+          collection.rKind !== undefined ||
+          !collection.tupleRows.length ||
+          collection.tupleRows.some((row) => !row.length) ||
+          collection.tupleRows.flat().length !== collection.values.length ||
+          collection.tupleRows
+            .flat()
+            .some((value, index) => value !== collection.values[index]))) ||
       (collection.entries &&
         (collection.entries.length !== collection.values.length ||
           collection.entries.some(
@@ -1435,12 +1503,20 @@ const boundedFileContext = (
         (filePath === undefined || boundedPythonFilePath(kind, qualifiedName, filePath))
     )
     .slice(0, MAX_NAMES_PER_RUN)
-  const namespaces = context.pythonTaintedNamespaces ?? []
+  const checksumRevocations = context.pythonInvalidatedChecksumNames ?? []
+  const namespaces =
+    checksumRevocations.length > MAX_NAMES_PER_RUN ||
+    checksumRevocations.some((name) => name.length > MAX_STATIC_STRING_LENGTH)
+      ? ['*']
+      : (context.pythonTaintedNamespaces ?? [])
   const pythonTaintedNamespaces =
     namespaces.length > MAX_NAMES_PER_RUN ||
     namespaces.some((name) => name.length > MAX_STATIC_STRING_LENGTH)
       ? ['*']
       : namespaces
+  const pythonInvalidatedChecksumNames = (context.pythonInvalidatedChecksumNames ?? [])
+    .filter((name) => name.length <= MAX_STATIC_STRING_LENGTH)
+    .slice(0, MAX_NAMES_PER_RUN)
   const pythonHelperModules = (context.pythonHelperModules ?? [])
     .filter(
       (module) =>
@@ -1451,6 +1527,10 @@ const boundedFileContext = (
     .slice(0, 32)
   return {
     ...(pythonTaintedNamespaces.length ? { pythonTaintedNamespaces } : {}),
+    ...(pythonInvalidatedChecksumNames.length ? { pythonInvalidatedChecksumNames } : {}),
+    ...(context.pythonMayHaveWritableMappings
+      ? { pythonMayHaveWritableMappings: true as const }
+      : {}),
     ...(pythonBindings.length ? { pythonBindings } : {}),
     staticStrings: staticStrings
       .filter(({ name }) => !wrapperNames.has(name))
@@ -2367,6 +2447,8 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.rPackageReads) !== undefined) &&
               (factsRecord.rAtomicValueNames === undefined ||
                 stringArray(factsRecord.rAtomicValueNames) !== undefined) &&
+              (factsRecord.rAtomicTableNames === undefined ||
+                stringArray(factsRecord.rAtomicTableNames) !== undefined) &&
               copyBindingArray(factsRecord.copyOnModifyBindings) !== undefined &&
               stringArray(factsRecord.copyOnModifyInvalidatedNames) !== undefined &&
               (factsRecord.safeCallNames === undefined ||
@@ -2412,6 +2494,8 @@ class NotebookDependencyAnalyzer {
                 stringArray(factsRecord.rPackageReads) !== undefined) &&
               (factsRecord.rAtomicValueNames === undefined ||
                 stringArray(factsRecord.rAtomicValueNames) !== undefined) &&
+              (factsRecord.rAtomicTableNames === undefined ||
+                stringArray(factsRecord.rAtomicTableNames) !== undefined) &&
               copyBindingArray(factsRecord.copyOnModifyBindings) !== undefined &&
               stringArray(factsRecord.copyOnModifyInvalidatedNames) !== undefined &&
               (factsRecord.safeCallNames === undefined ||

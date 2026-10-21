@@ -178,7 +178,7 @@ it('does not preserve pandas type through an explicit NumPy output buffer', asyn
   expect(facts.mutatedNames).toContain('buf')
 })
 
-it('captures the generated Welch/BH stage and its downstream volcano across cells', async () => {
+it('retains unproven BH coercion and downstream volcano uncertainty across cells', async () => {
   const root = await mkdtemp(join(tmpdir(), 'bioqa-de-'))
   // Input CSV generation has a separate sample.int limitation. Exercise the exact
   // generated analysis and plot with file inputs, without certifying that setup.
@@ -204,8 +204,12 @@ it('captures the generated Welch/BH stage and its downstream volcano across cell
       repository: { readSessionRuns: async () => runs }
     })
     const projection = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '1' })
-    expect(projection.stalenessByRunId['1']).toEqual({ state: 'clear' })
-    expect(projection.dependenciesByRunId?.['1']).toContain('0')
+    // apply/data-frame ownership does not establish primitive p-value columns.
+    expect(projection.stalenessByRunId['1']).toEqual({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['external-state', 'opaque-call'])
+    })
+    expect(projection.dependenciesByRunId?.['1']).toBeUndefined()
     for (const run of runs) {
       const context = await analyzer.sourceFileAccessContext({
         projectId: 'p',
@@ -216,9 +220,9 @@ it('captures the generated Welch/BH stage and its downstream volcano across cell
         kernelEpochId: 'epoch'
       })
       expect(await analyzeNotebookSourceFileAccess('r', run.script, context)).toMatchObject({
-        readState: 'complete',
-        writeState: 'complete',
-        externalState: 'complete',
+        readState: 'partial',
+        writeState: run.runId === '0' ? 'partial' : 'complete',
+        externalState: run.runId === '0' ? 'partial' : 'complete',
         reads: run.runId === '0' ? ['bioqa_logexpr.csv', 'bioqa_meta.csv'] : [],
         writes: run.runId === '0' ? [] : ['bioqa_de.csv', 'bioqa_volcano.png']
       })
@@ -231,10 +235,10 @@ it('captures the generated Welch/BH stage and its downstream volcano across cell
 it.each([
   'd<-data.frame(a=1:3,b=2:4);x<-t(apply(d,1,function(v)c(mean(v),sum(v))))',
   'd<-data.frame(a=1:3,b=2:4);x<-t(apply(FUN=function(v)c(mean(v),sum(v)),MARGIN=1,X=d,simplify=FALSE))'
-])('retains ordinary apply results through transpose: %s', async (source) => {
+])('withholds apply result ownership without mean input proof: %s', async (source) => {
   const { facts } = await analyzeRNotebookSource(source)
-  expect(facts.state).toBe('available')
-  expect(facts.copyOnModifyNames).toContain('x')
+  expect(facts.state).toBe('unknown')
+  expect(facts.copyOnModifyNames ?? []).not.toContain('x')
 })
 
 it.each([

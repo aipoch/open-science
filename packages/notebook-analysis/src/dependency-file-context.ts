@@ -49,8 +49,10 @@ const projectNotebookFileContext = (
   const replContainerNames = new Set<string>()
   let replNamespaceUncertain = false
   const rAtomicValueNames = new Set<string>()
+  const rAtomicTableNames = new Set<string>()
   const rCopyOnModifyNames = new Set<string>()
   const pythonTaintedNamespaces = new Set<string>()
+  let pythonMayHaveWritableMappings = false
   const pythonBindings = new Map<
     string,
     NonNullable<NotebookSourceFileAccessContext['pythonBindings']>[number]
@@ -121,6 +123,8 @@ const projectNotebookFileContext = (
     }
     for (const namespace of entry?.fileContext.pythonTaintedNamespaces ?? [])
       pythonTaintedNamespaces.add(namespace)
+    if (language === 'python' && entry?.fileContext.pythonMayHaveWritableMappings)
+      pythonMayHaveWritableMappings = true
     for (const module of entry?.fileContext.pythonHelperModules ?? [])
       pythonHelperModules.set(`${module.source}\0${module.exports.join('\0')}`, module)
     if (
@@ -143,6 +147,7 @@ const projectNotebookFileContext = (
       resolvedKernelNames.clear()
       replContainerNames.clear()
       rAtomicValueNames.clear()
+      rAtomicTableNames.clear()
       rCopyOnModifyNames.clear()
       rFunctions.clear()
       pythonBindings.clear()
@@ -229,6 +234,7 @@ const projectNotebookFileContext = (
       localFileWrappers.delete(name)
       rFunctions.delete(name)
       rAtomicValueNames.delete(name)
+      rAtomicTableNames.delete(name)
       rCopyOnModifyNames.delete(name)
       const binding = pythonBindings.get(name)
       if (
@@ -249,6 +255,33 @@ const projectNotebookFileContext = (
         rFunctions.delete(name)
     }
     if (language === 'r') {
+      // Unknown receiver effects and namespace evaluation can replace unrelated
+      // tables as well as explicit arguments. Never retain table authority there.
+      if (
+        (facts.receiverCalls?.length ?? 0) > 0 ||
+        (facts.usedNames ?? []).some((name) =>
+          [
+            'source',
+            'sys.source',
+            'load',
+            'attach',
+            'eval',
+            'evalq',
+            'assign',
+            'do.call',
+            'makeActiveBinding'
+          ].includes(name.split('::').at(-1)!)
+        )
+      )
+        rAtomicTableNames.clear()
+      for (const name of facts.rAtomicTableNames ?? [])
+        if (
+          definedNames.has(name) &&
+          !conditionalNames.has(name) &&
+          !mutatedNames.has(name) &&
+          !facts.copyOnModifyInvalidatedNames?.includes(name)
+        )
+          rAtomicTableNames.add(name)
       const uncertainMutations = new Set([
         ...(facts.possiblyMutatedNames ?? []),
         ...(facts.receiverCalls ?? []).flatMap((call) => [
@@ -322,6 +355,8 @@ const projectNotebookFileContext = (
     for (const collection of fileContext.staticCollections) {
       if (!conditionalNames.has(collection.name)) staticCollections.set(collection.name, collection)
     }
+    for (const name of fileContext.pythonInvalidatedChecksumNames ?? [])
+      localFileWrappers.delete(name)
     for (const wrapper of fileContext.localFileWrappers) {
       if (!conditionalNames.has(wrapper.name)) localFileWrappers.set(wrapper.name, wrapper)
     }
@@ -442,7 +477,13 @@ const projectNotebookFileContext = (
         isRelativeSqlitePath(binding.filePath)
       )
         pythonBindings.set(name, withoutFilePath(binding))
-  if (!available && !pythonTaintedNamespaces.size && !replNamespaceUncertain) return undefined
+  if (
+    !available &&
+    !pythonTaintedNamespaces.size &&
+    !replNamespaceUncertain &&
+    !pythonMayHaveWritableMappings
+  )
+    return undefined
   const specializedNames = new Set([
     ...staticStrings.keys(),
     ...staticCollections.keys(),
@@ -475,11 +516,13 @@ const projectNotebookFileContext = (
       ? { replContainerNames: [...replContainerNames], replNamespaceUncertain }
       : {}),
     ...(rAtomicValueNames.size ? { rAtomicValueNames: [...rAtomicValueNames].sort() } : {}),
+    ...(rAtomicTableNames.size ? { rAtomicTableNames: [...rAtomicTableNames].sort() } : {}),
     ...(rCopyOnModifyNames.size ? { rCopyOnModifyNames: [...rCopyOnModifyNames].sort() } : {}),
     ...(remainingKernelNames.length ? { resolvedKernelNames: remainingKernelNames } : {}),
     ...(pythonTaintedNamespaces.size
       ? { pythonTaintedNamespaces: [...pythonTaintedNamespaces].sort() }
       : {}),
+    ...(pythonMayHaveWritableMappings ? { pythonMayHaveWritableMappings: true as const } : {}),
     ...(pythonBindings.size
       ? {
           pythonBindings: [...pythonBindings.values()].sort((a, b) => a.name.localeCompare(b.name))

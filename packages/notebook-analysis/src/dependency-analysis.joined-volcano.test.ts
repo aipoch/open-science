@@ -35,9 +35,9 @@ it.each([
   'a<-c(1,2);b<-c(2,3);base::intersect(a,b);base::setdiff(a,b);base::union(a,b);base::setequal(a,b)'
 ])('tracks ordinary transform results: %s', async (script) => {
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete'
+    readState: script.includes('mean') ? 'partial' : 'complete',
+    writeState: script.includes('mean') ? 'partial' : 'complete',
+    externalState: script.includes('mean') ? 'partial' : 'complete'
   })
 })
 it.each([
@@ -59,7 +59,7 @@ it.each([
   ])
 })
 
-it('retains the real failed plot and recovers from the required inputs in a fresh epoch', async () => {
+it('retains the failed plot and unproven scientific dispatch after a fresh epoch', async () => {
   const root = await mkdtemp(join(tmpdir(), 'joined-recovery-'))
   const runs = runsFor(true)
   const analyzer = new NotebookDependencyAnalyzer({
@@ -87,7 +87,13 @@ it('retains the real failed plot and recovers from the required inputs in a fres
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(after.stalenessByRunId['retry-12'], JSON.stringify(after)).toEqual({ state: 'clear' })
+    // Loading an owned data frame does not establish the classes of its columns.
+    // cor coercion and the quantile generic can dispatch methods after a retry.
+    for (const runId of ['retry-4', 'retry-5', 'retry-12'])
+      expect(after.stalenessByRunId[runId], JSON.stringify(after)).toMatchObject({
+        state: 'unknown',
+        reasons: expect.arrayContaining(['opaque-call'])
+      })
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -270,7 +276,7 @@ it.each(cells.filter((c) => c.language === 'r' && c.status === 'completed'))(
         kernelEpochId: 'epoch'
       })
       const { facts } = await analyzeRNotebookSource(script, context)
-      const unprovenDispatch = ['3', '6', '12'].includes(runId)
+      const unprovenDispatch = ['3', '4', '5', '6', '12'].includes(runId)
       expect(
         facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
         JSON.stringify(facts)

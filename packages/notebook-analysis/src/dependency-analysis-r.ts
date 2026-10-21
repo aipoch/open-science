@@ -145,6 +145,90 @@ const isCharacter = (
 ): expr is Extract<RExpr, { kind: 'character' }> => expr?.kind === 'character'
 const isNull = (expr: RExpr | null | undefined): boolean => !expr || expr.kind === 'null'
 const emptySymbol = (): RExpr => ({ kind: 'symbol', name: '' })
+
+const R_MODEL_PARAMETERS: Record<string, string[]> = {
+  lm: [
+    'formula',
+    'data',
+    'subset',
+    'weights',
+    'na.action',
+    'method',
+    'model',
+    'x',
+    'y',
+    'qr',
+    'singular.ok',
+    'contrasts',
+    'offset'
+  ],
+  glm: [
+    'formula',
+    'family',
+    'data',
+    'weights',
+    'subset',
+    'na.action',
+    'start',
+    'etastart',
+    'mustart',
+    'offset',
+    'control',
+    'model',
+    'method',
+    'x',
+    'y',
+    'singular.ok',
+    'contrasts'
+  ],
+  aov: ['formula', 'data', 'projections', 'qr', 'contrasts']
+}
+
+// Recognize qualified spellings without granting their S3 methods purity.
+const R_MODEL_INSPECTORS = new Set(['coef', 'fitted', 'residuals'])
+
+// Match R's exact names, then partial names, then remaining positionals. Dots
+// need the downstream model's evaluation contract, so leave them conservative.
+const rModelArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>,
+  name: string
+): string[] | undefined => {
+  const parameters = R_MODEL_PARAMETERS[name]
+  if (
+    !parameters ||
+    expr.args.length > parameters.length ||
+    expr.args.some(
+      (arg) => isSymbol(arg) && (!arg.name || /^(?:\.\.\.|\.\.[1-9]\d*)$/u.test(arg.name))
+    )
+  )
+    return undefined
+  const matched = new Set<string>()
+  const result: string[] = []
+  for (const [index, label] of expr.names.entries()) {
+    if (!label || !parameters.includes(label)) continue
+    if (matched.has(label)) return undefined
+    matched.add(label)
+    result[index] = label
+  }
+  for (const [index, label] of expr.names.entries()) {
+    if (!label || result[index]) continue
+    const candidates = parameters.filter(
+      (parameter) => parameter.startsWith(label) && !matched.has(parameter)
+    )
+    if (candidates.length !== 1) return undefined
+    matched.add(candidates[0]!)
+    result[index] = candidates[0]!
+  }
+  const remaining = parameters.filter((parameter) => !matched.has(parameter))
+  for (let index = 0; index < expr.args.length; index += 1) {
+    if (result[index]) continue
+    const parameter = remaining.shift()
+    if (!parameter) return undefined
+    result[index] = parameter
+  }
+  return result.includes('formula') ? result : undefined
+}
+
 // case_when evaluates both sides now; these formulas are not deferred callbacks.
 // Keep stored formulas and dynamic dots opaque until their environments are known.
 const rCaseWhenArguments = (
@@ -439,8 +523,18 @@ const rPackageInspections = (expressions: readonly RExpr[]): Map<RExpr, RPackage
 const rRedirectsConsole = (expr: RExpr): boolean =>
   isCall(expr) && (rCalledName(expr) === 'sink' || expr.args.some(rRedirectsConsole))
 
-const R_FILESYSTEM_MUTATIONS = new Set(['file.copy', 'file.remove', 'file.rename', 'unlink'])
+const R_FILESYSTEM_MUTATIONS = new Set([
+  'file.copy',
+  'file.append',
+  'file.create',
+  'writeChar',
+  'file.remove',
+  'file.rename',
+  'file.link',
+  'unlink'
+])
 const R_UNCAPTURED_EXTERNAL_CALLS = new Map([
+  ['dir.create', 'base'],
   ['system', 'base'],
   ['system2', 'base'],
   ['font_add', 'sysfonts']
@@ -811,7 +905,8 @@ const analyzeRSource = (
   contextualKernelNames: readonly string[] = [],
   contextualAtomicValueNames: readonly string[] = [],
   contextualCopyOnModifyNames: readonly string[] = [],
-  verifiedSerializedValues: readonly NotebookSerializedValue[] = []
+  verifiedSerializedValues: readonly NotebookSerializedValue[] = [],
+  contextualAtomicTableNames: readonly string[] = []
 ): NotebookRunDependencyFacts => {
   const shadowedCallbackCalls = new Set([
     ...contextualKernelNames,
@@ -833,6 +928,36 @@ const analyzeRSource = (
     contextualFileWrappers.map(({ name }) => name)
   )
   const baseLabelFormatCalls = ['format', 'format.default', 'formatC', 'pretty', 'prettyNum']
+  const cumulativeStatistics = new Set(['cumsum', 'cumprod', 'cummin', 'cummax'])
+  const centralDistributionCalls = new Set([
+    'dt',
+    'pt',
+    'qt',
+    'dchisq',
+    'pchisq',
+    'qchisq',
+    'df',
+    'pf',
+    'qf'
+  ])
+  const gammaDistributionCalls = new Set(['dgamma', 'pgamma', 'qgamma'])
+  const poissonDistributionCalls = new Set(['dpois', 'ppois', 'qpois'])
+  const inputSensitiveStatistics = new Set([
+    ...cumulativeStatistics,
+    ...centralDistributionCalls,
+    ...gammaDistributionCalls,
+    ...poissonDistributionCalls,
+    'mean',
+    'mean.default',
+    'scale',
+    'scale.default',
+    'all.equal',
+    'all.equal.numeric',
+    'isTRUE',
+    'isFALSE',
+    'dnorm',
+    'qnorm'
+  ])
   const pureSafeCalls = [
     ...baseLabelFormatCalls,
     ...R_BASE_STRING_CALLS,
@@ -1664,14 +1789,22 @@ const analyzeRSource = (
   const outputSafe = new Set(outputSafeCalls)
   const functionalCallbacks = R_FUNCTIONAL_CALLS
   const callbackUnsafeCalls = new Set([
+    ...inputSensitiveStatistics,
     'bzfile',
     'close',
+    'cor',
     'file',
     'gzfile',
     'gzcon',
+    'median',
+    'p.adjust',
+    'quantile',
+    'rank',
     'rawConnection',
+    'sd',
     'textConnection',
     'unz',
+    'var',
     'xzfile'
   ])
   const pureCallbackOps = new Set([
@@ -1705,7 +1838,6 @@ const analyzeRSource = (
       'as.integer',
       'as.character',
       'as.logical',
-      'mean',
       'sum',
       'length',
       'rowMeans',
@@ -2519,6 +2651,8 @@ const analyzeRSource = (
   const staticScalarNames = new Set(contextualStaticStrings.map(({ name }) => name))
   const staticStrings = new Map(contextualStaticStrings.map(({ name, value }) => [name, value]))
   const staticCollections = rContextCollections(contextualStaticCollections)
+  const atomicCSVTableNames = new Set(contextualAtomicTableNames)
+  let csvColumnProofRevoked = false
   const localInputHandleNames = new Set<string>()
   const characterLoopNames = new Set<string>()
   const namespaceProbePackages = new Map<string, readonly string[]>()
@@ -2722,6 +2856,27 @@ const analyzeRSource = (
     pkg
       ? pkg === expected || (expected === 'tidyselect' && pkg === 'dplyr')
       : !defined.includes(name) && !localNames.includes(name) && !shadowedCallbackCalls.has(name)
+
+  // Only a directly constructed standard identity family is closed here. A
+  // stored family or link object can carry arbitrary callbacks and environments.
+  const directGaussianIdentityFamily = (value: RExpr): string | undefined => {
+    if (!isCall(value) || rCalledName(value) !== 'gaussian') return undefined
+    const qualified = rQualifiedCall(value)
+    if (
+      value.staticBuiltinShadowed ||
+      !contractAvailable('gaussian', qualified?.package, 'stats') ||
+      (isCall(value.callee) &&
+        (value.callee.staticBuiltinShadowed ||
+          !contractAvailable(value.callee.operator ?? '', undefined, 'base'))) ||
+      value.args.length > 1 ||
+      (value.args.length === 1 &&
+        ((value.names[0] && value.names[0] !== 'link') ||
+          !isCharacter(value.args[0]) ||
+          value.args[0].value !== 'identity'))
+    )
+      return undefined
+    return qualified ? 'stats::gaussian' : 'gaussian'
+  }
 
   const consumeOpaqueSolverCallback = (
     expr: RExpr | undefined,
@@ -3166,7 +3321,8 @@ const analyzeRSource = (
       (rMatlabReferenceReadCalls.includes(name) || rMatlabOutputCalls.includes(name))) ||
     (pkg === 'tibble' && tibbleConstructors.has(name)) ||
     (pkg === 'tidyr' && tidyrMask.has(name)) ||
-    (pkg === 'stats' && (modelMask.has(name) || pureSafe.has(name))) ||
+    (pkg === 'stats' &&
+      (modelMask.has(name) || R_MODEL_INSPECTORS.has(name) || pureSafe.has(name))) ||
     (pkg === 'svglite' && svgliteOutputCalls.includes(name)) ||
     (pkg === 'utils' && name !== 'write' && outputSafe.has(name)) ||
     (pkg === 'writexl' && writexlOutputCalls.includes(name)) ||
@@ -3303,6 +3459,354 @@ const analyzeRSource = (
       return baseReplacementRoot(expr.args[0])
     return baseReplacementName(expr) ? rootName(expr.args[0]) : null
   }
+  const csvSubsetMethods = [
+    '[',
+    '[.data.frame',
+    '[.default',
+    'names.data.frame',
+    'names.default',
+    'length.data.frame',
+    'length.default'
+  ]
+  const csvSubsetResult = (
+    expr: RExpr | null | undefined
+  ): { kind: 'atomic' | 'table'; dependencies: string[] } | null => {
+    if (
+      !isCall(expr) ||
+      callOperator(expr) !== '[' ||
+      expr.staticBuiltinShadowed ||
+      csvColumnProofRevoked ||
+      receiverCalls.length > 0 ||
+      unknown.some((reason) => reason !== 'external-state') ||
+      !atomicCSVTableExpression(expr.args[0]) ||
+      expr.args.length > 4 ||
+      expr.names.slice(0, 3).some(Boolean)
+    )
+      return null
+    const dependencies = csvSubsetMethods
+    if (!dependencies.every((name) => contractAvailable(name, undefined, 'base'))) return null
+    const missing = (value: RExpr | undefined): boolean =>
+      !value || (isSymbol(value) && value.name === '')
+    // One-index data-frame selection preserves the container, even for one column.
+    if (expr.args.length <= 2)
+      return missing(expr.args[1]) || atomicValueExpression(expr.args[1])
+        ? { kind: 'table', dependencies }
+        : null
+    const row = expr.args[1]
+    const column = expr.args[2]
+    if (!missing(row) && !atomicValueExpression(row)) return null
+    const drop = expr.args[3]
+    if (
+      expr.args.length === 4 &&
+      (expr.names[3] !== 'drop' || drop?.kind !== 'atomic' || drop.logical === undefined)
+    )
+      return null
+    if (drop?.kind === 'atomic' && drop.logical === false)
+      return missing(column) || atomicValueExpression(column)
+        ? { kind: 'table', dependencies }
+        : null
+    // With dropping enabled, only a literal single column guarantees an atomic
+    // result. Multiple columns can yield a data frame or a list depending on rows.
+    return isCharacter(column) ||
+      (column?.kind === 'atomic' && Number.isInteger(column.number) && column.number! > 0)
+      ? { kind: 'atomic', dependencies }
+      : null
+  }
+  const csvSubsetCallMethods = ['subset.data.frame', ...csvSubsetMethods]
+  const csvSubsetCallProof = (expr: RExpr | null | undefined): string[] | null => {
+    if (
+      !isCall(expr) ||
+      !intactBaseCall(expr, 'subset') ||
+      csvColumnProofRevoked ||
+      receiverCalls.length > 0 ||
+      unknown.some((reason) => reason !== 'external-state')
+    )
+      return null
+    const args = primitiveArguments(expr, ['x', 'subset', 'select', 'drop'])
+    if (!args || !atomicCSVTableExpression(args.get('x'))) return null
+    // Without column names, bare mask symbols may fall back to arbitrary caller
+    // values. Require an independently proven expression and a literal selector.
+    const predicate = args.get('subset'),
+      select = args.get('select'),
+      drop = args.get('drop')
+    const literalIndex = (value: RExpr): boolean =>
+      isCharacter(value) ||
+      (value.kind === 'atomic' && Number.isInteger(value.number) && value.number! > 0)
+    if (
+      !predicate ||
+      !atomicValueExpression(predicate) ||
+      !select ||
+      !(
+        literalIndex(select) ||
+        (isCall(select) &&
+          intactBaseCall(select, 'c') &&
+          select.args.length > 0 &&
+          select.names.every((name) => !name) &&
+          select.args.every(literalIndex))
+      ) ||
+      (drop && (drop.kind !== 'atomic' || drop.logical !== false)) ||
+      !csvSubsetCallMethods.every((name) => contractAvailable(name, undefined, 'base'))
+    )
+      return null
+    return csvSubsetCallMethods
+  }
+  const csvNAActionMethods = (name: string): string[] => [
+    name + '.data.frame',
+    'names.data.frame',
+    'names.default',
+    'length.data.frame',
+    'length.default',
+    'seq.logical'
+  ]
+  const atomicS3Methods = (name: string): string[] =>
+    [
+      'double',
+      'numeric',
+      'integer',
+      'logical',
+      'complex',
+      'character',
+      'raw',
+      'NULL',
+      'default'
+    ].map((type) => name + '.' + type)
+  // Namespace lookup fixes a generic's identity, but UseMethod still checks
+  // caller-visible implicit class methods for ordinary vectors. Internal
+  // default fallbacks resolve lexically and do not use global *.default names.
+  const implicitAtomicS3Methods = (name: string): string[] =>
+    atomicS3Methods(name).filter((method) => method !== name + '.default')
+  const primitiveStatisticMethods = (expr: RExpr): string[] => {
+    if (!isCall(expr)) return []
+    const name = calledName(expr)
+    const internal = (...names: string[]): string[] => names.flatMap(implicitAtomicS3Methods)
+    if (name === 'median') return [...atomicS3Methods(name), ...internal('sort', 'mean')]
+    if (name === 'weighted.mean') return atomicS3Methods(name)
+    if (name === 'IQR') return internal('quantile', 'sort', 'diff')
+    if (name === 'mad') return internal('median', 'sort', 'mean')
+    if (name === 'fivenum') return internal('sort')
+    if (name === 'quantile') {
+      const args = primitiveArguments(expr, ['x', 'probs', 'na.rm', 'names', 'type', 'digits'])
+      const names = args?.get('names')
+      const probs = args?.get('probs')
+      // stats::format_perc switches from formatC to S3 format for >=100 labels.
+      const formatsLabels =
+        !(names?.kind === 'atomic' && names.logical === false) &&
+        isCall(probs) &&
+        probs.args.length >= 100
+      return [
+        ...atomicS3Methods(name),
+        ...internal('sort'),
+        ...(formatsLabels ? internal('format') : [])
+      ]
+    }
+    return []
+  }
+  const primitiveStatisticMethodsAvailable = (expr: RExpr): boolean =>
+    primitiveStatisticMethods(expr).every((method) => contractAvailable(method, undefined, 'stats'))
+  const recordPrimitiveStatisticMethods = (expr: RExpr): void => {
+    const methods = primitiveStatisticMethods(expr)
+    used.push(...methods)
+    priorUsed.push(...methods)
+    safeCallNames.push(...methods)
+  }
+  const primitiveNAActionDependencies = (
+    expr: RExpr | null | undefined,
+    kind: 'table' | 'atomic' = 'table'
+  ): string[] | null => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['na.omit', 'na.exclude'].includes(name) ||
+      expr.staticBuiltinShadowed ||
+      !contractAvailable(name, qualifiedCall(expr)?.package, 'stats') ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base'))) ||
+      csvColumnProofRevoked ||
+      receiverCalls.length > 0 ||
+      unknown.some((reason) => reason !== 'external-state') ||
+      expr.args.length !== 1 ||
+      (expr.names[0] && expr.names[0] !== 'object') ||
+      !(kind === 'table'
+        ? atomicCSVTableExpression(expr.args[0])
+        : atomicValueExpression(expr.args[0]))
+    )
+      return null
+    const dependencies = kind === 'table' ? csvNAActionMethods(name) : atomicS3Methods(name)
+    return dependencies.every((method) =>
+      contractAvailable(
+        method,
+        undefined,
+        kind === 'atomic' || method === name + '.data.frame' ? 'stats' : 'base'
+      )
+    )
+      ? dependencies
+      : null
+  }
+  const csvHeadTailMethods = (name: string): string[] => [
+    name + '.data.frame',
+    'names.data.frame',
+    'names.default',
+    'length.data.frame',
+    'length.default'
+  ]
+  const primitiveHeadTailDependencies = (
+    expr: RExpr | null | undefined,
+    kind: 'table' | 'atomic' = 'table'
+  ): string[] | null => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['head', 'tail'].includes(name) ||
+      expr.staticBuiltinShadowed ||
+      !contractAvailable(name, qualifiedCall(expr)?.package, 'utils') ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base'))) ||
+      csvColumnProofRevoked ||
+      receiverCalls.length > 0 ||
+      unknown.some((reason) => reason !== 'external-state')
+    )
+      return null
+    const args = primitiveArguments(expr, name === 'head' ? ['x', 'n'] : ['x', 'n', 'keepnums'])
+    if (
+      !args ||
+      !(kind === 'table'
+        ? atomicCSVTableExpression(args.get('x'))
+        : atomicValueExpression(args.get('x')))
+    )
+      return null
+    const count = args.get('n'),
+      keepnums = args.get('keepnums')
+    if (
+      (count && !atomicValueExpression(count)) ||
+      (keepnums && (keepnums.kind !== 'atomic' || keepnums.logical === undefined))
+    )
+      return null
+    const dependencies = kind === 'table' ? csvHeadTailMethods(name) : atomicS3Methods(name)
+    return dependencies.every((method) =>
+      contractAvailable(
+        method,
+        undefined,
+        kind === 'atomic' || method === name + '.data.frame' ? 'utils' : 'base'
+      )
+    )
+      ? dependencies
+      : null
+  }
+  // Only names of source-proven primitive-column tables cross cell boundaries;
+  // no column contents or exact numeric schema are captured here.
+  const atomicCSVTableExpression = (expr: RExpr | null | undefined): boolean => {
+    if (isSymbol(expr)) return atomicCSVTableNames.has(expr.name)
+    if (calledName(expr) === 'subset') return csvSubsetCallProof(expr) !== null
+    if (['head', 'tail'].includes(calledName(expr) ?? ''))
+      return primitiveHeadTailDependencies(expr) !== null
+    if (['na.omit', 'na.exclude'].includes(calledName(expr) ?? ''))
+      return primitiveNAActionDependencies(expr) !== null
+    if (isCall(expr) && callOperator(expr) === '[') return csvSubsetResult(expr)?.kind === 'table'
+    if (
+      !isCall(expr) ||
+      calledName(expr) !== 'read.csv' ||
+      !contractAvailable('type.convert.character', undefined, 'utils') ||
+      expr.staticBuiltinShadowed ||
+      !contractAvailable('read.csv', qualifiedCall(expr)?.package, 'utils') ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+    )
+      return false
+    if (expr.names.slice(1).some((name) => !name)) return false
+    const parameters = [
+      'file',
+      'header',
+      'sep',
+      'quote',
+      'dec',
+      'fill',
+      'comment.char',
+      'numerals',
+      'row.names',
+      'col.names',
+      'as.is',
+      'tryLogical',
+      'na.strings',
+      'colClasses',
+      'nrows',
+      'skip',
+      'check.names',
+      'strip.white',
+      'blank.lines.skip',
+      'allowEscapes',
+      'flush',
+      'stringsAsFactors',
+      'fileEncoding',
+      'encoding',
+      'text',
+      'skipNul'
+    ]
+    const args = primitiveArguments(expr, parameters)
+    if (!args || !rStaticString(args.get('file'), staticStrings, staticCollections)) return false
+    const literalOption = (value: RExpr): boolean =>
+      ['atomic', 'character', 'null'].includes(value.kind) ||
+      (isCall(value) &&
+        intactBaseCall(value, 'c') &&
+        value.args.every((arg) => ['atomic', 'character'].includes(arg.kind)))
+    if ([...args].some(([name, value]) => name !== 'file' && !literalOption(value))) return false
+    const strings = args.get('stringsAsFactors'),
+      asIs = args.get('as.is')
+    if (strings && (strings.kind !== 'atomic' || strings.logical !== false)) return false
+    if (asIs && (asIs.kind !== 'atomic' || asIs.logical !== true)) return false
+    const classes = args.get('colClasses')
+    const primitiveClass = (value: RExpr): boolean =>
+      isCharacter(value) &&
+      ['logical', 'integer', 'numeric', 'double', 'complex', 'character', 'raw', 'NULL'].includes(
+        value.value
+      )
+    return (
+      !classes ||
+      primitiveClass(classes) ||
+      (isCall(classes) &&
+        intactBaseCall(classes, 'c') &&
+        classes.args.length > 0 &&
+        classes.args.every(primitiveClass))
+    )
+  }
+  const atomicCSVColumnDependencies = (expr: RExpr | null | undefined): string[] | null => {
+    if (
+      !isCall(expr) ||
+      csvColumnProofRevoked ||
+      receiverCalls.length > 0 ||
+      unknown.some((reason) => reason !== 'external-state')
+    )
+      return null
+    const op = callOperator(expr)
+    if (op === '[') {
+      const subset = csvSubsetResult(expr)
+      return subset?.kind === 'atomic' ? subset.dependencies : null
+    }
+    if (
+      (op !== '$' && op !== '[[') ||
+      expr.args.length !== 2 ||
+      expr.staticBuiltinShadowed ||
+      expr.names.some(Boolean) ||
+      !atomicCSVTableExpression(expr.args[0])
+    )
+      return null
+    const key = expr.args[1]
+    if (
+      op === '$'
+        ? !isSymbol(key) && !isCharacter(key)
+        : !isCharacter(key) &&
+          !(key?.kind === 'atomic' && Number.isInteger(key.number) && key.number! > 0)
+    )
+      return null
+    const dependencies = [op, op + '.data.frame', op + '.default']
+    return dependencies.every((name) => contractAvailable(name, undefined, 'base'))
+      ? dependencies
+      : null
+  }
   const atomicValueExpression = (expr: RExpr | null | undefined): boolean => {
     if (!expr) return false
     if (['atomic', 'character', 'null'].includes(expr.kind)) return true
@@ -3312,8 +3816,56 @@ const analyzeRSource = (
         (expr.name === 'pi' && contractAvailable('pi', undefined, 'base'))
       )
     if (!isCall(expr)) return false
+    if (atomicCSVColumnDependencies(expr)) return true
     const name = calledName(expr)
-    if (!name || !contractAvailable(name, qualifiedCall(expr)?.package, 'base')) return false
+    if (name && ['na.omit', 'na.exclude'].includes(name))
+      return primitiveNAActionDependencies(expr, 'atomic') !== null
+    if (name && ['head', 'tail'].includes(name))
+      return primitiveHeadTailDependencies(expr, 'atomic') !== null
+    if (name === 'is.double') return primitiveDoublePredicate(expr)
+    if (name === 'as.double' || name === 'as.numeric') return primitiveDoubleCoercion(expr)
+    if (name === 'which.min' || name === 'which.max') return primitiveExtremeIndex(expr)
+    if (name === 'ifelse') return primitiveIfelse(expr)
+    if (name === 'unname') return primitiveUnname(expr)
+    if (name === '%in%') return primitiveMembership(expr)
+    if (name === 'sum' || name === 'all' || name === 'any' || name === 'prod')
+      return primitiveSummary(expr)
+    if (name === 'which') return primitiveWhich(expr)
+    if (name === 'complete.cases') return primitiveCompleteCases(expr)
+    if (name === 'order') return primitiveOrder(expr)
+    if (name === 'IQR') return primitiveInterquartileRange(expr)
+    if (name === 'mad') return primitiveMedianDeviation(expr)
+    if (name === 'quantile') return primitiveQuantiles(expr)
+    if (name === 'median') return primitiveMedian(expr)
+    if (name === 'p.adjust') return primitivePValueAdjustment(expr)
+    if (name && centralDistributionCalls.has(name)) return primitiveCentralDistribution(expr)
+    if (name && gammaDistributionCalls.has(name)) return primitiveGammaDistribution(expr)
+    if (name && poissonDistributionCalls.has(name)) return primitivePoissonDistribution(expr)
+    if (name === 'pnorm' || name === 'dnorm' || name === 'qnorm')
+      return primitiveNormalDistribution(expr)
+    if (name === 'all.equal' || name === 'all.equal.numeric') return primitiveEquality(expr)
+    if (name === 'isTRUE' || name === 'isFALSE') return primitiveTruthPredicate(expr)
+    if (name === 'mean' || name === 'mean.default') return primitiveMean(expr)
+    if (name && cumulativeStatistics.has(name)) return primitiveCumulativeStatistic(expr)
+    if (name === 'rank') return primitiveRanks(expr)
+    if (name === 'weighted.mean') return primitiveWeightedMean(expr)
+    if (name === 'fivenum') return primitiveFiveNumberSummary(expr)
+    if (name === 'sd' || name === 'var' || name === 'cov' || name === 'cor')
+      return primitiveSecondMoment(expr)
+    if (!name || !intactBaseCall(expr, name)) return false
+    if (name === 'is.na') {
+      // The primitive dispatches only for objects with an explicit class.
+      // Proven unclassed inputs return an unclassed logical mask, even when
+      // caller-visible implicit is.na.numeric/default methods are replaced.
+      const args = primitiveArguments(expr, ['x'])
+      return Boolean(args && atomicValueExpression(args.get('x')))
+    }
+    // Atomic inputs do not prevent an overridden S3 default from returning a
+    // classed value. Keep that uncertainty in stored intermediates as well.
+    if (R_ATOMIC_VECTOR_CALLS.has(name) && !contractAvailable(`${name}.default`, undefined, 'base'))
+      return false
+    if (name === 'scan') return primitiveNumericScan(expr)
+    if (name === 'diff') return primitiveDifference(expr)
     // Coercions may dispatch class methods and return classed values. Their
     // primitive proof below must inspect primitive inputs, not copy ownership.
     if (
@@ -3354,6 +3906,733 @@ const analyzeRSource = (
     return (
       (atomicOperator || R_ATOMIC_VECTOR_CALLS.has(name)) && expr.args.every(atomicValueExpression)
     )
+  }
+
+  const primitiveDoublePredicate = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'is.double')) return false
+    const args = primitiveArguments(expr, ['x'])
+    const input = args?.get('x')
+    // This storage-type predicate never dispatches on the inspected class.
+    // Its ordinary logical result does not prove the input is itself ordinary.
+    return Boolean(input && (!isSymbol(input) || input.name !== ''))
+  }
+  const primitiveDoubleCoercion = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['as.double', 'as.numeric'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    if (expr.args.length === 0) return true
+    const args = primitiveArguments(expr, ['x'])
+    // Ordinary inputs bypass class coercion methods and lose their attributes.
+    // The bounded scale contract also returns a non-object matrix:
+    // immediate coercion drops its dimensions and scaling attributes without
+    // dispatch. Do not extend this proof to unproved stored matrix bindings.
+    const input = args?.get('x')
+    return Boolean(input && (atomicValueExpression(input) || primitiveVectorScale(input)))
+  }
+  const primitiveExtremeIndex = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      (name !== 'which.min' && name !== 'which.max') ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x'])
+    // The internal routine returns an unclassed position (possibly empty).
+    // Keep the proof to ordinary atomic inputs, independently of ownership.
+    return Boolean(args && atomicValueExpression(args.get('x')))
+  }
+  const primitiveIfelse = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'ifelse')) return false
+    const args = primitiveArguments(expr, ['test', 'yes', 'no'])
+    // The result retains the condition's attributes and may take either
+    // branch's values. Require ordinary atomic evidence for all three.
+    return Boolean(
+      args && ['test', 'yes', 'no'].every((name) => atomicValueExpression(args.get(name)))
+    )
+  }
+  const primitiveUnname = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'unname')) return false
+    const args = primitiveArguments(expr, ['obj', 'force'])
+    if (!args || !atomicValueExpression(args.get('obj'))) return false
+    const force = args.get('force')
+    // Removing names preserves an unclassed atomic value. Explicit classes
+    // can dispatch names/dimnames methods and must retain their uncertainty.
+    return !force || (force.kind === 'atomic' && force.logical !== undefined)
+  }
+  const primitiveMembership = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, '%in%')) return false
+    const args = primitiveArguments(expr, ['x', 'table'])
+    // The fixed base match wrapper returns a plain logical mask. Unclassed
+    // operands rule out caller-visible class transforms during matching.
+    return Boolean(
+      args && atomicValueExpression(args.get('x')) && atomicValueExpression(args.get('table'))
+    )
+  }
+  const primitiveSummary = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['sum', 'all', 'any', 'prod'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    let removeMissingSeen = false
+    // Unclassed inputs bypass Summary dispatch and return an unclassed summary.
+    // Keep option matching bounded; data arguments must be positional.
+    return expr.args.every((arg, index) => {
+      const name = expr.names[index]
+      if (!name) return atomicValueExpression(arg)
+      if (
+        name !== 'na.rm' ||
+        removeMissingSeen ||
+        arg.kind !== 'atomic' ||
+        arg.logical === undefined
+      )
+        return false
+      removeMissingSeen = true
+      return true
+    })
+  }
+  const primitiveWhich = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'which')) return false
+    const args = primitiveArguments(expr, ['x', 'arr.ind', 'useNames'])
+    if (!args || isNull(args.get('x')) || !atomicValueExpression(args.get('x'))) return false
+    const arrayIndices = args.get('arr.ind'),
+      useNames = args.get('useNames')
+    // The ordinary path returns unclassed integer indices. Array indices can
+    // be a matrix, so do not publish the same vector fact for that path.
+    return (
+      (!arrayIndices || (arrayIndices.kind === 'atomic' && arrayIndices.logical === false)) &&
+      (!useNames || (useNames.kind === 'atomic' && useNames.logical !== undefined))
+    )
+  }
+  const primitiveCompleteCases = (expr: RExpr): boolean => {
+    if (
+      !isCall(expr) ||
+      calledName(expr) !== 'complete.cases' ||
+      expr.staticBuiltinShadowed ||
+      !contractAvailable('complete.cases', qualifiedCall(expr)?.package, 'stats') ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+    )
+      return false
+    // The stats native implementation returns an unclassed logical mask.
+    // Keep this proof to positional, already-proven primitive/table inputs;
+    // arbitrary lists and custom classes need separate result evidence.
+    return (
+      expr.args.length > 0 &&
+      !expr.names.some(Boolean) &&
+      expr.args.every(
+        (arg) => !isNull(arg) && (atomicCSVTableExpression(arg) || atomicValueExpression(arg))
+      )
+    )
+  }
+  const primitiveOrder = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'order')) return false
+    const keys: RExpr[] = [],
+      seen = new Set<string>()
+    for (let index = 0; index < expr.args.length; index++) {
+      const name = expr.names[index],
+        value = expr.args[index]!
+      if (!name) {
+        keys.push(value)
+        continue
+      }
+      if (!['na.last', 'decreasing', 'method'].includes(name) || seen.has(name)) return false
+      seen.add(name)
+      if (name === 'method') {
+        if (!isCharacter(value) || !['auto', 'shell', 'radix'].includes(value.value)) return false
+      } else if (value.kind !== 'atomic' || value.logical === undefined) return false
+    }
+    // Unclassed keys bypass xtfrm. Literal flags also avoid classed coercions
+    // and the na.last=NA fallback's additional generic calls.
+    return keys.length > 0 && keys.every(atomicValueExpression)
+  }
+  const intactBaseCall = (expr: RExpr, name: string): boolean =>
+    isCall(expr) &&
+    calledName(expr) === name &&
+    !expr.staticBuiltinShadowed &&
+    contractAvailable(name, qualifiedCall(expr)?.package, 'base') &&
+    (!isCall(expr.callee) ||
+      (!expr.callee.staticBuiltinShadowed &&
+        contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+
+  // Match only exact names and positional arguments. Partial matching and dots
+  // deliberately stay outside this small value-type proof.
+  const primitiveArguments = (
+    expr: Extract<RExpr, { kind: 'call' }>,
+    parameters: string[]
+  ): Map<string, RExpr> | null => {
+    const result = new Map<string, RExpr>()
+    for (let i = 0; i < expr.args.length; i++) {
+      const name = expr.names[i]
+      if (!name) continue
+      if (!parameters.includes(name) || result.has(name)) return null
+      result.set(name, expr.args[i]!)
+    }
+    for (let i = 0; i < expr.args.length; i++) {
+      if (expr.names[i]) continue
+      const name = parameters.find((parameter) => !result.has(parameter))
+      if (!name) return null
+      result.set(name, expr.args[i]!)
+    }
+    return result
+  }
+  const primitiveCumulativeStatistic = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!isCall(expr) || !name || !cumulativeStatistics.has(name) || !intactBaseCall(expr, name))
+      return false
+    const args = primitiveArguments(expr, ['x'])
+    // These primitives can dispatch Math or a specific class method. Atomic
+    // inputs rule out both; unlike diff, they do not call an S3 default method.
+    return Boolean(args && atomicValueExpression(args.get('x')))
+  }
+  const primitiveNumericScan = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'scan')) return false
+    // quiet is not the third scan formal. Require named options after file.
+    if (expr.names.slice(1).some((name) => !name)) return false
+    const args = primitiveArguments(expr, ['file', 'what', 'quiet'])
+    if (!args) return false
+    const what = args.get('what')
+    const quiet = args.get('quiet')
+    return Boolean(
+      rStaticString(args.get('file'), staticStrings, staticCollections) &&
+      what &&
+      intactBaseCall(what, 'numeric') &&
+      isCall(what) &&
+      what.args.length === 0 &&
+      (!quiet || (quiet.kind === 'atomic' && quiet.logical !== undefined))
+    )
+  }
+  const primitiveStatisticsArguments = (
+    expr: RExpr,
+    name: string,
+    parameters: string[],
+    inputName = 'x'
+  ): Map<string, RExpr> | null => {
+    if (
+      !isCall(expr) ||
+      calledName(expr) !== name ||
+      expr.staticBuiltinShadowed ||
+      !contractAvailable(name, qualifiedCall(expr)?.package, 'stats') ||
+      (isCall(expr.callee) &&
+        (expr.callee.staticBuiltinShadowed ||
+          !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+    )
+      return null
+    const args = primitiveArguments(expr, parameters)
+    return args && atomicValueExpression(args.get(inputName)) ? args : null
+  }
+  const primitiveInterquartileRange = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'IQR', ['x', 'na.rm', 'type'])
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    // IQR first coerces x with as.numeric: classed objects can execute methods.
+    // Generic identities resolve in stats; implicit S3 methods remain guarded.
+    const removeMissing = args.get('na.rm')
+    const type = args.get('type')
+    return (
+      (!removeMissing ||
+        (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined)) &&
+      (!type ||
+        (type.kind === 'atomic' &&
+          type.number !== undefined &&
+          Number.isInteger(type.number) &&
+          type.number >= 1 &&
+          type.number <= 9))
+    )
+  }
+  const literalNumericOption = (expr: RExpr | undefined): number | undefined => {
+    if (expr?.kind === 'atomic' && Number.isFinite(expr.number)) return expr.number
+    if (
+      isCall(expr) &&
+      (intactBaseCall(expr, '-') || intactBaseCall(expr, '+')) &&
+      expr.args.length === 1 &&
+      expr.args[0].kind === 'atomic' &&
+      Number.isFinite(expr.args[0].number)
+    )
+      return (calledName(expr) === '-' ? -1 : 1) * expr.args[0].number!
+    return undefined
+  }
+  const primitiveMedianDeviation = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'mad', [
+      'x',
+      'center',
+      'constant',
+      'na.rm',
+      'low',
+      'high'
+    ])
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    if (
+      ['center', 'constant'].some(
+        (name) => args.has(name) && literalNumericOption(args.get(name)) === undefined
+      )
+    )
+      return false
+    if (
+      ['na.rm', 'low', 'high'].some((name) => {
+        const value = args.get(name)
+        return value && (value.kind !== 'atomic' || value.logical === undefined)
+      })
+    )
+      return false
+    const low = args.get('low')
+    const high = args.get('high')
+    return !(
+      low?.kind === 'atomic' &&
+      low.logical === true &&
+      high?.kind === 'atomic' &&
+      high.logical === true
+    )
+  }
+  const primitiveQuantiles = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'quantile', [
+      'x',
+      'probs',
+      'na.rm',
+      'names',
+      'type',
+      'digits'
+    ])
+    // Direct generic dispatch searches caller-visible methods. Unlike IQR's
+    // internal call, a top-level stats::quantile can use a global default.
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    const probability = (value: RExpr): boolean => {
+      const number = literalNumericOption(value)
+      return number !== undefined && number >= 0 && number <= 1
+    }
+    const probabilities = args.get('probs')
+    if (
+      probabilities &&
+      !probability(probabilities) &&
+      !(
+        isCall(probabilities) &&
+        intactBaseCall(probabilities, 'c') &&
+        probabilities.args.every(probability)
+      )
+    )
+      return false
+    if (
+      ['na.rm', 'names'].some((name) => {
+        const value = args.get(name)
+        return value && (value.kind !== 'atomic' || value.logical === undefined)
+      })
+    )
+      return false
+    return ['type', 'digits'].every((name) => {
+      if (!args.has(name)) return true
+      const value = literalNumericOption(args.get(name))
+      return (
+        value !== undefined &&
+        Number.isInteger(value) &&
+        value >= 1 &&
+        (name !== 'type' || value <= 9)
+      )
+    })
+  }
+  const primitiveNormalDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (name !== 'pnorm' && name !== 'dnorm' && name !== 'qnorm') return false
+    const input = name === 'dnorm' ? 'x' : name === 'qnorm' ? 'p' : 'q'
+    const flags = name === 'dnorm' ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(expr, name, [input, 'mean', 'sd', ...flags], input)
+    // stats calls its native numeric implementation directly. Ordinary atomic
+    // inputs and proven atomic mean/sd need no S3 default-method dependencies; argument
+    // expressions are still walked separately to preserve their effects.
+    if (!args) return false
+    return (
+      ['mean', 'sd'].every((name) => !args.has(name) || atomicValueExpression(args.get(name))) &&
+      flags.every((name) => {
+        const value = args.get(name)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveCentralDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !centralDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('q') ? 'p' : 'q'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const degrees = name.endsWith('f') ? ['df1', 'df2'] : ['df']
+    const args = primitiveStatisticsArguments(
+      expr,
+      name,
+      [input, ...degrees, 'ncp', ...flags],
+      input
+    )
+    if (!args || !degrees.every((degree) => atomicValueExpression(args.get(degree)))) return false
+    // The input and every degree are ordinary values. Keep this contract limited
+    // to the central family, including an explicitly literal zero ncp.
+    const noncentrality = args.get('ncp')
+    return (
+      (!noncentrality || literalNumericOption(noncentrality) === 0) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitiveGammaDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !gammaDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('q') ? 'p' : 'q'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(
+      expr,
+      name,
+      [input, 'shape', 'rate', 'scale', ...flags],
+      input
+    )
+    if (!args || !atomicValueExpression(args.get('shape'))) return false
+    // scale defaults to 1/rate inside stats. Classless parameters exclude
+    // dispatch there. Supplying both options enters a warning/error branch.
+    if (args.has('rate') && args.has('scale')) return false
+    return (
+      ['rate', 'scale'].every(
+        (option) => !args.has(option) || atomicValueExpression(args.get(option))
+      ) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitivePoissonDistribution = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (!name || !poissonDistributionCalls.has(name)) return false
+    const input = name.startsWith('d') ? 'x' : name.startsWith('q') ? 'p' : 'q'
+    const flags = name.startsWith('d') ? ['log'] : ['lower.tail', 'log.p']
+    const args = primitiveStatisticsArguments(expr, name, [input, 'lambda', ...flags], input)
+    // stats calls native numeric implementations directly. Classless arguments
+    // exclude user-defined coercion methods; domain errors remain runtime checks.
+    return (
+      !!args &&
+      atomicValueExpression(args.get('lambda')) &&
+      flags.every((flag) => {
+        const value = args.get(flag)
+        return !value || (value.kind === 'atomic' && value.logical !== undefined)
+      })
+    )
+  }
+  const primitivePValueAdjustment = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'p.adjust', ['p', 'method', 'n'], 'p')
+    if (!args) return false
+    const method = args.get('method')
+    if (
+      method &&
+      (!isCharacter(method) ||
+        !['holm', 'hochberg', 'hommel', 'bonferroni', 'BH', 'BY', 'fdr', 'none'].includes(
+          method.value
+        ))
+    )
+      return false
+    const count = args.get('n')
+    const value = literalNumericOption(count)
+    // p.adjust coerces p before ordering. Atomic input excludes coercion
+    // methods. A literal or primitive length count excludes overloaded
+    // arithmetic/comparisons; classed length inputs may dispatch methods.
+    if (!count || (value !== undefined && Number.isInteger(value) && value >= 0)) return true
+    if (!isCall(count) || !intactBaseCall(count, 'length')) return false
+    const countArgs = primitiveArguments(count, ['x'])
+    const input = countArgs?.get('x')
+    return !!input && atomicValueExpression(input)
+  }
+  const primitiveMeanMethods = (): string[] =>
+    [
+      'double',
+      'numeric',
+      'integer',
+      'logical',
+      'complex',
+      'character',
+      'raw',
+      'NULL',
+      'default'
+    ].map((type) => 'mean.' + type)
+  const primitiveMean = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['mean', 'mean.default'].includes(name) ||
+      !intactBaseCall(expr, name) ||
+      (name === 'mean' &&
+        !primitiveMeanMethods().every((method) => contractAvailable(method, undefined, 'base')))
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'trim', 'na.rm'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const trim = args.get('trim')
+    const value = trim && literalNumericOption(trim)
+    const removeMissing = args.get('na.rm')
+    // Even mean.default can invoke is.na/subset methods on classed inputs,
+    // and a classed trim can overload its comparisons and arithmetic.
+    return (
+      (!trim || (value !== undefined && value >= 0 && value <= 0.5)) &&
+      (!removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined))
+    )
+  }
+  const primitiveScaleMethods = (expr: RExpr): string[] => {
+    // Unclassed vectors still have implicit classes for UseMethod. Internal
+    // default fallbacks resolve lexically in base, unlike these class methods.
+    const classes = [
+      'double',
+      'numeric',
+      'integer',
+      'logical',
+      'character',
+      'complex',
+      'raw',
+      'NULL'
+    ]
+    return [
+      ...(calledName(expr) === 'scale'
+        ? [...classes.map((name) => 'scale.' + name), 'scale.default']
+        : []),
+      ...classes.map((name) => 'as.matrix.' + name),
+      'aperm.matrix',
+      'aperm.array'
+    ]
+  }
+  const primitiveVectorScale = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['scale', 'scale.default'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'center', 'scale'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const boundedOption = (option: RExpr | undefined): boolean =>
+      !option ||
+      (option.kind === 'atomic' && option.logical !== undefined) ||
+      literalNumericOption(option) !== undefined
+    return (
+      boundedOption(args.get('center')) &&
+      boundedOption(args.get('scale')) &&
+      primitiveScaleMethods(expr).every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveEqualityMethods = (expr: RExpr): string[] => [
+    ...(calledName(expr) === 'all.equal'
+      ? [
+          'double',
+          'numeric',
+          'integer',
+          'logical',
+          'character',
+          'complex',
+          'raw',
+          'NULL',
+          'default'
+        ].map((name) => 'all.equal.' + name)
+      : []),
+    // A failed numeric comparison uses the default formatFUN closure, which
+    // still dispatches format on its ordinary double error value.
+    'format.double',
+    'format.numeric'
+  ]
+  const primitiveEquality = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['all.equal', 'all.equal.numeric'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    // Only target/current are positional. Options after ... must be named,
+    // and arbitrary formatting callbacks never enter this bounded contract.
+    if (expr.names.some((name, index) => index >= 2 && !name)) return false
+    const args = primitiveArguments(expr, [
+      'target',
+      'current',
+      'tolerance',
+      'scale',
+      'countEQ',
+      'check.attributes',
+      'giveErr'
+    ])
+    if (
+      !args ||
+      !atomicValueExpression(args.get('target')) ||
+      !atomicValueExpression(args.get('current'))
+    )
+      return false
+    const isFalse = (value: RExpr | undefined): boolean =>
+      value?.kind === 'atomic' && value.logical === false
+    if (!isFalse(args.get('check.attributes'))) return false
+    if (['countEQ', 'giveErr'].some((key) => args.has(key) && !isFalse(args.get(key)))) return false
+    const tolerance = args.get('tolerance')
+    const toleranceValue = literalNumericOption(tolerance)
+    const scale = args.get('scale')
+    const scaleValue = literalNumericOption(scale)
+    return (
+      (!tolerance || (toleranceValue !== undefined && toleranceValue >= 0)) &&
+      (!scale || scale.kind === 'null' || (scaleValue !== undefined && scaleValue > 0)) &&
+      primitiveEqualityMethods(expr).every((method) => contractAvailable(method, undefined, 'base'))
+    )
+  }
+  const primitiveTruthPredicate = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (
+      !isCall(expr) ||
+      !name ||
+      !['isTRUE', 'isFALSE'].includes(name) ||
+      !intactBaseCall(expr, name)
+    )
+      return false
+    const args = primitiveArguments(expr, ['x'])
+    // Classed logical values can dispatch length/is.na methods inside isTRUE.
+    return !!args && atomicValueExpression(args.get('x'))
+  }
+  const primitiveMedian = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'median', ['x', 'na.rm'])
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    const removeMissing = args.get('na.rm')
+    return (
+      !removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined)
+    )
+  }
+  const primitiveRanks = (expr: RExpr): boolean => {
+    if (!isCall(expr) || !intactBaseCall(expr, 'rank')) return false
+    const args = primitiveArguments(expr, ['x', 'na.last', 'ties.method'])
+    if (!args || !atomicValueExpression(args.get('x'))) return false
+    const missing = args.get('na.last')
+    if (
+      missing &&
+      !(missing.kind === 'atomic' && missing.logical !== undefined) &&
+      !(isCharacter(missing) && missing.value === 'keep')
+    )
+      return false
+    const ties = args.get('ties.method')
+    // Random ties consume RNG state. Exact deterministic options avoid that
+    // effect; primitive input rules out is.na/ordering class dispatch.
+    return (
+      !ties ||
+      (isCharacter(ties) && ['average', 'first', 'last', 'min', 'max'].includes(ties.value))
+    )
+  }
+  const primitiveSecondMoment = (expr: RExpr): boolean => {
+    const name = calledName(expr)
+    if (name !== 'sd' && name !== 'var' && name !== 'cov' && name !== 'cor') return false
+    const parameters =
+      name === 'sd'
+        ? ['x', 'na.rm']
+        : name === 'var'
+          ? ['x', 'y', 'na.rm', 'use']
+          : ['x', 'y', 'use', 'method']
+    const args = primitiveStatisticsArguments(expr, name, parameters)
+    if (!args) return false
+    const other = args.get('y')
+    // Correlation/covariance start with two proven vectors. Matrix-only input
+    // and data-frame coercion require their own shape/class evidence.
+    if ((name === 'cov' || name === 'cor') && (!other || other.kind === 'null')) return false
+    if (other && !atomicValueExpression(other)) return false
+    const removeMissing = args.get('na.rm')
+    if (removeMissing && (removeMissing.kind !== 'atomic' || removeMissing.logical === undefined))
+      return false
+    const use = args.get('use')
+    if (
+      use &&
+      (!isCharacter(use) ||
+        ![
+          'all.obs',
+          'complete.obs',
+          'pairwise.complete.obs',
+          'everything',
+          'na.or.complete'
+        ].includes(use.value))
+    )
+      return false
+    const method = args.get('method')
+    if (
+      method &&
+      (!isCharacter(method) || !['pearson', 'spearman', 'kendall'].includes(method.value))
+    )
+      return false
+    // rank/NA handling resolves inside stats. Atomic inputs prevent class
+    // dispatch; no caller-visible rank or na.omit method is certified here.
+    // cov explicitly rejects pairwise rank methods, unlike cor.
+    return !(
+      name === 'cov' &&
+      isCharacter(method) &&
+      method.value !== 'pearson' &&
+      isCharacter(use) &&
+      use.value === 'pairwise.complete.obs'
+    )
+  }
+  const primitiveWeightedMean = (expr: RExpr): boolean => {
+    if (!isCall(expr)) return false
+    // na.rm follows ... in weighted.mean.default: positional arguments cannot
+    // bind it. Do not silently reinterpret an ignored dots argument as na.rm.
+    const positional = expr.args.filter((_, index) => !expr.names[index]).length
+    const namedInputs = ['x', 'w'].filter((name) => expr.names.includes(name)).length
+    if (positional > 2 - namedInputs) return false
+    const args = primitiveStatisticsArguments(expr, 'weighted.mean', ['x', 'w', 'na.rm'])
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    const weights = args.get('w')
+    const removeMissing = args.get('na.rm')
+    return (
+      (!weights || atomicValueExpression(weights)) &&
+      (!removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined))
+    )
+  }
+  const primitiveFiveNumberSummary = (expr: RExpr): boolean => {
+    const args = primitiveStatisticsArguments(expr, 'fivenum', ['x', 'na.rm'])
+    if (!args || !primitiveStatisticMethodsAvailable(expr)) return false
+    // The internal sort identity is lexical, but its implicit class methods
+    // remain caller-visible even for the shared ordinary atomic input proof.
+    const removeMissing = args.get('na.rm')
+    return (
+      !removeMissing || (removeMissing.kind === 'atomic' && removeMissing.logical !== undefined)
+    )
+  }
+  const primitiveDifferenceMethods = (): string[] =>
+    [
+      'double',
+      'numeric',
+      'integer',
+      'logical',
+      'complex',
+      'character',
+      'raw',
+      'NULL',
+      'default'
+    ].map((type) => 'diff.' + type)
+  const primitiveDifference = (expr: RExpr): boolean => {
+    if (
+      !isCall(expr) ||
+      !intactBaseCall(expr, 'diff') ||
+      !primitiveDifferenceMethods().every((method) => contractAvailable(method, undefined, 'base'))
+    )
+      return false
+    const args = primitiveArguments(expr, ['x', 'lag', 'differences'])
+    if (!args) return false
+    // Use the shared proof for CSV extraction and nested ordinary expressions.
+    // diff uses S3 even for unclassed vectors, so implicit methods above must
+    // remain intact independently of the input's copy-on-modify ownership.
+    if (!atomicValueExpression(args.get('x'))) return false
+    return ['lag', 'differences'].every((name) => {
+      const value = args.get(name)
+      return (
+        !value ||
+        (value.kind === 'atomic' &&
+          value.number !== undefined &&
+          Number.isInteger(value.number) &&
+          value.number > 0)
+      )
+    })
   }
 
   const staticScalarExpression = (expr: RExpr | null | undefined): boolean => {
@@ -3888,6 +5167,30 @@ const analyzeRSource = (
     }
     if (!isCall(expr)) return null
     if (readOnlyRuntimeQuery(expr)) return []
+    if (primitiveDifference(expr)) return []
+    if (primitiveInterquartileRange(expr)) return []
+    if (
+      primitiveDoublePredicate(expr) ||
+      primitiveDoubleCoercion(expr) ||
+      primitiveMedianDeviation(expr) ||
+      primitiveQuantiles(expr) ||
+      primitiveMedian(expr) ||
+      primitivePValueAdjustment(expr) ||
+      primitiveNormalDistribution(expr) ||
+      primitiveCentralDistribution(expr) ||
+      primitiveGammaDistribution(expr) ||
+      primitivePoissonDistribution(expr) ||
+      primitiveMean(expr) ||
+      primitiveVectorScale(expr) ||
+      primitiveEquality(expr) ||
+      primitiveTruthPredicate(expr) ||
+      primitiveCumulativeStatistic(expr) ||
+      primitiveRanks(expr) ||
+      primitiveSecondMoment(expr) ||
+      primitiveWeightedMean(expr) ||
+      primitiveFiveNumberSummary(expr)
+    )
+      return []
     const resultName = calledName(expr)
     if (resultName === 'venn.diagram' && ordinaryVennFilePlot(expr)) return []
     if (ordinaryVennDataCall(expr)) return []
@@ -3920,10 +5223,15 @@ const analyzeRSource = (
     }
     if (
       serializedReader(expr) &&
+      (calledName(expr) !== 'readRDS' || rRdsOptionsAreClosed(expr)) &&
       (() => {
         const reader = serializedReader(expr)!
         const value = serializedValuePaths.get(
-          serializedPath(expr.args[callbackArgumentIndex(expr, ['file'], [])]) ?? ''
+          serializedPath(
+            calledName(expr) === 'readRDS'
+              ? rConnectionIoArguments(expr)?.get('file')
+              : expr.args[callbackArgumentIndex(expr, ['file'], [])]
+          ) ?? ''
         )
         return value?.format === reader.format && value.valueType === 'r-value'
       })()
@@ -5273,6 +6581,7 @@ const analyzeRSource = (
     staticScalarNames.delete(name)
     literalLabelNames.delete(name)
     atomicValueNames.delete(name)
+    atomicCSVTableNames.delete(name)
     staticStrings.delete(name)
     staticCollections.delete(name)
     localInputHandleNames.delete(name)
@@ -5470,11 +6779,289 @@ const analyzeRSource = (
       safeCallNames.push(quoted.dependency)
       return
     }
+    if (
+      [
+        'source',
+        'sys.source',
+        'load',
+        'attach',
+        'eval',
+        'evalq',
+        'assign',
+        'do.call',
+        'makeActiveBinding'
+      ].includes(calledName(expr) ?? '')
+    ) {
+      atomicCSVTableNames.clear()
+      csvColumnProofRevoked = true
+    }
+    if (
+      callOperator(expr) === '[' &&
+      atomicCSVTableExpression(expr.args[0]) &&
+      (expr.staticBuiltinShadowed ||
+        !csvSubsetMethods.every((name) => contractAvailable(name, undefined, 'base')))
+    ) {
+      used.push(...csvSubsetMethods)
+      priorUsed.push(...csvSubsetMethods.filter((name) => !defined.includes(name)))
+      unknown.push('opaque-call')
+      for (const argument of expr.args) walk(argument)
+      return
+    }
+    const columnDependencies =
+      atomicCSVColumnDependencies(expr) ?? csvSubsetResult(expr)?.dependencies
+    if (columnDependencies) {
+      used.push(...columnDependencies)
+      priorUsed.push(...columnDependencies.filter((name) => !defined.includes(name)))
+      safeCallNames.push(...columnDependencies)
+      walk(expr.args[0])
+      if (callOperator(expr) !== '$') for (const argument of expr.args.slice(1)) walk(argument)
+      return
+    }
     let op = callOperator(expr)
     const qualified = qualifiedCall(expr)
     if (!op && qualified && knownQualifiedCall(qualified.package, qualified.name))
       op = qualified.name
     const dependencyName = qualified ? `${qualified.package}::${qualified.name}` : op
+    if (
+      calledName(expr) === 'read.csv' &&
+      contractAvailable('read.csv', qualified?.package, 'utils')
+    ) {
+      const method = 'type.convert.character'
+      used.push(method)
+      if (!defined.includes(method)) priorUsed.push(method)
+      if (contractAvailable(method, undefined, 'utils')) safeCallNames.push(method)
+      else unknown.push('opaque-call')
+    }
+    if (calledName(expr) === 'order') {
+      const dependency = qualified ? qualified.package + '::order' : 'order'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveOrder(expr)) safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      for (const argument of expr.args) walk(argument)
+      return
+    }
+    const robustStatistic = calledName(expr)
+    if (
+      robustStatistic === 'all.equal' ||
+      robustStatistic === 'all.equal.numeric' ||
+      robustStatistic === 'isTRUE' ||
+      robustStatistic === 'isFALSE'
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveEquality(expr) || primitiveTruthPredicate(expr)) {
+        const methods = robustStatistic.startsWith('all.equal')
+          ? primitiveEqualityMethods(expr)
+          : []
+        used.push(...methods)
+        priorUsed.push(...methods.filter((name) => !defined.includes(name)))
+        safeCallNames.push(dependency, ...methods)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'scale' || robustStatistic === 'scale.default') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveVectorScale(expr)) {
+        const methods = primitiveScaleMethods(expr)
+        used.push(...methods)
+        priorUsed.push(...methods.filter((name) => !defined.includes(name)))
+        safeCallNames.push(dependency, ...methods)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'mean.default' || robustStatistic === 'mean') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveMean(expr)) {
+        safeCallNames.push(dependency)
+        if (robustStatistic === 'mean') {
+          const methods = primitiveMeanMethods()
+          used.push(...methods)
+          priorUsed.push(...methods.filter((method) => !defined.includes(method)))
+          safeCallNames.push(...methods)
+        }
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'is.double' && intactBaseCall(expr, 'is.double')) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveDoublePredicate(expr)) {
+        safeCallNames.push(dependency)
+        for (const argument of expr.args)
+          if (isSymbol(argument)) safeCallArgumentNames.push(argument.name)
+      } else unknown.push('opaque-call')
+      const argumentReceiverStart = receiverCalls.length
+      expr.args.forEach((argument) => walk(argument))
+      // The predicate's contract does not certify generic calls evaluated
+      // inside its argument. Preserve their unproved external effects.
+      if (receiverCalls.slice(argumentReceiverStart).some((call) => call.kind === 'generic'))
+        unknown.push('opaque-call')
+      return
+    }
+    if (
+      robustStatistic === 'as.double' ||
+      (robustStatistic === 'as.numeric' &&
+        expr.args.some((argument) =>
+          ['scale', 'scale.default'].includes(calledName(argument) ?? '')
+        ))
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveDoubleCoercion(expr)) safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'prod') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveSummary(expr)) safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic && cumulativeStatistics.has(robustStatistic)) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveCumulativeStatistic(expr)) safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (
+      robustStatistic === 'p.adjust' ||
+      robustStatistic === 'pnorm' ||
+      robustStatistic === 'dnorm' ||
+      robustStatistic === 'qnorm' ||
+      (robustStatistic && centralDistributionCalls.has(robustStatistic)) ||
+      (robustStatistic && gammaDistributionCalls.has(robustStatistic)) ||
+      (robustStatistic && poissonDistributionCalls.has(robustStatistic))
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (
+        robustStatistic === 'p.adjust'
+          ? primitivePValueAdjustment(expr)
+          : poissonDistributionCalls.has(robustStatistic)
+            ? primitivePoissonDistribution(expr)
+            : gammaDistributionCalls.has(robustStatistic)
+              ? primitiveGammaDistribution(expr)
+              : centralDistributionCalls.has(robustStatistic)
+                ? primitiveCentralDistribution(expr)
+                : primitiveNormalDistribution(expr)
+      )
+        safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'median' || robustStatistic === 'rank') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (robustStatistic === 'median' ? primitiveMedian(expr) : primitiveRanks(expr)) {
+        safeCallNames.push(dependency)
+        if (robustStatistic === 'median') recordPrimitiveStatisticMethods(expr)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (
+      robustStatistic === 'sd' ||
+      robustStatistic === 'var' ||
+      robustStatistic === 'cov' ||
+      robustStatistic === 'cor'
+    ) {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      // Internal variance/coercion calls resolve in stats, not the caller's
+      // global environment. Atomic inputs rule out class dispatch here.
+      if (primitiveSecondMoment(expr)) safeCallNames.push(dependency)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'weighted.mean' || robustStatistic === 'fivenum') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (
+        robustStatistic === 'weighted.mean'
+          ? primitiveWeightedMean(expr)
+          : primitiveFiveNumberSummary(expr)
+      ) {
+        safeCallNames.push(dependency)
+        recordPrimitiveStatisticMethods(expr)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (robustStatistic === 'mad' || robustStatistic === 'quantile') {
+      const dependency = qualified ? `${qualified.package}::${robustStatistic}` : robustStatistic
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (robustStatistic === 'mad' ? primitiveMedianDeviation(expr) : primitiveQuantiles(expr)) {
+        safeCallNames.push(dependency)
+        recordPrimitiveStatisticMethods(expr)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (calledName(expr) === 'IQR') {
+      const dependency = qualified ? `${qualified.package}::IQR` : 'IQR'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveInterquartileRange(expr)) {
+        safeCallNames.push(dependency)
+        recordPrimitiveStatisticMethods(expr)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (calledName(expr) === 'diff') {
+      const dependency = qualified ? `${qualified.package}::diff` : 'diff'
+      used.push(dependency)
+      if (!defined.includes(dependency)) priorUsed.push(dependency)
+      if (primitiveDifference(expr)) {
+        const containsRange = (value: RExpr): boolean =>
+          isCall(value) && (calledName(value) === 'range' || value.args.some(containsRange))
+        const methods = [
+          ...primitiveDifferenceMethods(),
+          ...(expr.args.some(containsRange) ? ['range.default'] : [])
+        ]
+        safeCallNames.push(dependency, ...methods)
+        used.push(...methods)
+        priorUsed.push(...methods)
+      } else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument))
+      return
+    }
+    if (
+      qualified?.package === 'stats' &&
+      R_MODEL_INSPECTORS.has(qualified.name) &&
+      isCall(expr.callee) &&
+      (expr.callee.staticBuiltinShadowed ||
+        !contractAvailable(expr.callee.operator ?? '', undefined, 'base'))
+    ) {
+      unknown.push('opaque-call')
+      for (const argument of expr.args) walk(argument)
+      return
+    }
     const solverValue = [...R_OPAQUE_CALLBACK_CAPTURE_CALLS].find(
       ([name, contract]) =>
         (op === '::' || op === ':::') &&
@@ -5559,6 +7146,22 @@ const analyzeRSource = (
     }
     if (op && !qualified) recordPackageRead(op)
     if (
+      op &&
+      R_CONNECTION_IO_PARAMETERS.has(op) &&
+      contractAvailable(op, qualified?.package, 'base') &&
+      (qualified || !expr.staticBuiltinShadowed) &&
+      (!rConnectionIoArguments(expr) ||
+        (['saveRDS', 'readRDS'].includes(op) && !rRdsOptionsAreClosed(expr)))
+    ) {
+      invalidateSerializedValues()
+      used.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      unknown.push('external-state', 'opaque-call')
+      expr.args.forEach((argument) => walk(argument, false))
+      invalidateSerializedValues()
+      return
+    }
+    if (
       op === 'write' &&
       contractAvailable(op, qualified?.package, 'base') &&
       !atomicValueExpression(expr.args[callbackArgumentIndex(expr, ['x'], [])])
@@ -5567,6 +7170,33 @@ const analyzeRSource = (
       // dispatch a user method. Preserve the known destination without claiming
       // that an arbitrary object's formatting has no additional effects.
       unknown.push('opaque-call')
+    }
+    if (qualified?.package === 'tools' && qualified.name === 'md5sum' && dependencyName) {
+      used.push(dependencyName)
+      if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      const argument = expr.args[0]
+      const single = rStaticString(argument, staticStrings, staticCollections)
+      const paths =
+        rStaticStringCollection(argument, staticStrings, staticCollections)?.values ??
+        (single !== undefined ? [single] : undefined)
+      const namespaceOperator = isCall(expr.callee) ? expr.callee.operator : undefined
+      if (
+        !expr.staticBuiltinShadowed &&
+        !(isCall(expr.callee) && expr.callee.staticBuiltinShadowed) &&
+        namespaceOperator &&
+        contractAvailable(namespaceOperator, undefined, 'base') &&
+        expr.args.length === 1 &&
+        (!expr.names[0] || expr.names[0] === 'files') &&
+        paths &&
+        paths.length <= MAX_STATIC_FILE_LOOP_ITERATIONS &&
+        paths.every(
+          (path) => path.length > 0 && !path.includes('\0') && !isExternalNotebookPath(path)
+        )
+      )
+        safeCallNames.push(dependencyName)
+      else unknown.push('opaque-call')
+      expr.args.forEach((argument) => walk(argument, false))
+      return
     }
     // Record ownership at serialization time, not the variable's final cell value.
     const fileEffect = op ? rFileCallEffect(op, qualified?.package) : undefined
@@ -5591,8 +7221,11 @@ const analyzeRSource = (
           qualified?.package,
           op === 'saveRDS' ? 'base' : op === 'qsave' ? 'qs' : 'readr'
         ) &&
-        copyOnModifySources(expr.args[callbackArgumentIndex(expr, ['object', 'x'], [])])?.length ===
-          0
+        copyOnModifySources(
+          op === 'saveRDS'
+            ? rConnectionIoArguments(expr)?.get('object')
+            : expr.args[callbackArgumentIndex(expr, ['object', 'x'], [])]
+        )?.length === 0
       ) {
         const value: NotebookSerializedValue = {
           path,
@@ -5606,7 +7239,9 @@ const analyzeRSource = (
     if (op && ['readRDS', 'read_rds', 'qread'].includes(op))
       serializedValueReads.add(
         rStaticString(
-          expr.args[callbackArgumentIndex(expr, ['file'], [])],
+          op === 'readRDS'
+            ? rConnectionIoArguments(expr)?.get('file')
+            : expr.args[callbackArgumentIndex(expr, ['file'], [])],
           staticStrings,
           staticCollections
         ) ?? '<dynamic>'
@@ -5983,6 +7618,37 @@ const analyzeRSource = (
     if (
       op &&
       ['na.omit', 'na.exclude'].includes(op) &&
+      contractAvailable(op, qualified?.package, 'stats')
+    ) {
+      const dependencies =
+        primitiveNAActionDependencies(expr) ?? primitiveNAActionDependencies(expr, 'atomic')
+      if (dependencies) {
+        const calls = [dependencyName!, ...dependencies]
+        used.push(...calls)
+        priorUsed.push(...calls.filter((name) => !defined.includes(name)))
+        safeCallNames.push(...calls)
+        for (const argument of expr.args) walk(argument)
+        return
+      }
+      const object = expr.args[callbackArgumentIndex(expr, ['object'], [])]
+      const table = atomicCSVTableExpression(object)
+      const atomic = !table && atomicValueExpression(object)
+      if (
+        (table || atomic) &&
+        (table ? csvNAActionMethods(op) : atomicS3Methods(op)).some(
+          (name) =>
+            !contractAvailable(
+              name,
+              undefined,
+              atomic || name === op + '.data.frame' ? 'stats' : 'base'
+            )
+        )
+      )
+        unknown.push('opaque-call')
+    }
+    if (
+      op &&
+      ['na.omit', 'na.exclude'].includes(op) &&
       contractAvailable(op, qualified?.package, 'stats') &&
       copyOnModifySources(expr.args[0])?.length === 0
     ) {
@@ -6008,6 +7674,23 @@ const analyzeRSource = (
     if (op === 'p.adjust' && !contractAvailable(op, qualified?.package, 'stats'))
       unknown.push('opaque-call')
 
+    if (
+      ['untar', 'unzip', 'tar'].includes(op ?? qualified?.name ?? '') &&
+      contractAvailable((op ?? qualified?.name)!, qualified?.package, 'utils') &&
+      (qualified || !expr.staticBuiltinShadowed) &&
+      !(isCall(expr.callee) && expr.callee.staticBuiltinShadowed)
+    ) {
+      // Archive operations can replace serialized files and aliases. Keep the
+      // existing opaque-call boundary, including for custom/external backends.
+      invalidateSerializedValues()
+      used.push(dependencyName!)
+      if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
+      unknown.push('external-state', 'opaque-call')
+      for (const argument of expr.args) walk(argument, false)
+      invalidateSerializedValues()
+      return
+    }
+
     const fileMutation = rPrimitiveFileMutation(expr, staticStrings, staticCollections)
     if (fileMutation) {
       const removedPaths = rExactUnlinkPaths(expr, staticStrings, staticCollections)
@@ -6032,6 +7715,12 @@ const analyzeRSource = (
       contractAvailable(op!, qualified?.package, externalPackage)
     if (
       externalCall &&
+      (op !== 'dir.create' ||
+        (!expr.staticBuiltinShadowed &&
+          (!qualified ||
+            (isCall(expr.callee) &&
+              !expr.callee.staticBuiltinShadowed &&
+              contractAvailable(expr.callee.operator ?? '', undefined, 'base'))))) &&
       expr.args.every(
         (arg) =>
           arg.kind === 'atomic' ||
@@ -6044,6 +7733,14 @@ const analyzeRSource = (
       if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
       safeCallNames.push(dependencyName!)
       unknown.push('external-state')
+      for (const argument of expr.args) walk(argument, false)
+      return
+    }
+
+    if (externalCall && op === 'dir.create') {
+      // Unknown path/options can invoke conversion methods or force promises.
+      // Only the primitive-argument branch above preserves unrelated bindings.
+      unknown.push('external-state', 'opaque-call')
       for (const argument of expr.args) walk(argument, false)
       return
     }
@@ -6316,6 +8013,7 @@ const analyzeRSource = (
           const literalLabel = literalLabelValue(value)
           // Read RHS knowledge before invalidating the target: x <- x * pi is
           // an ordinary value transformation, not an unresolved self-reference.
+          const atomicTable = atomicCSVTableExpression(value)
           const atomicValue = atomicValueExpression(value)
           const scalarValue = staticScalarExpression(value)
           const nonemptyIterable = staticNonemptyIterable(value)
@@ -6336,6 +8034,7 @@ const analyzeRSource = (
           if (controlDepth === 0 && independentTheme) themeIndependentPlots.add(name)
           if (controlDepth === 0 && literalLabel) literalLabelNames.add(name)
           if (controlDepth === 0 && atomicValue) atomicValueNames.add(name)
+          if (controlDepth === 0 && atomicTable) atomicCSVTableNames.add(name)
           if (controlDepth === 0 && staticString !== undefined)
             staticStrings.set(name, staticString)
           if (controlDepth === 0 && staticCollection) staticCollections.set(name, staticCollection)
@@ -6375,8 +8074,35 @@ const analyzeRSource = (
             else copyOnModifyBindings.push({ target: name, sourceNames: copySources })
           }
           r6Summary = value ? summarizeR6(name, value) : null
+          const inputSensitiveReference = isSymbol(value)
+            ? inputSensitiveStatistics.has(value.name) &&
+              contractAvailable(value.name, undefined, 'base')
+            : isCall(value) &&
+              ['::', ':::'].includes(callOperator(value) ?? '') &&
+              isSymbol(value.args[0]) &&
+              isSymbol(value.args[1]) &&
+              value.args[0].name ===
+                ([
+                  'dnorm',
+                  'qnorm',
+                  ...centralDistributionCalls,
+                  ...gammaDistributionCalls,
+                  ...poissonDistributionCalls
+                ].includes(value.args[1].name)
+                  ? 'stats'
+                  : 'base') &&
+              inputSensitiveStatistics.has(value.args[1].name)
           const callable =
             summarizeCallback(value) ??
+            // An alias has no proven input type. Preserve that uncertainty in
+            // its callable summary so later cells cannot certify class methods.
+            (inputSensitiveReference
+              ? {
+                  name: '__call__',
+                  effect: 'unknown' as const,
+                  unknownScope: 'namespace' as const
+                }
+              : undefined) ??
             (isCall(value) &&
             calledName(value) === 'function' &&
             !localFileWrappers.effects.has(name)
@@ -6459,6 +8185,12 @@ const analyzeRSource = (
             if (aliasedCallbackDefinition && controlDepth === 0)
               callbackDefinitions.set(name, aliasedCallbackDefinition)
             const source = value.name
+            // A proven ordinary value copy still consumes its producer. Keep
+            // that read when the projector discharges reference-style aliasing.
+            if (atomicValue && copySources?.length === 0) {
+              used.push(source)
+              if (!definedBefore.includes(source)) priorUsed.push(source)
+            }
             const canonical = aliases.get(source)
             const resolved = canonical ? canonical.source : source
             if (controlDepth > 0) addPossibleAlias(name, resolved)
@@ -6502,12 +8234,14 @@ const analyzeRSource = (
             controlDepth === 0 &&
             (targetOperator === '[' || targetOperator === '[[') &&
             contractAvailable(`${targetOperator}<-`, qualifiedCall(target)?.package, 'base') &&
+            atomicValueNames.has(name) &&
             atomicValueExpression(target) &&
             atomicValueExpression(value)
           staticStrings.delete(name)
           staticCollections.delete(name)
           namespaceProbePackages.delete(name)
           atomicValueNames.delete(name)
+          atomicCSVTableNames.delete(name)
           if (atomicReplacement) atomicValueNames.add(name)
           literalLabelNames.delete(name)
           staticScalarNames.delete(name)
@@ -6652,6 +8386,11 @@ const analyzeRSource = (
         callbackDefinitions.delete(name)
       }
       if (!name) {
+        // Unknown replacement functions (including class<- and attr<-) can
+        // turn a primitive vector into an object with arbitrary S3 methods.
+        // Do not use pre-replacement type evidence later in the same cell.
+        atomicValueNames.clear()
+        atomicCSVTableNames.clear()
         // An unknown replacement can change a callable body or environment. Keep
         // its RHS reads, then withdraw old authority without certifying a new body.
         const callableTypes = new Set([...functions.values()].map((summary) => summary.name))
@@ -6717,6 +8456,23 @@ const analyzeRSource = (
       return
     }
     if (op === 'subset' && contractAvailable(op, qualified?.package, 'base')) {
+      const proof = csvSubsetCallProof(expr)
+      if (proof) {
+        const dependencies = [dependencyName!, ...proof]
+        used.push(...dependencies)
+        priorUsed.push(...dependencies.filter((name) => !defined.includes(name)))
+        safeCallNames.push(...dependencies)
+        // These expressions are safe in either the primitive-column mask or the
+        // proven caller environment; retain strong producer dependencies.
+        for (const argument of expr.args) walk(argument)
+        return
+      }
+      const data = expr.args[callbackArgumentIndex(expr, ['x'], [])]
+      if (
+        atomicCSVTableExpression(data) &&
+        csvSubsetCallMethods.some((name) => !contractAvailable(name, undefined, 'base'))
+      )
+        unknown.push('opaque-call')
       used.push(dependencyName!)
       if (!defined.includes(dependencyName!)) priorUsed.push(dependencyName!)
       safeCallNames.push(dependencyName!)
@@ -7155,10 +8911,50 @@ const analyzeRSource = (
     if (modelMask.has(op) && dependencyName) {
       used.push(dependencyName)
       if (!defined.includes(dependencyName)) priorUsed.push(dependencyName)
+      const parameters = rModelArguments(expr, op)
+      if (
+        !parameters ||
+        !contractAvailable(op, qualified?.package, 'stats') ||
+        expr.staticBuiltinShadowed ||
+        (isCall(expr.callee) &&
+          (expr.callee.staticBuiltinShadowed ||
+            !contractAvailable(expr.callee.operator ?? '', undefined, 'base')))
+      ) {
+        unknown.push('opaque-call')
+        for (const argument of expr.args) walk(argument)
+        return
+      }
       safeCallNames.push(dependencyName)
       for (let index = 0; index < expr.args.length; index += 1) {
-        if (expr.names[index] === 'data') walk(expr.args[index], false)
-        else walkDataMask(expr.args[index], true)
+        const parameter = parameters[index]!
+        const argument = expr.args[index]!
+        const familyConstructor =
+          op === 'glm' && parameter === 'family' && opaqueSolverArgumentsPreserveCallbacks(expr)
+            ? directGaussianIdentityFamily(argument)
+            : undefined
+        if (familyConstructor) {
+          used.push(familyConstructor)
+          if (!defined.includes(familyConstructor)) priorUsed.push(familyConstructor)
+          safeCallNames.push(familyConstructor)
+          continue
+        }
+        if (
+          ['subset', 'weights', 'offset', 'etastart', 'mustart'].includes(parameter) ||
+          (parameter === 'formula' && callOperator(argument) === '~')
+        ) {
+          walkDataMask(argument, true)
+        } else {
+          walk(argument, false)
+          // These values can invoke user functions while fitting. Reading the
+          // binding is definite, but does not certify its transitive file effects.
+          if (
+            ['na.action', 'family', 'contrasts'].includes(parameter) ||
+            (parameter === 'method' &&
+              !(isCharacter(argument) && op === 'lm' && argument.value === 'qr'))
+          ) {
+            unknown.push('opaque-call')
+          }
+        }
       }
       return
     }
@@ -7208,6 +9004,36 @@ const analyzeRSource = (
     const inspectorInput = ['head', 'tail'].includes(op)
       ? expr.args[callbackArgumentIndex(expr, ['x'], [])]
       : expr.args[0]
+    if (
+      ['head', 'tail'].includes(op) &&
+      dependencyName &&
+      contractAvailable(op, qualified?.package, 'utils')
+    ) {
+      const dependencies =
+        primitiveHeadTailDependencies(expr) ?? primitiveHeadTailDependencies(expr, 'atomic')
+      if (dependencies) {
+        const calls = [dependencyName, ...dependencies]
+        used.push(...calls)
+        priorUsed.push(...calls.filter((name) => !defined.includes(name)))
+        safeCallNames.push(...calls)
+        for (const argument of expr.args) walk(argument)
+        return
+      }
+      const table = atomicCSVTableExpression(inspectorInput)
+      const atomic = !table && atomicValueExpression(inspectorInput)
+      if (
+        (table || atomic) &&
+        (table ? csvHeadTailMethods(op) : atomicS3Methods(op)).some(
+          (name) =>
+            !contractAvailable(
+              name,
+              undefined,
+              atomic || name === op + '.data.frame' ? 'utils' : 'base'
+            )
+        )
+      )
+        unknown.push('opaque-call')
+    }
     if (op === 'sign' && !contractAvailable(op, qualified?.package, 'base'))
       unknown.push('opaque-call')
     if (
@@ -7628,7 +9454,20 @@ const analyzeRSource = (
     })),
     ...possibleAliases
   ]
+  const publishedAtomicTables =
+    !csvColumnProofRevoked &&
+    receiverCalls.length === 0 &&
+    unknown.every((reason) => reason === 'external-state')
+      ? [...atomicCSVTableNames].filter(
+          (name) =>
+            defined.includes(name) &&
+            !conditionallyDefined.has(name) &&
+            !mutated.includes(name) &&
+            !possiblyMutated.includes(name)
+        )
+      : []
   const facts = {
+    ...(publishedAtomicTables.length ? { rAtomicTableNames: publishedAtomicTables.sort() } : {}),
     ...(serializedValueWrites.size
       ? { serializedValueWrites: [...serializedValueWrites.values()] }
       : {}),
@@ -8761,6 +10600,86 @@ const rCsvTableWriterArguments = (
   }
 }
 
+const R_CONNECTION_IO_PARAMETERS = new Map<string, readonly string[]>([
+  ['writeBin', ['object', 'con', 'size', 'endian', 'useBytes']],
+  ['readBin', ['con', 'what', 'n', 'size', 'signed', 'endian']],
+  ['readChar', ['con', 'nchars', 'useBytes']],
+  ['writeChar', ['object', 'con', 'nchars', 'eos', 'useBytes']],
+  ['readLines', ['con', 'n', 'ok', 'warn', 'encoding', 'skipNul']],
+  ['writeLines', ['text', 'con', 'sep', 'useBytes']],
+  ['saveRDS', ['object', 'file', 'ascii', 'version', 'compress', 'refhook']],
+  ['readRDS', ['file', 'refhook']]
+])
+
+const rConnectionIoArguments = (
+  expr: Extract<RExpr, { kind: 'call' }>
+): Map<string, RExpr> | undefined => {
+  const name = rCalledName(expr) ?? ''
+  const parameters = R_CONNECTION_IO_PARAMETERS.get(name)
+  if (
+    !parameters ||
+    expr.args.length > parameters.length ||
+    expr.args.some(
+      (argument) =>
+        isSymbol(argument) && (!argument.name || /^(?:\.\.\.|\.\.[1-9]\d*)$/u.test(argument.name))
+    )
+  )
+    return undefined
+  const matched = new Map<string, RExpr>()
+  // R gives exact names priority over partial names, then fills remaining
+  // formals with positionals. In readBin(size=1, s=FALSE), s means signed.
+  for (const [index, name] of expr.names.entries()) {
+    if (!name || !parameters.includes(name)) continue
+    if (matched.has(name)) return undefined
+    matched.set(name, expr.args[index]!)
+  }
+  for (const [index, name] of expr.names.entries()) {
+    if (!name || parameters.includes(name)) continue
+    const candidates = parameters.filter(
+      (parameter) => parameter.startsWith(name) && !matched.has(parameter)
+    )
+    if (candidates.length !== 1) return undefined
+    matched.set(candidates[0]!, expr.args[index]!)
+  }
+  const remaining = parameters.filter((parameter) => !matched.has(parameter))
+  for (const [index, argument] of expr.args.entries()) {
+    if (expr.names[index]) continue
+    const parameter = remaining.shift()
+    if (!parameter) return undefined
+    matched.set(parameter, argument)
+  }
+  // Line readers default to stdin; line writers require only text and default
+  // to stdout. RDS functions require their first formal; binary/character I/O
+  // requires both leading formals.
+  const required =
+    name === 'readLines' ? 0 : ['writeLines', 'saveRDS', 'readRDS'].includes(name) ? 1 : 2
+  return parameters.slice(0, required).every((parameter) => matched.has(parameter))
+    ? matched
+    : undefined
+}
+
+// RDS options are part of the serialization proof, not just path extraction.
+// Dynamic options and hooks may fail, dispatch user code, or truncate a target.
+const rRdsOptionsAreClosed = (expr: Extract<RExpr, { kind: 'call' }>): boolean => {
+  const matched = rConnectionIoArguments(expr)
+  if (!matched) return false
+  const hook = matched.get('refhook')
+  if (hook && hook.kind !== 'null') return false
+  if (rCalledName(expr) === 'readRDS') return true
+  const ascii = matched.get('ascii')
+  const version = matched.get('version')
+  const compress = matched.get('compress')
+  return (
+    (!ascii || (ascii.kind === 'atomic' && typeof ascii.logical === 'boolean')) &&
+    (!version ||
+      version.kind === 'null' ||
+      (version.kind === 'atomic' && [2, 3].includes(version.number ?? -1))) &&
+    (!compress ||
+      (compress.kind === 'atomic' && typeof compress.logical === 'boolean') ||
+      (compress.kind === 'character' && ['gzip', 'bzip2', 'xz'].includes(compress.value)))
+  )
+}
+
 // R matches named arguments before positional arguments. Both direct calls and
 // wrapper summaries must use this rule, including options preceding the input.
 const rFileCallArgument = (
@@ -8768,6 +10687,19 @@ const rFileCallArgument = (
   effect: NotebookFileCallEffect
 ): RExpr | undefined => {
   if (rCsvTableWriterCall(expr, effect)) return rCsvTableWriterArguments(expr)?.file
+  if (
+    effect === R_FILE_CALL_EFFECTS.get('saveRDS') ||
+    effect === R_FILE_CALL_EFFECTS.get('readRDS')
+  )
+    return rConnectionIoArguments(expr)?.get('file')
+  if (
+    effect === R_FILE_CALL_EFFECTS.get('writeBin') ||
+    effect === R_FILE_CALL_EFFECTS.get('readBin') ||
+    effect === R_FILE_CALL_EFFECTS.get('readChar') ||
+    effect === R_FILE_CALL_EFFECTS.get('readLines') ||
+    effect === R_FILE_CALL_EFFECTS.get('writeLines')
+  )
+    return rConnectionIoArguments(expr)?.get('con')
   if (effect === R_FILE_CALL_EFFECTS.get('write')) {
     const named = rOptionArgumentIndex(expr.names, 'file')
     if (named >= 0) return expr.args[named]
@@ -9018,6 +10950,10 @@ const rLocalFileWrappers = (
           ) ||
           (formals?.kind === 'formals' &&
             formals.values.some((value) => rWriterArgumentHasEffects(value, localNames))))) ||
+      // A path summary must not bypass RDS argument and serialization guards.
+      (isCall(body) &&
+        ['saveRDS', 'readRDS'].includes(name ?? '') &&
+        !rRdsOptionsAreClosed(body)) ||
       // cat's optional destination may be stdout or a pipe. A single-path
       // wrapper summary cannot preserve that destination contract.
       name === 'cat' ||
@@ -9122,6 +11058,35 @@ const analyzeRFileAccessTree = (
   expressions = expressions.map(normalizeRPipes)
   const packageInspections = rPackageInspections(expressions)
   const consoleRedirected = expressions.some(rRedirectsConsole)
+  // Relative paths no longer identify the same file across a working-directory
+  // change. Retain candidates conservatively, including dormant references and
+  // cached helpers whose namespace effects cannot be proved. Do not rebase them
+  // or turn these candidates into complete file evidence.
+  const unknownContextFunctions = new Set(
+    context?.rFunctions
+      ?.filter(({ summary }) =>
+        summary.methods.some(
+          (method) => method.effect === 'unknown' && method.unknownScope === 'namespace'
+        )
+      )
+      .map(({ name }) => name)
+  )
+  const mayChangeWorkingDirectory = (expr: RExpr): boolean => {
+    if (isSymbol(expr)) return expr.name === 'setwd' || unknownContextFunctions.has(expr.name)
+    if (expr.kind === 'formals')
+      return expr.values.some((value) => value !== null && mayChangeWorkingDirectory(value))
+    if (!isCall(expr)) return false
+    // A recognized literal glue template has its own bounded evaluation contract;
+    // its cached function deliberately carries no blanket pure-call guarantee.
+    if (rStaticGlueTemplate(expr)) return false
+    return (
+      rCalledName(expr) === 'setwd' ||
+      rQualifiedFunctionReference(expr) === 'base::setwd' ||
+      mayChangeWorkingDirectory(expr.callee) ||
+      expr.args.some(mayChangeWorkingDirectory)
+    )
+  }
+  const cwdMayChange = expressions.some(mayChangeWorkingDirectory)
   // Keep each declaration's existing contract, then activate it only when visited.
   // The final pre-scan map cannot describe calls before a later replacement.
   const wrapperDefinitions = new Map<RExpr, NotebookFileCallEffectSummary>()
@@ -9721,8 +11686,9 @@ const analyzeRFileAccessTree = (
       !shadowedQuotationNames.has(name ?? '')
     )
   }
-  // These candidates retain one known read, not a complete helper effect. They are
-  // established in statement order and never exported into the wrapper context.
+  // These candidates retain a known first read, not a complete helper effect.
+  // Only a checked numeric CSV tail permits repeating the same helper. Candidates
+  // are established in statement order and never exported into wrapper context.
   const firstReadParameters = (
     value: RExpr | undefined
   ):
@@ -9733,6 +11699,8 @@ const analyzeRFileAccessTree = (
         compressed?: true
         readLines?: true
         writes?: string[]
+        requiredBuiltins?: string[]
+        repeatableNumericCsv?: true
       }
     | undefined => {
     if (!isCall(value) || value.operator !== 'function' || value.staticBuiltinShadowed)
@@ -9773,17 +11741,87 @@ const analyzeRFileAccessTree = (
       } else first = right
     }
     if (!isCall(first)) return undefined
-    const qualified = rQualifiedCall(first)
-    const readLines = qualified?.package === 'base' && qualified.name === 'readLines'
+    // A builtin strsplit forces its character input before the builtin [[
+    // selects a header row. Only this literal wrapper is transparent here;
+    // arbitrary R calls may leave their reader promise entirely unforced.
+    const requiredBuiltins = new Set<string>()
+    const trustedBaseCall = (call: RExpr | undefined, name: string): boolean => {
+      if (!isCall(call) || call.staticBuiltinShadowed) return false
+      const qualified = rQualifiedCall(call)
+      if (qualified) {
+        if (
+          qualified.package !== 'base' ||
+          qualified.name !== name ||
+          !isCall(call.callee) ||
+          call.callee.operator !== '::' ||
+          call.callee.staticBuiltinShadowed
+        )
+          return false
+        requiredBuiltins.add('::')
+      } else {
+        if (!isSymbol(call.callee) || call.callee.name !== name) return false
+        requiredBuiltins.add(name)
+      }
+      return true
+    }
+    let nestedHeaderRead = false
+    if (first.operator === '[[') {
+      const [split, index] = first.args
+      if (
+        !trustedBaseCall(first, '[[') ||
+        first.args.length !== 2 ||
+        first.names.some(Boolean) ||
+        index?.kind !== 'atomic' ||
+        index.number !== 1 ||
+        !isCall(split) ||
+        !trustedBaseCall(split, 'strsplit') ||
+        split.args.length !== 2 ||
+        split.names.some(Boolean) ||
+        !isCharacter(split.args[1]) ||
+        !trustedBaseCall(split.args[0], 'readLines') ||
+        !isCall(split.args[0]) ||
+        formals.names.some(
+          (name) => !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(name) || /^\.\.\d+$/u.test(name)
+        ) ||
+        [...requiredBuiltins, ...firstReadPrimitives].some((name) => formals.names.includes(name))
+      )
+        return undefined
+      nestedHeaderRead = true
+      first = split.args[0]
+    }
+    // A direct bare reader forces its literal file promise just like the
+    // qualified form, but only while its lexical builtin identity is intact.
+    const bareReadLines =
+      isSymbol(first.callee) &&
+      first.callee.name === 'readLines' &&
+      trustedBaseCall(first, 'readLines')
     if (
-      (!readLines &&
-        (qualified?.package !== 'utils' || !['read.csv', 'read.table'].includes(qualified.name))) ||
-      !isCall(first.callee) ||
-      first.callee.operator !== '::'
+      bareReadLines &&
+      formals.names.some(
+        (name) =>
+          name === 'readLines' ||
+          firstReadPrimitives.has(name) ||
+          !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(name) ||
+          /^\.\.\d+$/u.test(name)
+      )
     )
       return undefined
-    if (!qualified) return undefined
-    const effect = rFileCallEffect(qualified.name, qualified.package)
+    if ([...requiredBuiltins].some((name) => shadowedQuotationNames.has(name))) return undefined
+    const qualified = rQualifiedCall(first)
+    const readLines =
+      nestedHeaderRead ||
+      bareReadLines ||
+      (qualified?.package === 'base' && qualified.name === 'readLines')
+    if (
+      !nestedHeaderRead &&
+      !bareReadLines &&
+      ((!readLines &&
+        (qualified?.package !== 'utils' || !['read.csv', 'read.table'].includes(qualified.name))) ||
+        !isCall(first.callee) ||
+        first.callee.operator !== '::')
+    )
+      return undefined
+    const effect = rFileCallEffect(qualified?.name ?? 'readLines', qualified?.package ?? 'base')
     const fileArgument = effect && rFileCallArgument(first, effect)
     let file = fileArgument
     let pathExpression: Extract<RExpr, { kind: 'call' }> | undefined
@@ -9855,6 +11893,13 @@ const analyzeRFileAccessTree = (
       if (!name) return false
       if (!readLines)
         return fixedOptions.has(name) && ['character', 'atomic', 'null'].includes(argument.kind)
+      if (name === 'n')
+        return (
+          argument.kind === 'atomic' &&
+          Number.isInteger(argument.number) &&
+          argument.number! > 0 &&
+          argument.number! <= 2147483647
+        )
       if (name === 'encoding')
         return (
           isCharacter(argument) && ['unknown', 'UTF-8', 'latin1', 'bytes'].includes(argument.value)
@@ -9874,6 +11919,65 @@ const analyzeRFileAccessTree = (
       )
     )
       return undefined
+    // A two-statement numeric CSV reader has no opaque tail: it returns the
+    // fresh header and a fixed, qualified reader of the same literal argument.
+    // This narrow proof can retain this helper across consecutive calls only.
+    const repeatableNumericCsv = (() => {
+      const assignment = body.args[0]
+      const tail = body.args[1]
+      if (
+        !nestedHeaderRead ||
+        body.args.length !== 2 ||
+        formals.names.length !== 1 ||
+        !isSymbol(file) ||
+        !isCall(assignment) ||
+        !['<-', '='].includes(assignment.operator ?? '') ||
+        assignment.staticBuiltinShadowed ||
+        assignment.args.length !== 2 ||
+        assignment.names.some(Boolean) ||
+        !isSymbol(assignment.args[0]) ||
+        !/^[A-Za-z.][A-Za-z0-9._]*$/u.test(assignment.args[0].name) ||
+        /^\.\.\d+$/u.test(assignment.args[0].name) ||
+        [...firstReadPrimitives, ...requiredBuiltins, 'list'].includes(assignment.args[0].name) ||
+        formals.names.includes('list') ||
+        !isCall(tail) ||
+        !isSymbol(tail.callee) ||
+        tail.callee.name !== 'list' ||
+        tail.staticBuiltinShadowed ||
+        tail.args.length !== 2 ||
+        tail.names.filter((name) => name === 'header').length !== 1 ||
+        tail.names.filter((name) => name === 'data').length !== 1
+      )
+        return false
+      const header = tail.args[tail.names.indexOf('header')]
+      const csv = tail.args[tail.names.indexOf('data')]
+      if (
+        !isSymbol(header) ||
+        header.name !== assignment.args[0].name ||
+        !isCall(csv) ||
+        csv.staticBuiltinShadowed ||
+        !isCall(csv.callee) ||
+        csv.callee.operator !== '::' ||
+        csv.callee.staticBuiltinShadowed ||
+        rQualifiedCall(csv)?.package !== 'utils' ||
+        rQualifiedCall(csv)?.name !== 'read.csv' ||
+        csv.args.length !== 4 ||
+        csv.names[0] !== null ||
+        !isSymbol(csv.args[0]) ||
+        csv.args[0].name !== file.name ||
+        new Set(csv.names.slice(1)).size !== 3
+      )
+        return false
+      return csv.args.slice(1).every((argument, index) => {
+        const name = csv.names[index + 1]
+        if (name === 'colClasses') return isCharacter(argument) && argument.value === 'numeric'
+        return (
+          argument.kind === 'atomic' &&
+          ((name === 'header' && argument.logical === true) ||
+            (name === 'stringsAsFactors' && argument.logical === false))
+        )
+      })
+    })()
     // A stable reader helper may also contain a fixed writer after the read.
     // Retain only destinations that are statically local and literal; this is
     // an output candidate, not a complete proof that every branch executes.
@@ -9926,6 +12030,8 @@ const analyzeRFileAccessTree = (
       ...(pathExpression ? { pathExpression } : {}),
       ...(compressed ? { compressed: true as const } : {}),
       ...(readLines ? { readLines: true as const } : {}),
+      ...(requiredBuiltins.size ? { requiredBuiltins: [...requiredBuiltins] } : {}),
+      ...(repeatableNumericCsv ? { repeatableNumericCsv: true as const } : {}),
       ...(writes.size ? { writes: [...writes] } : {})
     }
   }
@@ -9956,6 +12062,8 @@ const analyzeRFileAccessTree = (
     invocation: Extract<RExpr, { kind: 'call' }>,
     parameters: NonNullable<ReturnType<typeof firstReadParameters>>
   ): string | undefined => {
+    if (parameters.requiredBuiltins?.some((name) => shadowedQuotationNames.has(name)))
+      return undefined
     const pathForReader = (path: string): string | undefined => {
       if (!parameters.readLines && !parameters.compressed && !parameters.pathExpression) return path
       // Character connections also name streams, selections, and remote resources.
@@ -10077,6 +12185,8 @@ const analyzeRFileAccessTree = (
   const reads = new Set<string>()
   const writes = new Set<string>()
   const definitelyWritten = new Set<string>()
+  const wasDefinitelyWritten = (path: string): boolean =>
+    !cwdMayChange && definitelyWritten.has(path)
   const inMemoryInputs = new Set<string>()
   type FileConnection = { path: string; mode: string | undefined }
   const fileConnections = new Map<string, FileConnection>()
@@ -10093,9 +12203,9 @@ const analyzeRFileAccessTree = (
   // their BAM inputs without publishing reference objects across cells.
   const rsamtoolsPileupFiles = new Map<string, string[]>()
   const writeScopes = new Map<string, NotebookSourceFileWriteScope>()
-  let unresolvedReads = false
-  let unresolvedWrites = false
-  let unsupportedExternalState = false
+  let unresolvedReads = cwdMayChange
+  let unresolvedWrites = cwdMayChange
+  let unsupportedExternalState = cwdMayChange
   let directoryStateRead = false
   let staticLoopIterations = 0
   let conditionalDepth = 0
@@ -10306,7 +12416,7 @@ const analyzeRFileAccessTree = (
       unresolvedWrites = true
       for (const effect of jsonSummary.effects) {
         if (effect.kind === 'read') {
-          if (!definitelyWritten.has(effect.path)) reads.add(effect.path)
+          if (!wasDefinitelyWritten(effect.path)) reads.add(effect.path)
         } else {
           // A helper candidate never proves that the output was replaced.
           writes.add(effect.path)
@@ -10329,19 +12439,27 @@ const analyzeRFileAccessTree = (
       const candidate = isSymbol(expr.callee)
         ? firstReadCandidates.get(expr.callee.name)
         : undefined
-      // The tail is opaque, even after a known first read. Other calls can also
-      // replace a helper without receiving it as an explicit argument.
+      // Consume authority before nested promises. An opaque tail or other call
+      // can replace helpers without receiving them as explicit arguments; only
+      // the checked numeric CSV reader may restore its own candidate below.
       firstReadCandidates.clear()
       if (candidate && conditionalDepth === 0) {
         const path = firstReadPath(expr, candidate)
         unresolvedReads = true
-        if (path && !definitelyWritten.has(path)) reads.add(path)
+        if (path && !wasDefinitelyWritten(path)) reads.add(path)
         if (path && isExternalNotebookPath(path)) unsupportedExternalState = true
         if (path) {
           for (const write of candidate.writes ?? []) {
-            if (!definitelyWritten.has(write)) writes.add(write)
+            if (!wasDefinitelyWritten(write)) writes.add(write)
             if (isExternalNotebookPath(write)) unsupportedExternalState = true
           }
+          if (
+            candidate.repeatableNumericCsv &&
+            isSymbol(expr.callee) &&
+            !shadowedQuotationNames.has('list') &&
+            !shadowedQuotationNames.has('::')
+          )
+            firstReadCandidates.set(expr.callee.name, candidate)
         }
       }
       firstReadNamespaceUncertain = true
@@ -10352,7 +12470,7 @@ const analyzeRFileAccessTree = (
         unsupportedExternalState = true
         if (path) {
           if (alias.wrapper.kind === 'read') {
-            if (!definitelyWritten.has(path)) reads.add(path)
+            if (!wasDefinitelyWritten(path)) reads.add(path)
           } else {
             // A possible destination does not prove a successful replacement.
             writes.add(path)
@@ -10390,29 +12508,239 @@ const analyzeRFileAccessTree = (
       }
       return
     }
-    if (R_FILESYSTEM_MUTATIONS.has(rCalledName(expr) ?? '')) {
+    if (
+      R_FILESYSTEM_MUTATIONS.has(rCalledName(expr) ?? '') &&
+      !(
+        ['file.append', 'file.create', 'writeChar'].includes(rCalledName(expr) ?? '') &&
+        !rQualifiedCall(expr) &&
+        expr.staticBuiltinShadowed
+      )
+    ) {
+      if (rCalledName(expr) === 'writeChar') {
+        const qualified = rQualifiedCall(expr)
+        const matched = rConnectionIoArguments(expr)
+        if ((qualified ? qualified.package === 'base' : !expr.staticBuiltinShadowed) && matched) {
+          const target = matched.get('con')
+          const count = matched.get('nchars')
+          const eos = matched.get('eos')
+          const useBytes = matched.get('useBytes')
+          const connection = fileConnection(target)
+          const path = connection?.path ?? rStaticString(target, bindings, collections)
+          if (
+            (!count ||
+              (count.kind === 'atomic' &&
+                typeof count.number === 'number' &&
+                Number.isSafeInteger(count.number) &&
+                count.number >= 0)) &&
+            (!eos ||
+              eos.kind === 'null' ||
+              rStaticString(eos, bindings, collections) !== undefined) &&
+            (!useBytes || (useBytes.kind === 'atomic' && typeof useBytes.logical === 'boolean')) &&
+            path &&
+            !isExternalNotebookPath(path) &&
+            !path.includes('\0') &&
+            !path.startsWith('~')
+          ) {
+            // A destination is a possible output even when the payload is unknown.
+            // A path or unopened connection is opened for replacement. Existing
+            // append/update connections preserve bytes; unknown/closed modes
+            // cannot certify replacement. None of these candidates proves success.
+            if (
+              connection &&
+              connection.mode !== '' &&
+              !connection.mode?.startsWith('w') &&
+              !wasDefinitelyWritten(path)
+            )
+              reads.add(path)
+            writes.add(path)
+          }
+        }
+      }
+      if (
+        rCalledName(expr) === 'file.create' &&
+        rPrimitiveFileMutation(expr, bindings, collections)
+      ) {
+        const paths: string[] = []
+        let bounded = true
+        let warningsSeen = false
+        for (const [index, argument] of expr.args.entries()) {
+          // Only exact matching reaches the option after `...`. All other
+          // names, including repeated names, label path arguments.
+          if (expr.names[index] === 'showWarnings') {
+            if (warningsSeen || argument.kind !== 'atomic' || typeof argument.logical !== 'boolean')
+              bounded = false
+            warningsSeen = true
+            continue
+          }
+          if (argument.kind === 'null') continue
+          const scalar = rStaticString(argument, bindings, collections)
+          const collection = rStaticStringCollection(argument, bindings, collections)
+          if (scalar !== undefined) paths.push(scalar)
+          else if (collection?.rKind === 'vector') paths.push(...collection.values)
+          else bounded = false
+        }
+        if (
+          bounded &&
+          paths.every(
+            (path) =>
+              path && !isExternalNotebookPath(path) && !path.includes('\0') && !path.startsWith('~')
+          )
+        )
+          // Creation truncates existing files without consuming their content.
+          // Failure is still possible, so this is not definite production.
+          paths.forEach((path) => writes.add(path))
+      }
+      if (rCalledName(expr) === 'file.append') {
+        const names = expr.names.filter((name): name is string => Boolean(name))
+        if (
+          rPrimitiveFileMutation(expr, bindings, collections) &&
+          expr.args.length === 2 &&
+          names.every((name) => ['file1', 'file2'].includes(name)) &&
+          new Set(names).size === names.length
+        ) {
+          const paths = (parameter: string): readonly string[] | undefined => {
+            const argument = connectionArgument(expr, ['file1', 'file2'], parameter)
+            const scalar = rStaticString(argument, bindings, collections)
+            if (scalar !== undefined) return [scalar]
+            const collection = rStaticStringCollection(argument, bindings, collections)
+            return collection?.rKind === 'vector' ? collection.values : undefined
+          }
+          const targets = paths('file1')
+          const sources = paths('file2')
+          if (
+            targets?.length &&
+            sources?.length &&
+            [...targets, ...sources].every(
+              (path) =>
+                path &&
+                !isExternalNotebookPath(path) &&
+                !path.includes('\0') &&
+                !path.startsWith('~')
+            )
+          ) {
+            // Appending depends on existing destination content as well as the
+            // source. R recycles either vector; only file1 is mutated.
+            for (const path of [...targets, ...sources])
+              if (!wasDefinitelyWritten(path)) reads.add(path)
+            targets.forEach((path) => writes.add(path))
+          }
+        }
+      }
+      if (rCalledName(expr) === 'file.remove') {
+        if (rPrimitiveFileMutation(expr, bindings, collections)) {
+          const paths: string[] = []
+          let bounded = true
+          for (const argument of expr.args) {
+            if (argument.kind === 'null') continue
+            const scalar = rStaticString(argument, bindings, collections)
+            const collection = rStaticStringCollection(argument, bindings, collections)
+            if (scalar !== undefined) paths.push(scalar)
+            else if (collection?.rKind === 'vector') paths.push(...collection.values)
+            else bounded = false
+          }
+          if (
+            bounded &&
+            paths.every(
+              (path) =>
+                path &&
+                !isExternalNotebookPath(path) &&
+                !path.includes('\0') &&
+                !path.startsWith('~')
+            )
+          )
+            paths.forEach((path) => writes.add(path))
+        }
+        // Deletion is a mutation candidate, never proof of a generated file.
+        // Unknown arguments and aliases can also affect earlier output paths.
+        definitelyWritten.clear()
+      }
+      if (['file.rename', 'file.link'].includes(rCalledName(expr) ?? '')) {
+        const names = expr.names.filter((name): name is string => Boolean(name))
+        if (
+          rPrimitiveFileMutation(expr, bindings, collections) &&
+          expr.args.length === 2 &&
+          names.every((name) => ['from', 'to'].includes(name)) &&
+          new Set(names).size === names.length
+        ) {
+          const paths = (parameter: string): readonly string[] | undefined => {
+            const argument = connectionArgument(expr, ['from', 'to'], parameter)
+            const scalar = rStaticString(argument, bindings, collections)
+            if (scalar !== undefined) return [scalar]
+            const collection = rStaticStringCollection(argument, bindings, collections)
+            return collection?.rKind === 'vector' ? collection.values : undefined
+          }
+          const from = paths('from')
+          const to = paths('to')
+          if (
+            from?.length &&
+            to?.length === from.length &&
+            [...from, ...to].every(
+              (path) =>
+                path &&
+                !isExternalNotebookPath(path) &&
+                !path.includes('\0') &&
+                !path.startsWith('~')
+            )
+          ) {
+            for (const path of from) {
+              if (!wasDefinitelyWritten(path)) reads.add(path)
+              writes.add(path)
+            }
+            to.forEach((path) => writes.add(path))
+          }
+        }
+        // Renames can relocate outputs; hard links share content under another
+        // spelling. Neither operation proves an independent generated file.
+        definitelyWritten.clear()
+      }
       if (
         rCalledName(expr) === 'file.copy' &&
         rPrimitiveFileMutation(expr, bindings, collections)
       ) {
         const parameters = ['from', 'to', 'overwrite', 'recursive', 'copy.mode', 'copy.date']
-        const recursive = connectionArgument(expr, parameters, 'recursive')
-        if (!recursive || (recursive.kind === 'atomic' && recursive.logical === false)) {
-          const from = rStaticString(
-            connectionArgument(expr, parameters, 'from'),
-            bindings,
-            collections
-          )
-          const to = rStaticString(
-            connectionArgument(expr, parameters, 'to'),
-            bindings,
-            collections
-          )
-          if (from && to) {
-            if (!definitelyWritten.has(from)) reads.add(from)
-            writes.add(to)
-            // These are possible paths. Copying can fail, or `to` can name a directory;
-            // do not prove a generated file or waive the filesystem coverage gaps.
+        const names = expr.names.filter((name): name is string => Boolean(name))
+        const bounded =
+          expr.args.length >= 2 &&
+          expr.args.length <= parameters.length &&
+          names.every((name) => parameters.includes(name)) &&
+          new Set(names).size === names.length &&
+          parameters.slice(2).every((parameter) => {
+            const option = connectionArgument(expr, parameters, parameter)
+            return (
+              !option ||
+              (option.kind === 'atomic' &&
+                typeof option.logical === 'boolean' &&
+                (parameter !== 'recursive' || option.logical === false))
+            )
+          })
+        if (bounded) {
+          const paths = (parameter: string): readonly string[] | undefined => {
+            const argument = connectionArgument(expr, parameters, parameter)
+            const scalar = rStaticString(argument, bindings, collections)
+            if (scalar !== undefined) return [scalar]
+            const collection = rStaticStringCollection(argument, bindings, collections)
+            return collection?.rKind === 'vector' ? collection.values : undefined
+          }
+          const from = paths('from')
+          const to = paths('to')
+          if (
+            from?.length &&
+            to?.length &&
+            (to.length === 1 || to.length === from.length) &&
+            [...from, ...to].every(
+              (path) =>
+                path &&
+                !isExternalNotebookPath(path) &&
+                !path.includes('\0') &&
+                !path.startsWith('~')
+            )
+          ) {
+            from.forEach((path) => {
+              if (!wasDefinitelyWritten(path)) reads.add(path)
+            })
+            to.forEach((path) => writes.add(path))
+            // A single destination can be a directory; do not invent child paths
+            // or prove successful production from these mutation candidates.
           }
         }
       }
@@ -10429,6 +12757,111 @@ const analyzeRFileAccessTree = (
       unresolvedWrites = true
       unsupportedExternalState = true
       expr.args.forEach((argument) => visit(argument))
+      // These mutations can change earlier outputs and their aliases.
+      // Arguments may themselves write files before the mutation, so invalidate
+      // their replacement evidence only after visiting those argument effects.
+      if (
+        ['file.copy', 'file.append', 'file.create', 'writeChar'].includes(rCalledName(expr) ?? '')
+      )
+        definitelyWritten.clear()
+      return
+    }
+    const archiveOperation = rCalledName(expr)
+    if (
+      ['untar', 'unzip', 'tar'].includes(archiveOperation ?? '') &&
+      (rQualifiedCall(expr)
+        ? rQualifiedCall(expr)?.package === 'utils'
+        : !expr.staticBuiltinShadowed && !localWrappers.names.has(archiveOperation!)) &&
+      !(isCall(expr.callee) && expr.callee.staticBuiltinShadowed)
+    ) {
+      const parameters =
+        archiveOperation === 'unzip'
+          ? ['zipfile', 'files', 'list', 'overwrite', 'junkpaths', 'exdir', 'unzip', 'setTimes']
+          : archiveOperation === 'tar'
+            ? ['tarfile', 'files', 'compression', 'compression_level', 'tar', 'extra_flags']
+            : [
+                'tarfile',
+                'files',
+                'list',
+                'exdir',
+                'compressed',
+                'extras',
+                'verbose',
+                'restore_times',
+                'support_old_tars',
+                'tar'
+              ]
+      // R matches exact names first, then unique prefixes, then positionals.
+      // Reject ambiguous/duplicate matches rather than silently using defaults.
+      const names = expr.names.map((name) => {
+        if (!name || parameters.includes(name)) return name
+        const matches = parameters.filter((parameter) => parameter.startsWith(name))
+        return matches.length === 1 ? matches[0]! : name
+      })
+      const named = names.filter((name): name is string => Boolean(name))
+      if (
+        expr.args.length > 0 &&
+        expr.args.length <= parameters.length &&
+        named.every((name) => parameters.includes(name)) &&
+        new Set(named).size === named.length
+      ) {
+        // All names are already resolved. Do not re-run prefix matching: exact
+        // `tar` names the backend, never the `tarfile` archive argument.
+        const argument = (parameter: string): RExpr | undefined => {
+          const index = names.indexOf(parameter)
+          if (index >= 0) return expr.args[index]
+          const remaining = parameters.filter((name) => !names.includes(name))
+          return expr.args.filter((_value, position) => !names[position])[
+            remaining.indexOf(parameter)
+          ]
+        }
+        const archiveArgument = argument(archiveOperation === 'unzip' ? 'zipfile' : 'tarfile')
+        const archive =
+          rStaticString(archiveArgument, bindings, collections) ??
+          (archiveOperation === 'untar' ? fileConnectionPath(archiveArgument) : undefined)
+        const destinationArgument = argument('exdir')
+        const destination = destinationArgument
+          ? rStaticString(destinationArgument, bindings, collections)
+          : '.'
+        const list = argument('list')
+        const listing =
+          list?.kind === 'atomic' &&
+          (list.logical === true ||
+            (typeof list.number === 'number' && Number.isFinite(list.number) && list.number !== 0))
+        const localPath = (path: string | undefined): path is string =>
+          Boolean(
+            path && !isExternalNotebookPath(path) && !path.includes('\0') && !path.startsWith('~')
+          )
+        if (archiveOperation === 'tar') {
+          const files = argument('files')
+          const scalar = rStaticString(files, bindings, collections)
+          const collection = rStaticStringCollection(files, bindings, collections)
+          const sources =
+            scalar !== undefined
+              ? [scalar]
+              : collection?.rKind === 'vector'
+                ? collection.values
+                : []
+          for (const source of sources) if (localPath(source)) reads.add(source)
+          // An omitted/NULL selection enumerates the working directory. A named
+          // directory may recurse; neither case has statically known members.
+          if (localPath(archive)) writes.add(archive)
+        } else {
+          if (localPath(archive)) reads.add(archive)
+          if (!listing && localPath(destination)) {
+            writes.add(destination)
+            writeScopes.set(`directory\0${destination}`, { kind: 'directory', path: destination })
+          }
+        }
+      }
+      unresolvedReads = true
+      unresolvedWrites = true
+      unsupportedExternalState = true
+      // Archive candidates never establish successful file production.
+      // Arguments may establish writes before the operation, so clear both sides.
+      definitelyWritten.clear()
+      expr.args.forEach((argument) => visit(argument))
+      definitelyWritten.clear()
       return
     }
     const externalPackage = R_UNCAPTURED_EXTERNAL_CALLS.get(rCalledName(expr) ?? '')
@@ -10774,6 +13207,15 @@ const analyzeRFileAccessTree = (
           : undefined
       const aliasParameters = aliasedWrapper && aliasableWrapperParameters.get(aliasedWrapper)
       if (!(isCall(right) && right.operator === 'function')) visit(right)
+      // A self-assignment may call the old reader, but its returned list is not
+      // a callable reader for the next statement.
+      if (
+        isSymbol(left) &&
+        isCall(right) &&
+        isSymbol(right.callee) &&
+        right.callee.name === left.name
+      )
+        firstReadCandidates.delete(left.name)
       if (isSymbol(left)) {
         if (jsonPath !== undefined) stableJsonPaths.set(left.name, jsonPath)
         if (
@@ -10870,7 +13312,7 @@ const analyzeRFileAccessTree = (
         else unresolvedReads = true
       } else if (isExternalNotebookPath(connection.path)) {
         if (serialization === 'serialize') writes.add(connection.path)
-        else if (!definitelyWritten.has(connection.path)) reads.add(connection.path)
+        else if (!wasDefinitelyWritten(connection.path)) reads.add(connection.path)
         unresolvedReads = true
         unresolvedWrites = true
         unsupportedExternalState = true
@@ -10883,7 +13325,7 @@ const analyzeRFileAccessTree = (
           unsupportedExternalState = true
         } else {
           const disposition = notebookWriteDisposition({ keyword: 'mode', defaultValue: 'w' }, mode)
-          if (disposition === 'update' && !definitelyWritten.has(connection.path))
+          if (disposition === 'update' && !wasDefinitelyWritten(connection.path))
             reads.add(connection.path)
           if (disposition === 'unknown') {
             unresolvedReads = true
@@ -10898,7 +13340,7 @@ const analyzeRFileAccessTree = (
         if (!mode || !/^r|\+/u.test(mode)) {
           unresolvedReads = true
           unsupportedExternalState = true
-        } else if (!definitelyWritten.has(connection.path)) reads.add(connection.path)
+        } else if (!wasDefinitelyWritten(connection.path)) reads.add(connection.path)
       }
       expr.args.forEach((item) => visit(item))
       return
@@ -10917,7 +13359,7 @@ const analyzeRFileAccessTree = (
       const expressions = name === 'source' && connectionArgument(expr, parameters, 'exprs')
       if (!expressions) {
         const path = fileConnectionPath(file) ?? rStaticString(file, bindings, collections)
-        if (path && !definitelyWritten.has(path)) reads.add(path)
+        if (path && !wasDefinitelyWritten(path)) reads.add(path)
       }
       unresolvedReads = true
       unresolvedWrites = true
@@ -11022,6 +13464,41 @@ const analyzeRFileAccessTree = (
       if (!qualified && shadowedQuotationNames.has(name)) unsupportedExternalState = true
       else if (valueUsed) directoryStateRead = true
     }
+    if (qualified?.package === 'tools' && name === 'md5sum') {
+      // tools::md5sum reads a character vector of filenames. Do not coerce
+      // arbitrary objects or certify calls through a replaced namespace operator.
+      const trusted =
+        !expr.staticBuiltinShadowed &&
+        !(isCall(expr.callee) && expr.callee.staticBuiltinShadowed) &&
+        !rFileCallLookupDependencies(expr).some((dependency) =>
+          shadowedQuotationNames.has(dependency)
+        )
+      const closed = expr.args.length === 1 && (!expr.names[0] || expr.names[0] === 'files')
+      const argument = expr.args[0]
+      const single = trusted && closed ? rStaticString(argument, bindings, collections) : undefined
+      const paths =
+        trusted && closed
+          ? (rStaticStringCollection(argument, bindings, collections)?.values ??
+            (single !== undefined ? [single] : undefined))
+          : undefined
+      if (
+        paths &&
+        paths.length <= MAX_STATIC_FILE_LOOP_ITERATIONS &&
+        paths.every(
+          (path) => path.length > 0 && !path.includes('\0') && !isExternalNotebookPath(path)
+        )
+      ) {
+        for (const path of paths) if (!wasDefinitelyWritten(path)) reads.add(path)
+        expr.args.forEach((argument) => visit(argument))
+      } else {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        // A replaced :: can choose not to force any argument.
+        if (trusted) expr.args.forEach((argument) => visit(argument))
+      }
+      return
+    }
     const wrapper = !qualified && name ? activeWrappers.get(name) : undefined
     let call: NotebookFileCallEffect | undefined = name
       ? qualified
@@ -11076,7 +13553,7 @@ const analyzeRFileAccessTree = (
         return
       }
       const addRead = (path: string | undefined): void => {
-        if (path && !definitelyWritten.has(path)) reads.add(path)
+        if (path && !wasDefinitelyWritten(path)) reads.add(path)
       }
       if (['BcfFile', 'FaFile', 'TabixFile'].includes(rsamtoolsName)) {
         // Constructors create references; only a later reader/open operation
@@ -11394,6 +13871,42 @@ const analyzeRFileAccessTree = (
       return
     }
     let fileArgumentOverride: { value: RExpr | undefined } | undefined
+    if (
+      name &&
+      R_CONNECTION_IO_PARAMETERS.has(name) &&
+      call === R_FILE_CALL_EFFECTS.get(name) &&
+      (qualified ? qualified.package === 'base' : !expr.staticBuiltinShadowed)
+    ) {
+      const matched = rConnectionIoArguments(expr)
+      if (!matched) {
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        definitelyWritten.clear()
+        expr.args.forEach((argument) => visit(argument))
+        definitelyWritten.clear()
+        return
+      }
+      fileArgumentOverride = { value: matched.get('con') ?? matched.get('file') }
+      if (['saveRDS', 'readRDS'].includes(name) && !rRdsOptionsAreClosed(expr)) {
+        // Keep bounded candidates, but a failed writer may already have changed
+        // bytes. Neither this call nor its nested arguments establishes a producer.
+        unresolvedReads = true
+        unresolvedWrites = true
+        unsupportedExternalState = true
+        definitelyWritten.clear()
+        const path =
+          fileConnectionPath(matched.get('file')) ??
+          rStaticString(matched.get('file'), bindings, collections)
+        if (path && !isExternalNotebookPath(path) && !path.includes('\0')) {
+          if (name === 'readRDS') reads.add(path)
+          else writes.add(path)
+        }
+        expr.args.forEach((argument) => visit(argument))
+        definitelyWritten.clear()
+        return
+      }
+    }
     if (name === 'HDF5Array' || name === 'writeHDF5Array') {
       // These contracts apply only to HDF5Array's explicit file arguments.
       // Delayed operations and the package's default dump destination remain
@@ -11503,7 +14016,7 @@ const analyzeRFileAccessTree = (
             const metadata = rStaticString(phenotype, bindings, collections)
             if (path !== undefined && literalLocalPath(metadata)) {
               const input = path === '.' ? metadata : `${path}/${metadata}`
-              if (!definitelyWritten.has(input)) reads.add(input)
+              if (!wasDefinitelyWritten(input)) reads.add(input)
             }
             unresolvedReads = true
           } else if (isNull(files) || path === undefined) {
@@ -11525,7 +14038,7 @@ const analyzeRFileAccessTree = (
             else
               for (const file of paths) {
                 const input = path === '.' ? file : `${path}/${file}`
-                if (!definitelyWritten.has(input)) reads.add(input)
+                if (!wasDefinitelyWritten(input)) reads.add(input)
               }
           }
           expr.args.forEach((argument) => visit(argument))
@@ -11746,7 +14259,7 @@ const analyzeRFileAccessTree = (
         const extraPath =
           fileConnectionPath(extraArgument) ?? rStaticString(extraArgument, bindings, collections)
         if (!extraPath) unresolvedReads = true
-        else if (!definitelyWritten.has(extraPath)) reads.add(extraPath)
+        else if (!wasDefinitelyWritten(extraPath)) reads.add(extraPath)
       }
       const argument = fileArgumentOverride
         ? fileArgumentOverride.value
@@ -11756,7 +14269,11 @@ const analyzeRFileAccessTree = (
             ? pathArgument(call)
             : rFileCallArgument(expr, call)
       if (!argument && call.pathOptional) {
-        if (call === R_FILE_CALL_EFFECTS.get('cat'))
+        // A console destination does not skip evaluation of the supplied text.
+        if (
+          call === R_FILE_CALL_EFFECTS.get('cat') ||
+          call === R_FILE_CALL_EFFECTS.get('writeLines')
+        )
           expr.args.forEach((argument) => visit(argument))
         return
       }
@@ -11803,7 +14320,7 @@ const analyzeRFileAccessTree = (
           paths.every((path): path is string => path !== undefined)
         ) {
           for (const path of paths) {
-            if (!definitelyWritten.has(path)) reads.add(path)
+            if (!wasDefinitelyWritten(path)) reads.add(path)
             if (isExternalNotebookPath(path)) {
               unresolvedReads = true
               unsupportedExternalState = true
@@ -11910,11 +14427,11 @@ const analyzeRFileAccessTree = (
         const arrowPaths = rStaticStringCollection(arrowArgument, bindings, collections)?.values
         if (arrowPaths) {
           for (const arrowPath of arrowPaths)
-            if (!definitelyWritten.has(arrowPath)) reads.add(arrowPath)
+            if (!wasDefinitelyWritten(arrowPath)) reads.add(arrowPath)
         } else {
           const arrowPath =
             fileConnectionPath(arrowArgument) ?? rStaticString(arrowArgument, bindings, collections)
-          if (arrowPath !== undefined && !definitelyWritten.has(arrowPath)) reads.add(arrowPath)
+          if (arrowPath !== undefined && !wasDefinitelyWritten(arrowPath)) reads.add(arrowPath)
         }
       }
       // A device path may be a printf page template or a shell pipe, not an
@@ -11998,7 +14515,7 @@ const analyzeRFileAccessTree = (
                       connection.mode
                     )
               : rWriterDisposition(expr, name!, bindings, call)
-            if (disposition === 'update' && !definitelyWritten.has(path)) reads.add(path)
+            if (disposition === 'update' && !wasDefinitelyWritten(path)) reads.add(path)
             if (disposition === 'unknown') {
               unresolvedReads = true
               unresolvedWrites = true
@@ -12040,7 +14557,7 @@ const analyzeRFileAccessTree = (
             // transitive inputs require runtime enumeration.
             unresolvedReads = true
           }
-          if (!definitelyWritten.has(path)) reads.add(path)
+          if (!wasDefinitelyWritten(path)) reads.add(path)
         }
       }
     }
@@ -12094,7 +14611,8 @@ const analyzeRSources = async (
         context?.resolvedKernelNames,
         context?.rAtomicValueNames,
         context?.rCopyOnModifyNames,
-        context?.verifiedSerializedValues
+        context?.verifiedSerializedValues,
+        context?.rAtomicTableNames
       )
     )
     results.push(
@@ -12125,7 +14643,8 @@ const analyzeRNotebookSource = async (
       context?.resolvedKernelNames,
       context?.rAtomicValueNames,
       context?.rCopyOnModifyNames,
-      context?.verifiedSerializedValues
+      context?.verifiedSerializedValues,
+      context?.rAtomicTableNames
     )
     const fileContext = fileContextForFacts ? fileContextForFacts(facts) : context
     // The public caller filters whole-cell definitions from its other context.

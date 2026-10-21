@@ -2003,7 +2003,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     }
   )
 
-  it('persists a scalar record path without persisting its rows or selected row', async () => {
+  it('persists a scalar record path and immutable rows without persisting the selected row', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-record-path-context-'))
     temporaryRoots.push(storageRoot)
     const analyzedRun = run(
@@ -2035,7 +2035,16 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       })
     ).resolves.toMatchObject({
       staticStrings: [{ name: 'target_path', value: 'outputs/target-0.50.txt' }],
-      staticCollections: []
+      staticCollections: [
+        {
+          name: 'records',
+          values: ['outputs/target-0.25.txt', '0.25', 'outputs/target-0.50.txt', '0.50'],
+          tupleRows: [
+            ['outputs/target-0.25.txt', '0.25'],
+            ['outputs/target-0.50.txt', '0.50']
+          ]
+        }
+      ]
     })
   })
 
@@ -7733,7 +7742,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
     )
   })
 
-  it('classifies an ordinary ggplot2 pie chart without marking it unknown', async () => {
+  it('retains unproven cumulative column dispatch in an ordinary ggplot2 pie chart', async () => {
     const storageRoot = await mkdtemp(join(tmpdir(), 'open-science-r-ggplot2-pie-'))
     temporaryRoots.push(storageRoot)
     const completedRun = {
@@ -7779,7 +7788,11 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       interpreter: unusedR
     })
 
-    expect(projection.stalenessByRunId['run-1']).toEqual({ state: 'clear' })
+    // Column-level primitive evidence is required to rule out Math dispatch.
+    expect(projection.stalenessByRunId['run-1']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
   })
 
   it('separates ggplot2 data-mask columns from explicit environment dependencies', async () => {
@@ -8042,7 +8055,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       storageRoot,
       repository: { readSessionRuns: vi.fn(async () => runs) }
     })
-    const scripts = ['f <- mean', 'x <- 1\nresult <- f(x)', 'f <- sum']
+    const scripts = ['f <- sum', 'x <- 1\nresult <- f(x)', 'f <- length']
     let projection
     for (const [index, script] of scripts.entries()) {
       const completedRun = {
@@ -8458,7 +8471,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       storageRoot,
       repository: { readSessionRuns: vi.fn(async () => runs) }
     })
-    const scripts = ['library(custompkg)', 'data <- mean()']
+    const scripts = ['library(custompkg)', 'data <- sum(c(1,2,3))']
     let projection
     for (const [index, script] of scripts.entries()) {
       const completedRun = {
@@ -8489,7 +8502,7 @@ describe('projectNotebookDependencies', { timeout: 60_000 }, () => {
       storageRoot,
       repository: { readSessionRuns: vi.fn(async () => runs) }
     })
-    const scripts = ['.GlobalEnv$mean <- custom_loader', 'data <- mean()']
+    const scripts = ['.GlobalEnv$mean <- custom_loader', 'data <- sum(c(1,2,3))']
     let projection
     for (const [index, script] of scripts.entries()) {
       const completedRun = {

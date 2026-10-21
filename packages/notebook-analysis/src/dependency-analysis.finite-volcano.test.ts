@@ -12,7 +12,7 @@ it.each(cells.filter((c) => c.kernelKind === 'r' && c.status === 'completed'))(
   'captures reported finite volcano cell $runId',
   async ({ script, runId }) => {
     const { facts } = await analyzeRNotebookSource(script)
-    if (runId === '8') {
+    if (runId === '6' || runId === '8') {
       expect(facts, JSON.stringify(facts)).toMatchObject({
         state: 'unknown',
         reasons: expect.arrayContaining(['opaque-call'])
@@ -66,8 +66,11 @@ it('keeps the finite-filtered plot uncertain after pre-dispatch installation rej
       sessionId: 's',
       completedRun: runs.at(-1)!
     })
-    expect(projection.stalenessByRunId['7']).toEqual({ state: 'clear' })
-    expect(projection.dependenciesByRunId?.['7']).toEqual([])
+    expect(projection.stalenessByRunId['7']).toMatchObject({
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
+    })
+    expect(projection.dependenciesByRunId?.['7']).toBeUndefined()
     expect(projection.stalenessByRunId['8'], JSON.stringify(projection)).toMatchObject({
       state: 'unknown',
       reasons: expect.arrayContaining(['opaque-call'])
@@ -87,7 +90,7 @@ it.each([
   expect(
     facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
     JSON.stringify(facts)
-  ).toEqual([])
+  ).toEqual(script.includes('mean(') ? ['opaque-call'] : [])
 })
 
 it('does not infer a primitive finite mask from table ownership', async () => {
