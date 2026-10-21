@@ -311,11 +311,13 @@ export const SessionDiagnosticsDialog = ({
         <Dialog.Overlay className={dialogOverlayClassName} />
         <Dialog.Content
           className={dialogPanelClassName(
-            'flex max-h-[min(760px,calc(100svh-2rem))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
+            'flex max-h-[min(760px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0'
           )}
           onInteractOutside={(event) => event.preventDefault()}
         >
-          <div className={`${dialogHeaderClassName} flex-col items-stretch`}>
+          <div
+            className={`${dialogHeaderClassName} flex-col items-stretch [@media(max-height:480px)]:py-2`}
+          >
             <div className="flex w-full items-start justify-between gap-3">
               <div className="flex min-w-0 items-center gap-2">
                 <Dialog.Title className={dialogTitleClassName}>
@@ -355,7 +357,7 @@ export const SessionDiagnosticsDialog = ({
           {(busy || result || error) && (
             <div
               data-testid="diagnostics-feedback"
-              className="shrink-0 space-y-3 border-b border-border-300/90 px-5 py-3.5"
+              className="shrink-0 space-y-3 border-b border-border-300/90 px-5 py-3.5 [@media(max-height:480px)]:py-2"
             >
               {busy && (
                 <ErrorNotice
@@ -439,7 +441,7 @@ export const SessionDiagnosticsDialog = ({
           )}
           <div
             data-testid="diagnostics-sources"
-            className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto`}
+            className={`${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto [@media(max-height:480px)]:py-2`}
           >
             <div className="space-y-7">
               {sections
@@ -651,7 +653,7 @@ export const SessionDiagnosticsDialog = ({
               </p>
             )}
           </div>
-          <div className={dialogFooterClassName}>
+          <div className={`${dialogFooterClassName} [@media(max-height:480px)]:py-2`}>
             <Button variant="outline" onClick={() => void close()}>
               {busy ? t('Cancel') : t('Close')}
             </Button>

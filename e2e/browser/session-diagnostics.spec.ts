@@ -56,6 +56,15 @@ for (const size of [
             const sources = node.querySelector('[data-testid="diagnostics-sources"]')!
             const feedback = node.querySelector('[data-testid="diagnostics-feedback"]')!
             return {
+              top: node.getBoundingClientRect().top,
+              bottom: node.getBoundingClientRect().bottom,
+              viewportHeight: innerHeight,
+              titlebarHeight:
+                parseFloat(
+                  getComputedStyle(document.documentElement).getPropertyValue(
+                    '--windows-titlebar-height'
+                  )
+                ) || 0,
               overflowX: node.scrollWidth - node.clientWidth,
               overflowY: node.scrollHeight - node.clientHeight,
               feedbackBottom: feedback.getBoundingClientRect().bottom,
@@ -64,6 +73,8 @@ for (const size of [
               sourceScrollTop: sources.scrollTop
             }
           })
+          expect(metrics.top).toBeGreaterThanOrEqual(metrics.titlebarHeight + 15)
+          expect(metrics.bottom).toBeLessThanOrEqual(metrics.viewportHeight - 15)
           expect(metrics.overflowX).toBeLessThanOrEqual(1)
           expect(metrics.overflowY).toBeLessThanOrEqual(1)
           expect(metrics.feedbackBottom).toBeLessThanOrEqual(metrics.sourcesTop)
@@ -87,4 +98,17 @@ test('preparation feedback stays above the checklist', async ({ page }) => {
     ratio: 1
   })
   await expect(dialog.getByRole('button', { name: 'Export', exact: true })).toBeDisabled()
+})
+
+test('Windows fullscreen uses the full content safe area', async ({ page }) => {
+  await page.setViewportSize({ width: 560, height: 420 })
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/session-diagnostics.html?windows&fullscreen')
+  const dialog = page.getByRole('dialog', { name: 'Export diagnostics', exact: true })
+  await dialog.getByRole('button', { name: 'Export', exact: true }).click()
+  await expect(dialog.getByTestId('diagnostics-feedback')).toBeInViewport({ ratio: 1 })
+  const bounds = await dialog.boundingBox()
+  expect(bounds!.y).toBeGreaterThanOrEqual(15)
+  expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(405)
+  expect(bounds!.height).toBeGreaterThan(352)
 })

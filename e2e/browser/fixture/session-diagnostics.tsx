@@ -6,6 +6,10 @@ import type { SessionDiagnosticExportResult } from '../../../src/shared/session-
 
 const params = new URLSearchParams(location.search)
 if (params.has('dark')) document.documentElement.classList.add('dark')
+if (params.has('windows'))
+  document.documentElement.dataset.windowsTitlebar = params.has('fullscreen')
+    ? 'fullscreen'
+    : 'restored'
 initI18n('en')
 const outcome = params.get('outcome') ?? 'exported'
 const path = params.has('windows')
