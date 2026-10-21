@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
+import { reviewNativeTableSources } from './literature-pdf-table-source-integrity.mjs'
 import {
   recoverCaptionedRuledTables as recoverExistingCaptionedRuledTables,
   boundNativeSideBySideTable,
@@ -14993,9 +14994,11 @@ export function refineTable(
       terminalRecordSeed,
       rulePaintBounds
     ) ?? wrappedHeaderResult
-  const finalResult =
+  const finalResult = reviewNativeTableSources(
     recoverNativeRuledGroupedStubSpans(calibratedResult, table, pageItems, sourceRules) ??
-    calibratedResult
+      calibratedResult,
+    originalPageItems
+  )
   const nativeCellProof = proveNativeFinalWholeCellSources(finalResult, originalPageItems)
   // Ambiguity review can use a complete header/ordinary numeric peer component
   // even when unrelated body cells have measured source segments. The default
@@ -16534,6 +16537,73 @@ function nativeLoweredTerminalScriptRuns(items, runs, options) {
       r.glyphRuns.every((n) => Number.isInteger(n) && n >= 0) &&
       r.glyphRuns.length === r.literalGlyphs.reduce((n, g) => n + [...g].length, 0) &&
       r.literalGlyphs.join('') === r.text.replace(/\s/gu, '')
+  // Complete-record recovery rebuilds the cells and can lose a shallow script
+  // already established by native adjacency. Restore only a whole two-item
+  // mathematical owner with matching original glyph programs; the generic
+  // script threshold and ordinary smaller baseline text remain unchanged.
+  if (
+    Array.isArray(items) &&
+    items.length === 2 &&
+    items.every(font) &&
+    Array.isArray(runs) &&
+    runs.length === 1 &&
+    runs[0].position === 'normal'
+  ) {
+    const [base, suffix] = [...items].sort((a, b) => a.rect[0] - b.rect[0]),
+      cell = options.sourceCell,
+      source = options.sourcePrograms,
+      pair = [base, suffix]
+    if (
+      /^\p{Ll}$/u.test(base.text) &&
+      /^[\p{L}\p{N}](?: ?[\p{L}\p{N}]){0,2}$/u.test(suffix.text) &&
+      suffix.baseline > base.baseline &&
+      isAdjacentTableScript(suffix, base) &&
+      runs[0].text === base.text + suffix.text &&
+      rect(cell?.rect) &&
+      cell.sourceItems?.length === 2 &&
+      cell.sourceRects?.length === 2 &&
+      cell.sourceTokens?.length === 2 &&
+      Array.isArray(source) &&
+      pair.every(
+        (item) =>
+          item.sourceItem?.text === item.text &&
+          Number.isSafeInteger(item.sourceItem.index) &&
+          item.sourceItem.index >= 0 &&
+          Number.isSafeInteger(item.sourceItem.pageNumber) &&
+          item.sourceItem.pageNumber > 0 &&
+          cell.sourceItems.filter(
+            (s) =>
+              s.pageNumber === item.sourceItem.pageNumber &&
+              s.index === item.sourceItem.index &&
+              s.text === item.text
+          ).length === 1 &&
+          cell.sourceRects.filter((r) => sameRect(r, item.rect)).length === 1 &&
+          cell.sourceTokens.filter(
+            (t) =>
+              font(t) &&
+              t.text === item.text &&
+              sameRect(t.rect, item.rect) &&
+              same(t.baseline, item.baseline) &&
+              same(t.height, item.height)
+          ).length === 1 &&
+          item.rect.every((v, n) => (n < 2 ? v >= cell.rect[n] : v <= cell.rect[n])) &&
+          source.filter(
+            (p) =>
+              program(p) &&
+              p.text === item.text &&
+              sameRect(p.rect, item.rect) &&
+              same(p.height, item.height) &&
+              same(p.baseline, item.baseline)
+          ).length === 1
+      ) &&
+      base.sourceItem.pageNumber === suffix.sourceItem.pageNumber &&
+      base.sourceItem.index !== suffix.sourceItem.index
+    )
+      return [
+        { text: base.text, position: 'normal' },
+        { text: suffix.text, position: 'subscript' }
+      ]
+  }
   if (!Array.isArray(items) || items.length !== 3 || !items.every(font)) return
   if (
     !Array.isArray(runs) ||

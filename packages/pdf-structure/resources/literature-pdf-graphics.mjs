@@ -315,7 +315,14 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
     } else if (op === OPS.clip || op === OPS.eoClip) pendingClip = true
     else if (
       op === OPS.constructPath &&
-      [OPS.stroke, OPS.fill, OPS.fillStroke, OPS.eoFillStroke].includes(args[0]) &&
+      [
+        OPS.stroke,
+        OPS.fill,
+        OPS.fillStroke,
+        OPS.eoFillStroke,
+        OPS.closeFillStroke,
+        OPS.closeEOFillStroke
+      ].includes(args[0]) &&
       args[1]?.length === 1
     ) {
       const nativePath = args[1][0]
@@ -331,8 +338,12 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
       if (args[0] !== OPS.fill && (!(strokeAlpha > 0) || !Number.isFinite(strokeAlpha))) continue
       // A fill-and-stroke operation really paints its closed perimeter. A
       // fill alone still requires the separate hollow-contour proof below.
+      // Closing paint variants use the same validators, which require an
+      // explicit closePath. The paint opcode alone does not prove a contour.
       if (
-        [OPS.fillStroke, OPS.eoFillStroke].includes(args[0]) &&
+        [OPS.fillStroke, OPS.eoFillStroke, OPS.closeFillStroke, OPS.closeEOFillStroke].includes(
+          args[0]
+        ) &&
         (!(lineWidth > 0) || !Number.isFinite(lineWidth))
       )
         continue
@@ -466,11 +477,10 @@ export function collectClosedFigureFrames(operators, viewport, paintEvidence) {
       // Rotate its exact commands to the corner-first form below; a trailing
       // move without a painted segment contributes no edge or frame evidence.
       if (
-        path.length === 47 &&
+        (path.length === 44 || (path.length === 47 && path[44] === 0)) &&
         path[0] === 0 &&
         path[3] === 1 &&
         path[43] === 4 &&
-        path[44] === 0 &&
         [6, 16, 26, 36].every((n) => path[n] === 2) &&
         [13, 23, 33].every((n) => path[n] === 1) &&
         path.every(Number.isFinite) &&

@@ -34,7 +34,7 @@ const blocked = (rect, caption, captions, tables) =>
 // Three independently painted source rasters can have two native title rows.
 // Complete raw text/image operations, unique source-font rows, and one caption
 // jointly own the plate; missing evidence retains every legacy matcher.
-function nativeKeyedRasterTextProfile(context, page, completeRasterPlate = false) {
+function nativeKeyedRasterTextProfile(context, page, completeRasterPlate = false, plateBand) {
   const nums = (a, n) => Array.isArray(a) && a.length === n && a.every(Number.isFinite)
   const ops = context?.operators,
     vp = context?.viewport
@@ -73,6 +73,61 @@ function nativeKeyedRasterTextProfile(context, page, completeRasterPlate = false
   for (let i = 0; i < ops.fnArray.length; i++) {
     const op = ops.fnArray[i],
       a = ops.argsArray[i]
+    // An isolated, restored horizontal margin rule cannot belong to the plate.
+    // Consume only this complete grammar, including its actual stroke domain;
+    // arbitrary paths, inherited dash/alpha and clipping remain unsupported.
+    if (
+      plateBand &&
+      op === OPS.save &&
+      ops.fnArray[i + 1] === OPS.transform &&
+      ops.fnArray[i + 2] === OPS.setDash &&
+      ops.fnArray[i + 3] === OPS.setLineCap &&
+      ops.fnArray[i + 4] === OPS.setLineWidth &&
+      ops.fnArray[i + 5] === OPS.constructPath &&
+      ops.fnArray[i + 6] === OPS.restore
+    ) {
+      const m = ops.argsArray[i + 1],
+        dash = ops.argsArray[i + 2],
+        cap = ops.argsArray[i + 3],
+        stroke = ops.argsArray[i + 4],
+        path = ops.argsArray[i + 5],
+        points = path?.[1]?.[0]
+      if (
+        text ||
+        !empty(a) ||
+        !empty(ops.argsArray[i + 6]) ||
+        !nums(m, 6) ||
+        m[0] !== 1 ||
+        m[1] !== 0 ||
+        m[2] !== 0 ||
+        m[3] !== 1 ||
+        !Array.isArray(dash) ||
+        dash.length !== 2 ||
+        !Array.isArray(dash[0]) ||
+        dash[0].length ||
+        dash[1] !== 0 ||
+        !nums(cap, 1) ||
+        cap[0] !== 0 ||
+        !nums(stroke, 1) ||
+        stroke[0] <= 0 ||
+        path?.length !== 3 ||
+        path[0] !== OPS.stroke ||
+        path[1]?.length !== 1 ||
+        !(points instanceof Float32Array) ||
+        points.length !== 6 ||
+        !Array.from(points).every(Number.isFinite) ||
+        points[0] !== 0 ||
+        points[3] !== 1 ||
+        points[2] !== points[5] ||
+        points[1] >= points[4]
+      )
+        return
+      const y = page.height - ctm[3] * (m[5] + points[2]) - ctm[5],
+        radius = (ctm[3] * stroke[0]) / 2
+      if (!(y + radius < plateBand[1] || y - radius > plateBand[3])) return
+      i += 6
+      continue
+    }
     if (op === OPS.save) {
       if (!empty(a) || text) return
       saved.push({ matrix: [...ctm], size })
@@ -933,7 +988,8 @@ export function nativeCaptionedAlignedRasterPair(
   tables,
   ownedRects = [],
   nativeTokens = [],
-  closedFrames = []
+  closedFrames = [],
+  operatorContext
 ) {
   if (
     caption?.page !== page.pageNumber ||
@@ -1008,6 +1064,15 @@ export function nativeCaptionedAlignedRasterPair(
   if (keyedRow) return keyedRow
   const completeRows = nativeCompletePaintedRasterRows(page, caption, captions, tables, ownedRects)
   if (completeRows) return completeRows
+  const nativePlate = nativeCompleteRasterPaintPlate(
+    page,
+    caption,
+    captions,
+    tables,
+    ownedRects,
+    operatorContext
+  )
+  if (nativePlate) return nativePlate
   if (images.length !== 2 || images[0].hash === images[1].hash) return
   const bounds = union(images.map((g) => g.rect))
   const [first, second] = images.map((g) => g.rect).sort((a, b) => a[0] - b[0])
@@ -1094,6 +1159,181 @@ export function nativeCaptionedAlignedRasterPair(
     reason: 'native-aligned-raster-pair',
     ...(excludedProseLines.length ? { excludedProseLines } : {})
   }
+}
+
+// Complete raster operations can prove a two-row plate without decoded hashes.
+// This path owns no native text: every glyph in the image-to-caption corridor
+// must be absent, and every original image is bound to its exact paint operation.
+function nativeCompleteRasterPaintPlate(page, caption, captions, tables, ownedRects, context) {
+  const valid = (r) =>
+    Array.isArray(r) && r.length === 4 && r.every(Number.isFinite) && r[2] > r[0] && r[3] > r[1]
+  const raw = context?.content?.items,
+    styles = context?.content?.styles
+  if (
+    !context ||
+    !Array.isArray(raw) ||
+    !styles ||
+    page.rotation !== 0 ||
+    page.renderRotation !== 0 ||
+    page.invalidGraphicsBounds !== 0 ||
+    ![2, 3].includes(page.graphicsBounds?.length) ||
+    captions.filter((c) => c.page === page.pageNumber).length !== 1 ||
+    captions.find((c) => c.page === page.pageNumber) !== caption ||
+    !valid(caption.rect) ||
+    !Array.isArray(page.lines) ||
+    tables.some((r) => !valid(r)) ||
+    ownedRects.some((r) => !valid(r))
+  )
+    return
+  const images = page.graphicsBounds.map((g) => {
+    if (
+      g.kind !== 'image' ||
+      !Number.isSafeInteger(g.operationIndex) ||
+      !valid(g.normalizedRect) ||
+      !valid(g.paintedNormalizedRect) ||
+      !contains([0, 0, 1, 1], g.normalizedRect) ||
+      !contains(g.normalizedRect, g.paintedNormalizedRect)
+    )
+      return
+    return {
+      g,
+      rect: g.paintedNormalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+    }
+  })
+  if (
+    images.some((i) => !i) ||
+    new Set(images.map((i) => i.g.operationIndex)).size !== images.length
+  )
+    return
+  // Caption grouping renders proved raised numeric exponents. Undo only that
+  // presentation when comparing its original rows; no compatibility folding.
+  const spelling = (s) =>
+    s
+      .replace(/[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]/gu, (c) => (c === '⁻' ? '−' : String('⁰¹²³⁴⁵⁶⁷⁸⁹'.indexOf(c))))
+      .replace(/\s/gu, '')
+  const rows = groupPageLines(page),
+    captionRows = caption.lines.map((s) =>
+      rows.filter(
+        (l) =>
+          spelling(l.text) === spelling(s) &&
+          contains(caption.rect, [l.x, l.y, l.right, l.bottom], 1e-8)
+      )
+    )
+  if (captionRows.some((r) => r.length !== 1)) return
+  if (
+    rows.some(
+      (l) =>
+        intersection([l.x, l.y, l.right, l.bottom], caption.rect) > 0 &&
+        !captionRows.some((r) => r[0] === l)
+    )
+  )
+    return
+  const font = Math.max(...captionRows.map((r) => r[0].fontSize))
+  if (
+    !(font > 0) ||
+    !Number.isFinite(font) ||
+    page.lines.some(
+      (l) =>
+        typeof l.text !== 'string' ||
+        !valid(lineRect(l)) ||
+        (intersection(lineRect(l), caption.rect) > 0 &&
+          (!contains(caption.rect, lineRect(l), 1e-8) || l.height < l.fontSize - 0.02))
+    )
+  )
+    return
+  const sorted = [...images].sort((a, b) => a.rect[1] - b.rect[1]),
+    bottom = sorted.at(-1).rect,
+    top = sorted.slice(0, -1).map((i) => i.rect),
+    bounds = union(images.map((i) => i.rect)),
+    upper = union(top),
+    width = (r) => r[2] - r[0],
+    height = (r) => r[3] - r[1]
+  if (
+    images.some((i) => width(i.rect) < font * 8 || height(i.rect) < font * 6) ||
+    top.some(
+      (r) =>
+        Math.abs(r[1] - top[0][1]) > font ||
+        Math.abs(r[3] - top[0][3]) > font ||
+        height(r) / height(bottom) < 0.75 ||
+        height(r) / height(bottom) > 1.25
+    ) ||
+    bottom[1] - upper[3] < font * 0.2 ||
+    bottom[1] - upper[3] > font * 3 ||
+    Math.abs((upper[0] + upper[2] - bottom[0] - bottom[2]) / 2) > font ||
+    !contains([upper[0], 0, upper[2], page.height], bottom, font * 0.25) ||
+    (top.length === 1 &&
+      (Math.abs(top[0][0] - bottom[0]) > font * 0.25 ||
+        Math.abs(top[0][2] - bottom[2]) > font * 0.25)) ||
+    (top.length === 2 &&
+      (Math.abs(width(top[0]) - width(top[1])) > font ||
+        [...top].sort((a, b) => a[0] - b[0])[1][0] - [...top].sort((a, b) => a[0] - b[0])[0][2] <=
+          0 ||
+        upper[2] - upper[0] - width(top[0]) - width(top[1]) > font * 4)) ||
+    bounds[3] - bounds[1] > page.height * 0.7 ||
+    bounds[0] < caption.rect[0] ||
+    bounds[2] > caption.rect[2] ||
+    caption.rect[1] - bounds[3] < font * 0.2 ||
+    caption.rect[1] - bounds[3] > font * 3 ||
+    ownedRects.some((r) => intersection(r, bounds) > 0)
+  )
+    return
+  const corridor = [caption.rect[0], bounds[1], caption.rect[2], caption.rect[1]]
+  if (
+    blocked(corridor, caption, captions, tables) ||
+    page.lines.some((l) => l.text.trim() && intersection(lineRect(l), corridor) > 0)
+  )
+    return
+  const profile = nativeKeyedRasterTextProfile(context, page, false, corridor)
+  if (
+    !profile ||
+    profile.images.length !== images.length ||
+    profile.literal !==
+      raw
+        .map((i) => i.str ?? '')
+        .join('')
+        .replace(/\s/gu, '')
+  )
+    return
+  for (const image of images) {
+    const ops = profile.images.filter((op) => op.operationIndex === image.g.operationIndex)
+    if (ops.length !== 1) return
+    const op = ops[0],
+      quantized = image.g.normalizedRect.map((v, i) => v * (i % 2 ? page.height : page.width))
+    if (
+      !contains(op.rect, image.rect, 1e-8) ||
+      !contains(quantized, op.rect, 1e-8) ||
+      op.rect.some((v, i) => Math.abs(v - quantized[i]) > (i % 2 ? page.height : page.width) / 128)
+    )
+      return
+  }
+  for (const item of raw) {
+    if (!item.str?.trim()) continue
+    const m = item.transform,
+      style = styles[item.fontName]
+    if (
+      item.dir !== 'ltr' ||
+      style?.vertical ||
+      !Array.isArray(m) ||
+      m.length !== 6 ||
+      !m.every(Number.isFinite) ||
+      m[0] <= 0 ||
+      m[3] <= 0 ||
+      m[1] ||
+      m[2] ||
+      !Number.isFinite(item.width) ||
+      item.width <= 0 ||
+      !Number.isFinite(style?.ascent) ||
+      !Number.isFinite(style?.descent) ||
+      style.ascent <= 0 ||
+      style.descent > 0 ||
+      style.descent < -1
+    )
+      return
+    const baseline = page.height - m[5],
+      r = [m[4], baseline - style.ascent * m[3], m[4] + item.width, baseline - style.descent * m[3]]
+    if (!valid(r) || intersection(r, corridor) > 0) return
+  }
+  return { caption, rect: bounds, graphicsCount: images.length }
 }
 
 // Two whole decoded painted images can form one unkeyed vertical plate. Native
@@ -3198,7 +3438,7 @@ export function nativeCaptionedVectorChartStrip(
   const excludedProse = closedRow
     ? page.lines.filter(
         (line) =>
-          nativeTopParagraphTail(line, stripBounds, page.lines.filter(wholeLine)) &&
+          nativeTopParagraphTail(line, stripBounds, page.lines.filter(wholeLine), captions) &&
           wholeLine(line) &&
           line.fontSize > font &&
           !paths.some((r) => intersection(r, lineRect(line)) > 0)
@@ -4907,9 +5147,109 @@ export function nativeCaptionedRasterFullWidth(page, caption, captions, tables) 
 // while a second multi-panel figure occupies the lower half of the page. The
 // ordinary adjacency pass can see both directions and conservatively defer;
 // accept only a unique, tightly attached raster with no competing caption.
+// A positional caption can bind an upper pair and a centered lower raster.
+// Require complete native paint bounds and an otherwise empty plate/caption
+// corridor. This never joins images merely because they are nearby.
+function nativeDescribedRasterPlate(page, caption, captions, tables, font) {
+  const positions = ['top left', 'top right', 'bottom']
+  const descriptions = (text) =>
+    [...text.matchAll(/\b(top(?:\s+(?:left|right))?|bottom(?:\s+(?:left|right))?)\s*:/gi)].map(
+      (m) => m[1].toLowerCase().replace(/\s+/g, ' ')
+    )
+  const matches = (text) => {
+    const labels = descriptions(text)
+    return labels.length === positions.length && positions.every((p, n) => labels[n] === p)
+  }
+  if (
+    page.invalidGraphicsBounds !== 0 ||
+    caption.page !== page.pageNumber ||
+    captions.filter((c) => c.page === page.pageNumber).length !== 1 ||
+    !matches(caption.lines.join(' ')) ||
+    !matches(
+      page.lines
+        .filter((l) => contains(caption.rect, lineRect(l)))
+        .map((l) => l.text)
+        .join(' ')
+    )
+  )
+    return
+  const imageObjects = page.graphicsBounds.filter((g) => g.kind === 'image')
+  if (imageObjects.length !== positions.length) return
+  const valid = (r) =>
+    Array.isArray(r) &&
+    r.length === 4 &&
+    r.every(Number.isFinite) &&
+    r[0] >= 0 &&
+    r[1] >= 0 &&
+    r[2] <= 1 &&
+    r[3] <= 1 &&
+    r[2] > r[0] &&
+    r[3] > r[1]
+  if (
+    imageObjects.some(
+      (g) =>
+        !valid(g.normalizedRect) ||
+        !valid(g.paintedNormalizedRect) ||
+        !contains(g.normalizedRect, g.paintedNormalizedRect) ||
+        !Number.isSafeInteger(g.operationIndex) ||
+        g.operationIndex < 0
+    ) ||
+    new Set(imageObjects.map((g) => g.operationIndex)).size !== imageObjects.length
+  )
+    return
+  const images = imageObjects
+    .map((g) => g.paintedNormalizedRect.map((v, n) => v * (n % 2 ? page.height : page.width)))
+    .sort((a, b) => a[1] - b[1] || a[0] - b[0])
+  const upper = images.slice(0, -1).sort((a, b) => a[0] - b[0]),
+    lower = images.at(-1)
+  const bounds = union(images),
+    width = upper[0][2] - upper[0][0],
+    height = upper[0][3] - upper[0][1]
+  if (
+    width < font * 8 ||
+    height < font * 8 ||
+    images.some(
+      (r) =>
+        Math.abs(r[2] - r[0] - width) > font * 0.2 || Math.abs(r[3] - r[1] - height) > font * 0.2
+    ) ||
+    Math.abs(upper[0][1] - upper[1][1]) > font * 0.2 ||
+    Math.abs(upper[0][3] - upper[1][3]) > font * 0.2 ||
+    upper[1][0] <= upper[0][2] ||
+    upper[1][0] - upper[0][2] > width ||
+    lower[1] < Math.max(...upper.map((r) => r[3])) ||
+    lower[1] - Math.max(...upper.map((r) => r[3])) > font * 2 ||
+    Math.abs((lower[0] + lower[2] - bounds[0] - bounds[2]) / 2) > font * 0.2 ||
+    caption.rect[1] < bounds[3] ||
+    caption.rect[1] - bounds[3] > font * 2 ||
+    Math.min(caption.rect[2], bounds[2]) - Math.max(caption.rect[0], bounds[0]) <
+      (bounds[2] - bounds[0]) * 0.95
+  )
+    return
+  const corridor = [bounds[0], bounds[1], bounds[2], caption.rect[1]]
+  if (
+    tables.some((r) => intersection(r, corridor) > 0) ||
+    page.lines.some((l) => l.text?.trim() && intersection(lineRect(l), corridor) > 0) ||
+    page.graphicsBounds.some(
+      (g) =>
+        !imageObjects.includes(g) &&
+        (!valid(g.paintedNormalizedRect ?? g.normalizedRect) ||
+          intersection(
+            (g.paintedNormalizedRect ?? g.normalizedRect).map(
+              (v, n) => v * (n % 2 ? page.height : page.width)
+            ),
+            corridor
+          ) > 0)
+    )
+  )
+    return
+  return { caption, rect: bounds, graphicsCount: images.length }
+}
+
 export function nativeCaptionedRaster(page, caption, captions, tables) {
   const font = captionFont(page, caption)
   if (!(font > 0) || !Number.isFinite(font)) return
+  const described = nativeDescribedRasterPlate(page, caption, captions, tables, font)
+  if (described) return described
   // Leave a raster/vector plate to the general association pass when a path
   // touches the candidate image/caption or sits in the immediately preceding
   // figure band. Unrelated paths elsewhere on the page (for example a listing

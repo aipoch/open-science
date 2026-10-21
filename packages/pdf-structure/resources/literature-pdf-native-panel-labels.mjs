@@ -747,8 +747,29 @@ export function nativeContiguousRasterStack(page, caption, captions, tables, con
     )
       return
     for (const im of images) {
-      const g = recorded.find((g) => g.operationIndex === im.operationIndex),
-        r = g?.normalizedRect?.map((n, i) => n * (i % 2 ? page.height : page.width)),
+      const g = recorded.find((g) => g.operationIndex === im.operationIndex)
+      let domain = g?.normalizedRect
+      // Association may narrow an image to its painted pixels. The native
+      // image transform instead describes its complete sampling domain.
+      if (g?.paintedNormalizedRect) {
+        const originals = context.graphicsBounds?.filter(
+          (original) => original.operationIndex === im.operationIndex
+        )
+        if (
+          originals?.length !== 1 ||
+          originals[0].kind !== 'image' ||
+          !valid(originals[0].normalizedRect) ||
+          !valid(originals[0].paintedNormalizedRect) ||
+          !valid(g.normalizedRect) ||
+          !valid(g.paintedNormalizedRect) ||
+          !contains(originals[0].normalizedRect, g.paintedNormalizedRect, 0) ||
+          !originals[0].paintedNormalizedRect?.every((n, i) => n === g.paintedNormalizedRect[i]) ||
+          !g.normalizedRect.every((n, i) => n === g.paintedNormalizedRect[i])
+        )
+          return
+        domain = originals[0].normalizedRect
+      }
+      const r = domain?.map((n, i) => n * (i % 2 ? page.height : page.width)),
         paint = o.argsArray[im.operationIndex]
       if (
         !valid(im.rect) ||
@@ -1425,6 +1446,7 @@ export function nativeRasterFormEnvelope(page, figure, captions, tables, tokens,
         'setLineJoin',
         'setLineCap',
         'setLineWidth',
+        'setMiterLimit',
         'setDash',
         'constructPath',
         'clip',
@@ -1465,6 +1487,10 @@ export function nativeRasterFormEnvelope(page, figure, captions, tables, tokens,
       const op = o.fnArray[i],
         a = o.argsArray[i]
       if (!allowed.has(op)) return
+      // PDF.js initializes the canvas miter limit to 10. Only an exact no-op
+      // is supported: the complete stream rejects any other setter or GState
+      // miter change, including changes later hidden by save/restore.
+      if (op === OPS.setMiterLimit && (!finite(a, 1) || a[0] !== 10)) return
       owners.set(i, owner)
       if (op === OPS.save) {
         if (text) return

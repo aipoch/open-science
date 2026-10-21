@@ -142,7 +142,8 @@ export function nativeCaptionedPlotBand(
   const keyed =
     unequal ??
     translated?.frames ??
-    nativeTitledTwoRowClosedGrid(page, caption, ownCaps, tables, allFrames, nativeTokens, font)
+    nativeTitledTwoRowClosedGrid(page, caption, ownCaps, tables, allFrames, nativeTokens, font) ??
+    nativeCaptionKeyedPlotRows(page, caption, allFrames, nativeTokens, font)
   const frames = keyed ?? allFrames.filter((r) => caption.rect[1] - r[3] < font * 6)
   // Grow only through aligned, equally sized closed faces. A caption, table
   // or full-size prose row breaks the corridor even when the next plot aligns.
@@ -349,6 +350,93 @@ export function nativeCaptionedPlotBand(
     graphicsCount: frames.length,
     ...(describedCurvePair ? { reason: 'native-described-curve-pair' } : {})
   }
+}
+
+// Caption references and a complete ordered native key inventory bind rows of
+// different panel widths. Each face still passes the tick, paint, prose and
+// competing-owner checks above; proximity alone does not establish a plate.
+function nativeCaptionKeyedPlotRows(page, caption, frames, tokens, font) {
+  if (page.invalidGraphicsBounds !== 0) return
+  const referenced = new Set()
+  for (const match of caption.lines.join(' ').matchAll(/\(([a-z])\s*[-–]\s*([a-z])\)/g)) {
+    const first = match[1].charCodeAt(0),
+      last = match[2].charCodeAt(0)
+    if (last <= first) return
+    for (let n = first; n <= last; n++) referenced.add(n)
+  }
+  if (referenced.size < 3 || referenced.size > 24) return
+  const keys = tokens.filter(
+    (t) =>
+      /^\([a-z]\)$/.test(t.text?.trim() ?? '') &&
+      Array.isArray(t.rect) &&
+      t.rect[1] < caption.rect[1]
+  )
+  if (keys.length !== referenced.size) return
+  const ordered = []
+  for (let n = 0; n < keys.length; n++) {
+    const code = 97 + n
+    if (!referenced.has(code)) return
+    const matches = keys.filter((t) => t.text.trim() === `(${String.fromCharCode(code)})`)
+    if (matches.length !== 1) return
+    const key = matches[0],
+      r = key.rect,
+      source = key.sourceItem
+    if (
+      !key.horizontal ||
+      r.length !== 4 ||
+      !r.every(Number.isFinite) ||
+      r[2] <= r[0] ||
+      r[3] <= r[1] ||
+      r[2] - r[0] > font * 3 ||
+      r[3] - r[1] > font * 1.5 ||
+      r[3] >= caption.rect[1] ||
+      !source ||
+      source.pageNumber !== page.pageNumber ||
+      !Number.isSafeInteger(source.index) ||
+      source.index < 0 ||
+      source.text !== key.text ||
+      tokens.filter(
+        (t) =>
+          t.sourceItem?.pageNumber === source.pageNumber && t.sourceItem?.index === source.index
+      ).length !== 1
+    )
+      return
+    const faces = frames.filter(
+      (f) =>
+        f[2] - f[0] >= font * 6 &&
+        f[3] - f[1] >= font * 6 &&
+        r[1] >= f[3] &&
+        r[3] - f[3] <= font * 4 &&
+        Math.abs((r[0] + r[2] - f[0] - f[2]) / 2) <= font &&
+        r[0] >= f[0] &&
+        r[2] <= f[2]
+    )
+    if (faces.length !== 1 || ordered.includes(faces[0])) return
+    ordered.push(faces[0])
+  }
+  const rows = []
+  for (const frame of ordered) {
+    const row = rows.at(-1)
+    if (row && Math.abs(row[0][1] - frame[1]) < font * 0.15) {
+      if (Math.abs(row[0][3] - frame[3]) >= font * 0.15 || frame[0] <= row.at(-1)[2]) return
+      row.push(frame)
+    } else {
+      if (row && frame[1] <= row[0][3]) return
+      rows.push([frame])
+    }
+  }
+  if (
+    rows.length < 2 ||
+    rows.some((row) => row.length < 2) ||
+    rows.some(
+      (row) =>
+        Math.abs(row[0][0] - rows[0][0][0]) > font * 0.5 ||
+        Math.abs(row.at(-1)[2] - rows[0].at(-1)[2]) > font * 0.5
+    ) ||
+    rows.slice(1).some((row, n) => row[0][1] - rows[n][0][3] > font * 16)
+  )
+    return
+  return ordered
 }
 
 // Complete shared title rows and disjoint column intervals independently prove
@@ -1976,7 +2064,7 @@ export function nativeAlignedNodeFigure(page, caption, captions, tables, rules, 
   return { caption, rect, graphicsCount: nodes.length + edges.length }
 }
 
-export function nativeTopParagraphTail(line, bounds, lines) {
+export function nativeTopParagraphTail(line, bounds, lines, captions = []) {
   if (line.y + line.height > bounds[1] || line.fontSize <= 0 || line.text.length < 3) return false
   const owned = [line]
   let current = line
@@ -1997,7 +2085,21 @@ export function nativeTopParagraphTail(line, bounds, lines) {
     current = peers[0]
     owned.push(current)
   }
+  // A figure can interrupt a sentence: require two full-width baselines above
+  // it and independently matching paragraph typography continuing below it.
   return (
+    (owned.length >= 2 &&
+      owned.every((l) => l.text.length >= 60 && l.width >= (bounds[2] - bounds[0]) * 0.85) &&
+      lines.some(
+        (l) =>
+          l.y > bounds[3] &&
+          !captions.some((c) => intersection(c.rect, lineRect(l)) > 0) &&
+          l.y - bounds[3] < line.fontSize * 7 &&
+          l.text.length >= 60 &&
+          Math.abs(l.fontSize - line.fontSize) < 0.1 &&
+          Math.abs(l.x - line.x) < line.fontSize &&
+          Math.abs(l.width - line.width) < line.fontSize * 2
+      )) ||
     (owned.length >= 3 &&
       owned.filter((l) => l.text.length >= 60).length >= 2 &&
       current.y < bounds[1] - 24) ||

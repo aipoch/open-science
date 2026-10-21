@@ -108,6 +108,54 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
     if (!added.length) break
     axes.push(...added)
   }
+  // Percentage ticks are a separate unit-consistent column. They must prove
+  // distinct rows and a complete exterior title, without absorbing side prose.
+  // Keep the existing plain-number and fragmented-axis proof unchanged.
+  const percentageTicks = source.filter(
+    (t) =>
+      t.horizontal &&
+      /^[−-]?\d+(?:\.\d+)?%$/.test(t.text.trim()) &&
+      t.rect[0] >= bounds[0] &&
+      t.rect[2] <= bounds[0] + t.height * 5 &&
+      t.rect[1] >= bounds[1] &&
+      t.rect[3] <= bounds[3]
+  )
+  const percentageColumns = percentageTicks.filter((t) => {
+    const column = source.filter(
+      (p) =>
+        p.horizontal &&
+        Math.abs(p.height - t.height) < t.height * 0.1 &&
+        Math.abs(p.rect[2] - t.rect[2]) < t.height * 0.15 &&
+        p.rect[1] >= bounds[1] &&
+        p.rect[3] <= bounds[3]
+    )
+    return (
+      column.every((p) => percentageTicks.includes(p)) &&
+      new Set(column.map((p) => Math.round(p.baseline / t.height))).size >= 3 &&
+      new Set(column.map((p) => p.text.trim())).size >= 3
+    )
+  })
+  const percentageAxes = source.filter((t) => {
+    if (
+      t.horizontal !== false ||
+      t.text.length >= 60 ||
+      t.rect[2] > bounds[0] ||
+      t.rect[1] < bounds[1] ||
+      t.rect[3] > bounds[3] ||
+      !percentageColumns.some(
+        (p) =>
+          p.rect[0] >= t.rect[2] &&
+          p.rect[0] - t.rect[2] < Math.max(p.height, t.height) * 3 &&
+          t.rect[1] < p.rect[3] &&
+          t.rect[3] > p.rect[1]
+      )
+    )
+      return false
+    const target = union([bounds, t.rect])
+    return !source.some(
+      (p) => p !== t && intersection(p.rect, target) > intersection(p.rect, bounds) + 0.01
+    )
+  })
   // Right colorbars can have longer tick strings cut at the current edge.
   // Require a repeated native numeric column at that edge plus rotated text
   // beside it; neither an isolated number nor ordinary side prose is an owner.
@@ -245,7 +293,7 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
     )
     .map((t) => ({
       token: t,
-      markers: rules.filter(
+      markers: markerRules.filter(
         (r) =>
           r.every(Number.isFinite) &&
           Math.abs(r[3] - r[1]) < t.height * 0.05 &&
@@ -266,6 +314,18 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
           Math.abs(p.token.height - q.token.height) < p.token.height * 0.1
       ).length >= 3
   )
+  if (legend.length) {
+    const target = union([bounds, ...legend.flatMap((p) => [p.token.rect, p.markers[0]])])
+    if (
+      new Set(legend.map((p) => p.markers[0])).size !== legend.length ||
+      source.some(
+        (t) =>
+          !legend.some((p) => p.token === t) &&
+          intersection(t.rect, target) > intersection(t.rect, bounds) + 0.01
+      )
+    )
+      legend.length = 0
+  }
   const vertical = rules.filter(
     (r) =>
       r[0] === r[2] &&
@@ -343,6 +403,7 @@ export function nativeAttachedPlotLabels(page, figure, captions, tables, rules, 
   const labels = [
     ...nativeExternalFrameLabels(page, figure, captions, tables, rules, tokens),
     ...axes.map((t) => t.rect),
+    ...percentageAxes.map((t) => t.rect),
     ...rightLabels.map((t) => t.rect),
     ...bottomLegend.flatMap((p) => [p.token.rect, p.markers[0]]),
     ...legend.flatMap((p) => [p.token.rect, p.markers[0]]),
@@ -466,7 +527,7 @@ function nativeExternalFrameLabels(page, figure, captions, tables, rules, tokens
 
 // Complete one scripted title only through its full native text packet,
 // repeated axis ticks and exact same-render glyph paths. Never widen proximity.
-export function nativeAxisTitlePacket(
+export function nativePlotPacketInventory(
   page,
   figure,
   captions,
@@ -474,7 +535,39 @@ export function nativeAxisTitlePacket(
   rules,
   tokens,
   context,
-  foreignOwns = () => false
+  allowEmptyOutlineSpaces = false
+) {
+  const valid = (r) =>
+    (Array.isArray(r) || ArrayBuffer.isView(r)) &&
+    r.length === 4 &&
+    Array.from(r).every(Number.isFinite) &&
+    r[2] > r[0] &&
+    r[3] > r[1]
+  if (!valid(figure?.rect) || ![captions, tables, rules].every(Array.isArray)) return
+  const caption = figure.caption,
+    cap = captions.filter((c) => c.page === page.pageNumber)
+  if (
+    !cap.includes(caption) ||
+    !cap.every((c) => valid(c.rect)) ||
+    !tables.every(valid) ||
+    !rules.every(
+      (r) =>
+        (Array.isArray(r) || ArrayBuffer.isView(r)) &&
+        r.length === 4 &&
+        Array.from(r).every(Number.isFinite)
+    ) ||
+    figure.rect[3] >= caption.rect[1]
+  )
+    return
+  const inventory = nativePageTextPacketInventory(page, tokens, context, allowEmptyOutlineSpaces)
+  return inventory ? { ...inventory, cap, caption } : undefined
+}
+
+export function nativePageTextPacketInventory(
+  page,
+  tokens,
+  context,
+  allowEmptyOutlineSpaces = false
 ) {
   const finite = (a, n) =>
       (Array.isArray(a) || ArrayBuffer.isView(a)) &&
@@ -502,12 +595,8 @@ export function nativeAxisTitlePacket(
     raw = context?.content?.items,
     fonts = context?.glyphBounds
   if (
-    !valid(figure?.rect) ||
     page.invalidGraphicsBounds !== 0 ||
     ![
-      captions,
-      tables,
-      rules,
       tokens,
       raw,
       page.graphicsBounds,
@@ -523,16 +612,6 @@ export function nativeAxisTitlePacket(
     v.rotation !== 0 ||
     v.width !== page.width ||
     v.height !== page.height
-  )
-    return
-  const caption = figure.caption,
-    cap = captions.filter((c) => c.page === page.pageNumber)
-  if (
-    !cap.includes(caption) ||
-    !cap.every((c) => valid(c.rect)) ||
-    !tables.every(valid) ||
-    !rules.every((r) => finite(r, 4)) ||
-    figure.rect[3] >= caption.rect[1]
   )
     return
   const evidence = { images: [], paths: new Map(), texts: new Map(), frames: new Map() }
@@ -623,7 +702,15 @@ export function nativeAxisTitlePacket(
             typeof g.fontChar !== 'string' ||
             !Number.isFinite(g.width) ||
             g.width < 0 ||
-            g.isInFont !== true ||
+            (g.isInFont !== true &&
+              !(
+                allowEmptyOutlineSpaces &&
+                g.unicode === ' ' &&
+                fontMap
+                  .get(fontName)
+                  ?.get(g.fontChar)
+                  ?.every((n) => n === 0)
+              )) ||
             g.accent != null ||
             g.operatorListId != null ||
             g.vmetric != null
@@ -701,9 +788,11 @@ export function nativeAxisTitlePacket(
       return
   }
   if (packet || stack.length) return
-  // Bind all visible raw items to the exact font/advance stream; whitespace/control glyph ink remains separately accounted.
+  // Canonical decomposition is comparison-only: keep source and painted glyph
+  // literals unchanged, and still bind every item to its font and advance.
+  // Compatibility characters are not equivalent.
   const visible = glyphs.flatMap((g) =>
-    Array.from(g.text)
+    Array.from(g.text.normalize('NFD'))
       .filter((c) => !/\s/u.test(c))
       .map((c) => ({ c, g }))
   )
@@ -727,7 +816,7 @@ export function nativeAxisTitlePacket(
   for (let index = 0; index < raw.length; index++) {
     const r = raw[index]
     if (typeof r.str !== 'string') return
-    const cs = Array.from(r.str).filter((c) => !/\s/u.test(c))
+    const cs = Array.from(r.str.normalize('NFD')).filter((c) => !/\s/u.test(c))
     if (!cs.length) continue
     const part = visible.slice(offset, offset + cs.length)
     offset += cs.length
@@ -739,7 +828,7 @@ export function nativeAxisTitlePacket(
       s.index !== index ||
       s.text !== r.str ||
       rc.get(k) !== 1 ||
-      tc.get(k) !== match.length ||
+      (tc.get(k) ?? 0) !== match.length ||
       match.length > 1 ||
       part.map((z) => z.c).join('') !== cs.join('') ||
       part.some((z) => z.g.fontName !== r.fontName) ||
@@ -772,6 +861,56 @@ export function nativeAxisTitlePacket(
     p.text = p.glyphs.map((g) => g.text).join('')
     p.height = Math.max(...p.glyphs.map((g) => g.height))
   }
+  return {
+    finite,
+    valid,
+    inside,
+    box,
+    o,
+    v,
+    evidence,
+    records,
+    packets,
+    glyphs,
+    strokeMargins
+  }
+}
+
+// The single-axis proof intentionally retains its original font-membership contract.
+export function nativeAxisTitlePacket(
+  page,
+  figure,
+  captions,
+  tables,
+  rules,
+  tokens,
+  context,
+  foreignOwns = () => false
+) {
+  const inventory = nativePlotPacketInventory(
+    page,
+    figure,
+    captions,
+    tables,
+    rules,
+    tokens,
+    context
+  )
+  if (!inventory) return
+  const {
+    finite,
+    valid,
+    inside,
+    box,
+    o,
+    v,
+    cap,
+    caption,
+    evidence,
+    packets,
+    glyphs,
+    strokeMargins
+  } = inventory
   const nativeRules = collectTableRules(o, v)
   const horizontal = rules.filter(
     (r) =>
