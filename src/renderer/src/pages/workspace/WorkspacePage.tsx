@@ -102,6 +102,7 @@ import { getVisiblePermissionRequests } from './session-permissions'
 import { WorkspaceSidebarContainer } from './WorkspaceSidebarContainer'
 import { WorkspacePanelLayout } from './workspace-panel-layout'
 import { useWorkspaceComposerController } from './workspace-composer-controller'
+import { useAgentAuthenticationRecovery } from './use-agent-authentication-recovery'
 import { useWorkspaceConversationController } from './workspace-conversation-controller'
 import { useWorkspaceSessionController } from './workspace-session-controller'
 import { useWorkspaceBranchSwitchGuard } from './use-workspace-branch-switch-guard'
@@ -679,6 +680,27 @@ const WorkspacePage = ({
     return reviews.some((review) => review.lifecycle === 'running')
   })
   const isReviewBusy = isReviewing || isManualReviewRequestPending
+  const authenticationOperationError = useWorkspaceOperationErrors((state) =>
+    activeSession ? (state.errors[activeSession.id] ?? null) : actionError
+  )
+  const authenticationOperationErrorValidations = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.providerValidations[activeSession.id] : undefined
+  )
+  const authenticationOperationTarget = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.providerTargets[activeSession.id] : undefined
+  )
+  const authenticationRecovery = useAgentAuthenticationRecovery(
+    activeSession,
+    currentDraftKey,
+    activeAgentConfiguration,
+    attachmentError,
+    authenticationOperationError,
+    {
+      composer: composer.view.errorProviderValidations,
+      action: authenticationOperationErrorValidations,
+      actionTarget: authenticationOperationTarget
+    }
+  )
   const conversation = useWorkspaceConversationController({
     activeSession,
     projectId: scopedProjectId,
@@ -692,7 +714,7 @@ const WorkspacePage = ({
     agentConfigurationReady: !agentConfigurationUnavailable,
     permissionProfile: activePermissionProfile,
     isReviewing: isReviewBusy,
-    isTurnAdmissionBlocked: isReviewHistoryUnavailable,
+    isTurnAdmissionBlocked: isReviewHistoryUnavailable || authenticationRecovery.required,
     promptInFlightSessionIds,
     sendPreparationInFlightSessionIds,
     saveAsSkillInFlightSessionIds,
@@ -1749,6 +1771,7 @@ const WorkspacePage = ({
                     activeSession?.id ?? ''
                   ),
                   actionError: visibleActionError,
+                  authenticationRecovery,
                   sideChatDisabledReason,
                   sessionImport: {
                     projectId: scopedProjectId,

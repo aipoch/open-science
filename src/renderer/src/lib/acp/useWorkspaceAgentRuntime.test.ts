@@ -1346,6 +1346,16 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
+  it('preserves authentication recovery after Electron IPC serialization', () => {
+    expect(
+      getResumeFailureMessage(
+        new Error(
+          "Error invoking remote method 'acp:resume-session': Error: Authentication required"
+        )
+      )
+    ).toBe('Agent session resume failed: Authentication required')
+  })
+
   it('preserves the main-process Claude version gate message when resuming', () => {
     const message = getResumeFailureMessage(
       new Error(
@@ -5359,6 +5369,53 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('keeps branch reset retryable when Electron reports an authentication failure', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, branchContextResetRequired: true }))
+    }))
+    vi.stubGlobal('window', {
+      api: {
+        sessions: createSessionPolicyApi(),
+        notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:reset-session-context': Error: Authentication required"
+          )
+        ),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toBe(
+      'Agent session resume failed: Authentication required'
+    )
+  })
+
   it('adopts a model-only Session target before resetting a selected Branch', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -7727,6 +7784,219 @@ describe('workspace agent message sending', () => {
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toEqual(expect.any(String))
   })
+
+  it('preserves authentication recovery when Electron session creation rejects', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:create-session': Error: Authentication required"
+          )
+        ),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex',
+      agentConfiguration: {
+        providerId: 'explicit-create-provider',
+        model: 'create-model',
+        reasoningEffort: 'default'
+      }
+    })
+    await flushRuntimeTasks()
+
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe('Authentication required')
+    expect(
+      useWorkspaceOperationErrors.getState().providerTargets[
+        useSessionStore.getState().sessions[0].id
+      ]
+    ).toEqual({ providerId: 'explicit-create-provider', model: 'create-model' })
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+  })
+
+  it.each(['send', 'resume'] as const)(
+    'captures the explicit failed account during %s instead of the stored account',
+    async (operation) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Previous prompt',
+        cwd: '/workspace/project',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:stored-provider',
+        agentConfiguration: { providerId: 'stored-provider', reasoningEffort: 'default' }
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockRejectedValue(new Error('Authentication required')),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn()
+      }
+      const configuration = {
+        providerId: 'failed-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
+      if (operation === 'send') {
+        await sendWorkspaceMessage(runtime, {
+          sessionId: 'session-1',
+          text: 'Next prompt',
+          cwd: '/workspace/project',
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:failed-provider',
+          agentConfiguration: configuration
+        })
+      } else {
+        await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+          agentTarget: { frameworkId: 'codex', ...configuration }
+        })
+      }
+      await flushRuntimeTasks()
+      expect(runtime.resumeSession).toHaveBeenCalledOnce()
+      expect(useWorkspaceOperationErrors.getState().providerTargets['session-1']).toEqual({
+        providerId: 'failed-provider',
+        model: 'requested-model'
+      })
+      expect(useSessionStore.getState().sessions[0].agentConfiguration?.providerId).toBe(
+        'stored-provider'
+      )
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([
+    ['existing', 'async'],
+    ['existing', 'sync'],
+    ['new', 'async'],
+    ['new', 'sync']
+  ] as const)(
+    'retains the requested target after %s prompt dispatch rejects %s',
+    async (kind, timing) => {
+      const target = {
+        providerId: 'requested-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
+      const sessionId = 'transport-session-1'
+      if (kind === 'existing') {
+        useSessionStore.getState().appendUserMessage({
+          sessionId,
+          content: 'Previous prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentConfiguration: target
+        })
+        useSessionStore.getState().finishRun(sessionId)
+      }
+      const gate = createDeferred<void>()
+      const switchSelection = (): void =>
+        useSessionStore.getState().setAgentConfiguration(sessionId, {
+          providerId: 'new-selection',
+          model: 'new-model',
+          reasoningEffort: 'default'
+        })
+      const runtime = {
+        state: createSnapshot(kind === 'existing' ? [sessionId] : []),
+        createSession: vi.fn().mockResolvedValue({ sessionId, cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn(() => {
+          if (timing === 'sync') {
+            switchSelection()
+            throw new Error('Authentication required')
+          }
+          return gate.promise.then(() => {
+            throw new Error('Authentication required')
+          })
+        })
+      }
+      await sendWorkspaceMessage(runtime, {
+        ...(kind === 'existing' ? { sessionId } : {}),
+        text: 'New prompt',
+        cwd: '/workspace/project',
+        projectId: 'project-1',
+        agentConfiguration: target
+      })
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+      if (timing === 'async') {
+        switchSelection()
+        gate.resolve()
+      }
+      await vi.waitFor(() =>
+        expect(useWorkspaceOperationErrors.getState().errors[sessionId]).toBe(
+          'Authentication required'
+        )
+      )
+      expect(useWorkspaceOperationErrors.getState().providerTargets[sessionId]).toEqual({
+        providerId: target.providerId,
+        model: target.model
+      })
+    }
+  )
+
+  it.each(['seed', 'policy'] as const)(
+    'retains the pending request target when %s preparation fails',
+    async (stage) => {
+      const target = {
+        providerId: 'requested-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
+      const sessions = createSessionPolicyApi()
+      const fail = (): never => {
+        const pending = useSessionStore.getState().sessions.find(({ isPending }) => isPending)!
+        useSessionStore.getState().setAgentConfiguration(pending.id, {
+          providerId: 'new-selection',
+          model: 'new-model',
+          reasoningEffort: 'default'
+        })
+        throw new Error('Authentication required')
+      }
+      if (stage === 'seed') sessions.saveSession.mockImplementationOnce(async () => fail())
+      else sessions.setDelegationPolicy.mockImplementationOnce(async () => fail())
+      vi.stubGlobal('window', { api: { sessions } })
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi
+          .fn()
+          .mockResolvedValue({ sessionId: 'transport-session-1', cwd: '/workspace/project' }),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn(),
+        deleteSession: vi.fn().mockResolvedValue(createSnapshot()),
+        sendPrompt: vi.fn()
+      }
+      await sendWorkspaceMessage(
+        runtime,
+        {
+          text: 'New prompt',
+          cwd: '/workspace/project',
+          projectId: 'project-1',
+          agentConfiguration: target,
+          ...(stage === 'policy' ? { delegationPolicy: 'deny' as const } : {})
+        },
+        { awaitPendingPreparation: true }
+      )
+      const failedSession = useSessionStore.getState().sessions[0]
+      expect(useWorkspaceOperationErrors.getState().errors[failedSession.id]).toBe(
+        'Authentication required'
+      )
+      expect(useWorkspaceOperationErrors.getState().providerTargets[failedSession.id]).toEqual({
+        providerId: target.providerId,
+        model: target.model
+      })
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
 
   it('uses a generic creation error when IPC supplies no downstream detail', async () => {
     const runtime = {

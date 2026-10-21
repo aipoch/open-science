@@ -1,0 +1,338 @@
+diff --git a/node_modules/docx-preview/dist/docx-preview.mjs b/node_modules/docx-preview/dist/docx-preview.mjs
+index 97fe1bace..6eb8a9adb 100644
+--- a/node_modules/docx-preview/dist/docx-preview.mjs
++++ b/node_modules/docx-preview/dist/docx-preview.mjs
+@@ -2415,6 +2415,9 @@ class DocumentParser {
+                     this.parseFont(c, style);
+                     break;
+                 case "tblBorders":
++                    // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
++                    // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
++                    (childStyle || style).$tableBorders = this.parseTableBorders(c);
+                     this.parseBorderProperties(c, childStyle || style);
+                     break;
+                 case "tblCellSpacing":
+@@ -2428,6 +2431,7 @@ class DocumentParser {
+                     style["border"] = values.valueOfBorder(c);
+                     break;
+                 case "tcBorders":
++                    style.$cellBorders = this.parseBorderProperties(c, {});
+                     this.parseBorderProperties(c, style);
+                     break;
+                 case "vanish":
+@@ -2609,6 +2613,15 @@ class DocumentParser {
+                 break;
+         }
+     }
++    parseTableBorders(node) {
++        const borders = {};
++        for (const edge of globalXmlParser.elements(node)) {
++            const name = edge.localName === "start" ? "left" : edge.localName === "end" ? "right" : edge.localName;
++            if (["top", "right", "bottom", "left", "insideH", "insideV"].includes(name))
++                borders[name] = values.valueOfBorder(edge);
++        }
++        return borders;
++    }
+     parseBorderProperties(node, output) {
+         for (const c of globalXmlParser.elements(node)) {
+             switch (c.localName) {
+@@ -2628,6 +2641,7 @@ class DocumentParser {
+                     break;
+             }
+         }
++        return output;
+     }
+ }
+ const knownColors = ['black', 'blue', 'cyan', 'darkBlue', 'darkCyan', 'darkGray', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'green', 'lightGray', 'magenta', 'none', 'red', 'white', 'yellow'];
+@@ -3021,23 +3035,44 @@ class HtmlRenderer {
+     }
+     processStyles(styles) {
+         const stylesMap = keyBy(styles.filter(x => x.id != null), x => x.id);
+-        for (const style of styles.filter(x => x.basedOn)) {
+-            var baseStyle = stylesMap[style.basedOn];
+-            if (baseStyle) {
+-                style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
+-                style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
+-                for (const baseValues of baseStyle.styles) {
+-                    const styleValues = style.styles.find(x => x.target == baseValues.target);
+-                    if (styleValues) {
+-                        this.copyStyleProperties(baseValues.values, styleValues.values);
++        // UPSTREAM: resolve bases before children, independent of styles.xml order.
++        // An iterative walk also bounds stack use and terminates malformed cycles.
++        const state = new Map();
++        for (const root of styles) {
++            const pending = [{ style: root, expanded: false }];
++            while (pending.length) {
++                const frame = pending[pending.length - 1];
++                const style = frame.style;
++                if (state.get(style) === 2) { pending.pop(); continue; }
++                const baseStyle = stylesMap[style.basedOn];
++                if (!frame.expanded) {
++                    frame.expanded = true;
++                    state.set(style, 1);
++                    if (baseStyle && !state.has(baseStyle)) {
++                        pending.push({ style: baseStyle, expanded: false });
++                        continue;
+                     }
+-                    else {
+-                        style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                }
++                if (baseStyle && state.get(baseStyle) === 2) {
++                    style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
++                    style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
++                    for (const baseValues of baseStyle.styles) {
++                        const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod);
++                        if (styleValues) {
++                            for (const key of ["$tableBorders", "$cellBorders"]) {
++                                if (baseValues.values[key])
++                                    styleValues.values[key] = { ...baseValues.values[key], ...styleValues.values[key] };
++                            }
++                            this.copyStyleProperties(baseValues.values, styleValues.values);
++                        }
++                        else {
++                            style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                        }
+                     }
+                 }
++                state.set(style, 2);
++                pending.pop();
+             }
+-            else if (this.options.debug)
+-                console.warn(`Can't find base style ${style.basedOn}`);
+         }
+         for (let style of styles) {
+             style.cssName = this.processStyleName(style.id);
+@@ -3069,7 +3104,7 @@ class HtmlRenderer {
+         for (var r of table.children) {
+             for (var c of r.children) {
+                 c.cssStyle = this.copyStyleProperties(table.cellStyle, c.cssStyle, [
+-                    "border-left", "border-right", "border-top", "border-bottom",
++                    ...(table.cellStyle?.$tableBorders ? [] : ["border-left", "border-right", "border-top", "border-bottom"]),
+                     "padding-left", "padding-right", "padding-top", "padding-bottom"
+                 ]);
+                 this.processElement(c);
+@@ -3686,7 +3721,45 @@ section.${c}>footer { z-index: 1; }
+         children.push(...this.renderElements(elem.children));
+         this.currentVerticalMerge = this.tableVerticalMerges.pop();
+         this.currentCellPosition = this.tableCellPositions.pop();
+-        return this.toHTML(elem, ns.html, "table", children);
++        const table = this.toHTML(elem, ns.html, "table", children);
++        this.applyTableBorders(elem, table);
++        return table;
++    }
++    applyTableBorders(model, table) {
++        const styles = this.findStyle(model.styleName)?.styles ?? [];
++        const direct = model.cellStyle?.$tableBorders;
++        if (!direct && !styles.some(s => s.values.$tableBorders)) return;
++        const rows = Array.from(table.rows);
++        const columnCount = Math.max(model.columns?.length ?? 0,
++            ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
++        // Work on the detached table after rowspan/colspan are known. No layout reads,
++        // document-global CSS, or mutation of the parsed cell borders is needed.
++        rows.forEach((row, rowIndex) => {
++            let column = 0;
++            for (const cell of row.cells) {
++                const start = column;
++                column += cell.colSpan;
++                if (cell.style.display === "none") continue;
++                let borders = {}, cellBorders = {};
++                for (const style of styles) {
++                    if ((!style.mod || table.matches(style.mod)) && cell.matches(style.target)) {
++                        Object.assign(borders, style.values.$tableBorders);
++                        Object.assign(cellBorders, style.values.$cellBorders);
++                    }
++                }
++                for (const side of ["top", "right", "bottom", "left"]) {
++                    const property = "border-" + side;
++                    // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
++                    if (cell.style.getPropertyValue(property + "-style")) continue;
++                    const outer = (side === "top" && rowIndex === 0)
++                        || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
++                        || (side === "left" && start === 0)
++                        || (side === "right" && column === columnCount);
++                    const key = outer ? side : (side === "top" || side === "bottom" ? "insideH" : "insideV");
++                    cell.style.setProperty(property, direct?.[key] ?? cellBorders[property] ?? borders[key] ?? "none");
++                }
++            }
++        });
+     }
+     renderTableColumns(columns) {
+         const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
+@@ -3838,7 +3911,7 @@ section.${c}>footer { z-index: 1; }
+         return this.toHTML(elem, ns.mathML, "mtable", children);
+     }
+     toH(elem, ns, tagName, children = null) {
+-        const { "$lang": lang, ...style } = elem.cssStyle ?? {};
++        const { "$lang": lang, "$tableBorders": tableBorders, "$cellBorders": cellBorders, ...style } = elem.cssStyle ?? {};
+         const className = cx(elem.className, elem.styleName && this.processStyleName(elem.styleName));
+         return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
+     }
+diff --git a/node_modules/docx-preview/dist/docx-preview.js b/node_modules/docx-preview/dist/docx-preview.js
+index 535ac9abc..3fef74985 100644
+--- a/node_modules/docx-preview/dist/docx-preview.js
++++ b/node_modules/docx-preview/dist/docx-preview.js
+@@ -2419,6 +2419,9 @@
+                         this.parseFont(c, style);
+                         break;
+                     case "tblBorders":
++                        // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
++                        // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
++                        (childStyle || style).$tableBorders = this.parseTableBorders(c);
+                         this.parseBorderProperties(c, childStyle || style);
+                         break;
+                     case "tblCellSpacing":
+@@ -2432,6 +2435,7 @@
+                         style["border"] = values.valueOfBorder(c);
+                         break;
+                     case "tcBorders":
++                        style.$cellBorders = this.parseBorderProperties(c, {});
+                         this.parseBorderProperties(c, style);
+                         break;
+                     case "vanish":
+@@ -2613,6 +2617,15 @@
+                     break;
+             }
+         }
++        parseTableBorders(node) {
++            const borders = {};
++            for (const edge of globalXmlParser.elements(node)) {
++                const name = edge.localName === "start" ? "left" : edge.localName === "end" ? "right" : edge.localName;
++                if (["top", "right", "bottom", "left", "insideH", "insideV"].includes(name))
++                    borders[name] = values.valueOfBorder(edge);
++            }
++            return borders;
++        }
+         parseBorderProperties(node, output) {
+             for (const c of globalXmlParser.elements(node)) {
+                 switch (c.localName) {
+@@ -2632,6 +2645,7 @@
+                         break;
+                 }
+             }
++            return output;
+         }
+     }
+     const knownColors = ['black', 'blue', 'cyan', 'darkBlue', 'darkCyan', 'darkGray', 'darkGreen', 'darkMagenta', 'darkRed', 'darkYellow', 'green', 'lightGray', 'magenta', 'none', 'red', 'white', 'yellow'];
+@@ -3025,23 +3039,44 @@
+         }
+         processStyles(styles) {
+             const stylesMap = keyBy(styles.filter(x => x.id != null), x => x.id);
+-            for (const style of styles.filter(x => x.basedOn)) {
+-                var baseStyle = stylesMap[style.basedOn];
+-                if (baseStyle) {
+-                    style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
+-                    style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
+-                    for (const baseValues of baseStyle.styles) {
+-                        const styleValues = style.styles.find(x => x.target == baseValues.target);
+-                        if (styleValues) {
+-                            this.copyStyleProperties(baseValues.values, styleValues.values);
++            // UPSTREAM: resolve bases before children, independent of styles.xml order.
++            // An iterative walk also bounds stack use and terminates malformed cycles.
++            const state = new Map();
++            for (const root of styles) {
++                const pending = [{ style: root, expanded: false }];
++                while (pending.length) {
++                    const frame = pending[pending.length - 1];
++                    const style = frame.style;
++                    if (state.get(style) === 2) { pending.pop(); continue; }
++                    const baseStyle = stylesMap[style.basedOn];
++                    if (!frame.expanded) {
++                        frame.expanded = true;
++                        state.set(style, 1);
++                        if (baseStyle && !state.has(baseStyle)) {
++                            pending.push({ style: baseStyle, expanded: false });
++                            continue;
+                         }
+-                        else {
+-                            style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                    }
++                    if (baseStyle && state.get(baseStyle) === 2) {
++                        style.paragraphProps = mergeDeep(style.paragraphProps, baseStyle.paragraphProps);
++                        style.runProps = mergeDeep(style.runProps, baseStyle.runProps);
++                        for (const baseValues of baseStyle.styles) {
++                            const styleValues = style.styles.find(x => x.target === baseValues.target && x.mod === baseValues.mod);
++                            if (styleValues) {
++                                for (const key of ["$tableBorders", "$cellBorders"]) {
++                                    if (baseValues.values[key])
++                                        styleValues.values[key] = { ...baseValues.values[key], ...styleValues.values[key] };
++                                }
++                                this.copyStyleProperties(baseValues.values, styleValues.values);
++                            }
++                            else {
++                                style.styles.push({ ...baseValues, values: { ...baseValues.values } });
++                            }
+                         }
+                     }
++                    state.set(style, 2);
++                    pending.pop();
+                 }
+-                else if (this.options.debug)
+-                    console.warn(`Can't find base style ${style.basedOn}`);
+             }
+             for (let style of styles) {
+                 style.cssName = this.processStyleName(style.id);
+@@ -3073,7 +3108,7 @@
+             for (var r of table.children) {
+                 for (var c of r.children) {
+                     c.cssStyle = this.copyStyleProperties(table.cellStyle, c.cssStyle, [
+-                        "border-left", "border-right", "border-top", "border-bottom",
++                        ...(table.cellStyle?.$tableBorders ? [] : ["border-left", "border-right", "border-top", "border-bottom"]),
+                         "padding-left", "padding-right", "padding-top", "padding-bottom"
+                     ]);
+                     this.processElement(c);
+@@ -3690,7 +3725,45 @@ section.${c}>footer { z-index: 1; }
+             children.push(...this.renderElements(elem.children));
+             this.currentVerticalMerge = this.tableVerticalMerges.pop();
+             this.currentCellPosition = this.tableCellPositions.pop();
+-            return this.toHTML(elem, ns.html, "table", children);
++            const table = this.toHTML(elem, ns.html, "table", children);
++            this.applyTableBorders(elem, table);
++            return table;
++        }
++        applyTableBorders(model, table) {
++            const styles = this.findStyle(model.styleName)?.styles ?? [];
++            const direct = model.cellStyle?.$tableBorders;
++            if (!direct && !styles.some(s => s.values.$tableBorders)) return;
++            const rows = Array.from(table.rows);
++            const columnCount = Math.max(model.columns?.length ?? 0,
++                ...rows.map(row => Array.from(row.cells).reduce((n, cell) => n + cell.colSpan, 0)));
++            // Work on the detached table after rowspan/colspan are known. No layout reads,
++            // document-global CSS, or mutation of the parsed cell borders is needed.
++            rows.forEach((row, rowIndex) => {
++                let column = 0;
++                for (const cell of row.cells) {
++                    const start = column;
++                    column += cell.colSpan;
++                    if (cell.style.display === "none") continue;
++                    let borders = {}, cellBorders = {};
++                    for (const style of styles) {
++                        if ((!style.mod || table.matches(style.mod)) && cell.matches(style.target)) {
++                            Object.assign(borders, style.values.$tableBorders);
++                            Object.assign(cellBorders, style.values.$cellBorders);
++                        }
++                    }
++                    for (const side of ["top", "right", "bottom", "left"]) {
++                        const property = "border-" + side;
++                        // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
++                        if (cell.style.getPropertyValue(property + "-style")) continue;
++                        const outer = (side === "top" && rowIndex === 0)
++                            || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
++                            || (side === "left" && start === 0)
++                            || (side === "right" && column === columnCount);
++                        const key = outer ? side : (side === "top" || side === "bottom" ? "insideH" : "insideV");
++                        cell.style.setProperty(property, direct?.[key] ?? cellBorders[property] ?? borders[key] ?? "none");
++                    }
++                }
++            });
+         }
+         renderTableColumns(columns) {
+             const children = columns.map(x => this.h({ tagName: "col", style: { width: x.width } }));
+@@ -3842,7 +3915,7 @@ section.${c}>footer { z-index: 1; }
+             return this.toHTML(elem, ns.mathML, "mtable", children);
+         }
+         toH(elem, ns, tagName, children = null) {
+-            const { "$lang": lang, ...style } = elem.cssStyle ?? {};
++            const { "$lang": lang, "$tableBorders": tableBorders, "$cellBorders": cellBorders, ...style } = elem.cssStyle ?? {};
+             const className = cx(elem.className, elem.styleName && this.processStyleName(elem.styleName));
+             return { ns, tagName, className, lang, style, children: children ?? this.renderElements(elem.children) };
+         }

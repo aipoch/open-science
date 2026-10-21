@@ -2053,6 +2053,11 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                         </div>
                       ) : (
                         <ConnectorsPanel
+                          recoveryConnectorId={
+                            connectorsView.kind === 'list'
+                              ? connectorsView.recoveryConnectorId
+                              : undefined
+                          }
                           onNavigate={navigateConnectors}
                           onOpenTag={navigateTag}
                           onOpenSpecialist={(usage) =>
@@ -2327,6 +2332,12 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           />
                         ) : null}
                         <ProvidersPanel
+                          recoveryProviderId={
+                            modelView.kind === 'list' ? modelView.recoveryProviderId : undefined
+                          }
+                          recoveryModel={
+                            modelView.kind === 'list' ? modelView.recoveryModel : undefined
+                          }
                           onCreateProvider={openCreate}
                           onEditProvider={openEdit}
                           busyProviderId={busyProviderId}

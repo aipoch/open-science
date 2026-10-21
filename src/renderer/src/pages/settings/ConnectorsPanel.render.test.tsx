@@ -923,7 +923,7 @@ describe('ConnectorsPanel (groups)', () => {
     const expiredToggle = openResourceMainSwitch('Expired OAuth')
     expect(expiredToggle?.getAttribute('data-state')).toBe('checked')
     expect(expiredToggle?.getAttribute('aria-disabled')).toBeNull()
-    await act(async () => clickButtonByText('Retry'))
+    await act(async () => clickButtonByText('Sign in again'))
     expect(useSettingsStore.getState().authenticateCustomServer).toHaveBeenCalledWith({
       id: 'expired-oauth'
     })
@@ -1166,3 +1166,49 @@ it.each([false, true])(
     expect(remove).toHaveBeenCalledTimes(recreated ? 1 : 3)
   }
 )
+
+it('targets OAuth recovery, retains it after cancellation and removes it after connection', async () => {
+  const server = {
+    id: 'recover-oauth',
+    name: 'recover-oauth',
+    displayName: 'Recovery account',
+    transport: 'streamable_http' as const,
+    enabled: true,
+    url: 'https://example.test/mcp',
+    oauth: { hasTokens: true },
+    availability: 'unauthenticated' as const
+  }
+  useSettingsStore.setState({
+    customServers: [server],
+    authenticateCustomServer: vi.fn(() => new Promise<void>(() => undefined))
+  })
+  act(() => root.render(<ConnectorsPanel onNavigate={vi.fn()} recoveryConnectorId={server.id} />))
+  const description = 'Sign in again to restore access to this account.'
+  expect(document.body.textContent).toContain(description)
+  await act(async () => clickButtonByText('Sign in again'))
+  expect(document.body.textContent).toContain('Waiting for authorization…')
+  await act(async () => clickButtonByText('Cancel'))
+  expect(useSettingsStore.getState().cancelCustomServerAuthentication).toHaveBeenCalledWith({
+    id: server.id
+  })
+  expect(document.body.textContent).toContain(description)
+  act(() => useSettingsStore.setState({ customServers: [{ ...server, availability: undefined }] }))
+  expect(document.body.textContent).not.toContain(description)
+})
+it('removes targeted static credential recovery after a successful connection', () => {
+  const server = { ...seedCustomServers[0], availability: 'credential_unavailable' as const }
+  const onNavigate = vi.fn()
+  useSettingsStore.setState({ customServers: [server] })
+  act(() =>
+    root.render(<ConnectorsPanel onNavigate={onNavigate} recoveryConnectorId={server.id} />)
+  )
+  expect(document.body.textContent).toContain(
+    'Update the saved credential, then test the connection.'
+  )
+  act(() => clickButtonByText('Update credential'))
+  expect(onNavigate).toHaveBeenCalledWith({ kind: 'edit', id: server.id })
+  act(() => useSettingsStore.setState({ customServers: [{ ...server, availability: undefined }] }))
+  expect(document.body.textContent).not.toContain(
+    'Update the saved credential, then test the connection.'
+  )
+})

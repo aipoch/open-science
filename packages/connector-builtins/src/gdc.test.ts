@@ -307,3 +307,376 @@ describe('gdc_get_manifest', () => {
     })
   })
 })
+
+// Representative relationship shapes observed on the public GDC /cases and /files
+// endpoints for case 1e5c5b1b-3450-4a1f-9e92-bf522b47f23f. A file response is
+// pruned to its own sample/aliquot paths, unlike the case biospecimen inventory.
+const biospecimen = (
+  id: string,
+  type: string,
+  aliquots: string[]
+): {
+  sample_id: string
+  submitter_id: string
+  sample_type: string
+  tissue_type: string
+  tumor_descriptor: string
+  portions: {
+    portion_id: string
+    analytes: {
+      analyte_id: string
+      aliquots: { aliquot_id: string; submitter_id: string }[]
+    }[]
+  }[]
+} => ({
+  sample_id: id,
+  submitter_id: `sample-${id}`,
+  sample_type: type,
+  tissue_type: type === 'Primary Tumor' ? 'Tumor' : 'Normal',
+  tumor_descriptor: 'Not Reported',
+  portions: [
+    {
+      portion_id: `portion-${id}`,
+      analytes: [
+        {
+          analyte_id: `analyte-${id}`,
+          aliquots: aliquots.map((aliquot_id) => ({
+            aliquot_id,
+            submitter_id: `aliquot-${aliquot_id}`
+          }))
+        }
+      ]
+    }
+  ]
+})
+const fileId = 'ca3dad26-e33b-4361-be4a-a074a344a757'
+
+describe('GDC biospecimen relationships', () => {
+  it('returns case biospecimens without treating them as file sources', async () => {
+    const { call, fetchImpl } = setup(
+      paged([
+        {
+          case_id: 'case-1',
+          samples: [
+            biospecimen('normal', 'Blood Derived Normal', ['n']),
+            biospecimen('tumor', 'Primary Tumor', ['t1', 't2'])
+          ]
+        }
+      ])
+    )
+    const result = await call('gdc_list_cases', { case_ids: 'case-1' })
+    expect(result).toMatchObject({
+      cases: [
+        {
+          samples: [
+            { sample_id: 'normal', aliquots: [{ aliquot_id: 'n' }] },
+            { sample_id: 'tumor', aliquots: [{ aliquot_id: 't1' }, { aliquot_id: 't2' }] }
+          ]
+        }
+      ]
+    })
+    const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))
+    expect(body.fields.split(',')).toContain('samples.portions.analytes.aliquots.aliquot_id')
+  })
+
+  it.each(['gdc_search_files', 'gdc_get_file'])(
+    'preserves only file-linked sample/aliquot paths in %s',
+    async (id) => {
+      const hit = {
+        file_id: fileId,
+        cases: [{ case_id: 'case-1', samples: [biospecimen('tumor', 'Primary Tumor', ['t2'])] }],
+        analysis: {
+          analysis_id: 'analysis-1',
+          workflow_type: 'STAR - Counts',
+          workflow_version: 'v1',
+          workflow_link: 'https://example.org/workflow'
+        }
+      }
+      const { call, fetchImpl } = setup(id === 'gdc_get_file' ? { data: hit } : paged([hit]))
+      const out = (await call(id, id === 'gdc_get_file' ? { file_id: fileId } : {})) as {
+        file: Record<string, unknown>
+        files: Record<string, unknown>[]
+      }
+      const result = id === 'gdc_get_file' ? out.file : out.files[0]
+      expect(result.cases).toEqual([
+        {
+          case_id: 'case-1',
+          submitter_id: null,
+          project_id: null,
+          samples: [
+            {
+              sample_id: 'tumor',
+              submitter_id: 'sample-tumor',
+              sample_type: 'Primary Tumor',
+              tissue_type: 'Tumor',
+              tumor_descriptor: 'Not Reported',
+              aliquots: [
+                {
+                  aliquot_id: 't2',
+                  submitter_id: 'aliquot-t2',
+                  portion_id: 'portion-tumor',
+                  analyte_id: 'analyte-tumor'
+                }
+              ]
+            }
+          ]
+        }
+      ])
+      expect(result.analysis).toEqual(hit.analysis)
+      expect(fetchImpl).toHaveBeenCalledTimes(1)
+      const fields =
+        id === 'gdc_get_file'
+          ? new URL(String(fetchImpl.mock.calls[0][0])).searchParams.get('fields')!
+          : JSON.parse(String(fetchImpl.mock.calls[0][1]?.body)).fields
+      for (const field of [
+        'cases.samples.sample_type',
+        'cases.samples.portions.analytes.aliquots.aliquot_id',
+        'analysis.workflow_type'
+      ]) {
+        expect(fields.split(',')).toContain(field)
+      }
+    }
+  )
+
+  it('keeps paired samples and multiple cases rather than selecting the first source', async () => {
+    const { call } = setup(
+      paged([
+        {
+          file_id: fileId,
+          cases: [
+            {
+              case_id: 'case-1',
+              samples: [
+                biospecimen('normal', 'Blood Derived Normal', ['n']),
+                biospecimen('tumor', 'Primary Tumor', ['t'])
+              ]
+            },
+            { case_id: 'case-2', samples: [biospecimen('other', 'Primary Tumor', ['o1', 'o2'])] }
+          ]
+        }
+      ])
+    )
+    const out = (await call('gdc_search_files', { sample_types: 'Primary Tumor' })) as {
+      files: {
+        cases: { case_id: string; samples: { sample_id: string; aliquots: unknown[] }[] }[]
+      }[]
+    }
+    expect(out.files[0].cases.map((item) => item.case_id)).toEqual(['case-1', 'case-2'])
+    expect(out.files[0].cases[0].samples.map((item) => item.sample_id)).toEqual(['normal', 'tumor'])
+    expect(out.files[0].cases[1].samples[0].aliquots).toHaveLength(2)
+  })
+
+  it.each(['gdc_list_cases', 'gdc_search_files', 'gdc_get_file'])(
+    'preserves every portion/analyte branch and its aliquot ownership in %s',
+    async (id) => {
+      const sample = biospecimen('tumor', 'Primary Tumor', ['a1', 'a2'])
+      sample.portions[0].analytes.push({
+        analyte_id: 'analyte-b',
+        aliquots: [{ aliquot_id: 'b1', submitter_id: 'aliquot-b1' }]
+      })
+      sample.portions.push({
+        portion_id: 'portion-b',
+        analytes: [
+          { analyte_id: 'empty', aliquots: [] },
+          { analyte_id: 'analyte-c', aliquots: [{ aliquot_id: 'c1', submitter_id: 'aliquot-c1' }] }
+        ]
+      })
+      const caseRecord = { case_id: 'case-1', samples: [sample] }
+      const hit = id === 'gdc_list_cases' ? caseRecord : { file_id: fileId, cases: [caseRecord] }
+      const { call } = setup(id === 'gdc_get_file' ? { data: hit } : paged([hit]))
+      const result = (await call(id, id === 'gdc_get_file' ? { file_id: fileId } : {})) as {
+        cases: { samples: { aliquots: unknown[] }[] }[]
+        files: { cases: { samples: { aliquots: unknown[] }[] }[] }[]
+        file: { cases: { samples: { aliquots: unknown[] }[] }[] }
+      }
+      const cases =
+        id === 'gdc_list_cases'
+          ? result.cases
+          : id === 'gdc_get_file'
+            ? result.file.cases
+            : result.files[0].cases
+      expect(cases[0].samples[0].aliquots).toEqual([
+        {
+          aliquot_id: 'a1',
+          submitter_id: 'aliquot-a1',
+          portion_id: 'portion-tumor',
+          analyte_id: 'analyte-tumor'
+        },
+        {
+          aliquot_id: 'a2',
+          submitter_id: 'aliquot-a2',
+          portion_id: 'portion-tumor',
+          analyte_id: 'analyte-tumor'
+        },
+        {
+          aliquot_id: 'b1',
+          submitter_id: 'aliquot-b1',
+          portion_id: 'portion-tumor',
+          analyte_id: 'analyte-b'
+        },
+        {
+          aliquot_id: 'c1',
+          submitter_id: 'aliquot-c1',
+          portion_id: 'portion-b',
+          analyte_id: 'analyte-c'
+        }
+      ])
+    }
+  )
+
+  it.each(['gdc_search_files', 'gdc_get_file'])(
+    'keeps a real file source distinct from previously queried case inventory in %s',
+    async (id) => {
+      // IDs and relationship sets recorded from public GDC responses: the case has
+      // three samples and six aliquots; this RNA file has one sample and one aliquot.
+      const caseId = '1e5c5b1b-3450-4a1f-9e92-bf522b47f23f'
+      const tumorId = '2be962e7-74f4-49f7-ae34-9080de3ef820'
+      const linkedAliquot = '89b8448a-02ed-45c9-9838-b41e58a9dfbe'
+      const caseRecord = {
+        case_id: caseId,
+        samples: [
+          biospecimen('0a9473b0-857c-4592-bd9d-4b5479b9ec6b', 'Blood Derived Normal', [
+            '39fbddfe-218a-4a59-865e-4e4d45f136f7'
+          ]),
+          biospecimen('1ee05c6a-bb23-4742-86f2-610029662392', 'Solid Tissue Normal', [
+            'c5ede38f-0c34-4e5f-95cf-44f405b7eded'
+          ]),
+          biospecimen(tumorId, 'Primary Tumor', [
+            '2b4ed2f5-3749-4f67-a8de-ac49107ebfa8',
+            linkedAliquot,
+            'b2031366-1cc1-48f4-a4d2-8754ad806cb6',
+            'd30ab124-bcd9-49ba-bf31-10a7bfa5cfdb'
+          ])
+        ]
+      }
+      const hit = {
+        file_id: fileId,
+        cases: [
+          { case_id: caseId, samples: [biospecimen(tumorId, 'Primary Tumor', [linkedAliquot])] }
+        ]
+      }
+      const { call, fetchImpl } = setup(paged([caseRecord]))
+      await call('gdc_list_cases', { case_ids: caseId })
+      fetchImpl.mockResolvedValueOnce(
+        new Response(JSON.stringify(id === 'gdc_get_file' ? { data: hit } : paged([hit])))
+      )
+      const result = (await call(
+        id,
+        id === 'gdc_get_file' ? { file_id: fileId } : { case_ids: caseId }
+      )) as {
+        file: {
+          cases: {
+            case_id: string
+            samples: { sample_id: string; aliquots: { aliquot_id: string }[] }[]
+          }[]
+        }
+        files: {
+          cases: {
+            case_id: string
+            samples: { sample_id: string; aliquots: { aliquot_id: string }[] }[]
+          }[]
+        }[]
+      }
+      const file = id === 'gdc_get_file' ? result.file : result.files[0]
+      expect(
+        file.cases.map((item) => ({
+          case_id: item.case_id,
+          samples: item.samples.map((sample) => ({
+            sample_id: sample.sample_id,
+            aliquots: sample.aliquots.map((aliquot) => aliquot.aliquot_id)
+          }))
+        }))
+      ).toEqual([{ case_id: caseId, samples: [{ sample_id: tumorId, aliquots: [linkedAliquot] }] }])
+      expect(fetchImpl.mock.calls.map(([url]) => new URL(String(url)).pathname)).toEqual([
+        '/cases',
+        id === 'gdc_get_file' ? `/files/${fileId}` : '/files'
+      ])
+    }
+  )
+
+  it('does not invent sample relationships or workflow metadata when omitted', async () => {
+    const { call } = setup(
+      paged([{ file_id: fileId, cases: [{ case_id: 'case-only' }] }, { file_id: fileId }])
+    )
+    await expect(call('gdc_search_files', {})).resolves.toMatchObject({
+      files: [
+        { cases: [{ case_id: 'case-only', samples: [] }], analysis: null },
+        { cases: [], analysis: null }
+      ]
+    })
+  })
+
+  it.each(['samples', 'portions', 'analytes', 'aliquots'])(
+    'rejects malformed %s relationships',
+    async (field) => {
+      const sample = biospecimen('tumor', 'Primary Tumor', ['t'])
+      const targets: Record<string, Record<string, unknown>> = {
+        samples: {},
+        portions: sample,
+        analytes: sample.portions[0],
+        aliquots: sample.portions[0].analytes[0]
+      }
+      const caseRecord = { samples: [sample] } as Record<string, unknown>
+      targets.samples = caseRecord
+      targets[field][field] = {}
+      const { call } = setup(paged([{ file_id: fileId, cases: [caseRecord] }]))
+      await expect(call('gdc_search_files', {})).rejects.toThrow(/Invalid GDC/)
+    }
+  )
+})
+
+describe('GDC file filters', () => {
+  it.each(['case_ids', 'sample_types', 'workflow_types'])(
+    'rejects invalid %s before HTTP',
+    (name) => {
+      const { call, fetchImpl } = setup(paged([]))
+      for (const value of [[], [''], Array(101).fill('x'), 1, 'x'.repeat(201)]) {
+        expect(() => call('gdc_search_files', { [name]: value })).toThrow('invalid_arguments')
+      }
+      expect(fetchImpl).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'combines case, sample and workflow filters with existing filters (arrays=%s)',
+    async (asArrays) => {
+      const { call, fetchImpl } = setup(paged([]))
+      await call('gdc_search_files', {
+        project_ids: 'TCGA-BRCA',
+        access: 'open',
+        case_ids: asArrays ? ['case-1', 'case-2'] : 'case-1',
+        sample_types: asArrays ? ['Primary Tumor', 'Solid Tissue Normal'] : 'Primary Tumor',
+        workflow_types: asArrays ? ['STAR - Counts', 'HTSeq - Counts'] : 'STAR - Counts',
+        page: 2,
+        page_size: 3
+      })
+      const body = JSON.parse(String(fetchImpl.mock.calls[0][1]?.body))
+      expect(body).toMatchObject({ from: 3, size: 3 })
+      expect(body.filters).toEqual({
+        op: 'and',
+        content: [
+          { op: 'in', content: { field: 'cases.project.project_id', value: ['TCGA-BRCA'] } },
+          {
+            op: 'in',
+            content: { field: 'cases.case_id', value: asArrays ? ['case-1', 'case-2'] : ['case-1'] }
+          },
+          {
+            op: 'in',
+            content: {
+              field: 'cases.samples.sample_type',
+              value: asArrays ? ['Primary Tumor', 'Solid Tissue Normal'] : ['Primary Tumor']
+            }
+          },
+          {
+            op: 'in',
+            content: {
+              field: 'analysis.workflow_type',
+              value: asArrays ? ['STAR - Counts', 'HTSeq - Counts'] : ['STAR - Counts']
+            }
+          },
+          { op: 'in', content: { field: 'files.access', value: ['open'] } }
+        ]
+      })
+    }
+  )
+})

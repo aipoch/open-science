@@ -21,6 +21,7 @@ import { Readable } from 'node:stream'
 import { gzipSync } from 'node:zlib'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { loadManagedCodexErrorHandler } from './codex-error.test-utils'
+import { describePromptError } from '../acp/prompt-error'
 
 import {
   ACP_MODEL_CALL_USAGE_META_KEY,
@@ -1441,13 +1442,16 @@ describe('Codex authentication repair', () => {
 
 describe('Codex terminal error normalization', () => {
   it.each([
-    ['serverOverloaded', true, -32603],
-    ['usageLimitExceeded', true, -32603],
-    ['unauthorized', true, -32603],
-    ['unauthorized', false, -32000]
+    ['serverOverloaded', true, -32603, false],
+    ['usageLimitExceeded', true, -32603, false],
+    ['unauthorized', true, -32603, true],
+    ['unauthorized', false, -32000, true],
+    [{ httpConnectionFailed: { httpStatusCode: 401 } }, true, -32603, true],
+    [{ httpConnectionFailed: { httpStatusCode: 401 } }, false, -32000, true],
+    [{ httpConnectionFailed: { httpStatusCode: 403 } }, true, -32603, false]
   ] as const)(
     'preserves %s with authConfigured=%s as an ACP error',
-    async (code, auth, rpcCode) => {
+    async (code, auth, rpcCode, authenticationRequired) => {
       const root = await mkdtemp(join(tmpdir(), 'codex-terminal-error-'))
       try {
         const handler = await loadManagedCodexErrorHandler(root)
@@ -1465,6 +1469,9 @@ describe('Codex terminal error normalization', () => {
           code: rpcCode,
           data: { codexErrorInfo: code, message: 'Provider could not finish.' }
         })
+        expect(describePromptError(handler.getFailure()) === 'Authentication required').toBe(
+          authenticationRequired
+        )
         const adapterPath = join(root, 'index.js')
         const normalized = await readFile(adapterPath, 'utf8')
         await ensureManagedCodexContextUsage(adapterPath)

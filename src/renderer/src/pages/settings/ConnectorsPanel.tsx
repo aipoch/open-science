@@ -100,12 +100,14 @@ const includesAgent = (
 }
 
 type ConnectorsPanelProps = {
+  recoveryConnectorId?: string
   onNavigate: (view: ConnectorsView) => void
   onOpenTag?: (tagId: string) => void
   onOpenSpecialist?: (usage: SpecialistUsage) => void
 }
 
 export function ConnectorsPanel({
+  recoveryConnectorId,
   onNavigate,
   onOpenTag,
   onOpenSpecialist
@@ -126,6 +128,7 @@ export function ConnectorsPanel({
   const specialistItems = useSpecialistStore((state) => state.items)
   const loadSpecialists = useSpecialistStore((state) => state.load)
 
+  const recoveryServer = customServers.find(({ id }) => id === recoveryConnectorId)
   const { panelRef, filterRef } = useStickyResourceFilters()
   const selection = useResourceSelection({
     resources: [
@@ -587,6 +590,31 @@ export function ConnectorsPanel({
 
   return (
     <div ref={panelRef} className="p-5">
+      {recoveryServer &&
+      (recoveryServer.availability === 'unauthenticated' ||
+        recoveryServer.availability === 'credential_unavailable' ||
+        (recoveryServer.oauth && !recoveryServer.oauth.hasTokens)) ? (
+        <ErrorNotice
+          className="mb-4"
+          tone="amber"
+          title={recoveryServer.displayName}
+          description={
+            recoveryServer.oauth && recoveryServer.availability !== 'credential_unavailable'
+              ? t('Sign in again to restore access to this account.')
+              : t('Update the saved credential, then test the connection.')
+          }
+          primaryButton={{
+            label:
+              recoveryServer.oauth && recoveryServer.availability !== 'credential_unavailable'
+                ? t('Sign in again')
+                : t('Update credential'),
+            onClick: () =>
+              recoveryServer.oauth && recoveryServer.availability !== 'credential_unavailable'
+                ? setOAuthSignInServer(recoveryServer)
+                : onNavigate({ kind: 'edit', id: recoveryServer.id })
+          }}
+        />
+      ) : null}
       {catalogState === 'error' ? (
         <SettingsLoadNotice
           state="error"
@@ -929,7 +957,7 @@ export function ConnectorsPanel({
                               {server.oauth.hasTokens && server.availability !== 'unauthenticated'
                                 ? t('Connected')
                                 : server.availability === 'unauthenticated'
-                                  ? t('Retry')
+                                  ? t('Sign in again')
                                   : t('Sign in')}
                             </Button>
                           ) : null}

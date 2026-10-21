@@ -334,12 +334,14 @@ describe('AgentRuntimeManager', () => {
     overrides: Partial<ManagerOptions> = {}
   ): InstanceType<typeof AgentRuntimeManager> => {
     const skills = {
-      materializeSkills: vi.fn().mockResolvedValue(undefined)
+      materializeSkills: vi.fn().mockResolvedValue(undefined),
+      listHostSkills: vi.fn().mockResolvedValue([])
     } as unknown as SkillCatalogModule
     const connectors = {
       getConnectors: vi.fn().mockResolvedValue(undefined),
       enabledConnectorIds: vi.fn().mockReturnValue([]),
-      materializedCustomSkillNames: vi.fn().mockReturnValue([])
+      materializedCustomSkillNames: vi.fn().mockReturnValue([]),
+      connectorSkillNames: vi.fn().mockReturnValue([])
     } as unknown as ConnectorSettingsModule
 
     return new AgentRuntimeManager({
@@ -1504,6 +1506,7 @@ describe('AgentRuntimeManager', () => {
       'revision-1'
     )
     const provisionRuntime = vi.spyOn(manager, 'provisionClaudeRuntimeConfig').mockResolvedValue({
+      mainAllowedNames: [],
       privateProfileDir: configDir,
       settingsPath: join(configDir, 'settings.json'),
       privateSettings: {},
@@ -1570,6 +1573,40 @@ describe('AgentRuntimeManager', () => {
       }),
       ['--add-dir', projectionRoot]
     )
+  })
+
+  it('prepares shared documents without transferring Specialist authority into Main', async () => {
+    const { ConnectorSettingsModule } = await import('./connector-settings')
+    const connectors = new ConnectorSettingsModule(repository)
+    const skills = {
+      materializeSkills: vi.fn().mockResolvedValue(undefined),
+      listHostSkills: vi
+        .fn()
+        .mockResolvedValue([{ id: 'disabled', name: 'private-research', source: 'personal' }])
+    } as unknown as SkillCatalogModule
+    manager = createManager({ connectors, skills })
+    const settings = { ...(await repository.getSettings()), disabledSkillIds: ['disabled'] }
+    const root = join(storageRoot, 'codex')
+    const [main, specialist] = await Promise.all([
+      manager.prepareAgentSkillDiscovery(settings, root, new Set()),
+      manager.prepareAgentSkillDiscovery(settings, root, new Set(['disabled', 'mcp-orphadata']), [
+        'mcp-orphadata',
+        'private-research'
+      ])
+    ])
+    expect(main.allowedNames).not.toContain('mcp-orphadata')
+    expect(main.allowedNames).not.toContain('private-research')
+    expect(specialist.allowedNames).toEqual(
+      expect.arrayContaining(['mcp-orphadata', 'private-research'])
+    )
+    expect(specialist.mainAllowedNames).toEqual(main.mainAllowedNames)
+    expect(specialist.mainAllowedNames).not.toContain('private-research')
+    const path = join(root, 'skills', 'mcp-orphadata', 'SKILL.md')
+    expect(main.allowedPaths).not.toContain(path)
+    expect(specialist.allowedPaths).toContain(path)
+    await manager.prepareAgentSkillDiscovery(settings, root, new Set(), [])
+    await expect(readFile(path, 'utf8')).resolves.toContain('get_disease_genes')
+    expect(await repository.getSettings()).not.toHaveProperty('enabledConnectorIds')
   })
 
   it('synchronizes provisioned custom Connector docs into isolated agent Skill roots', async () => {
@@ -1639,6 +1676,7 @@ describe('AgentRuntimeManager', () => {
       manager = createManager({ executeClaudeProbe: vi.fn().mockRejectedValue(error) })
       const configDir = getAppClaudeConfigDir(storageRoot)
       vi.spyOn(manager, 'provisionClaudeRuntimeConfig').mockResolvedValue({
+        mainAllowedNames: [],
         privateProfileDir: configDir,
         settingsPath: join(configDir, 'settings.json'),
         privateSettings: {},

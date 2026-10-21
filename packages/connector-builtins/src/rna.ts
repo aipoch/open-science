@@ -1,3 +1,4 @@
+import { RNACENTRAL_TOOLS } from './rna-rnacentral'
 import { createHash } from 'node:crypto'
 import { z } from 'zod'
 import type { ToolContext, ToolDescriptor } from '@aipoch/connector-core'
@@ -224,6 +225,7 @@ const searchResult = z.object({
 })
 
 export const RNA_TOOLS: ToolDescriptor[] = [
+  ...RNACENTRAL_TOOLS,
   {
     id: 'get_family',
     connector: 'rna',

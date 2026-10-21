@@ -1,3 +1,4 @@
+import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionReplayStore } from '@/stores/session-replay-store'
 import type { SessionDiscussionCapture } from './replay/replay-context'
 // @vitest-environment jsdom
@@ -212,6 +213,23 @@ afterEach(() => {
 })
 
 describe('workspace composer controller', () => {
+  it('retains the failed validation baseline across draft switches and captures repeated failures', () => {
+    const hook = renderController(uploads(), undefined, [], null)
+    mounted.push(hook)
+    const provider = useSettingsStore.getState().providers[0]
+    useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 10 }] })
+    act(() => hook.result.current.actions.setError('Authentication required'))
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 10 })
+    hook.selectDraft('second')
+    hook.selectDraft('first')
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 10 })
+    useSettingsStore.setState({ providers: [{ ...provider, id: 'provider', lastValidatedAt: 30 }] })
+    act(() => hook.result.current.actions.setError('Authentication required'))
+    expect(hook.result.current.view.errorProviderValidations).toEqual({ provider: 30 })
+    act(() => hook.result.current.actions.setError(null))
+    expect(hook.result.current.view.errorProviderValidations).toBeUndefined()
+  })
+
   it('replaces a discussion source atomically, preserves ordinary annotations, and allows undo', () => {
     const hook = renderController(uploads(), undefined, [], null)
     mounted.push(hook)
