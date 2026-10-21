@@ -87,13 +87,18 @@ export const Fixture = (): React.JSX.Element => {
         />
       ) : (
         <WorkspaceElicitationCard
-          request={{
-            requestId: 'question-1',
-            sessionId: 'session-1',
-            toolCallId: 'tool-1',
-            message: 'Which outputs?',
-            fields
-          }}
+          // Historical surfaces retain the projection after the pending request is gone.
+          request={
+            response?.action === 'accept'
+              ? undefined
+              : {
+                  requestId: 'question-1',
+                  sessionId: 'session-1',
+                  toolCallId: 'tool-1',
+                  message: 'Which outputs?',
+                  fields
+                }
+          }
           elicitation={{
             message: 'Which outputs?',
             fields,

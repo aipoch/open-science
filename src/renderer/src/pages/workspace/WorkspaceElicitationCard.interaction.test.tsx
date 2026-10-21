@@ -142,9 +142,13 @@ afterEach(() => {
 })
 
 describe('WorkspaceElicitationCard choice question', () => {
-  it.each(['answered', 'pending'] as const)(
-    'localizes the system answer in %s records without changing its stored value',
-    async (state) => {
+  it.each(
+    (['answered', 'pending'] as const).flatMap((state) =>
+      [true, false].map((withRequest) => ({ state, withRequest }))
+    )
+  )(
+    'localizes the system answer in $state records with request=$withRequest',
+    async ({ state, withRequest }) => {
       const answers = [{ fieldId: 'question_0_custom', value: 'Let the agent decide' }]
       await act(async () => i18next.changeLanguage('zh-Hans'))
       try {
@@ -152,7 +156,7 @@ describe('WorkspaceElicitationCard choice question', () => {
           root.render(
             <WorkspaceElicitationCard
               readOnly
-              request={request}
+              request={withRequest ? request : undefined}
               elicitation={{
                 message: request.message,
                 fields,
@@ -177,6 +181,51 @@ describe('WorkspaceElicitationCard choice question', () => {
       }
     }
   )
+
+  it('reviews saved questions and selected options without a pending request', async () => {
+    await act(async () =>
+      root.render(
+        <WorkspaceElicitationCard
+          elicitation={{
+            message: multiQuestionRequest.message,
+            fields: mixedChoiceFields,
+            state: 'answered',
+            answers: [
+              { fieldId: 'question_0', value: ['multi-omics', 'clinical'] },
+              { fieldId: 'question_1', value: 'chinese' }
+            ]
+          }}
+        />
+      )
+    )
+    expect(Array.from(container.querySelectorAll('h3'), (title) => title.textContent)).toEqual([
+      'What should this skill primarily cover?',
+      'Which language should the skill use?'
+    ])
+    expect(
+      Array.from(
+        container.querySelectorAll('[data-testid="choice-kind-chip"]'),
+        (chip) => chip.textContent
+      )
+    ).toEqual(['Multi select', 'Single select'])
+
+    const rows = container.querySelectorAll<HTMLButtonElement>(
+      '[data-testid="elicitation-answer-row"]'
+    )
+    await act(async () => rows[0].click())
+    await act(async () => rows[1].click())
+    expect(container.querySelectorAll('[data-testid="elicitation-choice-review"]')).toHaveLength(2)
+    expect(
+      Array.from(container.querySelectorAll('[data-selected="true"]'), (option) =>
+        option.getAttribute('data-testid')
+      )
+    ).toEqual([
+      'elicitation-option-multi-omics',
+      'elicitation-option-clinical',
+      'elicitation-option-chinese'
+    ])
+    expect(container.querySelector('form')).toBeNull()
+  })
 
   it('preserves ordinary answer text even when it matches the system answer', async () => {
     const textFields: ElicitationField[] = [{ id: 'notes', label: 'Notes', kind: 'text' }]

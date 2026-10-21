@@ -209,9 +209,11 @@ const WorkspaceElicitationCard = ({
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const fieldStatusId = useId()
-  const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
+  // Historical surfaces have saved fields but no pending request.
+  const questionFields = request?.fields ?? elicitation.fields
+  const choiceQuestions = resolveAgentUserChoiceQuestions(questionFields)
   const restoredValues = initialValues(
-    request?.fields ?? [],
+    questionFields,
     elicitation.state === 'pending' ? (elicitation.draftAnswers ?? []) : []
   )
   const restoredEdit =
@@ -246,15 +248,15 @@ const WorkspaceElicitationCard = ({
     () =>
       initialValues(
         readOnly
-          ? (request?.fields ?? []).map((field) => ({
+          ? questionFields.map((field) => ({
               ...field,
               defaultValue: undefined,
               required: false
             }))
-          : (request?.fields ?? []),
+          : questionFields,
         elicitation.answers ?? []
       ),
-    [request, elicitation.answers, readOnly]
+    [questionFields, elicitation.answers, readOnly]
   )
   const terminalLabel =
     elicitation.state === 'declined'
