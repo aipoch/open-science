@@ -1846,6 +1846,10 @@ describe('ProviderAccountsModule', () => {
   })
 
   it('owns the single xAI OAuth provider lifecycle without persisting an access token', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => Response.json({}))
+    )
     await module.upsertProvider({ type: 'xai-subscription' })
     const stored = (await repository.getSettings()).providers[0]
 

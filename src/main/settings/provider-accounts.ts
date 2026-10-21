@@ -512,8 +512,10 @@ class ProviderAccountsModule {
     return this.xai.beginLogin()
   }
 
-  waitXaiOAuthLogin(): Promise<{ accountEmail?: string }> {
-    return this.xai.waitForLogin()
+  async waitXaiOAuthLogin(): Promise<{ accountEmail?: string }> {
+    const account = await this.xai.waitForLogin()
+    await this.validateProvider({ providerId: XAI_SUBSCRIPTION_PROVIDER_ID })
+    return account
   }
 
   cancelXaiOAuthLogin(): void {

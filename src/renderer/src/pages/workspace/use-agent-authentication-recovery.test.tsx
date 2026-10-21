@@ -273,16 +273,20 @@ it('uses the provider default when validation records an effective model', () =>
   expect(hook.result.required).toBe(false)
 })
 
-it('restores every mounted session after shared validation without requiring each to open settings', () => {
-  const first = mount()
-  const second = mount()
-  expect(first.result.required).toBe(true)
-  expect(second.result.required).toBe(true)
-  act(() => first.result.openSettings())
-  first.providers([{ ...provider, lastValidatedAt: 30 }])
-  expect(first.result.required).toBe(false)
-  expect(second.result.required).toBe(false)
-})
+it.each(['codex-isolated', 'xai-subscription'] as const)(
+  'restores every mounted %s session after shared validation without requiring each to open settings',
+  (type) => {
+    useSettingsStore.setState({ providers: [{ ...provider, type }] })
+    const first = mount()
+    const second = mount()
+    expect(first.result.required).toBe(true)
+    expect(second.result.required).toBe(true)
+    act(() => first.result.openSettings())
+    first.providers([{ ...provider, type, lastValidatedAt: 30 }])
+    expect(first.result.required).toBe(false)
+    expect(second.result.required).toBe(false)
+  }
+)
 
 it('keeps restored live failures resolved across session switches and remounts, but blocks a new failure', () => {
   const first = failedSession()

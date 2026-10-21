@@ -553,7 +553,7 @@ it('routes API key recovery to the existing editor without starting login', asyn
   expect(edit).toHaveBeenCalledWith(provider)
 })
 
-it.each(['claude-isolated', 'custom'] as const)(
+it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
   'clears %s recovery after fresh validation while retaining an older model failure',
   (type) => {
     const provider = {
