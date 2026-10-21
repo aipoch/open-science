@@ -35,7 +35,7 @@ describe('provider metadata contracts', () => {
       '(page - 1) * page_size',
       'all_versions',
       'concept_record_id',
-      'No uploads or file downloads',
+      'Public metadata does not imply open file access',
       'not sanitized',
       'empty file list does not establish'
     ])
@@ -199,7 +199,7 @@ describe('registry + catalog', () => {
     }
   )
 
-  it('registers PDC discovery with version and data-use guidance', () => {
+  it('registers PDC discovery with version and file metadata', () => {
     expect(getConnectorTools('pdc').map((tool) => tool.id)).toEqual([
       'pdc_search_studies',
       'pdc_get_study',
@@ -220,8 +220,7 @@ describe('registry + catalog', () => {
       'pdc_list_files',
       'latest version',
       'local',
-      'Protein Assembly',
-      'data use'
+      'Protein Assembly'
     ])
       expect(doc).toContain(phrase)
     expect(() =>
