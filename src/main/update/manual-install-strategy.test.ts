@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { ElectronUpdaterStrategy, type ElectronUpdaterDeps } from './electron-updater-strategy'
 import { UpdateService } from './service'
+import { ManualInstallerFallback } from './manual-install'
 
 vi.mock('electron-updater', () => ({
   AppImageUpdater: class {},
@@ -62,8 +63,16 @@ async function setup() {
     manualInstallStorePath: join(directory, 'receipt.json'),
     verifyManualInstallerSignature: async () => {},
     revealManualInstallerFile: reveal,
-    markUpdateShutdown: () => () => {}
+    markUpdateShutdown: () => () => {},
+    manualInstallRecovery: async (...args) => terminalObservation(...args)
   }
+  const terminalObservation = (
+    ...args: Parameters<NonNullable<ElectronUpdaterDeps['manualInstallRecovery']>>
+  ): ReturnType<NonNullable<ElectronUpdaterDeps['manualInstallRecovery']>> =>
+    common.manualInstallRecovery === initialObservation
+      ? Promise.resolve('pending' as const)
+      : common.manualInstallRecovery!(...args)
+  const initialObservation = common.manualInstallRecovery
   const strategy = new ElectronUpdaterStrategy(common)
   await strategy.check()
   await strategy.download()
@@ -72,6 +81,7 @@ async function setup() {
 
 it('qualifies and reveals a reconstructed complete NSIS executable after real handoff failure', async () => {
   const f = await setup()
+  f.common.manualInstallRecovery = async () => 'failed'
   expect(f.strategy.getStatus().manualInstall).toBeUndefined()
   f.updater.quitAndInstall.mockImplementation(() => {
     throw new Error('native launch failed')
@@ -112,6 +122,7 @@ it('persists unresolved native handoff and prevents every recovery command bypas
 
 it('retains the package through safe recovery, and rehydrates the updater before automatic retry', async () => {
   const f = await setup()
+  f.common.manualInstallRecovery = async () => 'failed'
   f.updater.quitAndInstall.mockImplementationOnce(() => {
     throw new Error('native launch failed')
   })
@@ -126,6 +137,7 @@ it('retains the package through safe recovery, and rehydrates the updater before
 
 it('disambiguates the actual downloaded architecture in a multi-architecture Mac feed', async () => {
   const f = await setup()
+  f.common.manualInstallRecovery = async () => 'failed'
   const updater = f.updater
   const files = ['x64', 'arm64'].map((arch) => ({
     url: `aipoch-open-science-2.0.0-mac-${arch}.zip`,
@@ -242,6 +254,11 @@ it('requires native terminal evidence before recovering an asynchronous handoff 
   await strategy.download()
   await strategy.apply()
   f.updater.emit('error', new Error('asynchronous native error'))
+  expect(strategy.getStatus().recovery).toMatchObject({
+    installation: 'pending',
+    canRecover: true,
+    canRetryInstall: false
+  })
   strategy.publishLifecycleStatus({
     recovery: {
       phase: 'stopped',
@@ -294,6 +311,7 @@ it('retains protected handoff provenance across restart while the existing insta
 
 it('publishes a reachable retry/manual status during scheduler startup for a known failed native attempt', async () => {
   const f = await setup()
+  f.common.manualInstallRecovery = async () => 'failed'
   f.updater.quitAndInstall.mockImplementation(() => {
     throw new Error('native launch failed')
   })
@@ -401,4 +419,38 @@ it('lets the existing manifest recovery UI action recheck native evidence and pu
   const downloads = vi.mocked(fetchImpl).mock.calls.length
   await owner.check()
   expect(fetchImpl).toHaveBeenCalledTimes(downloads)
+})
+
+it('does not infer terminal failure from a synchronous native submission exception', async () => {
+  const f = await setup()
+  f.updater.quitAndInstall.mockImplementation(() => {
+    throw new Error('submission result unknown')
+  })
+  await f.strategy.apply({ relaunch: false })
+  expect(f.strategy.getStatus().recovery).toMatchObject({
+    installation: 'pending',
+    canRecover: true,
+    canRetryInstall: false
+  })
+  expect((await f.strategy.getManualInstall()).kind).toBe('blocked')
+  const receipt = JSON.parse(await readFile(f.common.manualInstallStorePath!, 'utf8'))
+  expect(receipt.attempt.state).toBe('pending')
+  expect(receipt.attempt.operationId).toMatch(/^[0-9a-f-]{36}$/)
+})
+
+it('releases the apply claim if durable failure cleanup cannot be written', async () => {
+  const f = await setup()
+  const clear = vi
+    .spyOn(ManualInstallerFallback.prototype, 'clearFailure')
+    .mockImplementationOnce(() => {
+      throw new Error('disk full')
+    })
+  try {
+    expect(await f.strategy.apply()).toMatchObject({ state: 'ready', error: 'disk full' })
+    expect(f.updater.quitAndInstall).not.toHaveBeenCalled()
+    await f.strategy.apply()
+    expect(f.updater.quitAndInstall).toHaveBeenCalledOnce()
+  } finally {
+    clear.mockRestore()
+  }
 })

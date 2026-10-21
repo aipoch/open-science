@@ -188,6 +188,7 @@ describe('manual installer qualification and continuity', () => {
     safety.mockResolvedValue(false)
     expect((await f.owner.revealInstaller()).kind).toBe('blocked')
     expect(f.reveal).not.toHaveBeenCalled()
+    expect(f.status().manualInstall?.kind).toBe('blocked')
   })
   it('offers the full download for transfer errors and updater-dependent artifacts', async () => {
     const f = await fixture()

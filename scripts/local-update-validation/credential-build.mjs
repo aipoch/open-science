@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/explicit-function-return-type */
 // Compile-time only: runtime environment variables cannot switch a production bundle's cipher.
 import { resolve } from 'node:path'
 export const credentialSandboxEnabled = (env = process.env) =>

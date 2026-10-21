@@ -508,6 +508,41 @@ describe('evidence evaluation', () => {
     ).toBe('failed')
   })
 
+  it('requires matching build, runner and application evidence for sandbox isolation', async () => {
+    const root = await temp()
+    await writeFile(
+      join(root, '.local-update-validation-owner.json'),
+      JSON.stringify({ schema: 1, runId: randomUUID(), root })
+    )
+    await writeFile(join(root, 'build.json'), JSON.stringify({ credentialMode: 'sandbox' }))
+    const dir = join(root, 'scenarios', 'sandbox')
+    await mkdir(dir, { recursive: true })
+    await writeFile(
+      join(dir, 'local-update.json'),
+      JSON.stringify({ runId: 'sandbox', scenario: 'manual-local', credentialMode: 'sandbox' })
+    )
+    const scope = {
+      isolated: true,
+      mode: 'local-update-credential-sandbox',
+      productionCredentialAcceptance: false
+    }
+    await writeFile(join(dir, 'keychain-verification.json'), JSON.stringify(scope))
+    expect((await writeReport(root)).scenarios[0].isolationVerified).toBe(false)
+    await writeFile(
+      join(dir, 'app-events.jsonl'),
+      JSON.stringify({
+        ...scope,
+        type: 'credential-scope-verified',
+        runId: 'sandbox',
+        scenario: 'manual-local'
+      }) + '\n'
+    )
+    const result = (await writeReport(root)).scenarios[0]
+    expect(result.isolationVerified).toBe(true)
+    expect(result.productionCredentialAcceptance).toBe(false)
+    expect(result.status).not.toBe('passed') // Isolation alone proves no update behavior.
+  })
+
   it('cannot hide an unsafe historical attempt behind a later passing retry', async () => {
     const root = await temp()
     await writeFile(

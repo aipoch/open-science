@@ -72,17 +72,17 @@ export const useManualUpdateInstall = (
     return true
   }
   const eligible = status.manualInstall && status.manualInstall.kind !== 'blocked'
-  const run = async (reveal: boolean): Promise<void> => {
+  const run = async (action: 'inspect' | 'reveal' | 'website'): Promise<void> => {
     if (pending.current || !eligible) return
     pending.current = true
     setChecking(true)
     const revision = generation.current
-    if (!reveal) {
+    if (action === 'inspect') {
       setNewDownload(false)
       setView({ identity })
     }
     try {
-      const info = await (reveal
+      const info = await (action === 'reveal'
         ? window.api.update.revealManualInstaller()
         : window.api.update.getManualInstall())
       if (
@@ -95,6 +95,7 @@ export const useManualUpdateInstall = (
         return
       }
       setView({ identity, info })
+      if (action === 'website') window.open(APP.update.downloadPage, '_blank', 'noreferrer')
     } catch {
       if (revision === generation.current)
         setView((previous) => ({ ...previous, identity, error: true }))
@@ -218,7 +219,7 @@ export const useManualUpdateInstall = (
       <button
         ref={entry}
         type="button"
-        onClick={() => void run(false)}
+        onClick={() => void run('inspect')}
         disabled={checking}
         className="mt-2 block text-xs text-muted-foreground underline underline-offset-4 hover:text-foreground"
       >
@@ -302,7 +303,7 @@ export const useManualUpdateInstall = (
             ) : null}
           </>
         ) : !checking ? (
-          <Button variant="outline" onClick={() => void run(false)}>
+          <Button variant="outline" onClick={() => void run('inspect')}>
             {t('Retry')}
           </Button>
         ) : null}
@@ -314,11 +315,18 @@ export const useManualUpdateInstall = (
           {t('Back to update')}
         </Button>
         {local ? (
-          <Button disabled={checking} onClick={() => void run(true)}>
+          <Button disabled={checking} onClick={() => void run('reveal')}>
             {revealLabel}
           </Button>
         ) : info ? (
-          <ExternalTextLink href={APP.update.downloadPage}>
+          <ExternalTextLink
+            href={APP.update.downloadPage}
+            aria-disabled={checking}
+            onClick={(event) => {
+              event.preventDefault()
+              void run('website')
+            }}
+          >
             {t('Download from website')}
           </ExternalTextLink>
         ) : (

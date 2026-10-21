@@ -471,7 +471,9 @@ export async function runScenario(
     if (stageOnly) {
       console.log(`Scenario staged without launching A: ${runRoot}`)
       console.log(
-        'Provision only in a dedicated disposable macOS login account/VM. The runner never changes Keychain lists.'
+        config.credentialMode === 'sandbox'
+          ? 'This scenario uses compile-only fixture credentials; production Keychain acceptance is excluded.'
+          : 'Provision only in a dedicated disposable macOS login account/VM. The runner never changes Keychain lists.'
       )
       return runRoot
     }

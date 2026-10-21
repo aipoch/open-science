@@ -204,6 +204,8 @@ export async function buildPair(runRoot, { versionA, versionB, snapshotId }) {
       runCommand(binary, args, { cwd: directory, logPath, env })
     console.log(`Preparing ${key.toUpperCase()} ${version}; log: ${logPath}`)
     await command(process.execPath, ['scripts/ci/npm-ci.mjs'])
+    // npm versions with blocked install scripts still need the repository's explicit preparation.
+    await command('npm', ['run', 'postinstall'])
     if (key === 'a') {
       const boundaryReport = join(runRoot, 'build-boundary-tests.json')
       await command(process.execPath, [

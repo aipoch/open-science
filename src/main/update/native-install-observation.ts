@@ -32,6 +32,7 @@ $ErrorActionPreference = 'Stop'
 $receipt = $env:OPEN_SCIENCE_INSTALL_OBSERVATION
 $attempt = $env:OPEN_SCIENCE_INSTALL_OBSERVATION_ID
 $target = [IO.Path]::GetFullPath($env:OPEN_SCIENCE_INSTALL_OBSERVATION_TARGET)
+$operationArgument = '(?:^|\s)"?--open-science-update-operation=' + [Regex]::Escape($attempt) + '"?(?:\s|$)'
 $record = Get-Content -LiteralPath $receipt -Raw | ConvertFrom-Json
 if ($record.attempt -ne $attempt) { exit 0 }
 function Publish($state, $pidValue, $code) {
@@ -65,7 +66,7 @@ public static class OpenScienceInstallObserver {
   do {
     $rows = @(Get-CimInstance Win32_Process)
     $matches = @($rows | Where-Object {
-      $_.ExecutablePath -and [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase)
+      $_.ExecutablePath -and [String]::Equals([IO.Path]::GetFullPath($_.ExecutablePath), $target, [StringComparison]::OrdinalIgnoreCase) -and $_.CommandLine -and $_.CommandLine -match $operationArgument
     })
     if ($matches.Count -gt 1) { throw 'Ambiguous installer identity' }
     if ($matches.Count -eq 1) {

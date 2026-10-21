@@ -22,23 +22,17 @@ The ordinary/test bundle guard runs against the frozen source. Full application 
 
 The runner **never changes a Keychain search list or default Keychain**, including under an altered HOME. It never creates, unlocks or resets a credential database. A changed HOME is insufficient proof that Security.framework is isolated. Ordinary login credentials must remain untouched.
 
-A packaged scenario requires an independently provisioned, scenario-owned Keychain in a dedicated disposable macOS login account or VM. The runner queries metadata only and refuses startup unless the default and search scope contain exactly the scenario database. Application startup also checks the effective scope and rejects shared application accounts in the System database. Production credential helpers remain active.
+The default local build uses a **compile-only credential sandbox**. Both `OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION=1` and `OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION_CREDENTIALS=sandbox` must be present during compilation. Main and the bundled Node backend use the same per-scenario AES-GCM cipher with a randomly generated, mode-0600 key in the isolated profile. This is nonsecret fixture storage, not production credential acceptance. The ordinary package cannot enable it with runtime environment variables; full-package scans reject sandbox markers.
 
-Stage a scenario before provisioning; this creates isolated app/data/config/profile/cache directories and fixed nonsecret test data, without opening A or starting the update server:
-
-```sh
-npm run validate:update:local -- stage /absolute/run-directory --scenario manual-local
-```
-
-The command prints the staged scenario directory. Its `local-update.json` names `homeRoot` and `keychainPath`. Provision that database and isolated preferences independently **inside the disposable account/VM**, using its supported Keychain administration workflow. Do not run a CI Keychain-list replacement script on a daily Mac. The runner deliberately provides no automatic credential provisioning command. If the host cannot prove this isolation, packaged interaction acceptance remains **not executed**, even when preparation succeeds.
-
-Resume the exact staged scenario after provisioning:
+Each scenario owns its A copy, unique Electron application name, HOME, config, data, profile, update cache and logs. No daily application profile is copied. The native production credential helper is excluded from sandbox builds. This permits local UI, download, lifecycle and file-reveal acceptance without a VM. It does not establish production Keychain compatibility or native installation success.
 
 ```sh
-npm run validate:update:local -- run /absolute/run-directory --scenario manual-local --staged /absolute/scenario-directory
+npm run validate:update:local -- run /absolute/run-directory --scenario manual-local
 ```
 
-For an already provisioned environment, `start` prepares and runs, while `run` creates a fresh scenario. Each scenario owns its own A copy, HOME, config, data, Electron profile, update cache and logs. Fixture creation happens offline before startup and is never repeated on resume or recovery. Source health is verified before A starts.
+`stage` creates the scenario without launching it; `run ... --staged /absolute/scenario-directory` resumes that exact fresh scenario. Fixture creation happens offline and is never repeated on resume or recovery. Source health is verified before A starts.
+
+For builds using production credential helpers, the existing strict Keychain mode remains available: startup requires an independently provisioned scenario-owned Keychain in a disposable macOS account or VM. The runner checks metadata and never provisions or alters the user's Keychain scope. That mode remains unexecuted on a daily local account.
 
 ## Scenarios and real interaction
 

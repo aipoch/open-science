@@ -239,3 +239,23 @@ describe('manual update instructions', () => {
     expect(cancel).not.toHaveBeenCalled()
   })
 })
+
+it('rechecks main-process safety before explicit website navigation', async () => {
+  const open = vi.spyOn(window, 'open').mockReturnValue(null)
+  try {
+    render()
+    await enter()
+    act(() => button('Use a new download instead').click())
+    const link = (): HTMLAnchorElement =>
+      document.querySelector(`a[href="${APP.update.downloadPage}"]`)!
+    await act(async () => link().click())
+    expect(open).toHaveBeenCalledExactlyOnceWith(APP.update.downloadPage, '_blank', 'noreferrer')
+    open.mockClear()
+    getManualInstall.mockResolvedValue({ ...local, kind: 'blocked' })
+    await act(async () => link().click())
+    expect(open).not.toHaveBeenCalled()
+    expect(button('Back to update')).toBeUndefined()
+  } finally {
+    open.mockRestore()
+  }
+})

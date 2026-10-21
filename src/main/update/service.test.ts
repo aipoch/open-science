@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UpdateManifest } from '../../shared/update'
 import type { Logger } from '@aipoch/diagnostics/node'
 import { UpdateService } from './service'
+import { ManualInstallerFallback } from './manual-install'
 
 const VALID_SHA256 = 'a'.repeat(64)
 const manifest: UpdateManifest = {
@@ -1548,6 +1549,29 @@ describe('UpdateService.apply', () => {
     expect(JSON.stringify(records)).not.toContain('private-installer.dmg')
   })
 
+  it.each(['opened', 'exception'])(
+    'keeps a submitted manifest installer unresolved (%s)',
+    async (result) => {
+      dir = await mkdtemp(join(tmpdir(), 'open-pending-'))
+      const openPath = vi.fn(async () => {
+        if (result === 'exception') throw new Error('OS submission outcome unknown')
+        return ''
+      })
+      const service = await downloadedService(join(dir, 'installer.dmg'), { openPath })
+      if (result === 'exception') await expect(service.apply()).rejects.toThrow('outcome unknown')
+      else await service.apply()
+      expect(service.getStatus().recovery).toMatchObject({
+        installation: 'pending',
+        canRecover: true,
+        canRetryInstall: false
+      })
+      await service.recover()
+      await service.apply()
+      expect(openPath).toHaveBeenCalledOnce()
+      expect((await service.getManualInstall()).kind).toBe('blocked')
+    }
+  )
+
   it('keeps a ready installer actionable when the operating system cannot open it', async () => {
     dir = await mkdtemp(join(tmpdir(), 'open-failure-'))
     const target = join(dir, 'installer.dmg')
@@ -1631,4 +1655,59 @@ it('blocks manual installer actions from a read-only installation without native
     'update:status',
     expect.objectContaining({ error: UPDATE_INSTALLATION_REQUIRED })
   )
+})
+
+it('keeps cancellation authoritative while completed artifact verification is pending', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'update-capture-cancel-'))
+  const bytes = Buffer.from('complete artifact')
+  let captured!: () => void
+  let release!: () => void
+  const reachedCapture = new Promise<void>((resolve) => {
+    captured = resolve
+  })
+  const finishCapture = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  const originalCapture = ManualInstallerFallback.prototype.capture
+  const capture = vi
+    .spyOn(ManualInstallerFallback.prototype, 'capture')
+    .mockImplementation(async function (this: ManualInstallerFallback, input) {
+      await originalCapture.call(this, input)
+      captured()
+      await finishCapture
+    })
+  try {
+    const service = new UpdateService({
+      platform: 'darwin',
+      arch: 'arm64',
+      currentVersion: '0.2.0',
+      manifestUrl: 'https://statics.aipoch.com/version.json',
+      broadcast: vi.fn(),
+      promptSavePath: async () => join(directory, 'installer.dmg'),
+      fetchImpl: async (input) =>
+        String(input).endsWith('version.json')
+          ? jsonResponse({
+              ...manifest,
+              downloads: {
+                'mac-arm64': {
+                  url: 'https://statics.aipoch.com/releases/0.3.0/installer.dmg',
+                  size: bytes.length,
+                  sha256: createHash('sha256').update(bytes).digest('hex')
+                }
+              }
+            })
+          : installerResponse(bytes)
+    })
+    await service.check()
+    const transfer = service.download()
+    await reachedCapture
+    expect((await service.cancel()).state).toBe('available')
+    release()
+    await transfer
+    expect(service.getStatus().state).toBe('available')
+  } finally {
+    release()
+    capture.mockRestore()
+    await rm(directory, { recursive: true, force: true })
+  }
 })

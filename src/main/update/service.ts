@@ -489,6 +489,7 @@ export class UpdateService implements UpdateStrategy {
             standalone: Boolean(format)
           })
         }
+        if (abort.signal.aborted || this.downloadAbort !== abort) return
         this.setStatus({
           ...this.status,
           state: 'ready',
@@ -562,6 +563,21 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     this.restoredArtifact = false
     if (this.blockForInstallation(options?.relaunch !== false)) return this.status
+    let nativeSubmissionStarted = false
+    const pendingRecovery = (): Partial<UpdateStatus> =>
+      this.manual.hasPendingAttempt()
+        ? {
+            reason: 'install-failed',
+            recovery: {
+              phase: 'install-check',
+              runtime: 'running',
+              installation: 'pending',
+              canCancel: false,
+              canRetryInstall: false,
+              canRecover: true
+            }
+          }
+        : {}
     let ownedStatus = admittedStatus
     const operation = startDiagnosticOperation(this.log, {
       operation: 'update-apply',
@@ -590,12 +606,14 @@ export class UpdateService implements UpdateStrategy {
         if (verified) {
           operation.phase('open-installer')
           await this.manual.beforeHandoff()
+          nativeSubmissionStarted = true
           const error = await this.openPath(localPath)
           if (error) this.manual.failed('install')
           if (this.status === ownedStatus) {
             this.setStatus({
               ...admittedStatus,
               state: 'ready',
+              ...pendingRecovery(),
               error: error
                 ? this.translate('Could not open the update installer: {{error}}', { error })
                 : undefined
@@ -629,8 +647,13 @@ export class UpdateService implements UpdateStrategy {
       return this.status
     } catch (error) {
       if (this.status === ownedStatus && ownedStatus.state === 'applying') {
-        this.manual.failed('install')
-        this.setStatus({ ...admittedStatus, state: 'ready' })
+        if (!nativeSubmissionStarted) this.manual.failed('install')
+        this.setStatus({
+          ...admittedStatus,
+          state: 'ready',
+          ...pendingRecovery(),
+          error: error instanceof Error ? error.message : 'Could not start the update installer.'
+        })
       }
       operation.fail(error, { result: 'error' })
       throw error

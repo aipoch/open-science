@@ -451,15 +451,27 @@ export async function writeReport(runRoot) {
     const config = await exists(join(dir, 'local-update.json'))
     if (!config) continue
     const keychain = await exists(join(dir, 'keychain-verification.json'))
-    const isolationVerified =
-      keychain?.isolated === true &&
-      keychain?.hostPreferencesUnchanged === true &&
-      keychain.defaultKeychain === config.keychainPath &&
-      keychain.searchList?.length === 1 &&
-      keychain.searchList[0] === config.keychainPath
     const app = (await readJsonLines(join(dir, 'app-events.jsonl'))).filter(
       (event) => event.runId === config.runId && event.scenario === config.scenario
     )
+    const isolationVerified =
+      config.credentialMode === 'sandbox'
+        ? build?.credentialMode === 'sandbox' &&
+          keychain?.isolated === true &&
+          keychain.mode === 'local-update-credential-sandbox' &&
+          keychain.productionCredentialAcceptance === false &&
+          app.some(
+            (event) =>
+              event.type === 'credential-scope-verified' &&
+              event.mode === 'local-update-credential-sandbox' &&
+              event.isolated === true &&
+              event.productionCredentialAcceptance === false
+          )
+        : keychain?.isolated === true &&
+          keychain?.hostPreferencesUnchanged === true &&
+          keychain.defaultKeychain === config.keychainPath &&
+          keychain.searchList?.length === 1 &&
+          keychain.searchList[0] === config.keychainPath
     scenarios.push({
       ...evaluateScenario({
         scenario: config.scenario,
@@ -473,7 +485,9 @@ export async function writeReport(runRoot) {
         )?.sha512,
         versionA: build?.versionA
       }),
-      directory: dir
+      directory: dir,
+      credentialMode: config.credentialMode ?? 'native',
+      productionCredentialAcceptance: config.credentialMode !== 'sandbox' && isolationVerified
     })
   }
   const required = SCENARIOS.map((scenario) => ({

@@ -373,6 +373,12 @@ export class ManualInstallerFallback {
   private async inspect(): Promise<ManualInstallInfo> {
     const revision = this.revision
     let snapshot = snapshotKey(this.status())
+    const blocked = (): ManualInstallInfo => {
+      const result = this.blocked()
+      if (revision === this.revision && snapshotKey(this.status()) === snapshot)
+        this.publish(result)
+      return result
+    }
     const artifact = this.stored.artifact
     if (
       this.stored.attempt?.state === 'pending' &&
@@ -382,11 +388,10 @@ export class ManualInstallerFallback {
       const result = await this.options
         .manualInstallRecovery(artifact, this.stored.attempt?.operationId)
         .catch(() => 'pending' as const)
-      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot)
-        return this.blocked()
+      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
       if (result === 'failed') {
         this.failed('install')
-      } else return this.blocked()
+      } else return blocked()
     }
     if (
       this.stored.failure &&
@@ -400,9 +405,8 @@ export class ManualInstallerFallback {
         manualInstallIsSafe({ ...current, recovery: undefined, reason: undefined }) &&
         (!this.options.inspectManualInstallSafety ||
           (await this.options.inspectManualInstallSafety().catch(() => false)))
-      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot)
-        return this.blocked()
-      if (!eligible) return this.blocked()
+      if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
+      if (!eligible) return blocked()
       this.publishRecovery?.({
         recovery: undefined,
         reason: undefined,
@@ -416,7 +420,7 @@ export class ManualInstallerFallback {
       (!this.options.inspectManualInstallSafety ||
         (await this.options.inspectManualInstallSafety().catch(() => false)))
     if (!this.stored.failure || this.stored.attempt?.state === 'pending' || !(await safe()))
-      return this.blocked()
+      return blocked()
     let result: ManualInstallInfo
     if (this.stored.failure === 'download') result = this.website('download-failed')
     else if (!artifact || artifact.version !== this.status().latest)
@@ -437,8 +441,8 @@ export class ManualInstallerFallback {
       }
     }
     if (revision !== this.revision || snapshotKey(this.status()) !== snapshot || !(await safe()))
-      return this.blocked()
-    if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return this.blocked()
+      return blocked()
+    if (revision !== this.revision || snapshotKey(this.status()) !== snapshot) return blocked()
     this.publish(result)
     return result
   }

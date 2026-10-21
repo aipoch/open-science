@@ -7,6 +7,7 @@ import {
   type ManualInstallerOptions
 } from './manual-install'
 import { spawnSync } from 'node:child_process'
+import { randomUUID } from 'node:crypto'
 import type { RuntimeStartupOptions } from '../runtime-startup-options'
 import { autoUpdater, CancellationToken, AppImageUpdater, DebUpdater } from 'electron-updater'
 
@@ -548,6 +549,7 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
         ...this.status,
         state: 'error',
         ...(installFailure ? { reason: 'install-failed' as const } : {}),
+        ...this.pendingNativeRecovery(),
         error: isMacReadOnlyUpdaterError(err, this.platform)
           ? UPDATE_INSTALLATION_REQUIRED
           : err instanceof Error
@@ -555,6 +557,20 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
             : 'Update error'
       })
     })
+  }
+
+  private pendingNativeRecovery(): Partial<UpdateStatus> {
+    if (!this.manual.hasPendingAttempt()) return {}
+    return {
+      recovery: {
+        phase: 'install-check',
+        runtime: this.status.recovery?.runtime ?? 'unknown',
+        installation: 'pending',
+        canCancel: false,
+        canRetryInstall: false,
+        canRecover: true
+      }
+    }
   }
 
   private releaseAbortedInstallHandoff(): void {
@@ -935,9 +951,14 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     if (this.artifactCapture) await this.artifactCapture
     if (this.status.state !== 'ready' || this.applying) return this.status
     if (this.blockForInstallation(options.relaunch !== false)) return this.status
+    try {
+      this.manual.clearFailure()
+    } catch (error) {
+      this.setLifecycleFailure(error)
+      return this.status
+    }
     this.applying = true
     this.installerStarted = false
-    this.manual.clearFailure()
     this.setStatus({
       ...this.status,
       state: 'applying',
@@ -1091,15 +1112,18 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
     const rollbackTrigger = this.markUpdateShutdown()
     this.pendingInstallRollback = rollbackTrigger
     this.installerStarted = true
+    let nativeSubmissionStarted = false
     try {
       // Keep the platform handoff and manual observer on the same durable operation.
       if (this.installationHooks.executeInstall) this.manual.retainProtectedHandoffContext()
       this.updateHandoff?.handoff()
       const executed = await this.installationHooks.executeInstall?.(this.status, options)
       if (!this.installationHooks.executeInstall || executed === 'legacy') {
+        const operationId = this.updateHandoff?.operationId ?? randomUUID()
         if (this.status.localPath && this.status.artifactSha512)
-          await this.manual.beforeHandoff(this.updateHandoff?.operationId)
-        this.updater.openScienceUpdateOperation = this.updateHandoff?.operationId
+          await this.manual.beforeHandoff(operationId)
+        this.updater.openScienceUpdateOperation = operationId
+        nativeSubmissionStarted = true
         this.updater.quitAndInstall(
           this.platform !== 'win32' || options.relaunch === false,
           options.relaunch ?? true
@@ -1111,11 +1135,12 @@ export class ElectronUpdaterStrategy implements UpdateStrategy {
       this.releaseAbortedInstallHandoff()
       this.applying = false
       this.installerStarted = false
-      this.manual.failed('install')
+      if (!nativeSubmissionStarted) this.manual.failed('install')
       this.setStatus({
         ...this.status,
         state: 'error',
         reason: 'install-failed',
+        ...this.pendingNativeRecovery(),
         error: error instanceof Error ? error.message : 'Could not start the update installer.'
       })
       operation.fail(error, { result: 'error' })
