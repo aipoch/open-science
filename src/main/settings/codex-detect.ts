@@ -421,7 +421,7 @@ const runAcpInitializeSmoke =
         child.stderr.on('data', (chunk: string) => {
           const remaining = MAX_SMOKE_STDERR_CHARS - stderrOutput.length
           stderrOutput += chunk.slice(0, remaining)
-          stderrTruncated ||= chunk.length > remaining
+          stderrTruncated ||= stderrOutput.length >= MAX_SMOKE_STDERR_CHARS
         })
         child.once('error', (error) => {
           processError = error
