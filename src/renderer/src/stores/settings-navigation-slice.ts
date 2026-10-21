@@ -22,6 +22,8 @@ export type SettingsNavigationState = {
 export type SettingsNavigationActions = {
   openSettings: () => void
   openSettingsToPanel: (panel: SettingsPanelId) => void
+  openSettingsToProvider: (providerId: string) => void
+  openSettingsToConnector: (id: string) => void
   openSettingsToClassification: () => void
   openSettingsToOpenAlex: () => void
   closeSettings: () => void
@@ -67,6 +69,10 @@ export const createSettingsNavigationSlice = ({
     },
 
     openSettingsToPanel: (panel) => openTo(settingsPanelRoute(panel)),
+    openSettingsToProvider: (providerId) =>
+      openTo({ panel: 'model', view: { kind: 'list', recoveryProviderId: providerId } }),
+    openSettingsToConnector: (id) =>
+      openTo({ panel: 'connectors', view: { kind: 'list', recoveryConnectorId: id } }),
     openSettingsToClassification: () =>
       openTo({ panel: 'model', view: { kind: 'classification' } }),
     openSettingsToOpenAlex: () =>

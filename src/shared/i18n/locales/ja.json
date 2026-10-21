@@ -4185,7 +4185,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "ブラウザーで認可を完了してください。サインインが完了すると、このダイアログが更新されます。",
     "Finish later": "後で完了",
     "{{name}} needs sign-in": "{{name}} へのサインインが必要です",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "認可の有効期限が切れたか、取り消されました。このコネクタを引き続き使用するには、もう一度サインインしてください。",
     "Open Connectors": "コネクタを開く",
     "Old data location needs cleanup": "以前のデータ保存場所をクリーンアップする必要があります",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "データは新しい保存場所を使用していますが、以前の保存場所に一部のファイルが残っています。Open-Science は次回起動時にもう一度削除を試みます。",
@@ -7290,7 +7289,6 @@
     "Cancel transfer": "転送をキャンセル",
     "Transfer cancelled": "転送がキャンセルされました",
     "Sign in to continue this conversation": "ログインしてこの会話を続ける",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "エージェントの認証が必要です。モデル設定を開いてプロバイダーにログインし、再試行してください。会話と下書きは保持されています。",
     "Check package": "パッケージを検証",
     "Review contents": "内容を確認",
     "Choose contents": "内容を選択",
@@ -7362,6 +7360,14 @@
     "Exclude conflicting references": "競合する文献を除外",
     "Excluded references were not imported. Their details remain below.": "除外した文献はインポートされていません。詳細は以下に残っています。",
     "Select reference {{number}}: {{title}}": "文献 {{number}} を選択：{{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "一部の識別子が一致しないか、異なる文献に対応しています。競合する文献を除外するか、元のファイルを修正するか、選択した文献の個別のコピーを保持してください。"
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "一部の識別子が一致しないか、異なる文献に対応しています。競合する文献を除外するか、元のファイルを修正するか、選択した文献の個別のコピーを保持してください。",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "アカウントを確認できませんでした。アクセスを復旧すると続行できます。会話と下書きは保持されています。",
+    "Open account settings": "アカウント設定を開く",
+    "Update the saved credential, then test the connection.": "保存された認証情報を更新し、接続をテストしてください。",
+    "Sign in to the Codex CLI, then re-import its login here.": "Codex CLI にログインしてから、ここでログイン情報を再インポートしてください。",
+    "Sign in again to restore access to this account.": "再度ログインして、このアカウントへのアクセスを復旧してください。",
+    "Update credential": "認証情報を更新",
+    "Re-import login": "ログイン情報を再インポート",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "このコネクタの認証情報を確認できませんでした。再度ログインしてアクセスを復旧してください。"
   }
 }

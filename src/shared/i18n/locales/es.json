@@ -4465,7 +4465,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "Complete la autorización en el navegador. Este cuadro de diálogo se actualizará cuando termine el inicio de sesión.",
     "Finish later": "Terminar más tarde",
     "{{name}} needs sign-in": "{{name}} necesita iniciar sesión",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "La autorización ha caducado o se ha revocado. Inicie sesión de nuevo para mantener disponible este conector.",
     "Open Connectors": "Abrir conectores",
     "Old data location needs cleanup": "Es necesario limpiar la ubicación anterior de los datos",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "Sus datos ya usan la nueva ubicación, pero aún quedan algunos archivos en la anterior. Open-Science intentará eliminarlos de nuevo la próxima vez que se inicie.",
@@ -7618,7 +7617,6 @@
     "Cancel transfer": "Cancelar transferencia",
     "Transfer cancelled": "Transferencia cancelada",
     "Sign in to continue this conversation": "Iniciar sesión para continuar esta conversación",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "El Agente requiere autenticación. Abra la configuración del modelo, inicie sesión en su proveedor y vuelva a intentarlo. Su conversación y su borrador se conservan.",
     "Check package": "Comprobar paquete",
     "Review contents": "Revisar contenido",
     "Choose contents": "Elegir contenido",
@@ -7690,6 +7688,14 @@
     "Exclude conflicting references": "Excluir referencias en conflicto",
     "Excluded references were not imported. Their details remain below.": "Las referencias excluidas no se importaron. Sus detalles siguen disponibles a continuación.",
     "Select reference {{number}}: {{title}}": "Seleccionar referencia {{number}}: {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Algunos identificadores no coinciden o corresponden a referencias diferentes. Excluya las referencias en conflicto, corrija el archivo de origen o conserve copias independientes de las referencias seleccionadas."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Algunos identificadores no coinciden o corresponden a referencias diferentes. Excluya las referencias en conflicto, corrija el archivo de origen o conserve copias independientes de las referencias seleccionadas.",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "No se pudo verificar su cuenta. Restablezca el acceso para continuar. La conversación y el borrador se conservan.",
+    "Open account settings": "Abrir la configuración de la cuenta",
+    "Update the saved credential, then test the connection.": "Actualice las credenciales guardadas y pruebe la conexión.",
+    "Sign in to the Codex CLI, then re-import its login here.": "Inicie sesión en Codex CLI y vuelva a importar aquí los datos de inicio de sesión.",
+    "Sign in again to restore access to this account.": "Vuelva a iniciar sesión para restablecer el acceso a esta cuenta.",
+    "Update credential": "Actualizar credenciales",
+    "Re-import login": "Volver a importar el inicio de sesión",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "No se pudieron verificar las credenciales de este conector. Vuelva a iniciar sesión para restablecer el acceso."
   }
 }

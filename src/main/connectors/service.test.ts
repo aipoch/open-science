@@ -1869,7 +1869,7 @@ describe('ConnectorService', () => {
       expect(call).not.toHaveBeenCalled()
     })
 
-    it('records structured authentication failures for a host-managed OAuth connector', async () => {
+    it('does not invalidate host OAuth for a business-tool login failure', async () => {
       const call = vi.fn().mockRejectedValue(new McpToolCallError('Not logged in. Sign in again.'))
       const onCustomServerAvailabilityChanged = vi.fn()
       const svc = new ConnectorService({
@@ -1896,13 +1896,16 @@ describe('ConnectorService', () => {
       })
 
       await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'connector_tool_error'
       )
       await expect(svc.call('oauth-server', 'lookup', {}, internal)).rejects.toThrow(
-        'connector_unauthenticated'
+        'connector_tool_error'
       )
-      expect(call).toHaveBeenCalledOnce()
-      expect(onCustomServerAvailabilityChanged).toHaveBeenCalledWith('oauth-1', 'unauthenticated')
+      expect(call).toHaveBeenCalledTimes(2)
+      expect(onCustomServerAvailabilityChanged).not.toHaveBeenCalledWith(
+        'oauth-1',
+        'unauthenticated'
+      )
     })
 
     it.each([

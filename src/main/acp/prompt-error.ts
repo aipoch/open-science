@@ -164,6 +164,7 @@ const connectionFailureDetail = (message: string): string | undefined =>
 // Produces the session-visible error text for a failed prompt: actionable guidance for recognized
 // provider configuration/connectivity failures, else the original message untouched.
 export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}): string => {
+  if (isAgentAuthenticationFailure(error)) return 'Authentication required'
   const raw = rawErrorMessage(error)
   const detail = extractUpstreamDetail(raw)
 
@@ -180,6 +181,44 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
   const modelPart = ctx.model ? ` for model "${ctx.model}"` : ''
 
   return `${PROVIDER_RESOURCE_NOT_FOUND_PREFIX}${modelPart}. The model name or endpoint is likely incorrect — check it in Settings → Model. Provider response: ${providerText}`
+}
+
+// Only interpret protocol/provider authentication signals at the ACP boundary. A 403, a tool's
+// business response, or an OAuth client-registration error cannot be repaired by account sign-in.
+export const isAgentAuthenticationFailure = (error: unknown): boolean => {
+  if (!(error instanceof Error) || error.name !== 'RequestError') return false
+  if (errorCode(error) === -32000) return true
+  if (errorCode(error) !== -32603) return false
+  const data = (error as Error & { data?: Record<string, unknown> }).data
+  if (data?.error === 'invalid_client' || data?.errorKind === 'invalid_client') return false
+  if (
+    isClaudeProviderApiError(error) &&
+    /^\s*Internal error:\s*API Error:\s*401\b/i.test(error.message)
+  )
+    return true
+  if (!data || typeof data !== 'object') return false
+  // The pinned Codex adapter keeps configured accounts on the internal-error path, even when
+  // their credentials are rejected. Match its structured authentication test rather than prose.
+  const codexErrorInfo = data.codexErrorInfo
+  if (codexErrorInfo === 'unauthorized') return true
+  if (codexErrorInfo !== null && typeof codexErrorInfo === 'object') {
+    const detail = Object.values(codexErrorInfo)[0]
+    if (detail !== null && typeof detail === 'object' && detail.httpStatusCode === 401) return true
+  }
+  if (data.details === 'workspace routing discovery unauthorized (401)') return true
+  return isApiError(error) && (data.statusCode === 401 || data.status === 401)
+}
+
+export const withAgentAuthenticationRecovery = async <T>(
+  operation: () => Promise<T>
+): Promise<T> => {
+  try {
+    return await operation()
+  } catch (error) {
+    if (isAgentAuthenticationFailure(error))
+      throw new Error('Authentication required', { cause: error })
+    throw error
+  }
 }
 
 // The agent's structured tag for a failure it relayed from the upstream model provider (as opposed to
@@ -215,6 +254,7 @@ const isProviderErrorKind = (error: unknown): boolean => {
 //   - it is a provider "resource not found" (wrong model id / endpoint), which requires the same
 //     upstream signal (see isProviderNotFound) and is never a bare ACP protocol not-found.
 export const isProviderPromptError = (error: unknown): boolean => {
+  if (isAgentAuthenticationFailure(error)) return true
   if (isApiError(error)) return true
   if (isProviderErrorKind(error)) return true
   if (isClaudeProviderApiError(error)) return true

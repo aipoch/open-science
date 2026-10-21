@@ -4183,7 +4183,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "브라우저에서 인증을 완료하세요. 로그인이 끝나면 이 대화 상자가 업데이트됩니다.",
     "Finish later": "나중에 완료",
     "{{name}} needs sign-in": "{{name}}에 로그인이 필요합니다",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "인증이 만료되었거나 취소되었습니다. 이 커넥터를 계속 사용하려면 다시 로그인하세요.",
     "Open Connectors": "커넥터 열기",
     "Old data location needs cleanup": "이전 데이터 위치를 정리해야 합니다",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "데이터는 새 위치를 사용하고 있지만 이전 위치에 일부 파일이 남아 있습니다. Open-Science가 다음 시작 시 다시 삭제를 시도합니다.",
@@ -7288,7 +7287,6 @@
     "Cancel transfer": "전송 취소",
     "Transfer cancelled": "전송이 취소됨",
     "Sign in to continue this conversation": "로그인하여 이 대화 계속하기",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "에이전트 인증이 필요합니다. 모델 설정에서 모델 제공업체에 로그인한 다음 다시 시도하세요. 대화와 초안은 보존됩니다.",
     "Check package": "패키지 검사",
     "Review contents": "내용 확인",
     "Choose contents": "내용 선택",
@@ -7360,6 +7358,14 @@
     "Exclude conflicting references": "충돌하는 참고문헌 제외",
     "Excluded references were not imported. Their details remain below.": "제외한 참고문헌은 가져오지 않았습니다. 세부 정보는 아래에 남아 있습니다.",
     "Select reference {{number}}: {{title}}": "참고문헌 {{number}} 선택: {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "일부 식별자가 서로 다르거나 다른 참고문헌과 일치합니다. 충돌하는 참고문헌을 제외하거나 원본 파일을 수정하거나 선택한 참고문헌의 별도 사본을 유지하세요."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "일부 식별자가 서로 다르거나 다른 참고문헌과 일치합니다. 충돌하는 참고문헌을 제외하거나 원본 파일을 수정하거나 선택한 참고문헌의 별도 사본을 유지하세요.",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "계정을 확인할 수 없습니다. 접근을 복구하면 계속할 수 있습니다. 대화와 초안은 보존됩니다.",
+    "Open account settings": "계정 설정 열기",
+    "Update the saved credential, then test the connection.": "저장된 자격 증명을 업데이트한 후 연결을 테스트하세요.",
+    "Sign in to the Codex CLI, then re-import its login here.": "Codex CLI에 로그인한 후 여기에서 로그인 정보를 다시 가져오세요.",
+    "Sign in again to restore access to this account.": "다시 로그인하여 이 계정에 대한 접근을 복구하세요.",
+    "Update credential": "자격 증명 업데이트",
+    "Re-import login": "로그인 정보 다시 가져오기",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "이 커넥터의 자격 증명을 확인할 수 없습니다. 다시 로그인하여 접근을 복구하세요."
   }
 }

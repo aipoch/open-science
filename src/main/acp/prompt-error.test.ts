@@ -251,3 +251,42 @@ describe('OpenCode session failure classification', () => {
     ).toBe(true)
   })
 })
+
+describe('ACP authentication recovery boundary', () => {
+  it.each([
+    agentError('Authentication required', {}, -32000),
+    agentError('Internal error', { details: 'workspace routing discovery unauthorized (401)' }),
+    agentError('Internal error: API Error: 401 Unauthorized', { errorKind: 'unknown' }),
+    Object.assign(new Error('Internal error: API Error: 401 Unauthorized'), {
+      name: 'RequestError',
+      code: -32603
+    }),
+    agentError('Provider rejected credentials', { errorName: 'APIError', statusCode: 401 }),
+    agentError('Provider rejected credentials', { codexErrorInfo: 'unauthorized' }),
+    agentError('Provider rejected credentials', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } }
+    })
+  ])('normalizes a protocol-owned authentication failure before transport', (error) => {
+    expect(describePromptError(error)).toBe('Authentication required')
+    expect(isProviderPromptError(error)).toBe(true)
+  })
+  it.each([
+    agentError('Forbidden', { errorName: 'APIError', statusCode: 403 }),
+    agentError('Rate limited', { errorName: 'APIError', statusCode: 429 }),
+    agentError('Server failed', { errorName: 'APIError', statusCode: 503 }),
+    agentError('Invalid client', { errorName: 'APIError', status: 401, error: 'invalid_client' }),
+    agentError('Forbidden', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 403 } }
+    }),
+    agentError('Usage limit exceeded', { codexErrorInfo: 'usageLimitExceeded' }),
+    agentError('Server overloaded', { codexErrorInfo: 'serverOverloaded' }),
+    agentError('Unrelated protocol error', { codexErrorInfo: 'unauthorized' }, -32002),
+    agentError('Malformed HTTP status', {
+      codexErrorInfo: { httpConnectionFailed: { httpStatusCode: '401' } }
+    }),
+    agentError('Query returned 401 records', { details: '401' }),
+    Object.assign(new Error('unrelated RPC'), { code: -32000 })
+  ])('preserves other failures', (error) => {
+    expect(describePromptError(error)).toBe(error.message)
+  })
+})

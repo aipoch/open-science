@@ -678,12 +678,9 @@ export class ConnectorService {
     } catch (error) {
       if (signal?.aborted) throw error
       const availability = classifyCustomMcpFailure(error)
-      // A structured tool error proves the MCP server is reachable. Keep connector-managed login
-      // tools callable, but publish stale host-managed OAuth so Settings can offer sign-in recovery.
-      if (
-        !(error instanceof McpToolCallError) ||
-        (custom.oauth && availability === 'unauthenticated')
-      ) {
+      // A tool response proves transport authentication worked; its own business login must not
+      // invalidate the host-managed OAuth account or disable other tools on the same Connector.
+      if (!(error instanceof McpToolCallError)) {
         this.recordCustomServerFailure(custom.id, failureEpoch, availability)
       }
       if (error instanceof McpToolCallError) {
@@ -709,14 +706,12 @@ export class ConnectorService {
         if (diagnostic.length > 2000) {
           diagnostic = `${diagnostic.slice(0, 650)}\n[diagnostic truncated]\n${diagnostic.slice(-1300)}`
         }
-        if (availability === 'unauthenticated') {
-          const guidance = custom.oauth
-            ? connectorGateGuidance.connector_unauthenticated
-            : 'Follow the authentication instructions and login tool, if listed, in this Connector’s loaded Skill. Retry the original call after authentication completes.'
-          throw new ConnectorGateError(
-            'connector_unauthenticated',
-            `connector_unauthenticated: ${guidance}${custom.oauth ? '' : ` ${diagnostic}`}`
+        if (
+          /(?:not (?:logged|signed) in|sign[ -]?in (?:is )?required|authentication (?:is )?required|invalid_token)/i.test(
+            diagnostic
           )
+        ) {
+          diagnostic = `Follow the authentication instructions and login tool, if listed, in this Connector’s loaded Skill. Retry the original call after authentication completes. ${diagnostic}`
         }
         throw new ConnectorGateError(
           'connector_tool_error',

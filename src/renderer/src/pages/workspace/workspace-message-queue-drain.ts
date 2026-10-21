@@ -7,6 +7,7 @@ import {
   queueItemIsBusy,
   queuePermissionIsPending,
   queueSessionIsSendable,
+  queueAuthenticationRequired,
   queuedAdmissionFailure,
   queuedItemHasPayload
 } from './workspace-message-queue-admission'
@@ -45,6 +46,7 @@ const dispatchQueuedSession = (
     }
   }
   let item: MessageQueueItem | undefined
+  const authenticationRequired = queueAuthenticationRequired(session)
   // Only skip terminal automatic heads; reserve at most one send per drain.
   for (
     let remainingHeads = owner.itemsFor(sessionId).length;
@@ -53,7 +55,11 @@ const dispatchQueuedSession = (
   ) {
     const head = owner.itemsFor(sessionId)[0]
     if (!head || head.phase === 'sending' || head.phase === 'error') return
-    const contextError = queueItemContextError(session, head)
+    const contextError =
+      queueItemContextError(session, head) ??
+      (authenticationRequired
+        ? { kind: 'send' as const, detail: 'Authentication required' }
+        : undefined)
     if (!contextError) {
       item = head
       break
@@ -243,6 +249,14 @@ const sendQueuedItemNow = async (
     const canContinue = (): boolean => {
       if (!liveSession) {
         owner.discardSession(sessionId, current.composer.discardSnapshot)
+        return false
+      }
+      if (queueAuthenticationRequired(liveSession)) {
+        owner.replaceItem(sessionId, itemId, {
+          phase: 'error',
+          error: { kind: 'send', detail: 'Authentication required' },
+          deferredUntilIdle: false
+        })
         return false
       }
       const contextError = queueItemContextError(liveSession, item)

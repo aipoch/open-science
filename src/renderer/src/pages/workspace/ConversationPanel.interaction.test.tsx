@@ -8467,7 +8467,8 @@ describe('ConversationPanel error box + report affordance', () => {
       expect(openSettingsToPanel).toHaveBeenCalledExactlyOnceWith('model')
       expect(changeDoc).not.toHaveBeenCalled()
       expect(session).toEqual(snapshot)
-      expect(container.textContent).toContain('Keep my research draft')
+      expect(container.querySelector('[data-testid=ordinary-composer-form]')).toBeNull()
+      expect(doc).toEqual(docFromText('Keep my research draft'))
     }
   )
 

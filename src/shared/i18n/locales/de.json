@@ -4028,7 +4028,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "Schließen Sie die Autorisierung im Browser ab. Dieser Dialog wird aktualisiert, sobald die Anmeldung abgeschlossen ist.",
     "Finish later": "Später beenden",
     "{{name}} needs sign-in": "Für {{name}} ist eine Anmeldung erforderlich",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "Die Autorisierung ist abgelaufen oder wurde widerrufen. Melden Sie sich erneut an, um diesen Konnektor verfügbar zu halten.",
     "Open Connectors": "Konnektoren öffnen",
     "Variable changed after this run": "Variable nach dieser Ausführung geändert",
     "Variable tracking is limited": "Die Variablenverfolgung ist begrenzt",
@@ -7450,7 +7449,6 @@
     "Cancel transfer": "Übertragung abbrechen",
     "Transfer cancelled": "Übertragung abgebrochen",
     "Sign in to continue this conversation": "Anmelden, um diese Konversation fortzusetzen",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Der Agent benötigt eine Authentifizierung. Öffnen Sie die Modelleinstellungen, melden Sie sich bei Ihrem Anbieter an und versuchen Sie es erneut. Ihre Konversation und Ihr Entwurf bleiben erhalten.",
     "Check package": "Paket prüfen",
     "Review contents": "Inhalte prüfen",
     "Choose contents": "Inhalte auswählen",
@@ -7522,6 +7520,14 @@
     "Exclude conflicting references": "Widersprüchliche Literaturangaben ausschließen",
     "Excluded references were not imported. Their details remain below.": "Ausgeschlossene Literaturangaben wurden nicht importiert. Ihre Details bleiben unten verfügbar.",
     "Select reference {{number}}: {{title}}": "Literaturangabe {{number}} auswählen: {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Einige Kennungen widersprechen sich oder passen zu unterschiedlichen Literaturangaben. Schließen Sie widersprüchliche Literaturangaben aus, korrigieren Sie die Quelldatei oder behalten Sie separate Kopien der ausgewählten Literaturangaben."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Einige Kennungen widersprechen sich oder passen zu unterschiedlichen Literaturangaben. Schließen Sie widersprüchliche Literaturangaben aus, korrigieren Sie die Quelldatei oder behalten Sie separate Kopien der ausgewählten Literaturangaben.",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "Ihr Konto konnte nicht verifiziert werden. Stellen Sie den Zugriff wieder her, um fortzufahren. Konversation und Entwurf bleiben erhalten.",
+    "Open account settings": "Kontoeinstellungen öffnen",
+    "Update the saved credential, then test the connection.": "Aktualisieren Sie die gespeicherten Zugangsdaten und testen Sie anschließend die Verbindung.",
+    "Sign in to the Codex CLI, then re-import its login here.": "Melden Sie sich bei der Codex CLI an und importieren Sie anschließend hier die Anmeldedaten erneut.",
+    "Sign in again to restore access to this account.": "Melden Sie sich erneut an, um den Zugriff auf dieses Konto wiederherzustellen.",
+    "Update credential": "Zugangsdaten aktualisieren",
+    "Re-import login": "Anmeldedaten erneut importieren",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "Die Zugangsdaten dieses Konnektors konnten nicht verifiziert werden. Melden Sie sich erneut an, um den Zugriff wiederherzustellen."
   }
 }

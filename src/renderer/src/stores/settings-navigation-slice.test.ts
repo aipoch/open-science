@@ -28,6 +28,19 @@ describe('settings navigation slice', () => {
     store = createHarness()
   })
 
+  it('lands on the exact account or connector without launching authorization', () => {
+    store.getState().openSettingsToProvider('codex-account')
+    expect(store.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list', recoveryProviderId: 'codex-account' }
+    })
+    store.getState().openSettingsToConnector('connector-a')
+    expect(store.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'connectors',
+      view: { kind: 'list', recoveryConnectorId: 'connector-a' }
+    })
+  })
+
   afterEach(() => {
     takeSettingsReturnFocusTarget()
     vi.unstubAllGlobals()

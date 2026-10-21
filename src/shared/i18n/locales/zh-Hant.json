@@ -4186,7 +4186,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "請在瀏覽器中完成授權。登入完成後，此對話框將更新。",
     "Finish later": "稍後完成",
     "{{name}} needs sign-in": "{{name}} 需要登入",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "授權已過期或遭撤銷。請重新登入以維持此連接器可用。",
     "Open Connectors": "開啟連接器",
     "Old data location needs cleanup": "舊資料位置需要清理",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "您的資料已使用新位置，但舊位置仍有部分檔案。Open-Science 將在下次啟動時再次嘗試清理。",
@@ -7290,7 +7289,6 @@
     "Cancel transfer": "取消傳輸",
     "Transfer cancelled": "傳輸已取消",
     "Sign in to continue this conversation": "登入後繼續此對話",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能體需要身分驗證。請開啟模型設定並登入服務提供者，然後重試。對話與草稿均已保留。",
     "Check package": "檢查套件",
     "Review contents": "確認內容",
     "Choose contents": "選擇內容",
@@ -7362,6 +7360,14 @@
     "Exclude conflicting references": "排除衝突書目",
     "Excluded references were not imported. Their details remain below.": "已排除的書目未匯入，其詳細資訊保留在下方。",
     "Select reference {{number}}: {{title}}": "選取書目 {{number}}：{{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分識別碼不一致或符合不同書目。請排除衝突書目、修正來源檔案，或為所選書目保留獨立副本。"
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分識別碼不一致或符合不同書目。請排除衝突書目、修正來源檔案，或為所選書目保留獨立副本。",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "無法驗證你的帳號。恢復存取後即可繼續，對話和草稿已保留。",
+    "Open account settings": "開啟帳號設定",
+    "Update the saved credential, then test the connection.": "更新儲存的憑證，然後測試連線。",
+    "Sign in to the Codex CLI, then re-import its login here.": "請先登入 Codex CLI，然後在此重新匯入登入憑證。",
+    "Sign in again to restore access to this account.": "重新登入以恢復此帳號的存取權限。",
+    "Update credential": "更新憑證",
+    "Re-import login": "重新匯入登入憑證",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "此連接器無法驗證憑證。請重新登入以恢復存取。"
   }
 }

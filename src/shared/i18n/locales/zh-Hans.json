@@ -4186,7 +4186,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "请在浏览器中完成授权。登录完成后，此对话框将更新。",
     "Finish later": "稍后完成",
     "{{name}} needs sign-in": "{{name}} 需要登录",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "授权已过期或被撤销。请重新登录以保持此连接器可用。",
     "Open Connectors": "打开连接器",
     "Old data location needs cleanup": "旧数据位置需要清理",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "您的数据已使用新位置，但旧位置仍有部分文件。Open-Science 将在下次启动时再次尝试清理。",
@@ -7290,7 +7289,6 @@
     "Cancel transfer": "取消传输",
     "Transfer cancelled": "传输已取消",
     "Sign in to continue this conversation": "登录后继续此对话",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "智能体需要身份验证。请打开模型设置并登录服务提供商，然后重试。对话和草稿均已保留。",
     "Check package": "检查包",
     "Review contents": "确认内容",
     "Choose contents": "选择内容",
@@ -7362,6 +7360,14 @@
     "Exclude conflicting references": "排除冲突题录",
     "Excluded references were not imported. Their details remain below.": "已排除的题录未导入，其详细信息保留在下方。",
     "Select reference {{number}}: {{title}}": "选择题录 {{number}}：{{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分标识符不一致或匹配不同题录。请排除冲突题录、修正源文件，或为所选题录保留独立副本。"
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分标识符不一致或匹配不同题录。请排除冲突题录、修正源文件，或为所选题录保留独立副本。",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "无法验证你的账号。恢复访问后即可继续，对话和草稿已保留。",
+    "Open account settings": "打开账号设置",
+    "Update the saved credential, then test the connection.": "更新保存的凭证，然后测试连接。",
+    "Sign in to the Codex CLI, then re-import its login here.": "请先登录 Codex CLI，然后在此重新导入登录凭证。",
+    "Sign in again to restore access to this account.": "重新登录以恢复此账号的访问权限。",
+    "Update credential": "更新凭证",
+    "Re-import login": "重新导入登录凭证",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "此连接器无法验证凭证。请重新登录以恢复访问。"
   }
 }

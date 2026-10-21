@@ -4580,7 +4580,6 @@
     "Complete authorization in your browser. This dialog will update when sign-in finishes.": "Завершите авторизацию в браузере. После входа это диалоговое окно обновится.",
     "Finish later": "Завершить позже",
     "{{name}} needs sign-in": "Для {{name}} требуется вход",
-    "Authorization expired or was revoked. Sign in again to keep this Connector available.": "Авторизация истекла или была отозвана. Войдите снова, чтобы этот Коннектор оставался доступным.",
     "Open Connectors": "Открыть Коннекторы",
     "Old data location needs cleanup": "Требуется очистка прежнего расположения данных",
     "Your data is using the new location, but some files remain in the old one. Open-Science will try again the next time it starts.": "Данные уже используются из нового расположения, но некоторые файлы остались в прежнем. Open-Science повторит попытку удалить их при следующем запуске.",
@@ -7757,7 +7756,6 @@
     "Cancel transfer": "Отменить передачу",
     "Transfer cancelled": "Передача отменена",
     "Sign in to continue this conversation": "Войдите, чтобы продолжить этот диалог",
-    "The agent requires authentication. Open Model settings and sign in to your provider, then retry. Your conversation and draft are preserved.": "Агент требует аутентификации. Откройте настройки модели, войдите в учётную запись поставщика и повторите попытку. Диалог и черновик сохранены.",
     "Check package": "Проверка пакета",
     "Review contents": "Просмотр содержимого",
     "Choose contents": "Выбор содержимого",
@@ -7829,6 +7827,14 @@
     "Exclude conflicting references": "Исключить конфликтующие источники",
     "Excluded references were not imported. Their details remain below.": "Исключённые источники не были импортированы. Их сведения остаются ниже.",
     "Select reference {{number}}: {{title}}": "Выбрать источник {{number}}: {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Некоторые идентификаторы противоречат друг другу или соответствуют разным источникам. Исключите конфликтующие источники, исправьте исходный файл или сохраните отдельные копии выбранных источников."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Некоторые идентификаторы противоречат друг другу или соответствуют разным источникам. Исключите конфликтующие источники, исправьте исходный файл или сохраните отдельные копии выбранных источников.",
+    "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "Не удалось проверить учётную запись. Восстановите доступ, чтобы продолжить. Диалог и черновик сохранены.",
+    "Open account settings": "Открыть настройки учётной записи",
+    "Update the saved credential, then test the connection.": "Обновите сохранённые учётные данные, затем проверьте подключение.",
+    "Sign in to the Codex CLI, then re-import its login here.": "Войдите в Codex CLI, затем повторно импортируйте данные входа здесь.",
+    "Sign in again to restore access to this account.": "Войдите снова, чтобы восстановить доступ к этой учётной записи.",
+    "Update credential": "Обновить учётные данные",
+    "Re-import login": "Повторно импортировать данные входа",
+    "This Connector could not verify its credentials. Sign in again to restore access.": "Не удалось проверить учётные данные этого коннектора. Войдите снова, чтобы восстановить доступ."
   }
 }

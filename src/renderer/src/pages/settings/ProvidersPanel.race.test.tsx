@@ -504,3 +504,51 @@ describe('ProvidersPanel: claude-shared actions', () => {
     )
   })
 })
+
+it('routes recovery to the existing account mode and retains it after cancellation', async () => {
+  const login = vi.fn().mockResolvedValue({ ok: false, category: 'auth', cancelled: true })
+  useSettingsStore.setState({ loginIsolatedClaudeBrowser: login })
+  act(() =>
+    root.render(
+      <ProvidersPanel
+        recoveryProviderId="builtin-claude-isolated"
+        onCreateProvider={vi.fn()}
+        onEditProvider={vi.fn()}
+        onBusyProviderChange={vi.fn()}
+      />
+    )
+  )
+  const reconnect = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Sign in again'
+  )
+  expect(reconnect).toBeDefined()
+  expect(login).not.toHaveBeenCalled()
+  await act(async () => reconnect?.click())
+  expect(login).toHaveBeenCalledOnce()
+  expect(container.textContent).toContain('Sign in again to restore access to this account.')
+})
+
+it('routes API key recovery to the existing editor without starting login', async () => {
+  const edit = vi.fn()
+  const provider = {
+    ...useSettingsStore.getState().providers[0],
+    type: 'custom' as const,
+    id: 'api-key'
+  }
+  useSettingsStore.setState({ providers: [provider] })
+  act(() =>
+    root.render(
+      <ProvidersPanel
+        recoveryProviderId="api-key"
+        onCreateProvider={vi.fn()}
+        onEditProvider={edit}
+        onBusyProviderChange={vi.fn()}
+      />
+    )
+  )
+  const update = [...container.querySelectorAll('button')].find(
+    (button) => button.textContent === 'Update credential'
+  )
+  await act(async () => update?.click())
+  expect(edit).toHaveBeenCalledWith(provider)
+})

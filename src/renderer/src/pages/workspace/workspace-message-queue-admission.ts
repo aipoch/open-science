@@ -1,3 +1,8 @@
+import { useSettingsStore } from '@/stores/settings-store'
+import {
+  sessionAuthenticationFailure,
+  isProviderAuthenticationRestored
+} from './agent-authentication-error'
 import { i18next } from '@/i18n'
 import type { ChatSession } from '@/stores/session-store'
 import { DEFAULT_PERMISSION_PROFILE } from '../../../../shared/permission-profiles'
@@ -76,10 +81,19 @@ const queuedAdmissionFailure = (
     : 'The queued message was not admitted.'
 }
 
+const queueAuthenticationRequired = (session: ChatSession): boolean => {
+  const failure = sessionAuthenticationFailure(session)
+  if (!failure) return false
+  const providerId = failure.providerId ?? session.agentConfiguration?.providerId
+  const provider = useSettingsStore.getState().providers.find(({ id }) => id === providerId)
+  return !isProviderAuthenticationRestored(provider, failure.at, session.agentConfiguration?.model)
+}
+
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
   session: ChatSession
 ): boolean =>
+  !queueAuthenticationRequired(session) &&
   !options.isPersistenceBlocked(session.id) &&
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
@@ -230,5 +244,6 @@ export {
   queueItemContextError,
   queueItemIsBusy,
   queuePermissionIsPending,
-  queueSessionIsSendable
+  queueSessionIsSendable,
+  queueAuthenticationRequired
 }
