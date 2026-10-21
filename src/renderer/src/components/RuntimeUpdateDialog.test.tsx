@@ -40,6 +40,37 @@ afterEach(() => {
 })
 const render = (): void => act(() => root.render(<RuntimeUpdateDialog />))
 describe('runtime update operation boundaries', () => {
+  it('keeps the qualified fallback visible after recovery clears the transient error', () => {
+    useUpdateStore.setState({
+      status: {
+        state: 'ready',
+        current: '1',
+        latest: '2',
+        recovery: r({ canRetryInstall: true }),
+        manualInstall: {
+          kind: 'local',
+          identity: 'verified-package',
+          platform: 'darwin',
+          arch: 'arm64',
+          version: '2',
+          format: 'zip',
+          fileName: 'update.zip',
+          size: 5000
+        }
+      }
+    })
+    render()
+    expect(document.body.textContent).toContain('Update failed')
+    expect(buttons('Install manually…')).toHaveLength(1)
+    expect(buttons('Restart to update')[0].disabled).toBe(false)
+    act(() =>
+      useUpdateStore.setState((state) => ({
+        status: { ...state.status, manualInstall: undefined }
+      }))
+    )
+    expect(buttons('Install manually…')).toHaveLength(0)
+    expect(document.body.textContent).not.toContain('Update failed')
+  })
   it('allows cancellation while the apply request is unresolved', async () => {
     let finish!: () => void
     const apply = vi.fn(

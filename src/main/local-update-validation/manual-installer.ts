@@ -1,5 +1,5 @@
-import { mkdtemp, readFile, readdir, rm, stat } from 'node:fs/promises'
 import { join, relative, sep } from 'node:path'
+import { installationFs } from '../update/installation-filesystem'
 import type { ManualInstallerArtifact } from '../update/manual-install'
 import { validateZipArchivePaths, verifyArtifactChecksum } from '../update/installation-artifact'
 import {
@@ -7,6 +7,9 @@ import {
   verificationDirectoryIsSettled
 } from '../update/verification-process'
 import type { LocalUpdateValidationConfig } from './config'
+
+// Inspect physical installer contents: Electron exposes app.asar as a virtual directory.
+const { mkdtemp, readFile, readdir, rm, stat } = installationFs.promises
 
 /** Test-build-only publisher check: inspect actual signed archive bytes, never a renderer claim. */
 export async function inspectValidationManualInstaller(

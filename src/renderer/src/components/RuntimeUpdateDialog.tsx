@@ -91,9 +91,13 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const legacyRecords = Boolean(status.legacyShellRecovery && !recovery && !progress)
   const open = active && (isDialogOpen || recovery || progress)
   const manual = useManualUpdateInstall(status, open && !confirming)
+  const manualFallbackAvailable = Boolean(
+    status.manualInstall && status.manualInstall.kind !== 'blocked'
+  )
   const saveFailed = status.recovery?.detail === 'save-failed'
   const standardFlow =
     !manual.visible &&
+    !manualFallbackAvailable &&
     !confirming &&
     !blocked &&
     !recovery &&
@@ -329,7 +333,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                 {!standardFlow && !needsDownload && !checkFailed ? (
                   <ErrorNotice
                     role={blocked || recovery ? 'alert' : 'status'}
-                    level={recovery ? 'warning' : blocked ? 'warning' : 'info'}
+                    level={recovery || blocked || manualFallbackAvailable ? 'warning' : 'info'}
                     icon={busy ? LoaderCircle : AlertTriangle}
                     iconClassName={busy ? 'animate-spin motion-reduce:animate-none' : undefined}
                     title={
@@ -337,7 +341,9 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                         ? t('Old Shell launch records are blocking this update.')
                         : saveFailed
                           ? t('Your changes could not be saved')
-                          : copy.title
+                          : manualFallbackAvailable
+                            ? t('Update failed')
+                            : copy.title
                     }
                     description={
                       legacyRecords
