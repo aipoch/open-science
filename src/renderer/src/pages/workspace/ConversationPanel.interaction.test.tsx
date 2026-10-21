@@ -3359,7 +3359,7 @@ describe('ConversationPanel composer intake', () => {
   })
 
   it.each(['running', 'idle'] as const)(
-    'releases the composer after Skip rejects an orphaned durable question while the task is %s',
+    'does not restore an orphaned durable question that Main rejects while the task is %s',
     async (status) => {
       // Reproduce the reported boundary state: the task continues (or has finished),
       // no live request remains, but its recorded question still says pending.
@@ -3438,6 +3438,15 @@ describe('ConversationPanel composer intake', () => {
           action: 'decline'
         })
       ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      await expect(
+        authority.prepareElicitation({
+          projectId: activeSession.projectId,
+          sessionId: activeSession.id,
+          requestId: 'export-choice-request',
+          toolCallId: 'export-choice',
+          action: 'decline'
+        })
+      ).rejects.toThrow('Durable elicitation no longer matches the pending Session activity.')
       const responseErrors: string[] = []
       useSessionStore.setState({ ...createInitialSessionState(), sessions: [activeSession] })
       renderPanel({
@@ -3476,6 +3485,13 @@ describe('ConversationPanel composer intake', () => {
         getComposerForm().hasAttribute('inert'),
         `a question rejected as stale must not permanently prevent the next prompt: ${responseErrors.join('; ')}`
       ).toBe(false)
+      expect(container.querySelector('[data-testid="elicitation-composer"]')).toBeNull()
+      expect(
+        Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Skip'
+        )
+      ).toBeUndefined()
+      expect(responseErrors).toEqual([])
     }
   )
 
