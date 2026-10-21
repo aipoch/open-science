@@ -144,8 +144,8 @@ index 97fe1bace..6eb8a9adb 100644
 +                }
 +                for (const side of ["top", "right", "bottom", "left"]) {
 +                    const property = "border-" + side;
-+                    // Explicit tcBorders (including nil/none) win over table defaults.
-+                    if (cell.style.getPropertyValue(property)) continue;
++                    // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
++                    if (cell.style.getPropertyValue(property + "-style")) continue;
 +                    const outer = (side === "top" && rowIndex === 0)
 +                        || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
 +                        || (side === "left" && start === 0)
@@ -313,8 +313,8 @@ index 535ac9abc..3fef74985 100644
 +                    }
 +                    for (const side of ["top", "right", "bottom", "left"]) {
 +                        const property = "border-" + side;
-+                        // Explicit tcBorders (including nil/none) win over table defaults.
-+                        if (cell.style.getPropertyValue(property)) continue;
++                        // Use the longhand: Chromium can serialize explicit nil/none as an empty shorthand.
++                        if (cell.style.getPropertyValue(property + "-style")) continue;
 +                        const outer = (side === "top" && rowIndex === 0)
 +                            || (side === "bottom" && rowIndex + cell.rowSpan === rows.length)
 +                            || (side === "left" && start === 0)
