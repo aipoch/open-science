@@ -2760,6 +2760,65 @@ describe('notebook runtime service', () => {
     ).resolves.toMatchObject({ status: 'completed', script: 'after-failed-shutdown' })
   })
 
+  it.each(['lane', 'session', 'project'] as const)(
+    'releases Shell admission and preserves deletion intent when scoped cleanup rejects (%s)',
+    async (scope) => {
+      const root = await createStorageRoot()
+      const cleanupError = new Error('shell teardown failed')
+      const shutdownExecutor = vi.fn(async () => ({ reaped: true }))
+      const shutdownShell = vi
+        .fn(async () => ({ reaped: true }))
+        .mockRejectedValueOnce(cleanupError)
+      const service = new NotebookRuntimeService({
+        configRoot: root,
+        dataRoot: root,
+        projectId: 'default-project',
+        repository: new NotebookRunRepository(root),
+        executorFactory: () => ({
+          execute: async (request): Promise<NotebookExecutionResult> => ({
+            status: 'completed',
+            stdout: '',
+            stderr: '',
+            traceback: '',
+            cwdAfter: request.cwd,
+            outputs: []
+          }),
+          shutdown: shutdownExecutor
+        }),
+        shellProcess: {
+          execute: async () => ({ stdout: '', stderr: '', exitCode: 0 }),
+          shutdown: shutdownShell
+        }
+      })
+      const request = { sessionId: 'session-1', workspaceCwd: root }
+
+      try {
+        await service.state(request)
+        const shutdown =
+          scope === 'lane'
+            ? service.shutdown(request)
+            : scope === 'session'
+              ? service.shutdownSession(request.sessionId)
+              : service.shutdownProject('default-project')
+        await expect(shutdown).rejects.toBe(cleanupError)
+        expect(shutdownExecutor).not.toHaveBeenCalled()
+
+        if (scope === 'project') {
+          await expect(service.state(request)).rejects.toThrow('Project is being deleted.')
+          service.releaseProjectDeletion('default-project')
+        }
+        await expect(service.state(request)).resolves.toMatchObject({
+          sessionId: request.sessionId
+        })
+        await expect(
+          service.executeShell({ ...request, command: 'after-failed-shutdown' })
+        ).resolves.toMatchObject({ exitCode: 0 })
+      } finally {
+        await service.dispose()
+      }
+    }
+  )
+
   it('does not thread the mcp RPC connection into the data-cell execute request', async () => {
     const root = await createStorageRoot()
     const executions: NotebookExecutionRequest[] = []
