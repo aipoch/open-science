@@ -1,4 +1,5 @@
 import { getResumeFailureMessage } from '@/lib/acp/workspace-runtime-prompt-preparation-owner'
+import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
 import {
   reportWorkspaceOperationError,
   clearWorkspaceOperationError
@@ -24,6 +25,7 @@ vi.mock('@/lib/session-fork', () => ({
 import { ConversationPanel } from './ConversationPanel'
 import { createSessionDiscussionAnnotation } from './session-discussion-annotation'
 import { SessionPromptPreparationOwner } from '../../../../main/session-persistence/prompt-preparation-owner'
+import { AcpDurableContinuationContextOwner } from '../../../../main/acp/durable-continuation-context-owner'
 import { recordRestartTurnOutcome } from '../../../../main/session-persistence/turn-outcome-authority'
 import {
   materializeSessionConversationGraph,
@@ -3106,6 +3108,7 @@ describe('ConversationPanel composer intake', () => {
       title: 'Choice before Plan',
       cwd: '/workspace',
       status: 'waiting-plan-approval',
+      liveInteractionState: { permission: false, elicitation: true },
       activeRun: { promptMessageId: 'interaction-1', startedAt: 1 },
       messages: planOriginMessages(),
       activities: [pendingActivity],
@@ -3176,7 +3179,7 @@ describe('ConversationPanel composer intake', () => {
       projectId: 'project-a',
       title: 'Restored choice',
       cwd: '/workspace',
-      status: 'idle',
+      status: 'waiting-for-user',
       messages: [],
       activities: [
         {
@@ -3354,6 +3357,127 @@ describe('ConversationPanel composer intake', () => {
     expect(getComposerForm().hidden).toBe(false)
     expect(container.textContent).not.toContain('Waiting for a response')
   })
+
+  it.each(['running', 'idle'] as const)(
+    'releases the composer after Skip rejects an orphaned durable question while the task is %s',
+    async (status) => {
+      // Reproduce the reported boundary state: the task continues (or has finished),
+      // no live request remains, but its recorded question still says pending.
+      // Use Main's real response authority so the screenshot error is not mocked.
+      const activeSession: ChatSession = {
+        id: 'session-orphaned-durable-choice',
+        projectId: 'project-a',
+        title: 'Export the analysis to PDF',
+        cwd: '/workspace',
+        status,
+        messages: [
+          {
+            id: 'export-prompt',
+            role: 'user',
+            content: 'Export the completed Markdown analysis to PDF.',
+            status: 'complete',
+            eventIds: [],
+            createdAt: 1,
+            updatedAt: 1
+          }
+        ],
+        ...(status === 'running'
+          ? { activeRun: { promptMessageId: 'export-prompt', startedAt: 1 } }
+          : {}),
+        activities: [
+          {
+            id: 'export-choice',
+            kind: 'tool',
+            title: 'AskUserQuestion',
+            status: 'completed',
+            promptMessageId: 'export-prompt',
+            eventIds: [],
+            sortIndex: 2,
+            createdAt: 2,
+            updatedAt: 3,
+            elicitation: {
+              message: 'How should the PDF be exported?',
+              fields: [
+                {
+                  id: 'question_0',
+                  label: 'Export method',
+                  kind: 'single-select',
+                  options: [{ value: 'agent', label: 'Let the agent decide' }]
+                },
+                { id: 'question_0_custom', label: 'Other', kind: 'text' }
+              ],
+              state: 'pending',
+              durable: {
+                kind: 'agent-user-choice',
+                requestId: 'export-choice-request',
+                promptMessageId: 'export-prompt'
+              }
+            }
+          }
+        ],
+        createdAt: 1,
+        updatedAt: 3
+      }
+      activeSession.conversationGraph =
+        materializeSessionConversationGraph(activeSession).conversationGraph
+      const authority = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => structuredClone(activeSession)
+      })
+      const waitingAuthority = new AcpDurableContinuationContextOwner({
+        loadSessionForContinuation: async () => ({
+          ...structuredClone(activeSession),
+          status: 'waiting-for-user'
+        })
+      })
+      await expect(
+        waitingAuthority.prepareElicitation({
+          projectId: activeSession.projectId,
+          sessionId: activeSession.id,
+          requestId: 'export-choice-request',
+          toolCallId: 'export-choice',
+          action: 'decline'
+        })
+      ).resolves.toMatchObject({ request: { requestId: 'export-choice-request' } })
+      const responseErrors: string[] = []
+      useSessionStore.setState({ ...createInitialSessionState(), sessions: [activeSession] })
+      renderPanel({
+        view: { activeSession },
+        elicitation: {
+          requests: pendingWorkspaceElicitations(activeSession),
+          respond: async (response) => {
+            try {
+              await authority.prepareElicitation({
+                projectId: activeSession.projectId,
+                sessionId: activeSession.id,
+                requestId: response.requestId,
+                toolCallId: response.request!.toolCallId!,
+                action: response.action,
+                answers: response.answers
+              })
+            } catch (error) {
+              responseErrors.push((error as Error).message)
+              throw error
+            }
+          }
+        }
+      })
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const skip = Array.from(container.querySelectorAll('button')).find(
+          (button) => button.textContent?.trim() === 'Skip'
+        )
+        if (!skip) break
+        await act(async () => skip.click())
+      }
+      for (const error of responseErrors) {
+        expect(error).toBe('Durable elicitation no longer matches the pending Session activity.')
+      }
+      expect(useSessionStore.getState().sessions[0].status).toBe(status)
+      expect(
+        getComposerForm().hasAttribute('inert'),
+        `a question rejected as stale must not permanently prevent the next prompt: ${responseErrors.join('; ')}`
+      ).toBe(false)
+    }
+  )
 
   it('keeps attachment limits discoverable in the tooltip and touch fallback', () => {
     renderPanel()
