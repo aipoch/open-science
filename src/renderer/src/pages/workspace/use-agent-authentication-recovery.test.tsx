@@ -346,7 +346,7 @@ it('recovers the actual operation account and model independently of the current
   act(() => hook.result.openSettings())
   expect(useSettingsStore.getState().pendingSettingsIntent?.route).toMatchObject({
     panel: 'model',
-    view: { recoveryProviderId: 'other' }
+    view: { recoveryProviderId: 'other', recoveryModel: 'requested-model' }
   })
   hook.providers([{ ...provider, lastValidatedAt: 40 }, other])
   expect(hook.result.required).toBe(true)

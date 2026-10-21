@@ -34,6 +34,11 @@ describe('settings navigation slice', () => {
       panel: 'model',
       view: { kind: 'list', recoveryProviderId: 'codex-account' }
     })
+    store.getState().openSettingsToProvider('codex-account', 'pinned-model')
+    expect(store.getState().pendingSettingsIntent?.route).toEqual({
+      panel: 'model',
+      view: { kind: 'list', recoveryProviderId: 'codex-account', recoveryModel: 'pinned-model' }
+    })
     store.getState().openSettingsToConnector('connector-a')
     expect(store.getState().pendingSettingsIntent?.route).toEqual({
       panel: 'connectors',

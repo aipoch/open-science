@@ -571,6 +571,7 @@ it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
       root.render(
         <ProvidersPanel
           recoveryProviderId={provider.id}
+          recoveryModel="available-model"
           onCreateProvider={vi.fn()}
           onEditProvider={vi.fn()}
           onBusyProviderChange={vi.fn()}
@@ -613,5 +614,64 @@ it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
 
     act(() => useSettingsStore.setState({ providers: [{ ...validated, needsKey: true }] }))
     expect(container.textContent).toContain(recoveryCopy)
+  }
+)
+
+it.each(['pinned-model', undefined])(
+  'keeps recovery until the requested model %s is validated',
+  (recoveryModel) => {
+    const provider = {
+      ...useSettingsStore.getState().providers[0],
+      type: 'custom' as const,
+      model: 'default-model',
+      hasKey: true,
+      lastValidatedAt: 10
+    }
+    useSettingsStore.setState({ providers: [provider] })
+    const renderRecovery = (model?: string): void =>
+      act(() =>
+        root.render(
+          <ProvidersPanel
+            recoveryProviderId={provider.id}
+            recoveryModel={model}
+            onCreateProvider={vi.fn()}
+            onEditProvider={vi.fn()}
+            onBusyProviderChange={vi.fn()}
+          />
+        )
+      )
+    renderRecovery(recoveryModel)
+    const copy = 'Update the saved credential, then test the connection.'
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 20, lastValidatedTarget: { model: 'other-model' } }
+        ]
+      })
+    )
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          {
+            ...provider,
+            lastValidatedAt: 30,
+            lastValidatedTarget: { model: recoveryModel ?? provider.model }
+          }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(copy)
+    renderRecovery('other-model')
+    expect(container.textContent).toContain(copy)
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...provider, lastValidatedAt: 40, lastValidatedTarget: { model: 'other-model' } }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(copy)
   }
 )

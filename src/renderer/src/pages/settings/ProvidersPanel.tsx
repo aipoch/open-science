@@ -1,3 +1,4 @@
+import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
 import { ErrorNotice } from '@/components/error-notice'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
 import { Notice } from '@/components/notice'
@@ -51,6 +52,7 @@ import { localizeProviderResourceMessage } from './validation-message'
 
 type ProvidersPanelProps = {
   recoveryProviderId?: string
+  recoveryModel?: string
   // Navigation callbacks into the page-level history: the add/edit provider form is a breadcrumb
   // sub-view owned by SettingsPage, not by this panel.
   onCreateProvider: () => void
@@ -113,6 +115,7 @@ const providerErrorCopy = (error: ProviderPanelError, t: TFunction): string => {
 // and the shared busy flag come in as props.
 const ProvidersPanel = ({
   recoveryProviderId,
+  recoveryModel,
   onCreateProvider,
   onEditProvider,
   busyProviderId,
@@ -499,16 +502,24 @@ const ProvidersPanel = ({
   const recoveryProvider = providers.find(({ id }) => id === recoveryProviderId)
   const [recoveryBaseline, setRecoveryBaseline] = useState({
     id: recoveryProviderId,
+    model: recoveryModel,
     validatedAt: recoveryProvider?.lastValidatedAt
   })
-  if (recoveryBaseline.id !== recoveryProviderId)
-    setRecoveryBaseline({ id: recoveryProviderId, validatedAt: recoveryProvider?.lastValidatedAt })
+  if (recoveryBaseline.id !== recoveryProviderId || recoveryBaseline.model !== recoveryModel)
+    setRecoveryBaseline({
+      id: recoveryProviderId,
+      model: recoveryModel,
+      validatedAt: recoveryProvider?.lastValidatedAt
+    })
   const recoveryComplete =
     recoveryProvider?.lastValidatedAt !== undefined &&
     recoveryProvider.lastValidatedAt > (recoveryBaseline.validatedAt ?? 0) &&
     !recoveryProvider.needsKey &&
     (recoveryProvider.lastValidationFailure?.category !== 'auth' ||
-      recoveryProvider.lastValidationFailure.at < recoveryProvider.lastValidatedAt)
+      recoveryProvider.lastValidationFailure.at < recoveryProvider.lastValidatedAt) &&
+    (!recoveryProvider.lastValidatedTarget?.model ||
+      recoveryProvider.lastValidatedTarget.model ===
+        resolveProviderEffectiveModel(recoveryProvider, recoveryModel))
 
   const recoveryPending =
     isCodexLoginPending ||

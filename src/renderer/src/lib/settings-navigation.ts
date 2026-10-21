@@ -65,7 +65,7 @@ export type TagsView =
 
 export type ModelView =
   | ClassificationView
-  | { kind: 'list'; recoveryProviderId?: string }
+  | { kind: 'list'; recoveryProviderId?: string; recoveryModel?: string }
   | { kind: 'local-models' }
   | { kind: 'create' }
   | { kind: 'edit'; providerId: string }

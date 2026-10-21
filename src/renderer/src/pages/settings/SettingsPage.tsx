@@ -2335,6 +2335,9 @@ const SettingsPage = forwardRef<SettingsPageHandle, SettingsPageProps>(function 
                           recoveryProviderId={
                             modelView.kind === 'list' ? modelView.recoveryProviderId : undefined
                           }
+                          recoveryModel={
+                            modelView.kind === 'list' ? modelView.recoveryModel : undefined
+                          }
                           onCreateProvider={openCreate}
                           onEditProvider={openEdit}
                           busyProviderId={busyProviderId}
