@@ -60,6 +60,7 @@ export const inventoryDiagnosticSchema = z
       'check-journal',
       'copy-snapshot',
       'read-database',
+      'cleanup-snapshot',
       'inspect-profile'
     ]),
     reason: z.enum([

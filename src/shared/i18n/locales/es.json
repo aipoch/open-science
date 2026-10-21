@@ -189,7 +189,8 @@
     "Startup data inspection failed": "Falló la inspección de datos al iniciar",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Se ha detenido el inicio. Esta comprobación no ha modificado los datos originales. Comparta los siguientes detalles de diagnóstico con el soporte; este error por sí solo no demuestra que falte una clave de cifrado.",
     "The failing data source and exact cause are unknown.": "Se desconocen el origen de datos que falló y la causa exacta.",
-    "Failure reason: {{reason}}": "Motivo: {{reason}}"
+    "Failure reason: {{reason}}": "Motivo: {{reason}}",
+    "Cleaning up database inspection resources": "Limpieza de los recursos de inspección de la base de datos"
   },
   "renderer": {
     "Could not load Reviewer log.": "No se pudo cargar el registro del revisor.",

@@ -190,7 +190,8 @@
     "Startup data inspection failed": "Ошибка проверки данных при запуске",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Запуск остановлен. Эта проверка не изменила исходные данные. Передайте приведённые ниже диагностические сведения службе поддержки; сама по себе эта ошибка не означает, что ключ шифрования отсутствует.",
     "The failing data source and exact cause are unknown.": "Источник данных, вызвавший ошибку, и точная причина неизвестны.",
-    "Failure reason: {{reason}}": "Причина: {{reason}}"
+    "Failure reason: {{reason}}": "Причина: {{reason}}",
+    "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",

@@ -159,6 +159,8 @@ export const withReadOnlySqliteSnapshot = (
   let temporary: string | undefined
   let stage: InventoryDiagnostic['stage'] = 'read-files'
   let readingContents = false
+  let inspectionFailed = false
+  let cleanupFailure: CredentialInventoryFailure | undefined
   try {
     const main = openSource(path)
     if (!main) return
@@ -231,6 +233,7 @@ export const withReadOnlySqliteSnapshot = (
       database.close()
     }
   } catch (error) {
+    inspectionFailed = true
     if (error instanceof CredentialInventoryFailure || readingContents) throw error
     throw new CredentialInventoryFailure(
       stage,
@@ -240,9 +243,21 @@ export const withReadOnlySqliteSnapshot = (
     )
   } finally {
     try {
-      for (const source of sources) closeSync(source.descriptor)
-    } finally {
-      if (temporary) rmSync(temporary, { recursive: true, force: true })
+      try {
+        for (const source of sources) closeSync(source.descriptor)
+      } finally {
+        if (temporary) rmSync(temporary, { recursive: true, force: true })
+      }
+    } catch (error) {
+      // Preserve the primary failure when cleanup also fails.
+      if (!inspectionFailed)
+        cleanupFailure = new CredentialInventoryFailure(
+          'cleanup-snapshot',
+          'operation-failed',
+          'SQLite snapshot cleanup failed',
+          error
+        )
     }
   }
+  if (cleanupFailure) throw cleanupFailure
 }

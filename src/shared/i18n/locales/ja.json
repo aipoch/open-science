@@ -187,7 +187,8 @@
     "Startup data inspection failed": "起動時のデータ検査に失敗しました",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "起動を停止しました。この検査では元のデータを変更していません。以下の診断情報をサポートにお知らせください。このエラーだけでは暗号化キーが失われたとは判断できません。",
     "The failing data source and exact cause are unknown.": "失敗したデータソースと正確な原因は不明です。",
-    "Failure reason: {{reason}}": "原因：{{reason}}"
+    "Failure reason: {{reason}}": "原因：{{reason}}",
+    "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
     "Could not load Reviewer log.": "レビュアーログを読み込めませんでした。",

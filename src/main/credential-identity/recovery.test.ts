@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest'
+import { expect, it, vi } from 'vitest'
 import { credentialRecoveryMessage } from './recovery'
 import { CredentialIdentityError } from './selection'
 import { inventoryDiagnosticSchema, windowsCredentialDiagnosticSchema } from './diagnostic'
@@ -8,6 +8,68 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { readCredentialCiphertexts } from './ciphertext-inventory'
 import { DatabaseSync } from 'node:sqlite'
+
+const cleanup = vi.hoisted(() => ({ fail: undefined as ((path: string) => void) | undefined }))
+vi.mock('node:fs', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:fs')>()
+  return {
+    ...actual,
+    rmSync(path: string, options: import('node:fs').RmOptions) {
+      cleanup.fail?.(path)
+      actual.rmSync(path, options)
+    }
+  }
+})
+
+it.each(['read-success', 'invalid-ciphertext'])(
+  'reports the correct failure when snapshot cleanup fails after %s',
+  (kind) => {
+    const root = mkdtempSync(join(tmpdir(), 'private-inventory-cleanup-'))
+    let temporary: string | undefined
+    try {
+      const path = join(root, 'open-science.db')
+      const db = new DatabaseSync(path)
+      db.exec('CREATE TABLE ComputeCredential(ciphertext TEXT)')
+      if (kind === 'invalid-ciphertext') {
+        db.exec("INSERT INTO ComputeCredential VALUES ('PRIVATE-SECRET')")
+      }
+      db.close()
+      const before = readFileSync(path)
+      cleanup.fail = (target) => {
+        temporary = target
+        throw Object.assign(new Error(`PRIVATE-SECRET ${target}`), { code: 'EACCES' })
+      }
+      let failure: unknown
+      try {
+        readCredentialCiphertexts({ configRoot: root, profilePath: join(root, 'profile') })
+      } catch (error) {
+        failure = error
+      }
+      expect(temporary).toBeDefined()
+      expect(failure).toBeInstanceOf(CredentialIdentityError)
+      const message = credentialRecoveryMessage(failure as CredentialIdentityError, ['en'])
+      expect(message).toContain('Affected data: Application database')
+      if (kind === 'read-success') {
+        expect(message).toContain('Stage: Cleaning up database inspection resources')
+        expect(message).toContain('Access was denied by the operating system.')
+        expect(message).toContain('SYSTEM_ERROR: EACCES')
+        expect(message).not.toContain('Reading database contents')
+      } else {
+        expect(message).toContain('Stage: Reading database contents')
+        expect(message).toContain('An encrypted data entry has an invalid format.')
+        expect(message).not.toContain('SYSTEM_ERROR: EACCES')
+      }
+      expect(message).not.toContain('PRIVATE-SECRET')
+      expect(message).not.toContain(root)
+      expect(message).not.toContain(temporary!)
+      expect(readFileSync(path)).toEqual(before)
+    } finally {
+      cleanup.fail = undefined
+      if (temporary) rmSync(temporary, { recursive: true, force: true })
+      rmSync(root, { recursive: true, force: true })
+    }
+  }
+)
 
 it.each(['journal', 'credentials', 'pending', 'database'])(
   'explains the actual %s inventory failure without suggesting key recovery',

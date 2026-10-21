@@ -187,7 +187,8 @@
     "Startup data inspection failed": "시작 시 데이터 검사 실패",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "시작이 중단되었습니다. 이 검사에서는 원본 데이터를 수정하지 않았습니다. 아래 진단 정보를 지원 담당자에게 전달해 주세요. 이 오류만으로 암호화 키가 없다고 판단할 수는 없습니다.",
     "The failing data source and exact cause are unknown.": "실패한 데이터 원본과 정확한 원인을 알 수 없습니다.",
-    "Failure reason: {{reason}}": "원인: {{reason}}"
+    "Failure reason: {{reason}}": "원인: {{reason}}",
+    "Cleaning up database inspection resources": "데이터베이스 검사 리소스 정리"
   },
   "renderer": {
     "Could not load Reviewer log.": "리뷰어 로그를 불러오지 못했습니다.",

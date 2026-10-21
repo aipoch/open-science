@@ -187,7 +187,8 @@
     "Startup data inspection failed": "啟動前的資料檢查失敗",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "啟動已停止。本次檢查未修改原始資料。請將以下診斷資訊提供給支援人員；僅憑此錯誤無法判定加密金鑰遺失。",
     "The failing data source and exact cause are unknown.": "失敗的資料來源及確切原因尚不明確。",
-    "Failure reason: {{reason}}": "原因：{{reason}}"
+    "Failure reason: {{reason}}": "原因：{{reason}}",
+    "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
     "Could not load Reviewer log.": "無法載入審閱器記錄。",

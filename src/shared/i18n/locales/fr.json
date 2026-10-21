@@ -189,7 +189,8 @@
     "Startup data inspection failed": "Échec de l’inspection des données au démarrage",
     "Startup has stopped. This check has not modified the original data. Share the diagnostic details below with support; this error alone does not establish that an encryption key is missing.": "Le démarrage a été arrêté. Cette vérification n’a pas modifié les données d’origine. Transmettez les détails de diagnostic ci-dessous au support ; cette erreur seule ne permet pas de conclure qu’une clé de chiffrement est manquante.",
     "The failing data source and exact cause are unknown.": "La source de données en échec et la cause exacte sont inconnues.",
-    "Failure reason: {{reason}}": "Cause : {{reason}}"
+    "Failure reason: {{reason}}": "Cause : {{reason}}",
+    "Cleaning up database inspection resources": "Nettoyage des ressources d’inspection de la base de données"
   },
   "renderer": {
     "Could not load Reviewer log.": "Impossible de charger le journal des évaluateurs.",

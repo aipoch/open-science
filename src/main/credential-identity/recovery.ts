@@ -18,6 +18,7 @@ const inventoryMessage = (diagnostic: InventoryDiagnostic, translate: NativeTran
     'check-journal': translate('Checking database journals'),
     'copy-snapshot': translate('Preparing a temporary database copy'),
     'read-database': translate('Reading database contents'),
+    'cleanup-snapshot': translate('Cleaning up database inspection resources'),
     'inspect-profile': translate('Inspecting browser profiles')
   }
   const reasons = {
