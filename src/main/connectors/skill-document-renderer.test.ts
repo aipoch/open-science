@@ -26,7 +26,7 @@ describe('data-only Skill documents', () => {
     expect(doc).toContain('host-managed OAuth')
     expect(doc).toContain('host.mcp("custom", "read")')
     expect(renderConnectorInstructions(['mcp-custom', 'mcp-custom', 'invalid'])).toContain(
-      'Globally Enabled Connector Skills: `mcp-custom`.'
+      'Available Connector Skills: `mcp-custom`.'
     )
     expect(renderConnectorInstructions([])).toBe('')
   })

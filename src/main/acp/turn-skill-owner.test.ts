@@ -43,7 +43,7 @@ describe('AcpTurnSkillOwner', () => {
       const handle = await owner.authorize({ specialistId: 'specialist' })
       expect(needForceLoad).toHaveBeenCalledWith(['enabled', 'disabled'])
       expect(handle.reloadDecision).toEqual({ kind: 'reload' })
-      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
+      expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['disabled'] })
       const prepared = await handle.prepareProvider({
         frameworkId: 'codex',
         selectionText: 'continue',
@@ -57,6 +57,106 @@ describe('AcpTurnSkillOwner', () => {
       expect(requestSkillsReload).toHaveBeenCalledOnce()
     }
   )
+
+  it.each(['completed', 'failed', 'cancelled', 'reload-restored'] as const)(
+    'carries a Connector-only Specialist scope across reconnect and clears it on %s',
+    async (outcome) => {
+      const reload = vi.fn()
+      const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [],
+          frameworkNames: ['mcp-orphadata'],
+          missingSkillIds: []
+        }),
+        skills: { needForceLoad: async () => ['mcp-orphadata'], namesForIds: async () => [] },
+        requestSkillsReload: reload
+      })
+      const handle = await owner.authorize({
+        specialistId: 'orphan-diseases',
+        frameworkId: 'opencode',
+        nativeSkillScope: ['mcp-genes']
+      })
+      expect(owner.backendPreparation()).toEqual({
+        forcedSkillIds: [],
+        skillWhitelist: ['mcp-orphadata']
+      })
+      const provider = await handle.prepareProvider({
+        frameworkId: 'codex',
+        selectionText: 'continue',
+        promptText: 'continue'
+      })
+      expect(provider.codexSkillInputs).toEqual([])
+      handle.close(outcome)
+      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
+      expect(reload).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['claude-code', 'codex', 'codebuddy', 'opencode'] as const)(
+    'reconciles a Connector-only scope without unnecessary shared-process reloads on %s',
+    async (frameworkId) => {
+      const reload = vi.fn()
+      const owner = new AcpTurnSkillOwner({
+        resolveSpecialistSkills: async () => ({
+          kind: 'specialist',
+          skillIds: [],
+          frameworkNames: ['mcp-orphadata'],
+          missingSkillIds: []
+        }),
+        skills: { needForceLoad: async () => ['mcp-orphadata'], namesForIds: async () => [] },
+        requestSkillsReload: reload
+      })
+      const handle = await owner.authorize({
+        frameworkId,
+        nativeSkillScope: frameworkId === 'opencode' ? ['mcp-genes'] : undefined,
+        specialistId: 'orphan-diseases'
+      })
+      expect(handle.reloadDecision.kind).toBe(frameworkId === 'opencode' ? 'reload' : 'continue')
+      handle.close('completed')
+      expect(reload).not.toHaveBeenCalled()
+      await expect(
+        owner.authorize({ frameworkId, selectedSkillIds: ['mcp-orphadata'] })
+      ).rejects.toThrow('not available to Main Agent')
+    }
+  )
+
+  it('reuses an identical OpenCode scope across turns and reconciles Main exactly once', async () => {
+    const reload = vi.fn()
+    const owner = new AcpTurnSkillOwner({
+      resolveSpecialistSkills: async () => ({
+        kind: 'specialist',
+        skillIds: [],
+        frameworkNames: ['mcp-orphadata'],
+        missingSkillIds: []
+      }),
+      requestSkillsReload: reload
+    })
+    const context = { frameworkId: 'opencode' as const, mainSkillScope: ['mcp-genes'] }
+    const first = await owner.authorize({
+      ...context,
+      specialistId: 'specialist',
+      nativeSkillScope: ['mcp-genes']
+    })
+    expect(first.reloadDecision.kind).toBe('reload')
+    expect(owner.backendPreparation().skillWhitelist).toEqual(['mcp-orphadata'])
+    first.close('completed')
+    const next = await owner.authorize({
+      ...context,
+      specialistId: 'specialist',
+      nativeSkillScope: ['mcp-orphadata', 'mcp-orphadata']
+    })
+    expect(next.reloadDecision.kind).toBe('continue')
+    next.close('completed')
+    const main = await owner.authorize({ ...context, nativeSkillScope: ['mcp-orphadata'] })
+    expect(main.reloadDecision.kind).toBe('reload')
+    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
+    main.close('completed')
+    const mainAgain = await owner.authorize({ ...context, nativeSkillScope: ['mcp-genes'] })
+    expect(mainAgain.reloadDecision.kind).toBe('continue')
+    mainAgain.close('completed')
+    expect(reload).not.toHaveBeenCalled()
+  })
 
   it('discards unused forced authorization without scheduling a provider reload', async () => {
     const requestSkillsReload = vi.fn()
@@ -240,15 +340,15 @@ describe('AcpTurnSkillOwner', () => {
     await vi.waitFor(() => expect(completions.has('newer')).toBe(true))
     completions.get('newer')?.(['newer'])
     const newer = await newerAuthorization
-    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['newer'] })
+    expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['newer'] })
 
     completions.get('older')?.(['older'])
     const older = await olderAuthorization
     expect(older.reloadDecision).toEqual({ kind: 'continue' })
-    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['newer'] })
+    expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['newer'] })
 
     older.close('failed')
-    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['newer'] })
+    expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['newer'] })
     newer.close('completed')
     expect(requestSkillsReload).toHaveBeenCalledOnce()
   })
@@ -283,7 +383,7 @@ describe('AcpTurnSkillOwner', () => {
     completions.get('first-session')?.(['first-session'])
     const first = await firstSession
     expect(first.reloadDecision).toEqual({ kind: 'reload' })
-    expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['first-session'] })
+    expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['first-session'] })
   })
 
   it.each(['cancelled', 'reload-restored'] as const)(
@@ -307,8 +407,8 @@ describe('AcpTurnSkillOwner', () => {
         specialistId: 'specialist-1',
         selectedSkillIds: ['disabled']
       })
-      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
-      expect(owner.backendPreparation()).toEqual({ forcedSkillIds: ['disabled'] })
+      expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['disabled'] })
+      expect(owner.backendPreparation()).toMatchObject({ forcedSkillIds: ['disabled'] })
 
       handle.close(outcome)
       handle.close(outcome)
@@ -332,8 +432,8 @@ describe('AcpTurnSkillOwner', () => {
 
     const firstConnect = owner.backendPreparation()
     const reconnect = owner.backendPreparation()
-    expect(firstConnect).toEqual({ forcedSkillIds: ['disabled'] })
-    expect(reconnect).toEqual({ forcedSkillIds: ['disabled'] })
+    expect(firstConnect).toMatchObject({ forcedSkillIds: ['disabled'] })
+    expect(reconnect).toMatchObject({ forcedSkillIds: ['disabled'] })
 
     handle.close('completed')
     expect(owner.backendPreparation()).toEqual({ forcedSkillIds: [] })
@@ -701,7 +801,7 @@ describe('AcpTurnSkillOwner', () => {
       }
     })
 
-    expect(catalogForCodeBuddyRoot).toHaveBeenCalledWith(root)
+    expect(catalogForCodeBuddyRoot).toHaveBeenCalledWith(root, undefined)
     expect(selectSkills).toHaveBeenCalledWith(requestText, [biomart, pubmed], undefined, undefined)
     expect(prepared.skillRuntimeAllowlist).toEqual([])
     expect(prepared.codexSkillInputs).toEqual([])

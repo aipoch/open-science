@@ -237,31 +237,50 @@ class ConnectorSettingsModule {
     ]
   }
 
-  connectorSkillNames(connectors: StoredConnectors | undefined): string[] {
-    const bundled = this.enabledConnectorIds(connectors).map((id) => `mcp-${id}`)
-    return [...new Set([...bundled, ...this.materializedCustomSkillNames()])]
+  connectorSkillNames(
+    connectors: StoredConnectors | undefined,
+    allowedNames?: readonly string[]
+  ): string[] {
+    const bundled = (
+      allowedNames === undefined
+        ? this.enabledConnectorIds(connectors)
+        : CONNECTOR_CATALOG.filter(({ id }) => allowedNames.includes(`mcp-${id}`)).map(
+            ({ id }) => id
+          )
+    ).map((id) => `mcp-${id}`)
+    return [...new Set([...bundled, ...this.materializedCustomSkillNames()])].filter(
+      (name) => allowedNames === undefined || allowedNames.includes(name)
+    )
   }
 
-  connectorSkillCatalogEntries(connectors: StoredConnectors | undefined): Array<{
+  connectorSkillCatalogEntries(
+    connectors: StoredConnectors | undefined,
+    allowedNames?: readonly string[]
+  ): Array<{
     directory: string
     name: string
     description?: string
     source: 'connector'
   }> {
-    const bundled = this.enabledConnectorIds(connectors).map((id) => {
-      const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)!
-      return {
-        directory: `mcp-${id}`,
-        name: `mcp-${id}`,
-        description: connector.useWhen,
-        source: 'connector' as const
+    const names = this.connectorSkillNames(connectors, allowedNames)
+    const bundled = CONNECTOR_CATALOG.filter(({ id }) => names.includes(`mcp-${id}`)).map(
+      ({ id }) => {
+        const connector = CONNECTOR_CATALOG.find((candidate) => candidate.id === id)!
+        return {
+          directory: `mcp-${id}`,
+          name: `mcp-${id}`,
+          description: connector.useWhen,
+          source: 'connector' as const
+        }
       }
-    })
-    const custom = this.materializedCustomSkillNames().map((name) => ({
-      directory: name,
-      name,
-      source: 'connector' as const
-    }))
+    )
+    const custom = this.materializedCustomSkillNames()
+      .filter((name) => names.includes(name))
+      .map((name) => ({
+        directory: name,
+        name,
+        source: 'connector' as const
+      }))
     return [...bundled, ...custom]
   }
 
@@ -343,8 +362,10 @@ class ConnectorSettingsModule {
   }
 
   async provisionedConnectorSkillNames(): Promise<string[]> {
-    const connectors = await this.getConnectors()
-    return this.connectorSkillNames(connectors)
+    return [
+      ...CONNECTOR_CATALOG.map(({ id }) => `mcp-${id}`),
+      ...this.materializedCustomSkillNames()
+    ]
   }
 
   async listConnectors(): Promise<ConnectorsSnapshot> {

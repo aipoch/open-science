@@ -570,6 +570,13 @@ export const createCodexFramework = ({
       })
       const codexConfig = {
         ...modelOptions,
+        ...(ctx.skillDiscovery
+          ? {
+              skills: {
+                include_instructions: false
+              }
+            }
+          : {}),
         // Model metadata can enable native delegation even when both feature flags are off.
         // Codex 0.157.1 config::multi_agent_version_override requires agents.enabled=false.
         agents: { enabled: false },
@@ -650,6 +657,13 @@ export const createCodexFramework = ({
         grantedLocalRoots: ctx.grantedLocalRoots
       }),
       ...(useChatBridge ? { features: CODEX_CHAT_BRIDGE_FEATURES } : {}),
+      ...(ctx.skillDiscovery
+        ? {
+            skills: {
+              include_instructions: false
+            }
+          }
+        : {}),
       ...(modelCatalogPath ? { model_catalog_json: modelCatalogPath } : {}),
       ...(persistentSystemPrompt ? { developer_instructions: persistentSystemPrompt } : {})
     }
@@ -695,7 +709,14 @@ export const createCodexFramework = ({
 
   buildSessionSetup(ctx: SessionSetupContext): SessionSetup {
     const runtime = ctx.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
-      { command?: string; entryPath?: string; root?: string; skillsDirectory?: string } | undefined
+      | {
+          command?: string
+          entryPath?: string
+          root?: string
+          skillsDirectory?: string
+          allowedNames?: string[]
+        }
+      | undefined
     const loaderAvailable =
       ctx.skillRuntimeScope !== undefined &&
       (ctx.skillRuntimeScope === 'all' || ctx.skillRuntimeScope.length > 0) &&

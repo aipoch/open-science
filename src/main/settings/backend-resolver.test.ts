@@ -255,6 +255,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
     probeCodexNativeVersion: vi.fn(async () => '0.144.6'),
     provisionClaudeRuntimeConfig: vi.fn(async () => ({
       privateProfileDir: '/storage/claude-private',
+      mainAllowedNames:
+        options.connectorSkillNames ?? (options.connectorIds ?? []).map((id) => `mcp-${id}`),
       settingsPath: '/storage/claude-private/settings.json',
       privateSettings: {
         disableBundledSkills: true,
@@ -265,12 +267,18 @@ const makeHarness = (options: HarnessOptions = {}) => {
         revision: 'revision-1'
       }
     })),
-    materializeAgentSkills: vi.fn(
-      async () =>
+    prepareAgentSkillDiscovery: vi.fn(async () => {
+      const names =
         options.materializedConnectorSkillNames ??
         options.connectorSkillNames ??
         (options.connectorIds ?? []).map((id) => `mcp-${id}`)
-    ),
+      return {
+        connectorSkillNames: names,
+        allowedNames: names,
+        mainAllowedNames: names,
+        allowedPaths: []
+      }
+    }),
     materializeAgentConfigFiles: vi.fn(async (files?: AgentConfigFile[]) => {
       void files
     }),
@@ -370,7 +378,7 @@ const expectRuntimeNotStarted = (runtime: ReturnType<typeof makeHarness>['runtim
   expect(runtime.resolveCodexExecutable).not.toHaveBeenCalled()
   expect(runtime.probeCodexNativeVersion).not.toHaveBeenCalled()
   expect(runtime.provisionClaudeRuntimeConfig).not.toHaveBeenCalled()
-  expect(runtime.materializeAgentSkills).not.toHaveBeenCalled()
+  expect(runtime.prepareAgentSkillDiscovery).not.toHaveBeenCalled()
   expect(runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()
   expect(runtime.reserveOpenCodeUsagePort).not.toHaveBeenCalled()
   expect(runtime.resolveCodexProxyEnvironment).not.toHaveBeenCalled()
@@ -817,7 +825,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
           'third-party/model-b': 'third-party/model-b'
         }
       },
-      true
+      true,
+      undefined
     )
     expect(JSON.stringify(modelConfig)).not.toContain('plain:key-a')
   })
@@ -865,7 +874,8 @@ describe('AgentBackendResolver configured and explicit targets', () => {
         harness.getSettings(),
         new Set(),
         null,
-        true
+        true,
+        undefined
       )
       expect(backend.env).toMatchObject({
         ANTHROPIC_MODEL: 'sonnet',
@@ -1051,13 +1061,14 @@ describe('AgentBackendResolver configured and explicit targets', () => {
     }
     expect(instructions).not.toContain('<open_science_user_skill_directories>')
     expect(instructions).not.toContain('# Open-Science data connector conventions')
-    expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
+    expect(harness.runtime.prepareAgentSkillDiscovery).not.toHaveBeenCalled()
     if (testCase.frameworkId === 'claude-code') {
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledWith(
         harness.getSettings(),
         new Set(),
         expect.anything(),
-        false
+        false,
+        undefined
       )
     }
     await backend.messagesBridgeLease?.release()
@@ -1697,15 +1708,17 @@ describe('AgentBackendResolver runtime delegation', () => {
           availableModels: ['model-a'],
           modelOverrides: { 'model-a': 'model-a' }
         },
-        true
+        true,
+        undefined
       )
-      expect(harness.runtime.materializeAgentSkills).not.toHaveBeenCalled()
+      expect(harness.runtime.prepareAgentSkillDiscovery).not.toHaveBeenCalled()
       expect(harness.runtime.materializeAgentConfigFiles).not.toHaveBeenCalled()
     } else {
-      expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
+      expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
         harness.getSettings(),
         expect.any(String),
-        new Set(['forced-skill'])
+        new Set(['forced-skill']),
+        undefined
       )
       expect(harness.runtime.materializeAgentConfigFiles).toHaveBeenCalledTimes(1)
     }
@@ -1821,16 +1834,15 @@ describe('AgentBackendResolver bridge predicates', () => {
           ? backend.systemPromptAppends?.join('\n\n')
           : backend.persistentSystemPrompt
 
-      expect(instructions).toContain(
-        'Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`, `mcp-custom-chemistry`.'
-      )
+      expect(instructions).toContain('Each Session has its own authorized Skill catalog.')
+      expect(instructions).not.toContain('`mcp-custom-chemistry`')
       expect(instructions).toContain('`<open_science_specialist_skill_scope>` block')
       expect(instructions).not.toContain('host.mcp("custom-chemistry"')
       expect(instructions).not.toContain('`mcp-openalex`')
       expect(harness.runtime.provisionClaudeRuntimeConfig).toHaveBeenCalledTimes(
         testCase.frameworkId === 'claude-code' ? 2 : 0
       )
-      expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledTimes(
+      expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledTimes(
         testCase.frameworkId === 'claude-code' ? 0 : 2
       )
       await backend.messagesBridgeLease?.release()
@@ -1849,20 +1861,24 @@ describe('AgentBackendResolver bridge predicates', () => {
       reasoningEffort: 'high'
     })
 
-    expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
+    expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
       expect.any(Object),
       join('/storage', 'codebuddy', 'skill-runtime', '.claude'),
       new Set(),
+      undefined,
       { directoryLayout: 'agent-facing' }
     )
     expect(backend.sessionOptions).toEqual({
       [OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION]: {
         command: process.execPath,
         entryPath: '/app/main.js',
-        root: join('/storage', 'codebuddy', 'skill-runtime')
+        root: join('/storage', 'codebuddy', 'skill-runtime'),
+        mainAllowedNames: ['mcp-pubmed']
       }
     })
-    expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
+    expect(backend.persistentSystemPrompt).toContain(
+      'Each Session has its own authorized Skill catalog.'
+    )
     expect(backend.persistentSystemPrompt).not.toContain('search_articles')
     expect(backend.env).toMatchObject({
       CODEBUDDY_API_KEY: 'openai-bridge-token-0',
@@ -1895,17 +1911,18 @@ describe('AgentBackendResolver bridge predicates', () => {
       reasoningEffort: 'high'
     })
 
-    expect(harness.runtime.materializeAgentSkills).toHaveBeenCalledWith(
+    expect(harness.runtime.prepareAgentSkillDiscovery).toHaveBeenCalledWith(
       expect.any(Object),
       join('/storage', 'codebuddy', 'skill-runtime', '.claude'),
       new Set(),
+      undefined,
       { directoryLayout: 'agent-facing' }
     )
     expect(backend.sessionOptions).toHaveProperty(
       OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION,
       expect.objectContaining({ root: join('/storage', 'codebuddy', 'skill-runtime') })
     )
-    expect(backend.persistentSystemPrompt).toBeUndefined()
+    expect(backend.persistentSystemPrompt).not.toContain('Available Connector Skills:')
     await backend.providerTransportLease?.release()
   })
 
@@ -1940,8 +1957,20 @@ describe('AgentBackendResolver bridge predicates', () => {
         reasoningEffort: 'high'
       })
 
-      expect(backend.persistentSystemPrompt).toContain('`mcp-pubmed`')
+      expect(backend.persistentSystemPrompt).toContain(
+        'Each Session has its own authorized Skill catalog.'
+      )
       expect(backend.persistentSystemPrompt).not.toContain('`mcp-xt`')
+      const advertised =
+        backend.framework.id === 'opencode'
+          ? JSON.parse(backend.env.OPENCODE_CONFIG_CONTENT).permission.skill
+          : (
+              backend.sessionOptions?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as {
+                mainAllowedNames: string[]
+              }
+            ).mainAllowedNames
+      expect(JSON.stringify(advertised)).toContain('mcp-pubmed')
+      expect(JSON.stringify(advertised)).not.toContain('mcp-xt')
       await backend.messagesBridgeLease?.release()
       await backend.responsesTransportLease?.release()
       await backend.providerTransportLease?.release()

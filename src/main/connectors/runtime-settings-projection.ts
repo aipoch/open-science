@@ -1,4 +1,3 @@
-import { isBundledConnectorEnabled } from './catalog'
 import {
   classifyCustomMcpFailure,
   toCustomMcpConfig,
@@ -144,9 +143,8 @@ class ConnectorRuntimeSettingsProjection {
         return
       }
 
-      const enabledIds = ALL_CONNECTOR_IDS.filter((id) => isBundledConnectorEnabled(id, connectors))
-
-      await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds, signal)
+      // Source definitions are shared; each session independently controls discovery and calls.
+      await this.syncBundledSkillDocs(this.options.skillsDir, [...ALL_CONNECTOR_IDS], signal)
       signal.throwIfAborted()
       const customServers = selectEnabledCustomServers(connectors)
       const customSync = await this.syncCustomSkillDocs(

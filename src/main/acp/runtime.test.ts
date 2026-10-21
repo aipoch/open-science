@@ -26546,7 +26546,7 @@ describe('ACP runtime skill force-load + nudge', () => {
       historyPreamble: 'earlier conversation'
     })
 
-    expect(hooks.catalogForCodexHome).toHaveBeenCalledWith('/data/codex')
+    expect(hooks.catalogForCodexHome).toHaveBeenCalledWith('/data/codex', undefined)
     expect(selectSkills).toHaveBeenCalledWith(
       '用 PubMed 搜索肿瘤免疫文章',
       catalog,

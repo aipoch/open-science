@@ -45,6 +45,19 @@ const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
 
 // Exercises the durable Connector owner against a real on-disk repository.
 describe('ConnectorSettingsModule', () => {
+  it('offers a Main-disabled bundled definition to a separately authorized Specialist', async () => {
+    await service.setConnectorEnabled({ id: 'orphadata', enabled: false })
+    const stored = await service.getConnectors()
+    expect(service.connectorSkillNames(stored)).not.toContain('mcp-orphadata')
+    expect(await service.provisionedConnectorSkillNames()).toContain('mcp-orphadata')
+    expect(service.connectorSkillNames(stored, ['mcp-orphadata'])).toEqual(['mcp-orphadata'])
+    expect(service.connectorSkillCatalogEntries(stored, ['mcp-orphadata'])).toEqual([
+      expect.objectContaining({ directory: 'mcp-orphadata', name: 'mcp-orphadata' })
+    ])
+    expect(service.connectorSkillNames(stored, [])).toEqual([])
+    expect(await service.getConnectors()).toEqual(stored)
+  })
+
   it('keeps historical defaults and opt-outs while persisting Orphadata opt-in for views and Skills', async () => {
     const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
     expect(service.enabledConnectorIds(undefined)).toEqual(expect.arrayContaining(existing))

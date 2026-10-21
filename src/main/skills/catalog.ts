@@ -411,17 +411,19 @@ class SkillCatalogModule {
 
   async codexSkillCatalog(
     codexHome: string | undefined,
-    additionalEntries: AdditionalSkillCatalogEntries = []
+    additionalEntries: AdditionalSkillCatalogEntries = [],
+    allowedNames?: readonly string[]
   ): Promise<SkillCatalogEntry[]> {
     if (!codexHome) return []
     const skillsRoot = this.allowedCodexSkillsRoot(codexHome)
     if (!skillsRoot) return []
-    return this.projectedSkillCatalog(skillsRoot, additionalEntries)
+    return this.projectedSkillCatalog(skillsRoot, additionalEntries, undefined, allowedNames)
   }
 
   async codeBuddySkillCatalog(
     runtimeRoot: string | undefined,
-    additionalEntries: AdditionalSkillCatalogEntries = []
+    additionalEntries: AdditionalSkillCatalogEntries = [],
+    allowedNames?: readonly string[]
   ): Promise<SkillCatalogEntry[]> {
     if (
       !runtimeRoot ||
@@ -430,7 +432,12 @@ class SkillCatalogModule {
     ) {
       return []
     }
-    return this.projectedSkillCatalog(join(runtimeRoot, '.claude', 'skills'), additionalEntries)
+    return this.projectedSkillCatalog(
+      join(runtimeRoot, '.claude', 'skills'),
+      additionalEntries,
+      undefined,
+      allowedNames
+    )
   }
 
   async delegatedSkillCatalog(
@@ -444,7 +451,8 @@ class SkillCatalogModule {
   private async projectedSkillCatalog(
     skillsRoot: string,
     additionalEntries: AdditionalSkillCatalogEntries,
-    delegatedSkillIds?: ReadonlySet<string>
+    delegatedSkillIds?: ReadonlySet<string>,
+    allowedNames?: readonly string[]
   ): Promise<SkillCatalogEntry[]> {
     const realRoot = await realpath(skillsRoot).catch(() => undefined)
     if (!realRoot) return []
@@ -462,7 +470,11 @@ class SkillCatalogModule {
     )
     const enabled: AdditionalSkillCatalogEntry[] = [
       ...skills
-        .filter((skill) => isSkillEffectivelyEnabled(skill, disabled))
+        .filter((skill) =>
+          allowedNames === undefined
+            ? isSkillEffectivelyEnabled(skill, disabled)
+            : allowedNames.includes(skill.name)
+        )
         .map((skill) => ({
           directory: delegatedSkillIds ? skill.name : `${OS_SKILL_PREFIX}${skill.id}`,
           name: skill.name,
@@ -474,6 +486,7 @@ class SkillCatalogModule {
     for (const item of enabled) nameCounts.set(item.name, (nameCounts.get(item.name) ?? 0) + 1)
     const result: SkillCatalogEntry[] = []
     for (const item of enabled) {
+      if (allowedNames !== undefined && !allowedNames.includes(item.name)) continue
       if (nameCounts.get(item.name) !== 1) continue
       const filePath = join(skillsRoot, item.directory, 'SKILL.md')
       const realFile = await realpath(filePath).catch(() => undefined)

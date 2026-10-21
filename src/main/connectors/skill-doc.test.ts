@@ -46,7 +46,7 @@ describe('renderConnectorInstructions', () => {
       'not-a-skill'
     ])
 
-    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-literature`.')
+    expect(md).toContain('Available Connector Skills: `mcp-pubmed`, `mcp-literature`.')
     expect(md).toContain('`<open_science_specialist_skill_scope>` block')
     expect(md).toContain('do not load or call any `mcp-*` skill absent from that block')
     expect(md.match(/`mcp-pubmed`/g)).toHaveLength(1)
@@ -56,7 +56,7 @@ describe('renderConnectorInstructions', () => {
   it('includes canonical custom MCP Skill names in the global catalog', () => {
     const md = renderConnectorInstructions(['mcp-pubmed', 'mcp-custom-chemistry'])
 
-    expect(md).toContain('Globally Enabled Connector Skills: `mcp-pubmed`, `mcp-custom-chemistry`.')
+    expect(md).toContain('Available Connector Skills: `mcp-pubmed`, `mcp-custom-chemistry`.')
   })
 })
 
