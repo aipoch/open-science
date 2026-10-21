@@ -2180,15 +2180,14 @@ describe('notebook shell process behavior', () => {
       { name: 'successful reaping', reaped: true },
       { name: 'bounded reaping failure', reaped: false }
     ])('waits for $name before timeout cleanup completes', async ({ reaped }) => {
-      let releaseReaping: (() => void) | undefined
-      const reapingGate = new Promise<void>((resolve) => {
-        releaseReaping = resolve
-      })
+      const reapingEntered = Promise.withResolvers<void>()
+      const reapingGate = Promise.withResolvers<void>()
+      let actualReaping: Awaited<ReturnType<typeof terminateProcessTree>> | undefined
       const terminateTree = vi.fn(async (child: ChildProcess) => {
-        const actual = await terminateProcessTree(child)
-        expect(actual).toEqual({ reaped: true })
-        await reapingGate
-        return { reaped }
+        reapingEntered.resolve()
+        await reapingGate.promise
+        actualReaping = await terminateProcessTree(child)
+        return { reaped: actualReaping.reaped && reaped }
       })
       const cleanup = vi.fn(async (_reason, processOutcome: { processesTerminated: boolean }) => ({
         processesTerminated: processOutcome.processesTerminated,
@@ -2207,7 +2206,8 @@ describe('notebook shell process behavior', () => {
       let completed = false
 
       const completion = runShellCommand({
-        command: 'sleep 5',
+        // This ordering fixture owns one real process; descendant teardown has separate coverage.
+        command: 'exec sleep 5',
         cwd: process.cwd(),
         handoffDir: process.cwd(),
         runtimeRoot: portableRuntimeRoot,
@@ -2222,16 +2222,23 @@ describe('notebook shell process behavior', () => {
         return result
       })
 
-      await vi.waitFor(() => expect(terminateTree).toHaveBeenCalledOnce())
-      expect(completed).toBe(false)
-      expect(cleanup).not.toHaveBeenCalled()
-      releaseReaping?.()
-      await expect(completion).resolves.toMatchObject({ exitCode: null })
-      expect(cleanup).toHaveBeenCalledWith('timeout', {
-        processesTerminated: reaped,
-        processState: reaped ? 'started-and-reaped' : 'termination-unknown',
-        ...(!reaped ? { confirmTermination: expect.any(Function) } : {})
-      })
+      try {
+        await reapingEntered.promise
+        expect(terminateTree).toHaveBeenCalledOnce()
+        expect(completed).toBe(false)
+        expect(cleanup).not.toHaveBeenCalled()
+        reapingGate.resolve()
+        await expect(completion).resolves.toMatchObject({ exitCode: null })
+        expect(actualReaping).toEqual({ reaped: true })
+        expect(cleanup).toHaveBeenCalledWith('timeout', {
+          processesTerminated: reaped,
+          processState: reaped ? 'started-and-reaped' : 'termination-unknown',
+          ...(!reaped ? { confirmTermination: expect.any(Function) } : {})
+        })
+      } finally {
+        reapingGate.resolve()
+        await completion
+      }
     })
 
     it('awaits one structured cleanup when process spawning fails', async () => {
