@@ -46,7 +46,12 @@ body {
   width: 100%;
   padding: 0.125rem 0.75rem;
   border-bottom: 1px solid var(--border, #e5e7eb);
-  background: var(--bg-100, #ffffff);
+  background: #ffffff;
+}
+
+.docx-wrapper {
+  /* Keep document layers below the sticky toolbar, independent of page containment. */
+  isolation: isolate;
 }
 
 .spreadsheet-review-toolbar {
