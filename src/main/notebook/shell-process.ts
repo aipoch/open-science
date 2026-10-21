@@ -666,11 +666,21 @@ const runShellCommand = (
       if (!sandboxCleanupPromise) {
         sandboxCleanupPromise =
           sandboxed?.cleanup(reason, processOutcome) ??
-          Promise.resolve({
-            processesTerminated: processOutcome.processesTerminated,
-            networkClosed: true,
-            temporaryResourcesRemoved: true
-          })
+          (async () => {
+            let processesTerminated = processOutcome.processesTerminated
+            if (!processesTerminated) {
+              try {
+                processesTerminated = (await processOutcome.confirmTermination?.()) === true
+              } catch {
+                processesTerminated = false
+              }
+            }
+            return {
+              processesTerminated,
+              networkClosed: true,
+              temporaryResourcesRemoved: true
+            }
+          })()
       }
       try {
         const result = await sandboxCleanupPromise

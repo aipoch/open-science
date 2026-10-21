@@ -2121,6 +2121,64 @@ describe('notebook shell process behavior', () => {
       })
     })
 
+    it.each(['confirmed', 'unconfirmed', 'rejected'] as const)(
+      'rechecks the original native owner without a sandbox and keeps %s proof authoritative',
+      async (recovery) => {
+        let confirmation: 'confirmed' | 'unconfirmed' | 'rejected' = 'unconfirmed'
+        const actualReapings: Awaited<ReturnType<typeof terminateProcessTree>>[] = []
+        const terminateTree = vi.fn(async (child: ChildProcess) => {
+          const actual = await terminateProcessTree(child)
+          actualReapings.push(actual)
+          if (confirmation === 'rejected') throw new Error('Original owner proof unavailable')
+          return { reaped: actual.reaped && confirmation === 'confirmed' }
+        })
+        const releaseOwnership = vi.fn()
+        let retryCleanup: (() => Promise<boolean>) | undefined
+        const result = await runShellCommand({
+          command: 'exec sleep 5',
+          cwd: process.cwd(),
+          handoffDir: process.cwd(),
+          runtimeRoot: portableRuntimeRoot,
+          sessionId: 'session-1',
+          projectId: 'project-1',
+          platform: 'linux',
+          timeoutMs: 25,
+          terminateTree,
+          claimProcess: () => releaseOwnership,
+          onCleanupRetry: (retry) => {
+            retryCleanup = retry
+          }
+        })
+
+        expect(result).toMatchObject({
+          errorCode: 'shell-cleanup-incomplete',
+          ownedTreeReaped: false,
+          recovery: { retryAfter: 'cleanup-verified' }
+        })
+        expect(releaseOwnership).not.toHaveBeenCalled()
+        expect(actualReapings.length).toBeGreaterThan(0)
+        for (const actual of actualReapings) expect(actual).toEqual({ reaped: true })
+        if (!retryCleanup) throw new Error('Original owner cleanup retry was not retained')
+
+        confirmation = recovery
+        const attemptsBeforeRetry = terminateTree.mock.calls.length
+        expect(await retryCleanup()).toBe(recovery === 'confirmed')
+        expect(terminateTree).toHaveBeenCalledTimes(attemptsBeforeRetry + 1)
+        if (recovery === 'confirmed') expect(releaseOwnership).toHaveBeenCalled()
+        else expect(releaseOwnership).not.toHaveBeenCalled()
+
+        const attemptsAfterRetry = terminateTree.mock.calls.length
+        expect(await retryCleanup()).toBe(recovery === 'confirmed')
+        expect(terminateTree).toHaveBeenCalledTimes(
+          attemptsAfterRetry + (recovery === 'confirmed' ? 0 : 1)
+        )
+        if (recovery !== 'confirmed') expect(releaseOwnership).not.toHaveBeenCalled()
+        const originalChild = terminateTree.mock.calls[0][0]
+        expect(terminateTree.mock.calls.every(([child]) => child === originalChild)).toBe(true)
+        for (const actual of actualReapings) expect(actual).toEqual({ reaped: true })
+      }
+    )
+
     it.each([
       {
         name: 'timeout',
