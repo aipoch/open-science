@@ -748,10 +748,6 @@ describe('ask_user_question tool', () => {
   it('accepts 1-3 compact questions', () => {
     expect(tool).toBeDefined()
     expect(tool?.method).toBe('requestUserInput')
-    expect(tool?.description).toContain('app-owned tool')
-    expect(tool?.description).toContain('materially different interpretations')
-    expect(tool?.description).toContain('first tool call')
-    expect(tool?.description).toContain('include every known question in one call')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('ask_user_question')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('materially different interpretations')
     expect(NOTEBOOK_SYSTEM_PROMPT_APPEND).toContain('first tool call')
@@ -832,8 +828,6 @@ describe('ask_user_question tool', () => {
         questions: [question]
       })
       expect(tool!.description).toContain('2-16')
-      expect(tool!.description).toContain('multi-select only for combinable choices')
-      expect(tool!.description).toContain('never exclusive alternatives')
     }
   )
 

@@ -460,7 +460,7 @@ export class UserSkillStore {
     if (!taken.has(baseName)) return baseName
     for (let index = 2; ; index += 1) {
       const suffix = `-${index}`
-      const candidate = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
+      const candidate = `${baseName.slice(0, SKILL_NAME_MAX_LENGTH - suffix.length).replace(/-+$/, '')}${suffix}`
       if (!taken.has(candidate)) return candidate
     }
   }

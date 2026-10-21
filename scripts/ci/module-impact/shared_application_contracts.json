@@ -321,6 +321,7 @@
     ],
     "contract": [],
     "consumer": [
+      "scripts/build-backend.integration.test.ts",
       "src/main/notebook/windows-runtime-components.test.ts",
       "src/main/notebook/windows-runtime-manager.test.ts",
       "src/main/update/ipc.test.ts",

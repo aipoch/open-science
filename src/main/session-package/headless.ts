@@ -19,7 +19,7 @@ import {
   type SessionPackageExternalPort
 } from '../session-package-external-port'
 import { PackageCleanupPendingError } from './cleanup'
-import type { SessionPackageService } from './service'
+import { PackageImportRecoveryRequiredError, type SessionPackageService } from './service'
 
 const packagePath = z
   .string()
@@ -77,6 +77,8 @@ type PendingImport = {
   expiresAt: number
   approve(): void
   completion: Promise<SessionPackageRequest>
+  projectCreated: boolean
+  recovery?: PackageImportRecoveryRequiredError
   timer?: ReturnType<typeof setTimeout>
 }
 const error = (code: SessionPackageExternalError['code'], message: string): never => {
@@ -188,6 +190,11 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
     caller: CallerContext
   ): Promise<HeadlessPackageImportPreview> {
     this.assertCanStart()
+    if ([...this.imports.values()].some((pending) => pending.recovery))
+      return error(
+        'conflict',
+        'Retry the package import that needs recovery before inspecting another archive.'
+      )
     const id = randomUUID()
     const controller = new AbortController()
     const signal = AbortSignal.any([this.shutdown.signal, controller.signal])
@@ -208,6 +215,7 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
       state: 'inspecting',
       expiresAt: 0,
       approve,
+      projectCreated: !request.target.projectId,
       completion: Promise.resolve({ projectId: '', sessionId: '' })
     }
     const completion = Promise.resolve().then(async () => {
@@ -268,18 +276,9 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
             )
           )
         )
-        pending.state = 'completed'
-        try {
-          await this.dependencies.afterImport(
-            imported,
-            caller.lifecycleClientId,
-            !request.target.projectId
-          )
-        } catch {
-          /* Notification transport cannot undo a committed package import. */
-        }
-        return imported
+        return await this.completeImport(pending, imported)
       } catch (failure) {
+        if (failure instanceof PackageImportRecoveryRequiredError) pending.recovery = failure
         pending.state = signal.aborted ? 'cancelled' : 'failed'
         failPreview(failure)
         throw failure
@@ -296,10 +295,80 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
     // Keep bounded completed handles for transport retries; a completed handle never imports again.
     for (const [key, old] of this.imports) {
       if (this.imports.size <= 32) break
-      if (old !== pending && !['inspecting', 'reviewing', 'committing'].includes(old.state))
+      if (
+        old !== pending &&
+        !old.recovery &&
+        !['inspecting', 'reviewing', 'committing'].includes(old.state)
+      )
         this.imports.delete(key)
     }
     return preview
+  }
+
+  private async completeImport(
+    pending: PendingImport,
+    imported: SessionPackageRequest
+  ): Promise<SessionPackageRequest> {
+    pending.state = 'completed'
+    pending.recovery = undefined
+    try {
+      await this.dependencies.afterImport(
+        imported,
+        pending.caller.lifecycleClientId,
+        pending.projectCreated
+      )
+    } catch {
+      /* Notification transport cannot undo a committed package import. */
+    }
+    return imported
+  }
+
+  private resumeImport(pending: PendingImport): void {
+    this.assertCanStart()
+    const recovery = pending.recovery!
+    const signal = AbortSignal.any([this.shutdown.signal, pending.controller.signal])
+    pending.state = 'committing'
+    const completion = Promise.resolve().then(async () => {
+      let release: (() => void) | undefined
+      try {
+        await this.retryCleanup()
+        assertCaller(pending.caller)
+        release = await this.dependencies.reserveImport(recovery.identity.projectId, signal)
+        signal.throwIfAborted()
+        assertCaller(pending.caller)
+        const imported = await this.dependencies.withDataRootWrite(() => {
+          signal.throwIfAborted()
+          assertCaller(pending.caller)
+          return this.acceptCleanup(() => recovery.resume(signal))
+        })
+        if (!imported) {
+          // The native witness proved there was no commit; cleanup owns the retained staging.
+          pending.recovery = undefined
+          throw new Error('No package import was committed; inspect the archive again.')
+        }
+        if (
+          imported.projectId !== recovery.identity.projectId ||
+          imported.sessionId !== recovery.identity.sessionId
+        )
+          throw new Error('Package import recovery returned a different Session identity.')
+        return await this.completeImport(pending, imported)
+      } catch (failure) {
+        if (
+          failure instanceof PackageImportRecoveryRequiredError &&
+          failure.identity.projectId === recovery.identity.projectId &&
+          failure.identity.sessionId === recovery.identity.sessionId
+        )
+          pending.recovery = failure
+        pending.state = signal.aborted ? 'cancelled' : 'failed'
+        throw failure
+      } finally {
+        release?.()
+        if (this.transfer === completion) this.transfer = undefined
+      }
+    })
+    pending.completion = completion
+    void completion.catch(() => undefined)
+    this.transfer = completion
   }
 
   private findImport(id: string, caller: CallerContext): PendingImport {
@@ -321,6 +390,8 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
       pending.state = 'committing'
       clearTimeout(pending.timer)
       pending.approve()
+    } else if (pending.recovery && pending.state !== 'committing') {
+      this.resumeImport(pending)
     } else if (!['committing', 'completed'].includes(pending.state)) {
       return error('conflict', 'Package preflight is not ready for commit.')
     }
@@ -332,6 +403,8 @@ export class SessionPackageHeadless implements SessionPackageExternalPort {
   private async cancelImport(id: string, caller: CallerContext): Promise<{ cancelled: boolean }> {
     const pending = this.findImport(id, caller)
     if (pending.state === 'completed') return { cancelled: false }
+    if (pending.recovery)
+      return error('conflict', 'Package import needs recovery; retry commit or restart the app.')
     if (pending.state === 'committing')
       return error('conflict', 'Package import is already committing.')
     pending.controller.abort(new Error('Package preflight was cancelled.'))

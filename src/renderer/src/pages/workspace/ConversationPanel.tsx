@@ -1,4 +1,5 @@
 import { isAgentAuthenticationRequired } from './agent-authentication-error'
+import { pendingWorkspaceElicitations } from '@/lib/acp/useWorkspaceElicitation'
 import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import { ResearchWorkspaceHeader } from './ResearchWorkspaceHeader'
 import { useResearchWorkspaceStore } from '@/stores/research-workspace-store'
@@ -1141,29 +1142,11 @@ const ConversationPanel = ({
       ?.elicitation?.state
     return state === undefined || state === 'pending'
   })
-  const pendingElicitationActivity = livePendingElicitationRequest
-    ? sessionActivities.find((activity) => activity.id === livePendingElicitationRequest.toolCallId)
-    : sessionActivities.find(
-        (activity) =>
-          activity.elicitation?.state === 'pending' &&
-          activity.elicitation.durable?.kind === 'agent-user-choice'
-      )
-  const restoredElicitation = pendingElicitationActivity?.elicitation
   const pendingElicitationRequest: PendingElicitationRequest | undefined =
-    livePendingElicitationRequest ??
-    (activeSession &&
-    pendingElicitationActivity &&
-    restoredElicitation?.state === 'pending' &&
-    restoredElicitation.durable
-      ? {
-          requestId: restoredElicitation.durable.requestId,
-          sessionId: activeSession.id,
-          toolCallId: pendingElicitationActivity.id,
-          message: restoredElicitation.message,
-          fields: restoredElicitation.fields,
-          durable: restoredElicitation.durable
-        }
-      : undefined)
+    livePendingElicitationRequest ?? pendingWorkspaceElicitations(activeSession)[0]
+  const pendingElicitationActivity = pendingElicitationRequest
+    ? sessionActivities.find((activity) => activity.id === pendingElicitationRequest.toolCallId)
+    : undefined
   const pendingElicitation: ElicitationProjection | undefined =
     pendingElicitationActivity?.elicitation?.state === 'pending'
       ? pendingElicitationActivity.elicitation

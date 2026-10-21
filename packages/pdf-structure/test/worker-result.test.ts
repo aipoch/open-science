@@ -75,6 +75,138 @@ afterEach(async () => {
   await rm(root, { recursive: true, force: true })
 })
 describe('worker result boundary', () => {
+  it.each(['math-table', 'algorithm'] as const)(
+    'preserves independently proved %s body origins without inventing cells',
+    async (kind) => {
+      const value = raw(),
+        sourceItems = [{ pageNumber: 1, index: 7, text: 'Exact native body' }],
+        candidate = {
+          ...(value.figures as Record<string, unknown>[])[0],
+          nativeBody: { kind, sourceItems }
+        }
+      value.figures = []
+      if (kind === 'algorithm') value.algorithms = [candidate]
+      else
+        value.tables = [
+          {
+            ...candidate,
+            sourceViewport: { width: 600, height: 800 },
+            grid: [],
+            cells: [],
+            unassigned: [],
+            issues: ['no-source-cell-grid']
+          }
+        ]
+      await save(value)
+      const result = await readWorkerResult(root, identity, new Map()),
+        element = result.elements[0]
+      expect(element).toMatchObject({
+        kind: kind === 'algorithm' ? 'algorithm' : 'table',
+        nativeBody: { kind, sourceItems }
+      })
+      expect(element.table).toBeUndefined()
+      expect(parsePdfStructureResult(result, identity)).toEqual(result)
+      for (const change of ['kind', 'caption', 'issue', 'wrong-page', 'empty', 'duplicate']) {
+        const bad = structuredClone(result),
+          body = bad.elements[0]
+        if (change === 'kind') body.kind = 'figure'
+        if (change === 'caption') delete body.caption
+        if (change === 'issue') body.issues.push({ code: 'unknown-structure', detail: '' })
+        if (change === 'wrong-page') body.nativeBody!.sourceItems[0].pageNumber = 2
+        if (change === 'empty') body.nativeBody!.sourceItems = []
+        if (change === 'duplicate') body.nativeBody!.sourceItems.push({ ...sourceItems[0] })
+        expect(() => parsePdfStructureResult(bad, identity), change).toThrow()
+      }
+      const duplicate = structuredClone(result)
+      duplicate.elements.push({ ...structuredClone(element), id: 'other-body' })
+      expect(() => parsePdfStructureResult(duplicate, identity)).toThrow(/multiple owners/)
+      const competing = structuredClone(result)
+      competing.elements.push({
+        id: 'other-figure',
+        kind: 'figure',
+        regions: structuredClone(element.regions),
+        issues: [],
+        sourceItems
+      })
+      expect(() => parsePdfStructureResult(competing, identity)).toThrow(/multiple owners/)
+      const cellConflict = structuredClone(result)
+      cellConflict.elements.push({
+        id: 'other-table',
+        kind: 'table',
+        regions: structuredClone(element.regions),
+        issues: [],
+        table: {
+          rowCount: 1,
+          columnCount: 1,
+          issues: [],
+          unassignedText: [],
+          cells: [
+            {
+              row: 0,
+              column: 0,
+              rowSpan: 1,
+              columnSpan: 1,
+              text: 'Exact native body',
+              regions: structuredClone(element.regions),
+              sourceItems
+            }
+          ]
+        }
+      })
+      expect(() => parsePdfStructureResult(cellConflict, identity)).toThrow(
+        /both a native body and a table/
+      )
+    }
+  )
+
+  it.each(['nodes', 'text'])(
+    'omits the complete optional body proof when its %s budget is exceeded',
+    async (budget) => {
+      const value = raw(),
+        candidate = {
+          ...(value.figures as Record<string, unknown>[])[0],
+          nativeBody: {
+            kind: 'algorithm',
+            sourceItems: Array.from({ length: budget === 'nodes' ? 8192 : 12 }, (_, index) => ({
+              pageNumber: 1,
+              index,
+              text: budget === 'text' ? 'x'.repeat(190000) : 'x'
+            }))
+          }
+        }
+      value.figures = []
+      value.algorithms = [candidate]
+      await save(value)
+      const result = await readWorkerResult(root, identity, new Map())
+      expect(result.elements[0].kind).toBe('algorithm')
+      expect(result.elements[0].nativeBody).toBeUndefined()
+    }
+  )
+
+  it('omits the complete optional body proof when its serialized UTF-8 budget is exceeded', async () => {
+    const value = raw()
+    value.algorithms = [
+      {
+        ...(value.figures as Record<string, unknown>[])[0],
+        nativeBody: {
+          kind: 'algorithm',
+          sourceItems: Array.from({ length: 16 }, (_, index) => ({
+            pageNumber: 1,
+            index,
+            text: '中'.repeat(200000)
+          }))
+        }
+      }
+    ]
+    value.figures = []
+    const serialized = serializeWorkerResult(value)
+    expect(serialized).not.toContain('nativeBody')
+    await save(JSON.parse(serialized))
+    expect(
+      (await readWorkerResult(root, identity, new Map())).elements[0].nativeBody
+    ).toBeUndefined()
+  })
+
   it('retains uncertainty on figures with a crop and native source evidence', async () => {
     const value = raw()
     Object.assign((value.figures as Record<string, unknown>[])[0], {
@@ -339,7 +471,7 @@ describe('worker result boundary', () => {
         sourceRects: [[90, 120, 100, 130]]
       })),
       unassigned: [],
-      issues: ['candidate-results']
+      issues: index ? [] : ['native-table-structure-ambiguous']
     }))
     const group = {
       id: 'p1-figure-1',
@@ -362,6 +494,13 @@ describe('worker result boundary', () => {
       ['B. Dewa data', 7]
     ])
     expect(result.elements[0].tableNotes?.[0].text).toBe('Shared note')
+    // Part-local uncertainty must not become a group-wide conflict after
+    // worker normalization; a reliable sibling keeps its own clean status.
+    expect(result.elements[0].issues).toEqual([])
+    expect(result.elements[0].tableParts?.map((part) => part.table.issues)).toEqual([
+      [{ code: 'native-table-structure-ambiguous', detail: 'native-table-structure-ambiguous' }],
+      []
+    ])
     expect(result.thumbnails).toHaveLength(1)
 
     await save({ ...raw(), figures: [], tables: [{ ...group, caption: undefined }] })

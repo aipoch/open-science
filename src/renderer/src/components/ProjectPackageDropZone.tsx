@@ -74,6 +74,21 @@ export const ProjectPackageDropZone = ({
       onDropCapture={(event) => {
         if (!isLocalFileDrag(event)) return
         event.stopPropagation()
+        // Inspect entries during drop, while native drag data is readable. A directory can
+        // appear in files as a zero-byte File, so neither size nor filename identifies it.
+        if (
+          Array.from(event.dataTransfer.items ?? []).some(
+            (item) => item.webkitGetAsEntry?.()?.isDirectory
+          )
+        ) {
+          event.preventDefault()
+          setNotice(
+            t(
+              'Folders cannot be attached. Select files inside the folder instead. No files were added.'
+            )
+          )
+          return
+        }
         dropZoneProps.onDrop(event)
       }}
     >

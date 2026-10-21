@@ -490,6 +490,21 @@ class SessionPersistenceStateOwner {
     operation: 'read' | 'patch'
   ): Promise<PersistedChatSession> {
     const loaded = await loadAuthority(this.options.repository, projectId, sessionId)
+    if (operation === 'read' && loaded.status !== 'found') {
+      try {
+        this.options.log.warn('Runtime Session authority unavailable', {
+          operation: 'runtime-context-read',
+          phase: 'load-authority',
+          projectId,
+          sessionId,
+          authorityStatus: loaded.status,
+          cachedProjectId: this.sessionMetadata.get(sessionId)?.projectId,
+          metadataComplete: this.isSessionMetadataComplete
+        })
+      } catch {
+        // Diagnostics must not replace the original rejection or recreate missing authority.
+      }
+    }
     if (loaded.status === 'unreadable') {
       throw new Error(
         `Cannot ${operation} Session runtime context because its durable JSON is unreadable.`

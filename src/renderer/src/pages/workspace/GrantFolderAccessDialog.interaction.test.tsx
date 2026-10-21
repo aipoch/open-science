@@ -557,7 +557,7 @@ describe('GrantFolderAccessDialog', () => {
     expect(document.activeElement).toBe(radios[0])
   })
 
-  it('shows "Directory could not be accessed." when the grant is rejected', async () => {
+  it('shows "Folder access could not be updated." when the grant is rejected', async () => {
     grantRoot.mockRejectedValue(new Error('Directory is outside the granted scope.'))
     renderDialog()
     await flush()
@@ -566,11 +566,47 @@ describe('GrantFolderAccessDialog', () => {
     await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
     await confirmGrant()
 
-    expect(document.body.textContent).toContain('Directory could not be accessed.')
+    expect(document.body.textContent).toContain('Folder access could not be updated.')
     // The failure clears on navigation.
     await click(document.body.querySelector('[data-testid="grant-access-crumb-home"]'))
-    expect(document.body.textContent).not.toContain('Directory could not be accessed.')
+    expect(document.body.textContent).not.toContain('Folder access could not be updated.')
   })
+
+  it('explains a rejected grant when browsing succeeds but Notebook cleanup is incomplete', async () => {
+    const reason =
+      'Notebook cleanup is incomplete; folder access changes are unavailable until cleanup is verified.'
+    grantRoot.mockRejectedValue(new Error(reason))
+    renderDialog()
+    await flush()
+
+    await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+    expect(document.body.textContent).toContain('No subfolders.')
+    await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+    await confirmGrant()
+
+    expect(grantRoot).toHaveBeenCalledWith({ path: `${HOME}/Projects`, access: 'ro' })
+    expect(useGrantedFoldersStore.getState().roots).toEqual([])
+    expect(
+      document.body.querySelector('[data-testid="grant-folder-access-dialog"]')?.textContent
+    ).toContain(reason)
+  })
+
+  it.each([new Error(''), undefined])(
+    'keeps a failure summary when a grant rejection has no details (%s)',
+    async (error) => {
+      grantRoot.mockRejectedValue(error)
+      renderDialog()
+      await flush()
+      await click(document.body.querySelector('[data-testid="grant-access-folder-Projects"]'))
+      await click(document.body.querySelector('[data-testid="grant-access-grant"]'))
+      await confirmGrant()
+
+      expect(document.body.querySelector('[role="alert"]')?.textContent).toContain(
+        'Folder access could not be updated.'
+      )
+      expect(document.body.querySelector('[data-testid="grant-access-error"] details')).toBeNull()
+    }
+  )
 
   it('keeps the selected folder unchanged when confirmation is cancelled', async () => {
     renderDialog()

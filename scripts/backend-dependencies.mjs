@@ -35,6 +35,7 @@ const packageName = (specifier) =>
 // roots: the dependency walker must still retain them if another runtime package needs them.
 export function desktopBackendDependencies(dependencies, metafiles) {
   assertBackendImports(metafiles, dependencies)
+  const bundled = desktopBundledDependencies(metafiles)
   const rendererRoots = new Set([
     '@radix-ui/react-focus-scope',
     '@rc-component/qrcode',
@@ -50,7 +51,39 @@ export function desktopBackendDependencies(dependencies, metafiles) {
     )
   )
   return Object.keys(dependencies).filter(
-    (name) => !rendererRoots.has(name) || runtimeImports.has(name)
+    (name) => !bundled.has(name) && (!rendererRoots.has(name) || runtimeImports.has(name))
+  )
+}
+
+// Use the actual build graph, never an assumed build mode, to remove a runtime root.
+// A mixed bundled/external copy would create independent module instances in one process.
+export function desktopBundledDependencies(metafiles) {
+  const bundled = new Set()
+  if (
+    metafiles.some((meta) =>
+      Object.keys(meta.inputs).some((path) => /(?:^|[\\/])node_modules[\\/]i18next[\\/]/.test(path))
+    )
+  ) {
+    for (const meta of metafiles)
+      for (const output of Object.values(meta.outputs))
+        if (output.imports.some((item) => item.external && packageName(item.path) === 'i18next'))
+          throw new Error('Desktop backend cannot mix bundled and external i18next.')
+    bundled.add('i18next')
+  }
+  return bundled
+}
+
+// Agent SDK 0.3.232 refers to the API SDK only from its .d.ts files. Desktop consumers
+// execute the prebuilt JavaScript; standalone/SDK staging retains the published type contract.
+// Keep unknown versions and every other incoming edge until separately audited.
+export function desktopBackendPeerDependencies(manifest) {
+  return Object.keys(manifest.peerDependencies ?? {}).filter(
+    (name) =>
+      !(
+        manifest.name === '@anthropic-ai/claude-agent-sdk' &&
+        manifest.version === '0.3.232' &&
+        name === '@anthropic-ai/sdk'
+      )
   )
 }
 

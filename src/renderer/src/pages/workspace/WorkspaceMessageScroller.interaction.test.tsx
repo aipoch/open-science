@@ -4401,7 +4401,8 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
       projectId: 'default',
       fileId: 'managed-artifact-1',
       versionId: 'artifact-version-1',
-      mimeType: 'image/png'
+      mimeType: 'image/png',
+      imagePreview: true
     })
   })
 

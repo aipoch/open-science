@@ -1,14 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H5 E5 S5 R5 V4 */
-import {
-  useId,
-  useEffectEvent,
-  useEffect,
-  useLayoutEffect,
-  useMemo,
-  useRef,
-  useState,
-  type FormEvent
-} from 'react'
+import { useId, useEffectEvent, useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { useTranslation } from 'react-i18next'
 import {
   Bot,
@@ -42,6 +33,7 @@ import {
 import type { ElicitationEditDraft } from '@/stores/session-store'
 import type { AnnotationPort } from './annotations/annotation-port'
 import { TextAnnotationSurface } from './annotations/TextAnnotationSurface'
+import { ChoiceKindChip } from './ChoiceKindChip'
 
 const displayValue = (
   value: ElicitationValue,
@@ -213,14 +205,15 @@ const WorkspaceElicitationCard = ({
   editDraft,
   onEditDraftChange,
   annotationPort,
-  annotationItemId,
-  revealRequest
+  annotationItemId
 }: WorkspaceElicitationCardProps): React.JSX.Element => {
   const { t } = useTranslation()
   const fieldStatusId = useId()
-  const choiceQuestions = request ? resolveAgentUserChoiceQuestions(request.fields) : undefined
+  // Historical surfaces have saved fields but no pending request.
+  const questionFields = request?.fields ?? elicitation.fields
+  const choiceQuestions = resolveAgentUserChoiceQuestions(questionFields)
   const restoredValues = initialValues(
-    request?.fields ?? [],
+    questionFields,
     elicitation.state === 'pending' ? (elicitation.draftAnswers ?? []) : []
   )
   const restoredEdit =
@@ -240,7 +233,6 @@ const WorkspaceElicitationCard = ({
   const [error, setError] = useState<string>()
   // Accordion review: indexes of the questions whose original content is expanded in place.
   const [expandedQuestions, setExpandedQuestions] = useState<ReadonlySet<number>>(new Set())
-  const appliedRevealRequestIdRef = useRef<number | undefined>(undefined)
   const customAnswerRef = useRef<HTMLTextAreaElement>(null)
 
   const canSubmit = useMemo(
@@ -256,15 +248,15 @@ const WorkspaceElicitationCard = ({
     () =>
       initialValues(
         readOnly
-          ? (request?.fields ?? []).map((field) => ({
+          ? questionFields.map((field) => ({
               ...field,
               defaultValue: undefined,
               required: false
             }))
-          : (request?.fields ?? []),
+          : questionFields,
         elicitation.answers ?? []
       ),
-    [request, elicitation.answers, readOnly]
+    [questionFields, elicitation.answers, readOnly]
   )
   const terminalLabel =
     elicitation.state === 'declined'
@@ -295,6 +287,12 @@ const WorkspaceElicitationCard = ({
     currentChoiceAnswer?.fieldId === choiceQuestion?.customField.id &&
     currentChoiceAnswer?.value === 'Let the agent decide'
   )
+  // Translate the app-owned sentinel only in a choice's custom field, not arbitrary answer text.
+  const displayAnswer = (answer: ElicitationAnswer): string =>
+    answer.value === 'Let the agent decide' &&
+    choiceQuestions?.some((question) => question.customField.id === answer.fieldId)
+      ? t('Let the agent decide')
+      : displayValue(answer.value, fieldsById.get(answer.fieldId), t)
   const canReviewAnswer = Boolean(elicitation.state === 'answered' && choiceQuestions)
   const isPendingPlaceholder = variant === 'pending-placeholder' && elicitation.state === 'pending'
   const choiceTitle =
@@ -314,12 +312,6 @@ const WorkspaceElicitationCard = ({
   const isAnsweredSummary = elicitation.state === 'answered' && answers.length > 0
   // Terminal choice cards render their own summary-style header, so the top title hides too.
   const isTerminalChoiceSummary = Boolean(terminalLabel && choiceQuestions)
-  // The summary is titled by the first question itself — the agent's generic prompt message
-  // carries no information. Multi-question cards append a count suffix in the header.
-  const summaryTitle = choiceQuestions?.length
-    ? choiceQuestions[0].choiceField.description || choiceQuestions[0].choiceField.label
-    : elicitation.message
-
   const toggleQuestionReview = (questionIndex: number): void => {
     setExpandedQuestions((current) => {
       const next = new Set(current)
@@ -329,27 +321,53 @@ const WorkspaceElicitationCard = ({
     })
   }
 
-  // Terminal cards put their status (skipped/cancelled) on the title line, right after the icon.
-  const summaryHeader = (statusPrefix?: string): React.JSX.Element => (
-    <div className="flex items-center gap-2">
+  const summaryHeader = (): React.JSX.Element => (
+    <div className="flex items-start gap-2">
       <span className="grid size-[22px] shrink-0 place-items-center text-primary">
         <CircleHelp className="size-3.5" strokeWidth={2} aria-hidden="true" />
       </span>
       <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-sm font-semibold leading-5">
-        {statusPrefix ? (
-          <span className="text-xs font-normal text-text-300">{`${statusPrefix} · `}</span>
-        ) : null}
-        {summaryTitle}
-        {choiceQuestions && choiceQuestions.length > 1 ? (
-          <span className="font-normal text-text-300">
-            {' · '}
-            {t('{{count}} questions', {
-              count: choiceQuestions.length,
-              defaultValue_one: '{{count}} question'
-            })}
-          </span>
-        ) : null}
+        {elicitation.message}
       </h3>
+    </div>
+  )
+
+  // Keep each question visible once, outside the answer disclosure and annotation-free chip.
+  const renderQuestionHeading = (question: AgentUserChoiceQuestion): React.JSX.Element => (
+    <div className="flex items-start gap-2">
+      <ChoiceKindChip kind={question.choiceField.kind} />
+      <div className="min-w-0 flex-1">
+        {annotationPort && annotationItemId ? (
+          <TextAnnotationSurface
+            source={{
+              kind: 'session-item',
+              sessionId: annotationPort.sessionId,
+              itemType: 'elicitation',
+              itemId: annotationItemId,
+              sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
+            }}
+            activeAnnotations={annotationPort.activeAnnotations}
+            onAdd={annotationPort.onAdd}
+            onUpdateNote={annotationPort.onUpdateNote}
+            onRemove={annotationPort.onRemove}
+            onError={annotationPort.onError}
+          >
+            <h3
+              id={`${fieldStatusId}-${question.choiceField.id}-title`}
+              className="whitespace-pre-wrap break-words text-sm font-semibold leading-5"
+            >
+              {question.choiceField.description || question.choiceField.label}
+            </h3>
+          </TextAnnotationSurface>
+        ) : (
+          <h3
+            id={`${fieldStatusId}-${question.choiceField.id}-title`}
+            className="whitespace-pre-wrap break-words text-sm font-semibold leading-5"
+          >
+            {question.choiceField.description || question.choiceField.label}
+          </h3>
+        )}
+      </div>
     </div>
   )
 
@@ -368,32 +386,11 @@ const WorkspaceElicitationCard = ({
     return (
       // Translucent white panel: a different material from the gray summary rows,
       // scaled to the summary rows (size-5 badges, 13px text).
-      <div className="mb-1.5 mt-1 rounded-[10px] bg-bg-000/60 p-2">
-        {annotationPort && annotationItemId ? (
-          <TextAnnotationSurface
-            source={{
-              kind: 'session-item',
-              sessionId: annotationPort.sessionId,
-              itemType: 'elicitation',
-              itemId: annotationItemId,
-              sectionId: `field:${question.choiceField.id}:${question.choiceField.description ? 'description' : 'label'}`
-            }}
-            activeAnnotations={annotationPort.activeAnnotations}
-            onAdd={annotationPort.onAdd}
-            onUpdateNote={annotationPort.onUpdateNote}
-            onRemove={annotationPort.onRemove}
-            onError={annotationPort.onError}
-          >
-            <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
-              {question.choiceField.description || question.choiceField.label}
-            </p>
-          </TextAnnotationSurface>
-        ) : (
-          <p className="whitespace-pre-wrap break-words text-[13px] font-semibold leading-[18px]">
-            {question.choiceField.description || question.choiceField.label}
-          </p>
-        )}
-        <div className="mt-1" data-testid="elicitation-choice-review">
+      <div
+        id={`${fieldStatusId}-${question.choiceField.id}-options`}
+        className="mt-1 rounded-[10px] bg-bg-000/60 p-2"
+      >
+        <div data-testid="elicitation-choice-review">
           {question.choiceField.options?.map((option, index) => {
             const selected = isChoiceOptionSelected(question, reviewValues, option.value)
             return (
@@ -403,7 +400,7 @@ const WorkspaceElicitationCard = ({
                 data-selected={selected ? 'true' : 'false'}
                 className={cn(
                   'flex w-full items-start gap-2 px-1 py-1.5 text-left',
-                  selected && 'bg-bg-200'
+                  selected && 'rounded-md bg-primary/10'
                 )}
               >
                 <span
@@ -477,40 +474,6 @@ const WorkspaceElicitationCard = ({
       </div>
     )
   }
-
-  useLayoutEffect(() => {
-    if (
-      !request ||
-      !revealRequest ||
-      elicitation.state !== 'answered' ||
-      revealRequest.itemId !== annotationItemId ||
-      appliedRevealRequestIdRef.current === revealRequest.requestId
-    ) {
-      return
-    }
-    const fieldMatch = /^field:([^:]+):(description|label)$/u.exec(revealRequest.sectionId ?? '')
-    if (!fieldMatch) return
-    const questions = resolveAgentUserChoiceQuestions(request.fields)
-    if (!questions) return
-    const questionIndex = questions.findIndex(
-      (question) => question.choiceField.id === fieldMatch[1]
-    )
-    if (questionIndex < 0) return
-    let cancelled = false
-    queueMicrotask(() => {
-      if (cancelled) return
-      appliedRevealRequestIdRef.current = revealRequest.requestId
-      setExpandedQuestions((current) => {
-        if (current.has(questionIndex)) return current
-        const next = new Set(current)
-        next.add(questionIndex)
-        return next
-      })
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [annotationItemId, elicitation.answers, elicitation.state, request, revealRequest])
 
   // Capture edits without confirming a question or emitting an Agent response. The callback can
   // change on store updates; only local input/navigation changes should publish another snapshot.
@@ -638,7 +601,7 @@ const WorkspaceElicitationCard = ({
       )}
     >
       {showChoiceProgress && choiceQuestions ? (
-        <div className="pointer-events-none sticky top-3 z-10 -mb-5 flex h-5 justify-end sm:top-4">
+        <div className="pointer-events-none sticky top-3 z-10 mb-2 flex h-5 justify-end sm:top-4">
           <span
             data-testid="elicitation-question-progress"
             role="status"
@@ -672,7 +635,8 @@ const WorkspaceElicitationCard = ({
       ) : null}
 
       {isAnsweredSummary || isTerminalChoiceSummary ? null : (
-        <div className="flex items-start">
+        <div className="flex items-start gap-2">
+          {choiceQuestion ? <ChoiceKindChip kind={choiceQuestion.choiceField.kind} /> : null}
           {annotationPort && annotationItemId ? (
             <div className="min-w-0 flex-1">
               <TextAnnotationSurface
@@ -690,23 +654,13 @@ const WorkspaceElicitationCard = ({
                 onRemove={annotationPort.onRemove}
                 onError={annotationPort.onError}
               >
-                <h3
-                  className={cn(
-                    'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-                    showChoiceProgress && 'pr-36'
-                  )}
-                >
+                <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
                   {choiceTitle ?? elicitation.message}
                 </h3>
               </TextAnnotationSurface>
             </div>
           ) : (
-            <h3
-              className={cn(
-                'min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6',
-                showChoiceProgress && 'pr-36'
-              )}
-            >
+            <h3 className="min-w-0 flex-1 whitespace-pre-wrap break-words text-base font-semibold leading-6">
               {choiceTitle ?? elicitation.message}
             </h3>
           )}
@@ -718,7 +672,12 @@ const WorkspaceElicitationCard = ({
           <p className="text-xs text-text-300">{t('No submitted answer recorded.')}</p>
           {elicitation.fields.map((field) => (
             <div key={field.id} className="text-sm">
-              <p className="font-medium">{field.description || field.label}</p>
+              <div className="flex items-start gap-2">
+                <ChoiceKindChip kind={field.kind} />
+                <p className="min-w-0 flex-1 break-words font-medium">
+                  {field.description || field.label}
+                </p>
+              </div>
               {field.options?.map((option) => (
                 <p key={option.value} className="text-text-300">
                   {option.label}
@@ -730,9 +689,7 @@ const WorkspaceElicitationCard = ({
             <div className="text-sm">
               <p className="text-xs text-text-300">{t('Saved draft answers')}</p>
               {elicitation.draftAnswers.map((answer) => (
-                <p key={answer.fieldId}>
-                  {displayValue(answer.value, fieldsById.get(answer.fieldId), t)}
-                </p>
+                <p key={answer.fieldId}>{displayAnswer(answer)}</p>
               ))}
             </div>
           ) : null}
@@ -746,9 +703,6 @@ const WorkspaceElicitationCard = ({
         </p>
       ) : elicitation.state === 'pending' && request && choiceQuestion ? (
         <form className="mt-2" data-testid="elicitation-choice-mode" onSubmit={handleChoiceSubmit}>
-          {choiceQuestion.choiceField.kind === 'multi-select' ? (
-            <p className="mb-1 text-xs text-text-300">{t('Select one or more options')}</p>
-          ) : null}
           <div className="max-h-[min(24rem,50vh)] space-y-0.5 overflow-y-auto">
             {choiceQuestion.choiceField.options?.map((option, index) => {
               const selected = isChoiceOptionSelected(choiceQuestion, values, option.value)
@@ -841,7 +795,11 @@ const WorkspaceElicitationCard = ({
               aria-label={t('Type your own answer')}
               placeholder={t('Or type your own answer…')}
               rows={1}
-              value={typeof customChoiceValue === 'string' ? customChoiceValue : ''}
+              value={
+                !agentDecidesSelected && typeof customChoiceValue === 'string'
+                  ? customChoiceValue
+                  : ''
+              }
               disabled={isSubmitting}
               maxLength={Math.min(
                 choiceQuestion.customField.maxLength ?? MAX_ELICITATION_MESSAGE_CHARS,
@@ -1158,8 +1116,8 @@ const WorkspaceElicitationCard = ({
         </form>
       ) : answers.length > 0 ? (
         <div data-testid="elicitation-answer-summary">
-          {summaryHeader()}
-          <div className="mt-1.5 flex flex-col">
+          {!choiceQuestions ? summaryHeader() : null}
+          <div className={cn('flex flex-col gap-4', !choiceQuestions && 'mt-1.5')}>
             {answers.map((answer) => {
               const field = fieldsById.get(answer.fieldId)
               const questionIndex =
@@ -1172,14 +1130,26 @@ const WorkspaceElicitationCard = ({
               const expanded = expandable && expandedQuestions.has(questionIndex)
               const question = expandable ? choiceQuestions?.[questionIndex] : undefined
               return (
-                <div key={answer.fieldId}>
+                <div
+                  key={answer.fieldId}
+                  data-testid={question ? 'elicitation-question-record' : undefined}
+                >
+                  {question ? renderQuestionHeading(question) : null}
                   <button
                     type="button"
                     data-testid="elicitation-answer-row"
                     aria-expanded={expandable ? expanded : undefined}
+                    aria-describedby={
+                      question ? `${fieldStatusId}-${question.choiceField.id}-title` : undefined
+                    }
+                    aria-controls={
+                      expanded && question
+                        ? `${fieldStatusId}-${question.choiceField.id}-options`
+                        : undefined
+                    }
                     disabled={!expandable}
                     className={cn(
-                      'group flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left',
+                      'group mt-1 flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left',
                       expandable
                         ? 'transition-colors duration-200 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none'
                         : 'cursor-default'
@@ -1192,17 +1162,13 @@ const WorkspaceElicitationCard = ({
                       <Check className="size-3" strokeWidth={3} aria-hidden="true" />
                     </span>
                     <span className="min-w-0 flex-1">
-                      {answers.length > 1 ? (
-                        <span className="block text-xs leading-4 text-text-100">
-                          {/* Custom/agent-decide answers live on the `question_N_custom` field
-                              labeled "Other" — surface the owning question's label instead. */}
-                          {choiceQuestions?.[questionIndex]?.choiceField.label ??
-                            field?.label ??
-                            answer.fieldId}
+                      {!question && answers.length > 1 ? (
+                        <span className="block text-xs leading-5 text-text-100">
+                          {field?.label ?? answer.fieldId}
                         </span>
                       ) : null}
                       <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
-                        {displayValue(answer.value, field, t)}
+                        {displayAnswer(answer)}
                       </span>
                     </span>
                     {expandable ? (
@@ -1224,31 +1190,31 @@ const WorkspaceElicitationCard = ({
         </div>
       ) : terminalLabel ? (
         choiceQuestions ? (
-          // Terminal choice cards share the summary surface: same header, one expandable row
-          // per question so the original prompt stays reviewable.
+          // Terminal records use the same independent question layout, with status as the trigger.
           <div data-testid="elicitation-answer-summary">
-            {summaryHeader(terminalLabel)}
-            <div className="mt-1.5 flex flex-col">
+            <div className="flex flex-col gap-4">
               {choiceQuestions.map((question, questionIndex) => {
                 const expanded = expandedQuestions.has(questionIndex)
                 return (
-                  <div key={question.choiceField.id}>
+                  <div key={question.choiceField.id} data-testid="elicitation-question-record">
+                    {renderQuestionHeading(question)}
                     <button
                       type="button"
                       data-testid="elicitation-answer-row"
                       aria-expanded={expanded}
-                      className="group flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left transition-colors duration-200 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none"
+                      aria-describedby={`${fieldStatusId}-${question.choiceField.id}-title`}
+                      aria-controls={
+                        expanded ? `${fieldStatusId}-${question.choiceField.id}-options` : undefined
+                      }
+                      className="group mt-1 flex w-full items-start gap-2 rounded-lg px-1 py-1.5 text-left transition-colors duration-200 hover:bg-bg-300 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/40 motion-reduce:transition-none"
                       onClick={() => toggleQuestionReview(questionIndex)}
                     >
                       <span className="mt-px grid size-5 shrink-0 place-items-center rounded-md bg-bg-200 text-text-300">
                         <Minus className="size-3" strokeWidth={2.5} aria-hidden="true" />
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block text-xs leading-4 text-text-100">
-                          {question.choiceField.label}
-                        </span>
-                        <span className="block whitespace-pre-wrap break-words text-[13px] font-medium leading-[18px]">
-                          {question.choiceField.description || question.choiceField.label}
+                        <span className="block text-[13px] leading-[18px] text-text-300">
+                          {terminalLabel}
                         </span>
                       </span>
                       <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-md text-text-300 transition-colors duration-150 group-hover:text-text-100">

@@ -9,6 +9,7 @@ import { isSessionPackagePending } from '../storage/session-package-state'
 import { decodeSessionComputePolicy } from './compute-policy'
 import { preserveImportedSession } from './imported-session'
 import { SessionProjectionAfterCommitError } from './save-session'
+import { createLogger, diagnosticErrorFields } from '@aipoch/diagnostics/node'
 
 import {
   MAX_PERSISTED_SESSION_BYTES,
@@ -1165,6 +1166,9 @@ class SessionRepository {
       try {
         await this.projection?.commitSave(durableSession)
       } catch (error) {
+        createLogger('session-persistence').error('derived catalog commit failed', {
+          ...diagnosticErrorFields(error)
+        })
         this.sessionRevisions.set(key, durableSession.revision!)
         throw new SessionProjectionAfterCommitError(durableSession, error)
       }

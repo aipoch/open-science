@@ -8174,6 +8174,80 @@ describe('LiteratureLibraryPage', () => {
     ])
   })
 
+  it('imports explicitly selected references and retains excluded conflict diagnostics', async () => {
+    const conflict = { ...libraryItem.item, title: 'Conflicting reference' }
+    const content = 'mixed references'
+    importRecords.mockImplementation(async (request: { mode: 'commit' | 'preview' }) => ({
+      format: 'bibtex',
+      items: [libraryItem.item, conflict],
+      errors: [],
+      scannedEntries: 2,
+      truncated: false,
+      entries: [
+        {
+          index: 0,
+          title: libraryItem.item.title,
+          item: libraryItem.item,
+          warnings: [],
+          status: 'ready'
+        },
+        {
+          index: 1,
+          title: conflict.title,
+          item: conflict,
+          warnings: [],
+          status: 'conflict',
+          conflict: {
+            identifiers: conflict.identifiers,
+            matches: [{ itemId: 'other', title: 'Other reference' }]
+          }
+        }
+      ],
+      ...(request.mode === 'commit'
+        ? { imported: { itemIds: [libraryItem.id], createdCount: 1, reusedCount: 0 } }
+        : {})
+    }))
+    render(<LiteratureLibraryPage />)
+    fireEvent.click(screen.getByRole('button', { name: 'All references' }))
+    const file = new File([content], 'references.bib')
+    Object.defineProperty(file, 'text', { value: async () => content })
+    fireEvent.change(screen.getByLabelText('Import references'), { target: { files: [file] } })
+    const submit = (await screen.findByRole('button', {
+      name: 'Import references'
+    })) as HTMLButtonElement
+    expect(submit.disabled).toBe(true)
+    fireEvent.click(screen.getByRole('button', { name: 'Exclude conflicting references' }))
+    expect(submit.disabled).toBe(true)
+    await waitFor(() => expect(submit.disabled).toBe(false))
+    expect(
+      (
+        screen.getByRole('checkbox', {
+          name: 'Select reference 2: Conflicting reference'
+        }) as HTMLInputElement
+      ).checked
+    ).toBe(false)
+    fireEvent.click(submit)
+    await waitFor(() =>
+      expect(importRecords).toHaveBeenCalledWith({
+        mode: 'commit',
+        content,
+        selectedItemIndexes: [0]
+      })
+    )
+    expect(
+      await screen.findByText('Excluded references were not imported. Their details remain below.')
+    ).not.toBeNull()
+    expect(screen.getByText('Library reference: Other reference')).not.toBeNull()
+    expect((screen.getByText(/View details/).closest('details') as HTMLDetailsElement).open).toBe(
+      true
+    )
+    const excluded = screen.getByRole('checkbox', {
+      name: 'Select reference 2: Conflicting reference'
+    }) as HTMLInputElement
+    expect(excluded.disabled).toBe(true)
+    expect(excluded.checked).toBe(false)
+  })
+
   it('previews and imports BibTeX records into the Library', async () => {
     render(<LiteratureLibraryPage />)
     fireEvent.click(screen.getByRole('button', { name: 'All references' }))

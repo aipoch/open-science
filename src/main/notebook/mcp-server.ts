@@ -179,12 +179,19 @@ const userChoiceOptionSchema = z.object({
 })
 
 const userChoiceQuestionSchema = z.object({
-  question: z.string().trim().min(1).max(MAX_ELICITATION_MESSAGE_CHARS),
+  question: z
+    .string()
+    .trim()
+    .min(1)
+    .max(MAX_ELICITATION_MESSAGE_CHARS)
+    .describe('NEVER mention selection mode/count in any language ("可多选"); UI labels kind.'),
   header: z.string().trim().min(1).max(MAX_ELICITATION_LABEL_CHARS).optional(),
   kind: z
     .enum(['single-select', 'multi-select'])
     .default('single-select')
-    .describe('Single answer or combinable choices.'),
+    .describe(
+      'Set explicitly: single-select = one exclusive option; multi-select = one or more combinable interests/outputs. Default single-select; text cannot override kind.'
+    ),
   options: z
     .array(userChoiceOptionSchema)
     .min(MIN_AGENT_USER_CHOICE_OPTIONS)
@@ -1544,7 +1551,7 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     name: 'ask_user_question',
     title: 'Ask the user to choose',
     description:
-      'For materially different interpretations, use this app-owned tool as the first tool call; include every known question in one call. Ask 1-3 questions with 2-16 unique, described options each. Never print choice lists or add Other (UI adds custom, agent-decide, Skip). Use multi-select only for combinable choices, never exclusive alternatives; otherwise single-select. Questions appear individually; multiple answers return as a JSON array of labels. Pending ends the turn; Finish continues.',
+      '1-3 questions; 2-16 unique described options each. Match question/options to kind. No printed lists/Other; UI adds custom/agent-decide/Skip. Multi-answer: JSON label array. Pending ends turn; Finish continues.',
     method: 'requestUserInput',
     inputSchema: requestUserInputToolSchema,
     mapResult: compactUserChoiceResult,

@@ -581,14 +581,6 @@ export const createApplicationModules = async (
     modules,
     composition
   })
-  // Reverse disposal must cancel journal writes before draining Compute tasks that can
-  // be waiting for the same database lock. The journal owner is lazy until commands open.
-  await modules.add(researchCatalog.journalAttributes, (owner) => ({
-    name: 'literature-journal-attributes',
-    capability: owner,
-    dispose: () => owner.dispose(),
-    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
-  }))
   const sideChatCommands = await composeProjectRecovery({
     declareElectronAdapter,
     applicationEvents,
@@ -868,6 +860,14 @@ export const createApplicationModules = async (
     dependencies: commandDependencies.applicationCommandDependencies,
     declareElectronAdapter
   })
+  // Reverse disposal must cancel journal writes before commands drain and Compute waits
+  // for the same database lock. The journal owner is lazy until command admission opens.
+  await modules.add(researchCatalog.journalAttributes, (owner) => ({
+    name: 'literature-journal-attributes',
+    capability: owner,
+    dispose: () => owner.dispose(),
+    disposeTimeoutMs: QUIT_SHUTDOWN_BUDGET_MS
+  }))
   composition.phase('commands')
   let quitPreparationGeneration = 0
 

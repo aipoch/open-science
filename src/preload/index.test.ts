@@ -41,6 +41,8 @@ vi.mock('electron', () => ({
 type PreloadApi = {
   researchRuns: { inspect: (request: unknown) => unknown }
   saveSessionArtifacts: (request: unknown) => unknown
+  getArtifactSaveProgress: (request: unknown) => unknown
+  cancelArtifactSave: (request: unknown) => unknown
   saveProjectArtifacts: (request: unknown) => unknown
   getRuntimeVersions: () => { electron: string; chrome: string; node: string }
   diagnostics: {
@@ -320,6 +322,7 @@ describe('preload bridge — public surface inventory', () => {
       'bookmarks.list',
       'bookmarks.resolvePdfSource',
       'bookmarks.updateNote',
+      'cancelArtifactSave',
       'cli.getStatus',
       'cli.install',
       'cli.uninstall',
@@ -372,6 +375,7 @@ describe('preload bridge — public surface inventory', () => {
       'desktopRuntime.reconciled',
       'desktopRuntime.reconnect',
       'diagnostics.reportRendererFailure',
+      'getArtifactSaveProgress',
       'getRuntimeVersions',
       'github.getStars',
       'handoff.list',
@@ -1495,6 +1499,18 @@ const cases: ForwardingCase[] = [
     invoke: (a) => a.saveSessionArtifacts(sampleSessionArtifactSelection),
     channel: 'file:save-session-artifacts',
     args: [sampleSessionArtifactSelection]
+  },
+  {
+    name: 'getArtifactSaveProgress → file:artifact-save-progress',
+    invoke: (a) => a.getArtifactSaveProgress({ operationId: 'download' }),
+    channel: 'file:artifact-save-progress',
+    args: [{ operationId: 'download' }]
+  },
+  {
+    name: 'cancelArtifactSave → file:cancel-artifact-save',
+    invoke: (a) => a.cancelArtifactSave({ operationId: 'download' }),
+    channel: 'file:cancel-artifact-save',
+    args: [{ operationId: 'download' }]
   },
   {
     name: 'saveProjectArtifacts → file:save-project-artifacts',

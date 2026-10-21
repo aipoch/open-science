@@ -162,7 +162,7 @@ export const readRasterImageDimensions = (
   return readWebpDimensions(bytes)
 }
 
-export const exceedsDecodedImagePixelLimit = (size: RasterImageDimensions): boolean =>
-  size.width < 1 ||
-  size.height < 1 ||
-  size.width > Math.floor(MAX_DECODED_IMAGE_PIXELS / size.height)
+export const exceedsDecodedImagePixelLimit = (
+  size: RasterImageDimensions,
+  maxPixels = MAX_DECODED_IMAGE_PIXELS
+): boolean => size.width < 1 || size.height < 1 || size.width > Math.floor(maxPixels / size.height)

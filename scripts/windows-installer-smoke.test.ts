@@ -15,6 +15,7 @@ import {
   assertUpgradeProfilePreserved,
   assertWsl2RestartCleanupBlocked,
   buildSmokePlan,
+  captureStartupLogs,
   cleanupOwnedSmokeRegistrations,
   cleanupSmokeRegistrations,
   cleanupSmokeRoot,
@@ -46,6 +47,26 @@ import {
 } from './windows-installer-smoke.mjs'
 
 describe('Windows installer smoke plan', () => {
+  it('retains backend startup logs from candidate roots without copying profile secrets', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'installer-startup-evidence-'))
+    const profile = join(root, 'profile')
+    const output = join(root, 'evidence')
+    try {
+      await mkdir(join(profile, 'logs'), { recursive: true })
+      await writeFile(join(profile, 'logs', 'main.log'), 'backend startup failed\n')
+      await writeFile(join(profile, 'web-token'), 'private-token')
+      const files = await captureStartupLogs(
+        [undefined, join(root, 'missing'), profile, profile],
+        output
+      )
+      expect(files).toEqual([join(output, 'backend-1.log')])
+      expect(await readFile(files[0], 'utf8')).toBe('backend startup failed\n')
+      await expect(readFile(join(output, 'web-token'))).rejects.toMatchObject({ code: 'ENOENT' })
+    } finally {
+      await rm(root, { recursive: true, force: true })
+    }
+  })
+
   it('bounds installation separately and preserves failures when no files were extracted', async () => {
     const root = await mkdtemp(join(tmpdir(), 'open-science-install-deadline-'))
     const installDirectory = join(root, 'installed app 程序')

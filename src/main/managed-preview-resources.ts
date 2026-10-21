@@ -15,6 +15,11 @@ import { FileObservationMismatchError, type FileObservation } from './bounded-fi
 import { waitForManagedFilePublication } from './managed-file-preview'
 import type { ManagedFileReadLease } from './managed-file-versions/read-port'
 import {
+  MAX_PREVIEW_SOURCE_PIXELS,
+  resizeImagePreview,
+  type ResizedImagePreview
+} from './image-preview-resize'
+import {
   exceedsDecodedImagePixelLimit,
   isPixelLimitedRasterMimeType,
   MAX_DECODED_IMAGE_PIXELS,
@@ -108,6 +113,7 @@ type ResourceEntry = ManagedPreviewResource & {
   ownerId: number
   filePath: string
   trustedLease?: ManagedPreviewTrustedLease
+  imagePreview?: ResizedImagePreview
   activeReaders?: number
   strictSnapshot?: {
     dev: bigint
@@ -171,7 +177,7 @@ const readExactRange = async (
   }
 }
 
-// Stores capability metadata only; file bytes remain on disk until a protocol or range read occurs.
+// Owns file capabilities and bounded, temporary display buffers for downsampled images.
 class ManagedPreviewResources {
   private readonly resources = new Map<string, ResourceEntry>()
   private readonly releasedOwners = new Map<string, number>()
@@ -216,6 +222,7 @@ class ManagedPreviewResources {
     options?: AcquireManagedPreviewOptions
   ): Promise<ManagedPreviewResource> {
     const trustedLease = await this.openTrustedLease(request)
+    let imagePreview: ResizedImagePreview | undefined
     let admitted = false
     try {
       // Resolve through the managed repository before minting an owner-scoped capability URL.
@@ -263,55 +270,65 @@ class ManagedPreviewResources {
         throw new Error('Managed preview file changed after admission.')
       }
 
-      const mimeType = inferMimeType(filePath, request.mimeType)
+      let mimeType = inferMimeType(filePath, request.mimeType)
       // Reused below as the resource's width/height, so consumers learn the exact geometry from
       // the same header read that enforces the decoded-pixel limit.
       let imageDimensions: RasterImageDimensions | undefined
       if (isPixelLimitedRasterMimeType(mimeType)) {
-        const headerLength = Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES)
-        let header: Buffer
-        if (trustedLease) {
-          const bytes = await trustedLease.readRange(0, headerLength)
-          if (bytes.byteLength !== headerLength) {
-            throw new Error('Image preview changed while reading its dimensions.')
-          }
-          header = Buffer.from(bytes)
-          await trustedLease.verifyUnchanged()
-        } else {
-          const fileHandle = await open(filePath, 'r')
-          try {
-            const before = snapshotFileStat(await fileHandle.stat({ bigint: true }))
-            if (
-              before.size !== fileSnapshot.size ||
-              before.mtimeNs !== fileSnapshot.mtimeNs ||
-              before.dev !== fileSnapshot.dev ||
-              before.ino !== fileSnapshot.ino
-            ) {
-              throw new Error('Image preview changed before reading its dimensions.')
+        const readImageBytes = async (length: number): Promise<Buffer> => {
+          if (trustedLease) {
+            const bytes = await trustedLease.readRange(0, length)
+            if (bytes.byteLength !== length) {
+              throw new Error('Image preview changed while reading.')
             }
-            header = Buffer.allocUnsafe(headerLength)
-            if (headerLength > 0) await readExactRange(fileHandle, header, 0)
-            const after = snapshotFileStat(await fileHandle.stat({ bigint: true }))
-            if (
-              after.size !== fileSnapshot.size ||
-              after.mtimeNs !== fileSnapshot.mtimeNs ||
-              after.dev !== fileSnapshot.dev ||
-              after.ino !== fileSnapshot.ino
-            ) {
-              throw new Error('Image preview changed while reading its dimensions.')
+            await trustedLease.verifyUnchanged()
+            return Buffer.from(bytes)
+          } else {
+            const fileHandle = await open(filePath, 'r')
+            try {
+              const before = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+              if (
+                before.size !== fileSnapshot.size ||
+                before.mtimeNs !== fileSnapshot.mtimeNs ||
+                before.dev !== fileSnapshot.dev ||
+                before.ino !== fileSnapshot.ino
+              ) {
+                throw new Error('Image preview changed before reading its dimensions.')
+              }
+              const bytes = Buffer.allocUnsafe(length)
+              if (length > 0) await readExactRange(fileHandle, bytes, 0)
+              const after = snapshotFileStat(await fileHandle.stat({ bigint: true }))
+              if (
+                after.size !== fileSnapshot.size ||
+                after.mtimeNs !== fileSnapshot.mtimeNs ||
+                after.dev !== fileSnapshot.dev ||
+                after.ino !== fileSnapshot.ino
+              ) {
+                throw new Error('Image preview changed while reading its dimensions.')
+              }
+              return bytes
+            } finally {
+              await fileHandle.close()
             }
-          } finally {
-            await fileHandle.close()
           }
         }
+        const header = await readImageBytes(Math.min(fileSnapshot.size, MAX_IMAGE_HEADER_BYTES))
         const dimensions = readRasterImageDimensions(header, mimeType)
         if (!dimensions) throw new Error('Could not read image preview dimensions safely.')
-        if (exceedsDecodedImagePixelLimit(dimensions)) {
+        const maxPixels =
+          request.imagePreview === true ? MAX_PREVIEW_SOURCE_PIXELS : MAX_DECODED_IMAGE_PIXELS
+        if (exceedsDecodedImagePixelLimit(dimensions, maxPixels)) {
           throw new Error(
-            `Image preview exceeds the ${MAX_DECODED_IMAGE_PIXELS.toLocaleString('en-US')}-pixel limit.`
+            `Image preview exceeds the ${maxPixels.toLocaleString('en-US')}-pixel limit.`
           )
         }
         imageDimensions = dimensions
+        if (request.imagePreview === true && exceedsDecodedImagePixelLimit(dimensions)) {
+          imagePreview = await resizeImagePreview(fileSnapshot.size, () =>
+            readImageBytes(fileSnapshot.size)
+          )
+          mimeType = 'image/png'
+        }
       }
 
       const sourceChecksum = trustedLease?.version?.checksum ?? trustedLease?.checksum
@@ -319,7 +336,7 @@ class ManagedPreviewResources {
       const resource: ManagedPreviewResource = {
         id,
         url: `${PREVIEW_SCHEME}://${id}/${encodeURIComponent(basename(filePath))}`,
-        size: fileSnapshot.size,
+        size: imagePreview?.data.byteLength ?? fileSnapshot.size,
         mimeType,
         version: fileSnapshot.version,
         ...(typeof sourceChecksum === 'string' && /^[a-f0-9]{64}$/.test(sourceChecksum)
@@ -334,6 +351,7 @@ class ManagedPreviewResources {
         ownerId,
         filePath,
         ...(trustedLease ? { trustedLease } : {}),
+        ...(imagePreview ? { imagePreview } : {}),
         // Capability identity is independent of an optional whole-file admission limit.
         ...(!trustedLease
           ? {
@@ -348,6 +366,7 @@ class ManagedPreviewResources {
       admitted = true
       return resource
     } finally {
+      if (imagePreview && !admitted) imagePreview.release()
       if (trustedLease && !admitted) await trustedLease.close()
     }
   }
@@ -421,8 +440,8 @@ class ManagedPreviewResources {
       throw new Error('Managed preview range exceeds the maximum size.')
     }
 
-    if (resource.trustedLease) {
-      const releaseRead = this.retainTrustedLease(resource)
+    if (resource.trustedLease && !resource.imagePreview) {
+      const releaseRead = this.retainResourceRead(resource)
       try {
         const data = await resource.trustedLease.readRange(begin, end)
         return { begin, end, total: resource.size, data: new Uint8Array(data) }
@@ -482,8 +501,30 @@ class ManagedPreviewResources {
       throw new Error('Managed preview resource is not available.')
     }
 
+    if (resource.imagePreview) {
+      let data: Buffer | undefined = resource.imagePreview.data
+      const size = data.byteLength
+      const releaseRead = this.retainResourceRead(resource)
+      return {
+        fileHandle: {
+          read: async (buffer, offset, length, position) => {
+            if (!data) throw new Error('Managed preview reader is closed.')
+            const bytes = data.subarray(position, position + length)
+            buffer.set(bytes, offset)
+            return { bytesRead: bytes.byteLength }
+          },
+          close: async () => {
+            data = undefined
+            await releaseRead()
+          }
+        },
+        mimeType: resource.mimeType,
+        size,
+        verifyUnchanged: async () => undefined
+      }
+    }
     if (resource.trustedLease) {
-      const releaseRead = this.retainTrustedLease(resource)
+      const releaseRead = this.retainResourceRead(resource)
       return {
         fileHandle: {
           read: (buffer, offset, length, position) =>
@@ -589,8 +630,10 @@ class ManagedPreviewResources {
   private revokeResource(resourceId: string, ownerId: number): void {
     const resource = this.resources.get(resourceId)
     this.resources.delete(resourceId)
-    if (resource?.trustedLease && !resource.activeReaders) {
-      void resource.trustedLease.close().catch(() => undefined)
+    if (resource && !resource.activeReaders) {
+      resource.imagePreview?.release()
+      resource.imagePreview = undefined
+      void resource.trustedLease?.close().catch(() => undefined)
     }
     this.releasedOwners.set(resourceId, ownerId)
     while (this.releasedOwners.size > MAX_RELEASED_RESOURCE_TOMBSTONES) {
@@ -600,7 +643,7 @@ class ManagedPreviewResources {
     }
   }
 
-  private retainTrustedLease(resource: ResourceEntry): () => Promise<void> {
+  private retainResourceRead(resource: ResourceEntry): () => Promise<void> {
     resource.activeReaders = (resource.activeReaders ?? 0) + 1
     let released = false
     return async () => {
@@ -609,7 +652,9 @@ class ManagedPreviewResources {
       resource.activeReaders! -= 1
       // Revocation removes access immediately; only already-admitted reads may finish.
       if (!resource.activeReaders && this.resources.get(resource.id) !== resource) {
-        await resource.trustedLease!.close().catch(() => undefined)
+        resource.imagePreview?.release()
+        resource.imagePreview = undefined
+        await resource.trustedLease?.close().catch(() => undefined)
       }
     }
   }

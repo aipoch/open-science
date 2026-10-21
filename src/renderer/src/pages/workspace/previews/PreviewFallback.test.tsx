@@ -117,7 +117,40 @@ describe('PreviewFallback', () => {
       false,
       'Open the file from your current storage location'
     ],
-    ['Temporary read failure', true, 'Read failed']
+    ['Temporary read failure', true, 'Read failed'],
+    [
+      'Error invoking remote method: Image preview exceeds the 64,000,000-pixel limit.',
+      true,
+      '64,000,000 pixels'
+    ],
+    [
+      'Animated image preview exceeds the 16,000,000-pixel limit.',
+      true,
+      'animated image is too large'
+    ],
+    ['Image preview source exceeds the 50 MiB limit.', true, '50 MiB limit for resizing'],
+    ['Image preview capacity is busy.', true, 'Close other previews and retry'],
+    [
+      'Could not read image preview dimensions safely.',
+      true,
+      'dimensions could not be read safely'
+    ],
+    [
+      'Image preview could not be decoded or resized.',
+      true,
+      'could not be decoded or resized within'
+    ],
+    [
+      'Managed preview file changed after capability creation.',
+      true,
+      'file changed while its preview'
+    ],
+    ['Image preview request failed with status 404.', true, 'preview resource could not be loaded'],
+    [
+      'EACCES: permission denied /private/secret.png',
+      true,
+      'Permission to read this file was denied'
+    ]
   ])('classifies recovery for %s', async (error, retryable, guidance) => {
     await act(async () =>
       root.render(

@@ -30,24 +30,24 @@ Var publicationOutput
 !macro customExtractAppPackage FILE
   File /oname=$PLUGINSDIR\windows-install-publication.ps1 "${BUILD_RESOURCES_DIR}\windows-install-publication.ps1"
   StrCpy $publicationState "$PLUGINSDIR\publication-state.json"
-  !insertmacro runInstallPublication prepare
-  StrCmp $publicationResult "0" 0 publication_failed
-  StrCpy $publicationDirectory $publicationOutput
   # Keep the current directory outside staging so failed extraction cannot block cleanup.
   SetOutPath "$INSTDIR"
   !ifdef APP_ARM64
     ${If} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\arm64\7za.exe"
+      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\arm64\windows-install-publication.dll"
     ${Else}
   !endif
   !ifdef APP_64
     ${If} ${RunningX64}
     ${OrIf} ${IsNativeARM64}
       File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\x64\7za.exe"
+      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\x64\windows-install-publication.dll"
     ${Else}
   !endif
   !ifdef APP_32
     File /oname=$PLUGINSDIR\7za.exe "${PROJECT_DIR}\out\windows-installer\ia32\7za.exe"
+      File /oname=$PLUGINSDIR\windows-install-publication.dll "${PROJECT_DIR}\out\windows-installer\ia32\windows-install-publication.dll"
   !else
     StrCpy $publicationResult "unsupported-architecture"
     Goto publication_failed
@@ -58,6 +58,9 @@ Var publicationOutput
   !ifdef APP_ARM64
     ${EndIf}
   !endif
+  !insertmacro runInstallPublication prepare
+  StrCmp $publicationResult "0" 0 publication_failed
+  StrCpy $publicationDirectory $publicationOutput
   SetDetailsPrint textonly
   DetailPrint "$(^Extract)Open-Science"
   SetDetailsPrint none

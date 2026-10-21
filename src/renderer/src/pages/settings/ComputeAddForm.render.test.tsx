@@ -211,6 +211,20 @@ describe('ComputeAddForm password authentication', () => {
     )
 
     expect(add?.disabled).toBe(true)
+    act(() =>
+      container
+        .querySelector('#compute-port')
+        ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    )
+    expect(container.querySelector('#compute-port')?.getAttribute('aria-invalid')).toBe('true')
+    act(() =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.includes('Advanced'))
+        ?.click()
+    )
+    expect(
+      container.querySelector('[aria-controls="compute-advanced-settings"]')?.textContent
+    ).toContain('Enter a whole number from 1 to 65535.')
     await act(async () => add?.click())
     expect(useComputeStore.getState().createHost).not.toHaveBeenCalled()
   })
@@ -379,5 +393,76 @@ describe('ComputeAddForm completion navigation', () => {
     expect(container.querySelector('[role="alert"]')).toBeNull()
     expect(onCreated).not.toHaveBeenCalled()
     expect(useComputeStore.getState().probeHost).not.toHaveBeenCalled()
+  })
+})
+
+describe('Compute setup recovery', () => {
+  it('keeps an invalid port visible when switching authentication modes', async () => {
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    act(() => container.querySelector<HTMLInputElement>('input[value="password"]')?.click())
+    act(() => enter('compute-password-port', '70000'))
+    act(() =>
+      container
+        .querySelector('#compute-password-port')
+        ?.dispatchEvent(new FocusEvent('focusout', { bubbles: true }))
+    )
+    expect(container.querySelector('#compute-password-port')?.getAttribute('aria-invalid')).toBe(
+      'true'
+    )
+
+    act(() => container.querySelector<HTMLInputElement>('input[value="ssh_config"]')?.click())
+    expect(
+      container.querySelector('[aria-controls="compute-advanced-settings"]')?.textContent
+    ).toContain('Enter a whole number from 1 to 65535.')
+
+    act(() => container.querySelector<HTMLInputElement>('input[value="password"]')?.click())
+    expect(container.querySelector('#compute-password-port')?.getAttribute('aria-invalid')).toBe(
+      'true'
+    )
+    act(() => enter('compute-password-port', '22'))
+    expect(container.querySelector('#compute-password-port')?.hasAttribute('aria-invalid')).toBe(
+      false
+    )
+    expect(container.querySelector('#compute-port-error')).toBeNull()
+  })
+
+  it('shows failed SSH discovery and lets the user retry without clearing a typed alias', async () => {
+    useComputeStore.setState({ sshAliasesLoadFailed: true })
+    await act(async () => root.render(<ComputeAddForm onCreated={vi.fn()} onCancel={vi.fn()} />))
+    act(() => enter('compute-alias', 'manual-host'))
+    expect(container.textContent).toContain('Could not read SSH hosts.')
+    expect(container.textContent).not.toContain('No hosts in ~/.ssh/config')
+    await act(async () =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Retry')
+        ?.click()
+    )
+    expect(useComputeStore.getState().loadSshAliases).toHaveBeenCalledTimes(2)
+    expect(container.querySelector<HTMLInputElement>('#compute-alias')?.value).toBe('manual-host')
+  })
+
+  it('reports dirty and busy state without discarding password input when Cancel asks to leave', async () => {
+    const onLeaveStateChange = vi.fn()
+    const onCancel = vi.fn()
+    await act(async () =>
+      root.render(
+        <ComputeAddForm
+          onCreated={vi.fn()}
+          onCancel={onCancel}
+          onLeaveStateChange={onLeaveStateChange}
+        />
+      )
+    )
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: false, busy: false })
+    act(() => container.querySelector<HTMLInputElement>('input[value="password"]')?.click())
+    act(() => enter('compute-password', 'secret'))
+    await act(async () =>
+      Array.from(container.querySelectorAll('button'))
+        .find((button) => button.textContent?.trim() === 'Cancel')
+        ?.click()
+    )
+    expect(onCancel).toHaveBeenCalledOnce()
+    expect(onLeaveStateChange).toHaveBeenLastCalledWith({ dirty: true, busy: false })
+    expect(container.querySelector<HTMLInputElement>('#compute-password')?.value).not.toBe('')
   })
 })

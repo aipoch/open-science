@@ -267,6 +267,8 @@ const createDependencies = () => {
       dispose: vi.fn()
     },
     fileSaveCommands: {
+      'file:artifact-save-progress': vi.fn(),
+      'file:cancel-artifact-save': vi.fn(),
       'file:save-blob': vi.fn(),
       'file:save-managed': vi.fn(),
       'file:save-session-artifacts': vi.fn(),
@@ -502,6 +504,8 @@ describe('Data and content application commands', () => {
         'artifacts:list-reproducibility-receipts',
         'artifacts:start-reproducibility-check',
         'artifacts:cancel-reproducibility-check',
+        'file:artifact-save-progress',
+        'file:cancel-artifact-save',
         'file:save-blob',
         'file:save-managed',
         'file:save-session-artifacts',
@@ -568,6 +572,18 @@ describe('Data and content application commands', () => {
         key: 'officePreviewReportState',
         args: ['session-1', { sessionId: 'session-1', phase: 'ready' }],
         owner: deps.dependencies.officePreviewCommands.reportState,
+        passInvocation: true
+      },
+      {
+        key: 'artifactSaveProgress',
+        args: [{ operationId: 'download' }],
+        owner: deps.dependencies.fileSaveCommands['file:artifact-save-progress'],
+        passInvocation: true
+      },
+      {
+        key: 'cancelArtifactSave',
+        args: [{ operationId: 'download' }],
+        owner: deps.dependencies.fileSaveCommands['file:cancel-artifact-save'],
         passInvocation: true
       },
       {

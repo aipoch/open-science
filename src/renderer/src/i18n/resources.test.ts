@@ -1148,8 +1148,6 @@ describe('mandatory product glossary', () => {
       sizeAndShape: de.renderer['Size / Shape'],
       variableOne: de.renderer['Variables: {{count}}_one'],
       variableOther: de.renderer['Variables: {{count}}_other'],
-      questionsOne: de.renderer['{{count}} questions_one'],
-      questionsOther: de.renderer['{{count}} questions_other'],
       openSource: de.renderer['Open source in browser'],
       sourcePreview: de.renderer['Source preview: {{title}}'],
       httpsOnly: de.renderer['Only HTTPS sources can be previewed']
@@ -1159,8 +1157,6 @@ describe('mandatory product glossary', () => {
       sizeAndShape: 'Größe / Dimensionen',
       variableOne: '{{count}} Variable',
       variableOther: '{{count}} Variablen',
-      questionsOne: '{{count}} Frage',
-      questionsOther: '{{count}} Fragen',
       openSource: 'Quelle im Browser öffnen',
       sourcePreview: 'Quellenvorschau: {{title}}',
       httpsOnly: 'Vorschau nur für HTTPS-Quellen verfügbar'

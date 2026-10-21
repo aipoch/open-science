@@ -15,6 +15,7 @@ import { drainWorkspaceRuntimeEventsForPersistence } from '../lib/acp/useWorkspa
 import { flushPreviewPersistence } from '../lib/preview-persistence/preview-persistence'
 import { flushSessionPersistence } from '../lib/session-persistence/session-persistence'
 import { flushComposerDrafts } from '../pages/workspace/composer-draft-storage'
+import { pendingWorkspaceQueueCount } from '../pages/workspace/workspace-message-queue-owner'
 
 const flushDrafts = (): void => {
   if (flushComposerDrafts().failed) throw new Error('Draft storage is unavailable.')
@@ -46,6 +47,7 @@ export const completeQuitPersistenceFlush = async (
     await deps.flushPersistence()
     await deps.flushPreviewPersistence()
     flushDrafts()
+    if (pendingWorkspaceQueueCount() > 0) throw new Error('Queued messages have not been sent.')
     // Tab persistence does not save edited file content. Reuse Main's existing retry/force-quit gate.
     if (previewLeaveGuards.hasUnsavedChanges()) throw new Error('Preview has unsaved changes.')
   } catch (error) {

@@ -2,6 +2,7 @@ import { ErrorNotice } from '@/components/error-notice'
 import { FileWarning, FileX } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import type { TFunction } from 'i18next'
 
 import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-store'
 
@@ -193,10 +194,54 @@ export const PreviewFallbackCard = ({
   )
 }
 
-// Error fallback that distinguishes an unavailable file from a genuine render/parse failure. A
-// missing file (deleted/moved) and an outside-storage file (stale/cross-root path) both read as
-// unavailable and get the FileX icon, but with different copy — deleted vs "not in current
-// storage". Everything else keeps the renderer's type-specific message.
+const getPreviewFailureMessage = (error: unknown, t: TFunction): string | undefined => {
+  const message = error instanceof Error ? error.message : String(error ?? '')
+  if (/Animated image preview exceeds/.test(message)) {
+    return t(
+      'This animated image is too large to preview safely. Download the original to view it.'
+    )
+  }
+  const pixelLimit = /Image preview exceeds the ([\d,]+)-pixel limit/.exec(message)
+  if (pixelLimit) {
+    return t(
+      'This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.',
+      {
+        limit: pixelLimit[1]
+      }
+    )
+  }
+  if (/Image preview source exceeds the 50 MiB limit/.test(message)) {
+    return t('This image exceeds the 50 MiB limit for resizing. Download the original to view it.')
+  }
+  if (/Image preview capacity is busy/.test(message)) {
+    return t('Image preview memory or processing capacity is busy. Close other previews and retry.')
+  }
+  if (/Could not read image preview dimensions safely/.test(message)) {
+    return t(
+      'The image dimensions could not be read safely. The file may be damaged or use an unsupported format.'
+    )
+  }
+  if (/Image preview could not be decoded or resized|Image preview output exceeds/.test(message)) {
+    return t(
+      'The image could not be decoded or resized within the preview safety limits. Download the original to view it.'
+    )
+  }
+  if (/(?:Image preview|Managed preview file|Verified Reviewer artifact) changed/i.test(message)) {
+    return t(
+      'The file changed while its preview was being prepared. Retry to load the latest version.'
+    )
+  }
+  if (/Image preview request failed with status/.test(message)) {
+    return t('The preview resource could not be loaded. Retry to request it again.')
+  }
+  if (/EACCES|EPERM|permission denied/i.test(message)) {
+    return t('Permission to read this file was denied. Check its access permissions and retry.')
+  }
+  return undefined
+}
+
+// IPC preserves error messages, but not custom error properties. Only translate recognized
+// failures; arbitrary exception messages can contain private filesystem paths.
 export const PreviewErrorCard = (props: {
   name: string
   error?: unknown
@@ -213,7 +258,7 @@ export const PreviewErrorCard = (props: {
     ? `${t(FILE_MISSING_MESSAGE_KEY)} ${t('Restore the file or reconnect its drive before retrying. You can close this preview and continue working.')}`
     : outside
       ? `${t(FILE_OUTSIDE_STORAGE_MESSAGE_KEY)} ${t('Open the file from your current storage location, or close this preview and continue working.')}`
-      : fallbackMessage
+      : (getPreviewFailureMessage(error, t) ?? fallbackMessage)
 
   return (
     <PreviewFallbackCard

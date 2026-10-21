@@ -158,6 +158,7 @@ describe('DownloadSessionArtifactsDialog', () => {
     })
 
     expect(saveSessionArtifacts).toHaveBeenCalledWith({
+      operationId: expect.any(String),
       projectId: 'project-1',
       sessionId: 'session-1',
       files: [
@@ -298,4 +299,30 @@ describe('DownloadSessionArtifactsDialog', () => {
     expect(closeButton?.disabled).toBe(false)
     expect(cancelButton?.disabled).toBe(false)
   })
+})
+
+it('keeps only unfinished files selected after a cancelled batch', async () => {
+  const onClose = vi.fn()
+  saveSessionArtifacts.mockResolvedValueOnce({
+    saved: true,
+    cancelled: true,
+    filePaths: ['/downloads/report.csv'],
+    completedFileIds: ['artifact-1']
+  })
+  await act(async () => {
+    root.render(<DownloadSessionArtifactsDialog session={session} onClose={onClose} />)
+  })
+  await act(async () => {
+    document.body
+      .querySelector<HTMLButtonElement>('[data-testid="download-session-artifacts-confirm"]')
+      ?.click()
+    await Promise.resolve()
+  })
+  expect(onClose).not.toHaveBeenCalled()
+  expect(document.body.textContent).toContain(
+    'Download cancelled. Completed files were kept; remaining files stay selected.'
+  )
+  const checkboxes = [...document.body.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')]
+  expect(checkboxes[0].checked).toBe(false)
+  expect(checkboxes[1].checked).toBe(true)
 })

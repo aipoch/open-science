@@ -1,7 +1,17 @@
 {
   "schemaVersion": 1,
   "modules": {
-    "artifact_content_contracts": ["src/main/session-package/literature-source.test.ts"],
+    "acp_runtime": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "artifact_content_contracts": [
+      "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "artifact_provenance": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "artifact_publication_request": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "artifact_reproducibility_contract": [
       "src/main/replay-viewer/assets.test.ts",
       "src/main/session-package/literature-source.test.ts",
@@ -84,10 +94,16 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx"
     ],
-    "artifact_storage_validation": ["src/main/session-package/literature-source.test.ts"],
+    "artifact_storage": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "artifact_storage_validation": [
+      "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": [
       "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
@@ -133,7 +149,8 @@
     "delegation_execution_contracts": [
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
-      "src/main/desktop-startup-recovery.integration.test.ts"
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "durable_files": [
       "src/main/desktop-update-integration.test.ts",
@@ -142,13 +159,16 @@
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "environment_contracts": [
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
@@ -175,35 +195,61 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "environment_engine": ["src/main/session-package/literature-source.test.ts"],
+    "environment_engine": [
+      "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "framework_installation": [
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
-      "src/main/desktop-startup-recovery.integration.test.ts"
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "framework_process_launch": [
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts"
     ],
+    "host_bounded_io": [
+      "src/main/image-preview-resize.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "host_file_publisher": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "host_http_transport": [
       "src/main/desktop-runtime-launcher.integration.test.ts",
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/desktop-startup-recovery.integration.test.ts"
     ],
-    "host_rpc_transport": ["src/main/desktop-startup-recovery.integration.test.ts"],
-    "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_process_runtime": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "host_rpc_transport": [
+      "src/main/desktop-startup-recovery.integration.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "host_runtime_lifecycle": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "host_runtime_ports": [
       "src/main/cli-install/launcher.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "host_value_guards": ["src/main/update/windows-update-handoff.test.ts"],
+    "host_value_guards": [
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "i18n_main_adapter": [
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts"
     ],
     "i18n_renderer_adapter": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
@@ -211,8 +257,12 @@
       "src/main/update/electron-updater-provider-regressions.test.ts",
       "src/main/update/electron-updater-strategy.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "immutable_input_authority": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "literature_presentation_model": [
       "src/main/application-command-wiring.test.ts",
@@ -259,6 +309,15 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.layout.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx"
     ],
+    "main_agent_framework": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "main_archive": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "main_delegation": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "main_managed_file_versions": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "main_storage": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "managed_version_files": [
       "src/main/compute/agent-compute-service.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
@@ -331,7 +390,8 @@
       "src/main/notebook/wsl2-shell.integration.test.ts",
       "src/main/session-plan/plan-context-file.shell.integration.test.ts",
       "src/main/skills/catalog.registered-helpers.test.ts",
-      "src/main/skills/registered-helper-catalog.test.ts"
+      "src/main/skills/registered-helper-catalog.test.ts",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "native_file_publisher": [
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
@@ -376,10 +436,15 @@
       "src/main/notebook/working-file-observer.performance.test.ts",
       "src/main/notebook/working-file-observer.test.ts",
       "src/main/notebook/working-file-observer.write-scope.integration.test.ts",
-      "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
+      "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "native_process_tree": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "notebook_analysis": [
       "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
       "src/renderer/src/pages/literature/JournalManager.render.test.tsx",
@@ -406,10 +471,26 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "notebook_analysis_engine": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "notebook_execution_model": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "notebook_input_materialization": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "notebook_network_sandbox": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "notebook_observation_actions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "notebook_repository": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
+    "notebook_syntax": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "observation_desktop_contract": ["src/main/update/windows-update-handoff.test.ts"],
     "package_journal_catalog": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -424,6 +505,7 @@
     "package_literature_citations": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
       "src/renderer/src/pages/literature/collections/useSmartDecisionBatch.test.tsx",
@@ -448,6 +530,7 @@
     "package_literature_library": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
       "src/renderer/src/pages/literature/collections/SmartCollectionProcess.test.tsx",
@@ -555,6 +638,7 @@
     ],
     "pdf_document_source": [
       "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
       "src/renderer/src/pages/literature/LiteratureSources.test.tsx",
@@ -579,11 +663,29 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "pdf_documents": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "pdf_structure_engine": [
+      "packages/pdf-translation/test/decoration-roundtrip.test.ts",
+      "packages/pdf-translation/test/float-footnote-roundtrip.test.ts",
+      "packages/pdf-translation/test/form-graphics.test.ts",
+      "packages/pdf-translation/test/form-identity.test.ts",
+      "packages/pdf-translation/test/linked-prose-roundtrip.test.ts",
+      "packages/pdf-translation/test/native-reading-order.test.ts",
+      "packages/pdf-translation/test/numeric-glyph-name-roundtrip.test.ts",
+      "packages/pdf-translation/test/parameter-prose-roundtrip.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-extraction.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-layout-left-prose.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-math-diagram.test.ts",
+      "packages/pdf-translation/test/reader/pdf-translation-whole-region-retention.test.ts",
+      "packages/pdf-translation/test/spaced-script-roundtrip.test.ts",
+      "packages/pdf-translation/test/structural-roundtrip.test.ts",
+      "packages/pdf-translation/test/styled-float-roundtrip.test.ts",
+      "packages/pdf-translation/test/terminal-link-roundtrip.test.ts",
+      "packages/pdf-translation/test/writer.test.ts",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -787,6 +889,9 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
+    "project_files_repository": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "providers_package": [
       "src/main/artifacts/session-version-content-reader.test.ts",
@@ -873,6 +978,7 @@
       "src/renderer/replay-viewer/research-observation-selection.test.ts",
       "src/renderer/replay-viewer/research-viewer.test.tsx",
       "src/renderer/replay-viewer/use-viewer-observation.test.tsx",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/lib/replay/live-source.test.ts",
@@ -939,7 +1045,10 @@
       "src/renderer/src/stores/research-run-store.test.ts",
       "src/shared/session-replay.test.ts"
     ],
-    "renderer_acp": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "renderer_acp": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
     "renderer_action_menu": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -973,11 +1082,13 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_desktop_recovery": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_diagnostics": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
@@ -988,7 +1099,9 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_i18n": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
@@ -1030,6 +1143,7 @@
     ],
     "renderer_permission_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_preferences": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1040,12 +1154,14 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_preview_state": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
       "src/renderer/src/stores/research-run-store.test.ts"
     ],
     "renderer_review_card": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_runtime_errors": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_session_actions": [
@@ -1064,14 +1180,17 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_session_persistence": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "renderer_settings_model": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "renderer_settings_state": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
@@ -1130,6 +1249,8 @@
       "src/renderer/replay-viewer/research-browser.integration.test.ts",
       "src/renderer/replay-viewer/research-client.test.ts",
       "src/renderer/replay-viewer/research-viewer.test.tsx",
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.i18n.render.test.tsx",
       "src/renderer/src/components/global-search/GlobalSearchDialog.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
@@ -1225,6 +1346,7 @@
     ],
     "reproducibility_contracts": [
       "src/main/session-package/literature-source.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
@@ -1252,6 +1374,9 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "reproducibility_engine": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "research_observation_composer": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1276,6 +1401,7 @@
     "research_runtime_contracts": [
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
@@ -1321,6 +1447,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "research_workspace_state": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1328,6 +1455,7 @@
     ],
     "resilient_download": [
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
@@ -1355,6 +1483,9 @@
       "src/renderer/src/pages/workspace/ReadingContextPicker.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "reviewer_orchestrator": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "session_diagnostic_contracts": [
       "src/main/replay-viewer/assets.test.ts",
@@ -1462,16 +1593,23 @@
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx",
       "src/renderer/src/pages/workspace/replay/use-recorded-materials.test.tsx"
     ],
+    "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
+    "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "session_replay": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
+    ],
+    "settings_backend_resolution": [
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "settings_extension_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1520,6 +1658,7 @@
     "skill_package": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
       "src/renderer/src/pages/literature/JournalAttributes.render.test.tsx",
@@ -1550,6 +1689,7 @@
       "src/main/desktop-startup-recovery.integration.test.ts"
     ],
     "specialist_package": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -1594,6 +1734,13 @@
       "src/renderer/src/pages/workspace/previews/LibraryInboxPreview.test.tsx",
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx"
     ],
+    "storage_location": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "storage_state": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "upload_file_transport": ["src/renderer/src/components/ProjectPackageDropZone.test.tsx"],
+    "upload_repository": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
+    ],
     "web_renderer_bridge": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1606,6 +1753,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_annotations": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1636,12 +1784,14 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_composer_model": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "workspace_conversation": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/lib/session-persistence/session-persistence.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1656,6 +1806,7 @@
     ],
     "workspace_error_reporting": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_file_model": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1714,13 +1865,18 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_page": ["src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"],
+    "workspace_page": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
+      "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
+    ],
     "workspace_pdf_reading_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_permissions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_plan_model": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1740,6 +1896,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_replay_model": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1753,7 +1910,10 @@
     "workspace_run_marks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_runtime": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "workspace_runtime": [
+      "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
+      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
+    ],
     "workspace_session_controls": [
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
@@ -1765,6 +1925,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_shell": [
+      "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/ResearchMembershipDialog.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -1775,7 +1936,10 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "workspace_skill_document": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
-    "workspace_tool_blocks": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
+    "workspace_tool_blocks": [
+      "src/renderer/src/lib/literature-renderer-host.test.ts",
+      "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
+    ],
     "workspace_tool_model": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",

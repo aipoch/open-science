@@ -5,11 +5,15 @@ import {
 } from '../../../../shared/__fixtures__/skill-marketplace'
 // @vitest-environment jsdom
 import { act } from 'react'
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import type { SkillImportPreviewContent } from '../../../../shared/settings'
-import type { AgentHomeSkillView } from '@aipoch/skills/document'
+import type { AgentHomeSkillRef, AgentHomeSkillView } from '@aipoch/skills/document'
+import { AgentHomeSkillCatalog, UserSkillRepository } from '@aipoch/skills'
 import { SkillsPanel } from './SkillsPanel'
 import { SKILL_IMPORT_LIMITS } from '@aipoch/skills/document'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
@@ -2460,6 +2464,189 @@ describe('SkillsPanel (sub-views)', () => {
     expect(document.body.textContent).not.toContain('~/.claude/skills')
     expect(document.body.textContent).not.toContain('~/.codex/skills')
   })
+
+  it.each([256, 257])(
+    'imports all %i preselected installed skills through the bounded catalog',
+    async (count) => {
+      const directory = await mkdtemp(join(tmpdir(), 'installed-skill-selection-'))
+      try {
+        const home = join(directory, 'agents', 'skills')
+        await Promise.all(
+          Array.from({ length: count }, async (_, index) => {
+            const slug = `skill-${index}`
+            const path = join(home, slug)
+            await mkdir(path, { recursive: true })
+            await writeFile(
+              join(path, 'SKILL.md'),
+              `---\nname: ${slug}\ndescription: Installed skill ${index}\n---\n# ${slug}\n`
+            )
+          })
+        )
+        const repository = new UserSkillRepository(join(directory, 'data'))
+        const catalog = new AgentHomeSkillCatalog(repository)
+        const sources = [{ source: 'agents' as const, dir: home }]
+        let completed = 0
+        let scans = 0
+        let importError: unknown
+        const importSkills = vi.fn(async (refs: AgentHomeSkillRef[]) => {
+          try {
+            const results = await catalog.importAgentHomeSkills(sources, refs)
+            completed += results.length
+            return { results, skills: [] }
+          } catch (error) {
+            importError = error
+            throw error
+          }
+        })
+        // Only replace the transport; discovery, request validation and disk writes are real.
+        useSettingsStore.setState({
+          listAgentHomeSkills: async () => {
+            const skills = await catalog.list(sources)
+            scans += 1
+            return skills
+          },
+          importAgentHomeSkills: importSkills
+        })
+        await act(async () => {
+          root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+        })
+        await vi.waitFor(
+          () => expect(document.body.textContent).toContain(`Import selected (${count})`),
+          { timeout: 10_000 }
+        )
+        await act(async () => {
+          const button = Array.from(
+            document.body.querySelectorAll<HTMLButtonElement>('button')
+          ).find((candidate) => candidate.textContent === `Import selected (${count})`)
+          expect(button).toBeDefined()
+          button!.click()
+          await vi.waitFor(
+            () =>
+              expect(importError !== undefined || (completed === count && scans === 2)).toBe(true),
+            { timeout: 20_000 }
+          )
+        })
+
+        expect(importError, String(importError)).toBeUndefined()
+        expect(await repository.list()).toHaveLength(count)
+        expect(document.body.textContent).toContain(`Imported ${count} skills.`)
+      } finally {
+        await rm(directory, { recursive: true, force: true })
+      }
+    },
+    30_000
+  )
+
+  it.each(['item failure', 'request failure'] as const)(
+    'preserves confirmed installed-skill outcomes after a later %s',
+    async (failure) => {
+      const skills: AgentHomeSkillView[] = Array.from({ length: 513 }, (_, index) => ({
+        source: 'agents',
+        slug: `skill-${index}`,
+        name: `Skill ${index}`,
+        description: '',
+        alreadyImported: false
+      }))
+      const listAgentHomeSkills = vi.fn().mockResolvedValueOnce(skills).mockResolvedValue([])
+      const importAgentHomeSkills = vi.fn(async (refs: AgentHomeSkillRef[]) => {
+        if (failure === 'request failure' && refs[0].slug === 'skill-256') {
+          throw new Error('Connection lost')
+        }
+        return {
+          results: refs.map((ref) =>
+            ref.slug === 'skill-256'
+              ? { ...ref, error: 'Invalid skill document' }
+              : { ...ref, status: 'imported' as const, id: `imported-${ref.slug}` }
+          ),
+          skills: []
+        }
+      })
+      useSettingsStore.setState({ listAgentHomeSkills, importAgentHomeSkills })
+      await act(async () => {
+        root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      })
+      await act(async () => {
+        const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.textContent === 'Import selected (513)'
+        )
+        expect(button).toBeDefined()
+        button!.click()
+      })
+
+      expect(listAgentHomeSkills).toHaveBeenCalledTimes(2)
+      if (failure === 'item failure') {
+        expect(importAgentHomeSkills.mock.calls.map(([refs]) => refs.length)).toEqual([256, 256, 1])
+        expect(document.body.textContent).toContain(
+          'Imported 512; 1 failed. Invalid skill document'
+        )
+      } else {
+        expect(importAgentHomeSkills.mock.calls.map(([refs]) => refs.length)).toEqual([256, 256])
+        expect(document.body.textContent).toContain('Imported 256 skills. Connection lost')
+      }
+    }
+  )
+
+  it.each(['switch framework', 'switch away and back', 'leave import view'] as const)(
+    'stops submitting installed-skill batches when users %s',
+    async (navigation) => {
+      const skills: AgentHomeSkillView[] = Array.from({ length: 257 }, (_, index) => ({
+        source: 'agents',
+        slug: `skill-${index}`,
+        name: `Skill ${index}`,
+        description: '',
+        alreadyImported: false
+      }))
+      let finishBatch: () => void = () => undefined
+      const pending = new Promise<void>((resolve) => {
+        finishBatch = resolve
+      })
+      const importAgentHomeSkills = vi.fn(async (refs: AgentHomeSkillRef[]) => {
+        await pending
+        return {
+          results: refs.map((ref) => ({
+            ...ref,
+            status: 'imported' as const,
+            id: `imported-${ref.slug}`
+          })),
+          skills: []
+        }
+      })
+      const listAgentHomeSkills = vi.fn().mockResolvedValueOnce(skills).mockResolvedValue([])
+      useSettingsStore.setState({
+        agentFrameworkId: 'claude-code',
+        listAgentHomeSkills,
+        importAgentHomeSkills
+      })
+      await act(async () => {
+        root.render(<SkillsPanel view={{ kind: 'import-agent-home' }} onNavigate={vi.fn()} />)
+      })
+      await act(async () => {
+        const button = Array.from(document.body.querySelectorAll<HTMLButtonElement>('button')).find(
+          (candidate) => candidate.textContent === 'Import selected (257)'
+        )
+        expect(button).toBeDefined()
+        button!.click()
+      })
+      expect(importAgentHomeSkills).toHaveBeenCalledTimes(1)
+      expect(importAgentHomeSkills.mock.calls[0][0]).toHaveLength(256)
+      expect(document.body.querySelector<HTMLButtonElement>('button')?.disabled).toBe(true)
+      await act(async () => {
+        if (navigation === 'leave import view') root.render(<div />)
+        else useSettingsStore.setState({ agentFrameworkId: 'codex' })
+      })
+      if (navigation === 'switch away and back') {
+        await act(async () => useSettingsStore.setState({ agentFrameworkId: 'claude-code' }))
+      }
+      const scansBeforeCompletion = listAgentHomeSkills.mock.calls.length
+      await act(async () => {
+        finishBatch()
+        await pending
+      })
+      expect(importAgentHomeSkills).toHaveBeenCalledTimes(1)
+      expect(listAgentHomeSkills).toHaveBeenCalledTimes(scansBeforeCompletion)
+      expect(document.body.textContent).not.toContain('Imported 256 skills.')
+    }
+  )
 
   it('invalidates installed-skill rows while a framework-switch rescan is pending', async () => {
     let finishCodexScan: (skills: []) => void = () => undefined

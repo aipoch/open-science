@@ -3,6 +3,8 @@ import { useTranslation } from 'react-i18next'
 import { Archive, Download, LoaderCircle, X } from 'lucide-react'
 import * as Dialog from '@/components/ui/dialog'
 
+import { useArtifactSaveProgress } from './use-artifact-save-progress'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
 import {
   dialogCancelButtonClassName,
@@ -59,6 +61,7 @@ const DownloadSessionArtifactsDialog = ({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [downloadError, setDownloadError] = useState<DownloadError>()
   const [isDownloading, setIsDownloading] = useState(false)
+  const transfer = useArtifactSaveProgress()
   const [retryVersion, setRetryVersion] = useState(0)
   const projectId = session?.projectId
   const sessionId = session?.id
@@ -142,10 +145,12 @@ const DownloadSessionArtifactsDialog = ({
 
   const downloadSelected = async (): Promise<void> => {
     if (!session || selectedArtifacts.length === 0 || isDownloading) return
+    const operationId = transfer.begin(selectedArtifacts.length)
     setIsDownloading(true)
     setDownloadError(undefined)
     try {
       const result = await window.api.saveSessionArtifacts({
+        operationId,
         projectId: session.projectId,
         sessionId: session.id,
         files: selectedArtifacts.map((artifact) => ({
@@ -154,6 +159,25 @@ const DownloadSessionArtifactsDialog = ({
           suggestedName: artifact.name
         }))
       })
+      if (result.cancelled) {
+        if (result.saved) {
+          const completed = new Set(result.completedFileIds)
+          setSelectedIds(
+            new Set(
+              selectedArtifacts
+                .filter((file) => !completed.has(file.sourceFileId))
+                .map((file) => file.id)
+            )
+          )
+        }
+        setDownloadError({
+          kind: 'raw',
+          message: t(
+            'Download cancelled. Completed files were kept; remaining files stay selected.'
+          )
+        })
+        return
+      }
       if (!result.saved) return
       if (result.failures?.length) {
         const failedFileIds = new Set(result.failures.map((failure) => failure.fileId))
@@ -176,6 +200,7 @@ const DownloadSessionArtifactsDialog = ({
     } catch (error) {
       setDownloadError({ kind: 'raw', message: getErrorMessage(error) })
     } finally {
+      transfer.end()
       setIsDownloading(false)
     }
   }
@@ -265,6 +290,7 @@ const DownloadSessionArtifactsDialog = ({
                   >
                     <input
                       type="checkbox"
+                      disabled={isDownloading}
                       checked={selectedIds.has(artifact.id)}
                       onChange={() => toggleArtifact(artifact.id)}
                       className="size-4 cursor-pointer accent-primary"
@@ -283,6 +309,42 @@ const DownloadSessionArtifactsDialog = ({
               </div>
             )}
           </div>
+
+          {isDownloading ? (
+            <div className="shrink-0 space-y-2 border-t border-border-300/90 px-5 py-3 text-sm">
+              <p role="status" aria-live="polite">
+                {transfer.cancelPending
+                  ? t('Cancelling download…')
+                  : transfer.progress?.phase === 'preparing'
+                    ? t('Choose a destination to start the download.')
+                    : t('Processed {{completed}} of {{total}} files.', {
+                        completed: transfer.progress?.completedFiles ?? 0,
+                        total: transfer.progress?.totalFiles ?? 0
+                      })}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {t('Cancellation takes effect at the next safe stopping point.')}
+              </p>
+              {transfer.progressUnavailable ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  description={t(
+                    'Download progress is temporarily unavailable. The download is still running.'
+                  )}
+                />
+              ) : null}
+              {transfer.cancelError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  description={t(
+                    'Could not cancel the download. It is still running; try Cancel again.'
+                  )}
+                />
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="flex shrink-0 items-center justify-between gap-3 border-t border-border-300/90 px-5 py-3.5">
             <Button
@@ -313,10 +375,16 @@ const DownloadSessionArtifactsDialog = ({
                 variant="ghost"
                 size="sm"
                 className={dialogCancelButtonClassName}
-                disabled={isDownloading}
-                onClick={onClose}
+                disabled={
+                  isDownloading &&
+                  (transfer.cancelPending || typeof window.api.cancelArtifactSave !== 'function')
+                }
+                onClick={() => {
+                  if (isDownloading) void transfer.cancel()
+                  else onClose()
+                }}
               >
-                {t('Cancel')}
+                {transfer.cancelPending ? t('Cancelling download…') : t('Cancel')}
               </Button>
               <Button
                 type="button"

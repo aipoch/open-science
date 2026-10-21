@@ -10,7 +10,8 @@ import {
   type HeadlessPackageImportPreview,
   type SessionPackageHeadlessDependencies
 } from './headless'
-import { SessionPackageService } from './service'
+import { PackageImportRecoveryRequiredError, SessionPackageService } from './service'
+import { PackageCleanupPendingError } from './cleanup'
 import type { SessionPackagePreview, SessionPackageRequest } from '../../shared/session-package'
 
 vi.mock('electron', () => ({
@@ -178,6 +179,343 @@ describe('headless package transfers', () => {
     ).rejects.toMatchObject({ code: 'conflict' })
     expect(await target.service.inspect(forwarded)).toMatchObject({ title: 'Research' })
   }, 60_000)
+
+  it('retries the reviewed import handle without reading or importing the archive again', async () => {
+    const f = await stubFixture()
+    const identity = { projectId: 'target', sessionId: 'retained-import' }
+    const resume = vi.fn(async () => identity)
+    vi.mocked(f.service.importFrom).mockImplementation(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw new PackageImportRecoveryRequiredError(
+          identity,
+          resume,
+          new Error('Publication failed')
+        )
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict', message: 'Publication failed' })
+    expect(f.deps.afterImport).not.toHaveBeenCalled()
+    await writeFile(f.path, 'archive changed after the native commit')
+    await expect(
+      f.owner.call('preflightImport', { filePath: f.path, target: { projectId: 'target' } }, caller)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    await expect(
+      f.owner.call('cancelImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    const [first, concurrent] = await Promise.all([
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller),
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ])
+    expect(first).toEqual({ ...identity, cleanupPending: false })
+    expect(concurrent).toEqual(first)
+    expect(
+      await f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).toEqual(first)
+    expect(resume).toHaveBeenCalledExactlyOnceWith(expect.any(AbortSignal))
+    expect(f.service.importFrom).toHaveBeenCalledOnce()
+    expect(f.deps.reserveImport).toHaveBeenCalledTimes(2)
+    expect(f.deps.afterImport).toHaveBeenCalledExactlyOnceWith(
+      identity,
+      caller.lifecycleClientId,
+      false
+    )
+  })
+
+  it('preserves one native import and later title edits while recovering real publication', async () => {
+    const f = await realFixture()
+    const archive = join(f.fixture.storageRoot, 'publication.science')
+    await f.service.exportTo(scope, archive)
+    const onSessionPublished = vi.fn().mockRejectedValueOnce(new Error('Publication unavailable'))
+    const service = new SessionPackageService({
+      storageRoot: f.fixture.storageRoot,
+      getClient: async () => f.fixture.client,
+      onSessionPublished
+    })
+    services.push(service)
+    f.deps.service = service
+    const importFrom = vi.spyOn(service, 'importFrom')
+    const before = await f.fixture.client.fileOriginSession.count()
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: archive, target: { projectId: scope.projectId } },
+      caller
+    )) as HeadlessPackageImportPreview
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict', message: 'Publication unavailable' })
+    const identity = onSessionPublished.mock.calls[0][0]
+    const repository = new SessionRepository(f.fixture.storageRoot)
+    const imported = (await repository.loadSession(identity.projectId, identity.sessionId))!
+    await repository.saveSession({ ...imported, title: 'My organized research' })
+    await writeFile(archive, 'not an archive anymore')
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).resolves.toMatchObject({ projectId: identity.projectId, sessionId: identity.sessionId })
+    expect((await repository.loadSession(identity.projectId, identity.sessionId))?.title).toBe(
+      'My organized research'
+    )
+    expect(await f.fixture.client.fileOriginSession.count()).toBe(before + 1)
+    expect(importFrom).toHaveBeenCalledOnce()
+    expect(onSessionPublished).toHaveBeenCalledTimes(2)
+    expect(f.deps.afterImport).toHaveBeenCalledOnce()
+  }, 60_000)
+
+  it.each(['another-client', 'revoked', 'revoked-at-write-gate'] as const)(
+    'does not resume an import for %s authorization',
+    async (scenario) => {
+      const f = await stubFixture()
+      let authorized = true
+      const context = createTaskCallerContext({
+        clientId: 'reviewer',
+        isAuthorizationCurrent: () => authorized
+      })
+      const identity = { projectId: 'target', sessionId: 'retained-import' }
+      const resume = vi.fn(async () => identity)
+      vi.mocked(f.service.importFrom).mockImplementation(
+        async (_path, signal, _progress, confirm) => {
+          await confirm!(preview, signal!)
+          throw new PackageImportRecoveryRequiredError(
+            identity,
+            resume,
+            new Error('Publication failed')
+          )
+        }
+      )
+      const inspected = (await f.owner.call(
+        'preflightImport',
+        { filePath: f.path, target: { projectId: 'target' } },
+        context
+      )) as HeadlessPackageImportPreview
+      await expect(
+        f.owner.call('commitImport', { preflightId: inspected.preflightId }, context)
+      ).rejects.toMatchObject({ code: 'conflict' })
+      if (scenario === 'revoked') authorized = false
+      if (scenario === 'revoked-at-write-gate')
+        vi.mocked(f.deps.withDataRootWrite).mockImplementation(async (work) => {
+          authorized = false
+          return work()
+        })
+      await expect(
+        f.owner.call(
+          'commitImport',
+          { preflightId: inspected.preflightId },
+          scenario === 'another-client' ? createTaskCallerContext({ clientId: 'another' }) : context
+        )
+      ).rejects.toMatchObject({
+        code: scenario === 'another-client' ? 'not_found' : 'unauthorized'
+      })
+      await f.owner.close()
+      expect(resume).not.toHaveBeenCalled()
+      expect(f.service.importFrom).toHaveBeenCalledOnce()
+      expect(f.deps.afterImport).not.toHaveBeenCalled()
+    }
+  )
+
+  it('keeps recovery available after an admission failure and a repeated publication failure', async () => {
+    const f = await stubFixture()
+    const identity = { projectId: 'target', sessionId: 'retained-import' }
+    const resume = vi.fn<PackageImportRecoveryRequiredError['resume']>()
+    const recovery = new PackageImportRecoveryRequiredError(
+      identity,
+      resume,
+      new Error('Publication failed')
+    )
+    resume.mockRejectedValueOnce(recovery).mockResolvedValue(identity)
+    vi.mocked(f.service.importFrom).mockImplementation(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw recovery
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectName: 'New Project' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    const commit = (): Promise<unknown> =>
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    await expect(commit()).rejects.toMatchObject({ code: 'conflict' })
+    vi.mocked(f.deps.reserveImport).mockRejectedValueOnce(new Error('Project handoff is busy'))
+    await expect(commit()).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'Project handoff is busy'
+    })
+    expect(resume).not.toHaveBeenCalled()
+    await expect(commit()).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'Publication failed'
+    })
+    await expect(commit()).resolves.toMatchObject(identity)
+    expect(f.service.importFrom).toHaveBeenCalledOnce()
+    expect(resume).toHaveBeenCalledTimes(2)
+    expect(f.deps.reserveImport).toHaveBeenCalledWith(identity.projectId, expect.any(AbortSignal))
+    expect(f.deps.afterImport).toHaveBeenCalledExactlyOnceWith(
+      identity,
+      caller.lifecycleClientId,
+      true
+    )
+  })
+
+  it('reports recovered success while retaining failed staging cleanup for shutdown', async () => {
+    const f = await stubFixture()
+    const identity = { projectId: 'target', sessionId: 'retained-import' }
+    const cleanup = vi.fn(async () => undefined)
+    const resume = vi.fn(async () => {
+      throw new PackageCleanupPendingError({ value: identity }, cleanup, new Error('Cleanup busy'))
+    })
+    vi.mocked(f.service.importFrom).mockImplementation(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw new PackageImportRecoveryRequiredError(
+          identity,
+          resume,
+          new Error('Publication failed')
+        )
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).resolves.toEqual({ ...identity, cleanupPending: true })
+    expect(cleanup).not.toHaveBeenCalled()
+    await f.owner.close()
+    expect(cleanup).toHaveBeenCalledOnce()
+    expect(f.deps.afterImport).toHaveBeenCalledOnce()
+  })
+
+  it('allows a fresh preflight only after recovery proves that no native import committed', async () => {
+    const f = await stubFixture()
+    const resume = vi.fn(async () => undefined)
+    vi.mocked(f.service.importFrom).mockImplementationOnce(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw new PackageImportRecoveryRequiredError(
+          { projectId: 'target', sessionId: 'unconfirmed' },
+          resume,
+          new Error('Witness unavailable')
+        )
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'No package import was committed; inspect the archive again.'
+    })
+    expect(f.deps.afterImport).not.toHaveBeenCalled()
+    const fresh = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    expect(fresh.preflightId).not.toBe(inspected.preflightId)
+    await expect(
+      f.owner.call('commitImport', { preflightId: fresh.preflightId }, caller)
+    ).resolves.toMatchObject({ projectId: 'target', sessionId: 'imported' })
+    expect(resume).toHaveBeenCalledOnce()
+    expect(f.service.importFrom).toHaveBeenCalledTimes(2)
+    expect(f.deps.afterImport).toHaveBeenCalledOnce()
+  })
+
+  it('rejects changed recovery identities without discarding the original handle', async () => {
+    const f = await stubFixture()
+    const identity = { projectId: 'target', sessionId: 'retained-import' }
+    const resume = vi
+      .fn<PackageImportRecoveryRequiredError['resume']>()
+      .mockResolvedValueOnce({ ...identity, sessionId: 'unexpected' })
+      .mockResolvedValue(identity)
+    vi.mocked(f.service.importFrom).mockImplementation(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw new PackageImportRecoveryRequiredError(
+          identity,
+          resume,
+          new Error('Publication failed')
+        )
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    const commit = (): Promise<unknown> =>
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    await expect(commit()).rejects.toMatchObject({ code: 'conflict' })
+    await expect(commit()).rejects.toMatchObject({
+      code: 'conflict',
+      message: 'Package import recovery returned a different Session identity.'
+    })
+    expect(f.deps.afterImport).not.toHaveBeenCalled()
+    await expect(commit()).resolves.toMatchObject(identity)
+    expect(f.service.importFrom).toHaveBeenCalledOnce()
+    expect(f.deps.afterImport).toHaveBeenCalledExactlyOnceWith(
+      identity,
+      caller.lifecycleClientId,
+      false
+    )
+  })
+
+  it('cancels and drains active recovery on shutdown without publishing or starting another import', async () => {
+    const f = await stubFixture()
+    const identity = { projectId: 'target', sessionId: 'retained-import' }
+    const resume = vi.fn(
+      async (signal?: AbortSignal): Promise<SessionPackageRequest> =>
+        new Promise((_resolve, reject) => {
+          signal!.addEventListener('abort', () => reject(signal!.reason), { once: true })
+        })
+    )
+    vi.mocked(f.service.importFrom).mockImplementation(
+      async (_path, signal, _progress, confirm) => {
+        await confirm!(preview, signal!)
+        throw new PackageImportRecoveryRequiredError(
+          identity,
+          resume,
+          new Error('Publication failed')
+        )
+      }
+    )
+    const inspected = (await f.owner.call(
+      'preflightImport',
+      { filePath: f.path, target: { projectId: 'target' } },
+      caller
+    )) as HeadlessPackageImportPreview
+    await expect(
+      f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    ).rejects.toMatchObject({ code: 'conflict' })
+    const retry = f.owner.call('commitImport', { preflightId: inspected.preflightId }, caller)
+    const rejection = expect(retry).rejects.toMatchObject({ code: 'conflict' })
+    await vi.waitFor(() => expect(resume).toHaveBeenCalledOnce())
+    expect(f.owner.hasActiveTransfer()).toBe(true)
+    await f.owner.close()
+    await rejection
+    expect(f.owner.hasActiveTransfer()).toBe(false)
+    expect(f.service.importFrom).toHaveBeenCalledOnce()
+    expect(f.deps.afterImport).not.toHaveBeenCalled()
+  })
 
   it('rejects anonymous, revoked and remote callers before any file or service operation', async () => {
     const f = await stubFixture()

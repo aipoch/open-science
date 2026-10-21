@@ -20,6 +20,8 @@ import { useNavigationStore } from '@/stores/navigation-store'
 import { useGrantedFoldersStore } from '@/stores/granted-folders-store'
 import { SpecialistMarketplace } from '@/pages/settings/SpecialistMarketplace'
 import { TagsPanel } from '@/pages/settings/TagsPanel'
+import { LiteratureRendererProvider } from '@/pages/literature/public/host'
+import { literatureRendererHost } from '@/lib/literature-renderer-host'
 import { ComputePanel } from '@/pages/settings/ComputePanel'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
@@ -328,4 +330,8 @@ export function Fixture(): React.JSX.Element {
     </>
   )
 }
-createRoot(document.getElementById('root')!).render(<Fixture />)
+createRoot(document.getElementById('root')!).render(
+  <LiteratureRendererProvider host={literatureRendererHost}>
+    <Fixture />
+  </LiteratureRendererProvider>
+)

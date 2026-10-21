@@ -103,6 +103,9 @@ const StorageMigrationModal = ({
   const [discardError, setDiscardError] = useState<string | null>(null)
   const [cleanupWarning, setCleanupWarning] = useState(false)
   const [ipcError, setIpcError] = useState(false)
+  const [cancelPending, setCancelPending] = useState(false)
+  const [cancelError, setCancelError] = useState(false)
+  const cancelRequested = useRef(false)
   // Elapsed clock: `startedAt` is stamped at each transition into the migrating stage (event
   // handler / async callback, never an effect body), and `now` is ticked every second. Both are
   // state so render reads no refs; elapsedMs is derived below.
@@ -212,7 +215,18 @@ const StorageMigrationModal = ({
     setStartedAt(Date.now())
     setStage('migrating')
   }
-  const handleCancel = (): void => void window.api.storage.cancelMigrate().catch(() => {})
+  const handleCancel = (): void => {
+    if (cancelRequested.current) return
+    cancelRequested.current = true
+    setCancelPending(true)
+    setCancelError(false)
+    void window.api.storage.cancelMigrate().catch(() => {
+      if (!mountedRef.current) return
+      cancelRequested.current = false
+      setCancelPending(false)
+      setCancelError(true)
+    })
+  }
 
   // "Restart now": commit the copied move (setDataRoot -> delete old -> relaunch). On success the app
   // relaunches, so control never returns here; a returned result means the commit failed, which we
@@ -417,10 +431,24 @@ const StorageMigrationModal = ({
                   variant="ghost"
                   className={dialogCancelButtonClassName}
                   onClick={handleCancel}
+                  disabled={cancelPending}
+                  aria-busy={cancelPending}
                 >
-                  {tCommon('Cancel')}
+                  {cancelPending
+                    ? t('Requesting cancellation…')
+                    : cancelError
+                      ? t('Retry cancellation')
+                      : tCommon('Cancel')}
                 </Button>
               </div>
+              {cancelError ? (
+                <ErrorNotice
+                  inline
+                  role="alert"
+                  tone="amber"
+                  description={t('Cancellation failed. The move is still running. Try again.')}
+                />
+              ) : null}
             </>
           ) : null}
 

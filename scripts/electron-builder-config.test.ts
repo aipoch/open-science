@@ -64,7 +64,7 @@ describe('electron-builder local evidence exclusion', () => {
           .map((line) => JSON.parse(line))
       ).toEqual([
         { name: 'native-components', args: [] },
-        { name: 'build-backend', args: [] },
+        { name: 'build-backend', args: ['--desktop'] },
         { name: 'stage-backend', args: ['--desktop'] }
       ])
     } finally {
@@ -89,7 +89,8 @@ describe('electron-builder local evidence exclusion', () => {
       'out/cli-artifacts/open-science-0.37.0-win32-x64.zip',
       'out/cli-artifacts/win32-x64.json',
       'out/cli-artifacts/.archive-fixture/backend/index.cjs',
-      'out/desktop-backend/out/backend/index.cjs'
+      'out/desktop-backend/out/backend/index.cjs',
+      'out/desktop-backend-build/index.cjs'
     ]
     const developmentFiles = [
       'scripts/stage-backend.mjs',

@@ -4,8 +4,9 @@ import { CLINICAL_TRIALS_TOOLS } from './clinical-trials'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const tool = (id: string): ToolDescriptor => CLINICAL_TRIALS_TOOLS.find((t) => t.id === id)!
+// A real JSON response isolates the fetched payload from the expected fixture.
 const jsonRes = (body: unknown): Response =>
-  ({ ok: true, status: 200, json: async () => body }) as Response
+  new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } })
 const call = (
   id: string,
   args: Record<string, unknown>,
@@ -227,6 +228,232 @@ describe('get_trial_details', () => {
       nct_id: 'NCT99999999',
       error: 'Trial NCT99999999 not found'
     })
+  })
+})
+
+describe('get_trial_results', () => {
+  // API v2 shape checked against NCT04280705 on 2026-10-20. Compact synthetic
+  // values exercise independent group namespaces, different populations and zero counts.
+  const results = {
+    participantFlowModule: {
+      groups: [
+        { id: 'FG000', title: 'Drug' },
+        { id: 'FG001', title: 'Placebo' }
+      ],
+      periods: [
+        {
+          title: 'Overall',
+          milestones: [
+            {
+              type: 'STARTED',
+              achievements: [
+                { groupId: 'FG000', numSubjects: '12' },
+                { groupId: 'FG001', numSubjects: '10' }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    baselineCharacteristicsModule: {
+      groups: [{ id: 'BG000', title: 'Drug' }],
+      denoms: [{ units: 'Participants', counts: [{ groupId: 'BG000', value: '12' }] }],
+      measures: [{ title: 'Age', unitOfMeasure: 'Years' }]
+    },
+    outcomeMeasuresModule: {
+      outcomeMeasures: [
+        {
+          type: 'PRIMARY',
+          title: 'Time to recovery',
+          timeFrame: 'Day 29',
+          reportingStatus: 'POSTED',
+          populationDescription: 'Participants with observed data',
+          paramType: 'MEDIAN',
+          dispersionType: '95% Confidence Interval',
+          unitOfMeasure: 'Days',
+          groups: [
+            { id: 'OG000', title: 'Placebo' },
+            { id: 'OG001', title: 'Drug' }
+          ],
+          denoms: [
+            {
+              units: 'Participants',
+              counts: [
+                { groupId: 'OG000', value: '9' },
+                { groupId: 'OG001', value: '11' }
+              ]
+            }
+          ],
+          classes: [
+            {
+              title: 'Day 29',
+              categories: [
+                {
+                  measurements: [
+                    { groupId: 'OG000', value: '15', lowerLimit: '13', upperLimit: '18' },
+                    { groupId: 'OG001', value: '10', lowerLimit: '9', upperLimit: '11' }
+                  ]
+                }
+              ]
+            }
+          ],
+          analyses: [
+            {
+              groupIds: ['OG000', 'OG001'],
+              pValue: '<0.001',
+              statisticalMethod: 'Log Rank',
+              paramType: 'Cox Proportional Hazard',
+              paramValue: '1.29',
+              ciPctValue: '95',
+              ciNumSides: 'TWO_SIDED',
+              ciLowerLimit: '1.12',
+              ciUpperLimit: '1.49'
+            }
+          ]
+        },
+        {
+          type: 'SECONDARY',
+          title: 'Recovery',
+          timeFrame: 'Day 15',
+          unitOfMeasure: 'Participants',
+          groups: [{ id: 'OG000', title: 'Drug' }],
+          classes: [
+            {
+              categories: [
+                {
+                  title: 'Recovered',
+                  measurements: [{ groupId: 'OG000', value: 'NA', comment: 'Not estimable' }]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    adverseEventsModule: {
+      frequencyThreshold: '5',
+      timeFrame: '29 days',
+      description: 'As treated population',
+      eventGroups: [
+        {
+          id: 'EG000',
+          title: 'Drug',
+          deathsNumAffected: 0,
+          deathsNumAtRisk: 12,
+          seriousNumAffected: 0,
+          seriousNumAtRisk: 11
+        }
+      ],
+      seriousEvents: [
+        {
+          term: 'Headache',
+          organSystem: 'Nervous system disorders',
+          assessmentType: 'SYSTEMATIC_ASSESSMENT',
+          stats: [{ groupId: 'EG000', numEvents: 0, numAffected: 0, numAtRisk: 11 }]
+        }
+      ],
+      otherEvents: []
+    },
+    moreInfoModule: { limitationsAndCaveats: { description: 'Small sample' } }
+  }
+
+  it('requests only results and identity, preserving every nested result and module-local group', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        protocolSection: {
+          identificationModule: {
+            nctId: 'NCT04280705',
+            briefTitle: 'Brief',
+            officialTitle: 'Official'
+          },
+          outcomesModule: { primaryOutcomes: [{ measure: 'Protocol-only endpoint' }] }
+        },
+        hasResults: true,
+        resultsSection: results
+      })
+    )
+    const out = await call('get_trial_results', { nct_id: ' 04280705 ' }, fetchImpl)
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+    expect(parseUrl(fetchImpl.mock.calls[0][0] as string)).toEqual({
+      path: `${STUDIES}/NCT04280705`,
+      params: { fields: 'NCTId|BriefTitle|OfficialTitle|hasResults|resultsSection' }
+    })
+    expect(out).toEqual({
+      found: true,
+      nct_id: 'NCT04280705',
+      title: 'Official',
+      url: 'https://clinicaltrials.gov/study/NCT04280705?tab=results',
+      has_results: true,
+      results_section: results
+    })
+  })
+
+  it('distinguishes an existing trial without posted results from a missing trial', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes({
+        hasResults: false,
+        protocolSection: {
+          identificationModule: { briefTitle: 'Brief' },
+          outcomesModule: { primaryOutcomes: [{ measure: 'Planned endpoint' }] }
+        }
+      })
+    )
+    expect(await call('get_trial_results', { nct_id: 'nct04280705' }, fetchImpl)).toEqual({
+      found: true,
+      nct_id: 'NCT04280705',
+      title: 'Brief',
+      url: 'https://clinicaltrials.gov/study/NCT04280705?tab=results',
+      has_results: false,
+      results_section: null
+    })
+  })
+
+  it('preserves partial results and does not infer flags, modules, counts or analyses', async () => {
+    const partial = {
+      outcomeMeasuresModule: {
+        outcomeMeasures: [
+          {
+            type: 'OTHER',
+            title: 'Partially reported outcome',
+            reportingStatus: 'POSTED'
+          }
+        ]
+      }
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes({ resultsSection: partial }))
+    const out = (await call('get_trial_results', { nct_id: '04280705' }, fetchImpl)) as Record<
+      string,
+      unknown
+    >
+    expect(out).toMatchObject({
+      found: true,
+      has_results: null
+    })
+    expect(out.results_section).toEqual(partial)
+    fetchImpl.mockResolvedValue(jsonRes({ hasResults: true }))
+    expect(await call('get_trial_results', { nct_id: '04280705' }, fetchImpl)).toMatchObject({
+      found: true,
+      has_results: true,
+      results_section: null
+    })
+  })
+
+  it.each([400, 404])('maps HTTP %i to not found', async (status) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status, headers: new Headers() } as Response)
+    expect(await call('get_trial_results', { nct_id: 'NCT99999999' }, fetchImpl)).toEqual({
+      found: false,
+      nct_id: 'NCT99999999',
+      error: 'Trial NCT99999999 not found'
+    })
+  })
+
+  it('propagates transport errors rather than claiming no posted results', async () => {
+    const descriptor = tool('get_trial_results')
+    const error = new Error('HTTP 503 Service Unavailable')
+    const engine = new ParserEngine({ retries: 0, fetchImpl: vi.fn().mockRejectedValue(error) })
+    await expect(engine.call(descriptor, { nct_id: 'NCT04280705' }, {})).rejects.toThrow(error)
   })
 })
 

@@ -14,6 +14,11 @@ import { createInitialProjectState, useProjectStore } from '@/stores/project-sto
 
 import { type ComposerDoc } from './composer/composer-doc'
 import {
+  QUEUED_MESSAGE_UNDO_MS,
+  pendingWorkspaceQueueCount,
+  pendingWorkspaceQueueTarget
+} from './workspace-message-queue-owner'
+import {
   useWorkspaceMessageQueueController,
   WorkspaceMessageQueueProvider,
   type MessageQueueAdmission,
@@ -201,6 +206,7 @@ afterEach(() => {
   setWorkspaceSpecialistBarrier('session-a', false)
   setWorkspacePresentationRevealing('session-a', false)
   vi.restoreAllMocks()
+  vi.useRealTimers()
 })
 
 describe('workspace message queue controller', () => {
@@ -934,10 +940,129 @@ describe('workspace message queue controller', () => {
     )
     const remainingId = hook.result.current.items[0].id
     act(() => hook.result.current.actions.remove(remainingId))
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+    expect(hook.result.current.removed?.[0]?.id).toBe(remainingId)
+    act(() => hook.result.current.actions.dismissRemoved?.(remainingId))
     expect(input.composer.discardSnapshot).toHaveBeenCalledWith(
       expect.objectContaining({ doc: textDoc('first') })
     )
     expect(hook.result.current.items).toEqual([])
+  })
+
+  it('retains removed attachments until Undo expires and releases them exactly once', () => {
+    vi.useFakeTimers()
+    const input = options(session())
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('recover me')))
+    const id = hook.result.current.items[0].id
+    act(() => hook.result.current.actions.remove(id))
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+    act(() => vi.advanceTimersByTime(QUEUED_MESSAGE_UNDO_MS - 1))
+    expect(hook.result.current.removed).toHaveLength(1)
+    act(() => vi.advanceTimersByTime(1))
+    expect(hook.result.current.removed).toEqual([])
+    expect(input.composer.discardSnapshot).toHaveBeenCalledTimes(1)
+    act(() => hook.result.current.actions.undoRemove?.(id))
+    act(() => hook.result.current.actions.dismissRemoved?.(id))
+    expect(hook.result.current.items).toEqual([])
+    expect(input.composer.discardSnapshot).toHaveBeenCalledTimes(1)
+  })
+
+  it('Undo restores the original queue position without releasing its snapshot', () => {
+    vi.useFakeTimers()
+    const input = options(session())
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => {
+      hook.result.current.lifecycle.enqueue(admission('first'))
+      hook.result.current.lifecycle.enqueue(admission('second'))
+    })
+    const id = hook.result.current.items[0].id
+    act(() => hook.result.current.actions.remove(id))
+    act(() => hook.result.current.actions.undoRemove?.(id))
+    expect(hook.result.current.items.map((item) => item.text)).toEqual(['first', 'second'])
+    expect(hook.result.current.removed).toEqual([])
+    act(() => vi.advanceTimersByTime(QUEUED_MESSAGE_UNDO_MS))
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+  })
+
+  it('Undo resumes normal queue delivery when the original conversation is idle', async () => {
+    let current = session()
+    const input = options(current, { getSession: () => current })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() => hook.result.current.lifecycle.enqueue(admission('resume after Undo')))
+    const id = hook.result.current.items[0].id
+    act(() => hook.result.current.actions.remove(id))
+    current = session('idle')
+    hook.rerender(
+      options(current, { ...input, activeSession: current, promptInFlightSessionIds: [] })
+    )
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    act(() => hook.result.current.actions.undoRemove?.(id))
+    await vi.waitFor(() => expect(input.runtime.sendMessage).toHaveBeenCalledOnce())
+    await vi.waitFor(() => expect(hook.result.current.items).toEqual([]))
+    expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+  })
+
+  it.each(['branch', 'frame', 'archived', 'deleted'] as const)(
+    'does not restore a removed message into a changed %s context',
+    (change) => {
+      let current: ChatSession | undefined = session()
+      const input = options(current, { getSession: () => current })
+      const hook = renderController(input)
+      mounted.push(hook)
+      act(() => hook.result.current.lifecycle.enqueue(admission('bound to original')))
+      const id = hook.result.current.items[0].id
+      act(() => hook.result.current.actions.remove(id))
+      if (change === 'deleted') current = undefined
+      else if (change === 'archived') current.archivedAt = 10
+      else if (change === 'frame') current.conversationGraph!.activeFrameId = 'other'
+      else current.conversationGraph!.frames[0].activeBranchId = 'other'
+      act(() => hook.result.current.actions.undoRemove?.(id))
+      expect(hook.result.current.items).toEqual([])
+      expect(hook.result.current.removed?.[0]?.unavailable).toBe(true)
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(input.composer.discardSnapshot).not.toHaveBeenCalled()
+    }
+  )
+
+  it('guards page unloading for unsent work across project navigation and removes the guard on disposal', () => {
+    const input = options(session())
+    const hook = renderController(input)
+    act(() => hook.result.current.lifecycle.enqueue(admission('unsent')))
+    expect(pendingWorkspaceQueueCount()).toBe(1)
+    hook.leaveWorkspace()
+    const unloading = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unloading)
+    expect(unloading.defaultPrevented).toBe(true)
+    hook.unmount()
+    expect(pendingWorkspaceQueueCount()).toBe(0)
+    const afterDispose = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(afterDispose)
+    expect(afterDispose.defaultPrevented).toBe(false)
+  })
+
+  it('does not call an appended message unsent when its later delivery fails', async () => {
+    const current = session('idle')
+    const input = options(current)
+    input.runtime.sendMessage = vi.fn(async (request) => {
+      request.onMessageAppended?.()
+      throw new Error('Delivery failed after append')
+    })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({ ...admission('already appended'), session: current })
+    )
+    await vi.waitFor(() => expect(hook.result.current.items[0]?.phase).toBe('error'))
+    expect(pendingWorkspaceQueueCount()).toBe(0)
+    expect(pendingWorkspaceQueueTarget()).toBeUndefined()
+    const unloading = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(unloading)
+    expect(unloading.defaultPrevented).toBe(false)
   })
 
   it('places a dragged message before or after its target', () => {

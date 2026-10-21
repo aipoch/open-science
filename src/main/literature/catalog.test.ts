@@ -27,6 +27,7 @@ import { TagRepository } from '../tags/repository'
 import { TagResourceCatalog } from '../tags/resource-catalog'
 import { TagService } from '../tags/service'
 import { LiteratureCatalog } from './catalog'
+import { createLiteratureCommandOwner } from './command-owner'
 import { ContentRepository } from '../storage/content-repository'
 import { createTestPdf } from '../../../test/fixtures/literature-pdf'
 
@@ -1927,6 +1928,58 @@ describe('LiteratureCatalog', () => {
     expect(merged.item.title).toBe('Preferred title')
     expect(toCslItem(merged.id, merged.item).DOI).toBe('10.1234/preferred')
   })
+
+  it.each(['duplicate', 'conflict'] as const)(
+    'rechecks and imports the remaining reference after excluding a batch %s source',
+    async (kind) => {
+      const catalog = await setup()
+      const a = candidate({ doi: '10.1234/one', title: 'Earlier reference' }).item
+      const b = {
+        ...a,
+        identifiers: [{ scheme: 'pmid' as const, value: '12345', isPrimary: true }]
+      }
+      const last = {
+        ...a,
+        title: 'Selected reference',
+        ...(kind === 'conflict' ? { identifiers: [...a.identifiers, ...b.identifiers] } : {})
+      }
+      const items = kind === 'conflict' ? [a, b, last] : [a, last]
+      const owner = createLiteratureCommandOwner({
+        literatureCatalog: catalog,
+        literatureCitationFormatter: {
+          parseReferences: async () => ({
+            items,
+            errors: [],
+            warnings: [],
+            format: 'bibtex',
+            scannedEntries: items.length,
+            truncated: false
+          })
+        }
+      } as unknown as Parameters<typeof createLiteratureCommandOwner>[0])
+      const original = await owner.importRecords({ mode: 'preview', content: 'source' })
+      expect(original.entries.at(-1)?.status).toBe(kind === 'conflict' ? 'conflict' : 'existing')
+      const selectedItemIndexes = [items.length - 1]
+      const selected = await owner.importRecords({
+        mode: 'preview',
+        content: 'source',
+        selectedItemIndexes
+      })
+      expect(selected.entries).toHaveLength(1)
+      expect(selected.entries[0].index).toBe(items.length - 1)
+      expect(['ready', 'warning']).toContain(selected.entries[0].status)
+      const committed = await owner.importRecords({
+        mode: 'commit',
+        content: 'source',
+        selectedItemIndexes
+      })
+      expect(committed.imported).toMatchObject({ createdCount: 1, reusedCount: 0 })
+      expect(await client!.literatureItem.count()).toBe(1)
+      expect((await catalog.get(committed.imported!.itemIds[0]))?.item.title).toBe(
+        'Selected reference'
+      )
+    }
+  )
 
   it.each(['reuse', 'fill-missing', 'separate'] as const)(
     'handles conflicts within one file with %s atomically',

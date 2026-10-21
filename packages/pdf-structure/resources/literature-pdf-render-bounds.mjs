@@ -34,10 +34,7 @@ export function recordNativeFigurePaths(renderTask) {
   // the original render-stream path provenance.
   const state = { paths: new Map(), bytes: 0, buffers: new Set(), overflow: false, scanned: 0 }
   nativeRenderPaths.set(renderTask, state)
-  const previousContinue = renderTask.onContinue
-  renderTask.onContinue = (resume) => {
-    // The public continuation callback precedes each execution chunk, including
-    // clip-only paths whose execution does not call the painted-box tracker.
+  const scanPendingPaths = () => {
     if (operators.fnArray.length > 100000) {
       state.overflow = true
       state.paths.clear()
@@ -60,8 +57,43 @@ export function recordNativeFigurePaths(renderTask) {
             state.buffers.clear()
           } else state.paths.set(index, [args[0], [path], args[2]])
         }
+      } else if (
+        [OPS.setFillColorN, OPS.setStrokeColorN].includes(operators.fnArray[index]) &&
+        operators.argsArray[index]?.[0] === 'TilingPattern'
+      ) {
+        // Tiling patterns own nested operator lists. CanvasGraphics mutates
+        // their constructPath arguments too, outside the top-level stream.
+        // Preserve the bounded original arguments at this exact operation.
+        const args = operators.argsArray[index]
+        try {
+          const size = nativeSnapshotSize(args, 16 * 1024 * 1024 - state.bytes)
+          if (size === undefined) throw new Error('Unproved native pattern snapshot')
+          state.paths.set(index, structuredClone(args))
+          state.bytes += size
+        } catch {
+          state.overflow = true
+          state.paths.clear()
+          state.buffers.clear()
+        }
       }
     }
+  }
+  const internal = renderTask._internalRenderTask,
+    previousChanged = internal.operatorListChanged
+  if (typeof previousChanged === 'function') {
+    // Appended chunks can arrive after onContinue but before its queued
+    // execution. PDF.js skips another continuation while running; observe the
+    // new tail synchronously before that notification can execute any paths.
+    internal.operatorListChanged = function (...args) {
+      scanPendingPaths()
+      return previousChanged.apply(this, args)
+    }
+  }
+  const previousContinue = renderTask.onContinue
+  renderTask.onContinue = (resume) => {
+    // Retain initial operations too, including clip-only paths that never call
+    // the painted-box tracker. The cursor prevents rescanning appended chunks.
+    scanPendingPaths()
     if (previousContinue) previousContinue.call(renderTask, resume)
     else resume()
   }
@@ -76,6 +108,37 @@ const nativeViewportValue = (viewport) => ({
   rotation: viewport.rotation,
   transform: Array.from(viewport.transform)
 })
+
+function nativeSnapshotSize(value, budget) {
+  const pending = [value],
+    seen = new Set()
+  let size = 0
+  while (pending.length) {
+    const item = pending.pop()
+    if (typeof item === 'string') size += item.length * 2
+    else if (item && typeof item === 'object' && !seen.has(item)) {
+      seen.add(item)
+      if (ArrayBuffer.isView(item)) {
+        size += 64
+        pending.push(item.buffer)
+      } else if (item instanceof ArrayBuffer) size += item.byteLength
+      else if (Array.isArray(item)) {
+        size += item.length * 8
+        for (const child of item) pending.push(child)
+      } else {
+        const prototype = Object.getPrototypeOf(item)
+        if (prototype !== Object.prototype && prototype !== null) return
+        size += 64
+        for (const [key, child] of Object.entries(item)) {
+          size += key.length * 2 + 8
+          pending.push(child)
+        }
+      }
+    } else if (typeof item === 'function') return
+    if (size > budget) return
+  }
+  return size
+}
 
 // Keep only a bounded, isolated native proof snapshot from the exact render
 // stream that supplied operation indices. This is internal batch state, never
@@ -128,40 +191,21 @@ export function captureNativeFigureRenderContext(
       viewport: nativeViewportValue(viewport),
       content: { items: content.items, styles: content.styles }
     }
-    const pending = [value],
-      seen = new Set()
-    let size = 0
-    while (pending.length) {
-      const item = pending.pop()
-      if (typeof item === 'string') size += item.length * 2
-      else if (item && typeof item === 'object' && !seen.has(item)) {
-        seen.add(item)
-        if (ArrayBuffer.isView(item)) {
-          size += 64
-          pending.push(item.buffer)
-        } else if (item instanceof ArrayBuffer) size += item.byteLength
-        else if (Array.isArray(item)) {
-          size += item.length * 8
-          for (const child of item) pending.push(child)
-        } else {
-          const prototype = Object.getPrototypeOf(item)
-          if (prototype !== Object.prototype && prototype !== null) return
-          size += 64
-          for (const [key, child] of Object.entries(item)) {
-            size += key.length * 2 + 8
-            pending.push(child)
-          }
-        }
-      } else if (typeof item === 'function') return
-      if (size > 16 * 1024 * 1024) return
-    }
+    const size = nativeSnapshotSize(value, 16 * 1024 * 1024)
+    if (size === undefined) return
     const snapshot = structuredClone(value)
     const glyphBounds = nativeGlyphBounds(operators, commonObjs, 16 * 1024 * 1024 - size)
     if (glyphBounds) snapshot.glyphBounds = glyphBounds
+    // Keep the existing all-font proof unchanged. A Type3 or unavailable font
+    // must not masquerade as complete evidence for consumers of glyphBounds.
+    const partialFontGlyphBounds = glyphBounds
+      ? undefined
+      : nativePartialFontGlyphBounds(operators, commonObjs, 16 * 1024 * 1024 - size)
+    if (partialFontGlyphBounds) snapshot.partialFontGlyphBounds = partialFontGlyphBounds
     // This records decoded RGB shape only, never copies pixels or infers alpha
     // from a thumbnail. Consumers must separately prove graphics state and clip.
     const glyphBytes =
-      glyphBounds?.reduce(
+      (glyphBounds ?? partialFontGlyphBounds)?.reduce(
         (sum, f) =>
           sum +
           256 +
@@ -229,6 +273,9 @@ export function matchNativeFigureRenderContext(
     return {
       operators: snapshot.operators,
       ...(snapshot.glyphBounds ? { glyphBounds: snapshot.glyphBounds } : {}),
+      ...(snapshot.partialFontGlyphBounds
+        ? { partialFontGlyphBounds: snapshot.partialFontGlyphBounds }
+        : {}),
       ...(snapshot.opaqueRasterImages ? { opaqueRasterImages: snapshot.opaqueRasterImages } : {}),
       graphicsBounds: snapshot.graphicsBounds,
       viewport: {
@@ -343,6 +390,57 @@ function nativeGlyphBounds(operators, objects, budget) {
       fontName,
       glyphs: [...entry.glyphs].map(([fontChar, bounds]) => ({ fontChar, bounds }))
     }))
+  } catch {
+    return
+  }
+}
+
+// Every returned font is complete for its whole original showText inventory.
+// Missing fonts are omitted atomically; only an explicitly partial-aware
+// consumer may use this evidence. Reuse the strict path collector per font.
+function nativePartialFontGlyphBounds(operators, objects, budget) {
+  if (!objects || typeof objects.get !== 'function' || !(budget > 0)) return
+  try {
+    const runs = new Map(),
+      stack = []
+    let active
+    for (let i = 0; i < operators.fnArray.length; i++) {
+      const op = operators.fnArray[i],
+        args = operators.argsArray[i]
+      if (op === OPS.setFont) active = args?.[0]
+      else if (op === OPS.save || op === OPS.paintFormXObjectBegin) stack.push(active)
+      else if (op === OPS.restore || op === OPS.paintFormXObjectEnd) {
+        if (!stack.length) return
+        active = stack.pop()
+      } else if (op === OPS.showText) {
+        if (typeof active !== 'string' || !Array.isArray(args?.[0])) return
+        if (!runs.has(active)) runs.set(active, [])
+        runs.get(active).push(args)
+      }
+    }
+    if (stack.length) return
+    const result = []
+    let bytes = 0
+    for (const [fontName, args] of runs) {
+      const proof = nativeGlyphBounds(
+        {
+          fnArray: [OPS.setFont, ...args.map(() => OPS.showText)],
+          argsArray: [[fontName, 1], ...args]
+        },
+        objects,
+        budget - bytes
+      )
+      if (!proof?.length) continue
+      for (const font of proof) {
+        bytes +=
+          256 +
+          font.fontName.length * 2 +
+          font.glyphs.reduce((n, glyph) => n + 256 + glyph.fontChar.length * 2, 0)
+        if (bytes > budget) return
+        result.push(font)
+      }
+    }
+    return result.length ? result : undefined
   } catch {
     return
   }

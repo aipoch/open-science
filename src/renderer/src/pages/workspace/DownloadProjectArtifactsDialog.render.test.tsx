@@ -239,6 +239,7 @@ describe('DownloadProjectArtifactsDialog', () => {
     })
 
     expect(saveProjectArtifacts).toHaveBeenCalledWith({
+      operationId: expect.any(String),
       projectId: 'project-1',
       suggestedArchiveName: 'Research project',
       files: [
@@ -271,6 +272,7 @@ describe('DownloadProjectArtifactsDialog', () => {
     })
 
     expect(saveProjectArtifacts).toHaveBeenCalledWith({
+      operationId: expect.any(String),
       projectId: 'project-1',
       suggestedArchiveName: 'Research project',
       files: [
@@ -442,4 +444,50 @@ describe('DownloadProjectArtifactsDialog', () => {
     expect(document.body.textContent).toContain('No downloadable artifacts in this project.')
     expect(confirmButton()?.disabled).toBe(true)
   })
+})
+
+it('reports progress and cancellation failure, and waits for the real save result before unlocking', async () => {
+  let finish!: (result: { saved: false; cancelled: true }) => void
+  saveProjectArtifacts.mockImplementationOnce(
+    () =>
+      new Promise((resolve) => {
+        finish = resolve
+      })
+  )
+  window.api.getArtifactSaveProgress = vi
+    .fn()
+    .mockResolvedValue({ phase: 'running', completedFiles: 1, totalFiles: 3 })
+  window.api.cancelArtifactSave = vi
+    .fn()
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(undefined)
+  const onClose = vi.fn()
+  await renderDialog({ onClose })
+  await act(async () => {
+    confirmButton()?.click()
+    await Promise.resolve()
+  })
+  expect(document.body.textContent).toContain('Processed 1 of 3 files.')
+  const cancelButton = (): HTMLButtonElement | undefined =>
+    [...document.body.querySelectorAll('button')].find((button) => button.textContent === 'Cancel')
+  await act(async () => {
+    cancelButton()?.click()
+    await Promise.resolve()
+  })
+  expect(document.body.textContent).toContain('Could not cancel the download.')
+  expect(confirmButton()?.disabled).toBe(true)
+  await act(async () => {
+    cancelButton()?.click()
+    await Promise.resolve()
+  })
+  expect(document.body.textContent).toContain('Cancelling download…')
+  expect(onClose).not.toHaveBeenCalled()
+  expect(confirmButton()?.disabled).toBe(true)
+  await act(async () => {
+    finish({ saved: false, cancelled: true })
+    await Promise.resolve()
+  })
+  expect(document.body.textContent).toContain('Download cancelled. No archive was replaced.')
+  expect(confirmButton()?.disabled).toBe(false)
+  expect(checkboxes().every((checkbox) => checkbox.checked)).toBe(true)
 })

@@ -1976,7 +1976,7 @@ if (process.argv.includes('--version')) {
           reply = 'Workspace translation PDF created.'
         } else if (prompt.includes('PAIR_PDF_ACCEPTANCE')) {
           // Controlled inference only; PDF generation, IPC and reader remain production code.
-          await new Promise((resolve) => setTimeout(resolve, 1500))
+          await delay(prompt.includes('PAIR_PDF_ACCEPTANCE_SLOW_CANCEL') ? 3500 : 1500)
           reply =
             (prompt.includes('PAIR_PDF_INLINE_LINK') ? 'Methods: ' : '') +
             '测量受控实验室培养物中的细胞生长。' +

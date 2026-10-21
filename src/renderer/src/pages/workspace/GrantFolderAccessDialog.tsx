@@ -203,7 +203,7 @@ const GrantFolderAccessDialogContent = ({
     selectedAccess ??
     roots.find((root) => sameLocalDirectory(root.path, cwd, platform))?.access ??
     'ro'
-  const [grantFailed, setGrantFailed] = useState(false)
+  const [grantError, setGrantError] = useState<string | null>(null)
   const [grantConfirmationOpen, setGrantConfirmationOpen] = useState(false)
   const [isGranting, setIsGranting] = useState(false)
   const grantingRef = useRef(false)
@@ -299,7 +299,7 @@ const GrantFolderAccessDialogContent = ({
       : { kind: 'loading' }
 
   const navigateTo = (path: string): void => {
-    setGrantFailed(false)
+    setGrantError(null)
     setAccess(undefined)
     setCwd(path)
   }
@@ -346,11 +346,9 @@ const GrantFolderAccessDialogContent = ({
         nextRoots.find((root) => !roots.some((existing) => existing.id === root.id))
       onOpenChange(false)
       if (granted) onGranted?.(granted)
-    } catch {
+    } catch (error) {
       if (attempt !== grantAttemptRef.current) return
-      // Main rejected the candidate (unreadable, home itself): state it quietly next to the
-      // buttons; navigation clears the message.
-      setGrantFailed(true)
+      setGrantError(error instanceof Error ? error.message : String(error ?? ''))
     } finally {
       if (attempt === grantAttemptRef.current) {
         grantingRef.current = false
@@ -578,7 +576,7 @@ const GrantFolderAccessDialogContent = ({
         )}
 
         {/* Subfolder listing */}
-        <div className="flex max-h-[320px] min-h-[220px] flex-col overflow-y-auto px-5 pb-3 pt-2">
+        <div className="flex h-[320px] min-h-0 flex-col overflow-y-auto px-5 pb-3 pt-2">
           {initializationError ? (
             <ErrorNotice
               description={initializationError}
@@ -645,14 +643,17 @@ const GrantFolderAccessDialogContent = ({
               <span>{t("Your home folder itself can't be granted — pick a subfolder.")}</span>
             </div>
           ) : null}
-          {grantFailed ? (
-            <div data-testid="grant-access-error">
-              <ErrorNotice
-                inline
-                role="alert"
-                description={t('Directory could not be accessed.')}
-              />
-            </div>
+          {/* This notice has no responsive actions; inline-size containment inflates the flex footer. */}
+          {grantError !== null ? (
+            <ErrorNotice
+              data-testid="grant-access-error"
+              inline
+              role="alert"
+              className="max-h-[min(180px,30svh)] overflow-y-auto [container-type:normal]"
+              description={t('Folder access could not be updated.')}
+              errorCode={grantError || undefined}
+              diagnosticsLabel={t('Error details')}
+            />
           ) : null}
           <div className="flex items-center gap-2.5">
             <RadioGroup.Root

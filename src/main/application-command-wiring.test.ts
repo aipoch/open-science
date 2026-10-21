@@ -515,7 +515,7 @@ describe('production application command wiring', () => {
     expect(notificationIpcSource).toContain('owner.markSessionCompletionsRead(')
   })
 
-  it('adds transport adapters after composition and disposes the router before its owners', () => {
+  it('adds transport adapters after composition and disposes the router before backend teardown', () => {
     const backendModule = ipcSource.indexOf('await composeBackendLifecycle({')
     const commandModule = ipcSource.indexOf('await registerApplicationCommandComposition({')
     expect(backendModule).toBeGreaterThan(-1)
@@ -532,6 +532,16 @@ describe('production application command wiring', () => {
     expect(install).toBeGreaterThan(build)
     expect(ownAdapter).toBeGreaterThan(install)
     expect(runtimeSource).toContain("await modules.dispose('rollback')")
+  })
+
+  it('cancels journal writes before draining commands and Compute during reverse disposal', () => {
+    const journalModule = ipcSource.indexOf('await modules.add(researchCatalog.journalAttributes')
+    const commandModule = ipcSource.indexOf('await registerApplicationCommandComposition({')
+    const computeModule = ipcSource.indexOf('await composeComputeRecovery({')
+    expect(computeModule).toBeGreaterThan(-1)
+    expect(commandModule).toBeGreaterThan(computeModule)
+    expect(journalModule).toBeGreaterThan(commandModule)
+    expect(occurrences(ipcSource, "name: 'literature-journal-attributes'")).toBe(1)
   })
 
   it('exposes startup network commands before attaching the desktop transport', () => {

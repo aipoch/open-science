@@ -979,6 +979,23 @@ const createUpgradeProfileGuard = (
   return { cleanup, shouldExpectDowngradeBlock: () => expectDowngradeBlock, verifyCycle }
 }
 
+// The Node backend logs independently of Electron stdout. Preserve its startup evidence before
+// the disposable profile is removed, without copying credentials, databases, or service tokens.
+const captureStartupLogs = async (configRoots, outputDirectory) => {
+  await mkdir(outputDirectory, { recursive: true })
+  const captured = []
+  for (const [index, root] of [...new Set(configRoots.filter(Boolean))].entries()) {
+    const target = join(outputDirectory, `backend-${index}.log`)
+    try {
+      await copyFile(join(root, 'logs', 'main.log'), target)
+      captured.push(target)
+    } catch (error) {
+      if (error.code !== 'ENOENT') throw error
+    }
+  }
+  return captured
+}
+
 const launchAndProbe = async ({
   installDirectory,
   expectedVersion,
@@ -1037,6 +1054,14 @@ const launchAndProbe = async ({
     if (onSqliteVersion) onSqliteVersion(await readDesktopSqliteVersion(configRoot, child.pid))
     return configRoot
   } catch (error) {
+    try {
+      await captureStartupLogs(
+        [env.OPEN_SCIENCE_E2E_STORAGE_ROOT, ...(legacyConfigRoots ?? [])],
+        resolve('test-results', 'windows-installer-smoke', randomUUID())
+      )
+    } catch (captureError) {
+      console.warn('Could not capture installed backend startup logs:', captureError.code)
+    }
     await terminateProcessTree(child)
     const processOutput = output().trim()
     if (error instanceof Error && processOutput && !error.message.includes(processOutput)) {
@@ -1898,6 +1923,7 @@ export {
   assertPackagedResources,
   assertUpgradeProfilePreserved,
   buildSmokePlan,
+  captureStartupLogs,
   cleanupSmokeRoot,
   cleanupOwnedSmokeRegistrations,
   cleanupSmokeRegistrations,

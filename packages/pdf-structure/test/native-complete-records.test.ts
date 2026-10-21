@@ -5027,6 +5027,62 @@ const anonymousLoweredSuffix = (): ReturnType<typeof JSON.parse> => {
   }
 }
 
+it.each(['complete', 'missing-program', 'wrong-literal', 'ordinary-baseline', 'duplicate-program'])(
+  'retains a shallow native subscript only with complete source programs: %s',
+  (condition) => {
+    const f = anonymousLoweredSuffix()
+    f.items.splice(4, 1)
+    f.runs.splice(4, 1)
+    Object.assign(f.items[3], {
+      text: 'AB',
+      baseline: 131.2,
+      height: 8,
+      rect: [50, 123.2, 62, 131.2]
+    })
+    if (condition === 'ordinary-baseline')
+      Object.assign(f.items[3], { baseline: 130, rect: [50, 122, 62, 130] })
+    Object.assign(f.runs[3], {
+      ...f.items[3],
+      literalGlyphs: ['A', 'B'],
+      glyphRuns: [3, 3]
+    })
+    f.items.forEach((item: ReturnType<typeof JSON.parse>, index: number) => {
+      item.sourceItem = { pageNumber: 1, index, text: item.text }
+    })
+    if (condition === 'missing-program') f.runs.splice(3, 1)
+    if (condition === 'wrong-literal') f.runs[3].literalGlyphs = ['A', '?']
+    if (condition === 'duplicate-program') f.runs.push(structuredClone(f.runs[3]))
+    const before = structuredClone(f)
+    const result = refineTable(
+      f.table,
+      f.items,
+      f.captions,
+      [],
+      f.rules,
+      f.runs,
+      undefined,
+      new Map()
+    )
+    const cell = result.cells.find(
+      (c: ReturnType<typeof JSON.parse>) => c.row === 1 && c.column === 0
+    )
+    if (condition === 'complete') {
+      expect(result.repairs).toContain('native-closed-leaf-complete-records-recovered')
+      expect(cell.textRuns).toEqual([
+        { text: 'q', position: 'normal' },
+        { text: 'AB', position: 'subscript' }
+      ])
+      expect(cell.sourceItems).toEqual(
+        f.items.slice(2, 4).map((i: ReturnType<typeof JSON.parse>) => i.sourceItem)
+      )
+    } else
+      expect(cell.textRuns?.some((r: { position: string }) => r.position === 'subscript')).not.toBe(
+        true
+      )
+    expect(f).toEqual(before)
+  }
+)
+
 it('keeps a touching terminal lowered fragment with its unique native script parent', () => {
   const f = anonymousLoweredSuffix(),
     before = structuredClone(f)
