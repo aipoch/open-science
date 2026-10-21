@@ -232,7 +232,67 @@ describe('ProviderRuntimeProjectionOwner', () => {
           },
           provider: { model, supportsImageInput: true }
         })
-        if (type === 'official') expect(target.provider.contextWindow).toBe(1_050_000)
+        expect(target.provider.contextWindow).toBe(1_050_000)
+      }
+    }
+  )
+
+  it.each(['official', 'codex-isolated', 'codex-shared'] as const)(
+    'passes published OpenAI context limits through to Codex for %s',
+    (type) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = {
+        id: type,
+        type,
+        ...(type === 'official' ? { vendorId: 'openai' as const } : {}),
+        name: 'OpenAI',
+        model: 'gpt-5.4-mini'
+      }
+      const before = structuredClone(provider)
+      const framework = getAgentFramework('codex')
+      for (const [model, contextWindow] of [
+        ['gpt-6-astra', 1_050_000],
+        ['gpt-6.1-sol', 1_050_000],
+        ['gpt-6-sol', 1_050_000],
+        ['gpt-6-luna', 1_050_000],
+        ['gpt-5.6-sol', 1_050_000],
+        ['gpt-5.6-terra', 1_050_000],
+        ['gpt-5.6-luna', 1_050_000],
+        ['gpt-5.5', 1_050_000],
+        ['gpt-5.4', 1_050_000],
+        ['gpt-5.4-mini', 400_000]
+      ] as const) {
+        const target = owner.resolveRuntimeTarget(provider, { kind: 'required', model }, framework)
+        expect(target.provider).toMatchObject({ model, contextWindow })
+        const config = framework.prepareModelConfig(target.provider, {
+          storageRoot: '/data',
+          executablePath: '/runtime/codex-acp'
+        })
+        expect(JSON.parse(config.env?.CODEX_CONFIG ?? '')).toMatchObject({
+          model,
+          model_context_window: contextWindow,
+          model_auto_compact_token_limit: contextWindow * 0.95
+        })
+      }
+      expect(provider).toEqual(before)
+    }
+  )
+
+  it.each(['codex-isolated', 'codex-shared'] as const)(
+    'leaves unknown and account-default %s context limits to Codex',
+    (type) => {
+      const owner = new ProviderRuntimeProjectionOwner()
+      const provider: StoredProvider = { id: type, type, name: 'Codex' }
+      for (const model of [undefined, 'unpublished-model']) {
+        const resolved = owner.resolveProvider(provider, model)
+        expect(resolved.contextWindow).toBeUndefined()
+        const config = getAgentFramework('codex').prepareModelConfig(resolved, {
+          storageRoot: '/data',
+          executablePath: '/runtime/codex-acp'
+        })
+        const parsed = JSON.parse(config.env?.CODEX_CONFIG ?? '')
+        expect(parsed).not.toHaveProperty('model_context_window')
+        expect(parsed).not.toHaveProperty('model_auto_compact_token_limit')
       }
     }
   )

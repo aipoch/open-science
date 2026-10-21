@@ -207,6 +207,7 @@ class AcpModelChangeWorkflow {
       backend.backendId === target.backendId &&
       backend.providerId === target.providerId &&
       backend.context.model === target.model &&
+      (backend.framework.id !== 'codex' || backend.context.window === target.contextWindow) &&
       backend.session.model === target.sessionModel &&
       backend.context.supportsImageInput === target.supportsImageInput &&
       (backend.session.effort ?? 'default') === target.reasoningEffort
@@ -217,6 +218,11 @@ class AcpModelChangeWorkflow {
     const connection = this.options.connectionResources.connection
     if (!connection) return false
     const backend = this.options.backendGeneration.current
+    // Codex reads context/compaction overrides at process startup; an ACP model switch cannot
+    // replace them. Reconnect before publishing a capacity that the running process cannot use.
+    if (backend.framework.id === 'codex' && backend.context.window !== target.contextWindow) {
+      return false
+    }
     // ACP Sessions retain provider-side context that the host cannot inspect. Crossing the image
     // capability boundary requires a fresh Session when canonical history contains images. A Codex
     // bridge also binds its provider Session to the upstream model even when the current history is

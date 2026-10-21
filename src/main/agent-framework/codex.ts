@@ -218,17 +218,28 @@ const isOfficialOpenAiResponsesBase = (value: string | undefined): boolean => {
   }
 }
 
-// Just the model + reasoning-effort fields a Codex config can carry, with no provider plumbing.
+// Model settings shared by API and subscription sessions, with no provider plumbing.
 // The bridge path layers the open-science custom provider on top of this; the codex-isolated path
 // uses it on its own so codex-acp can drive the ChatGPT subscription with the user's selected
 // model from session start (issue #277).
 const buildCodexModelOptions = (input: {
   model?: string
+  contextWindow?: number
   reasoningEffort?: ModelReasoningEffort
 }): Record<string, unknown> => {
+  const contextWindow =
+    input.contextWindow && input.contextWindow > 0 ? input.contextWindow : undefined
   return {
     ...(input.model ? { model: input.model } : {}),
-    ...(input.reasoningEffort ? { model_reasoning_effort: input.reasoningEffort } : {})
+    ...(input.reasoningEffort ? { model_reasoning_effort: input.reasoningEffort } : {}),
+    ...(contextWindow
+      ? {
+          model_context_window: contextWindow,
+          model_auto_compact_token_limit: Math.floor(
+            (contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100
+          )
+        }
+      : {})
   }
 }
 
@@ -260,9 +271,6 @@ const buildCodexConfig = (provider: {
   const baseUrl = normalizeResponsesBaseUrl(provider.baseUrl, {
     appendVersionPath: !provider.preserveBaseUrl
   })
-  const contextWindow =
-    provider.contextWindow && provider.contextWindow > 0 ? provider.contextWindow : undefined
-
   return {
     ...buildCodexModelOptions(provider),
     // Model metadata can enable native delegation even when both feature flags are off.
@@ -270,14 +278,6 @@ const buildCodexConfig = (provider: {
     agents: { enabled: false },
     features: CODEX_DISABLED_NATIVE_FEATURES,
     memories: CODEX_DISABLED_NATIVE_MEMORY,
-    ...(contextWindow
-      ? {
-          model_context_window: contextWindow,
-          model_auto_compact_token_limit: Math.floor(
-            (contextWindow * CODEX_EFFECTIVE_CONTEXT_WINDOW_PERCENT) / 100
-          )
-        }
-      : {}),
     ...codexSandboxWriteConfig(provider.grantedLocalRoots),
     model_provider: CODEX_PROVIDER_ID,
     model_providers: {
@@ -566,6 +566,7 @@ export const createCodexFramework = ({
       // session/set_config_option switch (issue #277).
       const modelOptions = buildCodexModelOptions({
         model: provider.model,
+        contextWindow: provider.contextWindow,
         reasoningEffort: ctx.reasoningEffort
       })
       const codexConfig = {
