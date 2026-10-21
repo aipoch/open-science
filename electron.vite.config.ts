@@ -1,8 +1,3 @@
-import {
-  credentialSandboxEnabled,
-  credentialSandboxModule,
-  credentialSandboxImports
-} from './scripts/local-update-validation/credential-build.mjs'
 import { windowsSigningBuildDefines } from './scripts/windows-signing-policy.mjs'
 import { createRequire } from 'node:module'
 import { resolve } from 'path'
@@ -22,21 +17,9 @@ export { resolveWsl2BashPreviewBuildEnabled } from './scripts/wsl2-build-flags.m
 
 export default defineConfig(({ command }) => ({
   main: {
-    resolve: {
-      alias: credentialSandboxEnabled()
-        ? [{ find: credentialSandboxImports, replacement: credentialSandboxModule(process.cwd()) }]
-        : []
-    },
     plugins: [nativeLocaleAssets()],
     define: {
       __OPEN_SCIENCE_NATIVE_LOCALE_DIRECTORY__: JSON.stringify('native-locales'),
-      __OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION_CREDENTIAL_SANDBOX__: JSON.stringify(
-        credentialSandboxEnabled()
-      ),
-      // Rollup erases the guarded dynamic import completely from ordinary release bundles.
-      __OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION__: JSON.stringify(
-        process.env.OPEN_SCIENCE_LOCAL_UPDATE_VALIDATION === '1'
-      ),
       ...windowsSigningBuildDefines(process.env),
       ...wsl2BuildDefines(process.platform, command === 'serve', process.env)
     },

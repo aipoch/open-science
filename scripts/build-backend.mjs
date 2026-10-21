@@ -1,8 +1,3 @@
-import {
-  credentialSandboxEnabled,
-  credentialSandboxModule,
-  credentialSandboxImports
-} from './local-update-validation/credential-build.mjs'
 import { windowsSigningBuildDefines } from './windows-signing-policy.mjs'
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { assertBackendImports, desktopBundledDependencies } from './backend-dependencies.mjs'
@@ -59,10 +54,6 @@ export async function createBackendBuilder({
           {
             name: 'open-science-node-resources',
             setup(plugin) {
-              if (credentialSandboxEnabled())
-                plugin.onResolve({ filter: credentialSandboxImports }, () => ({
-                  path: credentialSandboxModule(root)
-                }))
               if (inlineI18next)
                 plugin.onResolve({ filter: /^i18next$/ }, () => ({
                   path: require.resolve('i18next')

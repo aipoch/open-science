@@ -121,9 +121,7 @@
     "check:resilient-download-package": "node scripts/check-resilient-download-package.mjs",
     "analyze:test-impact": "node scripts/build-dev-packages.mjs --packages=test-impact && node packages/test-impact/dist/cli.js --config scripts/ci/test-impact-config.json",
     "check:test-impact-package": "node scripts/check-test-impact-package.mjs",
-    "check:providers-package": "node scripts/check-providers-package.mjs",
-    "validate:update:local": "node scripts/local-update-validation/index.mjs",
-    "test:update:local": "vitest run scripts/local-update-validation src/main/local-update-validation src/main/desktop-update-integration.test.ts"
+    "check:providers-package": "node scripts/check-providers-package.mjs"
   },
   "dependencies": {
     "@agentclientprotocol/claude-agent-acp": "^0.70.0",
