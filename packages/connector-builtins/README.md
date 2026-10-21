@@ -62,15 +62,24 @@ existing writer.
 `./molecule` advertises only `render_molecule`. Application preview/Artifact actions
 are registered by the host.
 
-The following public, read-only methods require no credentials:
+`./genes` includes [HGNC](https://www.genenames.org/help/rest/)
+methods `get_hgnc_gene` and `resolve_hgnc_alias`.
 
-| Entry                 | Source                                                            | Methods                                         |
-| --------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
-| `./genes`             | [HGNC](https://www.genenames.org/help/rest/)                      | `get_hgnc_gene`, `resolve_hgnc_alias`           |
-| `./pubmed`            | [PubTator 3](https://www.ncbi.nlm.nih.gov/research/pubtator3/api) | `get_pubtator_annotations`, `search_pubtator`   |
-| `./clinical-genomics` | [DGIdb](https://dgidb.org/api)                                    | `get_dgidb_gene_drugs`, `get_dgidb_drug_genes`  |
-| `./rna`               | [RNAcentral](https://rnacentral.org/api)                          | `get_rnacentral_record`, `get_rnacentral_xrefs` |
-| `./orphadata`         | [Orphadata](https://api.orphadata.com/openapi.json)               | `get_disease_genes`, `get_disease_phenotypes`   |
+`./pubmed` includes
+[PubTator 3](https://www.ncbi.nlm.nih.gov/research/pubtator3/api) methods
+`get_pubtator_annotations` and `search_pubtator`.
+
+`./clinical-genomics` includes [DGIdb](https://dgidb.org/api)
+methods `get_dgidb_gene_drugs` and `get_dgidb_drug_genes`.
+
+`./rna` includes [RNAcentral](https://rnacentral.org/api)
+methods `get_rnacentral_record` and `get_rnacentral_xrefs`.
+
+`./orphadata` includes
+[Orphadata](https://api.orphadata.com/openapi.json) methods `get_disease_genes` and
+`get_disease_phenotypes`.
+
+These methods are public and read-only and require no credentials.
 
 HGNC, PubTator and RNAcentral share per-source process-local request admission at 10, 3 and
 20 requests/second respectively. These methods do not automatically retry HTTP failures; the
