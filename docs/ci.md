@@ -531,6 +531,21 @@ This proves bounded registration coverage, not behavioral equivalence of the ref
 behavior tests, CI owner review of policy and trusted-base validation remain mandatory. Merge this
 policy before proposing source/registration cleanup that depends on it.
 
+Full owners split under a separate proof. Only module-impact JSON and the derived consumer index
+may change; source, test and runtime declarations stay byte-identical. The remaining owner keeps
+a nonempty full marker, which may be restated, plus every contract, consumer, module edge,
+overlay, fallback and its surviving interfaces. Each moved path needs a unique destination.
+Shared sources move only into **new** modules that inherit the origin's fallback, overlays,
+downstream module edges and moved interfaces. A new full destination can take any surface.
+A selective destination accepts only static contracts: no runtime-consumer edge, no
+renderer-catalog or generated Web API file, no channel/event-name literal or persisted-format
+marker, and complete direct dependency evidence. Its plan must select every statically reachable
+test (outside excluded package roots) and every original explicit test with no static path from
+the origin's sources; those may observe the owner through IPC or files. Regression fixtures may
+move to an existing reader owner only when their fixture routing, lanes and selected tests are
+preserved. Moved owner tests keep their owner classification. Merge this policy before
+proposing a registration split that depends on it.
+
 This registration-only proof follows source imports (including type and test-mock imports) and
 explicit runtime-consumer edges. Host globals such as `process` or `window`, Node built-ins and
 external libraries do not by themselves make the repository dependency graph incomplete. Unresolved

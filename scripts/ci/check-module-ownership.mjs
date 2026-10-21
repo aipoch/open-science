@@ -13,6 +13,7 @@ import {
   verifiedHostOwnerSplits,
   verifiedHostSourceMoves
 } from './host-owner-split.mjs'
+import { verifiedFullOwnerSplits } from './full-owner-split.mjs'
 import {
   moduleImpactRegistrationPath,
   isModuleImpactRegistrationPath,
@@ -53,7 +54,8 @@ function registrationViolations(
   retiredConsumers = new Set(),
   retiredPackageTests = new Set(),
   boundedOwnerSplits = new Set(),
-  transferredOwnerTests = new Set()
+  transferredOwnerTests = new Set(),
+  rewordedFullOwners = new Set()
 ) {
   // Compare checked-in routing only; local graph evidence must not mask lost coverage.
   const graph = { status: 'not-used', testFiles: [] }
@@ -194,7 +196,12 @@ function registrationViolations(
     )
     retain(base.capabilityOverlays, head.capabilityOverlays, `${id}.capabilityOverlays`)
     if (head.fallbackCapability !== base.fallbackCapability) reject(`${id}.fallbackCapability`)
-    if (base.fullTestReason !== undefined && head.fullTestReason !== base.fullTestReason) {
+    // A verified full-owner split may restate why its remaining surface stays full.
+    if (
+      base.fullTestReason !== undefined &&
+      head.fullTestReason !== base.fullTestReason &&
+      !(rewordedFullOwners.has(id) && head.fullTestReason)
+    ) {
       reject(`${id}.fullTestReason`)
     }
   }
@@ -240,7 +247,8 @@ export function checkModuleOwnership({
   retiredConsumers = new Set(),
   retiredPackageTests = new Set(),
   boundedOwnerSplits = new Set(),
-  transferredOwnerTests = new Set()
+  transferredOwnerTests = new Set(),
+  rewordedFullOwners = new Set()
 }) {
   validateModuleImpactManifest(baseManifest)
   const before = new Set(baseFiles)
@@ -258,7 +266,8 @@ export function checkModuleOwnership({
     retiredConsumers,
     retiredPackageTests,
     boundedOwnerSplits,
-    transferredOwnerTests
+    transferredOwnerTests,
+    rewordedFullOwners
   )
   const legacyGaps = []
   for (const path of headFiles.filter(isModuleOwnershipPath)) {
@@ -316,6 +325,7 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
   validateModuleImpactManifest(headManifest, { pathExists: (path) => existing.has(path) })
   const hostSplits = verifiedHostOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
   const hostMoves = verifiedHostSourceMoves(mergeBase, head, baseManifest, headManifest, { cwd })
+  const fullSplits = verifiedFullOwnerSplits(mergeBase, head, baseManifest, headManifest, { cwd })
   const dependencyRetirements = dependencyBasedConsumerRetirements(
     mergeBase,
     head,
@@ -350,9 +360,15 @@ export function moduleOwnershipFromRevisions(base, head, { cwd = process.cwd() }
     boundedOwnerSplits: new Set([
       ...verifiedExistingHostOwnerTransfers(mergeBase, head, baseManifest, headManifest, { cwd }),
       ...hostSplits.paths,
-      ...hostMoves.paths
+      ...hostMoves.paths,
+      ...fullSplits.paths
     ]),
-    transferredOwnerTests: new Set([...hostSplits.ownerTests, ...hostMoves.ownerTests]),
+    transferredOwnerTests: new Set([
+      ...hostSplits.ownerTests,
+      ...hostMoves.ownerTests,
+      ...fullSplits.ownerTests
+    ]),
+    rewordedFullOwners: fullSplits.rewordedOwners,
     changes: parseNameStatus(git('diff', '--name-status', '-z', mergeBase, head))
   })
   result.violations.push(...boundaryViolations)

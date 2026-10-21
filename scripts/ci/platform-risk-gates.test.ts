@@ -18,7 +18,7 @@ const changes = (path: string): Array<{ path: string; status: string }> => [
 
 describe('platform risk execution policy', () => {
   it.each([
-    ['shared owner', 'M', 'src/shared/app-config.ts'],
+    ['shared owner', 'M', 'src/shared/settings.ts'],
     ['unknown owner', 'A', 'src/shared/new-unregistered-contract.ts'],
     ['destructive change', 'D', 'src/shared/app-config.ts'],
     ['global input', 'M', 'package.json'],
