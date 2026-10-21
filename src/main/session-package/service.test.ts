@@ -2471,6 +2471,22 @@ it.each(['root', 'frame'] as const)(
     const previousRun = (
       await source.notebookRepository.readSessionRuns('project-1', 'session-1')
     )[0]
+    const repeatedObservation = await startWorkingFileObservation(
+      {
+        dataRoot: document.dataRoot,
+        notebookSessionRoot: document.notebookSessionRoot,
+        fileEvidenceStorageRoot: source.storageRoot,
+        fileEvidenceRoot: join(source.storageRoot, 'execution-file-evidence/project-1/session-1'),
+        fileEvidenceStoragePrefix: 'execution-file-evidence/project-1/session-1',
+        runId: 'notebook-run-2'
+      },
+      {
+        watchDirectory: () => {
+          throw new Error('Watcher unavailable in fixture')
+        }
+      }
+    )
+    const repeatedEvidence = await repeatedObservation.finish()
     await source.notebookRepository.appendRun({
       projectId: 'project-1',
       sessionId: 'session-1',
@@ -2482,7 +2498,7 @@ it.each(['root', 'frame'] as const)(
         startedAt: 3,
         endedAt: 4,
         script: 'read_input()',
-        fileEvidence: undefined,
+        fileEvidence: repeatedEvidence.fileEvidence,
         workingFiles: [],
         inputFiles: [
           {
@@ -2591,6 +2607,32 @@ it.each(['root', 'frame'] as const)(
     expect(sha256(sidecarText)).toBe(importedEvidence.checksum)
     const sidecar = JSON.parse(sidecarText)
     expect(sidecar.activityId).toBe(importedRun.runId)
+    const importedRuns = await target.notebookRepository.readSessionRuns(
+      imported.projectId,
+      imported.sessionId
+    )
+    const secondSidecar = JSON.parse(
+      await readFile(join(target.storageRoot, importedRuns[1].fileEvidence!.storageKey!), 'utf8')
+    )
+    const importedBlob = join(target.storageRoot, sidecar.relations[0].generation.contentStorageKey)
+    const secondBlob = join(
+      target.storageRoot,
+      secondSidecar.relations[0].generation.contentStorageKey
+    )
+    const importedBlobStats = await stat(importedBlob)
+    expect(await stat(secondBlob)).toMatchObject({
+      dev: importedBlobStats.dev,
+      ino: importedBlobStats.ino
+    })
+    const importedWorkingFile = join(
+      target.storageRoot,
+      history.files.find(
+        (file) =>
+          file.sourceStorageKey.startsWith('notebooks/') &&
+          file.sourceStorageKey.endsWith('/data/plot.png')
+      )!.localStorageKey
+    )
+    expect((await stat(importedWorkingFile)).ino).not.toBe(importedBlobStats.ino)
     await expect(
       readFile(
         join(target.storageRoot, ...sidecar.relations[0].generation.contentStorageKey.split('/'))
@@ -2729,6 +2771,20 @@ it.each(['root', 'frame'] as const)(
       'utf8'
     )
     expect(sha256(forkedEvidenceText)).toBe(forkedEvidence.checksum)
+    const forkedSidecars = await Promise.all(
+      forkedRuns.map(async (run) =>
+        JSON.parse(await readFile(join(target.storageRoot, run.fileEvidence!.storageKey!), 'utf8'))
+      )
+    )
+    const forkedBlobs = forkedSidecars.map((item) =>
+      join(target.storageRoot, item.relations[0].generation.contentStorageKey)
+    )
+    const forkedBlobStats = await stat(forkedBlobs[0])
+    expect(await stat(forkedBlobs[1])).toMatchObject({
+      dev: forkedBlobStats.dev,
+      ino: forkedBlobStats.ino
+    })
+    expect(forkedBlobStats.ino).not.toBe(importedBlobStats.ino)
     await expect(
       files.adoptLegacyArtifact({
         projectId: forked.projectId,
