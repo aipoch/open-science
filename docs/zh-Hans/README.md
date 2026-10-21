@@ -51,7 +51,7 @@ AIPOCH Open-Science 支持机器学习、统计学、生命科学、化学、材
 
 已完成的研究会话还可以导出为可移植的 `.science` 包，用于审阅、交接和归档，并携带所选的对话分支、文件版本、Notebook 记录和验证证据。
 
-> 💡 **AIPOCH Open-Science v1.0.1** _（2026 年 10 月更新）_。本次补丁新增从浏览器一键导入 `.science` 包、更清晰可靠的站内更新（尤其是 Windows）、始终可见的会话等待状态、MCP OAuth 凭据处理的安全修复，以及一批 PDF、文献和会话包修复。详情请查看 [1.0.1 发行说明](../../release-notes/1.0.1/zh-Hans.md)。下载仍以[最新已发布版本](https://github.com/aipoch/open-science/releases/latest)为准。
+> 💡 **AIPOCH Open-Science v1.0.2** _（2026 年 10 月更新）_。本次补丁新增五个科学连接器及更深入的 GDC 和 Ensembl 支持、回答卡片上准确的单选/多选标签、保持稳定不抖动的会话包对话框、更快的会话加载速度，以及一批会话、Notebook 和凭据恢复修复，此外还包含 Node 运行时安全补丁和 CLI 首次发布到 npm。详情请查看 [1.0.2 发行说明](../../release-notes/1.0.2/zh-Hans.md)。下载仍以[最新已发布版本](https://github.com/aipoch/open-science/releases/latest)为准。
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science 首屏横幅：Science, Open to All——开源、模型无关、可自托管的科学 AI 研究工作台" src="../images/readme/open-science-banner.png" />

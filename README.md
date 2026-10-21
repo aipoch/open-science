@@ -49,7 +49,7 @@ AIPOCH Open-Science supports computational and data-intensive research across di
 
 Completed research sessions can also be exported as portable `.science` packages for review, handoff, and archiving, with selected conversation branches, file versions, Notebook records, and verification evidence.
 
-> 💡 **AIPOCH Open-Science v1.0.1** _(updated October 2026)_. This patch adds one-click `.science` package imports from your browser, a clearer and more reliable in-app updater (especially on Windows), always-visible session wait states, security fixes for MCP OAuth credential handling, and a round of PDF, literature, and session-package fixes. See the [1.0.1 release notes](release-notes/1.0.1/en.md) for details. Downloads continue to follow the [latest published release](https://github.com/aipoch/open-science/releases/latest).
+> 💡 **AIPOCH Open-Science v1.0.2** _(updated October 2026)_. This patch adds five new Scientific Connectors plus deeper GDC and Ensembl support, honest single/multi-select labels on answer cards, a session package dialog that holds still, faster session loading, and a round of session, notebook, and credential-recovery fixes, plus Node runtime security patches and the CLI's first npm release. See the [1.0.2 release notes](release-notes/1.0.2/en.md) for details. Downloads continue to follow the [latest published release](https://github.com/aipoch/open-science/releases/latest).
 
 <p align="center">
  <img width="1920" height="1140" alt="AIPOCH Open-Science banner: Science, Open to All — an open-source, model-agnostic, self-hosted scientific AI research workbench" src="docs/images/readme/open-science-banner.png" />
