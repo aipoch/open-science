@@ -1,7 +1,8 @@
+import type { ProviderValidationSnapshot } from '@/lib/provider-validation-snapshot'
 // @vitest-environment jsdom
 import { act, createElement } from 'react'
 import { createRoot } from 'react-dom/client'
-import { afterEach, expect, it } from 'vitest'
+import { afterEach, beforeEach, expect, it } from 'vitest'
 import { createInitialSettingsState, useSettingsStore } from '@/stores/settings-store'
 import type { ProviderView, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
@@ -28,24 +29,29 @@ const disposers: (() => void)[] = []
 afterEach(() => {
   disposers.splice(0).forEach((dispose) => dispose())
 })
+beforeEach(() =>
+  useSettingsStore.setState({ ...createInitialSettingsState(), providers: [provider] })
+)
 const mount = (): {
   readonly result: AgentAuthenticationRecovery
-  error: (value: string | null) => void
+  error: (value: string | null, validations?: ProviderValidationSnapshot) => void
   select: (id: string, model?: string) => void
   session: (value: ChatSession) => void
   providers: (values: ProviderView[]) => void
 } => {
-  useSettingsStore.setState({ ...createInitialSettingsState(), providers: [provider] })
   const root = createRoot(document.createElement('div'))
   let result: AgentAuthenticationRecovery
   let error: string | null = 'Authentication required'
+  let errorValidations: ProviderValidationSnapshot | undefined
   let configuration: SessionAgentConfiguration = {
     providerId: provider.id,
     reasoningEffort: 'default'
   }
   let session: ChatSession | undefined
   const Harness = (): null => {
-    result = useAgentAuthenticationRecovery(session, 'draft', configuration, error, null)
+    result = useAgentAuthenticationRecovery(session, 'draft', configuration, error, null, {
+      composer: errorValidations
+    })
     return null
   }
   const render = (): void => act(() => root.render(createElement(Harness)))
@@ -55,8 +61,9 @@ const mount = (): {
     get result() {
       return result!
     },
-    error(value: string | null) {
+    error(value: string | null, validations?: ProviderValidationSnapshot) {
       error = value
+      errorValidations = validations
       render()
     },
     select(id: string, model?: string) {
@@ -86,7 +93,7 @@ it('retains recovery through cancellation/failure and restores only after succes
   hook.error('Authentication required')
   expect(hook.result.required).toBe(true)
 })
-it('does not transfer a failed operation or an old login completion to another provider', () => {
+it('keeps failures scoped to their provider and accepts recovery while another provider is selected', () => {
   const hook = mount()
   const other = { ...provider, id: 'other' }
   hook.providers([provider, other])
@@ -96,7 +103,7 @@ it('does not transfer a failed operation or an old login completion to another p
   hook.providers([{ ...provider, lastValidatedAt: 30 }, other])
   expect(hook.result.required).toBe(false)
   hook.select(provider.id)
-  expect(hook.result.required).toBe(true)
+  expect(hook.result.required).toBe(false)
 })
 it('does not classify permission, network or arbitrary messages as account recovery', () => {
   const hook = mount()
@@ -247,5 +254,62 @@ it('uses the provider default when validation records an effective model', () =>
   hook.providers([
     { ...custom, lastValidatedAt: 30, lastValidatedTarget: { model: 'default-model' } }
   ])
+  expect(hook.result.required).toBe(false)
+})
+
+it('restores every mounted session after shared validation without requiring each to open settings', () => {
+  const first = mount()
+  const second = mount()
+  expect(first.result.required).toBe(true)
+  expect(second.result.required).toBe(true)
+  act(() => first.result.openSettings())
+  first.providers([{ ...provider, lastValidatedAt: 30 }])
+  expect(first.result.required).toBe(false)
+  expect(second.result.required).toBe(false)
+})
+
+it('keeps restored live failures resolved across session switches and remounts, but blocks a new failure', () => {
+  const first = failedSession()
+  const second = { ...first, id: 'second' }
+  const hook = mount()
+  hook.error('Authentication required', { codex: 10 })
+  hook.session(first)
+  hook.session(second)
+  expect(hook.result.required).toBe(true)
+  hook.session(first)
+  hook.providers([{ ...provider, lastValidatedAt: 30 }])
+  hook.session(second)
+  expect(hook.result.required).toBe(false)
+  const remounted = mount()
+  remounted.error('Authentication required', { codex: 10 })
+  remounted.session(second)
+  expect(remounted.result.required).toBe(false)
+  remounted.error('Authentication required', { codex: 30 })
+  expect(remounted.result.required).toBe(true)
+})
+
+it('keeps another account blocked after the first account recovers', () => {
+  const first = mount()
+  const second = mount()
+  const other = { ...provider, id: 'other' }
+  first.providers([provider, other])
+  second.error(null)
+  second.select(other.id)
+  second.error('Authentication required', { codex: 10, other: 10 })
+  first.providers([{ ...provider, lastValidatedAt: 30 }, other])
+  expect(first.result.required).toBe(false)
+  expect(second.result.required).toBe(true)
+})
+
+it('restores a previously validated model when returning from a different model', () => {
+  const hook = mount()
+  hook.error(null)
+  hook.select(provider.id, 'chosen')
+  hook.providers([{ ...provider, lastValidatedAt: 30, lastValidatedTarget: { model: 'chosen' } }])
+  hook.session(failedSession())
+  expect(hook.result.required).toBe(false)
+  hook.select(provider.id, 'other')
+  expect(hook.result.required).toBe(true)
+  hook.select(provider.id, 'chosen')
   expect(hook.result.required).toBe(false)
 })

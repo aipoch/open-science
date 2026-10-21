@@ -683,12 +683,19 @@ const WorkspacePage = ({
   const authenticationOperationError = useWorkspaceOperationErrors((state) =>
     activeSession ? (state.errors[activeSession.id] ?? null) : actionError
   )
+  const authenticationOperationErrorValidations = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.providerValidations[activeSession.id] : undefined
+  )
   const authenticationRecovery = useAgentAuthenticationRecovery(
     activeSession,
     currentDraftKey,
     activeAgentConfiguration,
     attachmentError,
-    authenticationOperationError
+    authenticationOperationError,
+    {
+      composer: composer.view.errorProviderValidations,
+      action: authenticationOperationErrorValidations
+    }
   )
   const conversation = useWorkspaceConversationController({
     activeSession,

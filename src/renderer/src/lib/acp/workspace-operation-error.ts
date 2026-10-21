@@ -1,4 +1,8 @@
 import { create } from 'zustand'
+import {
+  captureProviderValidationSnapshot,
+  type ProviderValidationSnapshot
+} from '@/lib/provider-validation-snapshot'
 import { errorDetail } from '@/lib/error-detail'
 
 // Keep structured RPC fields in the local disclosure; message normalization is separate.
@@ -20,15 +24,16 @@ type OperationDiagnostic = { operation: 'resume'; detail: string; message: strin
 // Keep the Session identity so an asynchronous rejection cannot appear in another conversation.
 const useWorkspaceOperationErrors = create<{
   errors: Record<string, string>
+  providerValidations: Record<string, ProviderValidationSnapshot>
   diagnostics: Record<string, OperationDiagnostic>
-}>(() => ({ errors: {}, diagnostics: {} }))
+}>(() => ({ errors: {}, providerValidations: {}, diagnostics: {} }))
 
 const reportWorkspaceOperationError = (
   sessionId: string,
   error: string,
   diagnostic?: { operation: 'resume'; rawError: unknown }
 ): void => {
-  useWorkspaceOperationErrors.setState(({ errors, diagnostics }) => {
+  useWorkspaceOperationErrors.setState(({ errors, providerValidations, diagnostics }) => {
     const next = { ...diagnostics }
     if (diagnostic) {
       const raw = diagnostic.rawError
@@ -38,18 +43,31 @@ const reportWorkspaceOperationError = (
         detail: capturedErrorDetail(raw)
       }
     } else delete next[sessionId]
-    return { errors: { ...errors, [sessionId]: error }, diagnostics: next }
+    return {
+      errors: { ...errors, [sessionId]: error },
+      providerValidations: {
+        ...providerValidations,
+        [sessionId]: captureProviderValidationSnapshot()
+      },
+      diagnostics: next
+    }
   })
 }
 
 const clearWorkspaceOperationError = (sessionId: string): void => {
-  useWorkspaceOperationErrors.setState(({ errors, diagnostics }) => {
+  useWorkspaceOperationErrors.setState(({ errors, providerValidations, diagnostics }) => {
     if (!Object.hasOwn(errors, sessionId)) return { errors }
     const next = { ...errors }
     delete next[sessionId]
     const nextDiagnostics = { ...diagnostics }
     delete nextDiagnostics[sessionId]
-    return { errors: next, diagnostics: nextDiagnostics }
+    const nextProviderValidations = { ...providerValidations }
+    delete nextProviderValidations[sessionId]
+    return {
+      errors: next,
+      providerValidations: nextProviderValidations,
+      diagnostics: nextDiagnostics
+    }
   })
 }
 
