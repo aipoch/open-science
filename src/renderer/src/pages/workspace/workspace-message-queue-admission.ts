@@ -93,7 +93,7 @@ const queueAuthenticationRequired = (
     operation.errors[session.id]
   )
   if (!failure && !operationAuthenticationRequired) return false
-  const operationProviderId = operation.providerIds[session.id]
+  const operationProviderId = operation.providerTargets[session.id]?.providerId
   const providerId = configuration?.providerId ?? operationProviderId ?? failure?.providerId
   const provider = useSettingsStore.getState().providers.find(({ id }) => id === providerId)
   if (provider?.needsKey) return true

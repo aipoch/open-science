@@ -35,6 +35,11 @@ beforeEach(() =>
 const mount = (): {
   readonly result: AgentAuthenticationRecovery
   error: (value: string | null, validations?: ProviderValidationSnapshot) => void
+  operation: (
+    target: { providerId: string; model?: string },
+    validations: ProviderValidationSnapshot,
+    message?: string | null
+  ) => void
   select: (id: string, model?: string) => void
   session: (value: ChatSession) => void
   providers: (values: ProviderView[]) => void
@@ -43,14 +48,19 @@ const mount = (): {
   let result: AgentAuthenticationRecovery
   let error: string | null = 'Authentication required'
   let errorValidations: ProviderValidationSnapshot | undefined
+  let actionError: string | null = null
+  let actionTarget: { providerId: string; model?: string } | undefined
+  let actionValidations: ProviderValidationSnapshot | undefined
   let configuration: SessionAgentConfiguration = {
     providerId: provider.id,
     reasoningEffort: 'default'
   }
   let session: ChatSession | undefined
   const Harness = (): null => {
-    result = useAgentAuthenticationRecovery(session, 'draft', configuration, error, null, {
-      composer: errorValidations
+    result = useAgentAuthenticationRecovery(session, 'draft', configuration, error, actionError, {
+      composer: errorValidations,
+      action: actionValidations,
+      actionTarget
     })
     return null
   }
@@ -64,6 +74,12 @@ const mount = (): {
     error(value: string | null, validations?: ProviderValidationSnapshot) {
       error = value
       errorValidations = validations
+      render()
+    },
+    operation(target, validations, message = 'Authentication required') {
+      actionError = message
+      actionTarget = target
+      actionValidations = validations
       render()
     },
     select(id: string, model?: string) {
@@ -311,5 +327,88 @@ it('restores a previously validated model when returning from a different model'
   hook.select(provider.id, 'other')
   expect(hook.result.required).toBe(true)
   hook.select(provider.id, 'chosen')
+  expect(hook.result.required).toBe(false)
+})
+
+it('recovers the actual operation account and model independently of the current selection', () => {
+  const hook = mount()
+  hook.error(null)
+  const other = { ...provider, id: 'other', name: 'Other account' }
+  hook.providers([provider, other])
+  hook.select(provider.id, 'selected-model')
+  hook.operation({ providerId: 'other', model: 'requested-model' }, { codex: 10, other: 10 })
+  expect(hook.result.required).toBe(true)
+  expect(hook.result.provider?.id).toBe('other')
+  act(() => hook.result.openSettings())
+  expect(useSettingsStore.getState().pendingSettingsIntent?.route).toMatchObject({
+    panel: 'model',
+    view: { recoveryProviderId: 'other' }
+  })
+  hook.providers([{ ...provider, lastValidatedAt: 40 }, other])
+  expect(hook.result.required).toBe(true)
+  hook.providers([
+    provider,
+    { ...other, lastValidatedAt: 30, lastValidatedTarget: { model: 'selected-model' } }
+  ])
+  expect(hook.result.required).toBe(true)
+  hook.providers([
+    provider,
+    { ...other, lastValidatedAt: 40, lastValidatedTarget: { model: 'requested-model' } }
+  ])
+  expect(hook.result.required).toBe(false)
+  hook.select(provider.id, 'another-current-model')
+  expect(hook.result.required).toBe(false)
+  const remounted = mount()
+  remounted.error(null)
+  remounted.operation({ providerId: 'other', model: 'requested-model' }, { codex: 10, other: 10 })
+  expect(remounted.result.required).toBe(false)
+  remounted.operation({ providerId: 'other', model: 'requested-model' }, { codex: 10, other: 40 })
+  expect(remounted.result.required).toBe(true)
+})
+
+it('changes recovery identity when an otherwise identical failure targets another account', () => {
+  const hook = mount()
+  hook.error(null)
+  const other = { ...provider, id: 'other' }
+  hook.providers([provider, other])
+  hook.operation({ providerId: 'codex' }, { codex: 10, other: 10 })
+  hook.providers([{ ...provider, lastValidatedAt: 30 }, other])
+  expect(hook.result.required).toBe(false)
+  hook.operation({ providerId: 'other' }, { codex: 10, other: 10 })
+  expect(hook.result.required).toBe(true)
+  expect(hook.result.provider?.id).toBe('other')
+  hook.operation({ providerId: 'other' }, { codex: 10, other: 10 }, 'Network timeout')
+  expect(hook.result.required).toBe(false)
+  expect(hook.result.provider?.id).toBe('codex')
+})
+
+it('does not combine an operation failure with another account history or composer baseline', () => {
+  const hook = mount()
+  const other = { ...provider, id: 'other', lastValidatedAt: 15 }
+  hook.providers([provider, other])
+  hook.error('Authentication required', { codex: 10, other: 30 })
+  hook.session(failedSession())
+  hook.operation({ providerId: 'other' }, { codex: 10, other: 10 })
+  expect(hook.result.required).toBe(true)
+  expect(hook.result.provider?.id).toBe('codex')
+})
+
+it('returns to the selected account credential failure after the operation account recovers', () => {
+  const hook = mount()
+  hook.error(null)
+  const other = { ...provider, id: 'other' }
+  hook.providers([{ ...provider, needsKey: true }, other])
+  hook.operation({ providerId: 'other' }, { codex: 10, other: 10 })
+  expect(hook.result.provider?.id).toBe('other')
+  hook.providers([
+    { ...provider, needsKey: true },
+    { ...other, lastValidatedAt: 30 }
+  ])
+  expect(hook.result.required).toBe(true)
+  expect(hook.result.provider?.id).toBe('codex')
+  hook.providers([
+    { ...provider, lastValidatedAt: 40 },
+    { ...other, lastValidatedAt: 30 }
+  ])
   expect(hook.result.required).toBe(false)
 })

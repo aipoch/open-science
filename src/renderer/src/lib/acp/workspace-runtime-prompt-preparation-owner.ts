@@ -438,9 +438,8 @@ const prepareExistingWorkspacePrompt = async (
   } catch (error) {
     if (request.isCurrent?.() === false) return undefined
     reportWorkspaceOperationError(sessionId, getResumeFailureMessage(error), {
-      providerId:
-        request.selectedRuntime.agentConfiguration?.providerId ??
-        currentSession?.agentConfiguration?.providerId
+      providerTarget:
+        request.selectedRuntime.agentConfiguration ?? currentSession?.agentConfiguration
     })
     return undefined
   } finally {

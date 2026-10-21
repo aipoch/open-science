@@ -209,7 +209,7 @@ afterEach(() => {
   useWorkspaceOperationErrors.setState({
     errors: {},
     providerValidations: {},
-    providerIds: {},
+    providerTargets: {},
     diagnostics: {}
   })
   useProjectStore.setState(createInitialProjectState())
@@ -2826,7 +2826,7 @@ it.each(['durable', 'operation'])(
     if (source === 'operation')
       act(() =>
         reportWorkspaceOperationError(current.id, 'Authentication required', {
-          providerId: account.id
+          providerTarget: { providerId: account.id }
         })
       )
     hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
@@ -2976,7 +2976,7 @@ it.each(['failed', 'healthy'])(
       reportWorkspaceOperationError(
         running.id,
         'Agent session resume failed: Authentication required',
-        { providerId: 'failed' }
+        { providerTarget: { providerId: 'failed' } }
       )
     )
     current = { ...running, status: 'idle' }
@@ -3016,7 +3016,9 @@ it.each(['failed', 'healthy'])(
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()
     // A new failure at the new validation baseline still blocks manual retry.
     act(() =>
-      reportWorkspaceOperationError(running.id, 'Authentication required', { providerId: 'failed' })
+      reportWorkspaceOperationError(running.id, 'Authentication required', {
+        providerTarget: { providerId: 'failed' }
+      })
     )
     await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
     expect(input.runtime.sendMessage).not.toHaveBeenCalled()

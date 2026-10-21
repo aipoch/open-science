@@ -686,6 +686,9 @@ const WorkspacePage = ({
   const authenticationOperationErrorValidations = useWorkspaceOperationErrors((state) =>
     activeSession ? state.providerValidations[activeSession.id] : undefined
   )
+  const authenticationOperationTarget = useWorkspaceOperationErrors((state) =>
+    activeSession ? state.providerTargets[activeSession.id] : undefined
+  )
   const authenticationRecovery = useAgentAuthenticationRecovery(
     activeSession,
     currentDraftKey,
@@ -694,7 +697,8 @@ const WorkspacePage = ({
     authenticationOperationError,
     {
       composer: composer.view.errorProviderValidations,
-      action: authenticationOperationErrorValidations
+      action: authenticationOperationErrorValidations,
+      actionTarget: authenticationOperationTarget
     }
   )
   const conversation = useWorkspaceConversationController({

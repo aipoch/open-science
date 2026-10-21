@@ -22,18 +22,38 @@ export const useAgentAuthenticationRecovery = (
   configuration: SessionAgentConfiguration | undefined,
   composerError: string | null,
   actionError: string | null,
-  errorValidations: {
+  errorContext: {
     composer?: ProviderValidationSnapshot
     action?: ProviderValidationSnapshot
+    actionTarget?: Pick<SessionAgentConfiguration, 'providerId' | 'model'>
   } = {}
 ): AgentAuthenticationRecovery => {
   const providers = useSettingsStore((state) => state.providers)
-  const provider = providers.find(({ id }) => id === configuration?.providerId)
+  const capturedTarget = isAgentAuthenticationRequired(actionError)
+    ? errorContext.actionTarget
+    : undefined
+  const operationRestored =
+    capturedTarget &&
+    isProviderAuthenticationRestored(
+      providers.find(({ id }) => id === capturedTarget.providerId),
+      errorContext.action?.[capturedTarget.providerId] ?? 0,
+      capturedTarget.model
+    )
+  const operationTarget = operationRestored ? undefined : capturedTarget
+  const recoveryTarget = operationTarget ?? configuration
+  const provider = providers.find(({ id }) => id === recoveryTarget?.providerId)
   const sessionFailure = sessionAuthenticationFailure(session)
-  const selectedId = configuration?.providerId ?? ''
+  const selectedId = recoveryTarget?.providerId ?? ''
+  const sessionFailureAt =
+    !sessionFailure?.providerId || sessionFailure.providerId === selectedId
+      ? (sessionFailure?.at ?? 0)
+      : 0
   const liveFailures = [
-    { message: actionError, validations: errorValidations.action },
-    { message: composerError, validations: errorValidations.composer }
+    { message: operationRestored ? null : actionError, validations: errorContext.action },
+    {
+      message: operationTarget ? null : composerError,
+      validations: errorContext.composer
+    }
   ].filter(({ message }) => isAgentAuthenticationRequired(message))
   const liveError = liveFailures[0]?.message
   const validationAtFailure = liveFailures.some(({ validations }) => validations === undefined)
@@ -47,10 +67,12 @@ export const useAgentAuthenticationRecovery = (
     frame?.id,
     frame?.activeBranchId,
     sessionFailure?.at,
+    operationTarget?.providerId,
+    operationTarget?.model,
     liveFailures.map(({ validations }) => validations),
     error
   ])
-  const validCredential = isProviderAuthenticationRestored(provider, 0, configuration?.model)
+  const validCredential = isProviderAuthenticationRestored(provider, 0, recoveryTarget?.model)
   type Observation = {
     validatedAt?: number
     credentialRequired: boolean
@@ -63,7 +85,7 @@ export const useAgentAuthenticationRecovery = (
       error &&
       validationAtFailure !== undefined &&
       validCredential &&
-      provider!.lastValidatedAt! > Math.max(sessionFailure?.at ?? 0, validationAtFailure)
+      provider!.lastValidatedAt! > Math.max(sessionFailureAt, validationAtFailure)
         ? provider!.lastValidatedAt
         : undefined
   }
@@ -104,7 +126,7 @@ export const useAgentAuthenticationRecovery = (
     provider!.lastValidatedAt! >
       Math.max(
         validationAtFailure ?? observed.validatedAt ?? 0,
-        sessionFailure?.at ?? 0,
+        sessionFailureAt,
         observed.credentialRequired ? (observed.validatedAt ?? 0) : 0
       )
   ) {

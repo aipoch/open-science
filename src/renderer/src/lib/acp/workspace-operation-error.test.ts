@@ -10,7 +10,7 @@ beforeEach(() =>
   useWorkspaceOperationErrors.setState({
     errors: {},
     providerValidations: {},
-    providerIds: {},
+    providerTargets: {},
     diagnostics: {}
   })
 )
@@ -36,16 +36,20 @@ it('removes stale resume details when another operation replaces the error', () 
 })
 
 it('retains the initiating provider until the error is replaced or cleared', () => {
-  reportWorkspaceOperationError('first', 'Authentication required', { providerId: 'provider-b' })
-  reportWorkspaceOperationError('second', 'Authentication required', { providerId: 'provider-a' })
-  expect(useWorkspaceOperationErrors.getState().providerIds).toEqual({
-    first: 'provider-b',
-    second: 'provider-a'
+  reportWorkspaceOperationError('first', 'Authentication required', {
+    providerTarget: { providerId: 'provider-b', model: 'target-model' }
+  })
+  reportWorkspaceOperationError('second', 'Authentication required', {
+    providerTarget: { providerId: 'provider-a' }
+  })
+  expect(useWorkspaceOperationErrors.getState().providerTargets).toEqual({
+    first: { providerId: 'provider-b', model: 'target-model' },
+    second: { providerId: 'provider-a' }
   })
   reportWorkspaceOperationError('first', 'Another failure')
-  expect(useWorkspaceOperationErrors.getState().providerIds.first).toBeUndefined()
+  expect(useWorkspaceOperationErrors.getState().providerTargets.first).toBeUndefined()
   clearWorkspaceOperationError('second')
-  expect(useWorkspaceOperationErrors.getState().providerIds).not.toHaveProperty('second')
+  expect(useWorkspaceOperationErrors.getState().providerTargets).not.toHaveProperty('second')
 })
 
 it('retains structured thrown exception fields before normalizing its message', () => {

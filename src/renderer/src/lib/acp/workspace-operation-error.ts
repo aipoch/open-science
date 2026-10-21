@@ -18,6 +18,8 @@ const capturedErrorDetail = (raw: unknown): string => {
   return errorDetail(raw) ?? String(raw)
 }
 
+type ProviderTarget = { providerId: string; model?: string }
+
 type OperationDiagnostic = { operation: 'resume'; detail: string; message: string }
 
 // Operation failures belong to the initiating surface, never to the durable Session projection.
@@ -25,19 +27,19 @@ type OperationDiagnostic = { operation: 'resume'; detail: string; message: strin
 const useWorkspaceOperationErrors = create<{
   errors: Record<string, string>
   providerValidations: Record<string, ProviderValidationSnapshot>
-  providerIds: Record<string, string | undefined>
+  providerTargets: Record<string, ProviderTarget | undefined>
   diagnostics: Record<string, OperationDiagnostic>
-}>(() => ({ errors: {}, providerValidations: {}, providerIds: {}, diagnostics: {} }))
+}>(() => ({ errors: {}, providerValidations: {}, providerTargets: {}, diagnostics: {} }))
 
 const reportWorkspaceOperationError = (
   sessionId: string,
   error: string,
-  context?: { providerId?: string } & (
+  context?: { providerTarget?: ProviderTarget } & (
     { operation: 'resume'; rawError: unknown } | { operation?: undefined }
   )
 ): void => {
   useWorkspaceOperationErrors.setState(
-    ({ errors, providerValidations, providerIds, diagnostics }) => {
+    ({ errors, providerValidations, providerTargets, diagnostics }) => {
       const next = { ...diagnostics }
       if (context?.operation) {
         const raw = context.rawError
@@ -53,7 +55,12 @@ const reportWorkspaceOperationError = (
           ...providerValidations,
           [sessionId]: captureProviderValidationSnapshot()
         },
-        providerIds: { ...providerIds, [sessionId]: context?.providerId },
+        providerTargets: {
+          ...providerTargets,
+          [sessionId]: context?.providerTarget
+            ? { providerId: context.providerTarget.providerId, model: context.providerTarget.model }
+            : undefined
+        },
         diagnostics: next
       }
     }
@@ -62,7 +69,7 @@ const reportWorkspaceOperationError = (
 
 const clearWorkspaceOperationError = (sessionId: string): void => {
   useWorkspaceOperationErrors.setState(
-    ({ errors, providerValidations, providerIds, diagnostics }) => {
+    ({ errors, providerValidations, providerTargets, diagnostics }) => {
       if (!Object.hasOwn(errors, sessionId)) return { errors }
       const next = { ...errors }
       delete next[sessionId]
@@ -70,12 +77,12 @@ const clearWorkspaceOperationError = (sessionId: string): void => {
       delete nextDiagnostics[sessionId]
       const nextProviderValidations = { ...providerValidations }
       delete nextProviderValidations[sessionId]
-      const nextProviderIds = { ...providerIds }
-      delete nextProviderIds[sessionId]
+      const nextProviderTargets = { ...providerTargets }
+      delete nextProviderTargets[sessionId]
       return {
         errors: next,
         providerValidations: nextProviderValidations,
-        providerIds: nextProviderIds,
+        providerTargets: nextProviderTargets,
         diagnostics: nextDiagnostics
       }
     }

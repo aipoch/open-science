@@ -217,7 +217,7 @@ const rejectPreparedPrompt = async (
   message: string,
   preparation?: WorkspacePromptPreparation,
   rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void,
-  providerId?: string
+  providerTarget?: Pick<SessionAgentConfiguration, 'providerId' | 'model'>
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   const prompt = preparation
@@ -235,7 +235,7 @@ const rejectPreparedPrompt = async (
       reported = describeWorkspacePromptRollbackFailure(message, failure)
     } else if (!rolledBack) return
   }
-  reportWorkspaceOperationError(sessionId, reported, { providerId })
+  reportWorkspaceOperationError(sessionId, reported, { providerTarget })
   rejected?.(reported, sessionId, restoredAttachments)
 }
 const replayHistory = (
@@ -621,7 +621,7 @@ const rejectUnboundPendingPrompt = async (
   pending: SendWorkspaceMessageResult,
   message: string,
   rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void,
-  providerId?: string
+  providerTarget?: Pick<SessionAgentConfiguration, 'providerId' | 'model'>
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
   if (source?.isPending) markPendingSessionRetryable(source.id)
@@ -650,7 +650,7 @@ const rejectUnboundPendingPrompt = async (
       )
     }))
   }
-  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerId)
+  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerTarget)
 }
 
 const discardUnboundSeedSession = async (
@@ -714,7 +714,7 @@ const startPendingPrompt = (
           pending,
           createSessionFailureMessage(error),
           request.onPreparationRejected,
-          request.agentConfiguration?.providerId
+          request.agentConfiguration
         )
       }
       return undefined

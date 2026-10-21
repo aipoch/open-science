@@ -7804,7 +7804,11 @@ describe('workspace agent message sending', () => {
       text: 'Start a new analysis',
       cwd: '/workspace/project',
       agentFrameworkId: 'codex',
-      agentConfiguration: { providerId: 'explicit-create-provider', reasoningEffort: 'default' }
+      agentConfiguration: {
+        providerId: 'explicit-create-provider',
+        model: 'create-model',
+        reasoningEffort: 'default'
+      }
     })
     await flushRuntimeTasks()
 
@@ -7812,8 +7816,10 @@ describe('workspace agent message sending', () => {
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toBe('Authentication required')
     expect(
-      useWorkspaceOperationErrors.getState().providerIds[useSessionStore.getState().sessions[0].id]
-    ).toBe('explicit-create-provider')
+      useWorkspaceOperationErrors.getState().providerTargets[
+        useSessionStore.getState().sessions[0].id
+      ]
+    ).toEqual({ providerId: 'explicit-create-provider', model: 'create-model' })
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
@@ -7836,7 +7842,11 @@ describe('workspace agent message sending', () => {
         resetSessionContext: vi.fn(),
         sendPrompt: vi.fn()
       }
-      const configuration = { providerId: 'failed-provider', reasoningEffort: 'default' as const }
+      const configuration = {
+        providerId: 'failed-provider',
+        model: 'requested-model',
+        reasoningEffort: 'default' as const
+      }
       if (operation === 'send') {
         await sendWorkspaceMessage(runtime, {
           sessionId: 'session-1',
@@ -7853,9 +7863,10 @@ describe('workspace agent message sending', () => {
       }
       await flushRuntimeTasks()
       expect(runtime.resumeSession).toHaveBeenCalledOnce()
-      expect(useWorkspaceOperationErrors.getState().providerIds['session-1']).toBe(
-        'failed-provider'
-      )
+      expect(useWorkspaceOperationErrors.getState().providerTargets['session-1']).toEqual({
+        providerId: 'failed-provider',
+        model: 'requested-model'
+      })
       expect(useSessionStore.getState().sessions[0].agentConfiguration?.providerId).toBe(
         'stored-provider'
       )
