@@ -7814,13 +7814,12 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
   })
 
   it('does not restore a token cleared while its login probe is still running', async () => {
-    let finishProbe: (() => void) | undefined
-    const probe = vi.fn(
-      () =>
-        new Promise<void>((resolve) => {
-          finishProbe = resolve
-        })
-    )
+    const probeStarted = Promise.withResolvers<void>()
+    const finishProbe = Promise.withResolvers<void>()
+    const probe = vi.fn(() => {
+      probeStarted.resolve()
+      return finishProbe.promise
+    })
     const service = createService(undefined, { executeClaudeProbe: probe })
     await repository.setClaudeInfo({ resolvedPath: '/bin/claude', version: '2.1.118' })
     await repository.upsertProvider({
@@ -7830,17 +7829,24 @@ describe('SettingsService: claude-isolated login + status coordination', () => {
     })
 
     const login = service.loginIsolatedClaude('sk-ant-valid')
-    await vi.waitFor(() => expect(probe).toHaveBeenCalledOnce())
-    await service.logoutIsolatedClaude()
-    finishProbe?.()
+    try {
+      // Runtime preparation performs real filesystem work before the probe starts.
+      await probeStarted.promise
+      expect(probe).toHaveBeenCalledOnce()
+      await service.logoutIsolatedClaude()
+      finishProbe.resolve()
 
-    const result = await login
-    const stored = (await repository.getSettings()).providers.find(
-      (provider) => provider.id === 'builtin-claude-isolated'
-    )
-    expect(result).toMatchObject({ ok: true, applied: false })
-    expect(stored?.keyRef).toBeUndefined()
-    expect(stored?.lastValidatedAt).toBeUndefined()
+      const result = await login
+      const stored = (await repository.getSettings()).providers.find(
+        (provider) => provider.id === 'builtin-claude-isolated'
+      )
+      expect(result).toMatchObject({ ok: true, applied: false })
+      expect(stored?.keyRef).toBeUndefined()
+      expect(stored?.lastValidatedAt).toBeUndefined()
+    } finally {
+      finishProbe.resolve()
+      await login
+    }
   })
 
   it('discards an older probe when a newer setup-token login wins', async () => {
