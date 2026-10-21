@@ -484,7 +484,10 @@ describe('AcpRuntimeCoordinator', () => {
         expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
           outcome === 'reset'
             ? expect.not.objectContaining({ providerSessionId: 'provider-thread-1' })
-            : expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+            : expect.objectContaining({ providerSessionId: 'provider-thread-1' }),
+          ...(outcome === 'reset'
+            ? []
+            : [{ providerSessionId: 'provider-thread-1', writerReleased: true }])
         )
       } else expect(unavailable).not.toHaveBeenCalled()
     }
@@ -570,7 +573,8 @@ describe('AcpRuntimeCoordinator', () => {
       }
       await resume
       expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
-        expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+        expect.objectContaining({ providerSessionId: 'provider-thread-1' }),
+        { providerSessionId: 'provider-thread-1', writerReleased: true }
       )
       expect(writer).toBe(created.at(-1)!.runtime)
       expect(writer).not.toBe(owner.runtime)
@@ -627,7 +631,8 @@ describe('AcpRuntimeCoordinator', () => {
     await resume
     expect(owner.runtime.releaseSessionForTransfer).toHaveBeenCalledOnce()
     expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
-      expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+      expect.objectContaining({ providerSessionId: 'provider-thread-1' }),
+      { providerSessionId: 'provider-thread-1', writerReleased: true }
     )
   })
 

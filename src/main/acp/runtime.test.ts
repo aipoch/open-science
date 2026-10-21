@@ -18663,6 +18663,136 @@ describe('ACP runtime session management', () => {
     expect(mcpServerNamesFor(runtime, session.sessionId)).toEqual([])
   })
 
+  it.each(
+    (['codex-responses', 'codex-responses-compatibility', 'codex-bridge'] as const).flatMap(
+      (modelRoute) =>
+        (['resume', 'configuration'] as const).flatMap((failurePoint) =>
+          [false, true].map((sibling) => ({ modelRoute, failurePoint, sibling }))
+        )
+    )
+  )(
+    'transfers a $modelRoute Skill runtime writer and retries after $failurePoint failure (sibling: $sibling)',
+    async ({ modelRoute, failurePoint, sibling }) => {
+      const providerId = '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+      const siblingId = '019fb8c8-6c66-7f22-9653-17b5b287dbbc'
+      let acquired = false
+      let loaded = false
+      let failResume = true
+      const operations: string[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+        const process = new FakeAgentProcess()
+        let ownsWriter = false
+        process.on('exit', () => {
+          if (ownsWriter) loaded = false
+        })
+        startFakeAgent(process, [target?.model === 'new' ? siblingId : providerId], {
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+          onNewSession: ({ sessionId }) => {
+            if (sessionId === providerId) {
+              loaded = true
+              ownsWriter = true
+            }
+          },
+          onClose: (sessionId) => {
+            if (sessionId !== providerId) return
+            operations.push('close')
+            if (!loaded) throw new Error('Cannot close an inactive session')
+            loaded = false
+            ownsWriter = false
+          },
+          onResumeRequest: ({ sessionId }) => {
+            operations.push('resume')
+            expect(sessionId).toBe(providerId)
+            if (loaded) throw new Error('already has an active writer')
+            if (failResume && failurePoint === 'resume') {
+              failResume = false
+              throw acp.RequestError.internalError(
+                { errorKind: 'invalid_request' },
+                'model unavailable'
+              )
+            }
+            loaded = true
+            acquired = true
+            ownsWriter = true
+          },
+          onSetMode: ({ sessionId }) => {
+            if (
+              sessionId === providerId &&
+              acquired &&
+              failResume &&
+              failurePoint === 'configuration'
+            ) {
+              failResume = false
+              throw new Error('configuration failed')
+            }
+          }
+        })
+        return new AcpRuntime({
+          appVersion: '0.1.0',
+          defaultCwd: '/workspace',
+          callbacks,
+          resolveBackend: () => ({
+            framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+            backendId: 'codex:provider-a',
+            providerContinuityToken: 'transfer-provider',
+            modelRoute,
+            executablePath: '/bin/codex-acp',
+            env: {},
+            sessionOptions: {
+              openScienceSkillRuntime: {
+                command: '/node',
+                entryPath: '/main.js',
+                root: '/codex',
+                skillsDirectory: '/codex/skills'
+              }
+            },
+            ...(modelRoute === 'codex-bridge'
+              ? { responsesTransportLease: createBackendLeaseHarness().lease }
+              : {})
+          })
+        })
+      })
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'provider-a',
+        model: 'old',
+        reasoningEffort: 'high'
+      } as const
+      try {
+        const session = await coordinator.createSession({ cwd: '/workspace', agentTarget: target })
+        if (sibling)
+          await coordinator.createSession({
+            cwd: '/workspace',
+            agentTarget: { ...target, model: 'new' }
+          })
+        const request = {
+          permissionProfile: 'full' as const,
+          sessionId: session.sessionId,
+          providerSessionId: providerId,
+          cwd: '/workspace',
+          previousFrameworkId: 'codex' as const,
+          providerContinuityToken: 'transfer-provider',
+          agentTarget: { ...target, model: 'new' }
+        }
+        await expect(coordinator.resumeSession(request)).rejects.toThrow()
+        expect(operations).toEqual(
+          failurePoint === 'resume' ? ['close', 'resume'] : ['close', 'resume', 'close']
+        )
+        await expect(coordinator.resumeSession(request)).resolves.toMatchObject({
+          providerSessionId: providerId
+        })
+        expect(operations).toEqual(
+          failurePoint === 'resume'
+            ? ['close', 'resume', 'resume']
+            : ['close', 'resume', 'close', 'resume']
+        )
+        expect(loaded).toBe(true)
+      } finally {
+        await coordinator.disconnect()
+      }
+    }
+  )
+
   it('removes a session so later prompts cannot target it', async () => {
     const process = new FakeAgentProcess()
     const fakeAgent = startFakeAgent(process, ['remote-session-1'])

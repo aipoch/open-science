@@ -157,7 +157,10 @@ type PromptAdmissionGuard = <Result>(
 class AcpRuntimeCoordinator {
   private readonly runtimes = new Set<AcpRuntime>()
   // A failed incoming resume must retry the same provider history even after its writer detached.
-  private readonly transferProviderIds = new Map<string, string>()
+  private readonly sessionWriterTransfers = new Map<
+    string,
+    NonNullable<Parameters<AcpRuntime['resumeSession']>[1]>
+  >()
   private readonly retiredRuntimes = new Set<AcpRuntime>()
   private readonly sessionRuntimes = new Map<string, AcpRuntime>()
   private readonly sessionConnectionStatuses = new Map<string, AcpStateSnapshot['status']>()
@@ -632,7 +635,7 @@ class AcpRuntimeCoordinator {
     pinnedRuntime?: AcpRuntime
   ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
-    const retainedProviderId = this.transferProviderIds.get(request.sessionId)
+    const retainedProviderId = this.sessionWriterTransfers.get(request.sessionId)?.providerSessionId
     if (retainedProviderId) {
       request = { ...request, providerSessionId: retainedProviderId }
     }
@@ -726,18 +729,25 @@ class AcpRuntimeCoordinator {
         if (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption) {
           throw new Error('ACP session adoption was superseded before writer release')
         }
-        const providerSessionId =
-          (await owner.releaseSessionForTransfer(request.sessionId)) ??
-          this.transferProviderIds.get(request.sessionId)
+        const providerSessionId = await owner.releaseSessionForTransfer(request.sessionId)
         if (providerSessionId) {
-          this.transferProviderIds.set(request.sessionId, providerSessionId)
+          this.sessionWriterTransfers.set(request.sessionId, {
+            providerSessionId,
+            writerReleased: true
+          })
           request = { ...request, providerSessionId }
         }
         if (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption) {
           throw new Error('ACP session adoption was superseded before provider resume')
         }
       }
-      response = await runtime.resumeSession(request)
+      const writerTransfer = this.sessionWriterTransfers.get(request.sessionId)
+      response = writerTransfer
+        ? await runtime.resumeSession(
+            { ...request, providerSessionId: writerTransfer.providerSessionId },
+            writerTransfer
+          )
+        : await runtime.resumeSession(request)
     } catch (error) {
       if (
         transfersOwnership &&
@@ -783,7 +793,7 @@ class AcpRuntimeCoordinator {
       this.sessionRuntimes.delete(request.sessionId)
       this.sessionConnectionStatuses.delete(request.sessionId)
     }
-    this.transferProviderIds.delete(request.sessionId)
+    this.sessionWriterTransfers.delete(request.sessionId)
     this.bindSessionRuntime(response.sessionId, runtime)
     // The incoming runtime's attached snapshot is deliberately ignored while adoption is pending.
     // Commit its current connection status together with ownership so a stale status from the
@@ -821,7 +831,7 @@ class AcpRuntimeCoordinator {
     this.runtimeActivityCounts.set(runtime, (this.runtimeActivityCounts.get(runtime) ?? 0) + 1)
     try {
       const response = await runtime.resetSessionContext(request)
-      this.transferProviderIds.delete(request.sessionId)
+      this.sessionWriterTransfers.delete(request.sessionId)
       this.bindSessionRuntime(response.sessionId, runtime)
       this.lastRuntime = runtime
       return response
@@ -1706,7 +1716,7 @@ class AcpRuntimeCoordinator {
       await this.delegatedWork?.deleteSession(request.sessionId)
       await this.teardownCallbacks.beforeSessionDelete?.(request.sessionId)
       await runtime.deleteSession(request)
-      this.transferProviderIds.delete(request.sessionId)
+      this.sessionWriterTransfers.delete(request.sessionId)
     } catch (error) {
       this.teardownCallbacks.afterSessionDelete?.(request.sessionId, true)
       throw error
@@ -2224,7 +2234,7 @@ class AcpRuntimeCoordinator {
   }
 
   private bindSessionRuntime(sessionId: string, runtime: AcpRuntime): void {
-    this.transferProviderIds.delete(sessionId)
+    this.sessionWriterTransfers.delete(sessionId)
     this.sessionRuntimes.set(sessionId, runtime)
     if (!this.isolatedRuntimes.has(runtime)) return
     // Creation starts before the provider assigns an id. Replace its provisional scope so future
@@ -2663,7 +2673,7 @@ class AcpRuntimeCoordinator {
       }
     }
     this.runtimes.clear()
-    this.transferProviderIds.clear()
+    this.sessionWriterTransfers.clear()
     this.retiredRuntimes.clear()
     this.targetedRuntimes.clear()
     this.sessionRuntimes.clear()

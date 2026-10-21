@@ -112,7 +112,10 @@ import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpProviderSessionCreator } from './provider-session-creator'
-import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import type {
+  AcpProviderSessionResumer,
+  AcpSessionWriterTransfer
+} from './provider-session-resumer'
 import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
 import type {
   ReviewerSessionDisposition,
@@ -925,9 +928,12 @@ class AcpRuntime {
   }
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
-  async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+  async resumeSession(
+    request: AcpResumeSessionRequest,
+    writerTransfer?: AcpSessionWriterTransfer
+  ): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      const resumed = await this.providerSessionResumer.resume(request)
+      const resumed = await this.providerSessionResumer.resume(request, writerTransfer)
       if (resumed.contextReset) {
         const contextResetSessionIds =
           this.restoredContinuationContextResetSessionIds ?? new Set<string>()
