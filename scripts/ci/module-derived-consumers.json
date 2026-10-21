@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "modules": {
     "acp_runtime": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "acp_session_policy": ["src/main/credential-identity/recovery.test.ts"],
     "artifact_content_contracts": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -135,10 +136,14 @@
       "src/renderer/src/pages/workspace/composer/ArtifactMentionPopup.render.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
+    "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
+    "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
     "delegation_execution_contracts": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "durable_files": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/desktop-update-integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -151,6 +156,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "environment_contracts": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -189,8 +195,10 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "framework_installation": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "framework_process_launch": ["src/main/credential-identity/recovery.test.ts"],
     "host_bounded_io": [
       "src/main/image-preview-resize.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -200,6 +208,7 @@
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
+    "host_http_transport": ["src/main/credential-identity/recovery.test.ts"],
     "host_process_runtime": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
@@ -268,6 +277,7 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
     "main_agent_framework": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "main_archive": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
@@ -398,6 +408,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "native_process_tree": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "notebook_analysis": [
@@ -469,6 +480,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_citations": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
@@ -497,6 +509,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "package_literature_library": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
@@ -745,8 +758,11 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "provider_credentials": ["src/main/credential-identity/recovery.test.ts"],
+    "provider_transport": ["src/main/credential-identity/recovery.test.ts"],
     "providers_package": [
       "src/main/credential-identity/inventory-handoff.test.ts",
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/desktop-recovery-readiness.test.ts",
       "src/main/desktop-runtime-adoption.integration.test.ts",
       "src/main/desktop-runtime-controller.integration.test.ts",
@@ -1099,6 +1115,7 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "resilient_download": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1241,6 +1258,7 @@
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
     "settings_backend_resolution": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "settings_extension_presentation": [
@@ -1260,17 +1278,21 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx"
     ],
+    "settings_proxy_runtime": ["src/main/credential-identity/recovery.test.ts"],
     "settings_record_contracts": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
     "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
+    "settings_resource_policy": ["src/main/credential-identity/recovery.test.ts"],
     "shared_fuzzy_match": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "shared_promise_identity": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "skill_package": [
+      "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
@@ -1299,6 +1321,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
+    "skill_runtime_transport": ["src/main/credential-identity/recovery.test.ts"],
     "specialist_package": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/components/global-search/search-loading.test.tsx",
