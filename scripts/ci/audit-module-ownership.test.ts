@@ -211,7 +211,9 @@ describe('complete module ownership', () => {
     const path = 'src/shared/reviewer.ts'
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     expect(plan.mode).toBe('full')
-    expect(plan.reasonChains.join('\n')).toContain('Shared cross-process contracts')
+    expect(plan.reasonChains.join('\n')).toContain(
+      loadModuleImpactManifest().modules.shared_conversation_contracts.fullTestReason
+    )
     expect(plan.reasonChains.join('\n')).not.toContain('unknown module owner')
     expect(createModuleTestPlan('shared_conversation_contracts').mode).toBe('full')
   })
