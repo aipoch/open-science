@@ -255,6 +255,7 @@ describe('Artifact Provenance repository architecture', () => {
         'replayVersionWithinSession',
         'replayRoutingPublisher',
         'reconcileSessionWithinSession',
+        'hasRecoverableFinalization',
         'inspectVersionContent',
         'openVersionContent',
         'resolveOwnedVersion',

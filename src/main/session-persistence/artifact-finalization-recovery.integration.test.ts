@@ -31,7 +31,9 @@ import {
   FinalizedArtifactBindingConflictError,
   ProvenanceMessageSnapshotRepository
 } from '../artifacts/provenance-message-snapshot'
+import { ArtifactProvenanceFinalizationRecovery } from '../artifacts/provenance-finalization-recovery'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ArtifactProvenanceStagingRecovery } from '../artifacts/provenance-staging-recovery'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { ArtifactRepository } from '../artifacts/repository'
 import { createArtifactHandlers } from '../artifacts/ipc'
@@ -1435,10 +1437,18 @@ describe('artifact finalization startup recovery', () => {
     })
     await rm(join(storageRoot, ...snapshot.storageKey.split('/')))
     // Model a crash after the snapshot and Artifact Version commit but before recovered artifact
-    // metadata reached Session JSON.
+    // metadata reached Session JSON. A crash restarts the process, so do not reuse the coordinator's
+    // in-memory hydration cache.
     await sessions.saveSession(originalSession)
 
-    const recovered = await coordinator.loadAll()
+    const recovered = await new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      snapshots,
+      undefined,
+      prepared.provenance
+    ).loadAll()
 
     expect(recovered.sessions[0].messages[1].artifactIds).toEqual([prepared.version.versionId])
     await expect(
@@ -2010,6 +2020,37 @@ describe('artifact finalization startup recovery', () => {
     await provenance.reconcileSession(PROJECT_ID, SESSION_ID, durableSession)
 
     expect(discover).toHaveBeenCalledTimes(2)
+  })
+
+  it('skips only finalization for a clean idle Session with a prepared Project snapshot', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance } = await prepareRecovery(compatibility)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    await coordinator.loadAll()
+
+    const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    if (!durableSession) throw new Error('Recovery fixture Session is missing.')
+    expect(durableSession.status).toBe('idle')
+    const projectReconciliation = await provenance.prepareProjectReconciliation(PROJECT_ID)
+    const finalization = vi.spyOn(
+      ArtifactProvenanceFinalizationRecovery.prototype,
+      'reconcileSession'
+    )
+    const staging = vi.spyOn(ArtifactProvenanceStagingRecovery.prototype, 'reconcileSession')
+
+    await provenance.reconcileSession(PROJECT_ID, SESSION_ID, durableSession, {
+      projectReconciliation
+    })
+
+    expect(finalization).not.toHaveBeenCalled()
+    expect(staging).toHaveBeenCalledOnce()
   })
 
   it('recovers a pending Version when another Version from the same run is already linked', async () => {

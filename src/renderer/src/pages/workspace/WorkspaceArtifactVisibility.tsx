@@ -67,6 +67,30 @@ const resolveMessageArtifactScope = (
 
 const isSafeVersionId = (value: string): boolean => /^[A-Za-z0-9][A-Za-z0-9._-]*$/u.test(value)
 
+const ARTIFACT_DESCRIPTOR_CACHE_LIMIT = 2_000
+const historicalArtifactDescriptorCache = new Map<string, MessageArtifact>()
+const artifactDescriptorCacheKey = (
+  projectId: string,
+  sessionId: string,
+  versionId: string
+): string => `${projectId}\0${sessionId}\0${versionId}`
+const cacheHistoricalArtifactDescriptor = (
+  projectId: string,
+  sessionId: string,
+  artifact: MessageArtifact
+): void => {
+  const versionId = artifact.versionId
+  if (!versionId) return
+  const key = artifactDescriptorCacheKey(projectId, sessionId, versionId)
+  historicalArtifactDescriptorCache.delete(key)
+  historicalArtifactDescriptorCache.set(key, artifact)
+  while (historicalArtifactDescriptorCache.size > ARTIFACT_DESCRIPTOR_CACHE_LIMIT) {
+    const oldest = historicalArtifactDescriptorCache.keys().next().value
+    if (oldest === undefined) break
+    historicalArtifactDescriptorCache.delete(oldest)
+  }
+}
+
 const toResolvedMessageArtifact = (descriptor: ArtifactVersionDescriptor): MessageArtifact => ({
   id: descriptor.versionId,
   artifactId: descriptor.artifactId,
@@ -135,64 +159,81 @@ const useHistoricalArtifactDescriptors = (
         .filter((artifact) => !artifact.versionId || artifact.isPublished !== undefined)
         .map((artifact) => artifact.id)
     )
-    const unresolvedVersionIds = [
+    const unresolvedVersionIds: string[] = []
+    for (const versionId of [
       ...new Set([
         ...messages.flatMap((message) => message.artifactIds ?? []),
         ...projectedVersionIds
       ])
-    ].filter(
-      (versionId) =>
-        !storedArtifactIds.has(versionId) && !cache.has(versionId) && isSafeVersionId(versionId)
-    )
-    if (unresolvedVersionIds.length === 0) return
-    for (const versionId of unresolvedVersionIds) cache.set(versionId, undefined)
+    ]) {
+      if (storedArtifactIds.has(versionId) || cache.has(versionId) || !isSafeVersionId(versionId)) {
+        continue
+      }
+      const cached = historicalArtifactDescriptorCache.get(
+        artifactDescriptorCacheKey(projectId, sessionId, versionId)
+      )
+      if (cached) {
+        cache.set(versionId, cached)
+        continue
+      }
+      cache.set(versionId, undefined)
+      unresolvedVersionIds.push(versionId)
+    }
+    if (unresolvedVersionIds.length === 0) {
+      setResolved({ sessionId, artifactsByVersionId: new Map(cache) })
+      return
+    }
 
     void (async () => {
+      const batches: string[][] = []
       for (
         let index = 0;
         index < unresolvedVersionIds.length;
         index += MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS
       ) {
-        const versionIds = unresolvedVersionIds.slice(
-          index,
-          index + MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS
-        )
-        try {
-          const descriptors = await window.api.artifacts.resolveVersionDescriptors({
-            projectId,
-            appSessionId: sessionId,
-            versionIds
-          })
-          for (const descriptor of descriptors) {
-            cache.set(descriptor.versionId, toResolvedMessageArtifact(descriptor))
-          }
-        } catch {
-          let shouldRetry = false
-          for (const versionId of versionIds) {
-            cache.delete(versionId)
-            if (!retriedVersionIdsRef.current.has(versionId)) {
-              retriedVersionIdsRef.current.add(versionId)
-              shouldRetry = true
+        batches.push(unresolvedVersionIds.slice(index, index + MAX_ARTIFACT_VERSION_DESCRIPTOR_IDS))
+      }
+      let shouldRetry = false
+      await Promise.all(
+        batches.map(async (versionIds) => {
+          try {
+            const descriptors = await window.api.artifacts.resolveVersionDescriptors({
+              projectId,
+              appSessionId: sessionId,
+              versionIds
+            })
+            for (const descriptor of descriptors) {
+              const artifact = toResolvedMessageArtifact(descriptor)
+              cache.set(descriptor.versionId, artifact)
+              cacheHistoricalArtifactDescriptor(projectId, sessionId, artifact)
             }
-          }
-          if (shouldRetry) {
-            await flushSessionPersistence()
             if (
               mountedRef.current &&
               resolvedRef.current.sessionId === sessionId &&
               resolvedRef.current.artifactsByVersionId === cache
             ) {
-              setRetryToken((token) => token + 1)
+              setResolved({ sessionId, artifactsByVersionId: new Map(cache) })
+            }
+          } catch {
+            for (const versionId of versionIds) {
+              cache.delete(versionId)
+              if (!retriedVersionIdsRef.current.has(versionId)) {
+                retriedVersionIdsRef.current.add(versionId)
+                shouldRetry = true
+              }
             }
           }
+        })
+      )
+      if (shouldRetry) {
+        await flushSessionPersistence()
+        if (
+          mountedRef.current &&
+          resolvedRef.current.sessionId === sessionId &&
+          resolvedRef.current.artifactsByVersionId === cache
+        ) {
+          setRetryToken((token) => token + 1)
         }
-      }
-      if (
-        mountedRef.current &&
-        resolvedRef.current.sessionId === sessionId &&
-        resolvedRef.current.artifactsByVersionId === cache
-      ) {
-        setResolved({ sessionId, artifactsByVersionId: new Map(cache) })
       }
     })()
   }, [artifacts, messages, projectId, projectedVersionIds, retryToken, sessionId])
@@ -283,5 +324,9 @@ const useWorkspaceArtifactVisibility = (
   return { artifactsForMessage }
 }
 
-export { useWorkspaceArtifactVisibility }
+const resetHistoricalArtifactDescriptorCache = (): void => {
+  historicalArtifactDescriptorCache.clear()
+}
+
+export { resetHistoricalArtifactDescriptorCache, useWorkspaceArtifactVisibility }
 export type { MessageArtifact }
