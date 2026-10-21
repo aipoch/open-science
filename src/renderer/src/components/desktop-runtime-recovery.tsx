@@ -19,7 +19,9 @@ import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 export function DesktopRuntimeRecovery(): React.JSX.Element | null {
   const { t } = useTranslation()
   const state = useDesktopRuntimeRecoveryStore()
-  const updating = useUpdateStore((store) => store.status.state === 'applying')
+  const updateOwnsRecovery = useUpdateStore(
+    (store) => store.status.state === 'applying' || Boolean(store.status.recovery)
+  )
   const contentRef = useRef<HTMLDivElement>(null)
   const previousFocus = useRef<HTMLElement | null>(null)
   useEffect(() => {
@@ -86,8 +88,8 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
       live = false
     }
   }, [state.epoch, state.phase])
-  // The update dialog owns planned shutdown; an aborted/failed update restores recovery here.
-  if (state.phase === 'connected' || (state.closing && updating)) return null
+  // Planned shutdown remains owned by the update dialog until its recovery context settles.
+  if (state.phase === 'connected' || (state.closing && updateOwnsRecovery)) return null
   const busy = state.phase === 'reconnecting' || state.phase === 'reconciling'
   return (
     <AlertDialog.Root open>

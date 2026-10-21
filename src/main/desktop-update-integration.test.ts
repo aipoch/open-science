@@ -596,6 +596,8 @@ it.each([true, false])(
 describe('manual installer live safety gate', () => {
   it('checks current runtime control, installation occupancy and active work without stopping services', async () => {
     const { hooks, invoke, stop } = setup()
+    // The real inspectDesktopUpdate contract reports reaped:false because it never stops Node.
+    invoke.mockResolvedValue({ completed: true, reaped: false, blockedBy: [] })
     expect(await hooks.inspectManualInstallSafety!()).toBe(true)
     expect(state.availability).toHaveBeenCalled()
     expect(invoke).toHaveBeenCalledWith('desktop:update-inspect')

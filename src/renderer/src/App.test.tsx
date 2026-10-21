@@ -1182,6 +1182,17 @@ describe('App startup routing', () => {
     expect(mocks.lifecycleSync).toHaveBeenLastCalledWith({ isSessionPersistenceHydrated: false })
 
     mocks.update.status.state = 'error'
+    Object.assign(mocks.update.status, {
+      recovery: {
+        phase: 'stopped',
+        runtime: 'stopped-clean',
+        installation: 'unchanged',
+        canRecover: true
+      }
+    })
+    await act(async () => root.render(<App />))
+    expect(mocks.presentationProps.update?.active).toBe(true)
+    Reflect.deleteProperty(mocks.update.status, 'recovery')
     await act(async () => root.render(<App />))
     expect(mocks.presentationProps.update?.active).toBe(false)
   })

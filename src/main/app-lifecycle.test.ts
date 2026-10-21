@@ -2223,3 +2223,15 @@ it('still flushes an ordinary quit even if an old update preparation flag remain
   await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
   expect(h.flushSessionPersistence).toHaveBeenCalledTimes(2)
 })
+
+it('honors an owner-confirmed stopped update when the user quits from handoff recovery', async () => {
+  const h = setup({
+    rendererPersistencePreparedForUpdate: () => true,
+    shutdownTrigger: () => 'update'
+  })
+  h.closeOpts[0].requestQuit(true)
+  h.app.emit('before-quit')
+  await vi.waitFor(() => expect(h.app.exit).toHaveBeenCalledWith(0))
+  expect(h.flushSessionPersistence).not.toHaveBeenCalled()
+  expect(h.shutdownBackends).toHaveBeenCalledOnce()
+})

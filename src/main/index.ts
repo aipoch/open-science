@@ -1828,6 +1828,12 @@ async function startDesktop(): Promise<void> {
     },
     flushSessionPersistence: createElectronSessionPersistenceFlush(() => getMainWindow()),
     rendererPersistencePreparedForUpdate: () => rendererPreparedForUpdate && runtimeStopped,
+    shutdownTrigger: () => {
+      const trigger = currentApplicationShutdownTrigger()
+      // A user can quit from failed handoff recovery after the final save and clean stop.
+      // Keep that update shutdown proof; an ordinary quit after service recovery still saves.
+      return trigger === 'quit' && rendererPreparedForUpdate && runtimeStopped ? 'update' : trigger
+    },
     createConfirmClose: (getWindow) =>
       createElectronCloseConfirm(
         getWindow,

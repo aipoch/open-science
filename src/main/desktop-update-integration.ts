@@ -400,8 +400,8 @@ export function createDesktopUpdateIntegration(options: {
           !legacy &&
           !readiness.reason &&
           !readiness.blockedBy?.length &&
-          readiness.completed === true &&
-          readiness.reaped === true
+          // Inspection does not stop or reap the running service. Occupancy was checked above.
+          readiness.completed === true
         )
       } catch {
         return false
