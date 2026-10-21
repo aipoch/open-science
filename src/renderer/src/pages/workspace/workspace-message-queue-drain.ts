@@ -46,7 +46,6 @@ const dispatchQueuedSession = (
     }
   }
   let item: MessageQueueItem | undefined
-  const authenticationRequired = queueAuthenticationRequired(session)
   // Only skip terminal automatic heads; reserve at most one send per drain.
   for (
     let remainingHeads = owner.itemsFor(sessionId).length;
@@ -57,7 +56,7 @@ const dispatchQueuedSession = (
     if (!head || head.phase === 'sending' || head.phase === 'error') return
     const contextError =
       queueItemContextError(session, head) ??
-      (authenticationRequired
+      (queueAuthenticationRequired(session, head.agentConfiguration)
         ? { kind: 'send' as const, detail: 'Authentication required' }
         : undefined)
     if (!contextError) {
@@ -81,7 +80,7 @@ const dispatchQueuedSession = (
   }
   if (!item) return
   if (!current.isSpecialistReady(sessionId)) return
-  if (!queueSessionIsSendable(current, session)) return
+  if (!queueSessionIsSendable(current, session, item.agentConfiguration)) return
 
   owner.replaceItem(sessionId, item.id, {
     phase: 'sending',
@@ -157,7 +156,10 @@ const dispatchQueuedSession = (
       if (!result) {
         const latest = owner.resolveOptions(optionsRef.current)
         const latestSession = latest.getSession(sessionId)
-        if (latestSession && !queueSessionIsSendable(latest, latestSession)) {
+        if (
+          latestSession &&
+          !queueSessionIsSendable(latest, latestSession, item.agentConfiguration)
+        ) {
           if (owner.dispatches.get(sessionId) === activeDispatch) {
             owner.dispatches.delete(sessionId)
           }
@@ -251,7 +253,7 @@ const sendQueuedItemNow = async (
         owner.discardSession(sessionId, current.composer.discardSnapshot)
         return false
       }
-      if (queueAuthenticationRequired(liveSession)) {
+      if (queueAuthenticationRequired(liveSession, item.agentConfiguration)) {
         owner.replaceItem(sessionId, itemId, {
           phase: 'error',
           error: { kind: 'send', detail: 'Authentication required' },
@@ -352,7 +354,11 @@ const sendQueuedItemNow = async (
       const latest = owner.resolveOptions(optionsRef.current)
       const latestSession = latest.getSession(sessionId)
       const latestLiveTurn = isQueueLiveTurn(latestSession)
-      if (!latestSession || !latestLiveTurn || queueSessionIsSendable(latest, latestSession)) {
+      if (
+        !latestSession ||
+        !latestLiveTurn ||
+        queueSessionIsSendable(latest, latestSession, item.agentConfiguration)
+      ) {
         owner.replaceItem(sessionId, itemId, {
           phase: 'queued',
           error: undefined,

@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { act, createElement } from 'react'
+import { createLinearConversationGraph } from '../../../../shared/conversation-graph'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
@@ -2741,7 +2742,11 @@ it('pauses queued prompts on authentication failure and requires explicit retry 
   const hook = renderController(input)
   mounted.push(hook)
   act(() =>
-    hook.result.current.lifecycle.enqueue({ ...admission('keep queued'), session: running })
+    hook.result.current.lifecycle.enqueue({
+      ...admission('keep queued'),
+      session: running,
+      agentConfiguration: running.agentConfiguration
+    })
   )
   current = failed
   hook.rerender({ ...input, activeSession: failed, promptInFlightSessionIds: [] })
@@ -2798,7 +2803,8 @@ it('settles automatic authentication failures without trapping later user messag
       .then(completed)
     hook.result.current.lifecycle.enqueue({
       ...admission('continue after sign-in'),
-      session: running
+      session: running,
+      agentConfiguration: running.agentConfiguration
     })
   })
   current = { ...running, status: 'error', error: 'Authentication required', updatedAt: 20 }
@@ -2823,3 +2829,88 @@ it('settles automatic authentication failures without trapping later user messag
   expect(hook.result.current.items).toEqual([])
   expect(hook.result.current.hasPendingWork).toBe(false)
 })
+
+it.each([
+  { target: 'healthy', currentProvider: 'healthy', needsKey: false, blocked: false },
+  { target: 'healthy', currentProvider: 'failed', needsKey: false, blocked: false },
+  { target: 'failed', currentProvider: 'healthy', needsKey: false, blocked: true },
+  { target: 'healthy', currentProvider: 'healthy', needsKey: true, blocked: true }
+])(
+  'gates queued authentication by the captured send target: %j',
+  async ({ target, currentProvider, needsKey, blocked }) => {
+    const { useSettingsStore } = await import('@/stores/settings-store')
+    const account = {
+      type: 'codex-isolated' as const,
+      name: 'Codex',
+      hasKey: true,
+      needsKey: false,
+      models: [],
+      supportsImageInput: true,
+      lastValidatedAt: 1
+    }
+    useSettingsStore.setState({
+      providers: [
+        { ...account, id: 'failed' },
+        { ...account, id: 'healthy', needsKey }
+      ]
+    })
+    const failed: ChatSession = {
+      ...session('error'),
+      error: 'Authentication required',
+      updatedAt: 20,
+      agentConfiguration: { providerId: currentProvider, reasoningEffort: 'default' },
+      messages: [
+        {
+          id: 'failed-prompt',
+          role: 'user',
+          content: 'original',
+          status: 'complete',
+          eventIds: [],
+          createdAt: 1,
+          updatedAt: 20,
+          turnOutcome: { kind: 'failed', settledAt: 20, error: 'Authentication required' }
+        }
+      ]
+    }
+    failed.conversationGraph = createLinearConversationGraph({
+      sessionId: failed.id,
+      messages: failed.messages,
+      providerId: 'failed',
+      frameworkId: 'codex',
+      createdAt: 1,
+      updatedAt: 20
+    })
+    const running = { ...failed, status: 'running' as const }
+    let current = running as ChatSession
+    const input = options(running, { getSession: () => current })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const configuration = { providerId: target, reasoningEffort: 'default' as const }
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('queued follow-up'),
+        session: running,
+        agentConfiguration: configuration
+      })
+    )
+    current = failed
+    hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
+    await act(async () => {})
+    if (blocked) {
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+      expect(hook.result.current.items[0]).toMatchObject({
+        phase: 'error',
+        error: { detail: 'Authentication required' }
+      })
+      await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+      expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    } else {
+      expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+        expect.objectContaining({
+          text: 'queued follow-up',
+          agentConfiguration: configuration
+        })
+      )
+    }
+  }
+)

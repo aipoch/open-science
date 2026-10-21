@@ -81,19 +81,24 @@ const queuedAdmissionFailure = (
     : 'The queued message was not admitted.'
 }
 
-const queueAuthenticationRequired = (session: ChatSession): boolean => {
+const queueAuthenticationRequired = (
+  session: ChatSession,
+  configuration = session.agentConfiguration
+): boolean => {
   const failure = sessionAuthenticationFailure(session)
   if (!failure) return false
-  const providerId = failure.providerId ?? session.agentConfiguration?.providerId
+  const providerId = configuration?.providerId ?? failure.providerId
   const provider = useSettingsStore.getState().providers.find(({ id }) => id === providerId)
-  return !isProviderAuthenticationRestored(provider, failure.at, session.agentConfiguration?.model)
+  if (failure.providerId && failure.providerId !== providerId) return provider?.needsKey === true
+  return !isProviderAuthenticationRestored(provider, failure.at, configuration?.model)
 }
 
 const queueSessionIsSendable = (
   options: WorkspaceMessageQueueControllerOptions,
-  session: ChatSession
+  session: ChatSession,
+  configuration = session.agentConfiguration
 ): boolean =>
-  !queueAuthenticationRequired(session) &&
+  !queueAuthenticationRequired(session, configuration) &&
   !options.isPersistenceBlocked(session.id) &&
   session.archivedAt === undefined &&
   (options.isProjectActive?.(session.projectId) ?? true) &&
