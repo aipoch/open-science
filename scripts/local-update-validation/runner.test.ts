@@ -657,6 +657,48 @@ describe('evidence evaluation', () => {
 })
 
 describe('read-only task and recovery observations', () => {
+  it('observes an ephemeral-port recovery through its matching live IPC owner', async () => {
+    const root = await temp()
+    const config = {
+      runRoot: root,
+      configRoot: root,
+      runId: 'ipc-observation',
+      scenario: 'manual-local',
+      eventsPath: join(root, 'app-events.jsonl')
+    }
+    const path = join(root, 'host.sock')
+    await writeFile(join(root, 'fixture-manifest.json'), JSON.stringify({ workspace: root }))
+    const service = createTcpServer((socket) => socket.end())
+    await new Promise<void>((resolve) => service.listen(path, resolve))
+    try {
+      const event = {
+        type: 'runtime-recovered',
+        runId: config.runId,
+        scenario: config.scenario,
+        pid: process.pid,
+        port: 0,
+        generation: 'current'
+      }
+      await writeFile(config.eventsPath, JSON.stringify(event) + '\n')
+      const owner = { pid: process.pid, desktop: { path, generation: 'stale' } }
+      await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
+      const seen = new Set()
+      await observe(config, seen)
+      expect(await readFile(join(root, 'observations.jsonl'), 'utf8').catch(() => '')).toBe('')
+      owner.desktop.generation = 'current'
+      await writeFile(join(root, 'runtime-owner.json'), JSON.stringify(owner))
+      await observe(config, seen)
+      const evidence = JSON.parse((await readFile(join(root, 'observations.jsonl'), 'utf8')).trim())
+      expect(evidence).toMatchObject({
+        type: 'runtime-recovery-observed',
+        pid: process.pid,
+        generation: 'current'
+      })
+    } finally {
+      await new Promise<void>((resolve) => service.close(() => resolve()))
+    }
+  })
+
   it('requires a running PID, observes its natural exit, and rejects a rewritten task PID file after recovery', async () => {
     const root = await temp()
     const config = {

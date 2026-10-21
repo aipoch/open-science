@@ -127,8 +127,12 @@ async function compileFixture(root) {
 }
 
 async function portAvailable(port) {
+  return endpointAvailable({ host: '127.0.0.1', port })
+}
+
+async function endpointAvailable(endpoint) {
   return new Promise((resolve) => {
-    const socket = createConnection({ host: '127.0.0.1', port })
+    const socket = createConnection(endpoint)
     socket.setTimeout(1000)
     socket.once('connect', () => {
       socket.destroy()
@@ -140,6 +144,22 @@ async function portAvailable(port) {
       resolve(false)
     })
   })
+}
+
+async function recoveredEndpointAvailable(config, event) {
+  if (Number.isSafeInteger(event.port) && event.port > 0) return portAvailable(event.port)
+  if (event.port !== 0 || !config.configRoot) return false
+  // Desktop startup requests an ephemeral Web port (0). Observe the current owner,
+  // binding the private IPC endpoint to this recovery's PID and generation.
+  const owner = await json(join(config.configRoot, 'runtime-owner.json')).catch(() => null)
+  if (
+    owner?.pid !== event.pid ||
+    owner.desktop?.generation !== event.generation ||
+    typeof owner.desktop?.path !== 'string' ||
+    !isAbsolute(owner.desktop.path)
+  )
+    return false
+  return endpointAvailable({ path: owner.desktop.path })
 }
 
 async function observeSourceHealth(config, type, fields = {}) {
@@ -188,8 +208,7 @@ export async function observe(config, seen = new Set()) {
     } else if (
       event.type === 'runtime-recovered' &&
       processExists(event.pid) &&
-      Number.isSafeInteger(event.port) &&
-      (await portAvailable(event.port))
+      (await recoveredEndpointAvailable(config, event))
     ) {
       await record(join(config.runRoot, 'observations.jsonl'), {
         type: 'runtime-recovery-observed',
