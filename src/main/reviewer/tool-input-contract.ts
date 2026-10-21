@@ -1,17 +1,17 @@
 import { z } from 'zod'
 import {
-  MAX_SPREADSHEET_CELLS,
-  MAX_SPREADSHEET_COLUMNS,
-  MAX_SPREADSHEET_ROW_SPAN,
-  MAX_XLSX_ROWS
-} from './bounded-artifact-content'
-import {
   MAX_REVIEW_CHECKS,
   MAX_REVIEW_CLAIM_CHARACTERS,
   MAX_REVIEW_EVIDENCE_CHARACTERS,
   MAX_REVIEW_SUBMISSION_BYTES,
   reviewSubmissionByteLength
 } from './submission-limits'
+
+// The input contract owns bounds shared by schema validation and content readers.
+export const MAX_SPREADSHEET_ROW_SPAN = 1_000
+export const MAX_SPREADSHEET_COLUMNS = 50
+export const MAX_SPREADSHEET_CELLS = 50_000
+export const MAX_XLSX_ROWS = 1_048_576
 
 // Zod schema for the optional locator on a check submitted by the reviewer.
 export const checkLocatorSchema = z.object({

@@ -20,7 +20,7 @@
       "src/renderer/src/pages/settings/SkillImportCandidatePreview.render.test.tsx",
       "src/renderer/src/pages/settings/SkillUsageAgents.render.test.tsx"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",

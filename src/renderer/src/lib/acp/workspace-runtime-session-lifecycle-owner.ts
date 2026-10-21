@@ -17,12 +17,8 @@ import { isHiddenControlMessage } from '../../../../shared/session-persistence'
 import { toRuntimeUploadedAttachment } from '../../../../shared/uploads'
 import { isMediaOverflowError } from '../../../../shared/media-overflow'
 import { RESUME_WORKSPACE_MISSING_MESSAGE } from '../../../../shared/run-error-classification'
-import {
-  toPersistedSession,
-  useSessionStore,
-  type ChatMessage,
-  type ChatSession
-} from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import type { ChatMessage, ChatSession } from '../../stores/session-store-contract'
 import {
   confirmPendingDelegationPolicyAuthority,
   flushSessionPersistence,

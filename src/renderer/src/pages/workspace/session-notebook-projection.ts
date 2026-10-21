@@ -1,7 +1,7 @@
 import type { TFunction } from 'i18next'
 
 import type { NotebookRunHistorySummary, NotebookRunRecord } from '../../../../shared/notebook'
-import type { ChatSession, ToolActivity } from '@/stores/session-store'
+import type { ChatSession, ToolActivity } from '@/stores/session-store-contract'
 import { resolveActiveConversationMessages } from '../../../../shared/conversation-graph'
 import {
   getCorrelatedNotebookRun,

@@ -3,7 +3,7 @@ import type { FileDurability } from '@aipoch/durable-files'
 import type {
   PendingFileTransactionOptions,
   PendingFileTransactionStorage
-} from './pending-file-transaction'
+} from './pending-file-contract'
 
 type ArtifactMetadata = {
   mimeType?: string

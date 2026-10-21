@@ -13,7 +13,7 @@ import {
   type ProviderView
 } from '../../../../shared/settings'
 import type { UploadedAttachment } from '../../../../shared/uploads'
-import type { ChatMessage } from '../../stores/session-store'
+import type { ChatMessage } from '../../stores/session-store-contract'
 
 export const resolveHistoryReplayTarget = (
   frameworkId: AgentFrameworkId | undefined,

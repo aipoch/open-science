@@ -14,7 +14,7 @@ import {
   dialogTitleClassName
 } from '@/components/ui/dialog-chrome'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { formatBytes } from '../../../../shared/update'
 import type { ProjectFileItem } from '../../../../shared/project-files'
 import { listAllSessionArtifacts } from './session-artifact-download-data'

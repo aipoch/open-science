@@ -1,5 +1,5 @@
 import { isHiddenControlMessage, type MessagePart } from '../../../../../shared/session-persistence'
-import type { ChatMessage, ChatSession } from '@/stores/session-store'
+import type { ChatMessage, ChatSession } from '@/stores/session-store-contract'
 
 import { NO_VISIBLE_SESSIONS, visibleProjectSessions } from '../visible-project-sessions'
 import {

@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import { PACKAGE_MAX_FILE_BYTES } from '../../../shared/session-package'
+import { PACKAGE_MAX_FILE_BYTES, packageOperationActive } from '../../../shared/session-package'
 import type {
   BrowserPackageTransfer,
   PackageOperationSnapshot
@@ -111,8 +111,7 @@ export const usePackageOperationStore = create<{
   setOpen: (open) => set({ open })
 }))
 
-export const packageOperationActive = (operation: PackageOperationSnapshot | null): boolean =>
-  operation !== null && ['running', 'awaiting-selection', 'cancelling'].includes(operation.state)
+export { packageOperationActive } from '../../../shared/session-package'
 
 export const sessionExportLocked = (
   operation: PackageOperationSnapshot | null,

@@ -62,8 +62,8 @@ import {
   toPersistedSession,
   useSessionStore
 } from '../../stores/session-store'
+import type { ChatSession } from '../../stores/session-store-contract'
 import type {
-  ChatSession,
   SessionHydrationSelection,
   StreamingMessageContentByMessageId
 } from '../../stores/session-store'

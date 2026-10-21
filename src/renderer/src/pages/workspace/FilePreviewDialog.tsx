@@ -7,7 +7,7 @@ import * as Dialog from '@/components/ui/dialog'
 import { dialogOverlayClassName, dialogPanelClassName } from '@/components/ui/dialog-chrome'
 import { STREAMDOWN_FULLSCREEN_SELECTOR } from '@/components/streamdown/dom-selectors'
 import { useRetainedDialogValue } from '@/components/ui/use-retained-dialog-value'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import { dialogPreviewGuardScope } from '@/stores/preview-leave-guard'
 
 import { PreviewFileSurface, type PreviewFileSurfaceHandle } from './PreviewFileSurface'

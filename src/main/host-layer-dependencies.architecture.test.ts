@@ -2,6 +2,7 @@ import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
+import ts from 'typescript'
 // @ts-expect-error The repository's JavaScript evidence reader has no declaration file.
 import { createConsumerDependencyReader } from '../../scripts/ci/consumer-retirement.mjs'
 // @ts-expect-error The repository's JavaScript boundary checker has no declaration file.
@@ -136,6 +137,36 @@ function hostGraphs(overrides: Record<string, string> = {}): {
 }
 
 describe('host dependency layers', () => {
+  it('keeps the shared runtime network port independent of Electron adapter types', () => {
+    const path = 'src/main/runtime-network.ts'
+    const source = ts.createSourceFile(
+      path,
+      readFileSync(resolve(projectRoot, path), 'utf8'),
+      ts.ScriptTarget.Latest,
+      true
+    )
+    const external: string[] = []
+    const visit = (node: ts.Node): void => {
+      if (
+        (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) &&
+        node.moduleSpecifier &&
+        ts.isStringLiteral(node.moduleSpecifier)
+      )
+        external.push(node.moduleSpecifier.text)
+      if (
+        ts.isImportTypeNode(node) &&
+        ts.isLiteralTypeNode(node.argument) &&
+        ts.isStringLiteral(node.argument.literal)
+      )
+        external.push(node.argument.literal.text)
+      ts.forEachChild(node, visit)
+    }
+    visit(source)
+    expect(external.filter((name) => name === 'electron' || name.startsWith('electron/'))).toEqual(
+      []
+    )
+  })
+
   it('checks resolved package and preload targets outside the host cycle graph', () => {
     const graphs = hostGraphs({
       'src/shared/in-flight-promise.ts': "import '@aipoch/diagnostics'",
@@ -163,6 +194,31 @@ describe('host dependency layers', () => {
       ])
     )
   }, 180_000)
+
+  it('rejects implementation imports from extracted contracts and pure projections', () => {
+    const manifest = loadModuleImpactManifest(resolve(projectRoot, 'scripts/ci/module-impact.json'))
+    const edges: Graph = new Map([
+      [
+        'src/main/artifacts/pending-file-contract.ts',
+        new Set(['src/main/artifacts/pending-file-transaction.ts'])
+      ],
+      ['src/main/resource-budget-policy.ts', new Set(['src/main/resource-budget.ts'])],
+      ['src/main/tags/resource-contract.ts', new Set(['src/main/tags/repository.ts'])],
+      [
+        'src/renderer/src/pages/workspace/side-chat-contract.ts',
+        new Set(['src/renderer/src/pages/workspace/use-side-chat-controller.ts'])
+      ],
+      [
+        'src/renderer/src/stores/session-actionability.ts',
+        new Set(['src/renderer/src/stores/session-store.ts'])
+      ]
+    ])
+    const violations: string[] = boundaryViolations(edges, manifest.modules)
+    for (const [source, targets] of edges) {
+      for (const target of targets)
+        expect(violations).toContainEqual(expect.stringContaining(`${source} -> ${target}`))
+    }
+  })
 
   it('detects indirect cycles as well as reciprocal imports', () => {
     expect(

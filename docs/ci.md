@@ -274,6 +274,63 @@ require deleting conservative explicit consumers. A newly complete dependency gr
 current independence without proving historical reachability. Only the trusted base/head
 retirement checks described below authorize removing those existing obligations.
 
+### Reviewed source-derived boundaries
+
+Reviewed modules use known source dependencies plus explicit runtime and behavioral
+contracts instead of historical whole-module test inheritance. The exact module cohort and source
+boundaries are trusted policy in `module-derived-consumers.mjs`, not candidate metadata. Pure
+boundaries require a complete runtime-cone check; stateful boundaries require reviewed direct runtime
+imports and mandatory behavior tests. An unknown direct loader or external runtime import requires
+reclassification. This does not prove transitive services or packages pure; their declared contracts
+and platform lanes remain part of validation.
+
+Credential identity, provider transport and framework launch permit a bounded literal loader syntax:
+`createRequire(import.meta.url)` called directly or held in a local `const`, literal single-argument
+calls or `.resolve()`, and literal `process.getBuiltinModule()` calls. Escaped or shadowed bindings,
+computed targets and module-loader chaining remain opaque. This opt-in only establishes reviewed
+direct imports; it does not make the default consumer reader or transitive native/transport code
+complete.
+
+The shared file-role classifier enforces structural direction, including type-only imports. Record
+contracts cannot import services; codecs may use contracts, policy and packages, but cannot
+orchestrate services. Bootstrap credential-store state is identified separately. Host adapters
+cannot import host services or composition. Presentation models cannot import UI implementations or
+host code. Application services cannot import presentation or application composition. Mixed modules
+report multiple roles. Domain contracts cannot import application implementations; repositories may
+use lower-level storage infrastructure, but not command adapters. Infrastructure cannot import
+application services, while runtime state cannot import composition or presentation. Presentation
+runtime is distinguished from pure presentation models. Pure policy, domain-contract and
+presentation-model files cannot borrow a mixed owner's filesystem, process or UI import permissions;
+their direct external imports are checked separately. Host ports define their own contracts rather
+than importing an Electron adapter's types; a name containing `contracts` is not an exemption.
+Legacy foreign `interfacePaths` remain routing obligations, not proof of a public domain interface.
+
+Reviewed boundaries may declare `resourcePaths` separately from parser-readable `sources`; the two
+lists must partition all non-test owner paths, and `resourceTests` must be a nonempty subset of the
+pinned `requiredTests`. Resource contents remain opaque: their behavior, packaging and platform
+contracts must be reviewed explicitly. New owner paths, assets or missing tests invalidate the
+boundary; no directory-wide resource exemption is supported. Pure text-processing imports may be
+approved per file through `pureExternalImports`; only the reviewed parsing packages are admitted,
+never filesystem/process/UI imports. These opt-ins apply only to reviewed dependency-model
+selection; independent-history proofs retain their original conservative parser and opaque-resource
+behavior.
+
+For these modules, `consumerModules` retains platform and fallback routing only; it does not copy
+downstream modules' entire test inventories into the affected plan. Owner/contract suites,
+generated consumers, type/mock imports and explicit runtime edges remain selected. Keep dynamic
+IPC, event and filesystem obligations in the runtime manifest or explicit contract tests; an opaque
+consumer cone alone no longer requires retaining every historical test.
+
+Integrity permits inheritance-only consumer removals for this cohort only in a registration-only
+revision with unchanged source, interfaces, owner/contract tests, module edges, platform/fallback
+obligations and policy. Known reachable tests cannot retire. Reports call these
+**dependency-model retirements**, separately from proven independence. Merge the policy before a
+cleanup that relies on it. Integrity rejects newly copied consumers without known dependency
+evidence, and also rejects unreviewed owner expansion, additional module fan-out, reversed layers,
+missing required contracts and runtime dependencies outside the applicable boundary. Restore the
+reviewed boundary or add `fullTestReason` and review its reclassification. Other modules retain the
+existing conservative inheritance and retirement rules.
+
 ## Actions cache maintenance
 
 The **Clean up closed PR caches** workflow sweeps `refs/pull/<number>/merge` caches after
@@ -329,8 +386,19 @@ requires full validation. Verified retirements appear in the Integrity summary.
 Historical consumer entries for tests owned by a foreign package may also retire when complete
 source graphs for both revisions prove no path to the module, preserving the unique original
 package test owner and the union of runtime edges. Missing package manifests or incomplete
-evidence retain the registration. This does not authorize retirement of already-unproven host
-consumer contracts. These exceptions do not remove owner/contract tests, interfaces, module
+evidence retain the registration. Already-independent main/renderer consumer tests may retire in
+a consumer-removal-only registration change when complete structural traversal in both revisions
+proves independence and the unique original test owner retains the test in its owner bucket.
+Structural traversal includes type imports: a type dependency on the owner or an unresolved local
+type target still retains the registration. A separate strict runtime traversal rejects filesystem,
+IPC, network, process and other opaque access, including transitive access, even without a declared
+runtime edge. Explicitly erased type imports/exports do not execute the referenced module's body;
+only this runtime opacity check excludes them. Mixed imports, empty imports, side effects, mocks
+and declared runtime edges remain runtime dependencies. Source, test, runtime-declaration or
+executable-policy changes in the same diff reject this host exception. Unknown dependencies and
+full-validation modules retain their evidence. All other module fields must remain unchanged;
+owner transfers and new consumer registrations cannot be bundled into this exception.
+These exceptions do not remove owner/contract tests, interfaces, module
 consumer edges, or routing obligations; they execute only from trusted-base code. Merge a policy
 change before proposing registration cleanup that depends on it.
 New explicit ownership cannot hide existing inferred test coverage. Unknown policy metadata and

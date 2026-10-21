@@ -1,3 +1,7 @@
+import type {
+  PendingFileTransactionOptions,
+  PendingFileTransactionStorage
+} from './pending-file-contract'
 import { mkdir, open, rename, rm } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
@@ -27,47 +31,9 @@ export const artifactFailureDiagnostic = (error: unknown): string => {
     : `${text.slice(0, 800)}\n…[diagnostic truncated]…\n${text.slice(-800)}`
 }
 
-type PendingFileTransactionOptions = {
-  allowedImportRoots?: string[]
-  relativeBaseDirs?: string[]
-  maxFileBytes?: number
-  maxInlineBytes?: number
-  diskReserveBytes?: number
-  preserveRecoveryState?: () => Promise<boolean>
-  signal?: AbortSignal
-  reserveFile?: (fileBytes: number) => Promise<{ id: string; fileBytes: number }>
-  releaseFileReservation?: (reservationId: string) => Promise<void>
-}
-
 type PendingFileBudgetReservation = {
   id: string
   fileBytes: number
-}
-
-type PendingFileTransactionStorage = {
-  getPendingRunDir: (projectId: string, sessionId: string, runId: string) => string
-  getArtifactMetadataPath: (directory: string, filename: string) => string
-  resolveAllowedImportFilePath: (
-    path: string,
-    allowedImportRoots: string[],
-    relativeBaseDirs?: string[]
-  ) => Promise<string>
-  readFilePrefix: (path: string) => Promise<Buffer>
-  renameIfPresent: (sourcePath: string, targetPath: string) => Promise<boolean>
-  writeArtifactMetadata: (
-    directory: string,
-    filename: string,
-    metadata: { mimeType?: string; kind?: 'plan' }
-  ) => Promise<void>
-  createArtifactFile: (request: {
-    projectId: string
-    sessionId: string
-    filename: string
-    filePath: string
-    mimeType?: string
-    metadata?: { kind?: 'plan' }
-    runId?: string
-  }) => Promise<ArtifactFile>
 }
 
 type BindPendingArtifactVersionRouting<Routing> = (

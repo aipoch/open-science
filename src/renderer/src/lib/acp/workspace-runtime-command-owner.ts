@@ -43,7 +43,8 @@ import { i18next } from '../../i18n'
 import { validateImageAnnotationSourcesBeforeSend } from '../../pages/workspace/annotations/image-annotation-source-validation'
 import { prepareDiscussionSendAnnotations } from '../../pages/workspace/discussion-send-context'
 import type { SessionDiscussionCapture } from '../../pages/workspace/replay/replay-context'
-import { toPersistedSession, useSessionStore, type ChatMessage } from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import type { ChatMessage } from '../../stores/session-store-contract'
 import {
   confirmPendingDelegationPolicyAuthority,
   deleteSession,

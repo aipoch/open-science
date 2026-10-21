@@ -118,3 +118,6 @@ __pycache__/
 
 # Playwright shard reports (merged by CI).
 blob-report/
+
+# Local scratch files
+tmp/
