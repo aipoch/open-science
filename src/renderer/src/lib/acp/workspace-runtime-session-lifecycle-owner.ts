@@ -326,7 +326,8 @@ const resumeInterruptedWorkspaceSession = async (
   } catch (error) {
     reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
       operation: 'resume',
-      rawError: error
+      rawError: error,
+      providerId: options?.agentTarget?.providerId ?? session.agentConfiguration?.providerId
     })
     return
   }
@@ -355,7 +356,8 @@ const resumeInterruptedWorkspaceSession = async (
     } catch (error) {
       reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
         operation: 'resume',
-        rawError: error
+        rawError: error,
+        providerId: options?.agentTarget?.providerId ?? session.agentConfiguration?.providerId
       })
     }
     return
@@ -435,7 +437,8 @@ const resumeInterruptedWorkspaceSession = async (
   } catch (error) {
     reportWorkspaceOperationError(sessionId, resumeOperationMessage(error), {
       operation: 'resume',
-      rawError: error
+      rawError: error,
+      providerId: options?.agentTarget?.providerId ?? session.agentConfiguration?.providerId
     })
   }
 }

@@ -7,7 +7,12 @@ import {
 } from './workspace-operation-error'
 
 beforeEach(() =>
-  useWorkspaceOperationErrors.setState({ errors: {}, providerValidations: {}, diagnostics: {} })
+  useWorkspaceOperationErrors.setState({
+    errors: {},
+    providerValidations: {},
+    providerIds: {},
+    diagnostics: {}
+  })
 )
 it('keeps the captured exception separate from normalized text and scoped to its initiating session', () => {
   const error = new Error('Error invoking remote method: Internal error')
@@ -28,6 +33,19 @@ it('removes stale resume details when another operation replaces the error', () 
   })
   reportWorkspaceOperationError('session', 'Cannot send')
   expect(useWorkspaceOperationErrors.getState().diagnostics.session).toBeUndefined()
+})
+
+it('retains the initiating provider until the error is replaced or cleared', () => {
+  reportWorkspaceOperationError('first', 'Authentication required', { providerId: 'provider-b' })
+  reportWorkspaceOperationError('second', 'Authentication required', { providerId: 'provider-a' })
+  expect(useWorkspaceOperationErrors.getState().providerIds).toEqual({
+    first: 'provider-b',
+    second: 'provider-a'
+  })
+  reportWorkspaceOperationError('first', 'Another failure')
+  expect(useWorkspaceOperationErrors.getState().providerIds.first).toBeUndefined()
+  clearWorkspaceOperationError('second')
+  expect(useWorkspaceOperationErrors.getState().providerIds).not.toHaveProperty('second')
 })
 
 it('retains structured thrown exception fields before normalizing its message', () => {

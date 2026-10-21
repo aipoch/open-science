@@ -7803,15 +7803,65 @@ describe('workspace agent message sending', () => {
     await sendWorkspaceMessage(runtime, {
       text: 'Start a new analysis',
       cwd: '/workspace/project',
-      agentFrameworkId: 'codex'
+      agentFrameworkId: 'codex',
+      agentConfiguration: { providerId: 'explicit-create-provider', reasoningEffort: 'default' }
     })
     await flushRuntimeTasks()
 
     expect(
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toBe('Authentication required')
+    expect(
+      useWorkspaceOperationErrors.getState().providerIds[useSessionStore.getState().sessions[0].id]
+    ).toBe('explicit-create-provider')
     expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
+
+  it.each(['send', 'resume'] as const)(
+    'captures the explicit failed account during %s instead of the stored account',
+    async (operation) => {
+      useSessionStore.getState().appendUserMessage({
+        sessionId: 'session-1',
+        content: 'Previous prompt',
+        cwd: '/workspace/project',
+        agentFrameworkId: 'codex',
+        agentBackendId: 'codex:stored-provider',
+        agentConfiguration: { providerId: 'stored-provider', reasoningEffort: 'default' }
+      })
+      useSessionStore.getState().finishRun('session-1')
+      const runtime = {
+        state: createSnapshot(),
+        createSession: vi.fn(),
+        resumeSession: vi.fn().mockRejectedValue(new Error('Authentication required')),
+        resetSessionContext: vi.fn(),
+        sendPrompt: vi.fn()
+      }
+      const configuration = { providerId: 'failed-provider', reasoningEffort: 'default' as const }
+      if (operation === 'send') {
+        await sendWorkspaceMessage(runtime, {
+          sessionId: 'session-1',
+          text: 'Next prompt',
+          cwd: '/workspace/project',
+          agentFrameworkId: 'codex',
+          agentBackendId: 'codex:failed-provider',
+          agentConfiguration: configuration
+        })
+      } else {
+        await resumeInterruptedWorkspaceSession(runtime, 'session-1', undefined, {
+          agentTarget: { frameworkId: 'codex', ...configuration }
+        })
+      }
+      await flushRuntimeTasks()
+      expect(runtime.resumeSession).toHaveBeenCalledOnce()
+      expect(useWorkspaceOperationErrors.getState().providerIds['session-1']).toBe(
+        'failed-provider'
+      )
+      expect(useSessionStore.getState().sessions[0].agentConfiguration?.providerId).toBe(
+        'stored-provider'
+      )
+      expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
 
   it('uses a generic creation error when IPC supplies no downstream detail', async () => {
     const runtime = {

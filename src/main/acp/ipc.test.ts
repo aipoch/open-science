@@ -1456,7 +1456,7 @@ describe.each([
   ['acp:reset-session-context', resetSessionContext]
 ] as const)('%s authentication recovery', (channel, method) => {
   it.each([
-    { code: -32000 },
+    { code: -32000, message: 'Authentication required' },
     { code: -32603, data: { codexErrorInfo: 'unauthorized' } },
     { code: -32603, data: { errorName: 'APIError', statusCode: 401 } }
   ])(
@@ -1475,6 +1475,16 @@ describe.each([
       })
     }
   )
+
+  it('preserves a generic -32000 initialization error', async () => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Native Codex unavailable'), {
+      name: 'RequestError',
+      code: -32000
+    })
+    method.mockRejectedValueOnce(failure)
+    await expect(handlers.get(channel)?.({}, { sessionId: 's-1' })).rejects.toBe(failure)
+  })
 
   it.each([403, 429])('preserves non-authentication provider status %s', async (statusCode) => {
     registerWithFakes()

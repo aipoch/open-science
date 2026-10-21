@@ -1,5 +1,7 @@
 import { useSettingsStore } from '@/stores/settings-store'
+import { useWorkspaceOperationErrors } from '@/lib/acp/workspace-operation-error'
 import {
+  isAgentAuthenticationRequired,
   sessionAuthenticationFailure,
   isProviderAuthenticationRestored
 } from './agent-authentication-error'
@@ -86,9 +88,26 @@ const queueAuthenticationRequired = (
   configuration = session.agentConfiguration
 ): boolean => {
   const failure = sessionAuthenticationFailure(session)
-  if (!failure) return false
-  const providerId = configuration?.providerId ?? failure.providerId
+  const operation = useWorkspaceOperationErrors.getState()
+  const operationAuthenticationRequired = isAgentAuthenticationRequired(
+    operation.errors[session.id]
+  )
+  if (!failure && !operationAuthenticationRequired) return false
+  const operationProviderId = operation.providerIds[session.id]
+  const providerId = configuration?.providerId ?? operationProviderId ?? failure?.providerId
   const provider = useSettingsStore.getState().providers.find(({ id }) => id === providerId)
+  if (provider?.needsKey) return true
+  if (
+    operationAuthenticationRequired &&
+    (!operationProviderId || operationProviderId === providerId) &&
+    !isProviderAuthenticationRestored(
+      provider,
+      operation.providerValidations[session.id]?.[providerId ?? ''] ?? 0,
+      configuration?.model
+    )
+  )
+    return true
+  if (!failure) return false
   if (failure.providerId && failure.providerId !== providerId) return provider?.needsKey === true
   return !isProviderAuthenticationRestored(provider, failure.at, configuration?.model)
 }

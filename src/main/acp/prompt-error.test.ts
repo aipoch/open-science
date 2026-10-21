@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { RequestError } from '@agentclientprotocol/sdk'
 
 import {
   describePromptError,
   isProviderPromptError,
-  isOpenCodeSessionServiceFailure
+  isOpenCodeSessionServiceFailure,
+  withAgentAuthenticationRecovery
 } from './prompt-error'
 
 // Builds an ACP RequestError-shaped value: an Error carrying the JSON-RPC code + data the agent attaches.
@@ -254,7 +256,8 @@ describe('OpenCode session failure classification', () => {
 
 describe('ACP authentication recovery boundary', () => {
   it.each([
-    agentError('Authentication required', {}, -32000),
+    RequestError.authRequired(),
+    RequestError.authRequired({ reason: 'expired' }, 'Sign in again'),
     agentError('Internal error', { details: 'workspace routing discovery unauthorized (401)' }),
     agentError('Internal error: API Error: 401 Unauthorized', { errorKind: 'unknown' }),
     Object.assign(new Error('Internal error: API Error: 401 Unauthorized'), {
@@ -266,9 +269,32 @@ describe('ACP authentication recovery boundary', () => {
     agentError('Provider rejected credentials', {
       codexErrorInfo: { httpConnectionFailed: { httpStatusCode: 401 } }
     })
-  ])('normalizes a protocol-owned authentication failure before transport', (error) => {
+  ])('normalizes a protocol-owned authentication failure before transport', async (error) => {
     expect(describePromptError(error)).toBe('Authentication required')
     expect(isProviderPromptError(error)).toBe(true)
+    await expect(
+      withAgentAuthenticationRecovery(async () => {
+        throw error
+      })
+    ).rejects.toMatchObject({
+      message: 'Authentication required',
+      cause: error
+    })
+  })
+  it.each([
+    'Native Codex unavailable',
+    'permission failed',
+    'turn failed',
+    'Authentication requiredness'
+  ])('preserves generic -32000 errors: %s', async (message) => {
+    const error = new RequestError(-32000, message)
+    expect(describePromptError(error)).toBe(message)
+    expect(isProviderPromptError(error)).toBe(false)
+    await expect(
+      withAgentAuthenticationRecovery(async () => {
+        throw error
+      })
+    ).rejects.toBe(error)
   })
   it.each([
     agentError('Forbidden', { errorName: 'APIError', statusCode: 403 }),

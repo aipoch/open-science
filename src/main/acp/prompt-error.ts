@@ -187,7 +187,11 @@ export const describePromptError = (error: unknown, ctx: PromptErrorContext = {}
 // business response, or an OAuth client-registration error cannot be repaired by account sign-in.
 export const isAgentAuthenticationFailure = (error: unknown): boolean => {
   if (!(error instanceof Error) || error.name !== 'RequestError') return false
-  if (errorCode(error) === -32000) return true
+  if (errorCode(error) === -32000)
+    return (
+      error.message === 'Authentication required' ||
+      error.message.startsWith('Authentication required: ')
+    )
   if (errorCode(error) !== -32603) return false
   const data = (error as Error & { data?: Record<string, unknown> }).data
   if (data?.error === 'invalid_client' || data?.errorKind === 'invalid_client') return false

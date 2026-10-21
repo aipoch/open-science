@@ -25,50 +25,61 @@ type OperationDiagnostic = { operation: 'resume'; detail: string; message: strin
 const useWorkspaceOperationErrors = create<{
   errors: Record<string, string>
   providerValidations: Record<string, ProviderValidationSnapshot>
+  providerIds: Record<string, string | undefined>
   diagnostics: Record<string, OperationDiagnostic>
-}>(() => ({ errors: {}, providerValidations: {}, diagnostics: {} }))
+}>(() => ({ errors: {}, providerValidations: {}, providerIds: {}, diagnostics: {} }))
 
 const reportWorkspaceOperationError = (
   sessionId: string,
   error: string,
-  diagnostic?: { operation: 'resume'; rawError: unknown }
+  context?: { providerId?: string } & (
+    { operation: 'resume'; rawError: unknown } | { operation?: undefined }
+  )
 ): void => {
-  useWorkspaceOperationErrors.setState(({ errors, providerValidations, diagnostics }) => {
-    const next = { ...diagnostics }
-    if (diagnostic) {
-      const raw = diagnostic.rawError
-      next[sessionId] = {
-        operation: diagnostic.operation,
-        message: error,
-        detail: capturedErrorDetail(raw)
+  useWorkspaceOperationErrors.setState(
+    ({ errors, providerValidations, providerIds, diagnostics }) => {
+      const next = { ...diagnostics }
+      if (context?.operation) {
+        const raw = context.rawError
+        next[sessionId] = {
+          operation: context.operation,
+          message: error,
+          detail: capturedErrorDetail(raw)
+        }
+      } else delete next[sessionId]
+      return {
+        errors: { ...errors, [sessionId]: error },
+        providerValidations: {
+          ...providerValidations,
+          [sessionId]: captureProviderValidationSnapshot()
+        },
+        providerIds: { ...providerIds, [sessionId]: context?.providerId },
+        diagnostics: next
       }
-    } else delete next[sessionId]
-    return {
-      errors: { ...errors, [sessionId]: error },
-      providerValidations: {
-        ...providerValidations,
-        [sessionId]: captureProviderValidationSnapshot()
-      },
-      diagnostics: next
     }
-  })
+  )
 }
 
 const clearWorkspaceOperationError = (sessionId: string): void => {
-  useWorkspaceOperationErrors.setState(({ errors, providerValidations, diagnostics }) => {
-    if (!Object.hasOwn(errors, sessionId)) return { errors }
-    const next = { ...errors }
-    delete next[sessionId]
-    const nextDiagnostics = { ...diagnostics }
-    delete nextDiagnostics[sessionId]
-    const nextProviderValidations = { ...providerValidations }
-    delete nextProviderValidations[sessionId]
-    return {
-      errors: next,
-      providerValidations: nextProviderValidations,
-      diagnostics: nextDiagnostics
+  useWorkspaceOperationErrors.setState(
+    ({ errors, providerValidations, providerIds, diagnostics }) => {
+      if (!Object.hasOwn(errors, sessionId)) return { errors }
+      const next = { ...errors }
+      delete next[sessionId]
+      const nextDiagnostics = { ...diagnostics }
+      delete nextDiagnostics[sessionId]
+      const nextProviderValidations = { ...providerValidations }
+      delete nextProviderValidations[sessionId]
+      const nextProviderIds = { ...providerIds }
+      delete nextProviderIds[sessionId]
+      return {
+        errors: next,
+        providerValidations: nextProviderValidations,
+        providerIds: nextProviderIds,
+        diagnostics: nextDiagnostics
+      }
     }
-  })
+  )
 }
 
 export { useWorkspaceOperationErrors, reportWorkspaceOperationError, clearWorkspaceOperationError }

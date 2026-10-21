@@ -8,6 +8,10 @@ import { AcpNativeFollowUpWorkflow } from '../../../../main/acp/native-follow-up
 
 import type { ChatSession } from '@/stores/session-store'
 import {
+  reportWorkspaceOperationError,
+  useWorkspaceOperationErrors
+} from '@/lib/acp/workspace-operation-error'
+import {
   createInitialPreviewWorkbenchState,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
@@ -202,6 +206,12 @@ const mounted: Hook[] = []
 
 afterEach(() => {
   for (const hook of mounted.splice(0)) hook.unmount()
+  useWorkspaceOperationErrors.setState({
+    errors: {},
+    providerValidations: {},
+    providerIds: {},
+    diagnostics: {}
+  })
   useProjectStore.setState(createInitialProjectState())
   usePreviewWorkbenchStore.setState(createInitialPreviewWorkbenchState())
   setWorkspaceSpecialistBarrier('session-a', false)
@@ -2764,71 +2774,83 @@ it('pauses queued prompts on authentication failure and requires explicit retry 
   )
 })
 
-it('settles automatic authentication failures without trapping later user messages behind an invisible queue head', async () => {
-  const { useSettingsStore } = await import('@/stores/settings-store')
-  const account = {
-    id: 'automatic-reauth',
-    type: 'codex-isolated' as const,
-    name: 'Codex',
-    hasKey: true,
-    needsKey: false,
-    models: [],
-    supportsImageInput: true,
-    lastValidatedAt: 1
-  }
-  useSettingsStore.setState({ providers: [account] })
-  const running = {
-    ...session('running'),
-    agentConfiguration: { providerId: account.id, reasoningEffort: 'default' as const }
-  }
-  running.conversationGraph!.branches[0].headMessageId = undefined
-  let current = running
-  const input = options(running, { getSession: () => current })
-  const hook = renderController(input)
-  mounted.push(hook)
-  const completed = vi.fn()
-  act(() => {
-    void hook.result.current.lifecycle
-      .enqueueApplication({
+it.each(['durable', 'operation'])(
+  'settles automatic %s authentication failures without trapping later user messages behind an invisible queue head',
+  async (source) => {
+    const { useSettingsStore } = await import('@/stores/settings-store')
+    const account = {
+      id: 'automatic-reauth',
+      type: 'codex-isolated' as const,
+      name: 'Codex',
+      hasKey: true,
+      needsKey: false,
+      models: [],
+      supportsImageInput: true,
+      lastValidatedAt: 1
+    }
+    useSettingsStore.setState({ providers: [account] })
+    const running = {
+      ...session('running'),
+      agentConfiguration: { providerId: account.id, reasoningEffort: 'default' as const }
+    }
+    running.conversationGraph!.branches[0].headMessageId = undefined
+    let current = running
+    const input = options(running, { getSession: () => current })
+    const hook = renderController(input)
+    mounted.push(hook)
+    const completed = vi.fn()
+    act(() => {
+      void hook.result.current.lifecycle
+        .enqueueApplication({
+          session: running,
+          text: 'Analyze job-1.',
+          attribution: {
+            kind: 'application',
+            feature: 'compute',
+            purpose: 'job-completion-analysis',
+            deliveryKey: 'compute_done:session-a:job-1',
+            jobIds: ['job-1']
+          }
+        })
+        .then(completed)
+      hook.result.current.lifecycle.enqueue({
+        ...admission('continue after sign-in'),
         session: running,
-        text: 'Analyze job-1.',
-        attribution: {
-          kind: 'application',
-          feature: 'compute',
-          purpose: 'job-completion-analysis',
-          deliveryKey: 'compute_done:session-a:job-1',
-          jobIds: ['job-1']
-        }
+        agentConfiguration: running.agentConfiguration
       })
-      .then(completed)
-    hook.result.current.lifecycle.enqueue({
-      ...admission('continue after sign-in'),
-      session: running,
-      agentConfiguration: running.agentConfiguration
     })
-  })
-  current = { ...running, status: 'error', error: 'Authentication required', updatedAt: 20 }
-  hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
-  await vi.waitFor(() => expect(completed).toHaveBeenCalledExactlyOnceWith(undefined))
-  expect(hook.result.current.items).toEqual([
-    expect.objectContaining({
-      text: 'continue after sign-in',
-      phase: 'error',
-      error: { kind: 'send', detail: 'Authentication required' }
-    })
-  ])
-  expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    current =
+      source === 'durable'
+        ? { ...running, status: 'error', error: 'Authentication required', updatedAt: 20 }
+        : { ...running, status: 'idle' }
+    if (source === 'operation')
+      act(() =>
+        reportWorkspaceOperationError(current.id, 'Authentication required', {
+          providerId: account.id
+        })
+      )
+    hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
+    await vi.waitFor(() => expect(completed).toHaveBeenCalledExactlyOnceWith(undefined))
+    expect(hook.result.current.items).toEqual([
+      expect.objectContaining({
+        text: 'continue after sign-in',
+        phase: 'error',
+        error: { kind: 'send', detail: 'Authentication required' }
+      })
+    ])
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
 
-  act(() => useSettingsStore.setState({ providers: [{ ...account, lastValidatedAt: 30 }] }))
-  hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
-  expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-  await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
-  expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ text: 'continue after sign-in' })
-  )
-  expect(hook.result.current.items).toEqual([])
-  expect(hook.result.current.hasPendingWork).toBe(false)
-})
+    act(() => useSettingsStore.setState({ providers: [{ ...account, lastValidatedAt: 30 }] }))
+    hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ text: 'continue after sign-in' })
+    )
+    expect(hook.result.current.items).toEqual([])
+    expect(hook.result.current.hasPendingWork).toBe(false)
+  }
+)
 
 it.each([
   { target: 'healthy', currentProvider: 'healthy', needsKey: false, blocked: false },
@@ -2912,5 +2934,103 @@ it.each([
         })
       )
     }
+  }
+)
+
+it.each(['failed', 'healthy'])(
+  'scopes live operation authentication to its captured provider before draining %s',
+  async (target) => {
+    const { useSettingsStore } = await import('@/stores/settings-store')
+    const account = {
+      type: 'codex-isolated' as const,
+      name: 'Codex',
+      hasKey: true,
+      needsKey: false,
+      models: [],
+      supportsImageInput: true,
+      lastValidatedAt: 10
+    }
+    useSettingsStore.setState({
+      providers: [
+        { ...account, id: 'failed' },
+        { ...account, id: 'healthy' }
+      ]
+    })
+    const configuration = { providerId: target, reasoningEffort: 'default' as const }
+    const running = {
+      ...session('running'),
+      agentConfiguration: { ...configuration, providerId: 'healthy' }
+    }
+    let current: ChatSession = running
+    const input = options(running, { getSession: () => current })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('queued follow-up'),
+        session: running,
+        agentConfiguration: configuration
+      })
+    )
+    act(() =>
+      reportWorkspaceOperationError(
+        running.id,
+        'Agent session resume failed: Authentication required',
+        { providerId: 'failed' }
+      )
+    )
+    current = { ...running, status: 'idle' }
+    hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
+    await act(async () => {})
+    if (target === 'healthy') {
+      expect(input.runtime.sendMessage).toHaveBeenCalledOnce()
+      return
+    }
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      phase: 'error',
+      error: { detail: 'Authentication required' }
+    })
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    // Revalidating another account cannot release the failed target.
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...account, id: 'failed' },
+          { ...account, id: 'healthy', lastValidatedAt: 30 }
+        ]
+      })
+    )
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...account, id: 'failed', lastValidatedAt: 30 },
+          { ...account, id: 'healthy', lastValidatedAt: 30 }
+        ]
+      })
+    )
+    hook.rerender({ ...input, activeSession: current, promptInFlightSessionIds: [] })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    // A new failure at the new validation baseline still blocks manual retry.
+    act(() =>
+      reportWorkspaceOperationError(running.id, 'Authentication required', { providerId: 'failed' })
+    )
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...account, id: 'failed', lastValidatedAt: 40 },
+          { ...account, id: 'healthy', lastValidatedAt: 30 }
+        ]
+      })
+    )
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ agentConfiguration: configuration })
+    )
   }
 )

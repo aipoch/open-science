@@ -216,7 +216,8 @@ const rejectPreparedPrompt = async (
   sessionId: string,
   message: string,
   preparation?: WorkspacePromptPreparation,
-  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void,
+  providerId?: string
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   const prompt = preparation
@@ -234,7 +235,7 @@ const rejectPreparedPrompt = async (
       reported = describeWorkspacePromptRollbackFailure(message, failure)
     } else if (!rolledBack) return
   }
-  reportWorkspaceOperationError(sessionId, reported)
+  reportWorkspaceOperationError(sessionId, reported, { providerId })
   rejected?.(reported, sessionId, restoredAttachments)
 }
 const replayHistory = (
@@ -619,7 +620,8 @@ const pendingPromptSeed = (
 const rejectUnboundPendingPrompt = async (
   pending: SendWorkspaceMessageResult,
   message: string,
-  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void
+  rejected?: (error: string, sessionId?: string, attachments?: UploadedAttachment[]) => void,
+  providerId?: string
 ): Promise<void> => {
   const source = useSessionStore.getState().sessions.find(({ id }) => id === pending.sessionId)
   if (source?.isPending) markPendingSessionRetryable(source.id)
@@ -648,7 +650,7 @@ const rejectUnboundPendingPrompt = async (
       )
     }))
   }
-  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected)
+  await rejectPreparedPrompt(pending.sessionId, message, undefined, rejected, providerId)
 }
 
 const discardUnboundSeedSession = async (
@@ -711,7 +713,8 @@ const startPendingPrompt = (
         await rejectUnboundPendingPrompt(
           pending,
           createSessionFailureMessage(error),
-          request.onPreparationRejected
+          request.onPreparationRejected,
+          request.agentConfiguration?.providerId
         )
       }
       return undefined
