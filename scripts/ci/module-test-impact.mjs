@@ -10,7 +10,8 @@ import {
   classifyChanges,
   fixtureTestPatterns,
   matchesPath,
-  parseNameStatus
+  parseNameStatus,
+  playwrightReaderTests
 } from './classify-pr-changes.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { validateModuleImpactManifest } from './validate-module-impact.mjs'
@@ -207,10 +208,16 @@ export function createAffectedTestPlan(
       reasons.push(`${change.path} -> documentation lane -> no module tests`)
       continue
     }
-    // Browser fixtures/specs execute in the complete browser lane, not Vitest. This explicit
-    // owner must remain selected in mixed diffs; unknown E2E helpers still fall back to full.
-    if (pathPlan.roots.includes('renderer_browser_e2e') && !pathPlan.bundles.includes('unit')) {
-      reasons.push(`${change.path} -> renderer browser E2E lane -> no module tests`)
+    // Playwright specs and fixtures execute in their E2E lanes, not Vitest. Only declared
+    // readers run here; unattributed E2E files still fall back to full through the classifier.
+    const readerTests = playwrightReaderTests(change.path)
+    if (pathPlan.mode === 'selective' && readerTests) {
+      for (const test of readerTests) directTests.add(test)
+      reasons.push(
+        readerTests.length > 0
+          ? `${change.path} -> Playwright E2E input -> declared readers ${readerTests.join(', ')}`
+          : `${change.path} -> Playwright E2E lane -> no module tests`
+      )
       continue
     }
     for (const path of [change.path, change.previousPath].filter(Boolean)) {

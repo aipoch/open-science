@@ -239,10 +239,26 @@ describe('trusted supplemental selection', () => {
     }
   )
 
+  it('routes the shared Electron harness to every desktop group and its declared readers', () => {
+    const changes = changesFor(['e2e/fixtures/electron-app.ts'])
+    const plan = resolvePlan(['e2e/fixtures/electron-app.ts'])
+    expect(plan.mode).toBe('selective')
+    expect(macosGroupsForPlan(plan)).toEqual([
+      'journeys',
+      'presentation',
+      'regressions',
+      'delegation'
+    ])
+    expect(createAffectedTestPlan(changes, graph).testFiles).toEqual([
+      'scripts/electron-app-fixture.test.ts',
+      'scripts/electron-fixture-teardown.test.ts'
+    ])
+  })
+
   it.each([
     'src/main/artifacts/unregistered-export.ts',
     'src/renderer/src/pages/settings/unregistered-page.tsx',
-    'e2e/fixtures/electron-app.ts',
+    'e2e/fixtures/new-unattributed-helper.ts',
     'e2e/new-unknown.spec.ts',
     'package.json',
     'e2e/playwright.browser.config.ts',
