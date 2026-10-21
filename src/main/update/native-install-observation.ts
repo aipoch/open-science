@@ -45,7 +45,7 @@ function Publish($state, $pidValue, $code) {
   $bytes = [Text.Encoding]::UTF8.GetBytes(($record | ConvertTo-Json -Depth 8 -Compress))
   $file = [IO.File]::Open($temporary, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)
   try { $file.Write($bytes, 0, $bytes.Length); $file.Flush($true) } finally { $file.Dispose() }
-  [IO.File]::Replace($temporary, $receipt, $null)
+  [IO.File]::Replace($temporary, $receipt, [NullString]::Value)
 }
 try {
   Add-Type -TypeDefinition @'

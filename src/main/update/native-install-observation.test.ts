@@ -1,4 +1,5 @@
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -17,7 +18,11 @@ vi.mock('./installation-protection', () => ({
   captureInstallationManifestAsync: mocks.capture,
   verifyInstallationManifestAsync: mocks.verify
 }))
-import { createNativeInstallObservation, nativeInstallSettled } from './native-install-observation'
+import {
+  createNativeInstallObservation,
+  nativeInstallSettled,
+  WINDOWS_INSTALL_OBSERVER
+} from './native-install-observation'
 
 const boot = 'darwin-boot:11111111-1111-4111-8111-111111111111'
 const reboot = 'darwin-boot:22222222-2222-4222-8222-222222222222'
@@ -66,6 +71,74 @@ describe('native installation observation', () => {
     JSON.parse(await readFile(path, 'utf8'))
   const update = async (patch: object): Promise<void> =>
     writeFile(path, JSON.stringify({ ...(await read()), ...patch }))
+
+  it.skipIf(process.platform !== 'win32')(
+    'publishes readiness and a real process exit through Windows PowerShell',
+    async () => {
+      const operation = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa'
+      await owner().observeManualInstallHandoff!(artifact, operation)
+      const observer = spawn(
+        'powershell.exe',
+        [
+          '-NoProfile',
+          '-NonInteractive',
+          '-EncodedCommand',
+          Buffer.from(WINDOWS_INSTALL_OBSERVER, 'utf16le').toString('base64')
+        ],
+        {
+          windowsHide: true,
+          stdio: ['ignore', 'ignore', 'pipe'],
+          env: {
+            ...process.env,
+            OPEN_SCIENCE_INSTALL_OBSERVATION: path,
+            OPEN_SCIENCE_INSTALL_OBSERVATION_ID: operation,
+            OPEN_SCIENCE_INSTALL_OBSERVATION_TARGET: process.execPath
+          }
+        }
+      )
+      let stderr = ''
+      let launchError: Error | undefined
+      observer.stderr?.on('data', (bytes) => {
+        stderr += String(bytes)
+      })
+      observer.on('error', (error) => {
+        launchError = error
+      })
+      let helper: ReturnType<typeof spawn> | undefined
+      const waitForState = async (state: string): Promise<Awaited<ReturnType<typeof read>>> => {
+        const deadline = Date.now() + 10_000
+        while (Date.now() < deadline) {
+          const record = await read()
+          if (record.state === state) return record
+          if (launchError) throw launchError
+          if (observer.exitCode !== null)
+            throw new Error(`Observer exited before ${state}: ${stderr}`)
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        throw new Error(`Observer did not publish ${state}: ${stderr}`)
+      }
+      try {
+        await waitForState('watching')
+        helper = spawn(
+          process.execPath,
+          [
+            '-e',
+            'setTimeout(() => process.exit(17), 1500)',
+            '--',
+            `--open-science-update-operation=${operation}`
+          ],
+          { windowsHide: true, stdio: 'ignore' }
+        )
+        const record = await waitForState('exited')
+        expect(record).toMatchObject({ attempt: operation, installerPid: helper.pid, exitCode: 17 })
+      } finally {
+        // Only exact child handles owned by this test; no installed application is touched.
+        helper?.kill()
+        observer.kill()
+      }
+    },
+    25_000
+  )
 
   it('persists the bound original installation before handoff without claiming success', async () => {
     await owner().observeManualInstallHandoff!(artifact)
