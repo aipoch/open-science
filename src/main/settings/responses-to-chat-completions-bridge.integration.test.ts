@@ -1027,10 +1027,19 @@ it.runIf(runLiveContract).each([
   { type: 'official', contextWindow: undefined, expectedSize: 258_400 },
   { type: 'official', contextWindow: 1_050_000, expectedSize: 828_400 },
   { type: 'codex-isolated', contextWindow: 1_050_000, expectedSize: 828_400 },
-  { type: 'codex-shared', contextWindow: 1_050_000, expectedSize: 828_400 }
+  { type: 'codex-shared', contextWindow: 1_050_000, expectedSize: 828_400 },
+  {
+    type: 'codex-isolated',
+    contextWindow: 1_050_000,
+    expectedSize: 828_400,
+    nextModel: 'gpt-5.5',
+    nextSize: 258_400
+  }
 ] as const)(
-  'applies $type window $contextWindow through native config and reports $expectedSize',
-  async ({ type, contextWindow, expectedSize }) => {
+  'applies $type window $contextWindow through native config and reports $expectedSize (case %#)',
+  async (testCase) => {
+    const { type, contextWindow, expectedSize } = testCase
+    const inputTokens = 'nextModel' in testCase ? 100_000 : 300_000
     const root = await mkdtemp(join(tmpdir(), 'codex-context-window-'))
     const upstream = vi.fn(async () =>
       responsesSse([
@@ -1048,7 +1057,7 @@ it.runIf(runLiveContract).each([
           type: 'response.completed',
           response: {
             id: 'context-probe',
-            usage: { input_tokens: 300_000, output_tokens: 3, total_tokens: 300_003 }
+            usage: { input_tokens: inputTokens, output_tokens: 3, total_tokens: inputTokens + 3 }
           }
         }
       ])
@@ -1123,14 +1132,34 @@ it.runIf(runLiveContract).each([
                 .buildSession({ cwd: root, mcpServers: [] })
                 .withSession(async (session) => {
                   const notifications: acp.SessionNotification[] = []
-                  for (let turn = 0; turn < (contextWindow ? 2 : 1); turn++) {
+                  const turnCount = 'nextModel' in testCase ? 3 : contextWindow ? 2 : 1
+                  for (let turn = 0; turn < turnCount; turn++) {
+                    if (turn > 0 && 'nextModel' in testCase) {
+                      const model = turn === 1 ? testCase.nextModel : 'gpt-6-astra'
+                      await ctx.request(acp.methods.agent.session.setConfigOption, {
+                        sessionId: session.sessionId,
+                        configId: 'model',
+                        value: model
+                      })
+                      proxy.setModelTarget({ model })
+                    }
                     stage = `prompt ${turn + 1}`
+                    const turnUpdates: acp.SessionNotification[] = []
                     session.prompt('Reply with CONTEXT_OK.')
                     for (;;) {
                       const update = await session.nextUpdate()
                       if (update.kind === 'stop') break
                       notifications.push(update.notification)
+                      turnUpdates.push(update.notification)
                     }
+                    expect(turnUpdates.map(({ update }) => update)).toContainEqual(
+                      expect.objectContaining({
+                        sessionUpdate: 'usage_update',
+                        size:
+                          turn === 1 && 'nextSize' in testCase ? testCase.nextSize : expectedSize,
+                        used: inputTokens
+                      })
+                    )
                   }
                   return notifications
                 })
@@ -1152,11 +1181,12 @@ it.runIf(runLiveContract).each([
         expect.objectContaining({
           sessionUpdate: 'usage_update',
           size: expectedSize,
-          used: 300_000
+          used: inputTokens
         })
       )
       // A retained 100k/244.8k compaction threshold would issue an extra request before turn two.
-      expect(upstream).toHaveBeenCalledTimes(contextWindow ? 2 : 1)
+      // Each model switch performs a native compaction request before the next prompt.
+      expect(upstream).toHaveBeenCalledTimes('nextModel' in testCase ? 5 : contextWindow ? 2 : 1)
       expect(stderr.join('')).not.toContain('Model metadata for gpt-6-astra not found')
     } catch (error) {
       throw new Error(`${String(error)}\n${stderr.join('')}`)

@@ -219,7 +219,7 @@ class AcpModelChangeWorkflow {
     if (!connection) return false
     const backend = this.options.backendGeneration.current
     // Codex reads context/compaction overrides at process startup; an ACP model switch cannot
-    // replace them. Reconnect before publishing a capacity that the running process cannot use.
+    // replace them. Equal overrides remain valid across models: Codex resolves native caps per turn.
     if (backend.framework.id === 'codex' && backend.context.window !== target.contextWindow) {
       return false
     }

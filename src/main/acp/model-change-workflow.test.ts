@@ -301,6 +301,11 @@ describe('ACP model-change workflow', () => {
     ).resolves.toBe(true)
     expect(harness.requestReconnect).not.toHaveBeenCalled()
     expect(harness.updateModel).toHaveBeenCalledOnce()
+    expect(harness.clearContext).toHaveBeenCalledOnce()
+    expect(harness.beginContext).toHaveBeenCalledWith(
+      'app-session',
+      expect.objectContaining({ model: 'model-b' })
+    )
   })
 
   it('rejects an incompatible target without arming admission', async () => {
