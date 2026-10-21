@@ -9,6 +9,7 @@ import {
   degrees,
   rgb
 } from 'pdf-lib'
+import { createCanvas } from '@napi-rs/canvas'
 import { getDocument, OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import { expect, it } from 'vitest'
 import { PdfTranslationWriter } from '../src/writer.js'
@@ -1635,4 +1636,171 @@ it('retains nonstandard zero-based print ranges instead of guessing their intend
   ])
   expect(output.data).toEqual(await pdf.save())
   expect(output.layoutFailures[0].code).toBe('document-structure')
+})
+
+it.each(['plain', 'explicit-region', 'nested-form', 'joined'] as const)(
+  'retains scanned content without duplicating its OCR translation (%s)',
+  async (mode) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      canvas = createCanvas(400, 500),
+      context = canvas.getContext('2d')
+    context.fillStyle = 'white'
+    context.fillRect(0, 0, 400, 500)
+    context.fillStyle = 'black'
+    context.font = '12px sans-serif'
+    context.fillText('Scanned original body.', 40, 60)
+    // A visual figure absent from the OCR proves that silently dropping the scan is unsafe.
+    context.fillStyle = '#3380cc'
+    context.fillRect(40, 200, 150, 100)
+    const image = await pdf.embedPng(canvas.toBuffer('image/png')),
+      page = pdf.addPage([400, 500])
+    if (mode === 'nested-form') {
+      const inner = await PDFDocument.create(),
+        innerPage = inner.addPage([200, 250]),
+        innerImage = await inner.embedPng(canvas.toBuffer('image/png'))
+      innerPage.drawImage(innerImage, { x: 0, y: 0, width: 200, height: 250 })
+      await inner.flush()
+      const form = await pdf.embedPage(innerPage)
+      page.drawPage(form, { x: 0, y: 0, xScale: 2, yScale: 2 })
+    } else page.drawImage(image, { x: 0, y: 0, width: 400, height: 500 })
+    page.drawText('Scanned original body.', { font, x: 40, y: 440, size: 12, opacity: 0 })
+    if (mode === 'joined')
+      pdf.addPage([400, 500]).drawText('Continued source.', { font, x: 40, y: 440, size: 12 })
+    pdf.addPage([400, 500]).drawText('Independent source.', { font, x: 40, y: 440, size: 12 })
+    const joined = mode === 'joined',
+      independentPage = joined ? 3 : 2,
+      output = await generate(
+        pdf,
+        [
+          {
+            source: joined ? 'Scanned original body. Continued source.' : 'Scanned original body.',
+            translation: 'Translated scanned body.',
+            fragments: [fragment(1, 0.08), ...(joined ? [fragment(2, 0.08)] : [])]
+          },
+          {
+            source: 'Independent source.',
+            translation: 'Independent translation.',
+            fragments: [fragment(independentPage, 0.08)]
+          }
+        ],
+        mode === 'explicit-region'
+          ? { originalRegions: [{ pageNumber: 1, rect: { x: 0, y: 0, width: 1, height: 1 } }] }
+          : {}
+      )
+    expect(output.layoutFailures).toEqual([
+      expect.objectContaining({
+        unitIndex: 0,
+        code: 'unsupported-layout',
+        pageNumbers: joined ? [1, 2] : [1]
+      })
+    ])
+    expect(output.reflow!.originalPageNumbers).toEqual(joined ? [1, 2] : [1])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        first = await parsed.getPage(1),
+        operators = await first.getOperatorList(),
+        texts = []
+      expect(parsed.numPages).toBe(independentPage)
+      expect(operators.fnArray.filter((op) => op === OPS.paintImageXObject)).toHaveLength(1)
+      for (let number = 1; number <= parsed.numPages; number++) {
+        const content = await (await parsed.getPage(number)).getTextContent()
+        texts.push(
+          content.items
+            .filter((item) => 'str' in item)
+            .map((item) => item.str)
+            .join(' ')
+        )
+      }
+      expect(texts[0]).toContain('Scanned original body.')
+      expect(texts.join(' ')).not.toContain('Translated scanned body.')
+      expect(texts.at(-1)).toContain('Independent translation.')
+      if (joined) expect(texts[1]).toContain('Continued source.')
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it('keeps an explicitly identified large figure separate from its translated caption', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    canvas = createCanvas(400, 440),
+    context = canvas.getContext('2d')
+  context.fillStyle = '#3380cc'
+  context.fillRect(0, 0, 400, 440)
+  const image = await pdf.embedPng(canvas.toBuffer('image/png')),
+    page = pdf.addPage([400, 500])
+  page.drawImage(image, { x: 0, y: 60, width: 400, height: 440 })
+  page.drawText('Figure 1. Original caption.', { font, x: 40, y: 25, size: 12 })
+  const output = await generate(
+    pdf,
+    [
+      {
+        source: 'Figure 1. Original caption.',
+        translation: 'Figure 1. Translated caption.',
+        fragments: [fragment(1, 0.92)]
+      }
+    ],
+    { originalRegions: [{ pageNumber: 1, rect: { x: 0, y: 0, width: 1, height: 0.88 } }] }
+  )
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow!.originalPageNumbers).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      first = await parsed.getPage(1),
+      operators = await first.getOperatorList(),
+      content = await first.getTextContent()
+    expect(parsed.numPages).toBe(1)
+    expect(operators.fnArray.filter((op) => op === OPS.paintImageXObject)).toHaveLength(1)
+    expect(
+      content.items
+        .filter((item) => 'str' in item)
+        .map((item) => item.str)
+        .join(' ')
+    ).toContain('Figure 1. Translated caption.')
+  } finally {
+    await task.destroy()
+  }
+})
+
+it('keeps the visible part of an off-page raster alongside translated text', async () => {
+  const pdf = await PDFDocument.create(),
+    font = await pdf.embedFont(StandardFonts.Helvetica),
+    canvas = createCanvas(400, 500),
+    context = canvas.getContext('2d')
+  context.fillStyle = '#3380cc'
+  context.fillRect(0, 0, 400, 500)
+  const image = await pdf.embedPng(canvas.toBuffer('image/png')),
+    page = pdf.addPage([400, 500])
+  page.drawImage(image, { x: -200, y: 0, width: 400, height: 500 })
+  page.drawText('Source.', { font, x: 240, y: 440, size: 12 })
+  const output = await generate(pdf, [
+    {
+      source: 'Source.',
+      translation: 'Translated.',
+      fragments: [{ pageNumber: 1, rect: { x: 0.6, y: 0.08, width: 0.2, height: 0.05 } }]
+    }
+  ])
+  expect(output.layoutFailures).toEqual([])
+  expect(output.reflow!.originalPageNumbers).toEqual([])
+  const task = getDocument({ data: output.data.slice() })
+  try {
+    const parsed = await task.promise,
+      first = await parsed.getPage(1),
+      operators = await first.getOperatorList(),
+      content = await first.getTextContent()
+    expect(parsed.numPages).toBe(1)
+    expect(operators.fnArray.filter((op) => op === OPS.paintImageXObject)).toHaveLength(1)
+    expect(
+      content.items
+        .filter((item) => 'str' in item)
+        .map((item) => item.str)
+        .join(' ')
+    ).toContain('Translated.')
+  } finally {
+    await task.destroy()
+  }
 })

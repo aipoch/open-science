@@ -261,3 +261,11 @@ is already current; it does not call a translation model. Text-translation retry
 placement retry keep their existing behavior. The additive diagnostic is saved in the existing
 checkpoint layout reports; existing records need no migration. Previously exported PDFs are not
 rewritten and must be regenerated to gain this preservation behavior.
+
+Page-sized raster backgrounds are not inserted as ordinary figures beside translated OCR text.
+A raster covering more than 85% of the page retains the original page with the existing
+`unsupported-layout` diagnostic unless it is contained in an explicit original figure/table region
+that does not intersect any translated fragment. Retention extends across joined paragraphs;
+independent pages still reflow. This preserves visual content missing from OCR instead of silently
+discarding the scan. A verified large figure with a separate caption remains eligible for reflow.
+Accepted translations stay available in the sidebar; this adds no state or checkpoint fields.

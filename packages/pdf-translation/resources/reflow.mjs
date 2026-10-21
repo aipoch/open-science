@@ -115,6 +115,78 @@ function png(pixels, stride, x, y, w, h) {
   ])
 }
 
+// Use the visible page intersection for both background safety and graphic crops.
+function graphicRect([left, low, right, high], dimensions) {
+  return {
+    x: Math.max(0, left / dimensions.width),
+    y: Math.max(0, 1 - high / dimensions.height),
+    width: Math.max(
+      0,
+      Math.min(1, right / dimensions.width) - Math.max(0, left / dimensions.width)
+    ),
+    height: Math.max(
+      0,
+      Math.min(1, high / dimensions.height) - Math.max(0, low / dimensions.height)
+    )
+  }
+}
+
+function readGraphics(native, page) {
+  const { p } = native,
+    objects = [],
+    matrixBuffer = native.alloc(24)
+  // A publisher Form may wrap the entire page. Walk through it to locate
+  // actual figures, rather than copying its body text as one giant image.
+  const multiply = (a, b) => [
+    a[0] * b[0] + a[2] * b[1],
+    a[1] * b[0] + a[3] * b[1],
+    a[0] * b[2] + a[2] * b[3],
+    a[1] * b[2] + a[3] * b[3],
+    a[0] * b[4] + a[2] * b[5] + a[4],
+    a[1] * b[4] + a[3] * b[5] + a[5]
+  ]
+  let visited = 0
+  const visit = (object, matrix, depth) => {
+    if (++visited > 100000 || depth > 16) throw Error('PDF graphic nesting limit')
+    const type = p.FPDFPageObj_GetType(object)
+    if (type === 1) return
+    if (type === 5 && p.FPDFPageObj_GetMatrix(object, matrixBuffer)) {
+      const next = multiply(matrix, [
+        ...native.m.HEAPF32.slice(matrixBuffer / 4, matrixBuffer / 4 + 6)
+      ])
+      for (let i = 0; i < p.FPDFFormObj_CountObjects(object); i++)
+        visit(p.FPDFFormObj_GetObject(object, i), next, depth + 1)
+      return
+    }
+    const b = native.bounds(object),
+      corners = [
+        [b[0], b[1]],
+        [b[0], b[3]],
+        [b[2], b[1]],
+        [b[2], b[3]]
+      ].map(([x, y]) => [
+        matrix[0] * x + matrix[2] * y + matrix[4],
+        matrix[1] * x + matrix[3] * y + matrix[5]
+      ])
+    objects.push({
+      type,
+      bounds: [
+        Math.min(...corners.map((c) => c[0])),
+        Math.min(...corners.map((c) => c[1])),
+        Math.max(...corners.map((c) => c[0])),
+        Math.max(...corners.map((c) => c[1]))
+      ]
+    })
+  }
+  try {
+    for (let i = 0; i < p.FPDFPage_CountObjects(page); i++)
+      visit(p.FPDFPage_GetObject(page, i), [1, 0, 0, 1, 0, 0], 0)
+  } finally {
+    native.free(matrixBuffer)
+  }
+  return objects
+}
+
 export async function generateReflow(input, retainedLinkPages = new Set()) {
   const document = await PDFDocument.create({ updateMetadata: false }),
     bytes = await readFile(new URL('./NotoSansSC-Regular.otf', import.meta.url)),
@@ -321,7 +393,41 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
     retainLinkedPages(retainedLinkPages, sourceLinks.links, input.units)
     const retainedPages = new Set(retainedLinkPages)
     for (const number of sourceLinks.unsafePages) retainedPages.add(number)
-    // Copy rotated pages intact. Extend the fallback across joined paragraphs so
+    // A page-sized raster may contain body text and figures absent from the OCR
+    // layer. Dropping it loses content; inserting it duplicates the translated body.
+    // Only an explicit, separate original region can establish that it is a figure.
+    for (const number of changedPages) {
+      if (retainedPages.has(number)) continue
+      const nativePage = p.FPDF_LoadPage(source.doc, number - 1),
+        dimensions = input.pages[number - 1]
+      try {
+        for (const object of readGraphics(native, nativePage)) {
+          if (object.type !== 3) continue
+          const rect = graphicRect(object.bounds, dimensions)
+          if (rect.width * rect.height <= 0.85) continue
+          const separateFigure = input.originalRegions?.some(
+            (region) =>
+              region.pageNumber === number &&
+              contains(rect, region.rect) &&
+              !input.units.some(
+                (unit) =>
+                  unit.source !== unit.translation &&
+                  unit.fragments.some(
+                    (fragment) =>
+                      fragment.pageNumber === number && touches(fragment.rect, region.rect, 0)
+                  )
+              )
+          )
+          if (!separateFigure) {
+            retainedPages.add(number)
+            break
+          }
+        }
+      } finally {
+        p.FPDF_ClosePage(nativePage)
+      }
+    }
+    // Copy unsafe pages intact. Extend the fallback across joined paragraphs so
     // their source text cannot also be emitted on a neighboring reflowed page.
     let previousSize
     do {
@@ -370,57 +476,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
         nativePage = p.FPDF_LoadPage(source.doc, number - 1)
       let bitmap
       try {
-        const objects = [],
-          matrixBuffer = native.alloc(24)
-        // A publisher Form may wrap the entire page. Walk through it to locate
-        // actual figures, rather than copying its body text as one giant image.
-        const multiply = (a, b) => [
-          a[0] * b[0] + a[2] * b[1],
-          a[1] * b[0] + a[3] * b[1],
-          a[0] * b[2] + a[2] * b[3],
-          a[1] * b[2] + a[3] * b[3],
-          a[0] * b[4] + a[2] * b[5] + a[4],
-          a[1] * b[4] + a[3] * b[5] + a[5]
-        ]
-        let visited = 0
-        const visit = (object, matrix, depth) => {
-          if (++visited > 100000 || depth > 16) throw Error('PDF graphic nesting limit')
-          const type = p.FPDFPageObj_GetType(object)
-          if (type === 1) return
-          if (type === 5 && p.FPDFPageObj_GetMatrix(object, matrixBuffer)) {
-            const next = multiply(matrix, [
-              ...native.m.HEAPF32.slice(matrixBuffer / 4, matrixBuffer / 4 + 6)
-            ])
-            for (let i = 0; i < p.FPDFFormObj_CountObjects(object); i++)
-              visit(p.FPDFFormObj_GetObject(object, i), next, depth + 1)
-            return
-          }
-          const b = native.bounds(object),
-            corners = [
-              [b[0], b[1]],
-              [b[0], b[3]],
-              [b[2], b[1]],
-              [b[2], b[3]]
-            ].map(([x, y]) => [
-              matrix[0] * x + matrix[2] * y + matrix[4],
-              matrix[1] * x + matrix[3] * y + matrix[5]
-            ])
-          objects.push({
-            type,
-            bounds: [
-              Math.min(...corners.map((c) => c[0])),
-              Math.min(...corners.map((c) => c[1])),
-              Math.max(...corners.map((c) => c[0])),
-              Math.max(...corners.map((c) => c[1]))
-            ]
-          })
-        }
-        try {
-          for (let i = 0; i < p.FPDFPage_CountObjects(nativePage); i++)
-            visit(p.FPDFPage_GetObject(nativePage, i), [1, 0, 0, 1, 0, 0], 0)
-        } finally {
-          native.free(matrixBuffer)
-        }
+        const objects = readGraphics(native, nativePage)
         const scale = Math.min(2, 2400 / Math.max(dimensions.width, dimensions.height))
         const pw = Math.ceil(dimensions.width * scale),
           ph = Math.ceil(dimensions.height * scale)
@@ -482,13 +538,8 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
             ![left, low, right, high].every(Number.isFinite)
           )
             continue
-          const rect = {
-            x: Math.max(0, left / dimensions.width),
-            y: Math.max(0, 1 - high / dimensions.height),
-            width: Math.min(1, (right - left) / dimensions.width),
-            height: Math.min(1, (high - low) / dimensions.height)
-          }
-          if (rect.width * rect.height > 0.85 && object.type !== 3) continue
+          const rect = graphicRect(object.bounds, dimensions)
+          if (rect.width * rect.height > 0.85) continue
           // Merge connected diagram paths into one crop, retaining labels in place.
           let merged = rect
           for (let i = 0; i < graphics.length;) {
