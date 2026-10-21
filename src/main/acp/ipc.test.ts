@@ -1450,6 +1450,45 @@ describe('installAcpIpcHandlers — native context compaction bridge', () => {
   })
 })
 
+describe.each([
+  ['acp:create-session', createSession],
+  ['acp:resume-session', resumeSession],
+  ['acp:reset-session-context', resetSessionContext]
+] as const)('%s authentication recovery', (channel, method) => {
+  it.each([
+    { code: -32000 },
+    { code: -32603, data: { codexErrorInfo: 'unauthorized' } },
+    { code: -32603, data: { errorName: 'APIError', statusCode: 401 } }
+  ])(
+    'normalizes structured authentication failure %j before IPC serialization',
+    async (details) => {
+      registerWithFakes()
+      const failure = Object.assign(new Error('Internal error'), {
+        name: 'RequestError',
+        ...details
+      })
+      method.mockRejectedValueOnce(failure)
+
+      await expect(handlers.get(channel)?.({}, { sessionId: 's-1' })).rejects.toMatchObject({
+        message: 'Authentication required',
+        cause: failure
+      })
+    }
+  )
+
+  it.each([403, 429])('preserves non-authentication provider status %s', async (statusCode) => {
+    registerWithFakes()
+    const failure = Object.assign(new Error('Internal error'), {
+      name: 'RequestError',
+      code: -32603,
+      data: { errorName: 'APIError', statusCode }
+    })
+    method.mockRejectedValueOnce(failure)
+
+    await expect(handlers.get(channel)?.({}, { sessionId: 's-1' })).rejects.toBe(failure)
+  })
+})
+
 describe('installAcpIpcHandlers — create-session failure logging', () => {
   it('logs the failure via the file logger and re-throws so the renderer still sees the error', async () => {
     registerWithFakes()

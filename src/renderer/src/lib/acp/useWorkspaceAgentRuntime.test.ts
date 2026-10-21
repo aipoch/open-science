@@ -1346,6 +1346,16 @@ describe('workspace agent runtime event processing', () => {
 })
 
 describe('resume failure classification', () => {
+  it('preserves authentication recovery after Electron IPC serialization', () => {
+    expect(
+      getResumeFailureMessage(
+        new Error(
+          "Error invoking remote method 'acp:resume-session': Error: Authentication required"
+        )
+      )
+    ).toBe('Agent session resume failed: Authentication required')
+  })
+
   it('preserves the main-process Claude version gate message when resuming', () => {
     const message = getResumeFailureMessage(
       new Error(
@@ -5359,6 +5369,53 @@ describe('workspace agent message sending', () => {
     expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
   })
 
+  it('keeps branch reset retryable when Electron reports an authentication failure', async () => {
+    useSessionStore.getState().appendUserMessage({
+      sessionId: 'transport-session-1',
+      content: 'Original branch turn',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    useSessionStore.getState().finishRun('transport-session-1')
+    useSessionStore.setState((state) => ({
+      sessions: state.sessions.map((session) => ({ ...session, branchContextResetRequired: true }))
+    }))
+    vi.stubGlobal('window', {
+      api: {
+        sessions: createSessionPolicyApi(),
+        notebook: { shutdown: vi.fn().mockResolvedValue({ status: 'shutdown' }) }
+      }
+    })
+    const runtime = {
+      state: createSnapshot(['transport-session-1']),
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:reset-session-context': Error: Authentication required"
+          )
+        ),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      sessionId: 'transport-session-1',
+      text: 'Continue selected branch',
+      cwd: '/workspace/project',
+      projectId: 'project-1'
+    })
+    await flushRuntimeTasks()
+
+    expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].branchContextResetRequired).toBe(true)
+    expect(useWorkspaceOperationErrors.getState().errors['transport-session-1']).toBe(
+      'Agent session resume failed: Authentication required'
+    )
+  })
+
   it('adopts a model-only Session target before resetting a selected Branch', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'transport-session-1',
@@ -7726,6 +7783,34 @@ describe('workspace agent message sending', () => {
     expect(
       useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
     ).toEqual(expect.any(String))
+  })
+
+  it('preserves authentication recovery when Electron session creation rejects', async () => {
+    const runtime = {
+      state: createSnapshot(),
+      createSession: vi
+        .fn()
+        .mockRejectedValue(
+          new Error(
+            "Error invoking remote method 'acp:create-session': Error: Authentication required"
+          )
+        ),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn(),
+      sendPrompt: vi.fn()
+    }
+
+    await sendWorkspaceMessage(runtime, {
+      text: 'Start a new analysis',
+      cwd: '/workspace/project',
+      agentFrameworkId: 'codex'
+    })
+    await flushRuntimeTasks()
+
+    expect(
+      useWorkspaceOperationErrors.getState().errors[useSessionStore.getState().sessions[0].id]
+    ).toBe('Authentication required')
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
   })
 
   it('uses a generic creation error when IPC supplies no downstream detail', async () => {
