@@ -350,7 +350,13 @@ const runAcpInitializeSmoke =
             })
             .finally(() => {
               if (!ok && !signal?.aborted) {
-                const stderr = boundedRuntimeDiagnostic(stderrOutput)
+                // A cut quoted credential may no longer match the sanitizer. Withhold the
+                // incomplete trailing line whenever the raw capture limit was reached.
+                const stderr = boundedRuntimeDiagnostic(
+                  stderrTruncated
+                    ? stderrOutput.slice(0, stderrOutput.lastIndexOf('\n') + 1)
+                    : stderrOutput
+                )
                 log.error('ACP initialize check failed', {
                   status,
                   signal: exitSignal,

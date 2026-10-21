@@ -521,6 +521,29 @@ describe('codex-detect: real ACP initialize smoke', () => {
     }
   })
 
+  it('does not expose a quoted credential cut by the stderr capture limit', async () => {
+    const adapterPath = join(tempRoot, 'truncated-credential.js')
+    const prefix = 'Native Codex failed to start\n'
+    const credential = '"OPENAI_API_KEY":"smoke-secret-at-boundary"'
+    // Put the closing quote just beyond the raw capture limit. Sanitizing this partial
+    // JSON value cannot recognize it as the complete quoted credential.
+    const diagnostic =
+      prefix + 'x'.repeat(8_192 - prefix.length - credential.length + 1) + credential + '\n'
+    await writeFile(
+      adapterPath,
+      `process.stderr.write(${JSON.stringify(diagnostic)}, () => process.exit(1))`,
+      'utf8'
+    )
+
+    expect(await runAcpInitializeSmoke(process.platform)(adapterPath)).toBe(false)
+    expect(errorLogSpy).toHaveBeenCalledTimes(1)
+    expect(errorLogSpy.mock.calls[0][1]).toMatchObject({
+      stderr: expect.stringContaining('Native Codex failed to start'),
+      stderrTruncated: true
+    })
+    expect(JSON.stringify(errorLogSpy.mock.calls)).not.toContain('smoke-secret-at-boundary')
+  })
+
   it('records a sanitized initialize error response without logging its data payload', async () => {
     const adapterPath = join(tempRoot, 'initialize-error.js')
     const response = JSON.stringify({
