@@ -309,7 +309,10 @@ bootstraps a full plan.
 The generated `scripts/ci/module-derived-consumers.json` supplements explicit module contracts;
 selection explanations identify derived tests. See [registration steps](testing.md#module-impact-registration).
 Trusted CI Integrity recomputes the index from Git blobs without executing candidate code and rejects
-missing, stale or invalid evidence. Index changes retain full CI routing and require CI owner review.
+missing, stale or invalid evidence. Index changes require CI owner review. PR Gate treats a modified,
+valid index as additive evidence: it merges the candidate tests into the trusted index, so selection
+can only grow, and routes the remaining paths normally. An added, deleted, renamed or invalid index,
+or any other CI input, still selects the full plan.
 Non-source resource changes anywhere in the repository do not reject an inherited stale index
 when the dependency reader's text inputs and recomputed consumer memberships are unchanged.
 This uses the reader's own JavaScript/TypeScript/JSON input boundary, not a documentation-path

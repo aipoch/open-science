@@ -477,16 +477,14 @@ export async function runModuleTestCli(arguments_ = process.argv.slice(2), optio
   if (arguments_.includes('--coverage-changed') && !coverageChanged) {
     throw new Error('--coverage-changed requires a Git revision')
   }
-  const changes = changesFromGit(base, head, options)
+  const { manifest, registrationModules, registrationOnly, changes } = resolveModuleImpactInputs(
+    changesFromGit(base, head, options),
+    { base, head, ...options }
+  )
   const paths = sorted(
     changes.flatMap(({ path, previousPath }) => [path, previousPath].filter(Boolean))
   )
   const graph = collectCodeGraphTests(paths, options)
-  const { manifest, registrationModules, registrationOnly } = resolveModuleImpactInputs(changes, {
-    base,
-    head,
-    ...options
-  })
   let plan = createAffectedTestPlan(changes, graph, manifest, registrationModules, registrationOnly)
   // Documentation and trusted additive records do not turn a source boundary into a
   // mixed product change. Keep their plan evidence and capability selection intact.
