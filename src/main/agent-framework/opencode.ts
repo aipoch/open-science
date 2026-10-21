@@ -4,7 +4,7 @@ import {
   type SpawnOptionsWithoutStdio
 } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import type { SessionModeState } from '@agentclientprotocol/sdk'
 
 import {
@@ -507,7 +507,7 @@ export const createOpencodeFramework = ({
     const dataHome = opencodeDataHome(ctx.storageRoot)
     const opencodeDir = join(configHome, 'opencode')
     const configPath = join(opencodeDir, 'opencode.json')
-    const configFiles = [
+    const configFiles: NonNullable<AgentModelConfig['configFiles']> = [
       { path: configPath, content: '' },
       {
         path: join(opencodeDir, 'plugins', OPENCODE_GO_SESSION_PLUGIN),
@@ -532,26 +532,37 @@ export const createOpencodeFramework = ({
         .filter(Boolean)
         .join('\n\n')
       if (instructions) {
-        const instructionsPath = join(opencodeDir, 'instructions', 'open-science.md')
+        const instructionsPath = join(
+          opencodeDir,
+          'instructions',
+          `open-science-${createHash('sha256').update(instructions).digest('hex')}.md`
+        )
         instructionPaths.push(instructionsPath)
         persistentInstructions.push(instructions)
-        configFiles.push({ path: instructionsPath, content: instructions })
+        configFiles.push({ path: instructionsPath, content: instructions, contentAddressed: true })
       }
     }
     if (ctx.instructions) {
-      const instructionsPath = join(opencodeDir, 'instructions', 'connectors.md')
+      const instructionsPath = join(
+        opencodeDir,
+        'instructions',
+        `connectors-${createHash('sha256').update(ctx.instructions).digest('hex')}.md`
+      )
       instructionPaths.push(instructionsPath)
       persistentInstructions.push(ctx.instructions)
-      configFiles.push({ path: instructionsPath, content: ctx.instructions })
+      configFiles.push({
+        path: instructionsPath,
+        content: ctx.instructions,
+        contentAddressed: true
+      })
     }
 
     configFiles[0].content = buildOpencodeConfig(
       provider,
       {},
-      instructionPaths,
+      [],
       ctx.reasoningEffort,
-      ctx.providerModelCatalog,
-      ctx.storageRoot
+      ctx.providerModelCatalog
     )
 
     return {
@@ -583,14 +594,37 @@ export const createOpencodeFramework = ({
         // against the only remaining non-repo surface, the user's own ~/.opencode: it cannot repoint the
         // active provider's baseURL or swap the model to an attacker provider while inheriting the app's
         // `{env:...}` key ref. The key itself never rides this layer, only its env reference.
-        OPENCODE_CONFIG_CONTENT: JSON.stringify(
-          buildAppConfigContent(
+        OPENCODE_CONFIG_CONTENT: JSON.stringify({
+          ...buildAppConfigContent(
             provider,
             ctx.reasoningEffort,
             ctx.providerModelCatalog,
             ctx.storageRoot
-          )
-        ),
+          ),
+          instructions: instructionPaths,
+          ...(ctx.skillDiscovery
+            ? {
+                permission: {
+                  ...opencodePermissionRules(),
+                  external_directory: {
+                    '*': 'deny',
+                    ...Object.fromEntries(
+                      ctx.skillDiscovery.allowedPaths.map((path) => [
+                        join(dirname(path), '*'),
+                        'allow'
+                      ])
+                    )
+                  },
+                  skill: {
+                    '*': 'deny',
+                    ...Object.fromEntries(
+                      ctx.skillDiscovery.allowedNames.map((name) => [name, 'ask'])
+                    )
+                  }
+                }
+              }
+            : {})
+        }),
         // Pass credentials only through referenced environment values. Generation-local transport
         // routes use distinct variables so late OpenCode background work cannot inherit a new route.
         ...Object.fromEntries(

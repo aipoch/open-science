@@ -5,6 +5,9 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'orphadata') {
+    return t('Rare-disease genes, phenotypes and frequency evidence from Orphadata.')
+  }
   if (connector.id === 'encori') {
     return t('RNA interactions, regulatory evidence and bulk datasets from ENCORI.')
   }
@@ -76,6 +79,27 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'genes/get_hgnc_gene':
+      return t('Retrieve HGNC gene names and aliases.')
+    case 'genes/resolve_hgnc_alias':
+      return t('Resolve an HGNC gene alias without discarding ambiguous matches.')
+    case 'pubmed/get_pubtator_annotations':
+      return t('Retrieve PubTator 3 annotations for published articles.')
+    case 'pubmed/search_pubtator':
+      return t('Search PubTator 3 entities and relations, one page at a time.')
+    case 'clinical-genomics/get_dgidb_gene_drugs':
+      return t('Find drugs associated with a gene in DGIdb, retaining source evidence.')
+    case 'clinical-genomics/get_dgidb_drug_genes':
+      return t('Find genes associated with a drug in DGIdb, retaining source evidence.')
+    case 'rna/get_rnacentral_record':
+      return t('Retrieve an RNAcentral sequence record.')
+    case 'rna/get_rnacentral_xrefs':
+      return t('Map RNAcentral identifiers to source databases, one page at a time.')
+    case 'orphadata/get_disease_genes':
+      return t('Retrieve rare-disease gene associations from Orphadata.')
+    case 'orphadata/get_disease_phenotypes':
+      return t('Retrieve rare-disease phenotypes and frequencies from Orphadata.')
+
     case 'encori/query_mirna_targets':
       return t('Query miRNA target evidence.')
     case 'encori/query_rna_rna_interactions':

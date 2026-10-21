@@ -1,3 +1,4 @@
+import { isBundledConnectorEnabled } from './catalog'
 import { isSensitiveDiagnosticKey, redactSensitiveText } from '@aipoch/diagnostics'
 import { ConnectorHttpError, ParserEngine } from '@aipoch/connector-core'
 import type { ConnectorRegistry } from '@aipoch/connector-core'
@@ -258,8 +259,7 @@ export class ConnectorService {
     connector: string,
     connectors: StoredConnectors | undefined = this.deps.getConnectors()
   ): boolean {
-    // Bundled connectors are enabled by default; only an explicit opt-out disables one.
-    return !(connectors?.disabledConnectorIds ?? []).includes(connector)
+    return isBundledConnectorEnabled(connector, connectors)
   }
 
   // Invalidates every call that captured the previous custom-server configuration. While the

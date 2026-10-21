@@ -140,6 +140,11 @@ export type AgentModelChangeTarget = Readonly<{
 export type ModelConfigContext = {
   // App storage root; frameworks derive their config dir/location beneath it.
   storageRoot: string
+  // Fixed per-backend discovery scope; source documents may be shared by parallel sessions.
+  skillDiscovery?: {
+    allowedNames: readonly string[]
+    allowedPaths: readonly string[]
+  }
   // Current GUI-authorized local roots. Frameworks may translate write-capable roots into their
   // native sandbox configuration; access remains advisory to the model, never an authorization.
   grantedLocalRoots?: readonly Pick<GrantedLocalRoot, 'path' | 'access'>[]
@@ -177,8 +182,8 @@ export type SessionSetupContext = {
   // Framework-native options resolved with the active backend and applied to every session created
   // on that connection. Claude uses this to inject app-owned settings/plugins into shared auth mode.
   sessionOptions?: Record<string, unknown>
-  // undefined is the Main Agent and must omit the native field; [] is an explicit Specialist
-  // zero-skill whitelist and must be preserved verbatim by supporting frameworks.
+  // Production sessions pass the exact Main/Specialist names; [] is an explicit zero-Skill
+  // whitelist. Undefined preserves defaults for injected/legacy callers.
   skillWhitelist?: string[]
   // App-owned Skill loading is a primary-session capability, not a backend-wide default. Absent
   // means disabled (for example Reviewer and restricted inference); `all` is an unrestricted

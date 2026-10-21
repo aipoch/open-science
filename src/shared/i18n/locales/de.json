@@ -6323,6 +6323,7 @@
     "Could not cancel diagnostic export.": "Der Diagnoseexport konnte nicht abgebrochen werden.",
     "Diagnostic export failed.": "Diagnoseexport fehlgeschlagen.",
     "Diagnostic package exported successfully.": "Diagnosepaket erfolgreich exportiert.",
+    "Diagnostic package partially exported.": "Diagnosepaket teilweise exportiert.",
     "Some selected material could not be included in full.": "Einige ausgewählte Inhalte konnten nicht vollständig aufgenommen werden.",
     "Export cancelled.": "Export abgebrochen.",
     "Could not show the exported file.": "Die exportierte Datei konnte nicht angezeigt werden.",
@@ -7528,6 +7529,17 @@
     "Sign in again to restore access to this account.": "Melden Sie sich erneut an, um den Zugriff auf dieses Konto wiederherzustellen.",
     "Update credential": "Zugangsdaten aktualisieren",
     "Re-import login": "Anmeldedaten erneut importieren",
-    "This Connector could not verify its credentials. Sign in again to restore access.": "Die Zugangsdaten dieses Konnektors konnten nicht verifiziert werden. Melden Sie sich erneut an, um den Zugriff wiederherzustellen."
+    "This Connector could not verify its credentials. Sign in again to restore access.": "Die Zugangsdaten dieses Konnektors konnten nicht verifiziert werden. Melden Sie sich erneut an, um den Zugriff wiederherzustellen.",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Gene, Phänotypen und Häufigkeitsnachweise für seltene Erkrankungen aus Orphadata.",
+    "Retrieve HGNC gene names and aliases.": "HGNC-Gennamen und Aliasse abrufen.",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "Einen HGNC-Genalias auflösen und mehrdeutige Treffer beibehalten.",
+    "Retrieve PubTator 3 annotations for published articles.": "PubTator-3-Annotationen für veröffentlichte Artikel abrufen.",
+    "Search PubTator 3 entities and relations, one page at a time.": "PubTator-3-Entitäten und -Beziehungen seitenweise suchen.",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "Mit einem Gen assoziierte Wirkstoffe in DGIdb mit Quellennachweisen finden.",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "Mit einem Wirkstoff assoziierte Gene in DGIdb mit Quellennachweisen finden.",
+    "Retrieve an RNAcentral sequence record.": "Einen RNAcentral-Sequenzdatensatz abrufen.",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral-Kennungen seitenweise den Quelldatenbanken zuordnen.",
+    "Retrieve rare-disease gene associations from Orphadata.": "Genassoziationen seltener Erkrankungen aus Orphadata abrufen.",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Phänotypen und Häufigkeiten seltener Erkrankungen aus Orphadata abrufen."
   }
 }

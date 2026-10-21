@@ -149,6 +149,7 @@
       "src/renderer/src/pages/workspace/workspace-session-delegation-control-owner.test.tsx",
       "src/renderer/src/stores/session-store.test.ts"
     ],
+    "connector_core": ["packages/connector-builtins/src/scientific-expansion.test.ts"],
     "delegation_execution_contracts": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],

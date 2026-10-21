@@ -45,6 +45,47 @@ const { ALL_CONNECTOR_IDS } = await import('../connectors/registry')
 
 // Exercises the durable Connector owner against a real on-disk repository.
 describe('ConnectorSettingsModule', () => {
+  it('offers a Main-disabled bundled definition to a separately authorized Specialist', async () => {
+    await service.setConnectorEnabled({ id: 'orphadata', enabled: false })
+    const stored = await service.getConnectors()
+    expect(service.connectorSkillNames(stored)).not.toContain('mcp-orphadata')
+    expect(await service.provisionedConnectorSkillNames()).toContain('mcp-orphadata')
+    expect(service.connectorSkillNames(stored, ['mcp-orphadata'])).toEqual(['mcp-orphadata'])
+    expect(service.connectorSkillCatalogEntries(stored, ['mcp-orphadata'])).toEqual([
+      expect.objectContaining({ directory: 'mcp-orphadata', name: 'mcp-orphadata' })
+    ])
+    expect(service.connectorSkillNames(stored, [])).toEqual([])
+    expect(await service.getConnectors()).toEqual(stored)
+  })
+
+  it('keeps historical defaults and opt-outs while persisting Orphadata opt-in for views and Skills', async () => {
+    const existing = ['genes', 'pubmed', 'clinical-genomics', 'rna']
+    expect(service.enabledConnectorIds(undefined)).toEqual(expect.arrayContaining(existing))
+    expect(service.enabledConnectorIds(undefined)).not.toContain('orphadata')
+    await service.setConnectorEnabled({ id: 'genes', enabled: false })
+    let snapshot = await service.setConnectorEnabled({ id: 'orphadata', enabled: true })
+    expect(snapshot.connectors.find((entry) => entry.id === 'orphadata')?.enabled).toBe(true)
+    const stored = (await new SettingsRepository(dir).getSettings()).connectors
+    expect(service.enabledConnectorIds(stored)).not.toContain('genes')
+    expect(service.connectorSkillNames(stored)).toContain('mcp-orphadata')
+    expect(service.connectorSkillCatalogEntries(stored).map((entry) => entry.name)).toContain(
+      'mcp-orphadata'
+    )
+    expect(
+      projectConnectorsFromStored(stored).find((entry) => entry.id === 'orphadata')?.mainEnabled
+    ).toBe(true)
+    snapshot = await service.setConnectorEnabled({ id: 'orphadata', enabled: false })
+    expect(snapshot.connectors.find((entry) => entry.id === 'orphadata')?.enabled).toBe(false)
+    const off = await service.getConnectors()
+    expect(service.connectorSkillNames(off)).not.toContain('mcp-orphadata')
+    expect(
+      service.enabledConnectorIds({ ...stored!, disabledConnectorIds: ['orphadata'] })
+    ).not.toContain('orphadata')
+    expect(
+      projectConnectorsFromStored(undefined).find((entry) => entry.id === 'orphadata')?.mainEnabled
+    ).toBe(false)
+  })
+
   it('validates OpenAlex before saving, persists enablement, and refuses to replace a key', async () => {
     const probe = vi.fn<typeof fetch>().mockResolvedValue(new Response(null, { status: 401 }))
     service = new ConnectorSettingsModule(repository, probe)
@@ -141,11 +182,11 @@ describe('ConnectorSettingsModule', () => {
     }
   })
 
-  it('lists every bundled connector, all enabled and not auto-allowed by default', async () => {
+  it('lists every bundled connector using catalog defaults without auto-allow', async () => {
     const snapshot = await service.listConnectors()
 
     expect(snapshot.connectors).toHaveLength(ALL_CONNECTOR_IDS.length)
-    expect(snapshot.connectors.every((c) => c.enabled)).toBe(true)
+    expect(snapshot.connectors.filter((c) => !c.enabled).map((c) => c.id)).toEqual(['orphadata'])
     expect(snapshot.connectors.every((c) => !c.autoAllow)).toBe(true)
     expect(snapshot.customServers).toEqual([])
     expect(snapshot.ncbi).toEqual({ contactEmail: undefined, hasApiKey: false })

@@ -6165,6 +6165,7 @@
     "Could not cancel diagnostic export.": "診断情報のエクスポートをキャンセルできませんでした。",
     "Diagnostic export failed.": "診断情報のエクスポートに失敗しました。",
     "Diagnostic package exported successfully.": "診断パッケージを正常にエクスポートしました。",
+    "Diagnostic package partially exported.": "診断パッケージを一部エクスポートしました。",
     "Some selected material could not be included in full.": "選択した資料の一部を完全には含められませんでした。",
     "Export cancelled.": "エクスポートをキャンセルしました。",
     "Could not show the exported file.": "エクスポートしたファイルを表示できませんでした。",
@@ -7368,6 +7369,17 @@
     "Sign in again to restore access to this account.": "再度ログインして、このアカウントへのアクセスを復旧してください。",
     "Update credential": "認証情報を更新",
     "Re-import login": "ログイン情報を再インポート",
-    "This Connector could not verify its credentials. Sign in again to restore access.": "このコネクタの認証情報を確認できませんでした。再度ログインしてアクセスを復旧してください。"
+    "This Connector could not verify its credentials. Sign in again to restore access.": "このコネクタの認証情報を確認できませんでした。再度ログインしてアクセスを復旧してください。",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Orphadata の希少疾患の遺伝子、表現型、頻度に関するエビデンス。",
+    "Retrieve HGNC gene names and aliases.": "HGNC の遺伝子名と別名を取得します。",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "曖昧な一致を保持して HGNC の遺伝子別名を解決します。",
+    "Retrieve PubTator 3 annotations for published articles.": "公開論文の PubTator 3 アノテーションを取得します。",
+    "Search PubTator 3 entities and relations, one page at a time.": "PubTator 3 のエンティティと関係をページ単位で検索します。",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "出典のエビデンスを保持して DGIdb で遺伝子に関連する薬剤を検索します。",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "出典のエビデンスを保持して DGIdb で薬剤に関連する遺伝子を検索します。",
+    "Retrieve an RNAcentral sequence record.": "RNAcentral の配列レコードを取得します。",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral 識別子と出典データベースの対応をページ単位で取得します。",
+    "Retrieve rare-disease gene associations from Orphadata.": "Orphadata から希少疾患と遺伝子の関連を取得します。",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Orphadata から希少疾患の表現型と頻度を取得します。"
   }
 }

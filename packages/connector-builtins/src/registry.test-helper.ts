@@ -24,6 +24,7 @@ import { HMMER_TOOLS } from './hmmer'
 import { IEDB_TOOLS } from './iedb'
 import { INTERPROSCAN_TOOLS } from './interproscan'
 import { LITERATURE_TOOLS } from './literature'
+import { ORPHADATA_TOOLS } from './orphadata'
 import { MONARCH_TOOLS } from './monarch'
 import { MOLECULE_TOOLS } from './molecule'
 import { OMICS_ARCHIVES_TOOLS } from './omics-archives'
@@ -65,6 +66,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
   ...MONARCH_TOOLS,
+  ...ORPHADATA_TOOLS,
   ...MOLECULE_TOOLS,
   ...OMICS_ARCHIVES_TOOLS,
   ...PATHWAY_COMMONS_TOOLS,

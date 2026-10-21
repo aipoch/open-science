@@ -13,6 +13,7 @@ import type {
 } from '../../shared/session-plan/contract'
 import { formatPlanProtectedContext } from '../../shared/session-plan/contract'
 import type { AgentFramework } from '../agent-framework/types'
+import { OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION } from '../skills/runtime-mcp-server'
 import { DelegateMessagePreAcceptanceError } from '../delegation/execution-port'
 import { PLAN_FIRST_TURN_PROMPT_REMINDER } from '../session-plan/guidance'
 import {
@@ -306,7 +307,13 @@ class AcpPromptTurnWorkflow {
       if (preemption) await preemption
       const planPreflight = this.options.plan.preflight(request, mode)
       plan = planPreflight instanceof Promise ? await planPreflight : planPreflight
+      const backend = this.options.environment.backend()
+      const skillRuntime = backend.session.options?.[OPEN_SCIENCE_SKILL_RUNTIME_SESSION_OPTION] as
+        { nativeAllowedNames?: string[]; mainAllowedNames?: string[] } | undefined
       const authorization = this.options.skills.authorize({
+        frameworkId: backend.framework.id,
+        nativeSkillScope: skillRuntime?.nativeAllowedNames,
+        mainSkillScope: skillRuntime?.mainAllowedNames,
         role: this.options.environment.role?.(),
         specialistId: this.options.registry.lookup(request.sessionId)?.aggregate.snapshot()
           .specialistId,

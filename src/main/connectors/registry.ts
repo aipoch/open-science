@@ -25,6 +25,7 @@ import { HMMER_TOOLS } from '@aipoch/connector-builtins/hmmer'
 import { IEDB_TOOLS } from '@aipoch/connector-builtins/iedb'
 import { INTERPROSCAN_TOOLS } from '@aipoch/connector-builtins/interproscan'
 import { LITERATURE_TOOLS } from '@aipoch/connector-builtins/literature'
+import { ORPHADATA_TOOLS } from '@aipoch/connector-builtins/orphadata'
 import { MONARCH_TOOLS } from '@aipoch/connector-builtins/monarch'
 import { MOLECULE_TOOLS } from '@aipoch/connector-builtins/molecule'
 import { OMICS_ARCHIVES_TOOLS } from '@aipoch/connector-builtins/omics-archives'
@@ -68,6 +69,7 @@ const ALL_TOOLS: ToolDescriptor[] = [
   ...INTERPROSCAN_TOOLS,
   ...LITERATURE_TOOLS,
   ...MONARCH_TOOLS,
+  ...ORPHADATA_TOOLS,
   ...MOLECULE_TOOLS,
   MOLECULE_PREVIEW_TOOL,
   ...OMICS_ARCHIVES_TOOLS,

@@ -6626,6 +6626,7 @@
     "Could not cancel diagnostic export.": "Не удалось отменить экспорт диагностики.",
     "Diagnostic export failed.": "Ошибка экспорта диагностики.",
     "Diagnostic package exported successfully.": "Диагностический пакет успешно экспортирован.",
+    "Diagnostic package partially exported.": "Диагностический пакет экспортирован частично.",
     "Some selected material could not be included in full.": "Некоторые выбранные материалы не удалось включить полностью.",
     "Export cancelled.": "Экспорт отменён.",
     "Could not show the exported file.": "Не удалось показать экспортированный файл.",
@@ -7835,6 +7836,17 @@
     "Sign in again to restore access to this account.": "Войдите снова, чтобы восстановить доступ к этой учётной записи.",
     "Update credential": "Обновить учётные данные",
     "Re-import login": "Повторно импортировать данные входа",
-    "This Connector could not verify its credentials. Sign in again to restore access.": "Не удалось проверить учётные данные этого коннектора. Войдите снова, чтобы восстановить доступ."
+    "This Connector could not verify its credentials. Sign in again to restore access.": "Не удалось проверить учётные данные этого коннектора. Войдите снова, чтобы восстановить доступ.",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Гены, фенотипы и данные о частоте признаков редких заболеваний из Orphadata.",
+    "Retrieve HGNC gene names and aliases.": "Получить названия и синонимы генов из HGNC.",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "Определить ген по синониму HGNC, сохраняя неоднозначные совпадения.",
+    "Retrieve PubTator 3 annotations for published articles.": "Получить аннотации PubTator 3 для опубликованных статей.",
+    "Search PubTator 3 entities and relations, one page at a time.": "Искать сущности и связи в PubTator 3 постранично.",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "Найти препараты, связанные с геном, в DGIdb с сохранением данных источников.",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "Найти гены, связанные с препаратом, в DGIdb с сохранением данных источников.",
+    "Retrieve an RNAcentral sequence record.": "Получить запись последовательности из RNAcentral.",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "Сопоставить идентификаторы RNAcentral с исходными базами данных постранично.",
+    "Retrieve rare-disease gene associations from Orphadata.": "Получить связи редких заболеваний с генами из Orphadata.",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Получить фенотипы редких заболеваний и их частоты из Orphadata."
   }
 }

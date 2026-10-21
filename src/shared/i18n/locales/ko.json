@@ -6163,6 +6163,7 @@
     "Could not cancel diagnostic export.": "진단 정보 내보내기를 취소하지 못했습니다.",
     "Diagnostic export failed.": "진단 정보 내보내기에 실패했습니다.",
     "Diagnostic package exported successfully.": "진단 패키지를 성공적으로 내보냈습니다.",
+    "Diagnostic package partially exported.": "진단 패키지를 일부 내보냈습니다.",
     "Some selected material could not be included in full.": "선택한 자료 중 일부를 완전히 포함하지 못했습니다.",
     "Export cancelled.": "내보내기가 취소되었습니다.",
     "Could not show the exported file.": "내보낸 파일을 표시하지 못했습니다.",
@@ -7366,6 +7367,17 @@
     "Sign in again to restore access to this account.": "다시 로그인하여 이 계정에 대한 접근을 복구하세요.",
     "Update credential": "자격 증명 업데이트",
     "Re-import login": "로그인 정보 다시 가져오기",
-    "This Connector could not verify its credentials. Sign in again to restore access.": "이 커넥터의 자격 증명을 확인할 수 없습니다. 다시 로그인하여 접근을 복구하세요."
+    "This Connector could not verify its credentials. Sign in again to restore access.": "이 커넥터의 자격 증명을 확인할 수 없습니다. 다시 로그인하여 접근을 복구하세요.",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Orphadata의 희귀 질환 유전자, 표현형 및 빈도 근거.",
+    "Retrieve HGNC gene names and aliases.": "HGNC 유전자 이름과 별칭을 조회합니다.",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "모호한 일치 항목을 유지하며 HGNC 유전자 별칭을 확인합니다.",
+    "Retrieve PubTator 3 annotations for published articles.": "출판된 논문의 PubTator 3 주석을 조회합니다.",
+    "Search PubTator 3 entities and relations, one page at a time.": "PubTator 3 개체와 관계를 페이지별로 검색합니다.",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "출처 근거를 유지하며 DGIdb에서 유전자 관련 약물을 찾습니다.",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "출처 근거를 유지하며 DGIdb에서 약물 관련 유전자를 찾습니다.",
+    "Retrieve an RNAcentral sequence record.": "RNAcentral 서열 레코드를 조회합니다.",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral 식별자를 원본 데이터베이스에 페이지별로 매핑합니다.",
+    "Retrieve rare-disease gene associations from Orphadata.": "Orphadata에서 희귀 질환과 유전자의 연관성을 조회합니다.",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Orphadata에서 희귀 질환 표현형과 빈도를 조회합니다."
   }
 }

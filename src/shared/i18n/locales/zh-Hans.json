@@ -6165,6 +6165,7 @@
     "Could not cancel diagnostic export.": "无法取消诊断导出。",
     "Diagnostic export failed.": "诊断导出失败。",
     "Diagnostic package exported successfully.": "诊断包已成功导出。",
+    "Diagnostic package partially exported.": "诊断包已部分导出。",
     "Some selected material could not be included in full.": "部分所选材料未能完整收集。",
     "Export cancelled.": "导出已取消。",
     "Could not show the exported file.": "无法显示导出的文件。",
@@ -7368,6 +7369,17 @@
     "Sign in again to restore access to this account.": "重新登录以恢复此账号的访问权限。",
     "Update credential": "更新凭证",
     "Re-import login": "重新导入登录凭证",
-    "This Connector could not verify its credentials. Sign in again to restore access.": "此连接器无法验证凭证。请重新登录以恢复访问。"
+    "This Connector could not verify its credentials. Sign in again to restore access.": "此连接器无法验证凭证。请重新登录以恢复访问。",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Orphadata 提供的罕见病基因、表型及频率证据。",
+    "Retrieve HGNC gene names and aliases.": "查询 HGNC 基因名称和别名。",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "解析 HGNC 基因别名并保留歧义匹配。",
+    "Retrieve PubTator 3 annotations for published articles.": "获取已发表文献的 PubTator 3 标注。",
+    "Search PubTator 3 entities and relations, one page at a time.": "逐页检索 PubTator 3 实体和关系。",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "在 DGIdb 中查询基因关联药物并保留来源证据。",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "在 DGIdb 中查询药物关联基因并保留来源证据。",
+    "Retrieve an RNAcentral sequence record.": "获取 RNAcentral 序列记录。",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "逐页查询 RNAcentral 标识符到来源数据库的映射。",
+    "Retrieve rare-disease gene associations from Orphadata.": "获取 Orphadata 罕见病关联基因。",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "获取 Orphadata 罕见病表型及频率。"
   }
 }
