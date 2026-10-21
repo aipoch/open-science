@@ -699,6 +699,291 @@ describe('ensembl_vep_variant', () => {
     ]
   }
 
+  it.each([
+    'ENST00000366667:c.803C>T',
+    'ENST00000366667.999:c.803C>T',
+    '9:g.22125504G>C',
+    'ENSP00000401091.1:p.Tyr124Cys'
+  ])('routes HGVS %s unchanged and preserves resolved assembly/version/strand', async (hgvs) => {
+    const transcript = {
+      transcript_id: 'ENST00000366667.6',
+      hgvsc: 'ENST00000366667.6:c.803C>T',
+      hgvsp: 'ENSP00000355627.5:p.Ala268Val',
+      strand: -1,
+      variant_allele: 'T',
+      consequence_terms: ['missense_variant'],
+      impact: 'MODERATE'
+    }
+    const response = {
+      ...vepResult,
+      input: hgvs,
+      seq_region_name: '1',
+      start: 230710021,
+      end: 230710021,
+      strand: -1,
+      transcript_consequences: [
+        transcript,
+        { transcript_id: 'ENST00000412344.1', impact: 'MODIFIER' }
+      ],
+      warnings: ['upstream warning']
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(jsonRes([response]))
+    const out = (await run(
+      'ensembl_vep_variant',
+      { hgvs_notation: ` ${hgvs} `, max_consequences: 1 },
+      fetchImpl
+    )) as Record<string, unknown>
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      `https://rest.ensembl.org/vep/homo_sapiens/hgvs/${encodeURIComponent(hgvs)}?hgvs=1&transcript_version=1`
+    )
+    expect(out).toMatchObject({
+      query: hgvs,
+      n_results: 1,
+      hgvs_reference: {
+        requested: hgvs.split(':')[0],
+        note: expect.stringContaining('may not be enforced')
+      },
+      results: [
+        {
+          assembly_name: 'GRCh38',
+          seq_region_name: '1',
+          start: 230710021,
+          end: 230710021,
+          strand: -1,
+          allele_string: 'C/T',
+          warnings: ['upstream warning'],
+          n_transcript_consequences: 2,
+          transcript_consequences_truncated: true,
+          transcript_consequences: [transcript]
+        }
+      ]
+    })
+    expect(out).not.toHaveProperty('normalization')
+  })
+
+  it.each([
+    {
+      hgvs: 'ENST00000681514.999:c.803C>T',
+      matching: {
+        transcript_id: 'ENST00000681514.1',
+        hgvsc: 'ENST00000681514.1:c.803C>T',
+        hgvsp: 'ENSP00000505963.1:p.Ala268Val',
+        variant_allele: 'T'
+      },
+      other: { transcript_id: 'ENST00000366667.6', hgvsp: 'ENSP00000355627.5:p.Ala268Val' }
+    },
+    {
+      hgvs: 'ENSP00000401091.1:p.Tyr124Cys',
+      matching: {
+        transcript_id: 'ENST00000414269.2',
+        hgvsc: 'ENST00000414269.2:c.371A>G',
+        hgvsp: 'ENSP00000401091.2:p.Tyr124Cys',
+        variant_allele: 'G'
+      },
+      other: { transcript_id: 'ENST00000313237.10', hgvsp: 'ENSP00000324403.5:p.Tyr328Cys' }
+    }
+  ])(
+    'preserves input-reference annotations outside the consequence cap for $hgvs',
+    async ({ hgvs, matching, other }) => {
+      // These reference/version pairs come from the official coding and protein HGVS responses.
+      // The matching row is second, so an impact-sorted cap of one must exclude it.
+      const fetchImpl = vi.fn().mockResolvedValue(
+        jsonRes([
+          {
+            ...vepResult,
+            input: hgvs,
+            transcript_consequences: [
+              { ...other, impact: 'MODERATE' },
+              { ...matching, impact: 'MODERATE' }
+            ]
+          }
+        ])
+      )
+      const outputs = []
+      for (const cap of [1, 100]) {
+        outputs.push(
+          (await run(
+            'ensembl_vep_variant',
+            { hgvs_notation: hgvs, max_consequences: cap },
+            fetchImpl
+          )) as {
+            hgvs_reference: Record<string, unknown>
+            results: Array<Record<string, unknown>>
+          }
+        )
+      }
+      for (const out of outputs) {
+        expect(out.hgvs_reference).toMatchObject({
+          requested: hgvs.split(':')[0],
+          version_validation: 'unchecked'
+        })
+        expect(out.results[0].input_reference_annotations).toEqual({
+          status: 'matched',
+          annotations: [matching]
+        })
+      }
+      expect(outputs[0].results[0].input_reference_annotations).toEqual(
+        outputs[1].results[0].input_reference_annotations
+      )
+      expect(outputs[0].results[0].transcript_consequences).toEqual([
+        expect.objectContaining(other)
+      ])
+      expect(outputs[0].results[0].transcript_consequences_truncated).toBe(true)
+      expect(outputs[1].results[0].transcript_consequences).toHaveLength(2)
+    }
+  )
+
+  it.each(['ENST00000681514.999:c.803C>T', 'AGT:c.803C>T', '9:g.22125504G>C'])(
+    'reports unknown reference annotation evidence without inferring a mapping for %s',
+    async (hgvs) => {
+      const fetchImpl = vi.fn().mockResolvedValue(
+        jsonRes([
+          {
+            ...vepResult,
+            transcript_consequences: [
+              {
+                transcript_id: 'ENST000006815140.1',
+                gene_symbol: 'AGT',
+                hgvsc: 'ENST000006815140.1:c.803C>T',
+                impact: 'MODERATE'
+              }
+            ]
+          }
+        ])
+      )
+      const out = (await run('ensembl_vep_variant', { hgvs_notation: hgvs }, fetchImpl)) as {
+        hgvs_reference: Record<string, unknown>
+        results: Array<Record<string, unknown>>
+      }
+      expect(out.hgvs_reference.version_validation).toBe('unchecked')
+      expect(out.results[0].input_reference_annotations).toEqual({
+        status: 'unknown',
+        annotations: []
+      })
+    }
+  )
+
+  it('keeps reference annotation evidence local to each variant and retains allele-specific rows', async () => {
+    const matching = {
+      transcript_id: 'ENST00000681514.1',
+      hgvsc: 'ENST00000681514.1:c.803C>T',
+      impact: 'MODERATE'
+    }
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes([
+        {
+          ...vepResult,
+          transcript_consequences: [
+            { ...matching, variant_allele: 'T' },
+            { ...matching, hgvsc: 'ENST00000681514.1:c.803C>A', variant_allele: 'A' }
+          ]
+        },
+        { ...vepResult, transcript_consequences: [] }
+      ])
+    )
+    const out = (await run(
+      'ensembl_vep_variant',
+      { hgvs_notation: 'ENST00000681514:c.803C>T', max_consequences: 1 },
+      fetchImpl
+    )) as { results: Array<Record<string, unknown>> }
+    expect(out.results.map((r) => r.input_reference_annotations)).toEqual([
+      {
+        status: 'matched',
+        annotations: [
+          {
+            transcript_id: matching.transcript_id,
+            hgvsc: matching.hgvsc,
+            hgvsp: null,
+            variant_allele: 'T'
+          },
+          {
+            transcript_id: matching.transcript_id,
+            hgvsc: 'ENST00000681514.1:c.803C>A',
+            hgvsp: null,
+            variant_allele: 'A'
+          }
+        ]
+      },
+      { status: 'unknown', annotations: [] }
+    ])
+  })
+
+  it('encodes HGVS and species path segments, retains all resolutions and absent annotations', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(
+      jsonRes([
+        {
+          ...vepResult,
+          assembly_name: 'other-assembly',
+          transcript_consequences: [{ transcript_id: 'ENST1.2', impact: 'LOW' }]
+        },
+        { ...vepResult, seq_region_name: '2', transcript_consequences: [] }
+      ])
+    )
+    const out = (await run(
+      'ensembl_vep_variant',
+      { hgvs_notation: 'ref:c.1+2A>T/?#', species: 'species/name' },
+      fetchImpl
+    )) as { n_results: number; results: Array<Record<string, unknown>> }
+    expect(String(fetchImpl.mock.calls[0][0])).toBe(
+      'https://rest.ensembl.org/vep/species%2Fname/hgvs/ref%3Ac.1%2B2A%3ET%2F%3F%23?hgvs=1&transcript_version=1'
+    )
+    expect(out.n_results).toBe(2)
+    expect(out.results[0].assembly_name).toBe('other-assembly')
+    expect(out.results[0].transcript_consequences).toEqual([
+      expect.objectContaining({ transcript_id: 'ENST1.2' })
+    ])
+    expect(
+      (out.results[0].transcript_consequences as Record<string, unknown>[])[0]
+    ).not.toHaveProperty('hgvsc')
+    expect(out.results[1].transcript_consequences).toEqual([])
+  })
+
+  it.each([
+    { variant_id: 'rs7412' },
+    { region: '1:1-1' },
+    { allele: 'T' },
+    { allele_orientation: 'forward' }
+  ])('rejects conflicting HGVS arguments %j before fetching', async (other) => {
+    const fetchImpl = vi.fn()
+    await expect(
+      run('ensembl_vep_variant', { hgvs_notation: 'ENST00000366667:c.803C>T', ...other }, fetchImpl)
+    ).rejects.toThrow('hgvs_notation cannot be combined')
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each(['', '   ', null, 42])('rejects invalid HGVS argument %j', async (hgvs) => {
+    const fetchImpl = vi.fn()
+    await expect(run('ensembl_vep_variant', { hgvs_notation: hgvs }, fetchImpl)).rejects.toThrow()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      400,
+      { error: 'Unable to parse HGVS notation: reference allele mismatch' },
+      'reference allele mismatch'
+    ],
+    [400, { error: 'Could not find transcript ENST00000000000' }, 'Could not find transcript'],
+    [400, {}, 'unrecognized HTTP 400'],
+    [200, { error: 'Invalid HGVS notation' }, 'Invalid HGVS notation'],
+    [200, {}, 'invalid VEP result list'],
+    [200, [null], 'invalid VEP result list']
+  ])('preserves HGVS error reason for status %i and body %j', async (status, body, message) => {
+    const fetchImpl = vi
+      .fn()
+      .mockResolvedValue({ ...errRes(status), ok: status === 200, json: async () => body })
+    await expect(run('ensembl_vep_variant', { hgvs_notation: 'bad' }, fetchImpl)).rejects.toThrow(
+      message as string
+    )
+  })
+
+  it('propagates service failures instead of presenting them as HGVS absence', async () => {
+    const fetchImpl = vi.fn().mockResolvedValue(errRes(503))
+    await expect(
+      run('ensembl_vep_variant', { hgvs_notation: 'ENST00000366667:c.803C>T' }, fetchImpl)
+    ).rejects.toThrow(/HTTP 503/)
+  })
+
   it('sorts most-severe-first, truncates, and summarizes per-gene worst impact', async () => {
     const fetchImpl = vi.fn().mockResolvedValueOnce(jsonRes([vepResult]))
     const out = (await run(
@@ -912,6 +1197,10 @@ describe('ensembl_vep_variant', () => {
     expect(String(fetchImpl.mock.calls[0][0])).toContain('/id/rs7412')
     expect(out.query).toBe('rs7412')
     expect(out).not.toHaveProperty('normalization')
+    expect(out).not.toHaveProperty('hgvs_reference')
+    for (const result of out.results as Record<string, unknown>[]) {
+      expect(result).not.toHaveProperty('input_reference_annotations')
+    }
   })
 
   it('throws when neither variant_id nor region+allele is supplied', async () => {
