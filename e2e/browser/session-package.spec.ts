@@ -5,6 +5,9 @@ import type { PackageOperationSnapshot } from '../../src/shared/session-package'
 for (const viewport of [
   { width: 1280, height: 900 },
   { width: 320, height: 740 },
+  { width: 375, height: 812 },
+  { width: 414, height: 896 },
+  { width: 768, height: 850 },
   { width: 640, height: 360 }
 ]) {
   test(`export retains one dialog and stable progress geometry at ${viewport.width}x${viewport.height}`, async ({
@@ -44,7 +47,7 @@ for (const viewport of [
     ]
     for (const stage of stages) {
       await page.evaluate((detail) => {
-        window.dispatchEvent(new CustomEvent('package-fixture-export-progress', { detail }))
+        window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
       }, stage)
       await expect(dialog).toBeVisible()
       await expect(async () => {
@@ -71,49 +74,164 @@ for (const viewport of [
     await expect(dialog).toHaveCount(0)
     await page.evaluate(() => {
       window.dispatchEvent(
-        new CustomEvent('package-fixture-export-progress', {
+        new CustomEvent('package-fixture-progress', {
           detail: { ioBytesPerSecond: 1024 }
         })
       )
     })
     await expect(dialog).toHaveCount(0)
   })
+
+  test(`import retains its dialog through changing counters and results at ${viewport.width}x${viewport.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize(viewport)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await page.goto('/session-package.html?import=checking')
+    const dialog = page.getByRole('dialog', { name: 'Import Session package', exact: true })
+    const steps = dialog.getByRole('list', { name: 'Package steps' })
+    await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+    const original = await dialog.elementHandle()
+    const bounds = await dialog.boundingBox()
+    const stepBounds = await steps.boundingBox()
+    const publish = async (detail: Partial<PackageOperationSnapshot>): Promise<void> => {
+      await page.evaluate((detail) => {
+        window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
+      }, detail)
+    }
+    const expectCompact = async (): Promise<void> => {
+      await expect(async () => {
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        expect(await dialog.boundingBox()).toEqual(bounds)
+        expect(await steps.boundingBox()).toEqual(stepBounds)
+      }).toPass()
+      expect(await dialog.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
+        true
+      )
+      await expect(
+        dialog.getByRole('button', { name: /^(Cancel|Close|Run in background)$/ }).last()
+      ).toBeInViewport()
+    }
+    expect(bounds!.height).toBe(Math.min(400, viewport.height * 0.85))
+    for (const progress of [
+      { phase: 'copying', completedBytes: 10, totalBytes: 100 },
+      { phase: 'copying' },
+      { phase: 'validating', completedFiles: 1, totalFiles: 4 },
+      { phase: 'validating' }
+    ] satisfies PackageOperationSnapshot['progress'][]) {
+      await publish({ progress })
+      await expect(dialog.getByRole('status')).toHaveText('Checking Session package…')
+      await expectCompact()
+    }
+    await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
+    await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
+    expect((await dialog.boundingBox())!.height).toBe(Math.min(560, viewport.height * 0.85))
+    expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+    await dialog.getByRole('button', { name: 'Import', exact: true }).click()
+    await expect(dialog.getByRole('status')).toHaveText('Importing research…')
+    await expectCompact()
+    if (viewport.width >= 768) {
+      const details = await dialog
+        .locator('summary')
+        .filter({ hasText: /^Transfer details$/ })
+        .boundingBox()
+      const footer = await dialog
+        .getByRole('button', { name: 'Run in background', exact: true })
+        .evaluate((element) => element.parentElement!.getBoundingClientRect().y)
+      expect(details!.y + details!.height).toBeLessThanOrEqual(footer)
+    }
+    await dialog.screenshot({ path: testInfo.outputPath('import-stable-progress.png') })
+    for (const progress of [
+      { phase: 'importing', completedBytes: 60, totalBytes: 100 },
+      { phase: 'importing' },
+      { phase: 'importing', completedFiles: 3, totalFiles: 4 },
+      { phase: 'cleaning' }
+    ] satisfies PackageOperationSnapshot['progress'][]) {
+      await publish({ progress })
+      await expectCompact()
+    }
+    for (const state of ['cancelling', 'cancelled', 'failed', 'succeeded'] as const) {
+      await publish({
+        state,
+        progress: { phase: 'cleaning' },
+        error: state === 'failed' ? 'Import failed' : undefined,
+        result:
+          state === 'succeeded'
+            ? { imported: { projectId: 'cancer', sessionId: 'imported' } }
+            : undefined
+      })
+      await expectCompact()
+      await expect(steps.locator('[aria-current]')).toHaveCount(0)
+      await expect(steps.locator('svg')).toHaveCount(state === 'succeeded' ? 3 : 0)
+    }
+    await dialog.screenshot({ path: testInfo.outputPath('import-stable-result.png') })
+  })
 }
 
-test('export smoothly contracts once after selection and honors reduced motion', async ({
+test('sensitive export review reserves room for the warning and acknowledgement', async ({
   page
-}) => {
+}, testInfo) => {
   await page.setViewportSize({ width: 1280, height: 900 })
-  await page.emulateMedia({ reducedMotion: 'no-preference' })
-  await page.goto('/session-package.html')
+  await page.emulateMedia({ reducedMotion: 'reduce' })
+  await page.goto('/session-package.html?evidence')
   const dialog = page.getByRole('dialog')
   await expect(dialog).toHaveCSS('height', '560px')
-  await expect(dialog).toHaveCSS('transition-property', 'height')
-  await expect(dialog).toHaveCSS('transition-duration', '0.2s')
-  await dialog.evaluate((element) => {
-    const heights: number[] = []
-    element.addEventListener(
-      'transitionrun',
-      () => {
-        const sample = (): void => {
-          heights.push(element.getBoundingClientRect().height)
-          if (getComputedStyle(element).height !== '400px') requestAnimationFrame(sample)
-          else element.setAttribute('data-height-samples', JSON.stringify(heights))
-        }
-        requestAnimationFrame(sample)
-      },
-      { once: true }
-    )
+  const acknowledgement = dialog.getByRole('checkbox', {
+    name: 'I understand the risk and want to export anyway'
   })
-  await dialog.getByRole('button', { name: 'Choose save location…', exact: true }).click()
-  await expect(dialog).toHaveCSS('height', '400px')
-  await expect(dialog).toHaveAttribute('data-height-samples')
-  const heights = JSON.parse((await dialog.getAttribute('data-height-samples'))!) as number[]
-  expect(heights.some((height) => height > 400 && height < 560)).toBe(true)
-  expect(heights.at(-1)).toBe(400)
-  await page.emulateMedia({ reducedMotion: 'reduce' })
-  await expect(dialog).toHaveCSS('transition-property', 'none')
+  const exportAnyway = dialog.getByRole('button', { name: 'Export anyway', exact: true })
+  await expect(acknowledgement).toBeInViewport()
+  await expect(exportAnyway).toBeInViewport()
+  await expect(exportAnyway).toBeDisabled()
+  await dialog.screenshot({ path: testInfo.outputPath('sensitive-export-review.png') })
+  const bounds = await dialog.boundingBox()
+  await dialog.getByText('Sensitive-content evidence', { exact: true }).click()
+  expect(await dialog.boundingBox()).toEqual(bounds)
+  await expectSingleBodyScroll(dialog, exportAnyway)
+  await acknowledgement.check()
+  await expect(exportAnyway).toBeEnabled()
+  await dialog.screenshot({ path: testInfo.outputPath('sensitive-export-evidence.png') })
 })
+
+for (const flow of [
+  { kind: 'export', query: '', action: 'Choose save location…' },
+  { kind: 'import', query: '?import=review', action: 'Import' }
+]) {
+  test(`${flow.kind} smoothly contracts once after selection and honors reduced motion`, async ({
+    page
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 900 })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.goto(`/session-package.html${flow.query}`)
+    const dialog = page.getByRole('dialog')
+    await expect(dialog).toHaveCSS('height', '560px')
+    await expect(dialog).toHaveCSS('transition-property', 'height')
+    await expect(dialog).toHaveCSS('transition-duration', '0.2s')
+    await dialog.evaluate((element) => {
+      const heights: number[] = []
+      element.addEventListener(
+        'transitionrun',
+        () => {
+          const sample = (): void => {
+            heights.push(element.getBoundingClientRect().height)
+            if (getComputedStyle(element).height !== '400px') requestAnimationFrame(sample)
+            else element.setAttribute('data-height-samples', JSON.stringify(heights))
+          }
+          requestAnimationFrame(sample)
+        },
+        { once: true }
+      )
+    })
+    await dialog.getByRole('button', { name: flow.action, exact: true }).click()
+    await expect(dialog).toHaveCSS('height', '400px')
+    await expect(dialog).toHaveAttribute('data-height-samples')
+    const heights = JSON.parse((await dialog.getAttribute('data-height-samples'))!) as number[]
+    expect(heights.some((height) => height > 400 && height < 560)).toBe(true)
+    expect(heights.at(-1)).toBe(400)
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(dialog).toHaveCSS('transition-property', 'none')
+  })
+}
 
 test('hidden export stays hidden through progress and completion until explicitly opened', async ({
   page
@@ -129,13 +247,13 @@ test('hidden export stays hidden through progress and completion until explicitl
     { state: 'succeeded', progress: { phase: 'cleaning' } }
   ]) {
     await page.evaluate((detail) => {
-      window.dispatchEvent(new CustomEvent('package-fixture-export-progress', { detail }))
+      window.dispatchEvent(new CustomEvent('package-fixture-progress', { detail }))
     }, detail)
     await expect(dialog).toHaveCount(0)
   }
   await page.evaluate(() => {
     window.dispatchEvent(
-      new CustomEvent('package-fixture-export-progress', {
+      new CustomEvent('package-fixture-progress', {
         detail: { presentationRevision: 1 }
       })
     )

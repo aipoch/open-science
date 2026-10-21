@@ -90,34 +90,28 @@ const PackageOperationSteps = ({
   operation: PackageOperationSnapshot
 }): React.JSX.Element | null => {
   const { t } = useTranslation()
-  if (
-    operation.browserReceiptOnly ||
-    operation.kind === 'fork' ||
-    (operation.kind !== 'export' &&
-      (!['running', 'awaiting-selection'].includes(operation.state) ||
-        operation.progress.phase === 'cleaning'))
-  )
-    return null
+  if (operation.browserReceiptOnly || operation.kind === 'fork') return null
   const importing = operation.kind === 'import'
   const steps = importing
     ? [t('Check package'), t('Review contents'), t('Import')]
     : [t('Choose contents'), t('Create package'), t('Save package')]
   const phase = operation.progress.phase
-  const current = importing
-    ? phase === 'importing'
-      ? 2
-      : phase === 'confirming'
-        ? 1
-        : 0
-    : operation.state === 'succeeded'
+  const current =
+    operation.state === 'succeeded'
       ? steps.length
       : !['running', 'awaiting-selection'].includes(operation.state) || phase === 'cleaning'
         ? -1
-        : phase === 'saving'
-          ? 2
-          : ['preparing', 'selecting', 'choosing-location'].includes(phase)
-            ? 0
-            : 1
+        : importing
+          ? phase === 'importing'
+            ? 2
+            : phase === 'confirming'
+              ? 1
+              : 0
+          : phase === 'saving'
+            ? 2
+            : ['preparing', 'selecting', 'choosing-location'].includes(phase)
+              ? 0
+              : 1
   return (
     <ol aria-label={t('Package steps')} className="flex shrink-0 items-start text-xs">
       {steps.map((label, index) => (
@@ -906,10 +900,10 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             }}
             className={dialogPanelClassName(
               'flex max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0 [@media(max-height:500px)]:[&>div]:py-3',
-              selecting
+              selecting || Boolean(operation.sensitiveContent?.length)
                 ? 'h-[min(85svh,560px)]'
-                : operation.kind === 'export' && 'h-[min(85svh,400px)]',
-              operation.kind === 'export' &&
+                : operation.kind !== 'fork' && 'h-[min(85svh,400px)]',
+              operation.kind !== 'fork' &&
                 'transition-[height] duration-200 ease-out motion-reduce:transition-none'
             )}
           >
@@ -961,9 +955,7 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                 ) : null}
                 <Dialog.Description
                   className={
-                    operation.kind !== 'export' &&
-                    ((active && !selecting) ||
-                      (operation.kind === 'import' && !operation.importPreview))
+                    operation.kind === 'fork' && active && !selecting
                       ? 'sr-only'
                       : 'text-sm leading-relaxed text-muted-foreground'
                   }
@@ -981,13 +973,21 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             </div>
             {!selecting ? (
               <div
-                className={`${dialogBodyClassName} min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`}
+                className={cn(
+                  `${dialogBodyClassName} min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`,
+                  operation.kind === 'import' && 'space-y-3 py-3'
+                )}
               >
                 {notices}
                 {operation.browserReceiptOnly ? null : (
                   <>
                     {!(operation.state === 'failed' && operation.error) ? (
-                      <div className="space-y-5 py-1">
+                      <div
+                        className={cn(
+                          'space-y-5 py-1',
+                          operation.kind === 'import' && 'space-y-3 py-0'
+                        )}
+                      >
                         <div className="flex items-start gap-3">
                           <div
                             className={`mt-0.5 flex size-6 shrink-0 items-center justify-center ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'}`}
@@ -1007,7 +1007,12 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
                               {status}
                             </p>
                             {description || (operation.kind === 'export' && !active) ? (
-                              <p className="text-sm leading-relaxed text-muted-foreground">
+                              <p
+                                className={cn(
+                                  'text-sm leading-relaxed text-muted-foreground',
+                                  operation.kind === 'import' && 'leading-5'
+                                )}
+                              >
                                 {description ??
                                   t('The Session is unlocked. You can continue your research.')}
                               </p>

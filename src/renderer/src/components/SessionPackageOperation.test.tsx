@@ -1450,23 +1450,30 @@ it('retains one export dialog and its task context through completion and cleanu
   expect(dialog.textContent).toContain('The Session is unlocked. You can continue your research.')
 })
 
-for (const phase of ['copying', 'compressing', 'saving', 'cleaning'] as const) {
-  it.each(['failed', 'cancelled', 'cancelling'] as const)(
-    `keeps export steps visible without claiming completion when %s during ${phase}`,
-    async (state) => {
-      usePackageOperationStore.getState().receive({
-        ...snapshot,
-        state,
-        progress: { phase }
-      })
-      usePackageOperationStore.getState().setOpen(true)
-      await act(async () => root.render(<SessionPackageOperation />))
-      const steps = document.querySelector('ol')!
-      expect(steps).not.toBeNull()
-      expect(steps.querySelector('[aria-current]')).toBeNull()
-      expect(steps.querySelectorAll('svg')).toHaveLength(0)
-    }
-  )
+for (const kind of ['export', 'import'] as const) {
+  const phases =
+    kind === 'import'
+      ? (['copying', 'validating', 'importing', 'cleaning'] as const)
+      : (['copying', 'compressing', 'saving', 'cleaning'] as const)
+  for (const phase of phases) {
+    it.each(['failed', 'cancelled', 'cancelling'] as const)(
+      `keeps ${kind} steps visible without claiming completion when %s during ${phase}`,
+      async (state) => {
+        usePackageOperationStore.getState().receive({
+          ...snapshot,
+          kind,
+          state,
+          progress: { phase }
+        })
+        usePackageOperationStore.getState().setOpen(true)
+        await act(async () => root.render(<SessionPackageOperation />))
+        const steps = document.querySelector('ol')!
+        expect(steps).not.toBeNull()
+        expect(steps.querySelector('[aria-current]')).toBeNull()
+        expect(steps.querySelectorAll('svg')).toHaveLength(0)
+      }
+    )
+  }
 }
 
 it.each([

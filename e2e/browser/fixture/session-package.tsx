@@ -260,7 +260,7 @@ if (mode) {
 }
 const exportMode = new URLSearchParams(location.search).get('export')
 // Feed consecutive owner snapshots to exercise the real dialog without native filesystem writes.
-window.addEventListener('package-fixture-export-progress', (event) => {
+window.addEventListener('package-fixture-progress', (event) => {
   const current = usePackageOperationStore.getState().operation!
   const update = (event as CustomEvent<Partial<PackageOperationSnapshot>>).detail
   usePackageOperationStore.getState().receive({ ...current, ...update })
@@ -300,7 +300,8 @@ if (new URLSearchParams(location.search).has('evidence')) {
   usePackageOperationStore.getState().receive({
     ...current,
     state: 'failed',
-    error: 'Review flagged content before exporting.',
+    error:
+      'Sensitive content detected at session.json @37746. Check: Credential-like assignment. Review it before exporting the Session package.',
     sensitiveContent: Array.from({ length: 20 }, (_, index) => ({
       location: `research-file-${index}.txt`,
       offset: 0,
