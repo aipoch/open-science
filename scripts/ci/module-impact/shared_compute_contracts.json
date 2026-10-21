@@ -1,0 +1,12 @@
+{
+  "ownerPaths": ["src/shared/compute.ts"],
+  "interfacePaths": ["src/shared/compute.ts"],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [],
+    "contract": [],
+    "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}
