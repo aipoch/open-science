@@ -5,22 +5,11 @@
     "src/shared/artifact-provenance.ts",
     "src/shared/database-startup.ts",
     "src/shared/execution-file-evidence.ts",
-    "src/shared/file-save.ts",
-    "src/shared/managed-file-versions.test.ts",
-    "src/shared/managed-file-versions.ts",
     "src/shared/notebook-env.typecheck.test.ts",
     "src/shared/notebook-network.test.ts",
     "src/shared/notebook-network.ts",
     "src/shared/notebook.test.ts",
     "src/shared/notebook.ts",
-    "src/shared/replay-reference.ts",
-    "src/shared/replay.ts",
-    "src/shared/session-reading.ts",
-    "src/shared/uploads.test.ts",
-    "src/shared/uploads.ts",
-    "src/shared/artifact-version-locator.ts",
-    "src/shared/artifact-version-locator.test.ts",
-    "src/shared/notebook-network-settings.ts",
     "src/shared/desktop-runtime-recovery.ts"
   ],
   "interfacePaths": [
@@ -29,28 +18,17 @@
     "src/shared/artifact-visibility.ts",
     "src/shared/database-startup.ts",
     "src/shared/execution-file-evidence.ts",
-    "src/shared/file-save.ts",
-    "src/shared/managed-file-versions.ts",
     "src/shared/notebook-network.ts",
-    "src/shared/notebook.ts",
-    "src/shared/replay-reference.ts",
-    "src/shared/replay.ts",
-    "src/shared/session-reading.ts",
-    "src/shared/uploads.ts",
-    "src/shared/artifact-version-locator.ts",
-    "src/shared/notebook-network-settings.ts"
+    "src/shared/notebook.ts"
   ],
   "consumerModules": [],
   "testFiles": {
     "owner": [
       "src/shared/artifact-literature.test.ts",
       "src/shared/artifact-visibility.test.ts",
-      "src/shared/managed-file-versions.test.ts",
       "src/shared/notebook-env.typecheck.test.ts",
       "src/shared/notebook-network.test.ts",
-      "src/shared/notebook.test.ts",
-      "src/shared/uploads.test.ts",
-      "src/shared/artifact-version-locator.test.ts"
+      "src/shared/notebook.test.ts"
     ],
     "contract": [],
     "consumer": []
