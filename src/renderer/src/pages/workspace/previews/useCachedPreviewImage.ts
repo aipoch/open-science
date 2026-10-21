@@ -66,7 +66,10 @@ const acquirePreviewResource = async (
   retriesRemaining = PUBLICATION_RETRY_LIMIT
 ): ReturnType<Window['api']['previewResources']['acquire']> => {
   try {
-    return await window.api.previewResources.acquire(createManagedPreviewRequest(item))
+    return await window.api.previewResources.acquire({
+      ...createManagedPreviewRequest(item),
+      imagePreview: true
+    })
   } catch (error) {
     if (retriesRemaining === 0 || !isManagedFilePublicationPendingError(error)) throw error
     await new Promise<void>((resolve) => setTimeout(resolve, PUBLICATION_RETRY_DELAY_MS))
@@ -77,7 +80,8 @@ const acquirePreviewResource = async (
 const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
   const resource = await acquirePreviewResource(item)
 
-  const imageSize = Math.max(item.size ?? 0, resource.size)
+  const imageSize = resource.size
+  const decodedBytes = (resource.width ?? 0) * (resource.height ?? 0) * 4
   const dimensions = { width: resource.width, height: resource.height }
   if (imageSize > MAX_CACHED_IMAGE_BYTES) {
     return { url: resource.url, size: imageSize, managedResourceId: resource.id, ...dimensions }
@@ -91,7 +95,11 @@ const loadImage = async (item: PreviewImageItem): Promise<CachedImage> => {
     if (!response.ok)
       throw new Error(`Image preview request failed with status ${response.status}.`)
     const blob = await response.blob()
-    return { url: URL.createObjectURL(blob), size: blob.size, ...dimensions }
+    return {
+      url: URL.createObjectURL(blob),
+      size: Math.max(blob.size, decodedBytes),
+      ...dimensions
+    }
   } finally {
     void window.api.previewResources.release({ resourceId: resource.id }).catch(() => undefined)
   }

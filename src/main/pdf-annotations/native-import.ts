@@ -1,3 +1,5 @@
+/// <reference types="electron-vite/node" />
+
 import type { Worker, WorkerOptions } from 'node:worker_threads'
 
 import createNativePdfAnnotationWorker from './native-import-worker-entry?nodeWorker'

@@ -124,18 +124,37 @@ describe('isolated SQLite ciphertext snapshots', () => {
     }
   )
 
-  it.each(['truncated', 'partially-cleared'])(
-    'rejects a %s journal header instead of accepting it as a completed transaction',
+  it.each(['short-inactive', 'partially-cleared'])(
+    'reads a %s journal exactly as SQLite does without changing the source',
     (kind) => {
       const { root, path } = fixture()
       createCompletedRollback(path)
       const journal = `${path}-journal`
       const bytes = readFileSync(journal)
-      if (kind === 'truncated') writeFileSync(journal, bytes.subarray(0, 27))
+      if (kind === 'short-inactive') writeFileSync(journal, bytes.subarray(0, 1))
       else {
         bytes[27] = 1
         writeFileSync(journal, bytes)
       }
+      const before = contents(root)
+      withReadOnlySqliteSnapshot(path, (db) => {
+        expect(db.prepare('SELECT value FROM secrets').get()?.value).toBe('committed-ciphertext')
+        expect(() => db.exec("UPDATE secrets SET value='forbidden'")).toThrow()
+      })
+      expect(contents(root)).toEqual(before)
+    }
+  )
+
+  it.each(['truncated', 'invalid-magic'])(
+    'rejects a nonzero %s journal header before recovery',
+    (kind) => {
+      const { root, path } = fixture()
+      createCompletedRollback(path)
+      const journal = `${path}-journal`
+      const bytes = readFileSync(journal)
+      bytes[0] = 1
+      if (kind === 'truncated') writeFileSync(journal, bytes.subarray(0, 27))
+      else writeFileSync(journal, bytes)
       const before = contents(root)
       const read = vi.fn()
       expect(() => withReadOnlySqliteSnapshot(path, read)).toThrow(/journal.*safely/i)

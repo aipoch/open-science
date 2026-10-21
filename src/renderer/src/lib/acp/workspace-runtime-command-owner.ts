@@ -1292,7 +1292,7 @@ const performSendWorkspaceMessage = async (
         agentModel: input.agentModel,
         agentConfiguration: input.agentConfiguration,
         agentTarget: resolveSendAgentTarget(input),
-        preserveSelection: input.preserveSelection
+        preserveSelection: input.preserveSelection || attempt?.selectionChanged
       })
       if (!appended) return undefined
       // This submission now owns the retry; a concurrent send must not also bypass admission.
@@ -1516,7 +1516,8 @@ const performSendWorkspaceMessage = async (
         agentBackendId: prepared.appendOwnership.agentBackendId ?? input.agentBackendId,
         agentConfiguration: input.agentConfiguration
       }),
-      preserveSelection: input.preserveSelection
+      // Preparing a send must not undo navigation that happened while it was awaiting I/O.
+      preserveSelection: input.preserveSelection || attempt?.selectionChanged
     })
     if (!appended) return undefined
     input.onMessageAppended?.(appended)
@@ -1669,6 +1670,7 @@ const performSendWorkspaceMessage = async (
 }
 
 type WorkspaceSendAttempt = {
+  selectionChanged: boolean
   cancellationEligible: boolean
   cancelled: boolean
   dispatched: boolean
@@ -1703,6 +1705,7 @@ const sendWorkspaceMessage = async (
   let settle!: () => void
   const previousSession = useSessionStore.getState().sessions.find(({ id }) => id === sessionId)
   const attempt: WorkspaceSendAttempt = {
+    selectionChanged: false,
     cancellationEligible:
       !input.allowCompactionRecovery &&
       !previousSession?.compacting &&
@@ -1716,6 +1719,12 @@ const sendWorkspaceMessage = async (
     })
   }
   if (sessionId) preparingSessionAttempts.set(sessionId, attempt)
+  const unsubscribeSelection = sessionId
+    ? useSessionStore.subscribe((state, previous) => {
+        // Remember navigation even if the user returns to the selection at send admission.
+        if (state.selectedSessionId !== previous.selectedSessionId) attempt.selectionChanged = true
+      })
+    : undefined
   try {
     return await performSendWorkspaceMessage(
       runtime,
@@ -1727,6 +1736,7 @@ const sendWorkspaceMessage = async (
       attempt
     )
   } finally {
+    unsubscribeSelection?.()
     try {
       if (attempt.cancelled && !attempt.dispatched && attempt.preparation) {
         const rollback = await attemptWorkspacePromptRollback(attempt.preparation)

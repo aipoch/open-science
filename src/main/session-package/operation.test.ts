@@ -330,3 +330,22 @@ it('publishes browser transfers without claiming an import or replacing an activ
   completion.resolve()
   await exporting
 })
+
+it('retains the failed import retry state when cancellation leaves publication recovery required', async () => {
+  const owner = new SessionPackageOperation()
+  const failure = new Error('Publication interrupted after commit')
+  const run = owner.run(
+    'import',
+    undefined,
+    async () => {
+      owner.cancel()
+      throw failure
+    },
+    { projectId: 'target' },
+    () => true
+  )
+  await expect(run).rejects.toBe(failure)
+  expect(owner.snapshot).toMatchObject({ state: 'failed', error: failure.message })
+  expect(owner.snapshot?.result?.recovery).toBeUndefined()
+  expect(owner.active).toBe(false)
+})

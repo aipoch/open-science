@@ -72,6 +72,49 @@ test('shared confirmation keeps actions reachable in a small viewport', async ({
   await expect(dialog.getByRole('button', { name: 'Confirm', exact: true })).toBeInViewport()
 })
 
+for (const size of [
+  { width: 900, height: 500 },
+  { width: 560, height: 420 }
+]) {
+  test(`folder grant keeps recovery actions visible after failure at ${size.width}x${size.height}`, async ({
+    page
+  }, testInfo) => {
+    await page.setViewportSize({ width: 900, height: 800 })
+    await page.goto(
+      `/modal-scrollbars.html?mode=folder-grant${size.width === 560 ? '&longError=1' : ''}`
+    )
+    const dialog = page.getByTestId('grant-folder-access-dialog')
+    const grant = dialog.getByRole('button', { name: 'Grant this folder', exact: true })
+    await expect(grant).toBeEnabled()
+    await grant.click()
+    await page
+      .getByTestId('grant-folder-access-confirmation')
+      .getByRole('button', { name: 'Grant this folder', exact: true })
+      .click()
+    await expect(dialog.getByRole('alert')).toBeVisible()
+
+    await page.setViewportSize(size)
+    const bounds = await dialog.boundingBox()
+    const actions = await grant.boundingBox()
+    expect(bounds).not.toBeNull()
+    expect(actions).not.toBeNull()
+    expect(actions!.y + actions!.height).toBeLessThanOrEqual(bounds!.y + bounds!.height)
+    await expect(grant).toBeInViewport({ ratio: 1 })
+    await expect(dialog.getByRole('radio', { name: 'Read-only', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeInViewport({
+      ratio: 1
+    })
+    await dialog.getByText('Error details', { exact: true }).click()
+    await expect(dialog.locator('pre')).toContainText('Notebook cleanup is incomplete')
+    await expect(dialog.locator('pre')).toBeVisible()
+    await expect(grant).toBeInViewport({ ratio: 1 })
+    await page.screenshot({ path: testInfo.outputPath('folder-access-error.png') })
+    await grant.click()
+    await expect(page.getByTestId('grant-folder-access-confirmation')).toBeVisible()
+  })
+}
 test('manual reference editor has no second outer scroller', async ({ page }) => {
   await page.setViewportSize({ width: 560, height: 320 })
   await page.goto('/modal-scrollbars.html?mode=library')

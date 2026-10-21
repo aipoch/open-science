@@ -29,18 +29,22 @@ const sameFileState = (left: BigIntStats, right: BigIntStats): boolean =>
 const sourceState = (path: string): BigIntStats | undefined =>
   lstatSync(path, { bigint: true, throwIfNoEntry: false })
 
-// Return whether the private copy needs recovery; completed journals remain valid snapshot inputs.
+// Return whether the private copy needs recovery; inactive journals remain valid snapshot inputs.
 const validateRollback = (source: SourceFile): boolean => {
   if (source.initial.size === 0n) return false
   const magic = 'd9d505f920a163d7'
   const header = Buffer.alloc(28)
   const trailer = Buffer.alloc(8)
-  if (readSync(source.descriptor, header, 0, header.length, 0) !== header.length)
+  const count = readSync(source.descriptor, header, 0, header.length, 0)
+  // SQLite's hasHotJournal treats a zero first byte as inactive, even for a short header.
+  // writeJournalHdr initially zeros only magic + record count; the remaining fields are populated
+  // before syncJournal makes the journal hot. A crash here leaves the database unchanged.
+  // PERSIST commits also invalidate the header. Requiring all 28 bytes to be zero rejects valid
+  // pre-sync crash states. Keep SQLite's inactive-journal rule instead of enumerating those states.
+  // https://github.com/sqlite/sqlite/blob/master/src/pager.c
+  if (count > 0 && header[0] === 0) return false
+  if (count !== header.length)
     throw new Error('SQLite rollback journal header cannot be read safely')
-  // SQLite's PERSIST commit zeros all 28 header bytes instead of deleting the journal.
-  // Require the whole cleared header, not just missing magic, before accepting it as inactive.
-  // https://www.sqlite.org/lockingv3.html#writing_to_a_database_file
-  if (header.every((byte) => byte === 0)) return false
   if (source.initial.size <= 512n || header.subarray(0, 8).toString('hex') !== magic)
     throw new Error('SQLite rollback journal cannot be recovered safely')
   readSync(source.descriptor, trailer, 0, 8, Number(source.initial.size) - 8)

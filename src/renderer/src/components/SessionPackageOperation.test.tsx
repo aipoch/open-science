@@ -2265,3 +2265,54 @@ it('can hide a cancelled receipt while its cleanup is pending', async () => {
   )
   expect(usePackageOperationStore.getState().open).toBe(false)
 })
+
+it('groups verified duplicate evidence and retains expandable source paths', async () => {
+  const checksum = 'a'.repeat(64)
+  const paths = [
+    'execution-file-evidence/p/s/activity-a/blobs/sha256-a',
+    'execution-file-evidence/p/s/activity-b/blobs/sha256-a',
+    'artifacts/p/s/result.csv'
+  ]
+  const inventory: PackageOperationSnapshot = {
+    ...snapshot,
+    files: [],
+    summary: {
+      metadataBytes: 0,
+      retainedFiles: paths.map((storageKey) => ({
+        storageKey,
+        filename: storageKey,
+        sizeBytes: 1024 * 1024,
+        checksum
+      }))
+    }
+  }
+  vi.stubGlobal('api', {
+    sessions: {
+      onPackageOperation: () => () => undefined,
+      packageOperation: vi.fn(async () => inventory)
+    }
+  })
+  await act(async () =>
+    root.render(
+      <>
+        <PackageOperationIndicator />
+        <SessionPackageOperation />
+      </>
+    )
+  )
+  act(() => button('Customize contents').click())
+  act(() => button('View files').click())
+  const details = document.querySelector('details')!
+  expect(details).not.toBeNull()
+  expect(details.querySelector('summary')?.textContent).toContain('×3')
+  for (const path of paths) expect(details.textContent).toContain(path)
+  expect(document.body.textContent).toContain('1.0 MiB')
+  expect(document.body.textContent).not.toContain('2.0 MiB')
+  for (const category of ['Artifacts1', 'Execution evidence1', 'All1']) {
+    act(() => button(category).click())
+    const requiredFiles = button(category).closest('section')!
+    expect(requiredFiles.querySelectorAll('details')).toHaveLength(1)
+    for (const path of paths)
+      expect(requiredFiles.querySelector('details')?.textContent).toContain(path)
+  }
+})

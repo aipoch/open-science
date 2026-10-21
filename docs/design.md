@@ -725,6 +725,9 @@ The upper-right pin toggles the current Session through the shared Session contr
   filenames. Ordinary files use the existing composer intake and remain draft attachments until
   submission; one `.science` package opens the existing Project import flow. Reject mixed package
   batches without partially attaching or importing. Respect blocked composer and Project availability.
+- Reject native drops containing folders before attachment staging or package import, including
+  folders named with a `.science` suffix. Add nothing from that batch, preserve existing attachments,
+  and show a dismissible notice directing the user to select files inside the folder instead.
 - Project Home also accepts one `.science` package across its content area with the same bounded
   overlay. Dropping opens the existing destination Project picker, followed by the existing import
   preview and confirmation; Home does not preselect the previously visited Project.

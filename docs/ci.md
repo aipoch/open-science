@@ -272,6 +272,35 @@ require deleting conservative explicit consumers. A newly complete dependency gr
 current independence without proving historical reachability. Only the trusted base/head
 retirement checks described below authorize removing those existing obligations.
 
+## Actions cache maintenance
+
+The **Clean up closed PR caches** workflow sweeps `refs/pull/<number>/merge` caches after
+PR Gate completes for a PR or merge group. It checks each PR's current state and deletes
+only closed-PR caches, including fork PRs. Open-PR, main, branch and tag caches are preserved;
+a reopened PR may need to populate its cache again.
+
+The privileged workflow uses
+[`workflow_run`](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#workflow_run)
+so both its definition and cleanup script come from main. It does not execute upstream code,
+restore caches or download artifacts. This applies GitHub's
+[closed-PR cache cleanup guidance](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/manage-caches)
+without granting write access to a PR-controlled workflow.
+
+A PR closed after its last Gate run is swept by the next Gate completion or a manual run.
+For immediate recovery, run a manual sweep on main. Inspect the dry-run logs before enabling deletion:
+
+```bash
+gh workflow run cache-cleanup.yml --ref main -f dry_run=true
+gh workflow run cache-cleanup.yml --ref main -f dry_run=false
+```
+
+If the shared Windows Notebook runtime cache has already been evicted, run
+`gh workflow run windows-notebook-runtime.yml --ref main` after cleanup. This reuses the
+existing compiler and verification workflow to restore main's cache; PR-scoped caches cannot
+warm main or other PRs. Cache keys and validation remain unchanged. Cleanup reduces quota
+pressure but cannot guarantee retention; a missing runtime cache still triggers compilation.
+No Release assets, Deployments or periodic compiler runs are used.
+
 ## CI control-plane approval
 
 CI workflows, local actions, CI scripts, `packages/test-impact/`, Dependabot configuration and

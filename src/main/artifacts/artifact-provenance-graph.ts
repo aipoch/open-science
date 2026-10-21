@@ -104,6 +104,7 @@ type DecodedActivityEvidence = {
   writerAttribution: ExecutionFileEvidenceSummary['writerAttribution']
   reasonCodes: ExecutionFileEvidenceSummary['reasonCodes']
   relations: EvidenceRelation[]
+  predecessorGenerations?: FileGeneration[]
   scientificOutputs: ScientificOutputEvidence[]
   failure?: 'unavailable' | 'corrupt'
 }
@@ -395,6 +396,7 @@ const decodeActivityEvidence = (
         'writerAttribution',
         'reasonCodes',
         'scientificOutputs',
+        'predecessorGenerations',
         'relations'
       ]) ||
       evidence.schemaVersion !== 1 ||
@@ -418,7 +420,34 @@ const decodeActivityEvidence = (
     ) {
       return unavailableEvidence(summary, 'corrupt')
     }
+    if (
+      evidence.predecessorGenerations !== undefined &&
+      (!Array.isArray(evidence.predecessorGenerations) ||
+        evidence.predecessorGenerations.length > 10000)
+    )
+      return unavailableEvidence(summary, 'corrupt')
+    const predecessors = ((evidence.predecessorGenerations ?? []) as unknown[]).map(generationValue)
+    if (predecessors.some((generation) => !generation))
+      return unavailableEvidence(summary, 'corrupt')
     const relations = evidence.relations.map(relationValue)
+    const identities = new Map<string, FileGeneration>()
+    for (const generation of [
+      ...predecessors,
+      ...relations.map((relation) => relation?.generation)
+    ]) {
+      if (!generation) continue
+      const previous = identities.get(generation.generationId)
+      if (previous && JSON.stringify(previous) !== JSON.stringify(generation))
+        return unavailableEvidence(summary, 'corrupt')
+      identities.set(generation.generationId, generation)
+    }
+    if (
+      predecessors.some(
+        (generation) =>
+          !relations.some((relation) => relation?.previousGenerationId === generation!.generationId)
+      )
+    )
+      return unavailableEvidence(summary, 'corrupt')
     const scientificOutputs = evidence.scientificOutputs.map(scientificOutputValue)
     if (relations.some((relation) => relation === undefined)) {
       return unavailableEvidence(summary, 'corrupt')
@@ -446,6 +475,7 @@ const decodeActivityEvidence = (
       writerAttribution: summary.writerAttribution,
       reasonCodes: [...summary.reasonCodes],
       relations: relations as EvidenceRelation[],
+      predecessorGenerations: predecessors as FileGeneration[],
       scientificOutputs: scientificOutputs as ScientificOutputEvidence[]
     }
   } catch {
@@ -872,7 +902,12 @@ const sealArtifactProvenanceGraph = (
       }
     }
 
-    const generations = new Map<string, FileGeneration>()
+    const generations = new Map<string, FileGeneration>(
+      candidate.decodedEvidence.predecessorGenerations?.map((generation) => [
+        generation.generationId,
+        generation
+      ])
+    )
     for (const relation of candidate.decodedEvidence.relations) {
       if (relation.generation)
         generations.set(relation.generation.generationId, relation.generation)

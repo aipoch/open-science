@@ -60,6 +60,65 @@ afterEach(async () => {
 })
 
 describe('missing runtime Session authority regression', () => {
+  // Diagnostic controls only: these do not establish the trigger of the exported incident.
+  it('reads an empty runtime context from a durable Session without a context field', async () => {
+    const { coordinator } = await harness()
+    await coordinator.saveSession(createSession())
+
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).resolves.toEqual({
+      version: 1,
+      revision: 0
+    })
+  })
+
+  it('rejects a runtime context read before persistence and succeeds after persistence', async () => {
+    const { coordinator } = await harness()
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).rejects.toThrow(
+      'Cannot read runtime context for a missing Session.'
+    )
+
+    await coordinator.saveSession(createSession())
+
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).resolves.toEqual({
+      version: 1,
+      revision: 0
+    })
+  })
+
+  it.each([
+    ['other-project', 'session-1'],
+    ['project-1', 'other-session']
+  ])(
+    'rejects a runtime context lookup under mismatched identity %s/%s',
+    async (projectId, sessionId) => {
+      const { coordinator } = await harness()
+      await coordinator.saveSession(createSession())
+
+      await expect(coordinator.readSessionRuntimeContext(projectId, sessionId)).rejects.toThrow(
+        'Cannot read runtime context for a missing Session.'
+      )
+      await expect(
+        coordinator.readSessionRuntimeContext('project-1', 'session-1')
+      ).resolves.toEqual({
+        version: 1,
+        revision: 0
+      })
+    }
+  )
+
+  it('rejects a runtime context read after out-of-band removal without recreating authority', async () => {
+    const { root, coordinator, repository } = await harness()
+    await coordinator.saveSession(createSession())
+    await rm(join(root, 'sessions', 'project-1', 'session-1.json'))
+
+    await expect(coordinator.readSessionRuntimeContext('project-1', 'session-1')).rejects.toThrow(
+      'Cannot read runtime context for a missing Session.'
+    )
+    expect(await repository.loadSessionWithDiagnostics('project-1', 'session-1')).toEqual({
+      status: 'missing'
+    })
+  })
+
   it.each(['session-file', 'project-directory'] as const)(
     'releases an admitted turn after %s disappears without recreating its record',
     async (missing) => {

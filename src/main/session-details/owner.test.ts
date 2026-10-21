@@ -5,6 +5,7 @@ import { describe, expect, it, vi, type Mock } from 'vitest'
 
 import type { AcpTurnTokenUsage } from '../../shared/acp'
 import type { PersistedChatSession } from '../../shared/session-persistence'
+import { preserveImportedSession } from '../session-persistence/imported-session'
 import {
   buildSessionDetailsUserPrompt,
   createSessionDetailsOwner,
@@ -123,7 +124,7 @@ class MemorySessions implements SessionDetailsSessionMutations {
     const result = mutation(current)
     if (result.kind === 'unchanged') return undefined
     const saved = {
-      ...result.session,
+      ...preserveImportedSession(current, result.session),
       revision: (current.revision ?? 0) + 1,
       updatedAt: current.updatedAt + 1
     }
@@ -131,8 +132,8 @@ class MemorySessions implements SessionDetailsSessionMutations {
     return saved
   }
 
-  current(): SessionDetailsSession {
-    return this.records.get('project-1:session-1')!
+  current(sessionId = 'session-1'): SessionDetailsSession {
+    return this.records.get(`project-1:${sessionId}`)!
   }
 }
 
@@ -196,6 +197,122 @@ const harness = (
 }
 
 describe('SessionDetailsOwner', () => {
+  describe('imported Session title edits', () => {
+    const importedSession = (
+      overrides: Partial<SessionDetailsSession> = {}
+    ): SessionDetailsSession =>
+      queuedSession({
+        id: 'import-session-1',
+        sessionDetailsSource: undefined,
+        sessionDetailsGeneration: undefined,
+        packageOrigin: {
+          importId: 'import-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 20,
+          manifestChecksum: 'a'.repeat(64),
+          excludedFiles: []
+        },
+        ...overrides
+      })
+
+    it.each(['absent', 'generated', 'running'] as const)(
+      'renames imported research while preserving %s details provenance',
+      async (provenance) => {
+        const original = importedSession(
+          provenance === 'absent'
+            ? {}
+            : {
+                sessionDetailsSource: provenance === 'generated' ? 'generated' : 'fallback',
+                sessionDetailsGeneration:
+                  provenance === 'generated'
+                    ? {
+                        status: 'succeeded',
+                        sourceMessageId: 'message-1',
+                        requestId: 'request-1',
+                        queuedAt: 10,
+                        startedAt: 11,
+                        completedAt: 12,
+                        usageUnavailable: true,
+                        frameworkId: 'codex',
+                        model: 'model-1',
+                        reasoningEffort: 'low'
+                      }
+                    : runningSession().sessionDetailsGeneration
+              }
+        )
+        const { owner, store, publish, generate } = harness([original])
+
+        const saved = await owner.edit({
+          projectId: original.projectId,
+          sessionId: original.id,
+          expectedTitle: original.title,
+          expectedDescription: original.description ?? '',
+          title: 'Renamed imported research',
+          description: original.description ?? ''
+        })
+
+        expect(saved.title).toBe('Renamed imported research')
+        expect(store.current(original.id)).toEqual(saved)
+        expect(saved.packageOrigin).toEqual(original.packageOrigin)
+        expect(saved.sessionDetailsSource).toBe(original.sessionDetailsSource)
+        expect(saved.sessionDetailsGeneration).toEqual(original.sessionDetailsGeneration)
+        expect(saved.messages).toEqual(original.messages)
+        expect(saved.description).toBe(original.description)
+        expect(publish).toHaveBeenCalledWith(saved)
+        expect(generate).not.toHaveBeenCalled()
+      }
+    )
+
+    it('still rejects imported research description changes atomically', async () => {
+      const original = importedSession()
+      const { owner, store, publish } = harness([original])
+
+      await expect(
+        owner.edit({
+          projectId: original.projectId,
+          sessionId: original.id,
+          expectedTitle: original.title,
+          expectedDescription: original.description ?? '',
+          title: 'Must not be partially saved',
+          description: 'Changed research content'
+        })
+      ).rejects.toThrow('Imported research history is read-only.')
+      expect(store.current(original.id)).toEqual(original)
+      expect(publish).not.toHaveBeenCalled()
+    })
+
+    it('keeps manual provenance and generation supersession for writable forks', async () => {
+      const original = runningSession({
+        forkOrigin: {
+          importId: 'fork-1',
+          sourceProjectId: 'source-project',
+          sourceSessionId: 'source-session',
+          importedAt: 20,
+          manifestChecksum: 'b'.repeat(64)
+        }
+      })
+      const { owner } = harness([original])
+
+      const saved = await owner.edit({
+        projectId: original.projectId,
+        sessionId: original.id,
+        expectedTitle: original.title,
+        expectedDescription: original.description ?? '',
+        title: 'Writable fork title',
+        description: 'Writable fork description'
+      })
+
+      expect(saved).toMatchObject({
+        title: 'Writable fork title',
+        description: 'Writable fork description',
+        sessionDetailsSource: 'manual',
+        sessionDetailsGeneration: { status: 'superseded' },
+        forkOrigin: original.forkOrigin
+      })
+    })
+  })
+
   it('reuses the startup catalog without another full-history hydration', async () => {
     const source = queuedSession()
     const { owner, store, generate } = harness([source])

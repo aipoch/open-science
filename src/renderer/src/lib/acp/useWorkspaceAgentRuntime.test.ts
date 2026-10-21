@@ -11775,6 +11775,106 @@ describe('recovering from a request-size overflow', () => {
     })
   })
 
+  it.each(['claude-code', 'opencode', 'codex-response', 'codex-bridge'] as const)(
+    'retries a lost %s session before the prior prompt idle snapshot arrives',
+    async (target) => {
+      vi.stubGlobal('window', { api: { sessions: createSessionPolicyApi() } })
+      seedOverflowedConversation()
+      const frameworkId = target === 'claude-code' || target === 'opencode' ? target : 'codex'
+      const error =
+        target === 'opencode' ? 'Internal error: OpenCode service failure' : 'Session not found'
+      useSessionStore.setState((state) => ({
+        sessions: state.sessions.map((session) => ({
+          ...session,
+          runtimeTranscriptOwner: 'main' as const,
+          agentFrameworkId: frameworkId,
+          error
+        }))
+      }))
+      const original = toPersistedSession(useSessionStore.getState().sessions[0])
+      testDurableSessions.set('session-1', original)
+      // Main has committed the terminal outcome, but its previous busy projection is still visible.
+      syncWorkspaceAgentFirstOutputState(['session-1'])
+      const runtime = {
+        state: {
+          ...createSnapshot(['session-1']),
+          promptInFlight: true,
+          promptInFlightSessionIds: ['session-1'],
+          agentPromptInFlightSessionIds: ['session-1']
+        },
+        createSession: vi.fn(),
+        resumeSession: vi.fn(),
+        resetSessionContext: vi.fn().mockResolvedValue({
+          sessionId: 'session-1',
+          providerSessionId: 'replacement-provider',
+          frameworkId,
+          contextReset: true
+        }),
+        sendPrompt: vi.fn().mockResolvedValue(createSnapshot(['session-1']))
+      }
+      const owner = createWorkspaceRuntimeSessionLifecycleOwner()
+      const event = createEvent({
+        kind: 'error',
+        sessionId: 'session-1',
+        recoverable: 'session-lost',
+        text: error,
+        publicationOwner: 'main'
+      })
+      const options = {
+        getAgentTarget: () => undefined,
+        getSupportsImageInput: () => undefined,
+        getHistoryReplayDescriptor: () => ({ target })
+      }
+      owner.processRuntimeEvents(runtime, [event], options)
+      await vi.waitFor(() => expect(runtime.sendPrompt).toHaveBeenCalledOnce())
+      expect(runtime.resetSessionContext).toHaveBeenCalledWith(
+        'session-1',
+        '/workspace/project',
+        'default-project',
+        'ask',
+        true
+      )
+      expect(runtime.sendPrompt.mock.calls[0]?.[1]).toBe('now compare with this new screenshot')
+      expect(runtime.sendPrompt.mock.calls[0]?.[5]).toContain('Here is what it shows')
+      const recovered = toPersistedSession(useSessionStore.getState().sessions[0])
+      expect(recovered.messages.map(({ id }) => id)).toEqual(original.messages.map(({ id }) => id))
+      expect(recovered.conversationGraph?.frames).toEqual(original.conversationGraph?.frames)
+      expect(recovered.providerSessionId).toBe('replacement-provider')
+      owner.processRuntimeEvents(runtime, [event], options)
+      await flushRuntimeTasks()
+      expect(runtime.resetSessionContext).toHaveBeenCalledOnce()
+      expect(runtime.sendPrompt).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('keeps a pending permission blocking recovery despite a stale busy projection', async () => {
+    seedOverflowedConversation()
+    syncWorkspaceAgentFirstOutputState(['session-1'])
+    const permission: AcpPermissionRequest = {
+      requestId: 'permission-live',
+      sessionId: 'session-1',
+      toolCallId: 'tool-permission-live',
+      title: 'Run a command',
+      options: [{ optionId: 'allow-once', name: 'Allow once', kind: 'allow_once' }]
+    }
+    const original = useSessionStore.getState().sessions[0]
+    const runtime = {
+      state: { ...createSnapshot(['session-1']), pendingPermissions: [permission] },
+      createSession: vi.fn(),
+      resumeSession: vi.fn(),
+      resetSessionContext: vi.fn().mockResolvedValue({
+        sessionId: 'session-1',
+        providerSessionId: 'replacement-provider',
+        contextReset: true
+      }),
+      sendPrompt: vi.fn()
+    }
+
+    expect(await recoverContextOverflowWorkspaceSession(runtime, 'session-1')).toBe(false)
+    expect(runtime.sendPrompt).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().sessions[0].messages).toEqual(original.messages)
+  })
+
   it('does not retry a hidden Save as skill control as an ordinary prompt', async () => {
     useSessionStore.getState().appendUserMessage({
       sessionId: 'session-1',
@@ -12055,6 +12155,7 @@ describe('recovering from a request-size overflow', () => {
 
   it('uses native framework compaction and retries without replaying app-owned history', async () => {
     seedOverflowedConversation()
+    syncWorkspaceAgentFirstOutputState(['session-1'])
     const staleNativeSnapshot = {
       ...createSnapshot(['session-1']),
       nativeContextCompactionSessionIds: ['session-1'],

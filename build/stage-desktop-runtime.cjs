@@ -12,7 +12,7 @@ module.exports = async (context) => {
   const root = context.packager.projectDir
   for (const [script, args] of [
     [path.join(root, 'scripts/native-components.mjs'), []],
-    [path.join(root, 'scripts/build-backend.mjs'), []]
+    [path.join(root, 'scripts/build-backend.mjs'), ['--desktop']]
   ]) {
     const result = spawnSync(process.execPath, [script, ...args], { cwd: root, stdio: 'inherit' })
     if (result.error || result.status !== 0)
