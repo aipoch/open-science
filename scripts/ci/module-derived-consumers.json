@@ -87,16 +87,12 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
-    "artifact_storage": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
+    "artifact_storage": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "artifact_storage_validation": [
       "src/main/session-package/literature-source.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "cli_sdk": [
-      "src/main/session-package/desktop.test.ts"
-    ],
+    "cli_sdk": ["src/main/session-package/desktop.test.ts"],
     "compute_domain_contracts": [
       "src/main/session-package/literature-source.test.ts",
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
@@ -268,18 +264,12 @@
     "main_agent_framework": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "main_archive": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
-    "main_delegation": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
+    "main_archive": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "main_delegation": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "main_managed_file_versions": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "main_storage": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
+    "main_storage": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "managed_version_files": [
       "src/main/compute/agent-compute-service.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
@@ -446,9 +436,7 @@
     "notebook_repository": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "notebook_syntax": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
+    "notebook_syntax": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "package_journal_catalog": [
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -610,9 +598,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": [
-      "src/renderer/src/pages/literature/renderer-host.test.tsx"
-    ],
+    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotations": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -644,9 +630,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "pdf_documents": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
+    "pdf_documents": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -749,9 +733,7 @@
     "project_files_repository": [
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
-    "project_files_view": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
-    ],
+    "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "providers_package": [
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/desktop-recovery-readiness.test.ts",
@@ -816,12 +798,8 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_app_icons": [
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
-    ],
-    "renderer_assets": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_app_icons": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
+    "renderer_assets": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_compute": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -870,9 +848,7 @@
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
-    "renderer_job_surfaces": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_job_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_model_selection": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -906,9 +882,7 @@
     "renderer_package_transport": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_permission_state": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_permission_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_preferences": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -928,9 +902,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_review_card": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_review_card": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_runtime_errors": [
       "src/renderer/src/components/CloseConfirmModal.render.test.tsx",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -984,16 +956,12 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "renderer_storage_surfaces": [
-      "src/renderer/src/components/SessionPackageOperation.test.tsx"
-    ],
+    "renderer_storage_surfaces": ["src/renderer/src/components/SessionPackageOperation.test.tsx"],
     "renderer_streamdown": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "renderer_tag_state": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "renderer_tag_state": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "renderer_ui": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
@@ -1261,12 +1229,8 @@
       "src/renderer/src/pages/workspace/replay/ReplayPanel.test.tsx",
       "src/renderer/src/pages/workspace/replay/ReplayToolRecord.test.tsx"
     ],
-    "session_diagnostics": [
-      "src/main/session-package/desktop.test.ts"
-    ],
-    "session_persistence": [
-      "src/main/session-details/owner.test.ts"
-    ],
+    "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
+    "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1306,12 +1270,8 @@
       "src/main/literature/pdf-translation/api-target.test.ts",
       "src/main/literature/pdf-translation/text-generation.test.ts"
     ],
-    "settings_repository": [
-      "src/main/settings/workflows/local-shell.test.ts"
-    ],
-    "shared_fuzzy_match": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "settings_repository": ["src/main/settings/workflows/local-shell.test.ts"],
+    "shared_fuzzy_match": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "shared_promise_identity": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1393,15 +1353,9 @@
       "src/renderer/src/pages/workspace/previews/LibraryPreview.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "storage_location": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
-    "storage_state": [
-      "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
-    ],
-    "upload_file_transport": [
-      "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
-    ],
+    "storage_location": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "storage_state": ["src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"],
+    "upload_file_transport": ["src/renderer/src/components/ProjectPackageDropZone.test.tsx"],
     "upload_repository": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
@@ -1471,15 +1425,11 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_environment_controls": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_environment_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_environment_presentation": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_error_reporting": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_error_reporting": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_file_model": [
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -1492,9 +1442,7 @@
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx"
     ],
-    "workspace_folder_access": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_folder_access": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_job_presentation": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1533,9 +1481,7 @@
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
       "src/renderer/src/hooks/useQuitPersistenceFlush.test.ts"
     ],
-    "workspace_pdf_reading_controls": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_pdf_reading_controls": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_permissions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
@@ -1571,9 +1517,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_reproducibility_surfaces": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_reproducibility_surfaces": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_run_marks": [
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
@@ -1600,9 +1544,7 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_skill_document": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ],
+    "workspace_skill_document": ["src/renderer/src/lib/literature-renderer-host.test.ts"],
     "workspace_tool_blocks": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspaceElicitationCard.interaction.test.tsx"
@@ -1624,8 +1566,6 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "workspace_version_workflow": [
-      "src/renderer/src/lib/literature-renderer-host.test.ts"
-    ]
+    "workspace_version_workflow": ["src/renderer/src/lib/literature-renderer-host.test.ts"]
   }
 }
