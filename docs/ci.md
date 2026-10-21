@@ -61,6 +61,14 @@ planned for every change it carries, not only its own pull request. CI Integrity
 pull request title in the queue because it becomes the squash subject.
 Platform-sensitive changes add focused Darwin sandbox, process/delegation, window/second-launch
 and Notebook checks in that same job. Selected native checks must succeed; skipped is not success.
+The Notebook runtime macOS isolation file runs in its own Vitest invocation via
+`node scripts/ci/run-notebook-isolation.mjs`. An exit code of 1 permits one retry in a fresh
+process: an incomplete sandbox teardown can retain a singleton that an in-worker retry cannot
+reset. Only this file is repeated; its full assertions and production cleanup checks remain intact.
+Both attempts stay in the job log and step summary, with a warning when a retry is needed.
+A second failure, spawn error or signal still fails the step. Release verification keeps its
+existing single-attempt invocation. This bounds CI recovery; it does not prove or repair the cause
+of an intermittent cleanup failure.
 Queue does not repeat Windows business E2E or complete Mac business/presentation suites. Queue reselects Windows core integration groups for the combined revision; selected checks remain blocking.
 
 ### Platform profiles
