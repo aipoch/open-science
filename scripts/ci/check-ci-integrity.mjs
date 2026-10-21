@@ -8,7 +8,7 @@ import { fileURLToPath } from 'node:url'
 import { load } from 'js-yaml'
 
 import { parseNameStatus } from './classify-pr-changes.mjs'
-import { checkDerivedConsumerRevisions } from './generate-module-derived-consumers.mjs'
+import { checkDerivedConsumerRevisions } from './module-graph/index.mjs'
 import { moduleOwnershipFromRevisions } from './check-module-ownership.mjs'
 
 function actionReferences(document, workflow) {

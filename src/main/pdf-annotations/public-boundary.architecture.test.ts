@@ -3,9 +3,9 @@ import { existsSync, readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import { expect, it } from 'vitest'
 // @ts-expect-error The repository's JavaScript evidence reader has no declaration file.
-import { createConsumerDependencyReader } from '../../../scripts/ci/consumer-retirement.mjs'
+import { createDependencyReader } from '../../../scripts/ci/module-graph/index.mjs'
 // @ts-expect-error The repository's JavaScript layer classifier has no declaration file.
-import { dependencyLayer } from '../../../scripts/ci/module-relationships.mjs'
+import { dependencyLayer } from '../../../scripts/ci/module-graph/policy.mjs'
 
 it('keeps annotation storage and native parsing behind the supported entries', () => {
   const root = resolve(import.meta.dirname, '../../..')
@@ -23,7 +23,7 @@ it('keeps annotation storage and native parsing behind the supported entries', (
     if (!contents.has(path)) contents.set(path, readFileSync(resolve(root, path), 'utf8'))
     return contents.get(path)
   }
-  const reader = createConsumerDependencyReader({ files, read }, [])
+  const reader = createDependencyReader({ files, read }, [])
   const privateFiles = new Set([
     'src/main/pdf-annotations/document-store.ts',
     'src/main/pdf-annotations/sharing.ts'
