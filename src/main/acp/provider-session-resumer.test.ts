@@ -119,6 +119,7 @@ type ResumerHarness = {
   release: ReturnType<typeof vi.fn>
   backend: AcpBackendGenerationView
   request: ReturnType<typeof vi.fn>
+  releaseForTransfer: () => Promise<string | undefined>
   reconfigure: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   resume: (request?: Partial<AcpResumeSessionRequest>) => Promise<AcpCreateSessionResponse>
   sessionSetupAppends: string[][]
@@ -390,6 +391,7 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
     registry,
     release,
     request,
+    releaseForTransfer: () => resumer.releaseForTransfer('stable-app-session'),
     reconfigure,
     resume,
     sessionSetupAppends,
@@ -399,6 +401,64 @@ const createHarness = (options: HarnessOptions = {}): ResumerHarness => {
 }
 
 describe('AcpProviderSessionResumer', () => {
+  it('coalesces overlapping releases of the same provider writer', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const second = h.releaseForTransfer()
+    expect(h.request).toHaveBeenCalledOnce()
+    finish()
+    await expect(first).resolves.toBe('provider-session')
+    await expect(second).resolves.toBe('provider-session')
+    expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+  })
+
+  it.each([codexResponsesBackend, codexBridgeBackend, codexResponsesCompatibilityBackend])(
+    'closes only the provider writer and retains resume identity for $modelRoute',
+    async (initialBackend) => {
+      const h = createHarness({ attached: true, initialBackend })
+      await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+      expect(h.request).toHaveBeenCalledExactlyOnceWith(
+        acp.methods.agent.session.close,
+        { sessionId: 'provider-session' },
+        { cancellationSignal: expect.any(AbortSignal) }
+      )
+      expect(h.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+      expect(h.registry.lookup('stable-app-session')?.aggregate.snapshot().projectId).toBe(
+        'old-project'
+      )
+      expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+      expect(h.disconnectTimedOutConnection).not.toHaveBeenCalled()
+      await expect(h.releaseForTransfer()).resolves.toBeUndefined()
+      expect(h.request).toHaveBeenCalledOnce()
+    }
+  )
+
+  it('preserves the attachment when closing the writer fails', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    h.request.mockRejectedValueOnce(new Error('close failed'))
+    await expect(h.releaseForTransfer()).rejects.toThrow('close failed')
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    expect(h.providerSession.dispose).not.toHaveBeenCalled()
+  })
+
+  it('does not disconnect sibling Sessions when writer close times out', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    h.request.mockImplementationOnce(() => new Promise(() => undefined))
+    const release = h.releaseForTransfer()
+    const rejection = expect(release).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejection
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    expect(h.disconnectTimedOutConnection).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['Responses', false, codexResponsesBackend],
     ['Chat', false, codexBridgeBackend],

@@ -946,6 +946,17 @@ class AcpRuntime {
     })
   }
 
+  async releaseSessionForTransfer(sessionId: string): Promise<string | undefined> {
+    return this.withOperationLease(async () => {
+      if (this.sessionInteractions.current(sessionId)) {
+        throw new Error('Cannot transfer a Session while the Agent is running.')
+      }
+      const providerSessionId = await this.providerSessionResumer.releaseForTransfer(sessionId)
+      if (providerSessionId) this.sessionCapabilities.revokeSession(sessionId)
+      return providerSessionId
+    })
+  }
+
   async enableLiteratureContext(sessionId: string): Promise<void> {
     if (!this.options.literature) return
     this.sessionCapabilities.enableLiterature(sessionId)

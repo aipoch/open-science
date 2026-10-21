@@ -87,6 +87,7 @@ type AcpProviderSessionResumerDependencies = Readonly<{
 export class AcpProviderSessionResumer {
   private readonly policy = new AcpSessionResumePolicy()
   private readonly presentation = new AcpSessionPresentationPolicy()
+  private readonly writerReleases = new Map<string, Promise<string | undefined>>()
   private readonly progressObservers = new Map<string, Set<() => void>>()
 
   constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
@@ -102,6 +103,46 @@ export class AcpProviderSessionResumer {
     if (attached) return this.resumeAttached(request, attached)
 
     return this.resumeDetached(request, false)
+  }
+
+  releaseForTransfer(sessionId: string): Promise<string | undefined> {
+    const pending = this.writerReleases.get(sessionId)
+    if (pending) return pending
+    const release = this.releaseWriter(sessionId).finally(() => {
+      if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+    })
+    this.writerReleases.set(sessionId, release)
+    return release
+  }
+
+  private async releaseWriter(sessionId: string): Promise<string | undefined> {
+    const entry = this.deps.registry.lookup(sessionId)
+    const attachment = entry?.attachment
+    if (!attachment) return undefined
+    const connection = this.deps.currentConnection()
+    if (!connection || !this.deps.supportsSessionClose()) {
+      throw new Error('The provider cannot release this Session for a model change.')
+    }
+    // Close only this writer, preserving provider history and sibling Sessions. A failed close
+    // must not allow another generation to resume the same thread.
+    return this.withTimeout(
+      async (cancellationSignal) => {
+        await connection.agent.request(
+          acp.methods.agent.session.close,
+          { sessionId: attachment.providerSessionId },
+          { cancellationSignal }
+        )
+        cancellationSignal.throwIfAborted()
+        this.deps.assertCurrentConnection(connection)
+        if (!this.deps.registry.detach(attachment, 'connection')) {
+          throw new Error('ACP session transfer was superseded.')
+        }
+        attachment.session.dispose()
+        return attachment.providerSessionId
+      },
+      [],
+      { preserveConnection: true }
+    )
   }
 
   async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {

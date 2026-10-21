@@ -273,6 +273,7 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const sessionEfforts = new Map<string, import('@aipoch/providers').ResolvedReasoningEffort>()
   const runtime = {
+    releaseSessionForTransfer: vi.fn(async () => undefined),
     getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
     applySessionReasoningEffortChange: vi.fn(
       async (id: string, effort: import('@aipoch/providers').ResolvedReasoningEffort) => {
@@ -408,6 +409,157 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each(['success', 'retry', 'reset'] as const)(
+    'retains detached ownership during sibling updates until adoption settles (%s)',
+    async (outcome) => {
+      const failure = outcome !== 'success'
+      const adoption = createDeferred<void>()
+      const unavailable = vi.fn()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator(
+        (callbacks) => {
+          const fake = createFakeRuntime({
+            frameworkId: 'codex',
+            sessionIds: ['thread-1', 'sibling'],
+            callbacks,
+            beforeResume: () => (created.length <= 3 ? adoption.promise : Promise.resolve())
+          })
+          Object.assign(fake.runtime, {
+            releaseSessionForTransfer: vi.fn(async () => {
+              fake.setStateSilently({ sessionIds: ['sibling'], sessionId: 'sibling' })
+              return 'provider-thread-1'
+            })
+          })
+          created.push(fake)
+          return fake.runtime
+        },
+        {},
+        '',
+        undefined,
+        undefined,
+        unavailable
+      )
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'provider',
+        model: 'old',
+        reasoningEffort: 'high'
+      } as const
+      await coordinator.createSession({ agentTarget: target })
+      const owner = created.at(-1)!
+      const resume = coordinator.resumeSession({
+        sessionId: 'thread-1',
+        cwd: '/workspace',
+        agentTarget: { ...target, model: 'new' }
+      })
+      const settled = failure
+        ? expect(resume).rejects.toThrow('incoming failed')
+        : expect(resume).resolves.toMatchObject({ sessionId: 'thread-1' })
+      await vi.waitFor(() => expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce())
+      owner.emitState({})
+      expect(unavailable).not.toHaveBeenCalled()
+      await expect(
+        coordinator.sendPrompt({ sessionId: 'thread-1', text: 'too soon' })
+      ).rejects.toThrow('finish resuming')
+      expect(owner.sendPrompt).not.toHaveBeenCalled()
+      if (failure) adoption.reject(new Error('incoming failed'))
+      else adoption.resolve()
+      await settled
+      if (failure) {
+        expect(unavailable).toHaveBeenCalledWith('thread-1')
+        if (outcome === 'reset') {
+          await coordinator.resetSessionContext({
+            sessionId: 'thread-1',
+            cwd: '/workspace',
+            agentTarget: { ...target, model: 'new' }
+          })
+          created.at(-1)!.emitState({ sessionIds: [], sessionId: undefined })
+        }
+        await coordinator.resumeSession({
+          sessionId: 'thread-1',
+          cwd: '/workspace',
+          agentTarget: { ...target, model: 'new' }
+        })
+        expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
+          outcome === 'reset'
+            ? expect.not.objectContaining({ providerSessionId: 'provider-thread-1' })
+            : expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+        )
+      } else expect(unavailable).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each([false, true])(
+    'releases only the failed Codex writer before switching models (draining: %s)',
+    async (draining) => {
+      let writer: AcpRuntime | undefined
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1', 'sibling'],
+          callbacks,
+          beforeResume: async () => {
+            if (writer && writer !== fake.runtime) throw new Error('already has an active writer')
+            writer = fake.runtime
+          }
+        })
+        Object.assign(fake.runtime, {
+          releaseSessionForTransfer: vi.fn(async (id: string) => {
+            expect(id).toBe('thread-1')
+            writer = undefined
+            return 'provider-thread-1'
+          })
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      const target = {
+        frameworkId: 'codex',
+        providerId: 'provider',
+        model: 'rejected-model',
+        reasoningEffort: 'high'
+      } as const
+      const session = await coordinator.createSession({
+        agentTarget: target,
+        projectId: 'project-a'
+      })
+      const sibling = await coordinator.createSession({
+        agentTarget: target,
+        projectId: 'project-a'
+      })
+      const owner = created.at(-1)!
+      writer = owner.runtime
+      owner.emitState({
+        promptInFlight: true,
+        promptInFlightSessionIds: draining
+          ? [session.sessionId, sibling.sessionId]
+          : [sibling.sessionId]
+      })
+      const resume = coordinator.resumeSession({
+        sessionId: session.sessionId,
+        cwd: '/workspace',
+        agentTarget: { ...target, model: 'working-model' }
+      })
+      if (draining) {
+        await vi.waitFor(() => expect(created.at(-1)).not.toBe(owner))
+        expect(owner.runtime.releaseSessionForTransfer).not.toHaveBeenCalled()
+        expect(created.at(-1)!.resumeSession).not.toHaveBeenCalled()
+        owner.emitState({ promptInFlight: true, promptInFlightSessionIds: [sibling.sessionId] })
+      }
+      await resume
+      expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
+        expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+      )
+      expect(writer).toBe(created.at(-1)!.runtime)
+      expect(writer).not.toBe(owner.runtime)
+      expect(owner.runtime.getSnapshot().promptInFlightSessionIds).toEqual([sibling.sessionId])
+      expect(owner.deleteSession).not.toHaveBeenCalled()
+      expect(owner.disconnect).not.toHaveBeenCalled()
+      expect(owner.requestRetirement).not.toHaveBeenCalled()
+    }
+  )
+
   it.each([false, true])(
     'updates Codex effort on the existing writer (draining: %s)',
     async (draining) => {
