@@ -5,7 +5,7 @@ import {
 import { WEB_EVENT_SURFACE_ATTRIBUTE } from '../../../shared/web-event-connection'
 import { PackageImportSelection } from './PackageImportSelection'
 import { PackageImportQueue } from './PackageImportQueue'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import * as Dialog from '@/components/ui/dialog'
@@ -573,6 +573,81 @@ export const PackageOperationIndicator = (): React.JSX.Element | null => {
   )
 }
 
+// Measure the bounded content, not the animating shell, to avoid resize feedback loops.
+const PackageDialogLayout = ({
+  children,
+  stage,
+  enabled
+}: {
+  children: React.ReactNode
+  stage: string
+  enabled: boolean
+}): React.JSX.Element => {
+  const contentRef = useRef<HTMLDivElement>(null)
+  const previousStage = useRef(stage)
+  useLayoutEffect(() => {
+    const content = contentRef.current
+    const panel = content?.parentElement
+    if (!content || !panel) return
+    if (!enabled) {
+      panel.style.removeProperty('height')
+      return
+    }
+    const body = content.querySelector<HTMLElement>('[data-package-body]')
+    const naturalContent = body?.querySelector<HTMLElement>('[data-package-content]')
+    if (!body || !naturalContent) return
+    const chrome = Array.from(content.children).filter(
+      (element) => element !== body
+    ) as HTMLElement[]
+    const measure = (): void => {
+      const style = getComputedStyle(body)
+      const height =
+        naturalContent.offsetHeight +
+        (parseFloat(style.paddingTop) || 0) +
+        (parseFloat(style.paddingBottom) || 0) +
+        chrome.reduce((total, element) => total + element.offsetHeight, 0) +
+        2
+      const maximum = parseFloat(getComputedStyle(panel).maxHeight) || height
+      if (height > 2) panel.style.height = `${Math.min(height, maximum)}px`
+    }
+    measure()
+    const observer = typeof ResizeObserver === 'undefined' ? undefined : new ResizeObserver(measure)
+    for (const element of [naturalContent, ...chrome]) observer?.observe(element)
+    return () => observer?.disconnect()
+  }, [enabled, stage])
+  useLayoutEffect(() => {
+    const changed = previousStage.current !== stage
+    previousStage.current = stage
+    if (!enabled || !changed || window.matchMedia('(prefers-reduced-motion: reduce)').matches)
+      return
+    const animations = Array.from(
+      contentRef.current?.querySelectorAll<HTMLElement>('[data-package-content]') ?? []
+    ).flatMap((element) =>
+      element.animate
+        ? [
+            element.animate([{ opacity: 0.72 }, { opacity: 1 }], {
+              duration: 160,
+              fill: 'backwards'
+            })
+          ]
+        : []
+    )
+    return () => animations.forEach((animation) => animation.cancel())
+  }, [stage, enabled])
+  return (
+    <div
+      ref={contentRef}
+      className={
+        enabled
+          ? 'flex h-full max-h-[calc(var(--package-dialog-max-height)-2px)] min-h-0 flex-col'
+          : 'contents'
+      }
+    >
+      {children}
+    </div>
+  )
+}
+
 export const SessionPackageOperation = (): React.JSX.Element | null => {
   const { t } = useTranslation()
   const speedId = useId()
@@ -899,365 +974,367 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
               titleRef.current?.focus()
             }}
             className={dialogPanelClassName(
-              'flex max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0 [@media(max-height:500px)]:[&>div]:py-3',
-              Boolean(operation.sensitiveContent?.length) ||
-                (selecting && operation.kind !== 'import')
-                ? 'h-[min(85svh,560px)]'
-                : operation.kind === 'import' && selecting
-                  ? 'h-[min(85svh,440px)]'
-                  : operation.kind === 'import' && operation.state === 'succeeded'
-                    ? 'h-[min(85svh,400px)] sm:h-[min(85svh,280px)]'
-                    : operation.kind !== 'fork' && 'h-[min(85svh,400px)]',
-              operation.kind !== 'fork' &&
-                'transition-[height] duration-200 ease-out motion-reduce:transition-none'
+              'flex flex-col overflow-hidden p-0',
+              operation.kind === 'fork'
+                ? 'max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))]'
+                : '[--package-dialog-max-height:min(85svh,640px,var(--windows-content-max-height))] top-[calc(var(--windows-content-center-y)-var(--package-dialog-max-height)/2)] max-h-[var(--package-dialog-max-height)] w-[min(640px,calc(100vw-2rem))] -translate-y-0 transition-[height] duration-[220ms] ease-[cubic-bezier(0.2,0.8,0.2,1)] motion-reduce:transition-none'
             )}
           >
-            <div className={`${dialogHeaderClassName} flex-col items-stretch gap-3`}>
-              <div className="min-w-0 w-full space-y-1">
-                <div className="flex items-start gap-2">
-                  <Dialog.Title
-                    ref={titleRef}
-                    tabIndex={-1}
-                    className={`${dialogTitleClassName} min-w-0 flex-1 break-words py-0.5 leading-6 outline-none`}
+            <PackageDialogLayout
+              enabled={operation.kind !== 'fork'}
+              stage={`${operation.id}:${selecting ? operation.progress.phase : active ? 'progress' : operation.state}`}
+            >
+              <div className={`${dialogHeaderClassName} flex-col items-stretch gap-3`}>
+                <div className="min-w-0 w-full space-y-1">
+                  <div className="flex items-start gap-2">
+                    <Dialog.Title
+                      ref={titleRef}
+                      tabIndex={-1}
+                      className={`${dialogTitleClassName} min-w-0 flex-1 break-words py-0.5 leading-6 outline-none`}
+                    >
+                      {title}
+                    </Dialog.Title>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <PackageImportQueue
+                        key={operation.id}
+                        operation={sourceOperation!}
+                        onAction={respond}
+                      />
+                      <TooltipProvider delayDuration={200}>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              className={dialogCloseButtonClassName}
+                              aria-label={active ? t('Hide progress') : t('Dismiss')}
+                              onClick={() => (active ? setOpen(false) : dismiss())}
+                            >
+                              <X className="size-4" aria-hidden="true" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            {active
+                              ? t('Hide this window. The operation will continue.')
+                              : t('Dismiss')}
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  </div>
+                  {operation.kind === 'import' && operation.importFilename ? (
+                    <p
+                      className="truncate text-sm text-muted-foreground"
+                      title={operation.importFilename}
+                    >
+                      {operation.importFilename}
+                    </p>
+                  ) : null}
+                  <Dialog.Description
+                    className={
+                      operation.kind !== 'fork' || (active && !selecting)
+                        ? 'sr-only'
+                        : 'text-sm leading-relaxed text-muted-foreground'
+                    }
                   >
-                    {title}
-                  </Dialog.Title>
-                  <div className="flex shrink-0 items-center gap-1">
-                    <PackageImportQueue
-                      key={operation.id}
-                      operation={sourceOperation!}
-                      onAction={respond}
-                    />
-                    <TooltipProvider delayDuration={200}>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            className={dialogCloseButtonClassName}
-                            aria-label={active ? t('Hide progress') : t('Dismiss')}
-                            onClick={() => (active ? setOpen(false) : dismiss())}
-                          >
-                            <X className="size-4" aria-hidden="true" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          {active
-                            ? t('Hide this window. The operation will continue.')
-                            : t('Dismiss')}
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
+                    {operation.kind === 'export'
+                      ? t('Research history is always included.')
+                      : operation.kind === 'fork'
+                        ? t(
+                            'Fork creates an independent Session with all branches and research data. No code runs automatically.'
+                          )
+                        : t('Import creates a new read-only Session. No code runs automatically.')}
+                  </Dialog.Description>
+                </div>
+                <PackageOperationSteps operation={operation} />
+              </div>
+              {!selecting ? (
+                <div
+                  data-package-body
+                  className={cn(
+                    `${dialogBodyClassName} min-h-0 flex-1 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`
+                  )}
+                >
+                  <div
+                    data-package-content
+                    className={cn('space-y-4', active && operation.kind !== 'fork' && 'h-50')}
+                  >
+                    {notices}
+                    {operation.browserReceiptOnly ? null : (
+                      <>
+                        {!(operation.state === 'failed' && operation.error) ? (
+                          <div className="space-y-4">
+                            <div className="flex items-start gap-3">
+                              <div
+                                className={`mt-0.5 flex size-6 shrink-0 items-center justify-center ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'}`}
+                              >
+                                <OperationIcon
+                                  className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
+                                  aria-hidden="true"
+                                />
+                              </div>
+                              <div className="min-w-0 flex-1 space-y-1.5">
+                                {waiting ? (
+                                  <p className="text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
+                                    {t('Waiting for you')}
+                                  </p>
+                                ) : null}
+                                <p role="status" className="text-base font-semibold leading-6">
+                                  {status}
+                                </p>
+                                {description || (operation.kind === 'export' && !active) ? (
+                                  <p
+                                    className={cn(
+                                      'text-sm leading-relaxed text-muted-foreground',
+                                      operation.kind === 'import' && 'leading-5'
+                                    )}
+                                  >
+                                    {description ??
+                                      t('The Session is unlocked. You can continue your research.')}
+                                  </p>
+                                ) : null}
+                              </div>
+                            </div>
+                            <PackageProgressMeter operation={operation} />
+                            {operation.state === 'succeeded' && operation.result?.filePath ? (
+                              <p className="break-all text-sm text-muted-foreground">
+                                {operation.result.filePath}
+                              </p>
+                            ) : null}
+                            {operation.state === 'succeeded' &&
+                            operation.kind === 'import' &&
+                            (destinationName || operation.importTarget?.projectName) ? (
+                              <p className="text-sm text-muted-foreground">
+                                {t('Destination project')}:{' '}
+                                {destinationName ?? operation.importTarget?.projectName}
+                              </p>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {transferSettings}
+                        {error || operation.error ? (
+                          <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                            <ErrorNotice
+                              inline
+                              className="min-w-0 flex-1 basis-64"
+                              role="alert"
+                              tone="amber"
+                              description={error ?? operation.error}
+                            />
+                            {operation.state === 'failed' ? (
+                              <details className="min-w-0 pt-0.5 text-xs text-muted-foreground open:basis-full">
+                                <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                                  {t('Details')}
+                                </summary>
+                                <p className="mt-2">
+                                  {t('Last stage: {{stage}}', { stage: phase })}
+                                </p>
+                              </details>
+                            ) : null}
+                          </div>
+                        ) : null}
+                        {operation.sensitiveContent?.length ? (
+                          <details className="border-t border-border pt-3 text-sm">
+                            <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
+                              {t('Sensitive-content evidence')}
+                            </summary>
+                            <pre className="mt-3 whitespace-pre-wrap break-all rounded-md bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
+                              {JSON.stringify(operation.sensitiveContent, null, 2)}
+                            </pre>
+                          </details>
+                        ) : null}
+                        {canOverride ? (
+                          <div className="space-y-3 rounded-lg border border-border bg-status-warning-surface p-3 dark:bg-status-warning-dark-surface">
+                            <p
+                              id={`${riskId}-description`}
+                              className="text-sm leading-5 text-foreground"
+                            >
+                              {t(
+                                'This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.'
+                              )}
+                            </p>
+                            <div className="flex items-start gap-2">
+                              <input
+                                id={riskId}
+                                type="checkbox"
+                                className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
+                                aria-describedby={`${riskId}-description`}
+                                checked={riskAcceptedFor === operation.id}
+                                disabled={retrying}
+                                onChange={(event) =>
+                                  setRiskAcceptedFor(
+                                    event.target.checked ? operation.id : undefined
+                                  )
+                                }
+                              />
+                              <Label htmlFor={riskId} className="min-w-0 text-sm leading-5">
+                                {t('I understand the risk and want to export anyway')}
+                              </Label>
+                            </div>
+                          </div>
+                        ) : null}
+                        {operation.cleanupPending && !active ? (
+                          <ErrorNotice
+                            inline
+                            role="status"
+                            tone="amber"
+                            description={t(
+                              'Some temporary files could not be removed. Retry cleanup without repeating the transfer.'
+                            )}
+                          />
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 </div>
-                {operation.kind === 'import' && operation.importFilename ? (
-                  <p
-                    className="truncate text-sm text-muted-foreground"
-                    title={operation.importFilename}
-                  >
-                    {operation.importFilename}
-                  </p>
-                ) : null}
-                <Dialog.Description
-                  className={
-                    operation.kind === 'fork' && active && !selecting
-                      ? 'sr-only'
-                      : 'text-sm leading-relaxed text-muted-foreground'
+              ) : operation.kind === 'import' ? (
+                <PackageImportSelection
+                  key={`${operation.id}:${operation.progress.phase}`}
+                  operation={operation}
+                  notice={notices}
+                  error={error}
+                  onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
+                  onContinue={async (target) =>
+                    respond(
+                      target
+                        ? { action: 'select-project', operationId: operation.id, target }
+                        : { action: 'confirm-import', operationId: operation.id }
+                    )
                   }
-                >
-                  {operation.kind === 'export'
-                    ? t('Research history is always included.')
-                    : operation.kind === 'fork'
-                      ? t(
-                          'Fork creates an independent Session with all branches and research data. No code runs automatically.'
-                        )
-                      : t('Import creates a new read-only Session. No code runs automatically.')}
-                </Dialog.Description>
-              </div>
-              <PackageOperationSteps operation={operation} />
-            </div>
-            {!selecting ? (
-              <div
-                className={cn(
-                  `${dialogBodyClassName} min-h-0 flex-1 space-y-5 overflow-y-auto overscroll-contain [scrollbar-gutter:stable]`,
-                  operation.kind === 'import' && 'space-y-3 py-3'
-                )}
-              >
-                {notices}
-                {operation.browserReceiptOnly ? null : (
-                  <>
-                    {!(operation.state === 'failed' && operation.error) ? (
-                      <div
-                        className={cn(
-                          'space-y-5 py-1',
-                          operation.kind === 'import' && 'space-y-3 py-0'
-                        )}
-                      >
-                        <div className="flex items-start gap-3">
-                          <div
-                            className={`mt-0.5 flex size-6 shrink-0 items-center justify-center ${waiting ? 'text-status-warning-foreground dark:text-status-warning-dark-foreground' : 'text-primary'}`}
-                          >
-                            <OperationIcon
-                              className={`size-5 ${busy ? 'animate-spin motion-reduce:animate-none' : ''}`}
-                              aria-hidden="true"
-                            />
-                          </div>
-                          <div className="min-w-0 flex-1 space-y-1.5">
-                            {waiting ? (
-                              <p className="text-xs font-medium text-status-warning-foreground dark:text-status-warning-dark-foreground">
-                                {t('Waiting for you')}
-                              </p>
-                            ) : null}
-                            <p role="status" className="text-base font-semibold leading-6">
-                              {status}
-                            </p>
-                            {description || (operation.kind === 'export' && !active) ? (
-                              <p
-                                className={cn(
-                                  'text-sm leading-relaxed text-muted-foreground',
-                                  operation.kind === 'import' && 'leading-5'
-                                )}
-                              >
-                                {description ??
-                                  t('The Session is unlocked. You can continue your research.')}
-                              </p>
-                            ) : null}
-                          </div>
-                        </div>
-                        <PackageProgressMeter operation={operation} />
-                        {operation.state === 'succeeded' && operation.result?.filePath ? (
-                          <p className="break-all text-sm text-muted-foreground">
-                            {operation.result.filePath}
-                          </p>
-                        ) : null}
-                        {operation.state === 'succeeded' &&
-                        operation.kind === 'import' &&
-                        (destinationName || operation.importTarget?.projectName) ? (
-                          <p className="text-sm text-muted-foreground">
-                            {t('Destination project')}:{' '}
-                            {destinationName ?? operation.importTarget?.projectName}
-                          </p>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {transferSettings}
-                    {error || operation.error ? (
-                      <div className="flex flex-wrap items-start gap-x-3 gap-y-2">
+                />
+              ) : (
+                <PackageFileSelection
+                  key={operation.id}
+                  files={operation.files ?? []}
+                  summary={operation.summary}
+                  notice={
+                    <>
+                      {notices}
+                      {error || operation.error ? (
                         <ErrorNotice
                           inline
-                          className="min-w-0 flex-1 basis-64"
                           role="alert"
                           tone="amber"
                           description={error ?? operation.error}
                         />
-                        {operation.state === 'failed' ? (
-                          <details className="min-w-0 pt-0.5 text-xs text-muted-foreground open:basis-full">
-                            <summary className="w-fit cursor-pointer rounded-sm hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                              {t('Details')}
-                            </summary>
-                            <p className="mt-2">{t('Last stage: {{stage}}', { stage: phase })}</p>
-                          </details>
-                        ) : null}
-                      </div>
-                    ) : null}
-                    {operation.sensitiveContent?.length ? (
-                      <details className="border-t border-border pt-3 text-sm">
-                        <summary className="w-fit cursor-pointer rounded-sm text-muted-foreground hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring">
-                          {t('Sensitive-content evidence')}
-                        </summary>
-                        <pre className="mt-3 whitespace-pre-wrap break-all rounded-md bg-muted/50 p-3 text-xs leading-5 text-muted-foreground">
-                          {JSON.stringify(operation.sensitiveContent, null, 2)}
-                        </pre>
-                      </details>
-                    ) : null}
-                    {canOverride ? (
-                      <div className="space-y-3 rounded-lg border border-border bg-status-warning-surface p-3 dark:bg-status-warning-dark-surface">
-                        <p
-                          id={`${riskId}-description`}
-                          className="text-sm leading-5 text-foreground"
-                        >
-                          {t(
-                            'This package may contain credentials or private information. Exporting anyway includes flagged content without redaction. Review the package before sharing.'
-                          )}
-                        </p>
-                        <div className="flex items-start gap-2">
-                          <input
-                            id={riskId}
-                            type="checkbox"
-                            className="mt-0.5 size-4 shrink-0 accent-primary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50"
-                            aria-describedby={`${riskId}-description`}
-                            checked={riskAcceptedFor === operation.id}
-                            disabled={retrying}
-                            onChange={(event) =>
-                              setRiskAcceptedFor(event.target.checked ? operation.id : undefined)
-                            }
-                          />
-                          <Label htmlFor={riskId} className="min-w-0 text-sm leading-5">
-                            {t('I understand the risk and want to export anyway')}
-                          </Label>
-                        </div>
-                      </div>
-                    ) : null}
-                    {operation.cleanupPending && !active ? (
-                      <ErrorNotice
-                        inline
-                        role="status"
-                        tone="amber"
-                        description={t(
-                          'Some temporary files could not be removed. Retry cleanup without repeating the transfer.'
-                        )}
-                      />
-                    ) : null}
-                  </>
-                )}
-              </div>
-            ) : operation.kind === 'import' ? (
-              <PackageImportSelection
-                key={`${operation.id}:${operation.progress.phase}`}
-                operation={operation}
-                notice={notices}
-                error={error}
-                onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                onContinue={async (target) =>
-                  respond(
-                    target
-                      ? { action: 'select-project', operationId: operation.id, target }
-                      : { action: 'confirm-import', operationId: operation.id }
-                  )
-                }
-              />
-            ) : (
-              <PackageFileSelection
-                key={operation.id}
-                files={operation.files ?? []}
-                summary={operation.summary}
-                notice={
-                  <>
-                    {notices}
-                    {error || operation.error ? (
-                      <ErrorNotice
-                        inline
-                        role="alert"
-                        tone="amber"
-                        description={error ?? operation.error}
-                      />
-                    ) : null}
-                  </>
-                }
-                onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
-                onSelect={(excludedStorageKeys, includePdfNotes) =>
-                  void respond({
-                    action: 'select',
-                    operationId: operation.id,
-                    excludedStorageKeys,
-                    includePdfNotes
-                  })
-                }
-              >
-                {transferSettings}
-              </PackageFileSelection>
-            )}
-            {!selecting ? (
-              <div className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
-                {(error || operation.error) &&
-                operation.state === 'failed' &&
-                !operation.cleanupPending &&
-                operation.kind === 'import' &&
-                operation.importRequestId ? (
-                  <Button
-                    variant="outline"
-                    className="mr-auto h-auto min-h-8 max-w-full whitespace-normal text-left max-sm:w-full"
-                    disabled={retrying}
-                    onClick={() => void retry(true)}
-                  >
-                    {t('Choose another package')}
-                  </Button>
-                ) : null}
-                {active && !operation.browserReceiptOnly ? (
-                  <Button
-                    variant="ghost"
-                    className={dialogCancelButtonClassName}
-                    disabled={operation.state === 'cancelling'}
-                    onClick={() => void respond({ action: 'cancel', operationId: operation.id })}
-                  >
-                    {t('Cancel')}
-                  </Button>
-                ) : null}
-                {!waiting ? (
-                  <Button
-                    variant={
-                      active ? 'default' : operation.state === 'failed' ? 'ghost' : 'outline'
-                    }
-                    onClick={() => (active ? setOpen(false) : dismiss())}
-                  >
-                    {active ? t('Run in background') : t('Close')}
-                  </Button>
-                ) : null}
-                {operation.cleanupPending && !active ? (
-                  <Button
-                    variant={operation.state === 'succeeded' ? 'secondary' : 'default'}
-                    onClick={() =>
-                      void respond({ action: 'retry-cleanup', operationId: operation.id })
-                    }
-                  >
-                    {t('Retry cleanup')}
-                  </Button>
-                ) : null}
-                {!active &&
-                !operation.cleanupPending &&
-                Boolean(operation.pendingImports?.length) ? (
-                  <Button
-                    variant="outline"
-                    onClick={() =>
-                      void respond({ action: 'next-import', operationId: operation.id })
-                    }
-                  >
-                    {t('Open next package')}{' '}
-                    <span className="tabular-nums">({operation.pendingImports?.length})</span>
-                  </Button>
-                ) : null}
-                {operation.state === 'succeeded' && operation.result?.filePath ? (
-                  <Button
-                    onClick={() => void respond({ action: 'reveal', operationId: operation.id })}
-                  >
-                    {t('Show in folder')}
-                  </Button>
-                ) : null}
-                {operation.state === 'succeeded' && operation.result?.imported ? (
-                  <Button onClick={() => void openImported()}>
-                    {operation.kind === 'fork'
-                      ? t('Open forked Session')
-                      : t('Open imported Session')}
-                  </Button>
-                ) : null}
-                {operation.state === 'failed' &&
-                !operation.cleanupPending &&
-                !operation.result?.recovery ? (
-                  <Button
-                    variant={canOverride ? 'outline' : 'default'}
-                    disabled={retrying}
-                    onClick={() => void retry()}
-                  >
-                    {t('Try again')}
-                  </Button>
-                ) : null}
-                {canOverride ? (
-                  <Button
-                    disabled={retrying || riskAcceptedFor !== operation.id}
-                    aria-busy={retrying}
-                    onClick={() => void retry(false, true)}
-                  >
-                    {retrying ? (
-                      <LoaderCircle
-                        className="size-4 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : null}
-                    {t('Export anyway')}
-                  </Button>
-                ) : null}
-              </div>
-            ) : null}
+                      ) : null}
+                    </>
+                  }
+                  onCancel={() => void respond({ action: 'cancel', operationId: operation.id })}
+                  onSelect={(excludedStorageKeys, includePdfNotes) =>
+                    void respond({
+                      action: 'select',
+                      operationId: operation.id,
+                      excludedStorageKeys,
+                      includePdfNotes
+                    })
+                  }
+                >
+                  {transferSettings}
+                </PackageFileSelection>
+              )}
+              {!selecting ? (
+                <div data-package-footer className={`${dialogFooterClassName} shrink-0 flex-wrap`}>
+                  {(error || operation.error) &&
+                  operation.state === 'failed' &&
+                  !operation.cleanupPending &&
+                  operation.kind === 'import' &&
+                  operation.importRequestId ? (
+                    <Button
+                      variant="outline"
+                      className="mr-auto h-auto min-h-8 max-w-full whitespace-normal text-left max-sm:w-full"
+                      disabled={retrying}
+                      onClick={() => void retry(true)}
+                    >
+                      {t('Choose another package')}
+                    </Button>
+                  ) : null}
+                  {active && !operation.browserReceiptOnly ? (
+                    <Button
+                      variant="ghost"
+                      className={dialogCancelButtonClassName}
+                      disabled={operation.state === 'cancelling'}
+                      onClick={() => void respond({ action: 'cancel', operationId: operation.id })}
+                    >
+                      {t('Cancel')}
+                    </Button>
+                  ) : null}
+                  {!waiting ? (
+                    <Button
+                      variant={
+                        active ? 'default' : operation.state === 'failed' ? 'ghost' : 'outline'
+                      }
+                      onClick={() => (active ? setOpen(false) : dismiss())}
+                    >
+                      {active ? t('Run in background') : t('Close')}
+                    </Button>
+                  ) : null}
+                  {operation.cleanupPending && !active ? (
+                    <Button
+                      variant={operation.state === 'succeeded' ? 'secondary' : 'default'}
+                      onClick={() =>
+                        void respond({ action: 'retry-cleanup', operationId: operation.id })
+                      }
+                    >
+                      {t('Retry cleanup')}
+                    </Button>
+                  ) : null}
+                  {!active &&
+                  !operation.cleanupPending &&
+                  Boolean(operation.pendingImports?.length) ? (
+                    <Button
+                      variant="outline"
+                      onClick={() =>
+                        void respond({ action: 'next-import', operationId: operation.id })
+                      }
+                    >
+                      {t('Open next package')}{' '}
+                      <span className="tabular-nums">({operation.pendingImports?.length})</span>
+                    </Button>
+                  ) : null}
+                  {operation.state === 'succeeded' && operation.result?.filePath ? (
+                    <Button
+                      onClick={() => void respond({ action: 'reveal', operationId: operation.id })}
+                    >
+                      {t('Show in folder')}
+                    </Button>
+                  ) : null}
+                  {operation.state === 'succeeded' && operation.result?.imported ? (
+                    <Button onClick={() => void openImported()}>
+                      {operation.kind === 'fork'
+                        ? t('Open forked Session')
+                        : t('Open imported Session')}
+                    </Button>
+                  ) : null}
+                  {operation.state === 'failed' &&
+                  !operation.cleanupPending &&
+                  !operation.result?.recovery ? (
+                    <Button
+                      variant={canOverride ? 'outline' : 'default'}
+                      disabled={retrying}
+                      onClick={() => void retry()}
+                    >
+                      {t('Try again')}
+                    </Button>
+                  ) : null}
+                  {canOverride ? (
+                    <Button
+                      disabled={retrying || riskAcceptedFor !== operation.id}
+                      aria-busy={retrying}
+                      onClick={() => void retry(false, true)}
+                    >
+                      {retrying ? (
+                        <LoaderCircle
+                          className="size-4 animate-spin motion-reduce:animate-none"
+                          aria-hidden="true"
+                        />
+                      ) : null}
+                      {t('Export anyway')}
+                    </Button>
+                  ) : null}
+                </div>
+              ) : null}
+            </PackageDialogLayout>
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>

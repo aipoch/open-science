@@ -225,6 +225,10 @@ it('keeps failed background cancellation visible and retryable without discardin
   expect(usePackageOperationStore.getState().open).toBe(true)
 })
 beforeEach(() => {
+  vi.stubGlobal(
+    'matchMedia',
+    vi.fn(() => ({ matches: false }))
+  )
   usePackageOperationStore.setState({ browserReceipt: undefined })
   const container = document.createElement('div')
   document.body.append(container)
@@ -237,6 +241,30 @@ beforeEach(() => {
     selectionPreset: 'full',
     threshold: '256'
   })
+})
+
+it('releases measured layout when the dialog changes to a fork', async () => {
+  const height = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(320)
+  const disconnect = vi.fn()
+  vi.stubGlobal(
+    'ResizeObserver',
+    class {
+      observe = vi.fn()
+      disconnect = disconnect
+    }
+  )
+  try {
+    const running = { ...snapshot, state: 'running' as const }
+    usePackageOperationStore.getState().receive(running)
+    await act(async () => root.render(<SessionPackageOperation />))
+    const panel = document.querySelector<HTMLElement>('[role="dialog"]')!
+    expect(parseFloat(panel.style.height)).toBeGreaterThan(320)
+    await act(async () => usePackageOperationStore.getState().receive({ ...running, kind: 'fork' }))
+    expect(panel.style.height).toBe('')
+    expect(disconnect).toHaveBeenCalledOnce()
+  } finally {
+    height.mockRestore()
+  }
 })
 
 it('offers full and compact export without exposing customization and preserves required evidence', async () => {
