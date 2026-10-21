@@ -554,7 +554,7 @@ it('routes API key recovery to the existing editor without starting login', asyn
 })
 
 it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
-  'clears %s recovery after fresh validation while retaining an older model failure',
+  'clears %s recovery after fresh validation while retaining unrelated model failures',
   (type) => {
     const provider = {
       ...useSettingsStore.getState().providers[0],
@@ -594,6 +594,15 @@ it.each(['claude-isolated', 'xai-subscription', 'custom'] as const)(
     expect(useSettingsStore.getState().providers[0].lastValidationFailure).toEqual(
       provider.lastValidationFailure
     )
+
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          { ...validated, lastValidationFailure: { ...provider.lastValidationFailure, at: 40 } }
+        ]
+      })
+    )
+    expect(container.textContent).not.toContain(recoveryCopy)
 
     act(() =>
       useSettingsStore.setState({

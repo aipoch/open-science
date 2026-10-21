@@ -2725,54 +2725,75 @@ describe('Send now with the native follow-up lifecycle', () => {
   })
 })
 
-it('pauses queued prompts on authentication failure and requires explicit retry after validation', async () => {
-  const { useSettingsStore } = await import('@/stores/settings-store')
-  const account = {
-    id: 'reauth',
-    type: 'codex-isolated' as const,
-    name: 'Codex',
-    hasKey: true,
-    needsKey: false,
-    models: [],
-    supportsImageInput: true,
-    lastValidatedAt: 1
-  }
-  useSettingsStore.setState({ providers: [account] })
-  const failed = {
-    ...session('error'),
-    error: 'Authentication required',
-    updatedAt: 20,
-    agentConfiguration: { providerId: account.id, reasoningEffort: 'default' as const }
-  }
-  failed.conversationGraph!.branches[0].headMessageId = undefined
-  // Retain the same frame/branch identity so authentication, not a branch mismatch, blocks it.
-  const running = { ...session('running'), agentConfiguration: failed.agentConfiguration }
-  let current = running
-  const input = options(running, { getSession: () => current })
-  const hook = renderController(input)
-  mounted.push(hook)
-  act(() =>
-    hook.result.current.lifecycle.enqueue({
-      ...admission('keep queued'),
-      session: running,
-      agentConfiguration: running.agentConfiguration
+it.each([false, true])(
+  'pauses queued prompts until explicit retry after validation (unrelated model failure: %s)',
+  async (unrelatedFailure) => {
+    const { useSettingsStore } = await import('@/stores/settings-store')
+    const account = {
+      id: 'reauth',
+      type: 'codex-isolated' as const,
+      name: 'Codex',
+      hasKey: true,
+      needsKey: false,
+      models: [],
+      supportsImageInput: true,
+      lastValidatedAt: 1
+    }
+    useSettingsStore.setState({ providers: [account] })
+    const failed = {
+      ...session('error'),
+      error: 'Authentication required',
+      updatedAt: 20,
+      agentConfiguration: { providerId: account.id, reasoningEffort: 'default' as const }
+    }
+    failed.conversationGraph!.branches[0].headMessageId = undefined
+    // Retain the same frame/branch identity so authentication, not a branch mismatch, blocks it.
+    const running = { ...session('running'), agentConfiguration: failed.agentConfiguration }
+    let current = running
+    const input = options(running, { getSession: () => current })
+    const hook = renderController(input)
+    mounted.push(hook)
+    act(() =>
+      hook.result.current.lifecycle.enqueue({
+        ...admission('keep queued'),
+        session: running,
+        agentConfiguration: running.agentConfiguration
+      })
+    )
+    current = failed
+    hook.rerender({ ...input, activeSession: failed, promptInFlightSessionIds: [] })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    expect(hook.result.current.items[0]).toMatchObject({
+      phase: 'error',
+      error: { kind: 'send', detail: 'Authentication required' }
     })
-  )
-  current = failed
-  hook.rerender({ ...input, activeSession: failed, promptInFlightSessionIds: [] })
-  expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-  expect(hook.result.current.items[0]).toMatchObject({
-    phase: 'error',
-    error: { kind: 'send', detail: 'Authentication required' }
-  })
-  act(() => useSettingsStore.setState({ providers: [{ ...account, lastValidatedAt: 30 }] }))
-  hook.rerender({ ...input, activeSession: failed, promptInFlightSessionIds: [] })
-  expect(input.runtime.sendMessage).not.toHaveBeenCalled()
-  await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
-  expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
-    expect.objectContaining({ text: 'keep queued' })
-  )
-})
+    act(() =>
+      useSettingsStore.setState({
+        providers: [
+          {
+            ...account,
+            lastValidatedAt: 30,
+            ...(unrelatedFailure
+              ? {
+                  lastValidationFailure: {
+                    at: 40,
+                    category: 'model-not-found' as const,
+                    target: { model: 'unavailable-model' }
+                  }
+                }
+              : {})
+          }
+        ]
+      })
+    )
+    hook.rerender({ ...input, activeSession: failed, promptInFlightSessionIds: [] })
+    expect(input.runtime.sendMessage).not.toHaveBeenCalled()
+    await act(async () => hook.result.current.actions.sendNow(hook.result.current.items[0].id))
+    expect(input.runtime.sendMessage).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ text: 'keep queued' })
+    )
+  }
+)
 
 it.each(['durable', 'operation'])(
   'settles automatic %s authentication failures without trapping later user messages behind an invisible queue head',

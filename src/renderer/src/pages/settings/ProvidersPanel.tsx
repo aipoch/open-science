@@ -507,7 +507,7 @@ const ProvidersPanel = ({
     recoveryProvider?.lastValidatedAt !== undefined &&
     recoveryProvider.lastValidatedAt > (recoveryBaseline.validatedAt ?? 0) &&
     !recoveryProvider.needsKey &&
-    (!recoveryProvider.lastValidationFailure ||
+    (recoveryProvider.lastValidationFailure?.category !== 'auth' ||
       recoveryProvider.lastValidationFailure.at < recoveryProvider.lastValidatedAt)
 
   const recoveryPending =

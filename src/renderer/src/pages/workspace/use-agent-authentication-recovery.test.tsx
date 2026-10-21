@@ -416,3 +416,34 @@ it('returns to the selected account credential failure after the operation accou
   ])
   expect(hook.result.required).toBe(false)
 })
+
+it('keeps recovery resolved after another model fails validation, but still checks the send target and credentials', () => {
+  const hook = mount()
+  hook.select(provider.id, 'available-model')
+  const validated: ProviderView = {
+    ...provider,
+    lastValidatedAt: 30,
+    lastValidatedTarget: { model: 'available-model' }
+  }
+  hook.providers([validated])
+  expect(hook.result.required).toBe(false)
+
+  const retained: ProviderView = {
+    ...validated,
+    lastValidationFailure: {
+      at: 40,
+      category: 'model-not-found',
+      target: { model: 'unavailable-model' }
+    }
+  }
+  hook.providers([retained])
+  expect(hook.result.required).toBe(false)
+  hook.select(provider.id, 'unavailable-model')
+  expect(hook.result.required).toBe(true)
+  hook.select(provider.id, 'available-model')
+  expect(hook.result.required).toBe(false)
+  hook.providers([{ ...retained, lastValidatedAt: undefined, lastValidatedTarget: undefined }])
+  expect(hook.result.required).toBe(true)
+  hook.providers([{ ...retained, lastValidationFailure: { at: 40, category: 'auth' } }])
+  expect(hook.result.required).toBe(true)
+})

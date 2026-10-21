@@ -64,7 +64,7 @@ export const isProviderAuthenticationRestored = (
     provider?.lastValidatedAt !== undefined &&
     provider.lastValidatedAt > failedAt &&
     !provider.needsKey &&
-    (!provider.lastValidationFailure ||
+    (provider.lastValidationFailure?.category !== 'auth' ||
       provider.lastValidationFailure.at < provider.lastValidatedAt) &&
     (!provider.lastValidatedTarget?.model ||
       provider.lastValidatedTarget.model === resolveProviderEffectiveModel(provider, model))
