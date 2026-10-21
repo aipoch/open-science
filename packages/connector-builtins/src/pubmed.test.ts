@@ -11,10 +11,12 @@ const textRes = (body: string): Response =>
 
 const tool = (id: string): ToolDescriptor => PUBMED_TOOLS.find((t) => t.id === id)!
 
-describe('pubmed connector (7 tools)', () => {
-  it('exposes exactly the 7 official tool ids', () => {
+describe('pubmed connector', () => {
+  it('exposes the existing and PubTator tool ids', () => {
     expect(PUBMED_TOOLS.map((t) => t.id).sort()).toEqual(
       [
+        'get_pubtator_annotations',
+        'search_pubtator',
         'convert_article_ids',
         'find_related_articles',
         'get_article_metadata',

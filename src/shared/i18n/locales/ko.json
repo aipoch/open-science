@@ -7360,6 +7360,17 @@
     "Exclude conflicting references": "충돌하는 참고문헌 제외",
     "Excluded references were not imported. Their details remain below.": "제외한 참고문헌은 가져오지 않았습니다. 세부 정보는 아래에 남아 있습니다.",
     "Select reference {{number}}: {{title}}": "참고문헌 {{number}} 선택: {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "일부 식별자가 서로 다르거나 다른 참고문헌과 일치합니다. 충돌하는 참고문헌을 제외하거나 원본 파일을 수정하거나 선택한 참고문헌의 별도 사본을 유지하세요."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "일부 식별자가 서로 다르거나 다른 참고문헌과 일치합니다. 충돌하는 참고문헌을 제외하거나 원본 파일을 수정하거나 선택한 참고문헌의 별도 사본을 유지하세요.",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Orphadata의 희귀 질환 유전자, 표현형 및 빈도 근거.",
+    "Retrieve HGNC gene names and aliases.": "HGNC 유전자 이름과 별칭을 조회합니다.",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "모호한 일치 항목을 유지하며 HGNC 유전자 별칭을 확인합니다.",
+    "Retrieve PubTator 3 annotations for published articles.": "출판된 논문의 PubTator 3 주석을 조회합니다.",
+    "Search PubTator 3 entities and relations, one page at a time.": "PubTator 3 개체와 관계를 페이지별로 검색합니다.",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "출처 근거를 유지하며 DGIdb에서 유전자 관련 약물을 찾습니다.",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "출처 근거를 유지하며 DGIdb에서 약물 관련 유전자를 찾습니다.",
+    "Retrieve an RNAcentral sequence record.": "RNAcentral 서열 레코드를 조회합니다.",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "RNAcentral 식별자를 원본 데이터베이스에 페이지별로 매핑합니다.",
+    "Retrieve rare-disease gene associations from Orphadata.": "Orphadata에서 희귀 질환과 유전자의 연관성을 조회합니다.",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Orphadata에서 희귀 질환 표현형과 빈도를 조회합니다."
   }
 }

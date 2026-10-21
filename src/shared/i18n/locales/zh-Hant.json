@@ -7362,6 +7362,17 @@
     "Exclude conflicting references": "排除衝突書目",
     "Excluded references were not imported. Their details remain below.": "已排除的書目未匯入，其詳細資訊保留在下方。",
     "Select reference {{number}}: {{title}}": "選取書目 {{number}}：{{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分識別碼不一致或符合不同書目。請排除衝突書目、修正來源檔案，或為所選書目保留獨立副本。"
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "部分識別碼不一致或符合不同書目。請排除衝突書目、修正來源檔案，或為所選書目保留獨立副本。",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Orphadata 提供的罕見疾病基因、表型及頻率證據。",
+    "Retrieve HGNC gene names and aliases.": "查詢 HGNC 基因名稱和別名。",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "解析 HGNC 基因別名並保留歧義匹配。",
+    "Retrieve PubTator 3 annotations for published articles.": "取得已發表文獻的 PubTator 3 標註。",
+    "Search PubTator 3 entities and relations, one page at a time.": "逐頁檢索 PubTator 3 實體和關係。",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "在 DGIdb 中查詢基因關聯藥物並保留來源證據。",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "在 DGIdb 中查詢藥物關聯基因並保留來源證據。",
+    "Retrieve an RNAcentral sequence record.": "取得 RNAcentral 序列紀錄。",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "逐頁查詢 RNAcentral 識別碼至來源資料庫的對應。",
+    "Retrieve rare-disease gene associations from Orphadata.": "取得 Orphadata 罕見疾病關聯基因。",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "取得 Orphadata 罕見疾病表型及頻率。"
   }
 }

@@ -7690,6 +7690,17 @@
     "Exclude conflicting references": "Exclure les références en conflit",
     "Excluded references were not imported. Their details remain below.": "Les références exclues n’ont pas été importées. Leurs détails restent disponibles ci-dessous.",
     "Select reference {{number}}: {{title}}": "Sélectionner la référence {{number}} : {{title}}",
-    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Certains identifiants sont incohérents ou correspondent à des références différentes. Excluez les références en conflit, corrigez le fichier source ou conservez des copies distinctes des références sélectionnées."
+    "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Certains identifiants sont incohérents ou correspondent à des références différentes. Excluez les références en conflit, corrigez le fichier source ou conservez des copies distinctes des références sélectionnées.",
+    "Rare-disease genes, phenotypes and frequency evidence from Orphadata.": "Gènes, phénotypes et données de fréquence des maladies rares issus d’Orphadata.",
+    "Retrieve HGNC gene names and aliases.": "Récupérer les noms et alias de gènes HGNC.",
+    "Resolve an HGNC gene alias without discarding ambiguous matches.": "Résoudre un alias de gène HGNC sans éliminer les correspondances ambiguës.",
+    "Retrieve PubTator 3 annotations for published articles.": "Récupérer les annotations PubTator 3 d’articles publiés.",
+    "Search PubTator 3 entities and relations, one page at a time.": "Rechercher des entités et relations PubTator 3, une page à la fois.",
+    "Find drugs associated with a gene in DGIdb, retaining source evidence.": "Trouver les médicaments associés à un gène dans DGIdb en conservant les preuves des sources.",
+    "Find genes associated with a drug in DGIdb, retaining source evidence.": "Trouver les gènes associés à un médicament dans DGIdb en conservant les preuves des sources.",
+    "Retrieve an RNAcentral sequence record.": "Récupérer un enregistrement de séquence RNAcentral.",
+    "Map RNAcentral identifiers to source databases, one page at a time.": "Associer les identifiants RNAcentral aux bases de données sources, une page à la fois.",
+    "Retrieve rare-disease gene associations from Orphadata.": "Récupérer les associations entre maladies rares et gènes dans Orphadata.",
+    "Retrieve rare-disease phenotypes and frequencies from Orphadata.": "Récupérer les phénotypes et fréquences des maladies rares dans Orphadata."
   }
 }

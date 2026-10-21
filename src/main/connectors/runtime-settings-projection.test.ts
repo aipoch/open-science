@@ -16,6 +16,27 @@ const connectors = (overrides: Partial<StoredConnectors> = {}): StoredConnectors
 })
 
 describe('ConnectorRuntimeSettingsProjection', () => {
+  it('materializes default-off bundled Skills only after explicit opt-in and removes them after opt-out', async () => {
+    let stored = connectors()
+    const syncBundledSkillDocs = vi.fn().mockResolvedValue(undefined)
+    const projection = new ConnectorRuntimeSettingsProjection({
+      readConnectors: async () => stored,
+      skillsDir: '/config/skills',
+      mcpClientManager: { listTools: vi.fn() },
+      syncBundledSkillDocs,
+      syncCustomSkillDocs: async () => ({ materializedNames: [], failures: [] })
+    })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).not.toContain('orphadata')
+    stored = connectors({ enabledConnectorIds: ['orphadata'], disabledConnectorIds: ['genes'] })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).toContain('orphadata')
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).not.toContain('genes')
+    stored = connectors({ enabledConnectorIds: ['orphadata'], disabledConnectorIds: ['orphadata'] })
+    await projection.refresh()
+    expect(syncBundledSkillDocs.mock.lastCall?.[1]).not.toContain('orphadata')
+  })
+
   it.each([
     ['all', false],
     ['targeted', false],

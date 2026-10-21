@@ -283,6 +283,10 @@
     "./catalog": {
       "types": "./dist/catalog.d.ts",
       "default": "./dist/catalog.js"
+    },
+    "./orphadata": {
+      "types": "./dist/orphadata.d.ts",
+      "default": "./dist/orphadata.js"
     }
   },
   "files": [

@@ -1,3 +1,4 @@
+import { isBundledConnectorEnabled } from './catalog'
 import {
   classifyCustomMcpFailure,
   toCustomMcpConfig,
@@ -143,8 +144,7 @@ class ConnectorRuntimeSettingsProjection {
         return
       }
 
-      const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-      const enabledIds = ALL_CONNECTOR_IDS.filter((id) => !disabled.has(id))
+      const enabledIds = ALL_CONNECTOR_IDS.filter((id) => isBundledConnectorEnabled(id, connectors))
 
       await this.syncBundledSkillDocs(this.options.skillsDir, enabledIds, signal)
       signal.throwIfAborted()

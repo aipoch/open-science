@@ -210,10 +210,10 @@ describe('renderSkillDoc', () => {
     expect(md).not.toContain('Settings > Connectors')
   })
 
-  it('keeps the PubMed Skill under a 2.3k-token on-demand budget', () => {
+  it('keeps the nine-method PubMed Skill under a 2.9k-token on-demand budget', () => {
     const md = renderSkillDoc('pubmed')
 
-    expect(tokenizer.encode(md).length).toBeLessThan(2_300)
+    expect(tokenizer.encode(md).length).toBeLessThan(2_900)
   })
 
   it('keeps every authored connector example valid for the JavaScript REPL', () => {

@@ -40,7 +40,7 @@ import {
   customConnectorNameFromSkillName,
   isCustomConnectorName
 } from '../../shared/custom-connector'
-import { CONNECTOR_CATALOG } from '../connectors/catalog'
+import { CONNECTOR_CATALOG, isBundledConnectorEnabled } from '../connectors/catalog'
 import {
   hasUsableCustomMcpCredentials,
   isCustomMcpServerRouteSafe
@@ -218,12 +218,11 @@ class ConnectorSettingsModule {
     this.customServerRuntimeProjectionProvider = provider
   }
 
-  // Bundled connectors are default-on. Keep this projection on the durable owner so runtime
-  // configuration, Skill provisioning, and renderer views all apply the same opt-out rule.
+  // Runtime configuration, Skill provisioning and views share the catalog/explicit-choice rule.
   enabledConnectorIds(connectors: StoredConnectors | undefined): string[] {
-    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
-
-    return CONNECTOR_CATALOG.map((meta) => meta.id).filter((id) => !disabled.has(id))
+    return CONNECTOR_CATALOG.filter((meta) => isBundledConnectorEnabled(meta.id, connectors)).map(
+      (meta) => meta.id
+    )
   }
 
   materializedCustomSkillNames(): string[] {
@@ -1189,7 +1188,6 @@ class ConnectorSettingsModule {
   }
 
   private toConnectorViews(connectors: StoredConnectors | undefined): ConnectorView[] {
-    const disabled = new Set(connectors?.disabledConnectorIds ?? [])
     const autoAllow = new Set(connectors?.autoAllowIds ?? [])
 
     return CONNECTOR_CATALOG.map((meta) => ({
@@ -1199,7 +1197,7 @@ class ConnectorSettingsModule {
       description: meta.description,
       sources: meta.sources,
       requiresNcbi: meta.requiresNcbi,
-      enabled: !disabled.has(meta.id),
+      enabled: isBundledConnectorEnabled(meta.id, connectors),
       autoAllow: autoAllow.has(meta.id),
       group: meta.group ?? 'featured'
     })).sort((a, b) => a.displayName.localeCompare(b.displayName))

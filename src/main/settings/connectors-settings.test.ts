@@ -15,6 +15,7 @@ describe('sanitizeConnectors', () => {
         ncbiApiKeyRef: 'ref1',
         openAlexApiKeyRef: 'ref2',
         blockedToolIds: ['chemistry/pubchem_get_properties'],
+        enabledConnectorIds: ['orphadata', 42, 'orphadata'],
         disabledConnectorIds: ['zinc', 'zinc', 'rna']
       })
     ).toEqual({
@@ -24,6 +25,7 @@ describe('sanitizeConnectors', () => {
       ncbiApiKeyRef: 'ref1',
       openAlexApiKeyRef: 'ref2',
       blockedToolIds: ['chemistry/pubchem_get_properties'],
+      enabledConnectorIds: ['orphadata'],
       disabledConnectorIds: ['zinc', 'rna']
     })
   })
@@ -53,6 +55,20 @@ describe('SettingsRepository connector mutators', () => {
       expect((await readConnectors(repo))?.disabledConnectorIds).toEqual(['zinc'])
       await repo.setConnectorDisabled('zinc', false)
       expect((await readConnectors(repo))?.disabledConnectorIds).toBeUndefined()
+    })
+  })
+
+  it('persists explicit opt-in across repository reloads and removes conflicting choices', async () => {
+    await withRepo(async (repo, dir) => {
+      await repo.setConnectorDisabled('genes', true)
+      await repo.setConnectorDisabled('orphadata', false)
+      let saved = (await new SettingsRepository(dir).getSettings()).connectors
+      expect(saved?.enabledConnectorIds).toEqual(['orphadata'])
+      expect(saved?.disabledConnectorIds).toEqual(['genes'])
+      await repo.setConnectorDisabled('orphadata', true)
+      saved = (await new SettingsRepository(dir).getSettings()).connectors
+      expect(saved?.enabledConnectorIds).toBeUndefined()
+      expect(saved?.disabledConnectorIds).toEqual(['genes', 'orphadata'])
     })
   })
 

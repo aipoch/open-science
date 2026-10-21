@@ -1456,7 +1456,7 @@ export type ConnectorView = {
   description: string
   sources: string[]
   requiresNcbi: boolean
-  enabled: boolean // !disabledConnectorIds.includes(id)
+  enabled: boolean // Catalog default with persisted explicit enable/disable choices.
   autoAllow: boolean // autoAllowIds.includes(id) — "Skip approvals"
   group: ConnectorGroup
 }

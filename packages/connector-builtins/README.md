@@ -61,3 +61,34 @@ existing writer.
 
 `./molecule` advertises only `render_molecule`. Application preview/Artifact actions
 are registered by the host.
+
+The following public, read-only methods require no credentials:
+
+| Entry                 | Source                                                            | Methods                                         |
+| --------------------- | ----------------------------------------------------------------- | ----------------------------------------------- |
+| `./genes`             | [HGNC](https://www.genenames.org/help/rest/)                      | `get_hgnc_gene`, `resolve_hgnc_alias`           |
+| `./pubmed`            | [PubTator 3](https://www.ncbi.nlm.nih.gov/research/pubtator3/api) | `get_pubtator_annotations`, `search_pubtator`   |
+| `./clinical-genomics` | [DGIdb](https://dgidb.org/api)                                    | `get_dgidb_gene_drugs`, `get_dgidb_drug_genes`  |
+| `./rna`               | [RNAcentral](https://rnacentral.org/api)                          | `get_rnacentral_record`, `get_rnacentral_xrefs` |
+| `./orphadata`         | [Orphadata](https://api.orphadata.com/openapi.json)               | `get_disease_genes`, `get_disease_phenotypes`   |
+
+HGNC, PubTator and RNAcentral share per-source process-local request admission at 10, 3 and
+20 requests/second respectively. These methods do not automatically retry HTTP failures; the
+core still supplies HTTP status, Retry-After guidance, deadlines, cancellation and response-size
+limits. Separate processes on the same IP must coordinate their aggregate traffic. DGIdb and
+Orphadata use the core's bounded retry policy. Each new method caps responses at 2 MB.
+
+Pagination is explicit: PubTator returns one publication-search page, RNAcentral one mapping
+page, and DGIdb one matching gene/drug record per cursor page. DGIdb's nested interactions are
+unpaginated upstream; oversized responses fail instead of silently dropping evidence. HGNC
+exact lookups preserve ambiguous matches and withdrawn status. PubTator annotation retrieval
+accepts at most ten published PMIDs and never submits original text. RNAcentral uses API v1,
+which is distinct from a dataset release. Orphadata preserves dataset dates, validation and
+CC BY 4.0 attribution. DGIdb preserves each source's version and reuse terms; aggregated
+interactions are not clinical recommendations. Cite original publications and source databases.
+
+The host honors catalog `defaultEnabled` metadata (absence means enabled). Orphadata alone
+is opt-in for Main. Explicit enabled/disabled choices persist in settings, with disabled taking
+precedence on conflicting input; historical opt-outs and existing Specialist scope rules remain
+unchanged. Older hosts may discard the new affirmative-choice field when saving settings,
+requiring Orphadata to be enabled again after re-upgrade. No dataset cache or migration is used.

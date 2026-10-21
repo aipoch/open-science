@@ -2,6 +2,7 @@ import { CONNECTOR_CATALOG as providers } from '@aipoch/connector-builtins/catal
 
 // Settings sections and application capabilities are host presentation policy.
 const directory = new Set([
+  'orphadata',
   'pdc',
   'iedb',
   'monarch',
@@ -26,3 +27,13 @@ export const CONNECTOR_CATALOG = providers.map((provider) => ({
     : {}),
   group: directory.has(provider.id) ? ('directory' as const) : ('featured' as const)
 }))
+
+// Explicit opt-outs win even if an imported settings document contains conflicting choices.
+export function isBundledConnectorEnabled(
+  id: string,
+  settings?: { disabledConnectorIds?: string[]; enabledConnectorIds?: string[] }
+): boolean {
+  if (settings?.disabledConnectorIds?.includes(id)) return false
+  if (settings?.enabledConnectorIds?.includes(id)) return true
+  return CONNECTOR_CATALOG.find((entry) => entry.id === id)?.defaultEnabled !== false
+}

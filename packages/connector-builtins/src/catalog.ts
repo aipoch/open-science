@@ -9,11 +9,24 @@ export type ConnectorMeta = {
   useWhen: string
   sources: string[]
   termsUrl?: string
+  defaultEnabled?: boolean
   requiresNcbi: boolean
 }
 
 // Scientific provider metadata, independent of application navigation and presentation.
 export const CONNECTOR_CATALOG: ConnectorMeta[] = [
+  {
+    id: 'orphadata',
+    displayName: 'Orphadata',
+    aliases: ['Orphanet', 'ORPHAcode'],
+    description: 'Rare-disease genes, phenotypes and frequency evidence from Orphadata.',
+    useWhen:
+      'Use for Orphanet rare-disease gene associations and HPO phenotype frequencies by ORPHAcode. Preserve dataset dates, validation evidence and CC BY 4.0 attribution to Orphadata / Orphanet. Public read-only API; no credentials required.',
+    sources: ['Orphadata', 'Orphanet'],
+    termsUrl: 'https://www.orphadata.com/orphanet-scientific-knowledge/',
+    defaultEnabled: false,
+    requiresNcbi: false
+  },
   {
     id: 'encori',
     displayName: 'ENCORI',
@@ -105,24 +118,24 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'pubmed',
     displayName: 'PubMed',
-    aliases: ['NCBI literature', 'PMC', 'Europe PMC'],
+    aliases: ['NCBI literature', 'PMC', 'Europe PMC', 'PubTator 3'],
     description:
       'Biomedical literature via NCBI E-utilities, the PMC ID Converter and Europe PMC — search, metadata, related articles, citation lookup, ID conversion, full text and copyright.',
     useWhen:
-      'Use to search the biomedical literature and retrieve article metadata (authors, abstract, DOIs, MeSH), find related/similar articles, resolve citations to PMIDs, convert between PMID/PMCID/DOI, fetch open-access full text from PubMed Central, or check copyright/license status. Sourced from PubMed (NCBI), PMC and Europe PMC.',
-    sources: ['PubMed', 'PMC', 'Europe PMC'],
+      'Use for PubTator 3 published-article entity annotations and entity/relation search, or to search the biomedical literature and retrieve article metadata (authors, abstract, DOIs, MeSH), find related/similar articles, resolve citations to PMIDs, convert between PMID/PMCID/DOI, fetch open-access full text from PubMed Central, or check copyright/license status. Sourced from PubMed (NCBI), PMC and Europe PMC.',
+    sources: ['PubMed', 'PMC', 'Europe PMC', 'PubTator 3'],
     termsUrl: 'https://www.ncbi.nlm.nih.gov/home/about/policies/',
     requiresNcbi: true
   },
   {
     id: 'genes',
     displayName: 'Genes & Ontologies',
-    aliases: ['MyGene', 'mygene.info', 'UniProt', 'gene information', 'gene annotation'],
+    aliases: ['HGNC', 'MyGene', 'mygene.info', 'UniProt', 'gene information', 'gene annotation'],
     description:
       'Gene/protein identity, ontology terms and gene-set enrichment — mygene.info, UniProt, OLS4 ontologies, GO annotations, Reactome pathways, g:Profiler and Enrichr.',
     useWhen:
-      'Use when you need to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, submit batch UniProt ID mapping jobs and check status or page through mapping pairs and unmatched IDs, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction, or query Enrichr libraries for transcription-factor, perturbation, drug, disease, tissue and cell-type enrichment.',
-    sources: ['MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler', 'Enrichr'],
+      'Use for exact HGNC human gene names and alias resolution, or to resolve gene symbols/identifiers (mygene.info), discover UniProt proteins by gene name, protein name or organism with optional reviewed status and cursor pagination, fetch UniProt records or sequences by accession, submit batch UniProt ID mapping jobs and check status or page through mapping pairs and unmatched IDs, look up or search ontology terms (EFO, GO, CL, ChEBI, MONDO via OLS4), retrieve GO annotations for a protein (QuickGO), map genes to Reactome pathways, run cross-database GO/pathway enrichment with an explicit organism, background gene set and multiple-testing correction, or query Enrichr libraries for transcription-factor, perturbation, drug, disease, tissue and cell-type enrichment.',
+    sources: ['HGNC', 'MyGene', 'UniProt', 'OLS', 'QuickGO', 'Reactome', 'g:Profiler', 'Enrichr'],
     termsUrl: 'https://www.uniprot.org/help/license',
     requiresNcbi: false
   },
@@ -175,12 +188,12 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
   {
     id: 'clinical-genomics',
     displayName: 'Clinical Genomics',
-    aliases: ['ClinGen', 'CIViC', 'Open Targets', 'ClinPGx', 'pharmacogenomics'],
+    aliases: ['DGIdb', 'ClinGen', 'CIViC', 'Open Targets', 'ClinPGx', 'pharmacogenomics'],
     description:
       'Clinical genomics knowledge bases: ClinGen curations, CIViC clinical evidence, the Open Targets Platform, and ClinPGx pharmacogenomics.',
     useWhen:
-      "Use when you need clinical interpretation of genes, variants, or pharmacogenomics — ClinGen gene-disease validity, dosage sensitivity, clinical actionability, and expert-panel (VCEP) variant pathogenicity classifications; CIViC clinical evidence, assertions, molecular profiles, diseases, and therapies for a gene or variant in cancer; Open Targets target-disease association scores, a disease's known drugs/associated targets, a drug's mechanism of action, and arbitrary Open Targets GraphQL; or ClinPGx drug-gene-variant clinical annotations, dosing guidelines, regulatory labels, variant frequencies, and evidence levels. Sourced from ClinGen, CIViC, the Open Targets Platform, and ClinPGx.",
-    sources: ['ClinGen', 'CIViC', 'Open Targets', 'ClinPGx'],
+      "Use for DGIdb gene–drug interactions with source evidence, or clinical interpretation of genes, variants, or pharmacogenomics — ClinGen gene-disease validity, dosage sensitivity, clinical actionability, and expert-panel (VCEP) variant pathogenicity classifications; CIViC clinical evidence, assertions, molecular profiles, diseases, and therapies for a gene or variant in cancer; Open Targets target-disease association scores, a disease's known drugs/associated targets, a drug's mechanism of action, and arbitrary Open Targets GraphQL; or ClinPGx drug-gene-variant clinical annotations, dosing guidelines, regulatory labels, variant frequencies, and evidence levels. Sourced from ClinGen, CIViC, the Open Targets Platform, and ClinPGx.",
+    sources: ['ClinGen', 'CIViC', 'Open Targets', 'ClinPGx', 'DGIdb'],
     termsUrl: 'https://platform-docs.opentargets.org/licence',
     requiresNcbi: false
   },
@@ -308,8 +321,8 @@ export const CONNECTOR_CATALOG: ConnectorMeta[] = [
     displayName: 'RNA',
     description: 'Non-coding RNA family data (metadata, alignments, models, structures) via Rfam.',
     useWhen:
-      'Use for non-coding RNA families from Rfam (accession or family id, e.g. RF00005 / tRNA): family metadata (RNA type, seed/full counts, gathering/trusted/noise cutoffs, clan); the seed alignment (Stockholm or FASTA); the Infernal covariance model; the seed phylogenetic tree; full-region hits across sequence databases; PDB structure mappings; accession<->id conversion; and single-sequence cmscan search against all Rfam models.',
-    sources: ['Rfam'],
+      'Use for RNAcentral sequence records and cross-database identifier mappings, or non-coding RNA families from Rfam (accession or family id, e.g. RF00005 / tRNA): family metadata (RNA type, seed/full counts, gathering/trusted/noise cutoffs, clan); the seed alignment (Stockholm or FASTA); the Infernal covariance model; the seed phylogenetic tree; full-region hits across sequence databases; PDB structure mappings; accession<->id conversion; and single-sequence cmscan search against all Rfam models.',
+    sources: ['Rfam', 'RNAcentral'],
     termsUrl: 'https://docs.rfam.org/en/latest/',
     requiresNcbi: false
   },
