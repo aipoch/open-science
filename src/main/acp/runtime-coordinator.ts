@@ -633,7 +633,7 @@ class AcpRuntimeCoordinator {
   ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     const retainedProviderId = this.transferProviderIds.get(request.sessionId)
-    if (!request.providerSessionId && retainedProviderId) {
+    if (retainedProviderId) {
       request = { ...request, providerSessionId: retainedProviderId }
     }
     const owner = this.findRuntimeForSession(request.sessionId)
@@ -720,6 +720,8 @@ class AcpRuntimeCoordinator {
         owner.isSessionUsingFramework(request.sessionId, 'codex') &&
         (target?.frameworkId ?? runtime.captureBackend().framework?.id) === 'codex'
       ) {
+        // Adoption fences new starts; drain already-admitted prompts before detaching their writer.
+        await this.waitForSessionInteractionRelease(request.sessionId)
         await this.waitForSessionDrain(owner, request.sessionId)
         if (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption) {
           throw new Error('ACP session adoption was superseded before writer release')

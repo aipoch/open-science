@@ -477,6 +477,7 @@ describe('AcpRuntimeCoordinator', () => {
         }
         await coordinator.resumeSession({
           sessionId: 'thread-1',
+          providerSessionId: 'stale-persisted-thread',
           cwd: '/workspace',
           agentTarget: { ...target, model: 'new' }
         })
@@ -579,6 +580,56 @@ describe('AcpRuntimeCoordinator', () => {
       expect(owner.requestRetirement).not.toHaveBeenCalled()
     }
   )
+
+  it('waits for an admitted prompt to start and settle before releasing its writer', async () => {
+    const start = createDeferred<void>()
+    const finish = createDeferred<unknown>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['thread-1'],
+        callbacks,
+        beforePromptStart: () => start.promise,
+        prompt: () => finish.promise
+      })
+      Object.assign(fake.runtime, {
+        releaseSessionForTransfer: vi.fn(async () => 'provider-thread-1')
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'provider',
+      model: 'old',
+      reasoningEffort: 'high'
+    } as const
+    await coordinator.createSession({ agentTarget: target })
+    const owner = created.at(-1)!
+    const prompt = coordinator.sendPrompt({ sessionId: 'thread-1', text: 'already admitted' })
+    await vi.waitFor(() => expect(owner.sendPrompt).toHaveBeenCalledOnce())
+    expect(owner.runtime.getSnapshot().promptInFlightSessionIds).toEqual([])
+    const resume = coordinator.resumeSession({
+      sessionId: 'thread-1',
+      cwd: '/workspace',
+      agentTarget: { ...target, model: 'new' }
+    })
+    await vi.waitFor(() => expect(created.at(-1)).not.toBe(owner))
+    expect(owner.runtime.releaseSessionForTransfer).not.toHaveBeenCalled()
+    start.resolve()
+    await vi.waitFor(() =>
+      expect(owner.runtime.getSnapshot().promptInFlightSessionIds).toEqual(['thread-1'])
+    )
+    expect(owner.runtime.releaseSessionForTransfer).not.toHaveBeenCalled()
+    finish.resolve({ stopReason: 'end_turn' })
+    await prompt
+    await resume
+    expect(owner.runtime.releaseSessionForTransfer).toHaveBeenCalledOnce()
+    expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ providerSessionId: 'provider-thread-1' })
+    )
+  })
 
   it.each([false, true])(
     'updates Codex effort on the existing writer (draining: %s)',
