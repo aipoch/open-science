@@ -2,12 +2,69 @@
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
-import { readFile } from 'node:fs/promises'
+import { appendFile, readFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeTargets, runtimePackageName } from '../packages/open-science/runtime-package.mjs'
 
 const registry = 'https://registry.npmjs.org'
+
+// A successful stable Release is the authority for historical and future npm publications.
+// The workflow revision and the package source revision are deliberately separate.
+export async function releaseSource(runId, api) {
+  assert.match(runId, /^[1-9]\d*$/, 'Expected a Release run ID')
+  const run = await api(`actions/runs/${runId}`)
+  assert.equal(String(run.id), runId)
+  assert.equal(run.path, '.github/workflows/release.yml')
+  assert.equal(run.event, 'push')
+  assert.equal(run.status, 'completed')
+  assert.equal(run.conclusion, 'success')
+  assert.equal(run.repository?.full_name, 'aipoch/open-science')
+  assert.equal(run.head_repository?.full_name, 'aipoch/open-science')
+  assert.match(run.head_branch, /^v\d+\.\d+\.\d+$/, 'Expected a stable Release tag')
+  assert.match(run.head_sha, /^[a-f0-9]{40}$/)
+  const tag = run.head_branch
+  const release = await api(`releases/tags/${tag}`)
+  assert.equal(release.tag_name, tag)
+  assert.equal(release.draft, false)
+  assert.equal(release.prerelease, false)
+  assert.ok(release.published_at, 'Release must be published')
+  const commit = await api(`commits/${tag}`)
+  assert.equal(commit.sha, run.head_sha, 'Release tag moved since certification')
+  const comparison = await api(`compare/${run.head_sha}...main`)
+  assert.ok(
+    ['ahead', 'identical'].includes(comparison.status),
+    'Release must belong to main history'
+  )
+  const source = await api(`contents/package.json?ref=${run.head_sha}`)
+  assert.equal(source.encoding, 'base64')
+  const { version } = JSON.parse(Buffer.from(source.content, 'base64').toString('utf8'))
+  assert.equal(tag, `v${version}`, 'Release tag and source version differ')
+  return { version, sourceSha: run.head_sha, tag }
+}
+
+export function assertReleasePublisher(env) {
+  assert.equal(env.GITHUB_REPOSITORY, 'aipoch/open-science')
+  assert.ok(['workflow_dispatch', 'workflow_run'].includes(env.GITHUB_EVENT_NAME))
+  assert.equal(env.GITHUB_REF, 'refs/heads/main', 'Registry writes require the main workflow')
+  assert.equal(
+    env.GITHUB_WORKFLOW_REF,
+    'aipoch/open-science/.github/workflows/npm-release.yml@refs/heads/main'
+  )
+}
+
+async function githubApi(path) {
+  const response = await fetch(`https://api.github.com/repos/aipoch/open-science/${path}`, {
+    headers: {
+      Authorization: `Bearer ${process.env.GH_TOKEN}`,
+      Accept: 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28'
+    },
+    signal: AbortSignal.timeout(30_000)
+  })
+  assert.ok(response.ok, `GitHub source verification failed: ${response.status} ${path}`)
+  return response.json()
+}
 export async function collectPackages(directory, version, sha) {
   assert.match(version, /^\d+\.\d+\.\d+$/)
   assert.match(sha, /^[a-f0-9]{40}$/)
@@ -77,10 +134,29 @@ export async function publishPlan(packages, lookup) {
 }
 async function main() {
   const root = resolve(import.meta.dirname, '..')
-  const version = JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version
-  if (process.env.GITHUB_REF?.startsWith('refs/tags/'))
+  if (process.argv[2] === '--plan-release') {
+    const source = await releaseSource(process.env.NPM_RELEASE_RUN_ID, githubApi)
+    await appendFile(
+      process.env.GITHUB_OUTPUT,
+      `source_sha=${source.sourceSha}\nversion=${source.version}\ntag=${source.tag}\n`
+    )
+    console.log(JSON.stringify(source))
+    return
+  }
+  const mode = process.argv[3]
+  assert.ok(['--publish', '--dry-run', '--publish-release', '--verify-release'].includes(mode))
+  const releaseMode = mode === '--publish-release' || mode === '--verify-release'
+  if (mode === '--publish-release') assertReleasePublisher(process.env)
+  const source = releaseMode
+    ? await releaseSource(process.env.NPM_RELEASE_RUN_ID, githubApi)
+    : {
+        version: JSON.parse(await readFile(join(root, 'package.json'), 'utf8')).version,
+        sourceSha: process.env.GITHUB_SHA
+      }
+  const { version, sourceSha } = source
+  if (!releaseMode && process.env.GITHUB_REF?.startsWith('refs/tags/'))
     assert.equal(process.env.GITHUB_REF_NAME, `v${version}`)
-  const packages = await collectPackages(resolve(process.argv[2]), version, process.env.GITHUB_SHA)
+  const packages = await collectPackages(resolve(process.argv[2]), version, sourceSha)
   const plan = await publishPlan(packages, async (name) => {
     const response = await fetch(`${registry}/${encodeURIComponent(name)}`, {
       signal: AbortSignal.timeout(30_000)
@@ -89,11 +165,11 @@ async function main() {
     assert.ok(response.ok, `Registry lookup failed: ${response.status} ${name}`)
     return response.json()
   })
-  const publish = process.argv[3] === '--publish'
-  if (publish) {
+  const publish = mode === '--publish' || mode === '--publish-release'
+  if (mode === '--publish') {
     assert.equal(process.env.GITHUB_EVENT_NAME, 'push')
     assert.equal(process.env.GITHUB_REF, `refs/tags/v${version}`)
-  } else assert.equal(process.argv[3], '--dry-run')
+  }
   // All integrity and registry checks finish before the first immutable registry write.
   for (const pkg of plan) {
     if (pkg.published) {

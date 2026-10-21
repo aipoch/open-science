@@ -8,6 +8,76 @@ import { load } from 'js-yaml'
 const workflow = (name: string): any =>
   load(readFileSync(new URL(`../.github/workflows/${name}`, import.meta.url), 'utf8'))
 describe('runtime distribution boundary', () => {
+  it('isolates npm publication from builds and keeps manual dry-runs credential-free', () => {
+    const flow = workflow('npm-release.yml')
+    expect(flow.on.workflow_run).toEqual({ workflows: ['Release'], types: ['completed'] })
+    expect(flow.on.workflow_dispatch.inputs.dry_run.default).toBe(true)
+    expect(flow.on.workflow_dispatch.inputs.bootstrap.default).toBe(false)
+    expect(flow.permissions).toEqual({ contents: 'read', actions: 'read' })
+    expect(flow.concurrency).toEqual({ group: 'npm-release', 'cancel-in-progress': false })
+    expect(flow.jobs.source.steps.find((s: any) => s.id === 'source').run).toBe(
+      'node scripts/publish-npm-release.mjs --plan-release'
+    )
+    expect(flow.jobs.verify).toMatchObject({
+      needs: 'source',
+      uses: './.github/workflows/runtime-packages.yml',
+      with: { distribution: 'npm', source_sha: '${{ needs.source.outputs.source_sha }}' }
+    })
+    expect(flow.jobs.verify.secrets).toBeUndefined()
+    expect(flow.jobs.publish.needs).toEqual(['source', 'verify'])
+    expect(flow.jobs.publish.if).toContain('!inputs.dry_run')
+    expect(flow.jobs.publish.environment).toBe('npm')
+    expect(flow.jobs.publish.permissions['id-token']).toBe('write')
+    const steps = flow.jobs.publish.steps
+    const verify = steps.findIndex(
+      (s: any) => s.name === 'Revalidate certified source and complete artifact set'
+    )
+    const publish = steps.findIndex((s: any) => s.name === 'Publish verified packages')
+    expect(verify).toBeGreaterThan(-1)
+    expect(verify).toBeLessThan(publish)
+    expect(steps[publish].env.NODE_AUTH_TOKEN).toContain('inputs.bootstrap')
+    expect(steps[publish].run).toContain('--publish-release')
+    expect(JSON.stringify(steps.slice(0, publish))).not.toContain('NPM_BOOTSTRAP_TOKEN')
+    const script = flow.jobs.source.steps
+      .find((s: any) => s.id === 'inputs')
+      .run.replace(/^node --input-type=module <<'JS'\n/, '')
+      .replace(/\nJS\s*$/, '')
+    const root = mkdtempSync(join(tmpdir(), 'npm-release-inputs-'))
+    try {
+      const env = {
+        ...process.env,
+        GITHUB_OUTPUT: join(root, 'output'),
+        NPM_RELEASE_RUN_ID: '42',
+        GITHUB_REPOSITORY: 'aipoch/open-science',
+        GITHUB_REF: 'refs/heads/main',
+        GITHUB_WORKFLOW_REF:
+          'aipoch/open-science/.github/workflows/npm-release.yml@refs/heads/main',
+        GITHUB_EVENT_NAME: 'workflow_dispatch',
+        DRY_RUN: 'false',
+        TARGET: 'all'
+      }
+      execFileSync(process.execPath, ['--input-type=module', '-e', script], { env, stdio: 'pipe' })
+      expect(readFileSync(env.GITHUB_OUTPUT, 'utf8')).toContain('release_run_id=42')
+      for (const overrides of [
+        { TARGET: 'linux-x64-gnu' },
+        { GITHUB_REF: 'refs/heads/feature' },
+        { GITHUB_EVENT_NAME: 'pull_request' },
+        { NPM_RELEASE_RUN_ID: '../42' }
+      ])
+        expect(() =>
+          execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+            env: { ...env, ...overrides },
+            stdio: 'pipe'
+          })
+        ).toThrow()
+      execFileSync(process.execPath, ['--input-type=module', '-e', script], {
+        env: { ...env, DRY_RUN: 'true', TARGET: 'linux-x64-gnu', GITHUB_REF: 'refs/heads/feature' },
+        stdio: 'pipe'
+      })
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
   it('defaults the existing manual dispatcher to archives without publish permissions or secrets', () => {
     const flow = workflow('publish-npm.yml')
     expect(Object.keys(flow.on)).toEqual(['workflow_dispatch'])
@@ -17,6 +87,13 @@ describe('runtime distribution boundary', () => {
     expect(flow.jobs.verify.secrets).toBeUndefined()
     expect(flow.jobs.verify.with.desktop_run_id).toBe('${{ inputs.desktop_run_id }}')
     expect(flow.jobs.verify.with.verify_desktop_only).toBe("${{ inputs.desktop_run_id != '' }}")
+    expect(flow.on.workflow_dispatch.inputs.release_run_id.default).toBe('')
+    expect(flow.jobs.verify.needs).toBe('source')
+    expect(flow.jobs.verify.with.source_sha).toBe('${{ needs.source.outputs.source_sha }}')
+    const source = flow.jobs.source.steps.find((s: any) => s.id === 'source')
+    expect(source.if).toBe("inputs.release_run_id != ''")
+    expect(source.run).toContain('test "$DISTRIBUTION" = npm')
+    expect(source.run).toContain('--plan-release')
   })
   it('allows prior-run extraction only for an explicit manual verification without packaging or uploads', () => {
     const flow = workflow('runtime-packages.yml')
@@ -72,6 +149,26 @@ describe('runtime distribution boundary', () => {
         env: { ...env, NIGHTLY: 'true', DESKTOP_RUN: '200', VERIFY_DESKTOP_ONLY: 'false' },
         stdio: 'pipe'
       })
+      const historical = {
+        ...env,
+        DISTRIBUTION: 'npm',
+        DESKTOP_RUN: '',
+        VERIFY_DESKTOP_ONLY: 'false',
+        SOURCE_SHA: 'a'.repeat(40)
+      }
+      execFileSync(process.execPath, ['-e', script], { env: historical, stdio: 'pipe' })
+      for (const overrides of [
+        { SOURCE_SHA: 'main' },
+        { DISTRIBUTION: 'archive' },
+        { DESKTOP_RUN: '200' },
+        { NIGHTLY: 'true' }
+      ])
+        expect(() =>
+          execFileSync(process.execPath, ['-e', script], {
+            env: { ...historical, ...overrides },
+            stdio: 'pipe'
+          })
+        ).toThrow()
       // Ordinary Release calls must continue to accept their own run's artifacts.
       execFileSync(process.execPath, ['-e', script], {
         env: {
@@ -86,6 +183,15 @@ describe('runtime distribution boundary', () => {
       rmSync(root, { recursive: true, force: true })
     }
     const steps = flow.jobs.verify.steps
+    expect(steps[0].with.ref).toBe('${{ inputs.source_sha || github.sha }}')
+    expect(flow.jobs['publication-check'].steps[0].with.ref).toBe(
+      '${{ inputs.source_sha || github.sha }}'
+    )
+    expect(
+      flow.jobs['publication-check'].steps.find(
+        (s: any) => s.name === 'Verify complete npm version and integrity set without publication'
+      ).env.GITHUB_SHA
+    ).toBe('${{ inputs.source_sha || github.sha }}')
     expect(
       steps.find((s: any) => s.name === 'Download certified desktop payload').with['run-id']
     ).toBe('${{ inputs.desktop_run_id }}')

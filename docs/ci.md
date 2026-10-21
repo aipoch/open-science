@@ -169,8 +169,65 @@ without requiring notarization. Windows nightly permits unsigned binaries but re
 signatures; stable Release checks remain unchanged. Nightly does not publish CLI
 deb/rpm packages, npm packages or Homebrew updates.
 The manual `publish-npm.yml` workflow defaults to archive dry-run; `distribution=npm` retains the
-credential-free npm packaging dry-run. Automatic npm publication is deferred; no npm token is needed
-for a GitHub Release.
+credential-free npm packaging dry-run. No npm token is needed for a GitHub Release.
+
+### Publishing npm packages
+
+`npm-release.yml` runs after a successful stable **Release** tag push. It also accepts a
+`release_run_id` for a historical release (v1.0.1: `39409106648`). Manual runs default to
+`dry_run=true`. A single `target` provides a focused native diagnostic; publishing requires `all`.
+Before merging a new publisher workflow, use the existing `publish-npm.yml` dispatcher on the PR
+branch with `distribution=npm`, `release_run_id=39409106648`, and a focused `target` to exercise
+the same historical build path without registry writes. Leave `desktop_run_id` empty.
+Run the workflow from `main` with `dry_run=false` to publish after every native verification passes.
+`workflow_run` is intentional: GitHub Releases created with `GITHUB_TOKEN` do not trigger ordinary
+`release: published` workflows. Failed Releases and manual Release diagnostics cannot publish npm.
+
+The workflow resolves the successful Release run to its immutable source SHA, verifies its published
+stable tag and main ancestry, and builds that exact source using `runtime-packages.yml`. Thus a
+v1.0.1 backfill never labels today's main code as v1.0.1. Five native installation checks and a
+complete six-package integrity check must succeed before publication. The publisher rechecks GitHub
+evidence and registry versions, publishes platform packages before the entry package, and refuses
+to overwrite a version or downgrade `latest`. npm provenance identifies the publishing workflow;
+the verified artifact reports identify the separately checked release source SHA.
+
+Create a GitHub environment named `npm`, restricted to the `main` branch. The publisher uses
+GitHub-hosted runners, Node 24 and npm 11.20.0, with `id-token: write`. The build jobs receive no
+npm credentials. Configure each of these npm packages with a GitHub Actions Trusted Publisher:
+
+- `@aipoch/open-science`
+- `@aipoch/open-science-darwin-arm64`
+- `@aipoch/open-science-darwin-x64`
+- `@aipoch/open-science-linux-x64-gnu`
+- `@aipoch/open-science-linux-arm64-gnu`
+- `@aipoch/open-science-win32-x64`
+
+Use organization `aipoch`, repository `open-science`, workflow filename **`npm-release.yml`**,
+environment **`npm`**, and enable **Allow npm publish**. Do not select stage-only publishing:
+this workflow deliberately publishes directly after CI checks. Configure trust when the next
+publication is ready; new trust configurations expire unless first validated within two days.
+
+For the initial publication, the packages do not exist yet. Create a short-lived granular npm token
+with package/scope write access to `@aipoch` and **Bypass 2FA** enabled for noninteractive direct
+publication; organization-management permission is not needed. Save it as the `npm` environment
+secret `NPM_BOOTSTRAP_TOKEN`. Explicitly dispatch with `bootstrap=true`, `dry_run=false`, and
+`target=all`. This is a temporary bootstrap path, never an implicit fallback for failed OIDC.
+After the six packages exist, configure their Trusted Publishers, revoke the bootstrap token and
+delete the secret. Future runs leave `bootstrap=false` and use OIDC. npm is retiring direct publish
+with bypass-2FA tokens in January 2027; do not retain bootstrap credentials as ongoing automation.
+
+If publication stops part-way, rerun **failed jobs** in the same run so the publisher reuses the
+original tarballs. Already published versions are skipped only when their integrity matches.
+Do not rebuild and overwrite a published version: independent native builds can produce different
+bytes. Artifacts currently expire after five days; retain/recover the original verified artifact set
+or release a new version if a partial publication can no longer be completed with identical bytes.
+Six registry writes are not atomic; the entry package is published last.
+
+This adds npm/GitHub release configuration and immutable package records, not application database
+migrations or runtime state. The old unscoped `aipoch` package is not renamed or modified. The
+existing manual distribution dispatcher, desktop/archive publication and nightly behavior remain
+unchanged. See the official [Trusted Publisher documentation](https://docs.npmjs.com/trusted-publishers/)
+and [granular token documentation](https://docs.npmjs.com/creating-and-viewing-access-tokens).
 
 ## Supplemental desktop coverage
 

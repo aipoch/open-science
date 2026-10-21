@@ -133,8 +133,9 @@ Do not disable Gatekeeper or credential protection to bypass a failed verificati
 Release archives reuse the final signed desktop backend and its sibling Node executable, without
 rebuilding or re-signing them. Native signatures are checked before packing and after extraction.
 All five archives must pass version/source/integrity checks before the GitHub Release is published.
-They are included in Release SHA256SUMS and build-provenance attestations. npm registry publication
-is deferred and requires no token for this archive release flow.
+They are included in Release SHA256SUMS and build-provenance attestations. The separate
+[npm publication workflow](ci.md#publishing-npm-packages) rebuilds and tests npm distributions
+from the certified Release source; no npm token is required for this archive release flow.
 
 The rolling `nightly` Release also provides all five CLI archives using the desktop nightly version
 (`x.y.z-nightly.g<sha>`). Download the archive and `CLI-SHA256SUMS.txt` from the same nightly update.
@@ -544,6 +545,6 @@ formal signing/notarization, and updater replacement/data-root relaunch remain o
 Only focused/module tests ran locally as requested; no full `npm test` ran. Counts across earlier
 runs overlap and must not be summed as full-suite coverage. Required PR CI remains the merge gate.
 The current manual distribution workflow supports standalone archive dry-runs and a separate
-npm dry-run; stable releases publish the five standalone archives. Automatic npm registry
-publication remains deferred. Do not publish one package name/version separately for multiple
-platform-specific tarballs.
+npm dry-run; stable releases publish the five standalone archives. The separate npm publication
+workflow verifies all five native packages before publishing them and the shared entry package.
+Do not publish one package name/version separately for multiple platform-specific tarballs.

@@ -7,6 +7,10 @@ on:
         type: string
         default: archive
         description: archive for standalone Release downloads, npm for the deferred npm dry-run.
+      source_sha:
+        type: string
+        default: ''
+        description: Certified stable source commit for npm builds; empty uses the caller revision.
       desktop_run_id:
         type: string
         default: ''
@@ -41,9 +45,11 @@ jobs:
           NIGHTLY: ${{ inputs.nightly }}
           DESKTOP_RUN: ${{ inputs.desktop_run_id }}
           VERIFY_DESKTOP_ONLY: ${{ inputs.verify_desktop_only }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
         run: |
           node <<'JS'
           const fs = require('node:fs');
+          if (process.env.SOURCE_SHA && (!/^[a-f0-9]{40}$/.test(process.env.SOURCE_SHA) || process.env.DISTRIBUTION !== 'npm' || process.env.DESKTOP_RUN || process.env.NIGHTLY === 'true')) throw new Error('Historical sources require an isolated stable npm build');
           if (process.env.NIGHTLY === 'true' && (process.env.DESKTOP_RUN !== process.env.GITHUB_RUN_ID || process.env.DISTRIBUTION !== 'archive' || process.env.VERIFY_DESKTOP_ONLY === 'true' || !['schedule', 'workflow_dispatch'].includes(process.env.GITHUB_EVENT_NAME))) throw new Error('Nightly archives require same-run desktop artifacts and a Nightly build event');
           const verifyOnly = process.env.VERIFY_DESKTOP_ONLY === 'true';
           if (verifyOnly && (process.env.GITHUB_EVENT_NAME !== 'workflow_dispatch' || !/^[1-9][0-9]*$/.test(process.env.DESKTOP_RUN) || process.env.DISTRIBUTION !== 'archive')) throw new Error('Desktop verification requires manual archive dispatch and a source run');
@@ -79,6 +85,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -203,6 +210,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          ref: ${{ inputs.source_sha || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
@@ -214,6 +222,8 @@ jobs:
           merge-multiple: ${{ inputs.distribution == 'archive' }}
       - name: Verify complete npm version and integrity set without publication
         if: inputs.distribution == 'npm'
+        env:
+          GITHUB_SHA: ${{ inputs.source_sha || github.sha }}
         run: npm run publish:npm-release -- out/distributions --dry-run
       - name: Verify all five standalone archives
         if: inputs.distribution == 'archive'
