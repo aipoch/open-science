@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import { readFileSync } from 'node:fs'
+import { playwrightReaderTests } from './classify-pr-changes.mjs'
 
 export const windowsCoreChecks = JSON.parse(
   readFileSync(new URL('./windows-core-checks.json', import.meta.url), 'utf8')
@@ -41,8 +42,9 @@ export function selectWindowsCoreChecks(plan, modulePlan, changes, manifest, eve
     const owners = Object.values(manifest.modules).filter((module) =>
       module.ownerPaths.includes(path)
     )
-    // Registered runtime documents/assets still need their owner's evidence.
-    if (!owners.length && /^(docs\/)|\.md$/.test(path)) continue
+    // Registered runtime documents/assets still need their owner's evidence. Playwright inputs
+    // run in E2E lanes; their declared Vitest readers stay in the affected module plan.
+    if (!owners.length && (/^(docs\/)|\.md$/.test(path) || playwrightReaderTests(path))) continue
     if (owners.length !== 1 || owners[0].fullTestReason) return all(`${path}: unbounded owner`)
     for (const test of [...owners[0].testFiles.owner, ...owners[0].testFiles.contract])
       direct.add(test)
