@@ -10,7 +10,6 @@ import { formatSessionDetailsTitle } from '../../../shared/session-details'
 import type { MessagePart } from '../../../shared/session-persistence'
 import {
   sanitizeActivityGroup,
-  sanitizeToolActivity,
   type DelegationPolicy,
   type PersistedActivityGroup,
   type PersistedChatMessage,
@@ -201,9 +200,7 @@ export const projectSessionGraph = (
     now,
     session.activeRunRuntimeSegmentId
   )
-  const persistedActivities = (session.activities ?? [])
-    .map(sanitizeToolActivity)
-    .filter((activity): activity is PersistedToolActivity => Boolean(activity))
+  const persistedActivities = session.activities ?? []
   const persistedGroups = (session.activityGroups ?? [])
     .map(sanitizeActivityGroup)
     .filter((group): group is PersistedActivityGroup => Boolean(group))
@@ -473,10 +470,9 @@ export const projectSessionBranchSnapshot = (
     message: stripTransientMessageState(message),
     sortIndex: message.sortIndex ?? index
   }))
-  const activities = (source.activities ?? [])
-    .map(sanitizeToolActivity)
-    .filter((activity): activity is PersistedToolActivity => Boolean(activity))
-    .filter((activity) => !sourceMessage || isBeforeTimelineItem(activity, sourceMessage))
+  const activities = (source.activities ?? []).filter(
+    (activity) => !sourceMessage || isBeforeTimelineItem(activity, sourceMessage)
+  )
   const activityIds = new Set(activities.map((activity) => activity.id))
   const activityGroups = (source.activityGroups ?? [])
     .map(sanitizeActivityGroup)

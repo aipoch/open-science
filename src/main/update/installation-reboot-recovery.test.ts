@@ -1,5 +1,4 @@
-import { prefetchSystemBootIdentity } from '../system-boot-identity'
-import { afterEach, beforeAll, expect, it } from 'vitest'
+import { afterEach, expect, it, vi } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
@@ -19,10 +18,11 @@ import {
   recoverInstallationAfterSystemRestart,
   installationManifestIdentity
 } from './installation-reboot-recovery'
-// Match startup's asynchronous Windows boot query before creating durable update records.
-beforeAll(async () => {
-  await prefetchSystemBootIdentity()
-})
+// Boot-query failures are covered separately; recovery fixtures need a stable initial boot.
+vi.mock('../system-boot-identity', async (original) => ({
+  ...(await original<typeof import('../system-boot-identity')>()),
+  systemBootIdentity: () => 'windows-boot:12345678-1234-4321-8123-123456789abc'
+}))
 
 const dirs: string[] = []
 afterEach(() => dirs.splice(0).forEach((p) => rmSync(p, { recursive: true, force: true })))

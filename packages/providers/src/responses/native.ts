@@ -1,3 +1,5 @@
+import { resolveResponsesReasoningTransport } from '../protocols/reasoning'
+
 type JsonObject = Record<string, unknown>
 type NativeResponsesToolIdentity = Readonly<{ namespace: string; name: string }>
 type NativeResponsesToolAliases = Map<string, NativeResponsesToolIdentity>
@@ -132,8 +134,23 @@ export type NativeResponsesProjection = Readonly<{
   restore(value: unknown): unknown
 }>
 /** Binds the response decoder to the namespace declarations of one request. */
-export const prepareNativeResponsesRequest = (body: JsonObject): NativeResponsesProjection => {
+export const prepareNativeResponsesRequest = (
+  body: JsonObject,
+  vendorId?: string
+): NativeResponsesProjection => {
   const { request, aliases } = flattenNativeResponsesRequest(body)
+  // Codex can send `none` even for an always-thinking model. Apply the same provider policy
+  // as direct Responses calls, preserving unrelated reasoning fields and the caller's payload.
+  if (isObject(request.reasoning) && request.reasoning.effort === 'none') {
+    request.reasoning = {
+      ...request.reasoning,
+      ...resolveResponsesReasoningTransport(
+        vendorId,
+        typeof request.model === 'string' ? request.model : undefined,
+        'none'
+      ).reasoning
+    }
+  }
   return Object.freeze({
     request,
     toolCount: aliases.size,

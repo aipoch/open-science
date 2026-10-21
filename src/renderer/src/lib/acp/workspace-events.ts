@@ -1,4 +1,5 @@
 import {
+  ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_ARTIFACT_CLEANUP_FAILED_EVENT_TITLE,
   ACP_CONTEXT_COMPACTION_ACTIVITY_TOOL_NAME,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
@@ -1097,9 +1098,34 @@ const applyWorkspaceRuntimeEvent = async (
             ({ id }) => id === event.promptMessageId
           ) ?? activeSession?.messages.find(({ id }) => id === event.promptMessageId))
         : undefined
-      // Hidden controls have no transcript notice or Attention. Provider acceptance resolves the
-      // command early, so its later Main-authored failure needs the initiating operation surface.
-      if (prompt && isHiddenControlMessage(prompt) && !event.terminalCommitFailure)
+      // A rejected continuation may have no durable turn outcome, and rearming its question clears
+      // the Session error. Disclose it locally, but do not attach an old branch/prompt's failure to
+      // the current conversation. Hidden controls also have no transcript notice or Attention.
+      const graph = activeSession?.conversationGraph
+      const activeFrame = graph?.frames.find(({ id }) => id === graph.activeFrameId)
+      const currentQuestionContinuationFailed =
+        event.title === ACP_APP_CONTINUATION_FAILED_EVENT_TITLE &&
+        activeSession &&
+        event.promptMessageId &&
+        event.promptMessageId === getCurrentPromptMessageId(activeSession) &&
+        (!event.agentFrameId || event.agentFrameId === activeFrame?.id) &&
+        (!event.messageBranchId || event.messageBranchId === activeFrame?.activeBranchId) &&
+        activeSession.activities?.some(
+          ({ promptMessageId, elicitation, updatedAt }) =>
+            elicitation?.durable?.kind === 'agent-user-choice' &&
+            (promptMessageId ?? elicitation.durable.promptMessageId) === event.promptMessageId &&
+            (elicitation.state === 'pending' || elicitation.continuationPending === true) &&
+            // A provider can reject before acceptance and still commit a failed outcome. That
+            // outcome already explains this attempt; an older outcome must not hide a new retry.
+            !(
+              prompt?.turnOutcome?.kind === 'failed' &&
+              prompt.turnOutcome.settledAt >= (elicitation.respondedAt ?? updatedAt)
+            )
+        )
+      if (
+        (currentQuestionContinuationFailed || (prompt && isHiddenControlMessage(prompt))) &&
+        !event.terminalCommitFailure
+      )
         reportWorkspaceOperationError(event.sessionId, getEventErrorText(event))
       return true
     }

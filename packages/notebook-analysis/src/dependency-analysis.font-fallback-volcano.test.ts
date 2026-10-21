@@ -8,6 +8,9 @@ import { analyzeRNotebookSource } from './dependency-analysis-r'
 import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import cells from './reported-font-fallback-volcano.fixture.json'
 
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 const runs: NotebookRunRecord[] = cells.map((cell) => ({
   runId: String(cell.index),
   cellId: String(cell.index),
@@ -59,9 +62,10 @@ it('keeps unrelated font inspection and overwritten failed cells out of the fina
       completedRun: runs.at(-1)!
     })
     expect(projection.stalenessByRunId['12'], JSON.stringify(projection)).toEqual({
-      state: 'clear'
+      state: 'unknown',
+      reasons: expect.arrayContaining(['opaque-call'])
     })
-    expect(projection.dependenciesByRunId?.['12']).toEqual([])
+    expect(projection.dependenciesByRunId?.['12']).toBeUndefined()
   } finally {
     await rm(root, { recursive: true, force: true })
   }

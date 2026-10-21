@@ -130,12 +130,6 @@ const PYTHON_FILE_CALL_EFFECTS: ReadonlyMap<string, NotebookFileCallEffect> = ne
       ] as const
   ),
   ['dump', { kind: 'write', position: 1, keywords: ['file', 'filename', 'fp'] }],
-  // Atomic publication moves a temporary file into its final destination. The
-  // source path is intentionally not recorded as a read because mkstemp or a
-  // tempfile helper commonly makes it dynamic; the destination is the durable
-  // notebook output that downstream cells consume.
-  ['os.replace', { kind: 'write', position: 1, keywords: ['dst'] }],
-  ['shutil.move', { kind: 'write', position: 1, keywords: ['dst'] }],
   ['dcmwrite', { kind: 'write', position: 0, keywords: ['filename'] }],
   ['imwrite', { kind: 'write', position: 0, keywords: ['filename'] }],
   ['imsave', { kind: 'write', position: 0, keywords: ['fname'] }],
@@ -224,6 +218,25 @@ const PYTHON_UNSUPPORTED_EXTERNAL_STATE_CALLS = new Set([
   'datetime.datetime.now',
   'datetime.datetime.today',
   'datetime.date.today',
+  'os.chdir',
+  'os.fchdir',
+  'os.rename',
+  'os.replace',
+  'os.unlink',
+  'os.remove',
+  'os.rmdir',
+  'os.removedirs',
+  'os.truncate',
+  'os.ftruncate',
+  'os.link',
+  'os.symlink',
+  'shutil.rmtree',
+  'shutil.move',
+  'shutil.copy',
+  'shutil.copy2',
+  'shutil.copytree',
+  'shutil.unpack_archive',
+  'shutil.make_archive',
   'os.getenv',
   'os.getlogin',
   'os.urandom',

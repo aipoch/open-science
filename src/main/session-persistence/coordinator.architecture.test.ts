@@ -579,6 +579,7 @@ describe('Session persistence coordinator architecture', () => {
         'destructiveStartupWindowOpen',
         'exportingSessions',
         'fileIndex',
+        'hydrationCache',
         'log',
         'delegatedWorkOwner',
         'onFilesChanged',

@@ -10,14 +10,16 @@ import cells from './reported-r-aggregate-volcano.fixture.json'
 
 it.each(cells)('captures aggregate volcano cell $runId', async ({ script, runId }) => {
   const { facts } = await analyzeRNotebookSource(script)
+  // Frame ownership does not prove primitive p-value columns for coercion.
+  const unprovenAdjustment = ['2', '3'].includes(runId)
   expect(
     facts.state === 'unknown' ? facts.reasons.filter((r) => r !== 'external-state') : [],
     JSON.stringify(facts)
-  ).toEqual([])
+  ).toEqual(unprovenAdjustment ? ['function-scope', 'opaque-call'] : [])
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete'
+    readState: unprovenAdjustment ? 'partial' : 'complete',
+    writeState: unprovenAdjustment ? 'partial' : 'complete',
+    externalState: unprovenAdjustment ? 'partial' : 'complete'
   })
   if (runId === '3')
     expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
@@ -73,18 +75,18 @@ it.each([
   ).not.toBe(false)
 })
 
-it('preserves the formula interface when aggregating ordinary data', async () => {
+it('retains aggregate paths while leaving unproven mean dispatch partial', async () => {
   const script =
     'frame<-data.frame(value=1:4,g=c(1,1,2,2));clean<-na.omit(frame);result<-stats::aggregate(value ~ g,data=clean,FUN=mean);print(head(result));write.csv(result,"summary.csv")'
   expect(await analyzeNotebookSourceFileAccess('r', script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
-    externalState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial',
     writes: ['summary.csv']
   })
 })
 
-it('keeps the independent producer separate from exploratory and overwritten outputs', async () => {
+it('retains uncertain adjustment coercion in the independent producer', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aggregate-volcano-'))
   const runs: NotebookRunRecord[] = cells.map((cell, index) => ({
     runId: cell.runId,
@@ -107,7 +109,10 @@ it('keeps the independent producer separate from exploratory and overwritten out
       repository: { readSessionRuns: async () => runs }
     })
     const p = await analyzer.project({ projectId: 'p', sessionId: 's', completedRun: runs.at(-1)! })
-    expect(p.stalenessByRunId['3'], JSON.stringify(p)).toEqual({ state: 'clear' })
+    expect(p.stalenessByRunId['3'], JSON.stringify(p)).toEqual({
+      state: 'unknown',
+      reasons: ['external-state', 'function-scope', 'opaque-call']
+    })
     expect(p.dependenciesByRunId?.['3'] ?? []).toEqual([])
   } finally {
     await rm(root, { recursive: true, force: true })

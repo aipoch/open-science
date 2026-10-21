@@ -8,6 +8,930 @@ import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 
 describe('scientific storage modes', () => {
   it.each([
+    ['import os', 'os.replace', ''],
+    ['import shutil', 'shutil.move', ''],
+    ['import os as files', 'files.replace', ''],
+    ['from shutil import move as transfer', 'transfer', ''],
+    ['import os', 'os.replace', '    marker=1\n'],
+    ['import shutil', 'shutil.move', '    marker=1\n']
+  ])('replays mutation helper paths for %s / %s', async (imports, operation, prefix) => {
+    const source =
+      imports +
+      '\ndef publish(src,dst):\n' +
+      prefix +
+      '    ' +
+      operation +
+      '(src,dst)\npublish("stage.csv","published.csv")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['stage.csv'],
+      writes: ['published.csv', 'stage.csv'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    for (const unused of [
+      imports + '\ndef publish(src,dst):\n    ' + operation + '(src,dst)',
+      imports +
+        '\ndef publish(src,dst):\n    ' +
+        operation +
+        '(src,dst)\npublish=lambda *args: None\npublish("stage.csv","published.csv")'
+    ])
+      expect(await analyzeNotebookSourceFileAccess('python', unused)).toMatchObject({
+        reads: [],
+        writes: []
+      })
+  })
+  it.each(['loadtxt', 'genfromtxt'])(
+    'preserves complete ordinary NumPy text reader helper coverage: %s',
+    async (reader) => {
+      const source = `import numpy as np\ndef load(path):\n    return np.${reader}(path)\nvalue=load("input.txt")`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: ['input.txt'],
+        readState: 'complete',
+        writeState: 'complete',
+        externalState: 'complete'
+      })
+    }
+  )
+  it.each([
+    'np.loadtxt(fname=path,converters={0:convert})',
+    'np.loadtxt(path,converters={0:convert})',
+    'np.genfromtxt(path,converters={0:convert})'
+  ])('retains NumPy text reader helper calls without a return: %s', async (call) => {
+    const source = `import numpy as np\ndef load(path):\n    ${call}\nload("input.txt")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.txt'],
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'np.loadtxt(path,fname="other.txt")',
+    'np.loadtxt(path,converters={0:convert},**options)',
+    'np.genfromtxt(path,float,"#",None,0,0,{},converters=None)',
+    'np.loadtxt(path,invalid=True)'
+  ])('rejects unresolved NumPy text reader helper signatures: %s', async (call) => {
+    const source = `import numpy as np\ndef load(path):\n    return ${call}\nload("input.txt")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      externalState: 'partial'
+    })
+  })
+  it.each([
+    'import numpy as np\nnp.loadtxt=other\ndef load(path):\n    return np.loadtxt(path,converters={0:convert})\nload("input.txt")',
+    'import numpy as np\ndef load(path,np):\n    return np.loadtxt(path,converters={0:convert})\nload("input.txt",other)'
+  ])('checks active NumPy text reader helper authority: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      externalState: 'partial'
+    })
+  })
+  it('does not invoke an unused NumPy text reader helper', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import numpy as np\ndef load(path):\n    return np.loadtxt(path,converters={0:convert})'
+      )
+    ).toMatchObject({ reads: [], writes: [] })
+  })
+  it.each([
+    'np.loadtxt(path,converters={0:convert})',
+    'np.loadtxt(path,float,"#",None,{0:convert})',
+    'np.genfromtxt(path,converters={0:convert})',
+    'np.genfromtxt(path,float,"#",None,0,0,{0:convert})'
+  ])('keeps NumPy text reader helper converter I/O partial: %s', async (call) => {
+    const source = `import numpy as np\ndef convert(value):\n    return float(value)+float(open("offset.txt").read())\ndef load(path):\n    return ${call}\nvalue=load("input.txt")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.txt'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['loadtxt', 'genfromtxt'])(
+    'retains NumPy text reader helper aliases: %s',
+    async (reader) => {
+      const source = `from numpy import ${reader} as read\ndef load(path):\n    return read(path,converters={0:convert})\nvalue=load("input.txt")`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: ['input.txt'],
+        externalState: 'partial'
+      })
+    }
+  )
+
+  it('retains NumPy text reader helper converter default argument reads', async () => {
+    const source =
+      'import numpy as np\ndef load(path):\n    return np.loadtxt(path,converters=lambda value,offset=float(open("offset.txt").read()):float(value)+offset)\nvalue=load("input.txt")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.txt', 'offset.txt'],
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'np.savetxt(path,np.load("input.npy"))',
+    'return np.savetxt(fname=path,X=np.load("input.npy"))',
+    'np.savetxt(path,[1,2],header=open("header.txt").read())'
+  ])('retains NumPy text writer helper argument reads: %s', async (body) => {
+    const source = `import numpy as np\ndef export(path):\n    ${body}\nexport("result.txt")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [body.includes('header.txt') ? 'header.txt' : 'input.npy'],
+      writes: ['result.txt'],
+      externalState: 'partial'
+    })
+  })
+
+  it('retains the input of an aliased NumPy text writer helper', async () => {
+    const source =
+      'import numpy as np\nfrom numpy import savetxt as emit\ndef export(path):\n    emit(path,np.load("input.npy"))\nexport("result.txt.gz")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.npy'],
+      writes: ['result.txt.gz'],
+      externalState: 'partial'
+    })
+  })
+
+  it('does not give NumPy text writer authority to a helper parameter', async () => {
+    const source =
+      'import numpy as np\ndef export(path,np):\n    np.savetxt(path,[1,2])\nexport("result.txt",other)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it('does not invoke an unused NumPy text writer helper', async () => {
+    const source =
+      'import numpy as np\ndef export(path):\n    np.savetxt(path,np.load("input.npy"))'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+
+  it.each([
+    'np.savetxt(path,[1,2],fname="other.txt")',
+    'np.savetxt(path)',
+    'np.savetxt(path,[1,2],unknown=True)',
+    'np.savetxt(path,[1,2],**options)'
+  ])('does not certify unresolved NumPy text writer helper binding: %s', async (call) => {
+    const source = `import numpy as np\ndef export(path):\n    ${call}\nexport("result.txt")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'import numpy as np\nnp.savetxt=other\ndef export(path):\n    np.savetxt(path,[1,2])',
+    'def savetxt(path,data):\n    return None\ndef export(path):\n    savetxt(path,[1,2])'
+  ])('does not borrow NumPy text writer authority from a rebound name: %s', async (definitions) => {
+    expect(
+      await analyzeNotebookSourceFileAccess('python', definitions + '\nexport("result.txt")')
+    ).toMatchObject({ writes: [], externalState: 'partial' })
+  })
+
+  it.each([
+    'from pathlib import Path\nexport(Path("result.txt"))',
+    'with open("result.txt","w") as handle:\n    export(handle)'
+  ])(
+    'retains NumPy text writer helper inputs through paths and handles: %s',
+    async (invocation) => {
+      const source = `import numpy as np\ndef export(path):\n    np.savetxt(path,np.load("input.npy"))\n${invocation}`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: ['input.npy'],
+        writes: ['result.txt']
+      })
+    }
+  )
+
+  it('retains writable mapping effects inside a NumPy text writer helper', async () => {
+    const source =
+      'import numpy as np\ndef export(path):\n    np.savetxt(path,np.load("input.npy",mmap_mode="r+"))\nexport("result.txt")\nnp.save("later.npy",np.array([1,2]))'
+    const result = await analyzePythonNotebookSource(source)
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.npy'],
+      writes: ['input.npy', 'later.npy', 'result.txt']
+    })
+    expect(result.fileAccess?.context.pythonMayHaveWritableMappings).toBe(true)
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it('retains nested input reads inside a NumPy archive writer helper', async () => {
+    const source =
+      'import numpy as np\ndef export(path):\n    np.savez(path,values=np.load("input.npy"))\nexport("result")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['input.npy'],
+      writes: ['result.npz']
+    })
+  })
+
+  it('retains a Path argument to a NumPy archive writer helper', async () => {
+    const source =
+      'import numpy as np\nfrom pathlib import Path\ndef export(path):\n    np.savez(path,values=[1,2])\nexport(Path("result"))'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: ['result.npz']
+    })
+  })
+
+  it.each([
+    'np.savez(path,file="wrong",values=[1,2])',
+    'np.savez(file=path,**options)',
+    'np.savez(*paths,values=[1,2])'
+  ])('does not certify unresolved archive helper path binding: %s', async (call) => {
+    const source = `import numpy as np\ndef export(path):\n    ${call}\nexport("result")`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it('does not use a shadowed namespace parameter as an archive writer', async () => {
+    const source =
+      'import numpy as np\ndef export(path,np):\n    np.savez(path,values=[1,2])\nexport("result",other)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it('does not invoke an unused NumPy archive helper', async () => {
+    const source = 'import numpy as np\ndef export(path):\n    np.savez(path,values=[1,2])'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+  it.each(['savez', 'savez_compressed'])(
+    'retains the physical .npz path of a %s helper',
+    async (method) => {
+      const source = `import numpy as np\ndef export(path):\n    np.${method}(path,values=np.array([1,2]))\nexport("result")\nvalue=np.load("result")`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: ['result'],
+        writes: ['result.npz']
+      })
+    }
+  )
+
+  it.each(['"result.npz"', '"result.bin"'])(
+    'retains NumPy archive helper suffix rules for %s',
+    async (target) => {
+      const source = `import numpy as np\ndef export(path):\n    return np.savez(file=path,values=np.array([1,2]))\nexport(${target})`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        writes: [target === '"result.npz"' ? 'result.npz' : 'result.bin.npz']
+      })
+    }
+  )
+
+  it('does not append an archive suffix to a helper file handle', async () => {
+    const source =
+      'import numpy as np\ndef export(handle):\n    np.savez(handle,values=np.array([1,2]))\nwith open("result.bin","wb") as handle:\n    export(handle)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: ['result.bin']
+    })
+  })
+
+  it('resolves the actual imported archive writer alias inside a helper', async () => {
+    const source =
+      'from numpy import savez as pack\ndef export(path):\n    pack(path,values=[1,2])\nexport("result")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: ['result.npz']
+    })
+  })
+
+  it('does not borrow archive writer semantics from a local shadow', async () => {
+    const source =
+      'def savez(path,**values):\n    return None\ndef export(path):\n    savez(path,values=[1,2])\nexport("result")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+  })
+  it.each([
+    'from numpy import load as read\ndef reopen(path):\n    return read(path,mmap_mode="r+")\nmapped=reopen("seed.npy")',
+    'import numpy as np\ndef reopen(path):\n    return np.load(path,mmap_mode="r+")\ndef outer(path):\n    return reopen(path)\nmapped=outer("seed.npy")',
+    'import numpy as np\ndef reopen(path,mode="r+"):\n    return np.load(path,mmap_mode=mode)\nmapped=reopen("seed.npy")',
+    'import numpy as np\ndef reopen(path,mode):\n    return np.load(path,mmap_mode=mode)\nmapped=reopen("seed.npy","r+")'
+  ])('retains aliased and delegated NumPy helper mappings: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed.npy'],
+      writes: ['seed.npy'],
+      externalState: 'partial'
+    })
+    expect(
+      (
+        await analyzePythonNotebookSource(
+          source + '\nimport numpy as np\nnp.save("seed.npy",np.array([3,4]))'
+        )
+      ).facts.serializedValueWrites ?? []
+    ).toEqual([])
+  })
+
+  it('does not create NumPy mapping effects for an uninvoked helper', async () => {
+    const source =
+      'import numpy as np\ndef reopen(path):\n    return np.load(path,mmap_mode="r+")\nnp.save("result.npy",np.array([1,2]))'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: ['result.npy']
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'result.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+  })
+
+  it('does not borrow NumPy mapping authority for a local loader shadow', async () => {
+    const source =
+      'import numpy as np\ndef load(path,mmap_mode=None):\n    return np.array([1,2])\ndef reopen(path):\n    return load(path,mmap_mode="r+")\nmapped=reopen("seed.npy")'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+    expect(
+      (await analyzePythonNotebookSource(source + '\nnp.save("result.npy",np.array([3]))')).facts
+        .serializedValueWrites
+    ).toEqual([{ path: 'result.npy', format: 'npy', valueType: 'numpy.ndarray' }])
+  })
+
+  it.each([
+    'np.load(path,mmap_mode="r+")',
+    'np.load(path,"r+")',
+    'np.load(file=path,mmap_mode="r+")',
+    'np.load(path,mmap_mode=mode)',
+    'np.load(path,**options)'
+  ])('retains writable NumPy mapping helper effects: %s', async (call) => {
+    const source = `import numpy as np\ndef reopen(path):\n    return ${call}\nmapped=reopen("seed.npy")\nmapped[0]=7`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed.npy'],
+      writes: ['seed.npy'],
+      externalState: 'partial'
+    })
+  })
+
+  it.each(['"r+"', 'mode'])(
+    'revokes serialized proof through a NumPy mapping helper: %s',
+    async (mode) => {
+      const source = `import numpy as np\ndef reopen(path):\n    return np.load(path,mmap_mode=${mode})\nnp.save("seed.npy",np.array([1,2]))\nmapped=reopen("seed.npy")\nnp.save("seed.npy",np.array([3,4]))`
+      expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+        []
+      )
+    }
+  )
+
+  it.each(['"r"', '"c"', 'None'])(
+    'preserves nonpersistent NumPy helper controls: %s',
+    async (mode) => {
+      const source = `import numpy as np\ndef reopen(path):\n    return np.load(path,mmap_mode=${mode})\nmapped=reopen("seed.npy")\nnp.save("result.npy",np.array([3,4]))`
+      expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+        reads: ['seed.npy'],
+        writes: ['result.npy']
+      })
+      expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+        { path: 'result.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+    }
+  )
+
+  it.each([
+    'np.load(file="seed.npy",max_header_size=10000)',
+    'np.load("seed.npy",None,False,True,"ASCII")',
+    'np.load(encoding="ASCII",allow_pickle=False,file="seed.npy")'
+  ])('retains matched NumPy load paths: %s', async (call) => {
+    const source = `import numpy as np\nvalue=${call}`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed.npy'],
+      writes: []
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueReads).toEqual([
+      'seed.npy'
+    ])
+  })
+
+  it.each(['savez', 'savez_compressed'])('retains arbitrary %s data keywords', async (method) => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        `import numpy as np\nnp.${method}("result.npz",bogus=np.array([1,2]))`
+      )
+    ).toMatchObject({ writes: ['result.npz'] })
+  })
+
+  it.each(['save', 'load'])('validates an imported NumPy %s alias', async (method) => {
+    const source = `from numpy import ${method} as operation\noperation("result.npy",bogus=True)`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      externalState: 'partial'
+    })
+  })
+
+  it('retains NumPy handle destinations without appending a suffix', async () => {
+    const source =
+      'import numpy as np\nwith open("result.bin","wb") as f:\n    np.save(f,np.array([1,2]))'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      writes: ['result.bin']
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'result.bin', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+  })
+
+  it('does not apply NumPy signatures to a local loader shadow', async () => {
+    const source =
+      'def load(path,bogus=False):\n    return [1,2]\nvalue=load("seed.npy",bogus=True)'
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: []
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueReads ?? []).toEqual([])
+  })
+
+  it('allows a later valid NumPy save to establish fresh proof', async () => {
+    const source =
+      'import numpy as np\nnp.load("seed.npy",bogus=True)\nnp.save("result.npy",np.array([1,2]))'
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'result.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+  })
+
+  it.each([
+    'np.save("result.npy",np.array([1,2]),bogus=True)',
+    'np.save("result.npy",np.array([1,2]),file="other.npy")',
+    'np.save("result.npy",np.array([1,2]),arr=np.array([3]))',
+    'np.save("result.npy",np.array([1,2]),True,False)',
+    'np.save("result.npy")',
+    'np.save(file="result.npy",**options)',
+    'np.load("result.npy",bogus=True)',
+    'np.load("result.npy",file="other.npy")',
+    'np.load("result.npy",None,False,True,"ASCII",10000)',
+    'np.load()',
+    'np.load(*paths)'
+  ])('rejects unresolved NumPy serialization argument layouts: %s', async (call) => {
+    const source = `import numpy as np\n${call}`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+      []
+    )
+  })
+
+  it.each([
+    'np.save(arr=np.array([1,2]),file="result.npy")',
+    'np.save("result.npy",arr=np.array([1,2]),allow_pickle=False)',
+    'np.save("result.npy",np.array([1,2]),False)'
+  ])('preserves matched NumPy save argument layouts: %s', async (call) => {
+    const source = `import numpy as np\n${call}`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: ['result.npy']
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'result.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+  })
+
+  it.each([
+    'np.load("result.npy",bogus=True)',
+    'np.save("bad.npy",np.save("result.npy",np.array([3])),bogus=True)',
+    'read("result.npy")'
+  ])('revokes NumPy proof across rejected direct and helper calls: %s', async (call) => {
+    const source = [
+      'import numpy as np',
+      'def read(path):\n    return np.load(path,bogus=True)',
+      'np.save("result.npy",np.array([1,2]))',
+      call,
+      'value=np.load("result.npy")'
+    ].join('\n')
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['result.npy'],
+      writes: ['result.npy'],
+      externalState: 'partial'
+    })
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+      []
+    )
+  })
+
+  it.each([
+    'base::saveRDS(obj=list(x=1),fi="result.rds")',
+    'base::saveRDS(a=FALSE,v=2L,co=FALSE,re=NULL,list(x=1),"result.rds")',
+    'base::saveRDS(obj=list(x=1),co=FALSE,"result.rds")',
+    'base::saveRDS(fi="result.rds",co=FALSE,list(x=1))'
+  ])('matches RDS writer arguments for paths and value proof: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: ['result.rds']
+    })
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'result.rds', format: 'rds', valueType: 'r-value' }
+    ])
+  })
+
+  it.each(['base::readRDS(fi="seed.rds")', 'base::readRDS(re=NULL,"seed.rds")'])(
+    'matches RDS reader paths and serialized reads: %s',
+    async (source) => {
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['seed.rds'],
+        writes: []
+      })
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueReads).toEqual([
+        'seed.rds'
+      ])
+    }
+  )
+
+  it.each([
+    'base::saveRDS(list(x=1),file="result.rds",fi="other.rds")',
+    'base::saveRDS(list(x=1),"result.rds",bogus=TRUE)',
+    'base::saveRDS(fi="result.rds")',
+    'base::saveRDS(list(x=1),"result.rds",FALSE,NULL,FALSE,NULL,0)',
+    'base::readRDS(file="seed.rds",fi="other.rds")',
+    'base::readRDS("seed.rds",bogus=TRUE)',
+    'base::readRDS("seed.rds",NULL,0)',
+    'base::readRDS(...)'
+  ])('rejects invalid RDS layouts as serialized proof: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const result = await analyzeRNotebookSource('saveRDS(list(x=1),"checkpoint.rds");' + source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each([
+    'version=999L',
+    'version=version',
+    'ascii=flag',
+    'compress="invalid"',
+    'refhook=function(x) NULL',
+    'refhook=hook'
+  ])('keeps unproven RDS writer options partial without proof: %s', async (option) => {
+    const source = `base::saveRDS(list(x=1),"result.rds",${option})`
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      writes: ['result.rds'],
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const result = await analyzeRNotebookSource(source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it('does not suppress a later RDS input after a writer with invalid options', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'base::saveRDS(list(x=1),"result.rds",version=999L);base::readRDS("result.rds")'
+      )
+    ).toMatchObject({ reads: ['result.rds'], writes: ['result.rds'], externalState: 'partial' })
+  })
+
+  it('does not trust RDS readers with a custom refhook', async () => {
+    const source =
+      'base::saveRDS(list(x=1),"seed.rds");value <- base::readRDS(fi="seed.rds",re=function(x) NULL);base::saveRDS(value,"result.rds")'
+    const result = await analyzeRNotebookSource(source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each(['version=999L', 'refhook=hook', 'bogus=TRUE'])(
+    'does not certify RDS wrapper writes with unsupported options: %s',
+    async (option) => {
+      const source = `emit <- function(path) base::saveRDS(list(x=1),path,${option});emit("result.rds");base::readRDS("result.rds")`
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: ['result.rds'],
+        writeState: 'partial',
+        externalState: 'partial'
+      })
+      expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+    }
+  )
+
+  it('retains a valid RDS wrapper destination with partial argument names', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'emit <- function(path) base::saveRDS(obj=list(x=1),fi=path,co=FALSE);emit("result.rds")'
+      )
+    ).toMatchObject({ reads: [], writes: ['result.rds'] })
+  })
+
+  it('retains value proof through a matched RDS roundtrip', async () => {
+    const source =
+      'base::saveRDS(obj=list(x=1),fi="seed.rds");value <- base::readRDS(fi="seed.rds");base::saveRDS(value,"result.rds")'
+    expect((await analyzeRNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'seed.rds', format: 'rds', valueType: 'r-value' },
+      { path: 'result.rds', format: 'rds', valueType: 'r-value' }
+    ])
+  })
+
+  it.each(['readRDS', 'saveRDS'])(
+    'does not apply RDS effects to a local %s shadow',
+    async (name) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `${name} <- function(...) NULL;${name}(obj=list(x=1),fi="result.rds")`
+        )
+      ).toMatchObject({ reads: [], writes: [] })
+    }
+  )
+
+  it.each([
+    'from scipy.io import loadmat\nvalue=loadmat("seed")',
+    'import scipy.io as sio\nvalue=sio.loadmat(file_name="seed")',
+    'from scipy.io import loadmat as read\nvalue=read("seed",None,True)',
+    'from scipy.io import loadmat\ntarget="seed"\nvalue=loadmat(target)',
+    'from scipy.io import loadmat\ndef reopen(path):\n    return loadmat(path)\nvalue=reopen("seed")',
+    'from scipy.io import whosmat\nvalue=whosmat("seed")',
+    'import scipy.io as sio\nvalue=sio.whosmat(file_name="seed")',
+    'from scipy.io import whosmat as inspect\nvalue=inspect("seed",True)'
+  ])('retains both possible SciPy MAT string inputs: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed', 'seed.mat'],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'from scipy.io import loadmat\nvalue=loadmat("seed",appendmat=False)',
+    'from scipy.io import loadmat\nvalue=loadmat("seed",None,False)',
+    'from scipy.io import whosmat\nvalue=whosmat("seed",False)',
+    'from scipy.io import whosmat\nvalue=whosmat("seed",appendmat=False)',
+    'from pathlib import Path\nfrom scipy.io import loadmat\nvalue=loadmat(Path("seed"))',
+    'from pathlib import Path\nfrom scipy.io import loadmat\ntarget=Path("seed")\nvalue=loadmat(target)',
+    'from pathlib import Path\nfrom scipy.io import whosmat\nvalue=whosmat(Path("seed"))'
+  ])('does not append a fallback for disabled or Path SciPy MAT inputs: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed'],
+      writes: []
+    })
+  })
+
+  it.each([
+    'from scipy.io import loadmat\nvalue=loadmat("seed.mat")',
+    'from scipy.io import whosmat\nvalue=whosmat("seed.mat")',
+    'from scipy.io import loadmat\nwith open("seed.mat","rb") as handle:\n    value=loadmat(handle)',
+    'from scipy.io import loadmat\nvalue=loadmat(open("seed.mat","rb"))'
+  ])('keeps exact SciPy MAT paths and handle inputs: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['seed.mat'],
+      writes: []
+    })
+  })
+
+  it.each([
+    'from scipy.io import loadmat\nvalue=loadmat("seed",file_name="other")',
+    'from scipy.io import loadmat\nvalue=loadmat("seed",None,True,0)',
+    'from scipy.io import loadmat\nvalue=loadmat("seed",None,True,appendmat=False)',
+    'from scipy.io import whosmat\nvalue=whosmat("seed",True,False)'
+  ])('keeps invalid SciPy MAT layouts uncertain without invented paths: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'from scipy.io import loadmat\ndef reopen(path):\n    return loadmat(path,appendmat=False)\nvalue=reopen("seed")',
+    'from scipy.io import loadmat\ndef reopen(path):\n    return loadmat(file_name=path)\nvalue=reopen("seed.mat")'
+  ])('retains bounded SciPy MAT wrapper options: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: source.includes('seed.mat') ? ['seed.mat'] : ['seed'],
+      writes: []
+    })
+  })
+
+  it('keeps dynamic SciPy MAT fallback options uncertain', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from scipy.io import loadmat\nvalue=loadmat("seed",appendmat=flag)'
+      )
+    ).toMatchObject({
+      reads: ['seed', 'seed.mat'],
+      writes: [],
+      readState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not invent SciPy MAT disk paths for an in-memory buffer', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from io import BytesIO\nfrom scipy.io import loadmat\nbuffer=BytesIO()\nvalue=loadmat(buffer)'
+      )
+    ).toMatchObject({ reads: [], writes: [] })
+  })
+
+  it('does not infer SciPy MAT effects for a shadowed loader', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'from scipy.io import loadmat\nloadmat=lambda path: None\nvalue=loadmat("seed")'
+      )
+    ).toMatchObject({ reads: [], writes: [] })
+  })
+
+  it('does not restore SciPy MAT path authority after a member overwrite', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'python',
+        'import scipy.io as sio\nsio.loadmat=custom\nvalue=sio.loadmat("seed")'
+      )
+    ).toMatchObject({ reads: [], writes: [], externalState: 'partial' })
+  })
+
+  it.each([
+    'readLines(co="seed.bin",w=FALSE)',
+    'base::readLines(co="seed.bin",w=FALSE)',
+    'base::readLines(n=1L,w=FALSE,"seed.bin")',
+    'base::readLines(w=FALSE,co="seed.bin",1L)',
+    'con <- base::file("seed.bin","rb");base::readLines(co=con,w=FALSE);base::close(con)',
+    'read <- function(path) base::readLines(co=path,w=FALSE);read("seed.bin")'
+  ])('matches R readLines arguments and wrappers: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['seed.bin'],
+      writes: []
+    })
+  })
+
+  it.each([
+    'writeLines(te="new",co="result.bin")',
+    'base::writeLines(te="new",co="result.bin")',
+    'base::writeLines(se="|",u=TRUE,"new","result.bin")',
+    'base::writeLines(se="|",te="new","result.bin")',
+    'base::writeLines(se="|",co="result.bin","new")',
+    'emit <- function(path) base::writeLines(te="new",co=path,se="|");emit("result.bin")'
+  ])('matches R writeLines arguments and wrappers: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: ['result.bin']
+    })
+  })
+
+  it.each([
+    'base::readLines(con="seed.bin",co="other.bin")',
+    'base::readLines("seed.bin",bogus=TRUE)',
+    'base::readLines("seed.bin",1L,TRUE,FALSE,"unknown",FALSE,0)',
+    'base::readLines("seed.bin",...)',
+    'base::writeLines(text="new",con="result.bin",co="other.bin")',
+    'base::writeLines("new","result.bin",bogus=TRUE)',
+    'base::writeLines(co="result.bin")',
+    'base::writeLines("new","result.bin","|",TRUE,0)',
+    'base::writeLines("new",...)'
+  ])('keeps invalid R line I/O layouts uncertain: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const result = await analyzeRNotebookSource('saveRDS(list(x=1),"checkpoint.rds");' + source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each([
+    'base::writeLines(base::readLines("seed.bin",warn=FALSE))',
+    'base::writeLines(te=base::readLines(co="seed.bin",w=FALSE))'
+  ])('retains nested R line inputs when writing to the console: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['seed.bin'],
+      writes: []
+    })
+  })
+
+  it('retains nested R line input and output', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'base::writeLines(te=base::readLines(co="seed.bin",w=FALSE),co="result.bin",se="|")'
+      )
+    ).toMatchObject({ reads: ['seed.bin'], writes: ['result.bin'] })
+  })
+
+  it('retains existing bytes as input for an R line append connection', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'con <- base::file("result.bin","ab");base::writeLines(te="new",co=con,se="|");base::close(con)'
+      )
+    ).toMatchObject({ reads: ['result.bin'], writes: ['result.bin'] })
+  })
+
+  it.each(['readLines', 'writeLines'])(
+    'does not infer line I/O for a local %s shadow',
+    async (name) => {
+      expect(
+        await analyzeNotebookSourceFileAccess(
+          'r',
+          `${name} <- function(...) NULL;${name}(te="new",co="result.bin")`
+        )
+      ).toMatchObject({ reads: [], writes: [] })
+    }
+  )
+
+  it('does not mistake writeLines options for a console output path', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess('r', 'base::writeLines(se="|",te="new")')
+    ).toMatchObject({ reads: [], writes: [] })
+  })
+
+  it.each([
+    'readChar(co="seed.bin",n=3L,u=TRUE)',
+    'base::readChar(co="seed.bin",n=3L,u=TRUE)',
+    'base::readChar(u=TRUE,n=3L,"seed.bin")',
+    'base::readChar(u=TRUE,co="seed.bin",3L)',
+    'con <- base::file("seed.bin","rb");base::readChar(n=3L,co=con);base::close(con)'
+  ])('matches R readChar partial and reordered arguments: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: ['seed.bin'],
+      writes: []
+    })
+  })
+
+  it.each([
+    'writeChar(obj="new",co="result.bin",e=NULL)',
+    'base::writeChar(obj="new",co="result.bin",e=NULL)',
+    'base::writeChar(e=NULL,u=TRUE,n=2L,"new","result.bin")',
+    'base::writeChar(e=NULL,obj="new","result.bin")',
+    'base::writeChar(e=NULL,co="result.bin","new")'
+  ])('matches R writeChar partial and reordered arguments: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      writes: ['result.bin'],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it.each([
+    'base::readChar(con="seed.bin",con="other.bin",nchars=3L)',
+    'base::readChar("seed.bin",3L,bogus=TRUE)',
+    'base::readChar(co="seed.bin")',
+    'base::readChar("seed.bin",3L,TRUE,0)',
+    'base::readChar(con="seed.bin",nchars=3L,n=2L)',
+    'base::readChar("seed.bin",...)'
+  ])('keeps invalid R readChar argument layouts uncertain: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      reads: [],
+      writes: [],
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+    const result = await analyzeRNotebookSource('saveRDS(list(x=1),"checkpoint.rds");' + source)
+    expect(result.facts.state).toBe('unknown')
+    expect(result.facts.serializedValueWrites ?? []).toEqual([])
+  })
+
+  it.each([
+    'base::writeChar(obj=base::readChar(co="seed.bin",n=3L,u=TRUE),co="result.bin",e=NULL)',
+    'base::writeChar(object=payload,con="result.bin",eos=NULL)'
+  ])('retains possible R writeChar outputs independently of payload proof: %s', async (source) => {
+    expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+      writes: ['result.bin'],
+      writeState: 'partial',
+      externalState: 'partial'
+    })
+  })
+
+  it('does not suppress a later read after a partial-name writeChar', async () => {
+    expect(
+      await analyzeNotebookSourceFileAccess(
+        'r',
+        'base::writeChar(obj="new",co="result.bin",e=NULL);base::readChar(co="result.bin",n=3L)'
+      )
+    ).toMatchObject({ reads: ['result.bin'], writes: ['result.bin'], externalState: 'partial' })
+  })
+
+  it.each(['readChar', 'writeChar'])(
+    'does not assign base character I/O effects to a local %s shadow',
+    async (name) => {
+      const source = `${name} <- function(...) NULL;${name}(co="result.bin",n=3L)`
+      expect(await analyzeNotebookSourceFileAccess('r', source)).toMatchObject({
+        reads: [],
+        writes: []
+      })
+    }
+  )
+
+  it.each([
     'file.copy("inputs/data.tsv", "outputs/observed.tsv")',
     'base::file.copy("inputs/data.tsv", "outputs/observed.tsv", overwrite=TRUE)',
     'file.copy(to="outputs/observed.tsv", from="inputs/data.tsv", recursive=FALSE)',
@@ -37,8 +961,7 @@ describe('scientific storage modes', () => {
   it.each([
     'file.copy <- custom; file.copy("inputs/data.tsv", "outputs/observed.tsv")',
     'other::file.copy("inputs/data.tsv", "outputs/observed.tsv")',
-    'file.copy("inputs/data.tsv", "outputs/observed.tsv", recursive=TRUE)',
-    'file.copy(c("inputs/a.tsv", "inputs/b.tsv"), "outputs")'
+    'file.copy("inputs/data.tsv", "outputs/observed.tsv", recursive=TRUE)'
   ])(
     'does not assign single-file copy paths to unrelated or recursive calls: %s',
     async (source) => {
@@ -616,6 +1539,234 @@ it.each([
   expect(result.reads).toContain('profiles.npy')
   expect(result.writes).toEqual(writable ? ['profiles.npy'] : [])
 })
+it.each([
+  ['readonly', 'r'],
+  ['copyonwrite', 'c'],
+  ['readwrite', 'r+'],
+  ['write', 'w+']
+])('matches NumPy memmap mode alias %s to %s', async (alias, canonical) => {
+  const source = (mode: string): string =>
+    `import numpy as np\nmapped = np.memmap('data.bin', dtype='uint8', mode='${mode}', shape=(4,))`
+  expect(await analyzeNotebookSourceFileAccess('python', source(alias))).toEqual(
+    await analyzeNotebookSourceFileAccess('python', source(canonical))
+  )
+})
+
+it.each(['readonly', 'copyonwrite', 'readwrite', 'write'])(
+  'resolves imported and static NumPy memmap mode aliases: %s',
+  async (mode) => {
+    const direct = `import numpy as np\nmapped=np.memmap('data.bin', dtype='uint8', mode='${mode}', shape=(4,))`
+    const indirect = `from numpy import memmap as mapping\nmode='${mode}'\nmapped=mapping('data.bin', 'uint8', mode, shape=(4,))`
+    expect(await analyzeNotebookSourceFileAccess('python', indirect)).toEqual(
+      await analyzeNotebookSourceFileAccess('python', direct)
+    )
+  }
+)
+
+it.each(['readonly', 'copyonwrite'])(
+  'does not report persistent outputs for private or readonly memmap mutations: %s',
+  async (mode) => {
+    const source = `import numpy as np\nmapped=np.memmap('data.bin', dtype='uint8', mode='${mode}', shape=(4,))\nmapped[0]=9\nmapped.flush()`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['data.bin'],
+      writes: []
+    })
+  }
+)
+
+it.each(['readwrite', 'write'])(
+  'does not treat writable memmap aliases as proven producers: %s',
+  async (mode) => {
+    const source = `import numpy as np\nmapped=np.memmap('data.bin', dtype='uint8', mode='${mode}', shape=(4,))\nwith open('data.bin', 'rb') as source:\n    data=source.read()`
+    expect(await analyzeNotebookSourceFileAccess('python', source)).toMatchObject({
+      reads: ['data.bin'],
+      writes: ['data.bin']
+    })
+  }
+)
+
+it.each([
+  "np.memmap('data.bin', mode=unknown_mode)",
+  "np.memmap('data.bin', mode='invalid')",
+  "np.memmap('data.bin', mode='readonly', **options)",
+  "np.memmap('data.bin', *options, mode='copyonwrite')",
+  "np.lib.format.open_memmap('data.bin', mode='copyonwrite')",
+  "np.lib.format.open_memmap('data.bin', mode='readwrite')",
+  "np.load('data.bin', mmap_mode='copyonwrite')"
+])('keeps uncertain or different-API mapping modes partial: %s', async (call) => {
+  expect(
+    await analyzeNotebookSourceFileAccess('python', `import numpy as np\nmapped=${call}`)
+  ).toMatchObject({
+    reads: ['data.bin'],
+    writes: ['data.bin'],
+    readState: 'partial',
+    writeState: 'partial',
+    externalState: 'partial'
+  })
+})
+
+it('does not recognize a shadowed memmap constructor through its mode alias', async () => {
+  expect(
+    await analyzeNotebookSourceFileAccess(
+      'python',
+      "from numpy import memmap\nmemmap=custom\nmapped=memmap('data.bin', mode='readonly')"
+    )
+  ).toMatchObject({
+    reads: [],
+    writes: [],
+    readState: 'partial',
+    reasonCodes: ['source-analysis-unsupported-call']
+  })
+})
+
+it.each([
+  "np.memmap('data.npy', mode='w+', shape=(4,))",
+  "np.memmap('data.npy', mode='write', shape=(4,))",
+  "np.memmap('data.npy', mode='r+')",
+  "np.memmap('data.npy', mode='readwrite')",
+  "np.memmap('data.npy')",
+  "np.memmap('data.npy', mode=unknown_mode)",
+  "np.memmap('data.npy', mode='r', **options)",
+  "np.lib.format.open_memmap('data.npy')",
+  "np.lib.format.open_memmap('data.npy', mode='w+', shape=(4,))",
+  "np.load('data.npy', mmap_mode='r+')"
+])('invalidates serialized value proof exposed through a writable mapping: %s', async (call) => {
+  const source = `import numpy as np\nnp.save('data.npy', np.array([1,2,3]))\nmapped=${call}`
+  expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+})
+
+it.each([
+  "np.memmap('data.npy', mode='r')",
+  "np.memmap('data.npy', mode='readonly')",
+  "np.memmap('data.npy', mode='c')",
+  "np.memmap('data.npy', mode='copyonwrite')",
+  "np.lib.format.open_memmap('data.npy', mode='r')",
+  "np.lib.format.open_memmap('data.npy', mode='c')",
+  "np.load('data.npy')",
+  "np.load('data.npy', mmap_mode=None)",
+  "np.load('data.npy', mmap_mode='r')",
+  "np.load('data.npy', mmap_mode='c')"
+])('retains serialized value proof for nonpersistent mappings: %s', async (call) => {
+  const source = `import numpy as np\nnp.save('data.npy', np.array([1,2,3]))\nmapped=${call}`
+  expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+    { path: 'data.npy', format: 'npy', valueType: 'numpy.ndarray' }
+  ])
+})
+
+it.each([
+  "from numpy import memmap as mapping\nmapped=mapping('data.npy','uint8','r+')",
+  "from numpy.lib.format import open_memmap as mapping\nmapped=mapping('data.npy')",
+  "mode='readwrite'\npath='./data.npy'\nmapped=np.memmap(path,mode=mode)",
+  "mapped=np.memmap('data.npy',mode=(np.save('data.npy',np.array([4])), 'w+')[1],shape=(4,))",
+  "mapped=np.memmap((np.save('data.npy',np.array([4])), 'data.npy')[1],mode='w+',shape=(4,))"
+])(
+  'invalidates mapped serialization after aliases and argument evaluation: %s',
+  async (operation) => {
+    const source = `import numpy as np\nnp.save('data.npy',np.array([1,2,3]))\n${operation}`
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+      []
+    )
+  }
+)
+
+it('invalidates only the resolved writable mapping target', async () => {
+  const source =
+    "import numpy as np\nnp.save('data.npy',np.array([1]))\nnp.save('other.npy',np.array([2]))\nmapped=np.memmap('data.npy',mode='w+',shape=(4,))"
+  expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+    { path: 'other.npy', format: 'npy', valueType: 'numpy.ndarray' }
+  ])
+})
+
+it('invalidates all serialized proof when a writable mapping path is unresolved', async () => {
+  const source =
+    "import numpy as np\nnp.save('data.npy',np.array([1]))\nnp.save('other.npy',np.array([2]))\nmapped=np.memmap(unknown_path,mode='r+')"
+  expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual([])
+})
+
+it.each(['r+', 'w+'])(
+  'does not reuse verified serialized types after a writable mapping: %s',
+  async (mode) => {
+    const source = `import numpy as np\nmapped=np.memmap('data.npy',mode='${mode}',shape=(4,))\nrestored=np.load('data.npy')`
+    const result = await analyzePythonNotebookSource(source, {
+      staticStrings: [],
+      staticCollections: [],
+      localFileWrappers: [],
+      verifiedSerializedValues: [{ path: 'data.npy', format: 'npy', valueType: 'numpy.ndarray' }]
+    })
+    expect(
+      result.facts.typeBindings?.find((binding) => binding.target === 'restored')
+    ).toBeUndefined()
+  }
+)
+
+describe('serialization while writable mappings may remain alive', () => {
+  const save = "with open('data.npy','r+b') as handle:\n    np.save(handle,np.array([4,5,6]))"
+
+  it.each([
+    "mapped=np.memmap('data.npy',mode='r+')",
+    "mapped=np.memmap('data.npy',mode='readwrite')",
+    "mapped=np.memmap('data.npy')",
+    "from numpy import memmap as mapping\nmapped=mapping('data.npy','uint8','r+')",
+    "path='./data.npy'\nmode='r+'\nmapped=np.memmap(path,mode=mode)",
+    "original=np.memmap('data.npy',mode='r+')\nmapped=original\ndel original",
+    "original=np.memmap('data.npy',mode='r+')\nmapped=original[:]\ndel original",
+    "original=np.memmap('data.npy',mode='r+')\nmapped=original\noriginal=None",
+    "mapped=np.load('data.npy',mmap_mode='r+')",
+    "mapped=np.lib.format.open_memmap('data.npy')",
+    "mapped=np.memmap(unknown_path,mode='r+')",
+    "mapped=np.memmap('data.npy',mode=unknown_mode)",
+    "mapped=np.memmap('data.npy',mode='r+')\nmapped._mmap.close()",
+    "if condition:\n    mapped=np.memmap('data.npy',mode='r+')"
+  ])('does not recertify a file while a mapping may still write it: %s', async (operation) => {
+    const source = `import numpy as np\n${operation}\n${save}`
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+      []
+    )
+  })
+
+  it.each([
+    "mapped=np.memmap('data.npy',mode='r')",
+    "mapped=np.memmap('data.npy',mode='readonly')",
+    "mapped=np.memmap('data.npy',mode='c')",
+    "mapped=np.memmap('data.npy',mode='copyonwrite')",
+    "mapped=np.load('data.npy',mmap_mode='c')",
+    "mapped=np.lib.format.open_memmap('data.npy',mode='c')",
+    "mapped=np.load('data.npy')",
+    "def unused():\n    return np.memmap('data.npy',mode='r+')"
+  ])(
+    'preserves later serialization without an executed writable mapping: %s',
+    async (operation) => {
+      const source = `import numpy as np\n${operation}\n${save}`
+      expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+        { path: 'data.npy', format: 'npy', valueType: 'numpy.ndarray' }
+      ])
+    }
+  )
+
+  it('does not restore a trusted loader type after saving into a live mapping', async () => {
+    const source = `import numpy as np\nmapped=np.memmap('data.npy',mode='r+')\n${save}\nmapped[0]=0\nrestored=np.load('data.npy')`
+    const result = await analyzePythonNotebookSource(source)
+    expect(
+      result.facts.typeBindings?.find((binding) => binding.target === 'restored')
+    ).toBeUndefined()
+  })
+
+  it('retains serialization for a different file while a known target is mapped', async () => {
+    const source = `import numpy as np\nmapped=np.memmap('other.npy',mode='r+')\n${save}`
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites).toEqual([
+      { path: 'data.npy', format: 'npy', valueType: 'numpy.ndarray' }
+    ])
+  })
+
+  it('blocks direct-path serialized writers as well as file-handle writers', async () => {
+    const source =
+      "import numpy as np\nmapped=np.memmap('data.npy',mode='r+')\nnp.save('data.npy',np.array([4,5,6]))"
+    expect((await analyzePythonNotebookSource(source)).facts.serializedValueWrites ?? []).toEqual(
+      []
+    )
+  })
+})
+
 it('recognizes imported mapping aliases without claiming a write already happened', async () => {
   const result = await analyzeNotebookSourceFileAccess(
     'python',
@@ -1097,7 +2248,6 @@ describe('R compressed serialization path evidence', () => {
 
 describe('base R generic predicates require primitive dispatch proof', () => {
   it.each([
-    'sensor <- as.numeric(read.csv("inputs/pressure.csv")$pressure)\nstopifnot(all(is.finite(sensor)))',
     'sensor <- as.numeric(structure(c(1., 2.), class="mercury_sensor"))\nflags <- is.finite(sensor)',
     'original <- structure(c(1., 2.), class="mercury_sensor")\nsensor <- as.integer(original)\nflags <- is.infinite(sensor)',
     'sensor <- as.logical(structure(c(1., 2.), .Dim=c(1L,2L)))\nflags <- is.nan(sensor)',
@@ -1124,6 +2274,7 @@ describe('base R generic predicates require primitive dispatch proof', () => {
   })
 
   it.each([
+    'sensor <- as.numeric(read.csv("inputs/pressure.csv")$pressure)\nstopifnot(all(is.finite(sensor)))',
     'sensor <- as.numeric(c(first="1",second="2"))\nflags <- is.finite(sensor)',
     'sensor <- as.integer(c(1.,2.))\nflags <- is.infinite(sensor)',
     'sensor <- as.logical(c(1L,0L))\nflags <- is.nan(sensor)',

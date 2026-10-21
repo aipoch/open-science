@@ -48,7 +48,7 @@ it.each([
       { cwd: root, timeout: 15000 }
     )
     const actual = result.stdout
-      .split('\n')
+      .split(/\r?\n/)
       .filter((line) => line.startsWith('READ:'))
       .map((line) => line.slice(5))
       .sort()

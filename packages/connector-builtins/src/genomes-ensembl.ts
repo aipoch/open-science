@@ -188,6 +188,9 @@ function normalizeVepRegion(
 function leanTranscriptConsequence(tc: Dict): Dict {
   return {
     transcript_id: tc.transcript_id,
+    ...(tc.hgvsc !== undefined ? { hgvsc: tc.hgvsc } : {}),
+    ...(tc.hgvsp !== undefined ? { hgvsp: tc.hgvsp } : {}),
+    ...(tc.strand !== undefined ? { strand: tc.strand } : {}),
     variant_allele: tc.variant_allele,
     gene_id: tc.gene_id,
     gene_symbol: tc.gene_symbol,
@@ -203,6 +206,27 @@ function leanTranscriptConsequence(tc: Dict): Dict {
     polyphen_score: tc.polyphen_score,
     polyphen_prediction: tc.polyphen_prediction
   }
+}
+
+// Match annotation reference identities from the complete result, before the summary cap.
+// A matching annotation is comparison evidence, not proof of the reference used to parse HGVS.
+function hgvsReferenceAnnotations(result: Dict, requested: string): Dict {
+  const referenceId = requested.replace(/\.\d+$/, '')
+  const rows = (result.transcript_consequences as Dict[] | undefined) ?? []
+  const annotations = rows
+    .filter((tc) =>
+      [tc.transcript_id, tc.hgvsc, tc.hgvsp].some(
+        (value) =>
+          typeof value === 'string' && value.split(':')[0].replace(/\.\d+$/, '') === referenceId
+      )
+    )
+    .map((tc) => ({
+      transcript_id: tc.transcript_id ?? null,
+      hgvsc: tc.hgvsc ?? null,
+      hgvsp: tc.hgvsp ?? null,
+      variant_allele: tc.variant_allele ?? null
+    }))
+  return { status: annotations.length ? 'matched' : 'unknown', annotations }
 }
 
 // One colocated-variant row (dbSNP/COSMIC/ClinVar overlap) in a lean shape.
@@ -271,6 +295,7 @@ function summarizeVepResult(r: Dict, maxConsequences: number): Dict {
   const coloc = (r.colocated_variants as Dict[] | undefined) ?? []
   return {
     input: r.input,
+    ...(r.warnings !== undefined ? { warnings: r.warnings } : {}),
     assembly_name: r.assembly_name,
     seq_region_name: r.seq_region_name,
     start: r.start,
@@ -546,11 +571,18 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
     connector: 'genomes',
     credentialKeys: [],
     description:
-      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. If variant_id is provided, the ID route takes precedence and region/allele/allele_orientation are ignored. Otherwise, both region and allele are required. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (1-based inclusive chrom:start-end on the current species assembly, GRCh38 for human, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted; coordinates always refer to the reference genome, including on the negative strand); allele (A/C/G/T replacement sequence, or - for deletion; upstream symbolic alleles INS/DUP/DEL/TDUP are accepted in forward orientation); allele_orientation (forward by default, preserving existing calls: allele is on the reference forward strand regardless of the region suffix; region opts into interpreting allele on the region strand, so :-1 reverse-complements sequence alleles before querying; symbolic alleles on a negative region require forward orientation). Every region request is sent on the forward strand; returned alleles are forward-oriented. A negative-strand gene does not require negative-strand input; species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. Unknown rsIDs raise with the upstream message.',
+      'Predict variant consequences with Ensembl VEP — most-severe-first summary of the (often huge) per-transcript consequence list. Without hgvs_notation, variant_id takes precedence and region/allele/allele_orientation are ignored. Otherwise, supply hgvs_notation or both region and allele. HGVS must not be combined with variant_id, region, allele, or allele_orientation. hgvs_notation accepts genomic, coding, or protein HGVS (e.g. ENST00000366667:c.803C>T); reference versions are passed unchanged. HGVS uses the current species assembly from rest.ensembl.org (no assembly selection or liftover); assembly_name reports the resolved assembly. HGVS requests include hgvs=1 and transcript_version=1: transcript_id is versioned, hgvsc/hgvsp are retained when available. Input reference versions are not verified: version_validation is unchecked. Each HGVS result preserves input_reference_annotations from the complete upstream transcript list independently of max_consequences. matched means exact reference identity excluding the version suffix, not validated parsing or a version match; unknown means no comparable annotation (including unmapped gene symbols or genomic references). HGVS alleles retain the upstream strand, including negative strand; no region normalization is applied. allele does not filter results from the ID route. Args: variant_id (dbSNP rsID rs7412, COSMIC COSV..., or HGMD ID); region (1-based inclusive chrom:start-end on the current species assembly, GRCh38 for human, e.g. 7:140753336-140753336; SNV start==end; insertion start=end+1; explicit strand suffix :1/:-1 accepted; coordinates always refer to the reference genome, including on the negative strand); allele (A/C/G/T replacement sequence, or - for deletion; upstream symbolic alleles INS/DUP/DEL/TDUP are accepted in forward orientation); allele_orientation (forward by default, preserving existing calls: allele is on the reference forward strand regardless of the region suffix; region opts into interpreting allele on the region strand, so :-1 reverse-complements sequence alleles before querying; symbolic alleles on a negative region require forward orientation). Every region request is sent on the forward strand; region results are forward-oriented. A negative-strand gene does not require negative-strand input; species (default homo_sapiens); max_consequences (cap on returned per-transcript rows, default 25; full count in n_transcript_consequences, rows kept are most severe HIGH>MODERATE>LOW>MODIFIER; transcript_consequences_truncated flags the cap). Returns {query, n_results, results:[{input, assembly_name, seq_region_name, start, end, strand, allele_string, most_severe_consequence, genes:[{gene_id, gene_symbol, worst_impact, n_transcripts}], n_transcript_consequences, transcript_consequences_truncated, transcript_consequences:[...], n_regulatory_feature_consequences, n_motif_feature_consequences, colocated_variants:[...]}]}. Each transcript consequence retains variant_allele. n_transcripts counts distinct non-empty transcript IDs per gene across the full list; worst_impact spans all returned upstream alleles, while n_transcript_consequences counts rows. HGVS parsing errors retain the upstream reason; unknown rsIDs raise with the upstream message.',
     input: {
       type: 'object',
       properties: {
         variant_id: { type: 'string' },
+        hgvs_notation: {
+          type: 'string',
+          minLength: 1,
+          pattern: '\\S',
+          description:
+            'HGVS expression, e.g. ENST00000366667.6:c.803C>T; passed unchanged to Ensembl.'
+        },
         region: { type: 'string' },
         allele: { type: 'string' },
         allele_orientation: {
@@ -565,12 +597,28 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       }
     },
     returns:
-      '{query, n_results, results[], normalization?} — each result the most-severe-first VEP summary. Region calls add normalization: {original:{region,allele,allele_orientation}, forward:{region,allele}, reverse_complemented}; coordinates are not lifted or reversed. query retains the original input; results use forward-strand alleles. ID calls omit normalization.',
+      '{query, n_results, results[], normalization?} — each result the most-severe-first VEP summary. Region calls add normalization: {original:{region,allele,allele_orientation}, forward:{region,allele}, reverse_complemented}; coordinates are not lifted or reversed. query retains the original input. Region results use forward-strand alleles; HGVS results retain upstream strand and versioned transcript_id, hgvsc/hgvsp when available. HGVS calls add hgvs_reference:{requested, version_validation:"unchecked", note}. Each HGVS result adds input_reference_annotations:{status:"matched"|"unknown", annotations:[{transcript_id,hgvsc,hgvsp,variant_allele}]} from the full upstream list, unaffected by max_consequences. These are annotation versions, not proof of the parsing reference version. ID and HGVS calls omit normalization.',
     exampleArgs: { variant_id: 'rs7412', max_consequences: 25 },
     run: async (ctx, a) => {
       const species = String(a.species ?? DEFAULT_SPECIES)
       const maxConsequences = clampInt(a.max_consequences, 25, 1, 100000)
       const variantId = strArg(a.variant_id)
+      const hgvs = strArg(a.hgvs_notation)
+      if (a.hgvs_notation !== undefined) {
+        if (typeof a.hgvs_notation !== 'string' || !hgvs) {
+          throw new Error('hgvs_notation must be a non-empty string')
+        }
+        if (
+          variantId ||
+          strArg(a.region) ||
+          strArg(a.allele) ||
+          a.allele_orientation !== undefined
+        ) {
+          throw new Error(
+            'hgvs_notation cannot be combined with variant_id, region, allele, or allele_orientation'
+          )
+        }
+      }
       const region = strArg(a.region)
       const allele = strArg(a.allele)
       let url: string
@@ -579,20 +627,59 @@ export const GENOMES_ENSEMBL_TOOLS: ToolDescriptor[] = [
       if (variantId) {
         url = `${ENSEMBL}/vep/${species}/id/${encodeURIComponent(variantId)}`
         query = variantId
+      } else if (hgvs) {
+        url = `${ENSEMBL}/vep/${encodeURIComponent(species)}/hgvs/${encodeURIComponent(hgvs)}?hgvs=1&transcript_version=1`
+        query = hgvs
       } else if (region && allele) {
         normalization = normalizeVepRegion(region, allele, a.allele_orientation)
         url = `${ENSEMBL}/vep/${species}/region/${normalization.forward.region}/${encodeURIComponent(normalization.forward.allele)}`
         query = `${region} ${allele}`
       } else {
-        throw new Error('ensembl_vep_variant requires either variant_id or both region and allele')
+        throw new Error(
+          'ensembl_vep_variant requires either variant_id or both region and allele, or hgvs_notation'
+        )
       }
-      const raw = ((await ctx.fetchJson(url)) as Dict[] | undefined) ?? []
-      const results = raw.map((r) => summarizeVepResult(r, maxConsequences))
+      let raw: Dict[]
+      if (hgvs) {
+        const { body, status } = await ctx.fetchJsonWithHeaders(url, { allowHttpStatuses: [400] })
+        const error =
+          body && typeof body === 'object' && !Array.isArray(body)
+            ? (body as Dict).error
+            : undefined
+        if (typeof error === 'string')
+          throw new Error(`Ensembl HGVS failed: ${error.slice(0, 1000)}`)
+        if (status === 400)
+          throw new Error('Ensembl HGVS returned an unrecognized HTTP 400 response')
+        if (
+          !Array.isArray(body) ||
+          body.some((r) => !r || typeof r !== 'object' || Array.isArray(r))
+        ) {
+          throw new Error('Ensembl HGVS returned an invalid VEP result list')
+        }
+        raw = body as Dict[]
+      } else {
+        raw = ((await ctx.fetchJson(url)) as Dict[] | undefined) ?? []
+      }
+      const results = raw.map((r) => ({
+        ...summarizeVepResult(r, maxConsequences),
+        ...(hgvs
+          ? { input_reference_annotations: hgvsReferenceAnnotations(r, hgvs.split(':')[0]) }
+          : {})
+      }))
       return {
         query,
         n_results: results.length,
         results,
-        ...(normalization ? { normalization } : {})
+        ...(normalization ? { normalization } : {}),
+        ...(hgvs
+          ? {
+              hgvs_reference: {
+                requested: hgvs.split(':')[0],
+                version_validation: 'unchecked',
+                note: 'Uses the current species assembly; see each result assembly_name. Input reference versions are passed unchanged but may not be enforced by Ensembl. input_reference_annotations preserves matching annotation references outside the consequence cap; it does not verify the reference version used for parsing. Missing mappings are unknown, not inferred; alleles retain the reported strand.'
+              }
+            }
+          : {})
       }
     }
   },

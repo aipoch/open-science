@@ -9,14 +9,17 @@ import { analyzeNotebookSourceFileAccess } from './source-file-access-analysis'
 import { serializedFileContext, type FileGeneration } from './serialized-file-provenance'
 import cells from './reported-rds-clean-volcano.fixture.json'
 
+// Owned keys can still dispatch xtfrm; unproven ordering keeps effects partial.
+// Known paths and producer/consumer evidence remain checked independently.
+
 it('captures the producer and records ordinary ownership at saveRDS', async () => {
   const { facts } = await analyzeRNotebookSource(cells[7].script)
   expect(facts.serializedValueWrites).toEqual([
     { path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }
   ])
   expect(await analyzeNotebookSourceFileAccess('r', cells[7].script)).toMatchObject({
-    readState: 'complete',
-    writeState: 'complete',
+    readState: 'partial',
+    writeState: 'partial',
     reads: ['inputs/differential-results-333333333333.xlsx'],
     writes: ['diff_df_clean.rds']
   })
@@ -79,11 +82,17 @@ const evidence = async (
   }
 }
 
-it.each([false, true])(
-  'rebuilds captured RDS ownership across cells (new epoch=%s)',
-  async (newEpoch) => {
+it.each([
+  [false, false],
+  [true, false],
+  [false, true],
+  [true, true]
+])(
+  'rebuilds RDS evidence with epoch change=%s and proven producer=%s',
+  async (newEpoch, provenProducer) => {
     const root = await mkdtemp(join(tmpdir(), 'rds-clean-history-'))
     const runs = cells.map((c) => makeRun(c.index))
+    if (provenProducer) runs[7].script = 'df <- data.frame(x=1:3);saveRDS(df,"diff_df_clean.rds")'
     if (newEpoch) runs[8].kernelEpochId = 'new-epoch'
     try {
       await evidence(root, runs[7], 'created', 'a'.repeat(64))
@@ -94,8 +103,12 @@ it.each([false, true])(
         repository: { readSessionRuns: async () => runs }
       })
       const p = await analyzer.project({ projectId: 'p', sessionId: 's', throughRunId: '8' })
-      expect(p.stalenessByRunId['8'], JSON.stringify(p)).toEqual({ state: 'clear' })
-      expect(p.dependenciesByRunId?.['8']).toEqual([]) // File generations, not memory, connect the cells.
+      expect(p.stalenessByRunId['8'], JSON.stringify(p)).toMatchObject(
+        provenProducer
+          ? { state: 'clear' }
+          : { state: 'unknown', reasons: expect.arrayContaining(['opaque-call']) }
+      )
+      expect(p.dependenciesByRunId?.['8']).toEqual(provenProducer ? [] : undefined) // File generations, not memory, connect the cells.
       const reopened = new NotebookDependencyAnalyzer({
         storageRoot: root,
         readFileGenerations: readGenerations(root),
@@ -109,15 +122,31 @@ it.each([false, true])(
         environment: 'r',
         kernelEpochId: runs[8].kernelEpochId!
       })
-      expect(context?.verifiedSerializedValues).toEqual([
-        { path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }
-      ])
-      expect(
-        (await analyzeNotebookSourceFileAccess('r', runs[8].script, context)).externalState
-      ).toBe('complete')
+      expect(context?.verifiedSerializedValues ?? []).toEqual(
+        provenProducer ? [{ path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }] : []
+      )
+      if (provenProducer)
+        expect(
+          (
+            await analyzeNotebookSourceFileAccess(
+              'r',
+              'df <- readRDS("diff_df_clean.rds");head(df)',
+              context
+            )
+          ).externalState
+        ).toBe('complete')
       await evidence(root, runs[8], 'present-before', 'b'.repeat(64))
       const changed = await reopened.project({ projectId: 'p', sessionId: 's', throughRunId: '8' })
       expect(changed.stalenessByRunId['8'].state).toBe('unknown')
+      const changedContext = await reopened.sourceFileAccessContext({
+        projectId: 'p',
+        sessionId: 's',
+        currentRunId: '8',
+        language: 'r',
+        environment: 'r',
+        kernelEpochId: runs[8].kernelEpochId!
+      })
+      expect(changedContext?.verifiedSerializedValues ?? []).toEqual([])
     } finally {
       generations.delete(root)
       await rm(root, { recursive: true, force: true })
@@ -169,44 +198,58 @@ it('revokes verified ownership after an in-cell overwrite', async () => {
   expect(facts.serializedValueWrites ?? []).toEqual([])
 })
 
-it('rebuilds producer evidence before the first live read in a new R epoch', async () => {
-  const root = await mkdtemp(join(tmpdir(), 'rds-new-epoch-'))
-  const run = makeRun(7)
-  try {
-    await evidence(root, run, 'created', 'a'.repeat(64))
-    const analyzer = new NotebookDependencyAnalyzer({
-      storageRoot: root,
-      readFileGenerations: readGenerations(root),
-      repository: { readSessionRuns: async () => [run] }
-    })
-    const context = await analyzer.sourceFileAccessContext({
-      projectId: 'p',
-      sessionId: 's',
-      currentRunId: 'next',
-      language: 'r',
-      environment: 'r',
-      kernelEpochId: 'new-epoch'
-    })
-    expect(context?.serializedValueFiles).toEqual([
-      {
-        path: 'diff_df_clean.rds',
-        format: 'rds',
-        valueType: 'r-value',
-        checksum: 'a'.repeat(64)
-      }
-    ])
-    expect(context?.verifiedSerializedValues).toEqual([])
-    expect(context?.rCopyOnModifyNames ?? []).toEqual([])
-  } finally {
-    generations.delete(root)
-    await rm(root, { recursive: true, force: true })
-  }
-})
-
-it.each(['.', 'results/science'])(
-  'uses the caller generation namespace %s without a host manifest',
-  async (executionRelativeRoot) => {
+it.each([false, true])(
+  'rebuilds producer evidence before a new epoch with proven producer=%s',
+  async (provenProducer) => {
+    const root = await mkdtemp(join(tmpdir(), 'rds-new-epoch-'))
     const run = makeRun(7)
+    if (provenProducer) run.script = 'df <- data.frame(x=1:3);saveRDS(df,"diff_df_clean.rds")'
+    try {
+      await evidence(root, run, 'created', 'a'.repeat(64))
+      const analyzer = new NotebookDependencyAnalyzer({
+        storageRoot: root,
+        readFileGenerations: readGenerations(root),
+        repository: { readSessionRuns: async () => [run] }
+      })
+      const context = await analyzer.sourceFileAccessContext({
+        projectId: 'p',
+        sessionId: 's',
+        currentRunId: 'next',
+        language: 'r',
+        environment: 'r',
+        kernelEpochId: 'new-epoch'
+      })
+      expect(context?.serializedValueFiles ?? []).toEqual(
+        provenProducer
+          ? [
+              {
+                path: 'diff_df_clean.rds',
+                format: 'rds',
+                valueType: 'r-value',
+                checksum: 'a'.repeat(64)
+              }
+            ]
+          : []
+      )
+      expect(context?.verifiedSerializedValues ?? []).toEqual([])
+      expect(context?.rCopyOnModifyNames ?? []).toEqual([])
+    } finally {
+      generations.delete(root)
+      await rm(root, { recursive: true, force: true })
+    }
+  }
+)
+
+it.each([
+  ['.', false],
+  ['results/science', false],
+  ['.', true],
+  ['results/science', true]
+] as const)(
+  'uses generation namespace %s with proven producer=%s',
+  async (executionRelativeRoot, provenProducer) => {
+    const run = makeRun(7)
+    if (provenProducer) run.script = 'df <- data.frame(x=1:3);saveRDS(df,"diff_df_clean.rds")'
     run.fileEvidence = { state: 'available', fileReads: 'complete', writerAttribution: 'complete' }
     const path =
       executionRelativeRoot === '.'
@@ -228,9 +271,9 @@ it.each(['.', 'results/science'])(
       undefined,
       executionRelativeRoot
     )
-    expect(context?.serializedValueFiles?.[0].path).toBe(path)
-    expect(context?.verifiedSerializedValues).toEqual([
-      { path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }
-    ])
+    expect(context?.serializedValueFiles?.[0]?.path).toBe(provenProducer ? path : undefined)
+    expect(context?.verifiedSerializedValues ?? []).toEqual(
+      provenProducer ? [{ path: 'diff_df_clean.rds', format: 'rds', valueType: 'r-value' }] : []
+    )
   }
 )

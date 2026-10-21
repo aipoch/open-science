@@ -203,6 +203,34 @@ const emitRecoverableDiagnostic = (
   }
 }
 
+type SessionAuthorityScan = Awaited<ReturnType<SessionMutationRepository['loadAllWithDiagnostics']>>
+
+// Reuse only the expensive authority scan. Derived reconciliation still runs on every load so a
+// second window/renderer cannot miss files or artifacts written after the first was cached.
+class SessionHydrationCache {
+  private generation = 0
+  private cached: { generation: number; scan: SessionAuthorityScan } | undefined
+
+  generationForLoad(): number {
+    return this.generation
+  }
+
+  get(): SessionAuthorityScan | undefined {
+    const cached = this.cached
+    return cached && cached.generation === this.generation ? cached.scan : undefined
+  }
+
+  set(scan: SessionAuthorityScan, generation: number): void {
+    if (generation !== this.generation || scan.isComplete !== true) return
+    this.cached = { generation, scan }
+  }
+
+  invalidate(): void {
+    this.generation += 1
+    this.cached = undefined
+  }
+}
+
 // Serializes authoritative Session JSON and derived file-index mutations at their owning Project and
 // Session scopes. Catalog-wide reconciliation uses an exclusive barrier so unrelated Projects overlap
 // without allowing a late save to race or revive durable deletion authority.
@@ -320,6 +348,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
     { projectId: string; released: Promise<void> }
   >()
   private readonly operationScheduler = new SessionPersistenceOperationScheduler()
+  private readonly hydrationCache = new SessionHydrationCache()
   private readonly deletedSessions = new Set<string>()
   private readonly deletedProjects = new Set<string>()
   private readonly stateOwner: SessionPersistenceStateOwner
@@ -394,6 +423,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
       notifyRuntimeTranscriptSessionUpdated: (session) =>
         publishSessionUpdate(session, 'runtime-transcript'),
       notifyDelegationPolicyUpdated: (session) => onDelegationPolicyUpdated?.(session),
+      onSessionStateChanged: () => this.hydrationCache.invalidate(),
       releaseAbandonedPreparation: ({ projectId, sessionId }) => {
         void this.operationScheduler
           .runSession(projectId, sessionId, () =>
@@ -547,6 +577,7 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   // Degraded authority read: keeps healthy transcripts navigable while writes remain blocked.
   loadAllReadOnly(): Promise<LoadAllSessionsResult> {
     return this.operationScheduler.runGlobal(async () => {
+      this.hydrationCache.invalidate()
       this.stateOwner.beginHydration()
       // Once any renderer has observed a degraded snapshot, later loads are no longer allowed to
       // treat the process as an untouched startup boundary for destructive cleanup.
@@ -594,6 +625,8 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
    */
   loadAll(): Promise<LoadAllSessionsResult> {
     return this.operationScheduler.runGlobal(async () => {
+      const hydrationGeneration = this.hydrationCache.generationForLoad()
+      const cachedScan = this.hydrationCache.get()
       this.stateOwner.beginHydration()
       // Public loadAll can be called by multiple renderers/tasks. Only the first invocation in this
       // process is a startup boundary; consume it before any await so failures and partial scans cannot
@@ -605,29 +638,37 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         cpuUsage: SESSION_CPU_TRACE_ENABLED ? process.cpuUsage : undefined,
         fields: {
           mode: 'reconcile',
-          startupCleanupEligible: mayRunDestructiveStartupCleanup
+          startupCleanupEligible: mayRunDestructiveStartupCleanup,
+          authorityReused: cachedScan !== undefined
         }
       })
-      operation.phase('load-authority')
-      let scan: Awaited<ReturnType<SessionMutationRepository['loadAllWithDiagnostics']>>
-      try {
-        scan = await this.repository.loadAllWithDiagnostics()
-      } catch (error) {
-        operation.fail(error, { status: 'failed', hydrationAvailable: false })
-        throw error
+      let scan = cachedScan
+      if (scan) {
+        operation.phase('authority-reused', {
+          sessionCount: scan.result.sessions.length,
+          warningCount: scan.warnings?.length ?? 0
+        })
+      } else {
+        operation.phase('load-authority')
+        try {
+          scan = await this.repository.loadAllWithDiagnostics()
+        } catch (error) {
+          operation.fail(error, { status: 'failed', hydrationAvailable: false })
+          throw error
+        }
+        operation.phase('authority-loaded', {
+          sessionCount: scan.result.sessions.length,
+          warningCount: scan.warnings?.length ?? 0,
+          ...scan.scanMetrics
+        })
+        scan.result.diagnostics = {
+          isComplete: scan.isComplete,
+          warnings: scan.warnings ?? [],
+          failure: scan.failure
+        }
       }
       const hasAuthoritativeSessionCatalog = isSessionCatalogAuthoritative(scan)
       this.stateOwner.replaceMetadata(scan.result.sessions, hasAuthoritativeSessionCatalog)
-      operation.phase('authority-loaded', {
-        sessionCount: scan.result.sessions.length,
-        warningCount: scan.warnings?.length ?? 0,
-        ...scan.scanMetrics
-      })
-      scan.result.diagnostics = {
-        isComplete: scan.isComplete,
-        warnings: scan.warnings ?? [],
-        failure: scan.failure
-      }
       let result = scan.result
       let sessions = scan.result.sessions
 
@@ -772,6 +813,9 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         warningCount: scan.warnings?.length ?? 0,
         degradedReconciliationCount
       })
+      if (degradedReconciliationCount === 0) {
+        this.hydrationCache.set({ ...scan, result: reconciliation.result }, hydrationGeneration)
+      }
       return reconciliation.result
     })
   }
@@ -1318,6 +1362,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
         )
       )
         throw new Error('This Project contains a Session locked for export.')
+      // Whole-Project deletion can complete from a durable intent without re-entering
+      // stateOwner.removeProject (for example an already-absent Project with a legacy tombstone).
+      // Invalidate here so the next catalog load cannot reuse a pre-deletion authority scan.
+      this.hydrationCache.invalidate()
       this.deletedProjects.add(projectId)
       try {
         const deleted = await this.deletionOwner.deleteProjectSessions(
@@ -1410,7 +1458,10 @@ class SessionPersistenceCoordinator implements DelegatedWorkRecordCommands {
   }
 
   saveManifest(request: SaveSessionManifestRequest): Promise<void> {
-    return this.operationScheduler.runManifest(() => this.repository.saveManifest(request))
+    return this.operationScheduler.runManifest(() => {
+      this.hydrationCache.invalidate()
+      return this.repository.saveManifest(request)
+    })
   }
 
   /**

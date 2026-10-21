@@ -2128,7 +2128,7 @@ for path in left:
     })
   })
 
-  it('does not invent a file dependency for an in-memory compressed stream', async () => {
+  it('keeps an in-memory TAR stream partial without inventing file dependencies', async () => {
     await expect(
       analyzeNotebookSourceFileAccess(
         'python',
@@ -2141,12 +2141,12 @@ for path in left:
         ].join('\n')
       )
     ).resolves.toEqual({
-      readState: 'complete',
-      writeState: 'complete',
-      externalState: 'complete',
+      readState: 'partial',
+      writeState: 'partial',
+      externalState: 'partial',
       reads: [],
       writes: [],
-      reasonCodes: []
+      reasonCodes: ['dynamic-path-unresolved', 'source-analysis-unsupported-call']
     })
   })
 

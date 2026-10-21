@@ -31,7 +31,9 @@ import {
   FinalizedArtifactBindingConflictError,
   ProvenanceMessageSnapshotRepository
 } from '../artifacts/provenance-message-snapshot'
+import { ArtifactProvenanceFinalizationRecovery } from '../artifacts/provenance-finalization-recovery'
 import { ArtifactProvenanceRepository } from '../artifacts/provenance-repository'
+import { ArtifactProvenanceStagingRecovery } from '../artifacts/provenance-staging-recovery'
 import { requireAgentArtifactVersion } from '../artifacts/provenance-version-kind'
 import { ArtifactRepository } from '../artifacts/repository'
 import { createArtifactHandlers } from '../artifacts/ipc'
@@ -203,6 +205,184 @@ describe('artifact finalization startup recovery', () => {
     expect(durableSession?.error).toBeUndefined()
     await expect(coordinator.retryArtifactFinalization(request)).resolves.toEqual(recovery)
   })
+
+  it('finalizes a large pending run without exhausting the transaction budget', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance, versions } = await prepareRecovery(compatibility, 43)
+    const failed = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    failed.messages[1].responseToMessageId = 'prompt-1'
+    failed.conversationGraph!.messages[1].responseToMessageId = 'prompt-1'
+    await sessions.saveSession({
+      ...setTurnOutcome(failed, 'prompt-1', {
+        kind: 'failed',
+        settledAt: 3,
+        error: 'Artifact publication failed',
+        errorReportable: false,
+        recovery: 'retry-artifact-publication'
+      }),
+      status: 'error',
+      error: 'Artifact publication failed',
+      errorReportable: false
+    })
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    const request = {
+      projectId: PROJECT_ID,
+      sessionId: SESSION_ID,
+      messageId: 'message-1',
+      pendingPaths: [],
+      artifactVersionIds: versions.map((version) => version.versionId)
+    }
+
+    const recovery = await coordinator.retryArtifactFinalization(request)
+    expect(recovery?.artifacts).toHaveLength(43)
+    const rows = await client.artifactVersion.findMany({ where: { artifactRunId: RUN_ID } })
+    expect(rows).toHaveLength(43)
+    expect(rows.every((row) => row.state === 'finalized' && row.messageId === 'message-1')).toBe(
+      true
+    )
+    const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    expect(durableSession?.status).toBe('idle')
+    expect(durableSession?.messages[1].artifactIds).toHaveLength(43)
+  }, 60_000)
+
+  it('selects only ownership and context fields during the recovery scan', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance } = await prepareRecovery(compatibility)
+    const session = (await sessions.loadSession(PROJECT_ID, SESSION_ID))!
+    const scan = vi.spyOn(client.artifactVersion, 'findMany')
+
+    await provenance.reconcileSession(PROJECT_ID, SESSION_ID, session, {
+      artifactRunIds: [],
+      artifactVersionIds: []
+    })
+
+    expect(scan).toHaveBeenCalledWith({
+      where: {
+        originKind: 'agent_generated',
+        state: { in: ['pending', 'finalized'] },
+        artifact: { is: { projectId: PROJECT_ID, sessionId: SESSION_ID } }
+      },
+      select: {
+        id: true,
+        artifactRunId: true,
+        state: true,
+        messageId: true,
+        rootFrameId: true,
+        agentFrameId: true,
+        messageBranchId: true,
+        runtimeSegmentId: true,
+        promptMessageId: true
+      }
+    })
+  })
+
+  it.each([
+    ['rootFrameId', 1],
+    ['agentFrameId', 1],
+    ['messageBranchId', 1],
+    ['runtimeSegmentId', 1],
+    ['promptMessageId', 1],
+    ['artifactRunId', 1],
+    ['rootFrameId', 2]
+  ] as const)(
+    'blocks compatibility fallback for missing %s in a %i-Version native run',
+    async (field, count) => {
+      const compatibility = new ArtifactRepository(storageRoot)
+      const { provenance, versions } = await prepareRecovery(compatibility, count)
+      // Normal writes enforce complete provenance; model a corrupt database on one connection.
+      await client.$transaction(async (transaction) => {
+        await transaction.$executeRawUnsafe('PRAGMA ignore_check_constraints = ON')
+        try {
+          await transaction.artifactVersion.update({
+            where: { id: versions[0].versionId },
+            data: { [field]: null }
+          })
+        } finally {
+          await transaction.$executeRawUnsafe('PRAGMA ignore_check_constraints = OFF')
+        }
+      })
+      const coordinator = new SessionPersistenceCoordinator(
+        sessions,
+        files,
+        undefined,
+        undefined,
+        undefined,
+        provenance
+      )
+      const fallback = vi.spyOn(compatibility, 'reconcilePendingArtifactPaths')
+      const handlers = createArtifactHandlers(compatibility, new ArtifactRunRegistry(), {
+        recoverPendingArtifacts: (request) => coordinator.retryArtifactFinalization(request)
+      })
+
+      const request = {
+        projectId: PROJECT_ID,
+        sessionId: SESSION_ID,
+        messageId: 'message-1',
+        pendingPaths: [
+          join(
+            storageRoot,
+            'artifacts',
+            PROJECT_ID,
+            STORAGE_SESSION_ID,
+            '.pending',
+            RUN_ID,
+            'result.png'
+          )
+        ],
+        artifactVersionIds: versions.map((version) => version.versionId)
+      }
+      const failure =
+        field === 'artifactRunId'
+          ? 'missing its finalization run identity'
+          : 'Native Artifact finalization proof is invalid'
+      await expect(handlers.reconcilePendingArtifacts(request)).rejects.toThrow(failure)
+      await expect(
+        handlers.reconcilePendingArtifacts({ ...request, artifactVersionIds: undefined })
+      ).rejects.toThrow(failure)
+      await expect(
+        handlers.reconcilePendingArtifacts({ ...request, pendingPaths: [] })
+      ).rejects.toThrow(failure)
+
+      expect(fallback).not.toHaveBeenCalled()
+      await expect(
+        compatibility.listPendingRunFiles({
+          projectId: PROJECT_ID,
+          sessionId: STORAGE_SESSION_ID,
+          runId: RUN_ID
+        })
+      ).resolves.toHaveLength(count)
+      await expect(
+        client.artifactVersion.findMany({
+          where: { id: { in: versions.map((version) => version.versionId) } }
+        })
+      ).resolves.toEqual(
+        expect.arrayContaining(
+          versions.map((version) =>
+            expect.objectContaining({
+              id: version.versionId,
+              state: 'pending',
+              messageId: null,
+              managedVisibleAt: null
+            })
+          )
+        )
+      )
+      await expect(
+        compatibility.listMessageFiles({
+          projectId: PROJECT_ID,
+          sessionId: SESSION_ID,
+          messageId: 'message-1'
+        })
+      ).resolves.toEqual([])
+    }
+  )
 
   it('completes a resumed turn when its earlier published Version is outside the current retry batch', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
@@ -1257,10 +1437,18 @@ describe('artifact finalization startup recovery', () => {
     })
     await rm(join(storageRoot, ...snapshot.storageKey.split('/')))
     // Model a crash after the snapshot and Artifact Version commit but before recovered artifact
-    // metadata reached Session JSON.
+    // metadata reached Session JSON. A crash restarts the process, so do not reuse the coordinator's
+    // in-memory hydration cache.
     await sessions.saveSession(originalSession)
 
-    const recovered = await coordinator.loadAll()
+    const recovered = await new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      snapshots,
+      undefined,
+      prepared.provenance
+    ).loadAll()
 
     expect(recovered.sessions[0].messages[1].artifactIds).toEqual([prepared.version.versionId])
     await expect(
@@ -1834,6 +2022,37 @@ describe('artifact finalization startup recovery', () => {
     expect(discover).toHaveBeenCalledTimes(2)
   })
 
+  it('skips only finalization for a clean idle Session with a prepared Project snapshot', async () => {
+    const compatibility = new ArtifactRepository(storageRoot)
+    const { provenance } = await prepareRecovery(compatibility)
+    const coordinator = new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    )
+    await coordinator.loadAll()
+
+    const durableSession = await sessions.loadSession(PROJECT_ID, SESSION_ID)
+    if (!durableSession) throw new Error('Recovery fixture Session is missing.')
+    expect(durableSession.status).toBe('idle')
+    const projectReconciliation = await provenance.prepareProjectReconciliation(PROJECT_ID)
+    const finalization = vi.spyOn(
+      ArtifactProvenanceFinalizationRecovery.prototype,
+      'reconcileSession'
+    )
+    const staging = vi.spyOn(ArtifactProvenanceStagingRecovery.prototype, 'reconcileSession')
+
+    await provenance.reconcileSession(PROJECT_ID, SESSION_ID, durableSession, {
+      projectReconciliation
+    })
+
+    expect(finalization).not.toHaveBeenCalled()
+    expect(staging).toHaveBeenCalledOnce()
+  })
+
   it('recovers a pending Version when another Version from the same run is already linked', async () => {
     const compatibility = new ArtifactRepository(storageRoot)
     const { provenance, version: linkedVersion, context } = await prepareRecovery(compatibility)
@@ -1885,7 +2104,16 @@ describe('artifact finalization startup recovery', () => {
       })}\n`,
       'utf8'
     )
-    const recovered = await coordinator.loadAll()
+    // A real crash restarts the process, so recovery must not inherit the previous coordinator's
+    // in-memory hydration state. Recreate it before retrying the startup scan.
+    const recovered = await new SessionPersistenceCoordinator(
+      sessions,
+      files,
+      undefined,
+      undefined,
+      undefined,
+      provenance
+    ).loadAll()
 
     expect(recovered.sessions[0].messages[1].artifactIds).toEqual([
       linkedVersion.versionId,
