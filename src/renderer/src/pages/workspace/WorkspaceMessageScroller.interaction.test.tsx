@@ -45,6 +45,7 @@ import type { ActivePlanProjection } from '../../../../shared/session-plan/contr
 import { createUploadVersionReference, type UploadedAttachment } from '../../../../shared/uploads'
 import { BookmarksProvider } from './bookmarks/BookmarksProvider'
 import type { ComposerDoc } from './composer/composer-doc'
+import { resetHistoricalArtifactDescriptorCache } from './WorkspaceArtifactVisibility'
 
 const { createRoot } = createLiteratureTestRenderer({
   get api() {
@@ -418,6 +419,7 @@ describe('WorkspaceMessageScroller artifact click behavior', () => {
   let root: Root
 
   beforeEach(() => {
+    resetHistoricalArtifactDescriptorCache()
     scrollableMock.end = false
     upsertAndActivateItem.mockClear()
     openFileDialog.mockClear()

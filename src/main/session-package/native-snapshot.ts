@@ -1,7 +1,7 @@
 import { Prisma, type PrismaClient } from '@prisma/client'
 import { randomUUID } from 'node:crypto'
-import { mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { readFile, readdir, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { resolveManagedProjectFileAnnotationIdentity } from '../../shared/annotations'
 import { type PersistedArtifactExecutionSnapshot } from '../../shared/artifact-provenance'
 import {
@@ -28,11 +28,10 @@ export { type NativeRow, type NativeTable, type PackageRecords } from './records
 
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { copyFileWithinBudget } from '../bounded-file-io'
+import { createPackageMaterializer } from './materialize'
 import { createFrameNotebookLane } from '../notebook/lane-identity'
 import { NotebookRunRepository } from '../notebook/repository'
 import { assertPackageSourcePath, readPackageJson } from './archive'
-import { assertPackageCapacity } from './capacity'
 import { readExecutionEvidence } from './execution-evidence'
 import { packageHistorySchema } from './history-schema'
 const tableNames = Object.keys(COLUMNS) as NativeTable[]
@@ -667,7 +666,13 @@ export const prepareNativeImport = async (
   }
   const contentEntries = manifest.inventory.filter((entry) => entry.storageKey)
   const totalBytes = contentEntries.reduce((sum, entry) => sum + entry.sizeBytes, 0)
-  await assertPackageCapacity(dirname(destinationRoot), totalBytes)
+  const materialize = await createPackageMaterializer(
+    sourceDirectory,
+    destinationRoot,
+    contentEntries,
+    signal,
+    nativeStorageKeys(records)
+  )
   let completedBytes = 0
   let completedFiles = 0
   for (const entry of contentEntries) {
@@ -676,21 +681,15 @@ export const prepareNativeImport = async (
       destinationRoot,
       remapStorageKey(entry.storageKey!, identities)
     )
-    await mkdir(dirname(target), { recursive: true })
-    await copyFileWithinBudget(
-      join(sourceDirectory, entry.path),
-      target,
-      entry.sizeBytes,
-      signal,
-      (bytes) =>
-        onProgress?.({
-          phase: 'importing',
-          completedBytes: completedBytes + bytes,
-          totalBytes,
-          completedFiles,
-          totalFiles: contentEntries.length,
-          currentFile: entry.storageKey
-        })
+    await materialize(entry, remapStorageKey(entry.storageKey, identities), (bytes) =>
+      onProgress?.({
+        phase: 'importing',
+        completedBytes: completedBytes + bytes,
+        totalBytes,
+        completedFiles,
+        totalFiles: contentEntries.length,
+        currentFile: entry.storageKey
+      })
     )
     completedBytes += entry.sizeBytes
     completedFiles += 1

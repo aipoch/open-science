@@ -24,6 +24,11 @@ type ArtifactProjectReconciliationState = {
 
 const artifactProjectReconciliationState = Symbol('artifactProjectReconciliationState')
 
+const projectReconciliationHasUnfinishedPublications = (
+  snapshot: ArtifactProjectReconciliationSnapshot
+): boolean =>
+  snapshot[artifactProjectReconciliationState].unfinishedCompatibilityPublications.length > 0
+
 // Opaque outside this module: callers may route a Project-scoped snapshot but cannot inspect or
 // construct its publication state. This keeps compatibility layout knowledge inside Provenance.
 type ArtifactProjectReconciliationSnapshot = {
@@ -146,7 +151,7 @@ const inferDurableFinalizationMessageId = (
 }
 
 // Require Session metadata and every persisted owner projection to carry ArtifactFile.id.
-const isArtifactLinkedToDurableMessage = (
+export const isArtifactLinkedToDurableMessage = (
   session: PersistedChatSession,
   messageId: string,
   versionId: string
@@ -422,6 +427,7 @@ class ArtifactProvenanceFinalizationRecovery {
 
 export {
   ArtifactProvenanceFinalizationRecovery,
+  projectReconciliationHasUnfinishedPublications,
   type ArtifactFinalizationRecoveryResult,
   type ArtifactProjectReconciliationSnapshot
 }

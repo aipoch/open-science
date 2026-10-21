@@ -8675,6 +8675,18 @@ describe('ACP runtime session management', () => {
     })
     expect(fakeAgent.prompts).toHaveLength(0)
     expect(persisted.activities?.[0].elicitation?.draftAnswers).toEqual(response.answers)
+    expect(runtime.getSnapshot().events).toContainEqual(
+      expect.objectContaining({
+        kind: 'error',
+        title: 'Could not continue the Agent task',
+        text: 'temporary admission failure',
+        promptMessageId: 'prompt-restored-1',
+        agentFrameId: persisted.conversationGraph!.activeFrameId,
+        messageBranchId: persisted.conversationGraph!.frames.find(
+          ({ id }) => id === persisted.conversationGraph!.activeFrameId
+        )!.activeBranchId
+      })
+    )
     await runtime.respondToElicitation(response)
     await vi.waitFor(() => expect(fakeAgent.prompts).toHaveLength(1))
     await vi.waitFor(() => {

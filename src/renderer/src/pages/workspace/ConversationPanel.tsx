@@ -2036,7 +2036,7 @@ const ConversationPanel = ({
                     </div>
                   ) : null}
 
-                  {ordinaryComposerBlocked ? (
+                  {ordinaryComposerBlocked && !authenticationRequired ? (
                     <div
                       data-testid="blocking-composer-overlay"
                       className="absolute inset-x-0 bottom-0 z-30"

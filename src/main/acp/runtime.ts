@@ -12,6 +12,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import {
+  ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_CLEAR_FAILED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARMED_EVENT_TITLE,
   ACP_RESTORED_PERMISSION_REARM_FAILED_EVENT_TITLE,
@@ -2589,7 +2590,7 @@ class AcpRuntime {
         level: 'error',
         sessionId,
         ...(continuation.request.provenanceContext ?? {}),
-        title: 'Could not continue the Agent task',
+        title: ACP_APP_CONTINUATION_FAILED_EVENT_TITLE,
         text: errorMessage(error)
       })
       this.emitState()
