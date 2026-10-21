@@ -1,9 +1,6 @@
 import { previewCloseGuards } from '@/stores/preview-close-guard'
-import {
-  sideChatTabId,
-  usePreviewWorkbenchStore,
-  type PreviewItem
-} from '@/stores/preview-workbench-store'
+import { sideChatTabId, usePreviewWorkbenchStore } from '@/stores/preview-workbench-store'
+import type { PreviewItem } from '@/stores/preview-workbench-contract'
 import { useProjectStore } from '@/stores/project-store'
 import {
   Fragment,
@@ -28,7 +25,8 @@ import { SideChatCloseConfirmation } from './SideChatCloseConfirmation'
 import { useTranslation } from 'react-i18next'
 
 import { useNavigationStore } from '@/stores/navigation-store'
-import { useSessionStore, type ChatSession } from '@/stores/session-store'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { selectFrameworkApiEndpoints, useSettingsStore } from '@/stores/settings-store'
 import { getAcpRuntimeEventText } from '../../../../shared/acp'
 import { buildConfiguredModelCatalog } from '../../../../shared/configured-model-catalog'
@@ -36,24 +34,7 @@ import { resolveSessionAgentConfiguration } from '../../../../shared/session-age
 import type { SideChatModelSelection, SideChatSnapshot } from '../../../../shared/side-chat'
 import type { SideChatEntry } from '../../../../shared/side-chat-entry-contract'
 
-type SideChatView = Readonly<{
-  modelSelection?: SideChatModelSelection
-  id?: string
-  draftOnly?: boolean
-  generation: number
-  revision?: number
-  parentSessionId: string
-  projectId: string
-  sideSessionId?: string
-  entries: readonly SideChatEntry[]
-  liveTurnUserEntryId?: string
-  draft: string
-  annotations?: readonly Annotation[]
-  running: boolean
-  error?: string
-  persistenceError?: string
-  notice?: SideChatSnapshot['notice']
-}>
+import type { SideChatView } from './side-chat-contract'
 
 type SideChatController = Readonly<{
   views?: readonly SideChatView[]

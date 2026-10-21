@@ -44,6 +44,40 @@ retains the host's configured permissions and data recipients; absence of a desk
 establish isolation or offline operation. Protect its profile and service credentials, and confirm
 task/job cancellation separately from stopping a client wait.
 
+## Install from npm
+
+The published [@aipoch/open-science](https://www.npmjs.com/package/@aipoch/open-science) package
+provides the CLI, backend, Web UI and SDK. Install Node.js **22.13.0 or later**, then run:
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+Open the printed authenticated URL to configure an Agent runtime, model provider and optional
+Python/R Notebook runtime. For terminal setup and a first task, see the
+[CLI guide](../packages/open-science/CLI.md#first-run-setup-codex).
+
+npm selects a matching optional platform package for macOS ARM64/x64, glibc Linux ARM64/x64
+or Windows x64. The package includes backend resources and native dependencies; it uses your
+installed Node and does not require Electron. Linux musl and Windows ARM64 are unsupported.
+The [Linux prerequisites](#linux-prerequisites) still apply. Do not omit optional dependencies;
+reinstall with `npm install --global @aipoch/open-science --include=optional` if the matching
+native package is missing. Use the public entry package rather than installing a platform
+package directly; the CLI requires its platform package to have the same version.
+
+Stop all profiles started by the installation before upgrading with
+`npm install --global @aipoch/open-science@latest`, then restart with the same profile.
+Use `--config-root /absolute/path` to select a custom profile. Stop those profiles before
+`npm uninstall --global @aipoch/open-science` as well. Updates and uninstall retain the existing
+research data and credential locations; consult [release compatibility](compatibility.md)
+before downgrading. Package removal is not a data reset.
+
+When multiple installers provide `open-science`, check which command your shell resolves
+(`type -a open-science` on macOS/Linux or `Get-Command open-science -All` in PowerShell).
+Update or remove a launcher through the installer that owns it.
+
 ## Install with Homebrew (macOS/Linux)
 
 The [AIPOCH tap](https://github.com/aipoch/homebrew-tap) installs the standalone CLI on
@@ -133,8 +167,9 @@ Do not disable Gatekeeper or credential protection to bypass a failed verificati
 Release archives reuse the final signed desktop backend and its sibling Node executable, without
 rebuilding or re-signing them. Native signatures are checked before packing and after extraction.
 All five archives must pass version/source/integrity checks before the GitHub Release is published.
-They are included in Release SHA256SUMS and build-provenance attestations. npm registry publication
-is deferred and requires no token for this archive release flow.
+They are included in Release SHA256SUMS and build-provenance attestations. The separate
+[npm publication workflow](ci.md#publishing-npm-packages) rebuilds and tests npm distributions
+from the certified Release source; no npm token is required for this archive release flow.
 
 The rolling `nightly` Release also provides all five CLI archives using the desktop nightly version
 (`x.y.z-nightly.g<sha>`). Download the archive and `CLI-SHA256SUMS.txt` from the same nightly update.
@@ -544,6 +579,6 @@ formal signing/notarization, and updater replacement/data-root relaunch remain o
 Only focused/module tests ran locally as requested; no full `npm test` ran. Counts across earlier
 runs overlap and must not be summed as full-suite coverage. Required PR CI remains the merge gate.
 The current manual distribution workflow supports standalone archive dry-runs and a separate
-npm dry-run; stable releases publish the five standalone archives. Automatic npm registry
-publication remains deferred. Do not publish one package name/version separately for multiple
-platform-specific tarballs.
+npm dry-run; stable releases publish the five standalone archives. The separate npm publication
+workflow verifies all five native packages before publishing them and the shared entry package.
+Do not publish one package name/version separately for multiple platform-specific tarballs.

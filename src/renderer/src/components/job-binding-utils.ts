@@ -1,4 +1,4 @@
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 // Scans a repl_execute tool-call's rawOutput for a job_id submitted via submit_job.
 // The repl kernel returns: { stdout, stderr, result, cwd, figures }

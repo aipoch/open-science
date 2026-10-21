@@ -280,7 +280,7 @@ describe('module test impact commands', () => {
       [{ path: 'src/main/compute/dispatch-evidence.ts', status: 'added' }],
       { status: 'current', testFiles: [] }
     )
-    expect(affected.modules).toEqual(['compute_service', 'workspace_page'])
+    expect(affected.modules).toEqual(['compute_service'])
     expect(affected.testFiles).toEqual(
       expect.arrayContaining([
         'src/main/compute/compute-job-lifecycle.test.ts',
@@ -304,9 +304,7 @@ describe('module test impact commands', () => {
 
     expect(affected.mode).toBe('selective')
     expect(affected.modules).toEqual(
-      path.startsWith('packages/')
-        ? ['compute_package', 'compute_service', 'workspace_page']
-        : ['compute_service', 'workspace_page']
+      path.startsWith('packages/') ? ['compute_package', 'compute_service'] : ['compute_service']
     )
     if (path.startsWith('packages/'))
       expect(affected.testFiles).toEqual(
@@ -407,18 +405,14 @@ describe('module test impact commands', () => {
       })
       const prefix = path.startsWith('packages/skills/') ? 'skill_package -> ' : ''
       expect([...affected.modules].sort()).toEqual([
-        ...(prefix ? ['settings_operations'] : []),
-        'settings_service_facade',
         ...(prefix ? ['skill_marketplace', 'skill_package'] : []),
-        'user_skills_repository',
-        'workspace_page',
-        'workspace_runtime'
+        'user_skills_repository'
       ])
       expect(affected.reasonChains).toEqual(
         expect.arrayContaining([
-          `${prefix}user_skills_repository -> settings_service_facade`,
-          `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime`,
-          `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page`
+          `${prefix}user_skills_repository -> settings_service_facade -> capability routing only`,
+          `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> capability routing only`,
+          `${prefix}user_skills_repository -> settings_service_facade -> workspace_runtime -> workspace_page -> capability routing only`
         ])
       )
       expect(
@@ -428,7 +422,7 @@ describe('module test impact commands', () => {
         expect(affected.reasonChains).toEqual(
           expect.arrayContaining([
             'skill_package -> skill_marketplace',
-            'skill_package -> skill_marketplace -> settings_operations'
+            'skill_package -> skill_marketplace -> settings_operations -> capability routing only'
           ])
         )
         expect(affected.testFiles).toEqual(
@@ -443,23 +437,17 @@ describe('module test impact commands', () => {
       expect(affected.testFiles).not.toContain('packages/open-science/client.test.ts')
       expect(affected.testFiles).toEqual(
         expect.arrayContaining([
-          'src/main/acp/task-agent-port.test.ts',
-          'src/main/notebook/local-rpc-notebook-adapter.test.ts',
           'src/main/notebook/local-rpc-server.mcpcall.test.ts',
           'src/main/notebook/local-rpc-server.skill-import.test.ts',
           'src/main/notebook/local-rpc-server.skills.test.ts',
           'src/main/notebook/mcp-server.test.ts',
           'src/main/settings/ipc.test.ts',
           'src/main/web-service/http-server.test.ts',
-          'src/preload/electron-renderer-contract-adapter.test.ts',
           'src/preload/index.test.ts',
           'src/renderer/src/pages/settings/SkillsPanel.render.test.tsx',
           'src/renderer/src/stores/settings-skills-slice.test.ts',
           'src/renderer/src/stores/settings-store.test.ts',
-          'src/renderer/web/api-installer.test.ts',
-          'src/shared/renderer-surface-inventory.test.ts',
-          'src/shared/renderer-surface-matrix.test.ts',
-          'src/shared/web-rpc-contract.test.ts'
+          'src/renderer/web/api-installer.test.ts'
         ])
       )
     }
@@ -472,14 +460,11 @@ describe('module test impact commands', () => {
     )
 
     expect(plan.mode).toBe('selective')
-    expect(plan.modules).toEqual([
-      'artifact_provenance',
-      'artifact_storage',
-      'project_lifecycle',
-      'session_persistence'
-    ])
+    expect(plan.modules).toEqual(['artifact_storage'])
     expect(plan.testFiles).toContain('src/main/reviewer/ipc.test.ts')
-    expect(plan.reasonChains).toContain('artifact_storage -> artifact_provenance')
+    expect(plan.reasonChains).toContain(
+      'artifact_storage -> artifact_provenance -> capability routing only'
+    )
   })
 
   it.each(['src/main/reviewer/reviewer-session-driver.ts'])(
@@ -490,278 +475,123 @@ describe('module test impact commands', () => {
         testFiles: []
       })
 
-      expect([...plan.modules].sort()).toEqual([
-        'artifact_provenance',
-        'project_lifecycle',
-        'reviewer_orchestrator',
-        'session_persistence',
-        'session_replay',
-        'workspace_page',
-        'workspace_runtime'
-      ])
+      expect(plan.modules).toEqual(['reviewer_orchestrator'])
       expect(plan.reasonChains).toEqual(
         expect.arrayContaining([
-          'reviewer_orchestrator -> session_replay',
-          'reviewer_orchestrator -> workspace_runtime',
-          'reviewer_orchestrator -> workspace_page',
-          'reviewer_orchestrator -> artifact_provenance',
-          'reviewer_orchestrator -> artifact_provenance -> session_persistence'
+          'reviewer_orchestrator -> session_replay -> capability routing only',
+          'reviewer_orchestrator -> workspace_runtime -> capability routing only',
+          'reviewer_orchestrator -> workspace_page -> capability routing only',
+          'reviewer_orchestrator -> artifact_provenance -> capability routing only',
+          'reviewer_orchestrator -> artifact_provenance -> session_persistence -> capability routing only'
         ])
       )
       expect(plan.testFiles).toEqual(
         expect.arrayContaining([
-          'src/main/artifacts/provenance-repository.architecture.test.ts',
-          'src/main/session-persistence/coordinator.architecture.test.ts',
-          'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.architecture.test.ts',
-          'src/renderer/src/pages/workspace/workspace-page.architecture.test.ts'
+          'src/main/reviewer/reviewer-orchestrator.architecture.test.ts',
+          'src/main/reviewer/orchestrator-drive.test.ts',
+          'src/main/reviewer/orchestrator.start-contract.test.ts',
+          'src/main/reviewer/lifecycle.test.ts'
         ])
       )
     }
   )
 
   it.each([
-    [
-      'src/main/settings/repository.ts',
-      [
-        'artifact_provenance',
-        'compute_service',
-        'project_lifecycle',
-        'reviewer_orchestrator',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_provider_accounts',
-        'settings_repository',
-        'settings_service_facade',
-        'workspace_page',
-        'workspace_runtime'
-      ]
-    ],
-    [
-      'src/main/settings/compute-grant-port.ts',
-      [
-        'artifact_provenance',
-        'compute_service',
-        'project_lifecycle',
-        'reviewer_orchestrator',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_provider_accounts',
-        'settings_repository',
-        'settings_service_facade',
-        'workspace_page',
-        'workspace_runtime'
-      ]
-    ],
-    [
-      'src/main/settings/provider-accounts.ts',
-      [
-        'artifact_provenance',
-        'project_lifecycle',
-        'reviewer_orchestrator',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_provider_accounts',
-        'settings_service_facade',
-        'workspace_page',
-        'workspace_runtime'
-      ]
-    ],
-    [
-      'src/main/settings/responses-to-chat-completions-bridge.ts',
-      [
-        'artifact_provenance',
-        'project_lifecycle',
-        'reviewer_orchestrator',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_service_facade',
-        'workspace_page',
-        'workspace_runtime'
-      ]
-    ],
-    [
-      'packages/providers/src/responses/request.ts',
-      [
-        'acp_runtime',
-        'artifact_provenance',
-        'compute_service',
-        'desktop_composition',
-        'host_command_runtime',
-        'main_agent_framework',
-        'main_pdf_translation',
-        'main_session_details',
-        'main_web_service',
-        'project_lifecycle',
-        'provider_credentials',
-        'provider_transport',
-        'providers_package',
-        'renderer_acp',
-        'renderer_model_selection',
-        'renderer_settings_state',
-        'reviewer_orchestrator',
-        'reviewer_tool_contracts',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_model_owners',
-        'settings_model_presentation',
-        'settings_operations',
-        'settings_page_composition',
-        'settings_presentation_primitives',
-        'settings_provider_accounts',
-        'settings_provider_resolution',
-        'settings_record_contracts',
-        'settings_repository',
-        'settings_service_facade',
-        'shared_application_contracts',
-        'shared_conversation_contracts',
-        'web_renderer_bridge',
-        'workspace_conversation',
-        'workspace_page',
-        'workspace_previews',
-        'workspace_runtime',
-        'workspace_shell'
-      ]
-    ],
-    [
-      'packages/providers/src/responses/response.ts',
-      [
-        'acp_runtime',
-        'artifact_provenance',
-        'compute_service',
-        'desktop_composition',
-        'host_command_runtime',
-        'main_agent_framework',
-        'main_pdf_translation',
-        'main_session_details',
-        'main_web_service',
-        'project_lifecycle',
-        'provider_credentials',
-        'provider_transport',
-        'providers_package',
-        'renderer_acp',
-        'renderer_model_selection',
-        'renderer_settings_state',
-        'reviewer_orchestrator',
-        'reviewer_tool_contracts',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_model_owners',
-        'settings_model_presentation',
-        'settings_operations',
-        'settings_page_composition',
-        'settings_presentation_primitives',
-        'settings_provider_accounts',
-        'settings_provider_resolution',
-        'settings_record_contracts',
-        'settings_repository',
-        'settings_service_facade',
-        'shared_application_contracts',
-        'shared_conversation_contracts',
-        'web_renderer_bridge',
-        'workspace_conversation',
-        'workspace_page',
-        'workspace_previews',
-        'workspace_runtime',
-        'workspace_shell'
-      ]
-    ],
-    [
-      'packages/providers/src/responses/types.ts',
-      [
-        'acp_runtime',
-        'artifact_provenance',
-        'compute_service',
-        'desktop_composition',
-        'host_command_runtime',
-        'main_agent_framework',
-        'main_pdf_translation',
-        'main_session_details',
-        'main_web_service',
-        'project_lifecycle',
-        'provider_credentials',
-        'provider_transport',
-        'providers_package',
-        'renderer_acp',
-        'renderer_model_selection',
-        'renderer_settings_state',
-        'reviewer_orchestrator',
-        'reviewer_tool_contracts',
-        'session_persistence',
-        'session_replay',
-        'settings_backend_resolution',
-        'settings_model_owners',
-        'settings_model_presentation',
-        'settings_operations',
-        'settings_page_composition',
-        'settings_presentation_primitives',
-        'settings_provider_accounts',
-        'settings_provider_resolution',
-        'settings_record_contracts',
-        'settings_repository',
-        'settings_service_facade',
-        'shared_application_contracts',
-        'shared_conversation_contracts',
-        'web_renderer_bridge',
-        'workspace_conversation',
-        'workspace_page',
-        'workspace_previews',
-        'workspace_runtime',
-        'workspace_shell'
-      ]
-    ],
-    [
-      'src/main/settings/service.ts',
-      ['settings_service_facade', 'workspace_page', 'workspace_runtime']
-    ]
-  ])('expands Settings ownership through real consumers for %s', (path, expectedModules) => {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-      status: 'current',
-      testFiles: []
-    })
+    ['src/main/settings/repository.ts', ['settings_repository']],
+    ['src/main/settings/compute-grant-port.ts', ['settings_repository']],
+    ['src/main/settings/provider-accounts.ts', ['settings_provider_accounts']],
+    ['src/main/settings/responses-to-chat-completions-bridge.ts', ['settings_backend_resolution']],
+    ['packages/providers/src/responses/request.ts', ['providers_package']],
+    ['packages/providers/src/responses/response.ts', ['providers_package']],
+    ['packages/providers/src/responses/types.ts', ['providers_package']],
+    ['src/main/settings/service.ts', ['settings_service_facade']]
+  ])(
+    'selects Settings evidence while retaining platform routing for %s',
+    (path, expectedModules) => {
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+        status: 'current',
+        testFiles: []
+      })
 
-    expect(plan.mode).toBe('selective')
-    expect([...plan.modules].sort()).toEqual(expectedModules)
-    const rootModule = path.startsWith('packages/providers/')
-      ? 'providers_package'
-      : path === 'src/main/settings/repository.ts' ||
-          path === 'src/main/settings/compute-grant-port.ts'
-        ? 'settings_repository'
-        : path === 'src/main/settings/provider-accounts.ts'
-          ? 'settings_provider_accounts'
-          : path === 'src/main/settings/responses-to-chat-completions-bridge.ts'
-            ? 'settings_backend_resolution'
-            : 'settings_service_facade'
-    expect(plan.reasonChains).toEqual(
-      expect.arrayContaining(
-        rootModule === 'settings_service_facade'
-          ? [
-              'settings_service_facade -> workspace_runtime',
-              'settings_service_facade -> workspace_runtime -> workspace_page'
-            ]
-          : [
-              `${rootModule}${rootModule === 'settings_repository' ? ' -> settings_provider_accounts' : ''}${rootModule === 'settings_backend_resolution' ? '' : ' -> settings_backend_resolution'} -> reviewer_orchestrator`,
-              `${rootModule} -> settings_service_facade -> workspace_runtime`
-            ]
+      expect(plan.mode).toBe('selective')
+      expect([...plan.modules].sort()).toEqual(expectedModules)
+      const rootModule = path.startsWith('packages/providers/')
+        ? 'providers_package'
+        : path === 'src/main/settings/repository.ts' ||
+            path === 'src/main/settings/compute-grant-port.ts'
+          ? 'settings_repository'
+          : path === 'src/main/settings/provider-accounts.ts'
+            ? 'settings_provider_accounts'
+            : path === 'src/main/settings/responses-to-chat-completions-bridge.ts'
+              ? 'settings_backend_resolution'
+              : 'settings_service_facade'
+      expect(plan.reasonChains).toEqual(
+        expect.arrayContaining(
+          rootModule === 'settings_service_facade'
+            ? [
+                'settings_service_facade -> workspace_runtime -> capability routing only',
+                'settings_service_facade -> workspace_runtime -> workspace_page -> capability routing only'
+              ]
+            : [
+                `${rootModule}${rootModule === 'settings_repository' ? ' -> settings_provider_accounts' : ''}${rootModule === 'settings_backend_resolution' ? '' : ' -> settings_backend_resolution'} -> reviewer_orchestrator -> capability routing only`,
+                `${rootModule} -> settings_service_facade -> workspace_runtime -> capability routing only`
+              ]
+        )
       )
-    )
-    expect(plan.testFiles).toEqual(
-      expect.arrayContaining([
-        'src/shared/renderer-surface-inventory.test.ts',
-        'src/shared/renderer-surface-matrix.test.ts',
-        'src/shared/web-rpc-contract.test.ts',
-        'src/main/notebook/local-rpc-notebook-adapter.test.ts',
-        'src/main/notebook/local-rpc-server.mcpcall.test.ts',
-        'src/main/notebook/mcp-server.test.ts',
-        'src/main/web-service/http-server.test.ts'
-      ])
-    )
-  })
+      if (rootModule === 'settings_provider_accounts') {
+        expect(plan.testFiles).toEqual(
+          expect.arrayContaining([
+            'src/main/settings/provider-accounts.test.ts',
+            'src/main/settings/provider-runtime-projection.test.ts',
+            'src/main/settings/backend-resolver.test.ts',
+            'src/main/settings/service.providers.test.ts',
+            'src/main/settings/runtime-application-commands.test.ts',
+            'src/shared/renderer-contract-catalog.test.ts'
+          ])
+        )
+        expect(plan.capabilityOverlays).toEqual(
+          expect.arrayContaining(['windows_sensitive', 'settings_ipc', 'renderer_settings'])
+        )
+        expect(plan.fallbackCapabilities).toEqual(['main_runtime', 'renderer_view'])
+        return
+      }
+      const behaviorTests: Record<string, string[]> = {
+        settings_repository: [
+          'src/main/settings/repository.test.ts',
+          'src/main/settings/document-store.test.ts',
+          'src/main/settings/compute-grants.test.ts',
+          'src/shared/renderer-contract-catalog.test.ts'
+        ],
+        settings_backend_resolution: [
+          'src/main/settings/backend-route-planner.test.ts',
+          'src/main/settings/responses-to-chat-completions-bridge.test.ts',
+          'src/main/agent-framework/claude-code.test.ts',
+          'src/main/agent-framework/codex.test.ts',
+          'src/main/agent-framework/opencode.test.ts'
+        ],
+        providers_package: [
+          'packages/providers/src/responses/request.test.ts',
+          'packages/providers/src/responses/response.test.ts',
+          'packages/providers/src/responses/replay.test.ts',
+          'src/main/settings/responses-to-chat-completions-bridge.test.ts'
+        ],
+        settings_service_facade: [
+          'src/main/settings/service.providers.test.ts',
+          'src/main/settings/service.connectors.test.ts',
+          'src/main/settings/application-commands.test.ts',
+          'src/main/settings/runtime-application-commands.test.ts',
+          'src/main/settings/ipc.test.ts'
+        ]
+      }
+      expect(plan.testFiles).toEqual(expect.arrayContaining(behaviorTests[rootModule]))
+      expect(plan.capabilityOverlays).toEqual(expect.arrayContaining(['windows_sensitive']))
+      expect(plan.fallbackCapabilities).toEqual(
+        rootModule === 'providers_package'
+          ? ['main_runtime', 'renderer_view', 'shared_contract']
+          : ['main_runtime', 'renderer_view']
+      )
+    }
+  )
 
   it('fails closed for unknown and destructive changes', () => {
     expect(
@@ -1379,7 +1209,7 @@ describe('Notebook package module boundaries', () => {
         id
       ).toEqual([])
       if (!module.fullTestReason)
-        expect(packageTests(createModuleTestPlan(id, manifest).testFiles), id).toEqual([])
+        expect(packageTests(createModuleTestPlan(id).testFiles), id).toEqual([])
     }
   })
 
@@ -1409,7 +1239,7 @@ describe('Notebook package module boundaries', () => {
       'src/main/notebook/dependency-analysis-adapter.ts',
       'src/main/notebook/scientific-output-analysis.ts'
     ]) {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
       expect(plan.mode).toBe('selective')
       expect(packageTests(plan.testFiles)).toEqual([])
       expect(plan.testFiles).toContain('src/main/notebook/code-risk-admission.test.ts')
@@ -1431,7 +1261,7 @@ describe('Notebook package module boundaries', () => {
     ],
     ['src/main/storage/content-repository.ts', 'src/main/storage/content-repository.test.ts']
   ])('keeps host integrations without upstream package units for %s', (path, integration) => {
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles).toContain(integration)
     expect(packageTests(plan.testFiles)).toEqual([])
@@ -1452,13 +1282,14 @@ describe('Notebook package module boundaries', () => {
   ])(
     'selects only downstream package suites and host integrations for %s',
     (id, path, selected) => {
-      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph, manifest)
+      const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
       expect(plan.mode).toBe('selective')
       for (const candidate of packageModules) {
         const owned = manifest.modules[candidate].testFiles.owner
         if (candidate !== 'notebook_analysis') expect(owned.length).toBeGreaterThan(0)
-        if (selected.includes(candidate))
-          expect(plan.testFiles).toEqual(expect.arrayContaining(owned))
+        if (candidate === id) expect(plan.testFiles).toEqual(expect.arrayContaining(owned))
+        else if (selected.includes(candidate))
+          expect(plan.testFiles.some((test) => owned.includes(test))).toBe(true)
         else
           expect(
             plan.testFiles.filter((test) => owned.includes(test)),
@@ -1472,25 +1303,116 @@ describe('Notebook package module boundaries', () => {
 })
 
 it('separates analysis implementation consumers from broad shared contract consumers', () => {
-  const manifest = loadModuleImpactManifest()
   const graph = { status: 'unavailable-manifest-only', testFiles: [] }
   const implementation = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/dependency-analysis-python.ts', status: 'modified' }],
-    graph,
-    manifest
+    graph
   )
   const contract = createAffectedTestPlan(
     [{ path: 'packages/notebook-analysis/src/contracts.ts', status: 'modified' }],
-    graph,
-    manifest
+    graph
   )
   expect(implementation.modules).toContain('notebook_analysis_engine')
   expect(implementation.modules).not.toContain('notebook_analysis')
   expect(implementation.modules).not.toContain('session_persistence')
-  expect(contract.modules).toEqual(
-    expect.arrayContaining(['notebook_analysis', 'notebook_analysis_engine', 'session_persistence'])
+  expect(contract.modules).toEqual(['notebook_analysis'])
+  expect(contract.testFiles).toEqual(
+    expect.arrayContaining([
+      'packages/notebook-analysis/src/dependency-analysis.contracts.test.ts',
+      'src/main/notebook/analysis-file-evidence.test.ts',
+      'src/main/notebook/serialized-file-provenance.test.ts'
+    ])
   )
-  expect(contract.testFiles).toEqual(expect.arrayContaining(implementation.testFiles))
   expect(implementation.testFiles).toContain('src/main/notebook/analysis-file-evidence.test.ts')
   expect(implementation.testFiles).toContain('src/main/notebook/serialized-file-provenance.test.ts')
+})
+
+it('separates reviewed dependency tests from inherited platform routing, including mixed edits', () => {
+  const boundary = {
+    ownerPaths: ['src/shared/fuzzy-match.ts'],
+    interfacePaths: ['src/shared/fuzzy-match.ts'],
+    consumerModules: ['host_command_runtime'],
+    testFiles: {
+      owner: [],
+      contract: ['src/shared/behavior.test.ts'],
+      consumer: ['src/shared/known.test.ts']
+    },
+    capabilityOverlays: ['notebook_network_sandbox'],
+    fallbackCapability: 'shared_contract'
+  }
+  const host = {
+    ownerPaths: ['src/main/host.ts'],
+    interfacePaths: ['src/main/host.ts'],
+    consumerModules: [],
+    testFiles: {
+      owner: ['src/main/host.test.ts'],
+      contract: [],
+      consumer: ['src/main/unrelated.test.ts']
+    },
+    capabilityOverlays: ['windows_sensitive', 'e2e_regressions'],
+    fallbackCapability: 'main_runtime'
+  }
+  const manifest = {
+    schemaVersion: 1,
+    modules: { shared_fuzzy_match: boundary, host_command_runtime: host }
+  }
+  const graph = { status: 'not-used', testFiles: ['src/shared/graph.test.ts'] }
+  const changes = [{ path: 'src/shared/fuzzy-match.ts', status: 'modified' }]
+  const plan = createAffectedTestPlan(changes, graph, manifest)
+  expect(plan.mode).toBe('selective')
+  expect(plan.modules).toEqual(['shared_fuzzy_match'])
+  expect(plan.testFiles).toEqual([
+    'src/shared/behavior.test.ts',
+    'src/shared/graph.test.ts',
+    'src/shared/known.test.ts'
+  ])
+  expect(plan.capabilityOverlays).toEqual([
+    'e2e_regressions',
+    'notebook_network_sandbox',
+    'windows_sensitive'
+  ])
+  expect(plan.fallbackCapabilities).toEqual(['main_runtime', 'shared_contract'])
+  expect(plan.reasonChains).toContain(
+    'shared_fuzzy_match -> host_command_runtime -> capability routing only'
+  )
+  const mixed = createAffectedTestPlan(
+    [...changes, { path: 'src/main/host.ts', status: 'modified' }],
+    graph,
+    manifest
+  )
+  expect(mixed.testFiles).toEqual(
+    expect.arrayContaining(host.testFiles.owner.concat(host.testFiles.consumer))
+  )
+  expect(mixed.modules).toEqual(['shared_fuzzy_match', 'host_command_runtime'])
+  expect(
+    createAffectedTestPlan(changes, graph, {
+      ...manifest,
+      modules: {
+        ...manifest.modules,
+        shared_fuzzy_match: { ...boundary, fullTestReason: 'Opaque runtime dependency' }
+      }
+    }).mode
+  ).toBe('full')
+})
+
+it.each([
+  [
+    'src/main/literature/command-owner.ts',
+    'src/renderer/src/pages/literature/detail/LiteratureFullTextLookup.render.test.tsx'
+  ],
+  [
+    'src/main/session-persistence/coordinator.ts',
+    'src/renderer/src/hooks/useLifecycleSync.test.tsx'
+  ],
+  [
+    'src/main/tags/repository.ts',
+    'src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationsProvider.test.tsx'
+  ]
+])('preserves the explicit command or event consumer for %s', (path, test) => {
+  const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+    status: 'not-used',
+    testFiles: []
+  })
+  expect(plan.mode).toBe('selective')
+  expect(plan.testFiles).toContain(test)
 })

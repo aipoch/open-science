@@ -22,7 +22,7 @@
       "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
       "src/renderer/src/pages/workspace/session-artifact-download-data.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/main/literature/library-tool-contracts.test.ts",
       "src/main/literature/scale-regressions.test.ts",

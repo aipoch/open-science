@@ -47,11 +47,9 @@ import {
   createSessionPlanPreviewItem,
   usePreviewWorkbenchStore
 } from '@/stores/preview-workbench-store'
-import {
-  projectSessionActionability,
-  useSessionStore,
-  type ChatSession
-} from '@/stores/session-store'
+import { projectSessionActionability } from '@/stores/session-actionability'
+import { useSessionStore } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import { useSettingsStore } from '@/stores/settings-store'
 import { useSpecialistStore } from '@/stores/specialist-store'
 import { resolveEffectiveSpecialistSkills } from '@aipoch/specialists'

@@ -1,4 +1,4 @@
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 import { useTranslation } from 'react-i18next'
 
 import { WorkspaceActivityIcon } from './WorkspaceActivityIcon'

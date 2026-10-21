@@ -40,12 +40,8 @@ import { createPreviewFileItemFromArtifact } from '../../pages/workspace/preview
 import { getPreviewFormatForFile } from '../../pages/workspace/preview-support'
 import { useNavigationStore } from '../../stores/navigation-store'
 import { usePreviewWorkbenchStore } from '../../stores/preview-workbench-store'
-import {
-  toPersistedSession,
-  useSessionStore,
-  type ChatSession,
-  type ToolActivity
-} from '../../stores/session-store'
+import { toPersistedSession, useSessionStore } from '../../stores/session-store'
+import type { ChatSession, ToolActivity } from '../../stores/session-store-contract'
 import {
   hydratePersistedSessionIfPresent,
   loadPersistedSession,

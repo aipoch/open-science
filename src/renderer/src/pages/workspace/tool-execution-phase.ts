@@ -1,6 +1,6 @@
 import type { SessionPermissionRuntimeContext } from '../../../../shared/session-persistence'
 import type { NotebookRunRecord } from '../../../../shared/notebook'
-import type { ToolActivity } from '@/stores/session-store'
+import type { ToolActivity } from '@/stores/session-store-contract'
 
 import { readNotebookCodeReview, notebookInput } from './notebook-tool-presentation'
 import { isNotebookExecuteToolName } from './notebook-tool-names'

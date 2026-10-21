@@ -102,6 +102,16 @@ brew install aipoch/tap/open-science
 
 この Formula は Node を同梱し、デスクトップアプリなしで動作します。バージョンはデスクトップ Cask と異なる場合があります。前提条件と更新方法は[スタンドアロン実行環境ガイド](../standalone-runtime.md)を参照してください。
 
+独立した CLI と Web UI は、**Node.js 22.13.0 以降**で公開済みの [npm パッケージ](https://www.npmjs.com/package/@aipoch/open-science)からインストールできます：
+
+```bash
+npm install --global @aipoch/open-science
+open-science start --no-open
+open-science url
+```
+
+表示された URL を開いて設定を完了するか、[ターミナル設定ガイド](../../packages/open-science/CLI.md#first-run-setup-codex)に従ってください。npm は macOS ARM64/x64、glibc を使用する Linux ARM64/x64、Windows x64 に対応し、デスクトップアプリは不要です。npm のオプション依存関係を有効にして、[Linux の前提条件と更新手順](../standalone-runtime.md#install-from-npm)を確認してください。URL には認証トークンが含まれるため、共有しないでください。
+
 Windows での再インストールでは研究データが保持されます。完全に初期化する場合は、確認後にローカルデータを完全削除する[データリセットツール](../../scripts/windows-reset/README.md)を参照してください。
 
 ### 2. 初回設定を完了する
@@ -331,7 +341,7 @@ npm run pack:backend
 
 Web UI は通常の Node バックエンドで動作し、Electron や画面環境は不要です。`npm run dev:web` と `npm run dev:headless` はバックエンドと Web UI をビルドして起動し、デスクトップやトレイを起動しません。`OPEN_SCIENCE_WEB_PORT` でポートを指定します（既定値 `44100`）。Ctrl+C でフォアグラウンドサービスを正常終了します。
 
-ソース開発には Node.js 24 が必要です。独立 npm tarball は Node >=22.13.0、軽量 CLI/SDK は Node >=22.5 が必要です。Release アーカイブ、Homebrew Formula、デスクトップのコマンドランチャーはランタイムを同梱します。
+ソース開発には Node.js 24 が必要です。公開済みの npm パッケージとローカルでビルドした独立 tarball には Node.js >=22.13.0 が必要です。Release アーカイブ、Homebrew Formula、デスクトップのコマンドランチャーはランタイムを同梱します。
 
 デスクトップとブラウザーは同じサービスを共有します。デスクトップ終了時は自分で起動したバックエンドだけを停止し、CLI が起動したサービスからは切断するだけです。
 

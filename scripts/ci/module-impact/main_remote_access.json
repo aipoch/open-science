@@ -35,7 +35,8 @@
     "contract": [
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/acp/runtime-coordinator.test.ts",
@@ -47,8 +48,6 @@
       "src/main/application-command-composition.test.ts",
       "src/main/application-command-electron-adapter.test.ts",
       "src/main/host-application-commands.test.ts",
-      "src/main/index-fatal-errors.test.ts",
-      "src/main/index-startup-failure.test.ts",
       "src/main/literature/scale-regressions.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/settings/bootstrap.integration.test.ts",
@@ -69,7 +68,9 @@
       "src/main/desktop-runtime-session-size.integration.test.ts",
       "src/main/notebook-payload.integration.test.ts",
       "src/main/web-service/session-payload.integration.test.ts",
-      "src/main/desktop-runtime-controller.integration.test.ts"
+      "src/main/desktop-runtime-controller.integration.test.ts",
+      "src/main/index-fatal-errors.test.ts",
+      "src/main/index-startup-failure.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

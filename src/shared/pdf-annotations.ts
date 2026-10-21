@@ -9,7 +9,8 @@ import {
   type PdfBookmarkRegionSelector,
   type PdfBookmarkPageNoteSelector,
   type PdfBookmarkDocumentNoteSelector,
-  type PdfMarkKind
+  type PdfMarkKind,
+  type PdfMarkColor
 } from './pdf-bookmarks'
 import { sanitizePdfDocumentSource, type PdfDocumentSource } from './pdf-document-source'
 
@@ -24,6 +25,17 @@ export type PdfAnnotationSelector =
   | Omit<PdfBookmarkRegionSelector, 'markKind' | 'color' | 'tags'>
   | PdfBookmarkPageNoteSelector
   | PdfBookmarkDocumentNoteSelector
+export type PdfNativeAnnotationDraft = Readonly<{
+  nativeId?: string
+  stableKey: string
+  pageNumber: number
+  kind: PdfAnnotationKind
+  selector: PdfAnnotationSelector
+  color: PdfMarkColor
+  note: string
+  subtype: string
+}>
+
 export type PdfAnnotationTarget = Readonly<{
   source: PdfAnnotationSource
   selector: PdfAnnotationSelector

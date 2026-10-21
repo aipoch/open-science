@@ -1,5 +1,6 @@
+import type { AgentProcessSpawner } from '../node-process-host'
 import type { ClientConnection, McpServer, SessionModeState } from '@agentclientprotocol/sdk'
-import type { ChildProcessWithoutNullStreams, SpawnOptionsWithoutStdio } from 'node:child_process'
+import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 
 import type { AcpModelStepTokenUsage } from '../../shared/acp-usage-contract'
 import type { GrantedLocalRoot } from '../../shared/local-fs'
@@ -207,13 +208,7 @@ export type SessionSetup = {
 
 export type ProxyEnvironmentMode = 'inherit' | 'replace'
 
-// Already-resolved spawn inputs: env and args come from prepareModelConfig merged over the base
-// process env; configFiles are written by the runtime before this call.
-export type AgentProcessSpawner = (
-  command: string,
-  args: readonly string[],
-  options: SpawnOptionsWithoutStdio & { stdio: 'pipe' }
-) => ChildProcessWithoutNullStreams
+export type { AgentProcessSpawner } from '../node-process-host'
 
 export type AgentSpawnInput = {
   // Injected only for app-owned delegated launches, after framework-specific preparation.

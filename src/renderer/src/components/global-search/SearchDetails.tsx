@@ -12,7 +12,7 @@ import {
   useProjectFilePreviewReader,
   useProjectFilePreviews
 } from '@/pages/workspace/project-files-preview-owner'
-import type { PreviewFileItem } from '@/stores/preview-workbench-store'
+import type { PreviewFileItem } from '@/stores/preview-workbench-contract'
 import type { LiteratureItemView } from '@aipoch/literature-library/contracts'
 import { ArrowUpRight, File, LoaderCircle, MessageCircle } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'

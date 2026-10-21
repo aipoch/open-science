@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import type { TFunction } from 'i18next'
 
-import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-store'
+import type { PreviewFileFormat, PreviewFileSource } from '@/stores/preview-workbench-contract'
 
 import { LocalFileFallbackAction } from '../LocalFileHeaderActions'
 import { ManagedFileDownloadButton } from '../ManagedFileDownloadButton'

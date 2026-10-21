@@ -138,11 +138,14 @@ describe('Provider runtime projection ownership', () => {
       'src/main/settings/provider-runtime-projection.architecture.test.ts',
       'src/main/settings/xai-oauth.test.ts',
       'src/main/settings/xai-provider-account-owner.test.ts',
-      'src/main/settings/codex-auth.test.ts',
       'src/main/settings/claude-isolated-auth.test.ts',
       'src/main/settings/claude-shared-auth.test.ts',
       'src/main/settings/validate.test.ts',
-      'src/main/settings/list-models.test.ts',
+      'src/main/settings/list-models.test.ts'
+    ])
+    // Credential storage has its own owner; account-specific contracts do not propagate backwards.
+    expectBoundaryOwnerTests(manifest, 'provider_credentials', [
+      'src/main/settings/codex-auth.test.ts',
       'src/main/settings/crypto.test.ts',
       'src/main/settings/provider-env.test.ts'
     ])

@@ -6,7 +6,7 @@ import {
 } from '../../../../shared/session-persistence'
 import type { AgentFrameworkId, AgentFrameworkView } from '../../../../shared/settings'
 import { setDelegationPolicyAuthority } from '@/lib/session-persistence/session-persistence'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 
 type WorkspaceSessionDelegationControlOwnerOptions = Readonly<{
   activeSession: ChatSession | undefined

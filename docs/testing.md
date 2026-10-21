@@ -72,10 +72,13 @@ exclusions, retained boundary reasons, deferrals, capabilities and fallback reas
 `node scripts/ci/module-relationships.mjs <revision>` exports all registered modules with file-role
 layers, public interfaces, test counts, unresolved runtime files and file evidence for each edge.
 Runtime imports, type imports and explicit dynamic contracts point **consumer → dependency**;
-`test-routing` points **changed owner → consumer evidence**. These graphs must not be conflated.
-Layers describe file roles; a mixed legacy module can occupy several roles. The architecture guard
-prevents foundation dependencies, shared-to-host/presentation imports, owner-to-composition imports
-and private imports across the PDF/isolated-helper public boundaries. It does not claim complete
+`test-routing` points **changed owner → consumer evidence**, while `capability-routing` points
+**changed owner → platform/fallback obligations only** for reviewed source-derived boundaries. These graphs must not be conflated.
+Layers describe file roles; a mixed legacy module can occupy several roles. The classifier is shared
+with trusted consumer validation; see the [reviewed layer rules](ci.md#reviewed-source-derived-boundaries). The architecture guard
+prevents foundation dependencies, shared-to-host/presentation imports, owner-to-composition imports,
+repository-to-command imports, infrastructure-to-service imports, and private imports across the
+PDF/isolated-helper public boundaries. Mixed owners retain per-file roles and low-level purity checks. It does not claim complete
 encapsulation of every existing domain.
 
 Static diagnostics and selection use different engines: `npm run analyze:test-impact --
@@ -87,7 +90,10 @@ executed; IPC, events and filesystem relationships still need explicit contracts
 The derived-consumer reader also follows literal relative and renderer-alias imports of SVG, PNG,
 JPEG, GIF, WebP, AVIF, ICO and CSS files, including `?raw`, `?url`, `?inline`, `?no-inline` and
 fragment suffixes. These edges add consumers but remain incomplete for retirement/pruning:
-resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Computed
+resource contents, CSS imports/URLs and arbitrary loader plugins are not analyzed. Reviewed
+source-derived boundaries may instead pin exact asset inputs and resource behavior tests under
+[the explicit resource rules](ci.md#reviewed-source-derived-boundaries); that policy is not an
+independent-history proof. Computed
 imports and unsupported query combinations retain uncertainty. Resource consumers can be registered
 explicitly in their owning module; the generated index stores only additional memberships.
 Tests that read resource contents through filesystem APIs such as `readFileSync` need explicit
@@ -200,7 +206,9 @@ Before committing:
   Preserve explicit consumer contracts, including IPC, event and filesystem relationships;
   static reachability alone does not prove behavioral coverage or justify removing a contract.
 - Keep public boundaries in `interfacePaths`, including test files that export helpers used by other
-  tests. Keep `consumerModules` accurate for module-to-module relationships; it does not replace
+  tests. Keep `consumerModules` accurate for module-to-module relationships (reviewed
+  [source-derived boundaries](ci.md#reviewed-source-derived-boundaries) retain these edges only
+  for capability routing); it does not replace
   explicit test evidence. Native/worker loading edges use `scripts/ci/module-runtime-consumers.json`.
   IPC, events, filesystem protocols and other dynamic relationships still need explicit contract
   tests; static analysis cannot prove them all.

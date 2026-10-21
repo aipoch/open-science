@@ -1,4 +1,4 @@
-import type { PreviewFileFormat } from '@/stores/preview-workbench-store'
+import type { PreviewFileFormat } from '@/stores/preview-workbench-contract'
 
 // Single source of truth for which managed-file extensions the preview panel can render inline.
 // Add an entry here and a matching file renderer to light up a new previewable format.

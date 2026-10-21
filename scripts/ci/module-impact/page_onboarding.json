@@ -37,7 +37,7 @@
       "src/renderer/src/pages/onboarding/ProviderStep.render.test.tsx",
       "src/renderer/src/pages/onboarding/startup-gate.test.ts"
     ],
-    "contract": [],
+    "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
     "consumer": [
       "src/renderer/src/App.test.tsx",
       "src/renderer/src/main.render.test.tsx",

@@ -1,4 +1,4 @@
-import type { PreviewPanelState } from '@/stores/preview-workbench-store'
+import type { PreviewPanelState } from '@/stores/preview-workbench-contract'
 
 export const FOLLOW_SCROLL_EDGE_PX = 8
 

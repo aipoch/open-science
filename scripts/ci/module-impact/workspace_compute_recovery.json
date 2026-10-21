@@ -18,7 +18,8 @@
       "src/preload/index.test.ts",
       "src/renderer/web/api-installer.test.ts",
       "src/shared/remote-fs.test.ts",
-      "src/shared/renderer-contract-catalog.test.ts"
+      "src/shared/renderer-contract-catalog.test.ts",
+      "src/main/host-layer-dependencies.architecture.test.ts"
     ],
     "consumer": [
       "src/main/acp/application-commands.test.ts",
