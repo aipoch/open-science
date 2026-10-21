@@ -125,7 +125,8 @@ for (const viewport of [
     }
     await page.evaluate(() => window.dispatchEvent(new Event('package-fixture-inspected')))
     await expect(dialog.getByRole('button', { name: 'Import', exact: true })).toBeVisible()
-    expect((await dialog.boundingBox())!.height).toBe(Math.min(560, viewport.height * 0.85))
+    expect((await dialog.boundingBox())!.height).toBe(Math.min(440, viewport.height * 0.85))
+    await dialog.screenshot({ path: testInfo.outputPath('import-compact-review.png') })
     expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
     await dialog.getByRole('button', { name: 'Import', exact: true }).click()
     await expect(dialog.getByRole('status')).toHaveText('Importing research…')
@@ -160,7 +161,16 @@ for (const viewport of [
             ? { imported: { projectId: 'cancer', sessionId: 'imported' } }
             : undefined
       })
-      await expectCompact()
+      if (state === 'succeeded') {
+        await expect(dialog).toHaveCSS(
+          'height',
+          `${Math.min(viewport.width < 640 ? 400 : 280, viewport.height * 0.85)}px`
+        )
+        expect(await dialog.evaluate((element, before) => element === before, original)).toBe(true)
+        await expect(
+          dialog.getByRole('button', { name: 'Open imported Session', exact: true })
+        ).toBeInViewport()
+      } else await expectCompact()
       await expect(steps.locator('[aria-current]')).toHaveCount(0)
       await expect(steps.locator('svg')).toHaveCount(state === 'succeeded' ? 3 : 0)
     }
@@ -194,8 +204,8 @@ test('sensitive export review reserves room for the warning and acknowledgement'
 })
 
 for (const flow of [
-  { kind: 'export', query: '', action: 'Choose save location…' },
-  { kind: 'import', query: '?import=review', action: 'Import' }
+  { kind: 'export', query: '', action: 'Choose save location…', reviewHeight: 560 },
+  { kind: 'import', query: '?import=review', action: 'Import', reviewHeight: 440 }
 ]) {
   test(`${flow.kind} smoothly contracts once after selection and honors reduced motion`, async ({
     page
@@ -204,7 +214,7 @@ for (const flow of [
     await page.emulateMedia({ reducedMotion: 'no-preference' })
     await page.goto(`/session-package.html${flow.query}`)
     const dialog = page.getByRole('dialog')
-    await expect(dialog).toHaveCSS('height', '560px')
+    await expect(dialog).toHaveCSS('height', `${flow.reviewHeight}px`)
     await expect(dialog).toHaveCSS('transition-property', 'height')
     await expect(dialog).toHaveCSS('transition-duration', '0.2s')
     await dialog.evaluate((element) => {
@@ -226,7 +236,7 @@ for (const flow of [
     await expect(dialog).toHaveCSS('height', '400px')
     await expect(dialog).toHaveAttribute('data-height-samples')
     const heights = JSON.parse((await dialog.getAttribute('data-height-samples'))!) as number[]
-    expect(heights.some((height) => height > 400 && height < 560)).toBe(true)
+    expect(heights.some((height) => height > 400 && height < flow.reviewHeight)).toBe(true)
     expect(heights.at(-1)).toBe(400)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await expect(dialog).toHaveCSS('transition-property', 'none')

@@ -900,9 +900,14 @@ export const SessionPackageOperation = (): React.JSX.Element | null => {
             }}
             className={dialogPanelClassName(
               'flex max-h-[min(85svh,800px,var(--windows-content-max-height))] w-[min(560px,calc(100vw-2rem))] flex-col overflow-hidden p-0 [@media(max-height:500px)]:[&>div]:py-3',
-              selecting || Boolean(operation.sensitiveContent?.length)
+              Boolean(operation.sensitiveContent?.length) ||
+                (selecting && operation.kind !== 'import')
                 ? 'h-[min(85svh,560px)]'
-                : operation.kind !== 'fork' && 'h-[min(85svh,400px)]',
+                : operation.kind === 'import' && selecting
+                  ? 'h-[min(85svh,440px)]'
+                  : operation.kind === 'import' && operation.state === 'succeeded'
+                    ? 'h-[min(85svh,400px)] sm:h-[min(85svh,280px)]'
+                    : operation.kind !== 'fork' && 'h-[min(85svh,400px)]',
               operation.kind !== 'fork' &&
                 'transition-[height] duration-200 ease-out motion-reduce:transition-none'
             )}
