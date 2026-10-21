@@ -7,7 +7,7 @@ index 97fe1bace..6eb8a9adb 100644
                      break;
                  case "tblBorders":
 +                    // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
-+                    // docxjs#221 / #235 and patches/docx-preview.md for removal criteria.
++                    // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
 +                    (childStyle || style).$tableBorders = this.parseTableBorders(c);
                      this.parseBorderProperties(c, childStyle || style);
                      break;
@@ -176,7 +176,7 @@ index 535ac9abc..3fef74985 100644
                          break;
                      case "tblBorders":
 +                        // UPSTREAM(docx-preview 0.4.0): retain insideH/insideV separately; see
-+                        // docxjs#221 / #235 and patches/docx-preview.md for removal criteria.
++                        // docxjs#221 / #235 and patches/docx-preview+0.4.0.local-workaround.md for removal criteria.
 +                        (childStyle || style).$tableBorders = this.parseTableBorders(c);
                          this.parseBorderProperties(c, childStyle || style);
                          break;
