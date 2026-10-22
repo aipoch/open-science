@@ -30099,6 +30099,81 @@ describe('Specialist Skill scoping', () => {
   })
 
   it.each([
+    [claudeCodeFramework, 'claude-anthropic'],
+    [opencodeFramework, 'opencode-anthropic'],
+    [opencodeFramework, 'opencode-openai'],
+    [codeBuddyFramework, 'codebuddy-openai']
+  ] as const)(
+    'applies consecutive unprompted Specialist selections with %s (%s)',
+    async (framework, modelRoute) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['original', 'first', 'second', 'main', 'third'])
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/fixture/agent',
+          env: {},
+          modelRoute
+        }),
+        resolveSpecialistIdentity: async (id) => ({
+          append: `IDENTITY_${id}`,
+          prefix: `IDENTITY_${id}`
+        })
+      })
+      let persisted: { specialistId?: string; specialistBindingPending?: true } = {}
+      const reconfiguration = new SessionSpecialistReconfiguration({
+        sessionBinding: {
+          resolve: async () => ({ kind: 'main' }),
+          setBinding: vi.fn(),
+          clearSession: vi.fn()
+        },
+        loadBinding: async () => persisted,
+        persistBinding: async (_id, specialistId, pending) => {
+          persisted = {
+            specialistId,
+            ...(pending ? { specialistBindingPending: true as const } : {})
+          }
+        },
+        applyRuntime: (id, target) => runtime.switchSpecialist(id, target)
+      })
+      try {
+        const { sessionId } = await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project'
+        })
+        for (const target of ['first', 'second', undefined, 'third']) {
+          await expect(reconfiguration.requestSwitch(sessionId, target)).resolves.toEqual({
+            status: 'applied',
+            contextReset: framework.id === 'claude-code'
+          })
+          expect(persisted.specialistId).toBe(target)
+          expect(persisted.specialistBindingPending).toBeUndefined()
+          await expect(reconfiguration.assertUserPromptReady(sessionId)).resolves.toBeUndefined()
+        }
+        // Switching itself never tries to resume unprompted provider history on these frameworks.
+        expect(agent.resumedSessions).toHaveLength(0)
+        expect(agent.newSessions).toHaveLength(framework.id === 'claude-code' ? 5 : 1)
+        await runtime.sendPrompt({ sessionId, text: 'Continue after the selections' })
+        expect(agent.prompts[0]?.sessionId).toBe(
+          framework.id === 'claude-code' ? 'third' : 'original'
+        )
+        const identity =
+          framework.id === 'claude-code'
+            ? JSON.stringify(agent.newSessions.at(-1)?._meta)
+            : agent.prompts[0]?.text
+        expect(identity).toContain('IDENTITY_third')
+        expect(identity).not.toContain('IDENTITY_first')
+        expect(identity).not.toContain('IDENTITY_second')
+        expect(runtime.liveSessionProjectId(sessionId)).toBe('project')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it.each([
     ['codex-responses', false],
     ['codex-responses', true],
     ['codex-bridge', false],

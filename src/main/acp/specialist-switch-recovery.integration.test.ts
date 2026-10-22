@@ -11,6 +11,8 @@ vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } 
 
 import { claudeCodeFramework } from '../agent-framework/claude-code'
 import { createCodexFramework } from '../agent-framework/codex'
+import { opencodeFramework } from '../agent-framework/opencode'
+import { codeBuddyFramework } from '../agent-framework/codebuddy'
 import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
@@ -133,6 +135,146 @@ it
     })
   },
   30_000
+)
+
+it.for([
+  { framework: claudeCodeFramework, modelRoute: 'claude-anthropic' },
+  { framework: opencodeFramework, modelRoute: 'opencode-anthropic' },
+  { framework: opencodeFramework, modelRoute: 'opencode-openai' },
+  { framework: codeBuddyFramework, modelRoute: 'codebuddy-openai' }
+] as const)(
+  'applies consecutive unprompted Specialist selections through real $modelRoute',
+  { timeout: 30_000 },
+  async ({ framework, modelRoute }, context) => {
+    const executablePath =
+      framework.id === 'claude-code'
+        ? createRequire(import.meta.url).resolve(
+            `@anthropic-ai/claude-agent-sdk-${process.platform}-${process.arch}/${process.platform === 'win32' ? 'claude.exe' : 'claude'}`
+          )
+        : framework.id === 'opencode'
+          ? process.env.OPENCODE_ACP_PATH
+          : process.env.CODEBUDDY_ACP_PATH
+    if (!executablePath) return context.skip()
+    const root = await mkdtemp(join(tmpdir(), 'specialist-unprompted-'))
+    let disconnectRuntime = async (): Promise<void> => undefined
+    onTestFinished(async () => {
+      try {
+        await disconnectRuntime()
+      } finally {
+        await rm(root, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 })
+      }
+    })
+    const cwd = join(root, 'project')
+    await mkdir(cwd)
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        key: 'synthetic-no-inference-key',
+        apiEndpoints: modelRoute.endsWith('anthropic') ? ['messages'] : ['chat-completions'],
+        model: modelRoute.endsWith('anthropic') ? 'claude-sonnet-4-5' : 'probe-model'
+      },
+      { storageRoot: root, executablePath }
+    )
+    for (const file of config.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content)
+    }
+    const env: Record<string, string> = {}
+    for (const key of [
+      'PATH',
+      'Path',
+      'SYSTEMROOT',
+      'SystemRoot',
+      'WINDIR',
+      'COMSPEC',
+      'PATHEXT',
+      'TEMP',
+      'TMP',
+      'TMPDIR',
+      'LANG',
+      'LC_ALL'
+    ]) {
+      if (process.env[key] !== undefined) env[key] = process.env[key]!
+    }
+    Object.assign(env, {
+      HOME: root,
+      USERPROFILE: root,
+      APPDATA: join(root, 'appdata'),
+      LOCALAPPDATA: join(root, 'local-appdata'),
+      XDG_CONFIG_HOME: join(root, 'xdg-config'),
+      XDG_DATA_HOME: join(root, 'xdg-data'),
+      XDG_CACHE_HOME: join(root, 'xdg-cache'),
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: '1',
+      // Exercise native session lifecycle without remote catalogs or cold plugin dependency installs.
+      // App plugin behavior is covered separately by the OpenCode framework integration tests.
+      OPENCODE_DISABLE_MODELS_FETCH: '1',
+      OPENCODE_DISABLE_DEFAULT_PLUGINS: '1',
+      OPENCODE_PURE: '1',
+      ELECTRON_RUN_AS_NODE: '1',
+      ...config.env
+    })
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: cwd,
+      resolveBackend: () => ({
+        framework: {
+          ...framework,
+          spawn: (input) =>
+            framework.spawn({
+              ...input,
+              spawnProcess: (command, args, options) =>
+                spawn(command, args, { ...options, env, cwd })
+            })
+        },
+        executablePath,
+        args: config.args,
+        env,
+        authentication: config.authentication,
+        providerConfiguration: config.providerConfiguration,
+        modelRoute,
+        sessionOptions: {
+          settingSources: [],
+          tools: [],
+          strictMcpConfig: true
+        }
+      }),
+      resolveSpecialistIdentity: async (id) => ({
+        append: `Specialist ${id}`,
+        prefix: `Specialist ${id}`
+      })
+    })
+    disconnectRuntime = async () => {
+      await runtime.disconnect()
+    }
+    const { sessionId } = await runtime.createSession({ cwd, projectId: 'contract-project' })
+    let persisted: PersistedSessionSpecialistBinding = {}
+    const reconfiguration = new SessionSpecialistReconfiguration({
+      sessionBinding: {
+        resolve: async () => ({ kind: 'main' }),
+        setBinding: () => undefined,
+        clearSession: () => undefined
+      },
+      loadBinding: async () => persisted,
+      persistBinding: async (_id, specialistId, pending) => {
+        persisted = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime: (id, target) => runtime.switchSpecialist(id, target)
+    })
+    for (const target of ['first', 'second', undefined, 'third']) {
+      await expect(reconfiguration.requestSwitch(sessionId, target)).resolves.toEqual({
+        status: 'applied',
+        contextReset: framework.id === 'claude-code'
+      })
+      expect(persisted.specialistId).toBe(target)
+      expect(persisted.specialistBindingPending).toBeUndefined()
+      await expect(reconfiguration.assertUserPromptReady(sessionId)).resolves.toBeUndefined()
+      expect(runtime.liveSessionProjectId(sessionId)).toBe('contract-project')
+    }
+  }
 )
 
 // Real runtime, ACP adapter and SDK processes; only model inference is deterministic.
