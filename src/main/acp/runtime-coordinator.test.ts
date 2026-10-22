@@ -410,6 +410,50 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it.each(['disconnect', 'shutdown'] as const)(
+    'starts a fresh resume after %s without awaiting the old provider',
+    async (action) => {
+      const oldResume = createDeferred<void>()
+      const freshResume = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const first = created.length === 0
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks,
+          beforeResume: () => (first ? oldResume.promise : freshResume.promise)
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const request = { sessionId: 'thread-1', cwd: '/workspace' }
+      const old = coordinator.resumeSession(request)
+      const oldRejected = expect(old).rejects.toThrow('superseded')
+      await vi.waitFor(() => expect(created[0].resumeSession).toHaveBeenCalledOnce())
+      if (action === 'disconnect') await coordinator.disconnect()
+      else coordinator.shutdown()
+      const fresh = coordinator.resumeSession(request)
+      try {
+        await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledOnce())
+        oldResume.resolve()
+        await oldRejected
+        await expect(
+          coordinator.sendPrompt({ sessionId: 'thread-1', text: 'still adopting' })
+        ).rejects.toThrow('finish resuming')
+      } finally {
+        oldResume.resolve()
+        freshResume.resolve()
+        await oldRejected
+        await fresh
+      }
+      await coordinator.sendPrompt({ sessionId: 'thread-1', text: 'continue' })
+      expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+      expect(created[0].sendPrompt).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves a consumed timeout receipt across failed same-model resume and later model switch', async () => {
     const created: ReturnType<typeof createFakeRuntime>[] = []
     const coordinator = new AcpRuntimeCoordinator((callbacks) => {

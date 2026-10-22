@@ -669,6 +669,7 @@ class AcpRuntimeCoordinator {
     request: AcpResumeSessionRequest,
     pinnedRuntime?: AcpRuntime
   ): Promise<AcpCreateSessionResponse> {
+    const resumeGeneration = this.initializationGeneration
     await this.waitForInitialization()
     // A pinned activity must not reacquire the prior writer while another runtime adopts it.
     if (pinnedRuntime && this.pendingSessionAdoptions.has(request.sessionId)) {
@@ -826,10 +827,11 @@ class AcpRuntimeCoordinator {
     }
 
     if (
-      transfersOwnership &&
-      (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption ||
-        !this.runtimes.has(runtime) ||
-        (this.retiredRuntimes.has(runtime) && !pinnedRuntime))
+      resumeGeneration !== this.initializationGeneration ||
+      (transfersOwnership &&
+        (this.pendingSessionAdoptions.get(request.sessionId) !== pendingAdoption ||
+          !this.runtimes.has(runtime) ||
+          (this.retiredRuntimes.has(runtime) && !pinnedRuntime)))
     ) {
       if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
@@ -2160,6 +2162,8 @@ class AcpRuntimeCoordinator {
 
   private supersedeInitializationRequests(): void {
     this.initializationGeneration += 1
+    for (const queue of this.sessionResumeOperations.values()) queue.invalidated = true
+    this.sessionResumeOperations.clear()
   }
 
   // A committed quit latches admission closed; a live (non-abandoned) teardown only pauses it.
