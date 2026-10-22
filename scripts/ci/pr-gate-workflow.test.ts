@@ -394,8 +394,8 @@ describe('PR Gate workflow', () => {
         mkdirSync(join(root, path, '..'), { recursive: true })
         writeFileSync(join(root, path), contents)
       }
-      const source = 'packages/connector-builtins/src/cancer-models.ts'
-      const test = 'packages/connector-builtins/src/cancer-models.test.ts'
+      const source = 'packages/connector-core/src/engine.ts'
+      const test = 'packages/connector-core/src/engine.test.ts'
       try {
         git('init', '--quiet', '-b', 'main')
         git('config', 'user.email', 'ci@example.com')
@@ -454,7 +454,7 @@ describe('PR Gate workflow', () => {
         }
         if (scenario === 'deleted') git('rm', source)
         else if (scenario === 'renamed')
-          git('mv', source, source.replace('cancer-models', 'renamed-cancer-models'))
+          git('mv', source, source.replace('engine', 'renamed-engine'))
         else if (scenario === 'ci-edit') put('.github/workflows/pr-gate.yml', '# PR CI update\n')
         else {
           put(source, 'export const value = 2\n')
