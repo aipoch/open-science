@@ -30,22 +30,64 @@ const runtimeOptions = {
   externalImports: ['zod', 'node:buffer', 'node:path', 'node:url', 'node:util']
 }
 
+const eventApis = new Set([
+  'on',
+  'once',
+  'off',
+  'emit',
+  'send',
+  'invoke',
+  'handle',
+  'handleOnce',
+  'addEventListener',
+  'removeEventListener',
+  'dispatchEvent'
+])
+const isStringLike = (node) =>
+  ts.isStringLiteral(node) ||
+  ts.isNoSubstitutionTemplateLiteral(node) ||
+  ts.isTemplateExpression(node)
+
 // Channel/event names and persisted-format markers bind consumers by value, not by import.
 function dynamicMarkers(text, path) {
   const markers = []
   const ast = ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true)
+  // Local constants let `emit(NAME)` resolve to the literal it dispatches.
+  const constants = new Map()
+  const collect = (node) => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer)
+      if (isStringLike(node.initializer)) constants.set(node.name.text, node.initializer)
+    ts.forEachChild(node, collect)
+  }
+  ts.forEachChild(ast, collect)
   const visit = (node) => {
-    const literal =
-      ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)
-        ? node.text
-        : ts.isTemplateHead(node)
-          ? node.text
-          : undefined
     const specifier =
       (ts.isImportDeclaration(node.parent) || ts.isExportDeclaration(node.parent)) &&
       node.parent.moduleSpecifier === node
-    if (literal !== undefined && !specifier && /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/.test(literal))
-      markers.push(`name literal ${literal}`)
+    if (!specifier) {
+      if (
+        (ts.isStringLiteral(node) || ts.isNoSubstitutionTemplateLiteral(node)) &&
+        /^[a-z][a-z0-9-]*:[a-z][a-z0-9-]*/.test(node.text)
+      )
+        markers.push(`name literal ${node.text}`)
+      // Every template segment counts: `domain:${id}` and `${id}:open` are channels too.
+      if (
+        (ts.isTemplateHead(node) || ts.isTemplateMiddle(node) || ts.isTemplateTail(node)) &&
+        /[a-z][a-z0-9-]*:|:[a-z][a-z0-9-]*/.test(node.text)
+      )
+        markers.push(`name template ${node.text}`)
+    }
+    // Any name passed to an event/IPC API is bound by value, whatever its shape.
+    const dispatch =
+      (ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        eventApis.has(node.expression.name.text)) ||
+      (ts.isNewExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        /Event$/.test(node.expression.text))
+    const [name] = dispatch ? (node.arguments ?? []) : []
+    const target = name && ts.isIdentifier(name) ? constants.get(name.text) : name
+    if (target && isStringLike(target)) markers.push(`event name ${target.getText()}`)
     ts.forEachChild(node, visit)
   }
   ts.forEachChild(ast, visit)

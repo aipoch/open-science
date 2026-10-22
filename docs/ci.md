@@ -336,7 +336,7 @@ retirement checks described below authorize removing those existing obligations.
 
 Reviewed modules use known source dependencies plus explicit runtime and behavioral
 contracts instead of historical whole-module test inheritance. The exact module cohort and source
-boundaries are trusted policy in `module-derived-consumers.mjs`, not candidate metadata. Pure
+boundaries are trusted policy in `scripts/ci/module-boundaries.json`, not candidate metadata. Pure
 boundaries require a complete runtime-cone check; stateful boundaries require reviewed direct runtime
 imports and mandatory behavior tests. An unknown direct loader or external runtime import requires
 reclassification. This does not prove transitive services or packages pure; their declared contracts
@@ -538,8 +538,9 @@ overlay, fallback and its surviving interfaces. Each moved path needs a unique d
 Shared sources move only into **new** modules that inherit the origin's fallback, overlays,
 downstream module edges and moved interfaces. A new full destination can take any surface.
 A selective destination accepts only static contracts: no runtime-consumer edge, no
-renderer-catalog or generated Web API file, no channel/event-name literal or persisted-format
-marker, and complete direct dependency evidence. Its plan must select every statically reachable
+renderer-catalog or generated Web API file, no channel/event name (a `domain:action` literal or
+template segment, or any name passed to an event/IPC API) or persisted-format marker, and
+complete direct dependency evidence. Its plan must select every statically reachable
 test (outside excluded package roots) and every original explicit test with no static path from
 the origin's sources; those may observe the owner through IPC or files. Regression fixtures may
 move to an existing reader owner only when their fixture routing, lanes and selected tests are

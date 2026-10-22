@@ -35,7 +35,7 @@ type Module = {
   fullTestReason?: string
 }
 
-function fixture() {
+function fixture(sources: Record<string, string> = {}) {
   const cwd = mkdtempSync(join(tmpdir(), 'full-owner-split-'))
   roots.push(cwd)
   const git = (...args: string[]) => execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
@@ -95,6 +95,7 @@ function fixture() {
   put(fixtureData, '{}\n')
   put(unroutedData, '{}\n')
   put('scripts/ci/module-runtime-consumers.json', '{}')
+  for (const [path, text] of Object.entries(sources)) put(path, text)
   save()
   const base = commit()
   // Move one static contract to a new owner and its unproven evidence along with it.
@@ -154,6 +155,32 @@ it.each([
   const state = fixture()
   state.split([path])
   expect(rejected(state.check())).toContain('shared.ownerPaths')
+})
+
+it.each([
+  ['an interpolated channel name', 'export const channel = (id: string) => `example:${id}`'],
+  ['a channel suffix after interpolation', 'export const channel = (id: string) => `${id}:open`'],
+  [
+    'a plain event name passed to an event API',
+    "export const notify = (bus: { emit(name: string): void }) => bus.emit('session-updated')"
+  ],
+  [
+    'a local event-name constant passed to an event API',
+    "const UPDATED = 'session-updated'\nexport const notify = (bus: { send(name: string): void }) => bus.send(UPDATED)"
+  ],
+  ['a constructed DOM event', "export const event = () => new CustomEvent('session-updated')"]
+])('keeps %s on the full owner', (_, text) => {
+  const state = fixture({ [channel]: text })
+  state.split([channel], 'names')
+  expect(rejected(state.check())).toContain('shared.ownerPaths')
+})
+
+it('still moves ordinary kebab-case values that are not dispatched by name', () => {
+  const state = fixture({
+    [value]: "export const kinds = ['project-file', 'image-point'] as const"
+  })
+  state.split()
+  expect(state.check().violations).toEqual([])
 })
 
 it('retains explicit contracts that have no static path from the original sources', () => {
