@@ -194,6 +194,7 @@
     "Single select": "단일 선택",
     "Multi select": "다중 선택",
     "Your conversation is preserved. Try Resume again.": "대화는 보존됩니다. 다시 재개해 보세요.",
+    "Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.": "이전 에이전트의 정리 완료를 확인할 수 없습니다. 대화는 보존되어 있습니다. 새 대화를 시작하거나 재개를 다시 시도할 수 있습니다.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "에이전트가 제시간에 응답하지 않았습니다. 대화는 보존됩니다. 다시 재개해 보세요.",
     "The selected agent could not be attached to this conversation. Try Resume again.": "선택한 에이전트를 이 대화에 연결할 수 없습니다. 다시 재개해 보세요.",
     "Could not resume this conversation": "이 대화를 재개할 수 없습니다",

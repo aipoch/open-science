@@ -421,16 +421,6 @@ for (const stalled of [false, true]) {
           return runs.length
         })
         .toBe(1)
-      const agents = f.trackAgents(f.target)
-      const restartRecovery = process.platform === 'darwin' && !stalled
-      const legacyReceipts = restartRecovery
-        ? new DelegatedProcessOwnership(f.roots.storageRoot, 'main-agent-process-ownership')
-            .receipts()
-            .filter((receipt) => receipt.phase === 'owned' && receipt.ownership?.leader?.birthToken)
-            .sort((a, b) => b.createdAt - a.createdAt)
-            .slice(0, 2)
-        : []
-      if (restartRecovery) expect(legacyReceipts).toHaveLength(2)
       const providerPromptPath = join(
         f.roots.storageRoot,
         'e2e-handoff-captures',
@@ -442,7 +432,31 @@ for (const stalled of [false, true]) {
           .split('\n')
           .filter(Boolean)
           .map((line) => JSON.parse(line))
-      const originalProviderPrompts = restartRecovery ? await readProviderPrompts() : []
+      // A running TaskRun is published before its first ACP prompt reaches the Agent. Wait for
+      // both original submissions so a delayed initial CLI prompt cannot look like restart replay.
+      await expect
+        .poll(async () => {
+          const prompts = await readProviderPrompts()
+          return ['App task A', 'CLI task B'].map(
+            (task) =>
+              prompts.filter((entry) =>
+                entry.prompt.includes(`Hold the turn outcome fixture. ${task}`)
+              ).length
+          )
+        })
+        .toEqual([1, 1])
+      const originalProviderPrompts = await readProviderPrompts()
+      expect(originalProviderPrompts).toHaveLength(2)
+      const agents = f.trackAgents(f.target)
+      const injectLegacyCleanup = process.platform === 'darwin' && !stalled
+      const legacyReceipts = injectLegacyCleanup
+        ? new DelegatedProcessOwnership(f.roots.storageRoot, 'main-agent-process-ownership')
+            .receipts()
+            .filter((receipt) => receipt.phase === 'owned' && receipt.ownership?.leader?.birthToken)
+            .sort((a, b) => b.createdAt - a.createdAt)
+            .slice(0, 2)
+        : []
+      if (injectLegacyCleanup) expect(legacyReceipts).toHaveLength(2)
       expect(processBirthIdentity(f.target.pid)).toBe(f.target.birthToken)
       const processTree = await readProcessTree(f.target.pid)
       expect(processTree.complete).toBe(true)
@@ -615,7 +629,7 @@ for (const stalled of [false, true]) {
         expect(Date.now() - started).toBeGreaterThan(15_000)
         expect(Date.now() - started).toBeLessThan(27_000)
       }
-      if (restartRecovery) {
+      {
         // Recreate the two old, count-only diagnostic receipts from the actual owned launches.
         // Their leaders have exited through the real Stop tasks and quit path. No user records
         // or historical candidate identities are invented, deleted, or used as signal authority.
@@ -734,7 +748,7 @@ for (const stalled of [false, true]) {
         for (const { path, source } of f.retainedReceipts.values())
           expect(await readFile(path, 'utf8')).toBe(source)
         await writeFile(
-          join(evidence, 'app-cli-restart-resume.json'),
+          join(evidence, `app-cli-restart-resume-${stalled}.json`),
           JSON.stringify(
             {
               root: f.root,
@@ -745,7 +759,7 @@ for (const stalled of [false, true]) {
               originalProviderPrompts,
               providerPrompts: await readProviderPrompts(),
               retainedReceiptIds: [...f.retainedReceipts.keys()],
-              strictCleanupBlocked: true
+              strictCleanupBlocked: legacyReceipts.length > 0
             },
             null,
             2
@@ -760,6 +774,137 @@ for (const stalled of [false, true]) {
     }
   })
 }
+
+test('identityless historical cleanup blocks only old context restoration while fresh conversations remain usable', async () => {
+  test.setTimeout(150_000)
+  const f = await launchFixture()
+  let failure: unknown
+  try {
+    const prompt = 'Hold the turn outcome fixture. Identityless'
+    await submitPromptViaUi(f.page, prompt)
+    await expect(
+      f.page.getByText('Turn outcome cancellation checkpoint.', { exact: false })
+    ).toBeVisible()
+    f.trackAgents(f.target)
+    const receipts = new DelegatedProcessOwnership(
+      f.roots.storageRoot,
+      'main-agent-process-ownership'
+    ).receipts()
+    const original = receipts.find((receipt) => receipt.phase === 'owned')
+    expect(original?.ownership?.token).toBeTruthy()
+    if (process.platform !== 'win32') expect(original?.ownership?.leader?.birthToken).toBeTruthy()
+    if (!original) throw new Error('Fixture did not publish an owned agent receipt')
+    const providerPromptPath = join(
+      f.roots.storageRoot,
+      'e2e-handoff-captures',
+      'provider-prompts.jsonl'
+    )
+    const readProviderPrompts = async (): Promise<{ sessionId: string; prompt: string }[]> =>
+      (await readFile(providerPromptPath, 'utf8'))
+        .trim()
+        .split('\n')
+        .filter(Boolean)
+        .map((line) => JSON.parse(line))
+    const beforeQuitPrompts = await readProviderPrompts()
+    await f.app.evaluate(({ app }) => app.quit())
+    await f.page.getByRole('button', { name: 'Stop tasks and quit', exact: true }).click()
+    await expect
+      .poll(() => f.desktopProcess.exitCode !== null || f.desktopProcess.signalCode !== null, {
+        timeout: 30_000
+      })
+      .toBe(true)
+    await expect.poll(() => isRuntimeProcessAlive(f.target.pid), { timeout: 25_000 }).toBe(false)
+    acquireRuntimeDirectorySync(f.roots.storageRoot).release()
+    expect(remainingFixtureAgentReceipts(f.roots.storageRoot)).toEqual([])
+
+    // Reproduce a crash between durable starting publication and process identity publication.
+    // This record carries no signal authority. Keep it byte-for-byte; never invent a PID or
+    // remove evidence merely to let recovery or fixture cleanup pass.
+    const retained = { ...original, phase: 'starting', ownership: undefined }
+    const path = join(
+      f.roots.storageRoot,
+      'main-agent-process-ownership',
+      retained.projectId,
+      retained.sessionId,
+      `${retained.receiptId}.json`
+    )
+    const source = `${JSON.stringify(retained)}\n`
+    await writeFile(path, source, { flag: 'wx', mode: 0o600 })
+    f.retainedReceipts.set(retained.receiptId, { path, source })
+
+    const restarted = await f.restart()
+    expect(restarted.target.generation).not.toBe(f.target.generation)
+    await expect
+      .poll(() => restarted.page.evaluate(() => window.api.desktopRuntime!.getState()))
+      .toMatchObject({ phase: 'connected' })
+    expect(await readProviderPrompts()).toEqual(beforeQuitPrompts)
+    const historical = (
+      await restarted.page.evaluate(() => window.api.sessions.loadAll())
+    ).sessions.find((session) =>
+      session.messages.some((message) => message.role === 'user' && message.content === prompt)
+    )
+    if (!historical) throw new Error('Interrupted fixture Session was not persisted')
+    await restarted.page
+      .getByRole('region', { name: 'Recent sessions' })
+      .getByRole('button', { name: prompt })
+      .click()
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await restarted.page.getByRole('button', { name: 'Resume session', exact: true }).click()
+      await expect(restarted.page.getByTestId('resume-operation-error')).toContainText(
+        'Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.'
+      )
+      expect(await readProviderPrompts()).toEqual(beforeQuitPrompts)
+      expect(await readFile(path, 'utf8')).toBe(source)
+    }
+    const unchanged = (
+      await restarted.page.evaluate(() => window.api.sessions.loadAll())
+    ).sessions.find((session) => session.id === historical.id)!
+    expect(unchanged.providerSessionId).toBe(historical.providerSessionId)
+    expect(unchanged.messages.filter((message) => message.role === 'user')).toEqual(
+      historical.messages.filter((message) => message.role === 'user')
+    )
+
+    await restarted.page.getByRole('button', { name: 'All projects', exact: true }).click()
+    await createProjectViaUi(restarted.page, 'Fresh conversation with retained cleanup evidence')
+    await submitPromptViaUi(restarted.page, 'Summarize the deterministic fixture.')
+    await expect(
+      restarted.page.getByText('Deterministic reply: Summarize the deterministic fixture.', {
+        exact: false
+      })
+    ).toBeVisible({ timeout: 30_000 })
+    const after = await readProviderPrompts()
+    expect(after).toHaveLength(beforeQuitPrompts.length + 1)
+    expect(after.at(-1)!.sessionId).not.toBe(beforeQuitPrompts[0].sessionId)
+    expect(after.at(-1)!.prompt).toContain('Summarize the deterministic fixture.')
+    expect(await readFile(path, 'utf8')).toBe(source)
+    await writeFile(
+      join(evidence, 'identityless-receipt-restart-isolation.json'),
+      JSON.stringify(
+        {
+          root: f.root,
+          build: f.build,
+          previousGeneration: f.target.generation,
+          restartedGeneration: restarted.target.generation,
+          historicalSessionId: historical.id,
+          historicalProviderSessionId: historical.providerSessionId,
+          retainedReceiptIds: [...f.retainedReceipts.keys()],
+          beforeQuitPrompts,
+          providerPrompts: after,
+          explicitResumeRejections: 2,
+          freshConversationSucceeded: true,
+          retainedEvidenceUnchanged: true
+        },
+        null,
+        2
+      )
+    )
+  } catch (error) {
+    failure = error
+    throw error
+  } finally {
+    await f.cleanup(failure)
+  }
+})
 
 test('repeated disconnects preserve drafts; force stop never automatically revives the service', async () => {
   test.setTimeout(150_000)

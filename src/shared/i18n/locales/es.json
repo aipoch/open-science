@@ -196,6 +196,7 @@
     "Single select": "Selección única",
     "Multi select": "Selección múltiple",
     "Your conversation is preserved. Try Resume again.": "Su conversación se conserva. Intente reanudarla de nuevo.",
+    "Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.": "No se pudo confirmar la limpieza del agente anterior. La conversación se conserva. Puede iniciar una nueva conversación o volver a intentar reanudarla.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "El agente no respondió a tiempo. Su conversación se conserva. Intente reanudarla de nuevo.",
     "The selected agent could not be attached to this conversation. Try Resume again.": "No se pudo conectar el agente seleccionado a esta conversación. Intente reanudarla de nuevo.",
     "Could not resume this conversation": "No se pudo reanudar esta conversación",

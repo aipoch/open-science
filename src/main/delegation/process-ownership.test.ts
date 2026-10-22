@@ -522,7 +522,7 @@ describe('durable delegated process ownership', () => {
   })
 
   describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
-    'main-agent connection admission with retained candidate evidence',
+    'old provider-session recovery with retained candidate evidence',
     () => {
       const candidate = async (owner: DelegatedProcessOwnership): Promise<string> => {
         owner.recordFailure(scope)
@@ -559,7 +559,6 @@ describe('durable delegated process ownership', () => {
         )
         return path
       }
-      const spawned = (): ChildProcessWithoutNullStreams => ({}) as ChildProcessWithoutNullStreams
 
       it('admits a fresh connection after read-only proof while preserving byte-exact legacy receipts and strict cleanup gates', async () => {
         const owner = await setup()
@@ -568,9 +567,10 @@ describe('durable delegated process ownership', () => {
         const proof = vi
           .spyOn(processTree, 'proveRecordedPosixLeaderGone')
           .mockResolvedValue('gone')
-        const spawn = vi.fn(spawned)
         try {
-          await expect(owner.admitMainAgentConnection(spawn)).resolves.toEqual({})
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).resolves.toBeUndefined()
           expect(proof).toHaveBeenCalledExactlyOnceWith(
             expect.objectContaining({ pid: 1000 }),
             expect.any(String),
@@ -579,7 +579,6 @@ describe('durable delegated process ownership', () => {
             undefined,
             { terminateLive: false }
           )
-          expect(spawn).toHaveBeenCalledOnce()
           expect(await readFile(path, 'utf8')).toBe(before)
           expect(() => owner.assertClear(scope)).toThrow()
           await expect(owner.recover()).rejects.toThrow('recovery is incomplete')
@@ -609,10 +608,10 @@ describe('durable delegated process ownership', () => {
           const proof = vi
             .spyOn(processTree, 'proveRecordedPosixLeaderGone')
             .mockResolvedValue('gone')
-          const spawn = vi.fn(spawned)
           try {
-            await expect(owner.admitMainAgentConnection(spawn)).rejects.toThrow()
-            expect(spawn).not.toHaveBeenCalled()
+            await expect(
+              owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+            ).rejects.toThrow()
             expect(proof).not.toHaveBeenCalled()
           } finally {
             proof.mockRestore()
@@ -633,10 +632,10 @@ describe('durable delegated process ownership', () => {
         const proof = vi
           .spyOn(processTree, 'proveRecordedPosixLeaderGone')
           .mockResolvedValue('gone')
-        const spawn = vi.fn(spawned)
         try {
-          await expect(owner.admitMainAgentConnection(spawn)).rejects.toThrow()
-          expect(spawn).not.toHaveBeenCalled()
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
           expect(proof).not.toHaveBeenCalled()
         } finally {
           proof.mockRestore()
@@ -650,14 +649,21 @@ describe('durable delegated process ownership', () => {
         const proof = vi
           .spyOn(processTree, 'proveRecordedPosixLeaderGone')
           .mockResolvedValue('gone')
-        const spawn = vi.fn(spawned)
         try {
-          await expect(owner.admitMainAgentConnection(spawn)).rejects.toThrow()
-          expect(spawn).not.toHaveBeenCalled()
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
           expect(owner.receipts()).toHaveLength(2)
         } finally {
           proof.mockRestore()
         }
+      })
+
+      it('does not block another framework with parseable unresolved evidence', async () => {
+        const owner = await setup()
+        owner.recordFailure(scope)
+        await expect(owner.assertMainAgentSessionResumeAllowed('opencode')).resolves.toBeUndefined()
+        await expect(owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)).rejects.toThrow()
       })
 
       it('rechecks the proof for every connection and blocks a newly observable owned survivor', async () => {
@@ -668,11 +674,11 @@ describe('durable delegated process ownership', () => {
           .spyOn(processTree, 'proveRecordedPosixLeaderGone')
           .mockResolvedValueOnce('gone')
           .mockResolvedValueOnce('blocked')
-        const spawn = vi.fn(spawned)
         try {
-          await owner.admitMainAgentConnection(spawn)
-          await expect(owner.admitMainAgentConnection(spawn)).rejects.toThrow()
-          expect(spawn).toHaveBeenCalledOnce()
+          await owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          await expect(
+            owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
+          ).rejects.toThrow()
           expect(proof).toHaveBeenCalledTimes(2)
           expect(await readFile(path, 'utf8')).toBe(before)
         } finally {
@@ -696,14 +702,12 @@ describe('durable delegated process ownership', () => {
               release = resolve
             })
           })
-        const spawn = vi.fn(spawned)
         try {
-          const admission = owner.admitMainAgentConnection(spawn)
+          const admission = owner.assertMainAgentSessionResumeAllowed(scope.frameworkId)
           await scanning
           owner.recordFailure({ ...scope, attemptId: 'new-unconfirmed-attempt' })
           release('gone')
           await expect(admission).rejects.toThrow()
-          expect(spawn).not.toHaveBeenCalled()
         } finally {
           proof.mockRestore()
         }

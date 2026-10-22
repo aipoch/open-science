@@ -1223,29 +1223,31 @@ const scanForOwnedDescendants = async (
       // executables, but is more complete than ps e (which truncates long environments).
       try {
         const binding = requireDarwinProcessBinding()
-        const table = binding.listDarwinProcesses()
-        if (!table) return undefined // Failed to list processes
-
-        // If the process list itself is incomplete (table.complete === false), we cannot prove
-        // absence even if all listed processes lack the marker: an omitted descendant may exist.
-        if (!table.complete) return undefined
-
         const leaderGeneration = leaderBirthToken?.match(/^darwin-proc-uniqueid:(\d+)$/u)?.[1]
-        for (const proc of table.processes) {
-          // A process born before our recorded leader cannot be its descendant. In particular,
-          // unreadable system daemons from earlier in this boot do not make every recovery fail.
-          if (leaderGeneration && BigInt(proc.uniqueId) <= BigInt(leaderGeneration)) continue
-          const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
-          // Environment and identity reads are separate observations. Never use a replacement
-          // process's environment as evidence that the snapshotted process had no ownership marker.
-          const current = binding.getDarwinProcess(proc.pid)
-          if (value === null || !current || current.uniqueId !== proc.uniqueId) return undefined
-          if (value === marker) found.push(proc.pid)
-          // false is a successful read with no marker, not a failed read. Ordinary same-user
-          // processes are not descendants merely because we can inspect them. Treating every
-          // absent marker as suspicious permanently blocks recovery on any normal desktop.
+        // Processes routinely exit or exec between the table and environment observations. Retry
+        // a changed snapshot from scratch; never treat the stale identity as negative evidence.
+        // A stable unreadable process still blocks, and sustained churn has a finite budget.
+        for (let attempt = 0; attempt < 3; attempt++) {
+          const table = binding.listDarwinProcesses()
+          if (!table?.complete) return undefined
+          let changed = false
+          for (const proc of table.processes) {
+            if (leaderGeneration && BigInt(proc.uniqueId) <= BigInt(leaderGeneration)) continue
+            const value = binding.getDarwinEnvironmentValue(proc.pid, PROCESS_TREE_OWNERSHIP_ENV)
+            // A matching marker blocks absence even if its process exits during revalidation.
+            // This observation is not signal authority and is never discarded by a later retry.
+            if (value === marker) return [proc.pid]
+            const current = binding.getDarwinProcess(proc.pid)
+            if (!current || current.uniqueId !== proc.uniqueId) {
+              changed = true
+              break
+            }
+            if (value === null) return undefined
+            // false is a successful read without our marker, not ownership or a failed read.
+          }
+          if (!changed) return []
         }
-        return found
+        return undefined
       } catch {
         // Binding unavailable or failed — cannot prove absence
         return undefined

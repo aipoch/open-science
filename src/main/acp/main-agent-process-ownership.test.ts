@@ -1,10 +1,18 @@
 import type { ChildProcessWithoutNullStreams } from 'node:child_process'
-import { beforeEach, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { mkdtemp, mkdir, readFile, rm, writeFile, chmod } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { once } from 'node:events'
+import { DelegatedProcessOwnership } from '../delegation/process-ownership'
+import { terminateProcessTree } from '../process-tree'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
 const f = vi.hoisted(() => ({
   recover: vi.fn(async () => {}),
-  admitMainAgentConnection: vi.fn(async (spawn: () => ChildProcessWithoutNullStreams) => spawn()),
+  assertMainAgentSessionResumeAllowed: vi.fn<(frameworkId: string) => Promise<void>>(
+    async () => {}
+  ),
   spawn: vi.fn<
     (
       scope: { attemptId: string },
@@ -19,19 +27,19 @@ beforeEach(() => {
   vi.resetModules()
   vi.clearAllMocks()
   f.recover.mockResolvedValue(undefined)
-  f.admitMainAgentConnection.mockImplementation(async (spawn) => spawn())
+  f.assertMainAgentSessionResumeAllowed.mockResolvedValue(undefined)
 })
 
-it('recovers before startup and checks admission immediately before each persistent spawn', async () => {
+it('recovers before startup and isolates each new connection from historical receipt directories', async () => {
   const owner = await import('./main-agent-process-ownership')
   await owner.configureMainAgentProcessOwnership(f)
   expect(f.recover).toHaveBeenCalledExactlyOnceWith()
   await owner.spawnMainAgentProcess('codex', spawnConnection)
-  expect(f.admitMainAgentConnection).toHaveBeenCalledOnce()
+  expect(f.assertMainAgentSessionResumeAllowed).not.toHaveBeenCalled()
   expect(f.spawn).toHaveBeenCalledWith(
     expect.objectContaining({
       projectId: 'main-agents',
-      sessionId: 'service',
+      sessionId: expect.any(String),
       frameId: 'main-agent',
       frameworkId: 'codex',
       attemptId: expect.any(String)
@@ -42,17 +50,20 @@ it('recovers before startup and checks admission immediately before each persist
   )
 })
 
-it('retries current admission evidence after failed startup recovery without caching a global fence', async () => {
+it('does not turn failed startup recovery into a connection fence, but retries old-context recovery', async () => {
   const owner = await import('./main-agent-process-ownership')
   const failure = new Error('unresolved process ownership')
   f.recover.mockRejectedValueOnce(failure)
   await expect(owner.configureMainAgentProcessOwnership(f)).rejects.toBe(failure)
-  f.admitMainAgentConnection.mockRejectedValueOnce(failure)
-  await expect(owner.spawnMainAgentProcess('claude', spawnConnection)).rejects.toBe(failure)
-  expect(f.spawn).not.toHaveBeenCalled()
-  await owner.spawnMainAgentProcess('opencode', spawnConnection)
-  expect(f.admitMainAgentConnection).toHaveBeenCalledTimes(2)
-  expect(f.spawn).toHaveBeenCalledOnce()
+  for (const framework of ['claude', 'codex', 'opencode', 'codebuddy'])
+    await owner.spawnMainAgentProcess(framework, spawnConnection)
+  expect(f.spawn).toHaveBeenCalledTimes(4)
+  f.assertMainAgentSessionResumeAllowed.mockRejectedValueOnce(failure)
+  await expect(owner.assertMainAgentSessionResumeAllowed('opencode')).rejects.toThrow(
+    'Previous agent cleanup is unconfirmed.'
+  )
+  await owner.assertMainAgentSessionResumeAllowed('opencode')
+  expect(f.assertMainAgentSessionResumeAllowed).toHaveBeenCalledTimes(2)
 })
 
 it('closes once and refuses new and already captured spawners', async () => {
@@ -76,21 +87,18 @@ it('closes once and refuses new and already captured spawners', async () => {
 })
 
 it.each(['shutdown', 'replacement', 'reconfigure'] as const)(
-  'refuses a spawn when %s happens during asynchronous admission',
+  'rejects old-context recovery when %s happens during its asynchronous check',
   async (transition) => {
     const owner = await import('./main-agent-process-ownership')
     await owner.configureMainAgentProcessOwnership(f)
-    let admit!: () => ChildProcessWithoutNullStreams
     let release!: () => void
     const blocked = new Promise<void>((resolve) => {
       release = resolve
     })
-    f.admitMainAgentConnection.mockImplementationOnce(async (spawn) => {
-      admit = spawn
+    f.assertMainAgentSessionResumeAllowed.mockImplementationOnce(async () => {
       await blocked
-      return admit()
     })
-    const pending = owner.spawnMainAgentProcess('opencode', spawnConnection)
+    const pending = owner.assertMainAgentSessionResumeAllowed('opencode')
     if (transition === 'shutdown') await owner.closeMainAgentProcessOwnership()
     else await owner.configureMainAgentProcessOwnership(transition === 'replacement' ? { ...f } : f)
     release()
@@ -106,7 +114,7 @@ it('checks concurrent connections independently and gives each its own process r
     owner.spawnMainAgentProcess('opencode', spawnConnection),
     owner.spawnMainAgentProcess('codex', spawnConnection)
   ])
-  expect(f.admitMainAgentConnection).toHaveBeenCalledTimes(2)
+  expect(f.assertMainAgentSessionResumeAllowed).not.toHaveBeenCalled()
   expect(new Set(f.spawn.mock.calls.map(([scope]) => scope.attemptId)).size).toBe(2)
 })
 
@@ -131,3 +139,81 @@ it('preserves shutdown failure instead of treating unresolved trees as clean', a
   await expect(owner.closeMainAgentProcessOwnership()).rejects.toBe(failure)
   expect(f.recover).toHaveBeenCalledTimes(2)
 })
+
+describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
+  'real connection recovery isolation',
+  () => {
+    let root: string | undefined
+    const children: ChildProcessWithoutNullStreams[] = []
+    afterEach(async () => {
+      await Promise.all(children.splice(0).map((child) => terminateProcessTree(child)))
+      if (root) {
+        await chmod(
+          join(root, 'main-agent-process-ownership', 'main-agents', 'service'),
+          0o700
+        ).catch(() => {})
+        await rm(root, { recursive: true, force: true })
+      }
+      root = undefined
+    })
+
+    it.each(['identity-less', 'truncated', 'pending', 'unreadable-directory'] as const)(
+      'starts and stops fresh connections despite a historical %s receipt, preserving the evidence',
+      async (kind) => {
+        root = await mkdtemp(join(tmpdir(), 'main-agent-isolation-'))
+        const directory = join(root, 'main-agent-process-ownership', 'main-agents', 'service')
+        await mkdir(directory, { recursive: true })
+        const receiptId = '00000000-0000-4000-8000-000000000001'
+        const historicalPath = join(
+          directory,
+          receiptId + (kind === 'pending' ? '.json.pending' : '.json')
+        )
+        const bytes =
+          kind === 'truncated'
+            ? '{'
+            : JSON.stringify({
+                version: 1,
+                receiptId,
+                projectId: 'main-agents',
+                sessionId: 'service',
+                frameId: 'main-agent',
+                attemptId: 'old-attempt',
+                frameworkId: 'opencode',
+                phase: 'starting',
+                createdAt: Date.now(),
+                ownership: { platform: process.platform }
+              })
+        await writeFile(historicalPath, bytes)
+        if (kind === 'unreadable-directory') await chmod(directory, 0)
+        const ownership = new DelegatedProcessOwnership(root, 'main-agent-process-ownership')
+        const owner = await import('./main-agent-process-ownership')
+        await expect(owner.configureMainAgentProcessOwnership(ownership)).rejects.toThrow()
+        for (const framework of ['claude', 'codex', 'opencode', 'codebuddy']) {
+          const child = await owner.spawnMainAgentProcess(framework, (spawn) =>
+            spawn!(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'pipe' })
+          )
+          children.push(child)
+          await once(child, 'spawn')
+          expect(child.pid).toBeGreaterThan(0)
+        }
+        const scopes = []
+        // Read only the new attempts: historical malformed bytes cannot poison their ownership.
+        const { readdir } = await import('node:fs/promises')
+        for (const sessionId of await readdir(
+          join(root, 'main-agent-process-ownership', 'main-agents')
+        )) {
+          if (sessionId === 'service') continue
+          scopes.push({ projectId: 'main-agents', sessionId })
+          expect(ownership.receipts({ projectId: 'main-agents', sessionId })).toHaveLength(1)
+        }
+        expect(scopes).toHaveLength(4)
+        // Strict shutdown still reports the old debt, but must reap all discoverable new trees.
+        await expect(owner.closeMainAgentProcessOwnership()).rejects.toThrow()
+        for (const scope of scopes) expect(ownership.receipts(scope)).toHaveLength(0)
+        if (kind === 'unreadable-directory') await chmod(directory, 0o700)
+        expect(await readFile(historicalPath, 'utf8')).toBe(bytes)
+        await expect(ownership.recover()).rejects.toThrow()
+      }
+    )
+  }
+)

@@ -194,6 +194,7 @@
     "Single select": "单选",
     "Multi select": "多选",
     "Your conversation is preserved. Try Resume again.": "您的会话已保留。请再次尝试恢复。",
+    "Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.": "无法确认上一个智能体已清理完毕。您的对话已保留。您可以开始新对话，或重试恢复此对话。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "智能体未能及时响应。您的会话已保留。请再次尝试恢复。",
     "The selected agent could not be attached to this conversation. Try Resume again.": "无法将所选智能体连接到此会话。请再次尝试恢复。",
     "Could not resume this conversation": "无法恢复此会话",

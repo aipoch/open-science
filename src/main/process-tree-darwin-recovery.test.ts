@@ -25,6 +25,7 @@ const probe = (
     const leader = { pid: 1000, ppid: process.pid, pgid: 1000, sid: 1000, uniqueId: '100', parentUniqueId: '50' }
     const candidate = { pid: 2000, ppid: 1, pgid: 2000, sid: 2000, uniqueId: scenario === 'cold-older-unreadable' ? '50' : '200', parentUniqueId: scenario === 'reparented-exec' ? '1' : '150' }
     const processes = new Map([[1000, leader], [2000, candidate]])
+    if (scenario === 'cold-owned-before-race') processes.set(3000, { ...candidate, pid: 3000, uniqueId: '300' })
     let environmentReads = 0
     let readable = false
     let incomplete = ['history-gap', 'cold-incomplete'].includes(scenario)
@@ -34,12 +35,23 @@ const probe = (
       listDarwinProcesses: () => ({ processes: [...processes.values()], complete: !incomplete }),
       getDarwinEnvironmentValue: pid => {
         environmentReads++
-        if (!readable || scenario === 'cold-null') return null
-        if (['identity-race', 'cold-identity-race'].includes(scenario) && !race) {
-          race = true
-          processes.set(pid, { ...candidate, uniqueId: '201' })
+        if (scenario === 'cold-marked-then-exit') {
+          processes.delete(pid)
+          return 'owner-token'
         }
-        return ['owned', 'identity-race', 'reparented-exec', 'cold-marked'].includes(scenario) ? 'owner-token' : 'other-owner'
+        if (scenario === 'cold-owned-before-race') {
+          if (pid === 2000) return 'owner-token'
+          processes.delete(2000)
+          processes.delete(pid)
+          return null
+        }
+        if (!readable || scenario === 'cold-null') return null
+        if ((['identity-race', 'cold-identity-race', 'cold-race-then-marked', 'cold-exit-race'].includes(scenario) && !race) || scenario === 'cold-sustained-race') {
+          race = true
+          if (scenario === 'cold-exit-race') processes.delete(pid)
+          else processes.set(pid, { ...candidate, uniqueId: String(BigInt(processes.get(pid).uniqueId) + 1n) })
+        }
+        return ['owned', 'identity-race', 'reparented-exec', 'cold-marked', 'cold-race-then-marked'].includes(scenario) ? 'owner-token' : 'other-owner'
       }
     }
     const instance = new Module(filename, module)
@@ -150,12 +162,38 @@ describe('read-only Darwin main-agent admission proof', () => {
     expect(result.signals).toEqual([])
   })
 
-  it.each(['live', 'group', 'group-eperm', 'marked', 'incomplete', 'null', 'identity-race'])(
-    'blocks %s evidence without signaling any process',
+  it('retains a positively identified survivor without letting a later snapshot replace that evidence', () => {
+    const result = probe('cold-owned-before-race')
+    expect(result.admission).toBe('blocked')
+    expect(result.environmentReads).toBe(1)
+    expect(result.signals).toEqual([])
+  })
+
+  it.each(['identity-race', 'exit-race'])(
+    'retries a %s with a complete fresh snapshot instead of permanently rejecting a settled tree',
     (scenario) => {
       const result = probe(`cold-${scenario}`)
-      expect(result.admission).toBe('blocked')
+      expect(result.admission).toBe('gone')
+      expect(result.environmentReads).toBeGreaterThan(0)
+      expect(result.environmentReads).toBeLessThanOrEqual(3)
       expect(result.signals).toEqual([])
     }
   )
+
+  it.each([
+    'live',
+    'group',
+    'group-eperm',
+    'marked',
+    'incomplete',
+    'null',
+    'race-then-marked',
+    'marked-then-exit',
+    'sustained-race'
+  ])('blocks %s evidence without signaling any process', (scenario) => {
+    const result = probe(`cold-${scenario}`)
+    expect(result.admission).toBe('blocked')
+    expect(result.signals).toEqual([])
+    if (scenario === 'sustained-race') expect(result.environmentReads).toBe(3)
+  })
 })

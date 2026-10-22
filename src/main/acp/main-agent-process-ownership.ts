@@ -3,9 +3,7 @@ import type { ChildProcessWithoutNullStreams } from 'node:child_process'
 import type { AgentProcessSpawner } from '../agent-framework/types'
 
 type MainAgentProcessOwnership = {
-  admitMainAgentConnection(
-    spawnConnection: () => ChildProcessWithoutNullStreams
-  ): Promise<ChildProcessWithoutNullStreams>
+  assertMainAgentSessionResumeAllowed(frameworkId: string): Promise<void>
   recover(
     selection?: { projectId?: string; sessionId?: string; frameId?: string; attemptId?: string },
     terminateLive?: boolean
@@ -26,7 +24,7 @@ let owner: MainAgentProcessOwnership | undefined
 let generation = 0
 let closed = false
 let closing: Promise<void> | undefined
-const scope = { projectId: 'main-agents', sessionId: 'service' }
+const projectId = 'main-agents'
 
 /** Called only after the service acquires Config Root ownership, before accepting agent work. */
 export async function configureMainAgentProcessOwnership(
@@ -58,23 +56,38 @@ export async function spawnMainAgentProcess(
     if (closed || owner !== current || generation !== currentGeneration)
       throw new Error('Main agent process ownership is closed.')
   }
-  return current.admitMainAgentConnection(() => {
-    assertCurrent()
-    let active = true
-    try {
-      return spawnConnection((command, args, options) => {
-        assertCurrent()
-        if (!active) throw new Error('Main agent process admission has expired.')
-        active = false
-        return current.spawn(
-          { ...scope, frameworkId, frameId: 'main-agent', attemptId },
-          command,
-          args,
-          options
-        )
-      })
-    } finally {
+  // Connections can host independent provider sessions concurrently. Historical cleanup debt
+  // is not a service-wide connection lease. Isolate publication from other attempts' torn files.
+  assertCurrent()
+  let active = true
+  try {
+    return spawnConnection((command, args, options) => {
+      assertCurrent()
+      if (!active) throw new Error('Main agent process admission has expired.')
       active = false
-    }
-  })
+      return current.spawn(
+        { projectId, sessionId: attemptId, frameworkId, frameId: 'main-agent', attemptId },
+        command,
+        args,
+        options
+      )
+    })
+  } finally {
+    active = false
+  }
+}
+
+/** Only restoring an old provider session can reacquire a historical writer's context. */
+export async function assertMainAgentSessionResumeAllowed(frameworkId: string): Promise<void> {
+  const current = owner
+  const currentGeneration = generation
+  if (closed) throw new Error('Main agent process ownership is closed.')
+  if (!current) return
+  try {
+    await current.assertMainAgentSessionResumeAllowed(frameworkId)
+  } catch (cause) {
+    throw new Error('Previous agent cleanup is unconfirmed.', { cause })
+  }
+  if (closed || owner !== current || generation !== currentGeneration)
+    throw new Error('Main agent process ownership is closed.')
 }

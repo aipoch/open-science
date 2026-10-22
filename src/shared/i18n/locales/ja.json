@@ -194,6 +194,7 @@
     "Single select": "単一選択",
     "Multi select": "複数選択",
     "Your conversation is preserved. Try Resume again.": "会話は保持されています。もう一度再開してください。",
+    "Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.": "前のエージェントのクリーンアップを確認できませんでした。会話は保持されています。新しい会話を開始するか、再開を再試行できます。",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "エージェントが時間内に応答しませんでした。会話は保持されています。もう一度再開してください。",
     "The selected agent could not be attached to this conversation. Try Resume again.": "選択したエージェントをこの会話に接続できませんでした。もう一度再開してください。",
     "Could not resume this conversation": "この会話を再開できませんでした",

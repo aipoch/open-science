@@ -197,6 +197,7 @@
     "Single select": "Один вариант",
     "Multi select": "Несколько вариантов",
     "Your conversation is preserved. Try Resume again.": "Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
+    "Previous agent cleanup could not be confirmed. Your conversation is preserved. You can start a new conversation or retry Resume.": "Не удалось подтвердить завершение очистки предыдущего агента. Диалог сохранён. Можно начать новый диалог или повторить попытку возобновления.",
     "The agent did not respond in time. Your conversation is preserved. Try Resume again.": "Агент не ответил вовремя. Ваш диалог сохранён. Попробуйте возобновить его ещё раз.",
     "The selected agent could not be attached to this conversation. Try Resume again.": "Не удалось подключить выбранного агента к этому диалогу. Попробуйте возобновить его ещё раз.",
     "Could not resume this conversation": "Не удалось возобновить этот диалог",
