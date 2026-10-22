@@ -77,14 +77,19 @@ function dynamicMarkers(text, path) {
       )
         markers.push(`name template ${node.text}`)
     }
-    // Any name passed to an event/IPC API is bound by value, whatever its shape.
+    // Any name passed to an event/IPC API is bound by value, whatever its shape: `bus.emit`,
+    // `bus['emit']`, a destructured `emit` and `new FooEvent` / `new dom.FooEvent` all count.
+    const method = (callee) =>
+      ts.isPropertyAccessExpression(callee)
+        ? callee.name.text
+        : ts.isElementAccessExpression(callee) && ts.isStringLiteralLike(callee.argumentExpression)
+          ? callee.argumentExpression.text
+          : ts.isIdentifier(callee)
+            ? callee.text
+            : undefined
     const dispatch =
-      (ts.isCallExpression(node) &&
-        ts.isPropertyAccessExpression(node.expression) &&
-        eventApis.has(node.expression.name.text)) ||
-      (ts.isNewExpression(node) &&
-        ts.isIdentifier(node.expression) &&
-        /Event$/.test(node.expression.text))
+      (ts.isCallExpression(node) && eventApis.has(method(node.expression))) ||
+      (ts.isNewExpression(node) && /Event$/.test(method(node.expression) ?? ''))
     const [name] = dispatch ? (node.arguments ?? []) : []
     const target = name && ts.isIdentifier(name) ? constants.get(name.text) : name
     if (target && isStringLike(target)) markers.push(`event name ${target.getText()}`)

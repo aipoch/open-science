@@ -168,7 +168,19 @@ it.each([
     'a local event-name constant passed to an event API',
     "const UPDATED = 'session-updated'\nexport const notify = (bus: { send(name: string): void }) => bus.send(UPDATED)"
   ],
-  ['a constructed DOM event', "export const event = () => new CustomEvent('session-updated')"]
+  ['a constructed DOM event', "export const event = () => new CustomEvent('session-updated')"],
+  [
+    'a computed event API call',
+    "export const notify = (bus: Record<string, (name: string) => void>) => bus['emit']('session-updated')"
+  ],
+  [
+    'a destructured IPC call',
+    "export const ask = ({ invoke }: { invoke(name: string): void }) => invoke('session-updated')"
+  ],
+  [
+    'a qualified event constructor',
+    "export const event = (dom: { CustomEvent: typeof CustomEvent }) => new dom.CustomEvent('session-updated')"
+  ]
 ])('keeps %s on the full owner', (_, text) => {
   const state = fixture({ [channel]: text })
   state.split([channel], 'names')
