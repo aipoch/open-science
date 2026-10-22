@@ -1,4 +1,7 @@
-import { expectBoundaryPaths } from '../../../../../test/module-boundary-assertions'
+import {
+  expectBoundaryPaths,
+  expectBoundaryOwnerTests
+} from '../../../../../test/module-boundary-assertions'
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, extname, relative, resolve } from 'node:path'
 import {
@@ -883,7 +886,6 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/runtime-observer.test.ts',
       'src/renderer/src/lib/acp/runtime-writer-takeover.test.ts',
       'src/renderer/src/lib/acp/workspace-runtime-interrupted-recovery.test.ts',
-      'src/renderer/src/lib/acp/workspace-operation-error.ts',
       'src/renderer/src/lib/acp/workspace-prompt-admission.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.test.ts',
       'src/renderer/src/lib/acp/workspace-prompt-preparation.ts',
@@ -891,6 +893,26 @@ describe('workspace runtime architecture', () => {
       'src/renderer/src/lib/acp/workspace-runtime-overflow-recovery-failures.test.ts',
       'src/renderer/src/lib/handled-failure-diagnostics.ts'
     ])
+    // This pure error contract was already split out upstream; it retains its own
+    // reviewed evidence instead of inheriting the expanded runtime's full marker.
+    expectBoundaryPaths(manifest, 'renderer_runtime_errors', [
+      'src/renderer/src/lib/acp/workspace-operation-error.ts',
+      'src/renderer/src/lib/acp/workspace-operation-error.test.ts'
+    ])
+    expectBoundaryOwnerTests(manifest, 'renderer_runtime_errors', [
+      'src/renderer/src/lib/acp/workspace-operation-error.test.ts'
+    ])
+    expect(manifest.modules.renderer_runtime_errors.fullTestReason).toBeUndefined()
+    expect(manifest.modules.renderer_runtime_errors.testFiles.contract).toEqual(
+      expect.arrayContaining([
+        'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.first-output.render.test.tsx',
+        'src/main/host-layer-dependencies.architecture.test.ts'
+      ])
+    )
+    expect(workspaceRuntime.fullTestReason).toBe(
+      'The workspace_runtime owner retains 23 explicit research consumer obligations beyond its reviewed source-derived edges, including ResearchDemoPanel.test.tsx, ReplayPanel.layout.test.tsx, RecordedRunObservationPreview.test.tsx. 23 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full renderer_view validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+    )
+
     expect(workspaceRuntime.interfacePaths).toEqual(
       expect.arrayContaining([
         'src/renderer/src/lib/acp/useWorkspaceAgentRuntime.ts',

@@ -2,7 +2,7 @@ import { readFileSync, readdirSync } from 'node:fs'
 import { builtinModules } from 'node:module'
 import { relative, resolve, sep } from 'node:path'
 import ts from 'typescript'
-import { expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { packageTestRegistrationViolations } from './package-test-policy.mjs'
 import { localPackageSourcePaths } from './local-package-exports.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
@@ -578,27 +578,33 @@ it.each(hostBoundaryCases)(
   }
 )
 
-it('host source edits never select unchanged upstream PDF package implementation tests', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  const { modules } = loadModuleImpactManifest()
-  const violations: string[] = []
-  for (const [id, module] of Object.entries(modules) as [string, { ownerPaths: string[] }][]) {
-    if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) continue
-    const source = module.ownerPaths.find(
-      (path) => path.startsWith('src/') && !path.includes('.test.')
-    )
-    if (!source) continue
+const productionBoundaryCases = (
+  Object.entries(hostBoundaryManifest.modules) as [string, { ownerPaths: string[] }][]
+).map(([id, module]) => ({ id, module }))
+const pdfHostBoundaryCases = productionBoundaryCases.flatMap(({ id, module }) => {
+  if (module.ownerPaths.some((path) => path.startsWith('packages/pdf-'))) return []
+  const source = module.ownerPaths.find(
+    (path) => path.startsWith('src/') && !path.includes('.test.')
+  )
+  return source ? [{ id, source }] : []
+})
+
+// Keep every production owner in the audit while giving each plan its own test deadline.
+describe('host source edits never select unchanged upstream PDF package implementation tests', () => {
+  it.each(pdfHostBoundaryCases)('$id: $source', async ({ id, source }) => {
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+    const violations: string[] = []
     // Integrity retains historical registration evidence. Package boundaries apply to the
     // executable plan, including stale graph suggestions, rather than to raw evidence records.
-    const plan = createAffectedTestPlan([{ path: source, status: 'modified' }], {
-      status: 'not-used',
-      testFiles: []
-    })
+    const plan = createAffectedTestPlan(
+      [{ path: source, status: 'modified' }],
+      { status: 'not-used', testFiles: [] },
+      hostBoundaryManifest
+    )
     for (const test of plan.testFiles)
       if (/^packages\/pdf-(translation|structure)\//.test(test)) violations.push(`${id} -> ${test}`)
-  }
-  expect(violations).toEqual([])
+    expect(violations).toEqual([])
+  })
 })
 
 it('Compute host edits never register or select upstream Compute units', async () => {
@@ -661,24 +667,19 @@ it('Compute host edits never register or select upstream Compute units', async (
   }
 })
 
-it('every module plan excludes unrelated upstream package tests', async () => {
-  const { loadModuleImpactManifest } = await import('./load-module-impact.mjs')
-  const { createModuleTestPlan } = await import('./module-test-impact.mjs')
-  const manifest = loadModuleImpactManifest()
-  const violations: string[] = []
-  // Validate executed coverage while the trusted retirement policy permits cleanup of
-  // historical redundant registrations. Full-validation owners retain their fallback.
-  for (const [id, module] of Object.entries(manifest.modules) as [
-    string,
-    { ownerPaths: string[] }
-  ][]) {
-    const plan = createModuleTestPlan(id, manifest)
-    if (plan.mode === 'full') continue
+describe('every module plan excludes unrelated upstream package tests', () => {
+  it.each(productionBoundaryCases)('$id', async ({ id, module }) => {
+    const { createModuleTestPlan } = await import('./module-test-impact.mjs')
+    const violations: string[] = []
+    // Validate executed coverage while the trusted retirement policy permits cleanup of
+    // historical redundant registrations. Full-validation owners retain their fallback.
+    const plan = createModuleTestPlan(id, hostBoundaryManifest)
+    if (plan.mode === 'full') return
     const { excluded } = createPackageTestPlan(module.ownerPaths, registry)
     for (const test of plan.testFiles)
       if (excluded.some((root) => test.startsWith(root + '/'))) violations.push(`${id} -> ${test}`)
-  }
-  expect(violations).toEqual([])
+    expect(violations).toEqual([])
+  })
 })
 
 it('selects durable file consumers downstream without testing unchanged prerequisites', async () => {
