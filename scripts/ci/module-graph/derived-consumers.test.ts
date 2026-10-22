@@ -59,7 +59,7 @@ const source = (extra: Record<string, string> = {}) => {
 
 it.each([
   "import './owner'",
-  "import type { Value } from './owner'",
+  "import { type Value, value } from './owner'",
   "export * from './owner'",
   "void import('./owner')",
   "vi.mock('./owner', () => ({}))",
@@ -67,9 +67,22 @@ it.each([
   "vi.importActual('./owner')",
   "jest.mock('./owner')",
   "require('./owner')"
-])('retains structurally reachable consumers through %s', (text) => {
+])('retains runtime-reachable consumers through %s', (text) => {
   const graph = consumerDependencyGraph(source({ [consumer]: text }), [])
   expect(generateDerivedConsumers(manifest(), graph.reverse)).toEqual(expected)
+})
+
+it.each([
+  ['a type-only import', "import type { Value } from './owner'"],
+  ['a type-only named binding', "import { type Value } from './owner'"],
+  ['a type-only re-export bridge', "import './types'"]
+])('omits consumers reachable only through %s', (_, text) => {
+  const input = source({ [consumer]: text, 'src/main/types.ts': "export type * from './owner'" })
+  const graph = consumerDependencyGraph(input, [])
+  expect(generateDerivedConsumers(manifest(), graph.reverse)).toEqual({
+    schemaVersion: 1,
+    modules: {}
+  })
 })
 
 it('handles renderer aliases, cycles, runtime declarations and excludes E2E tests', () => {
@@ -261,7 +274,8 @@ it.each([
 })
 it.each([
   null,
-  { schemaVersion: 2, modules: {} },
+  { schemaVersion: 3, modules: {} },
+  { schemaVersion: '1', modules: {} },
   { schemaVersion: 1, modules: [], extra: true },
   { schemaVersion: 1, modules: { missing: [] } },
   { schemaVersion: 1, modules: { owner: [consumer, consumer] } }
