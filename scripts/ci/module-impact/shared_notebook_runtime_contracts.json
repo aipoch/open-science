@@ -1,0 +1,36 @@
+{
+  "ownerPaths": [
+    "src/shared/notebook-env.ts",
+    "src/shared/notebook-runtime.ts",
+    "src/shared/notebook-execution-error.ts",
+    "src/shared/notebook-language-contract.ts",
+    "src/shared/execution-recovery.ts",
+    "src/shared/notebook-runtime.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/notebook-env.ts",
+    "src/shared/notebook-runtime.ts",
+    "src/shared/notebook-execution-error.ts",
+    "src/shared/notebook-language-contract.ts",
+    "src/shared/execution-recovery.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/notebook-runtime.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/shared/notebook-env.typecheck.test.ts",
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

@@ -159,7 +159,12 @@
     "packages/connector-builtins/tsc.cjs",
     "packages/connector-builtins/tsconfig.json",
     "packages/connector-builtins/tsconfig.test.json",
-    "packages/connector-builtins/vitest.config.ts"
+    "packages/connector-builtins/vitest.config.ts",
+    "packages/connector-builtins/src/biosamples.ts",
+    "packages/connector-builtins/src/dailymed.ts",
+    "packages/connector-builtins/src/optional-research.test.ts",
+    "packages/connector-builtins/src/rxnorm.ts",
+    "packages/connector-builtins/src/wikipathways.ts"
   ],
   "interfacePaths": [
     "packages/connector-builtins/package.json",
@@ -235,7 +240,11 @@
     "packages/connector-builtins/src/variants-mavedb.ts",
     "packages/connector-builtins/src/variants.ts",
     "packages/connector-builtins/src/zenodo.ts",
-    "packages/connector-builtins/src/zinc.ts"
+    "packages/connector-builtins/src/zinc.ts",
+    "packages/connector-builtins/src/biosamples.ts",
+    "packages/connector-builtins/src/dailymed.ts",
+    "packages/connector-builtins/src/rxnorm.ts",
+    "packages/connector-builtins/src/wikipathways.ts"
   ],
   "consumerModules": [],
   "testFiles": {
@@ -311,7 +320,8 @@
       "packages/connector-builtins/src/variants.test.ts",
       "packages/connector-builtins/src/zenodo.test.ts",
       "packages/connector-builtins/src/zinc.test.ts",
-      "packages/connector-builtins/src/scientific-expansion.test.ts"
+      "packages/connector-builtins/src/scientific-expansion.test.ts",
+      "packages/connector-builtins/src/optional-research.test.ts"
     ],
     "contract": [
       "src/main/connectors/boundaries.architecture.test.ts",
@@ -523,5 +533,5 @@
   },
   "capabilityOverlays": [],
   "fallbackCapability": "main_runtime",
-  "fullTestReason": "The connector_builtins owner retains 3 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-nested-generation.integration.test.ts, managed-output-publication.integration.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes."
+  "fullTestReason": "Optional research providers expand the reviewed source boundary; retain complete validation until the expanded connector boundary is reviewed and reclassified."
 }

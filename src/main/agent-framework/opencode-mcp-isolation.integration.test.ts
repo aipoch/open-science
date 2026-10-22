@@ -1,5 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
+import { cp, mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer, type Server } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
@@ -122,14 +122,26 @@ it.runIf(opencodePath)(
       await mkdir(dirname(file.path), { recursive: true })
       await writeFile(file.path, file.content)
     }
+    // Optional offline fixture for a previously provisioned plugin runtime; never copy user config.
+    if (process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES) {
+      const target = join(root, 'opencode', 'config', 'opencode')
+      for (const entry of ['package.json', 'package-lock.json', 'node_modules']) {
+        await cp(join(process.env.OPENCODE_TEST_PLUGIN_DEPENDENCIES, entry), join(target, entry), {
+          recursive: true
+        })
+      }
+    }
+
     const children: ChildProcessWithoutNullStreams[] = []
     const connections: Array<{ stop: () => void; finished: Promise<unknown> }> = []
     const stderr: string[] = []
     const start = async (): Promise<acp.ClientContext> => {
-      const child = spawn(opencodePath!, ['acp'], {
-        cwd: workspace,
-        env: { ...process.env, ...config.env },
-        stdio: ['pipe', 'pipe', 'pipe']
+      const child = framework.spawn({
+        executablePath: opencodePath!,
+        args: config.args ?? [],
+        env: config.env ?? {},
+        spawnProcess: (command, args, options) =>
+          spawn(command, args, { ...options, cwd: workspace })
       })
       children.push(child)
       child.stderr.on('data', (chunk) => stderr.push(String(chunk)))

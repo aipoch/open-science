@@ -40,6 +40,11 @@ const ownershipModel = (): ReturnType<typeof createModuleImpactModel> =>
       interfacePaths: ['src/main/reviewer/correction.ts'],
       ownerTests: ['src/main/reviewer/correction-owner.test.ts']
     },
+    connector_core: {
+      ownerPaths: ['packages/connector-core/src/engine.ts'],
+      ownerTests: ['packages/connector-core/src/engine.test.ts'],
+      consumerModules: ['reviewer_orchestrator']
+    },
     connector_builtins: {
       ownerPaths: ['packages/connector-builtins/src/genes-ontology.ts'],
       ownerTests: ['packages/connector-builtins/src/genes.test.ts'],
@@ -244,6 +249,26 @@ describe('complete module ownership', () => {
       graph,
       model
     )
+    expect(sourcePlan.mode).toBe('selective')
+    expect(mixed.mode).toBe('selective')
+    expect(mixed.testFiles).toEqual([...new Set([...sourcePlan.testFiles, test])].sort())
+  })
+
+  it('keeps connector-core consumers in mixed source and test changes', () => {
+    const test = 'src/main/reviewer/correction-owner.test.ts'
+    const path = 'packages/connector-core/src/engine.ts'
+    const model = ownershipModel()
+    const sourcePlan = createAffectedTestPlan([{ path, status: 'modified' }], graph, model)
+    const mixed = createAffectedTestPlan(
+      [
+        { path, status: 'modified' },
+        { path: test, status: 'modified' }
+      ],
+      graph,
+      model
+    )
+    expect(sourcePlan.mode).toBe('selective')
+    expect(mixed.mode).toBe('selective')
     expect(mixed.testFiles).toEqual([...new Set([...sourcePlan.testFiles, test])].sort())
   })
 
@@ -331,7 +356,7 @@ const reclassifiedOwners = Object.entries(manifest.modules).filter(
   ([id, module]) => Object.hasOwn(reviewedBoundaries, id) && module.fullTestReason
 )
 
-it('retains all 116 reclassified production owners and the ten original full owners', () => {
+it('retains all 116 reclassified owners, the ten original full owners and the split catalog', () => {
   expect(reclassifiedOwners).toHaveLength(116)
   expect(
     Object.entries(manifest.modules)
@@ -347,6 +372,7 @@ it('retains all 116 reclassified production owners and the ten original full own
     'shared_network_contracts',
     'shared_permission_contracts',
     'shared_preview_contracts',
+    'shared_renderer_contract_catalog',
     'shared_session_configuration',
     'shared_workspace_contracts'
   ])

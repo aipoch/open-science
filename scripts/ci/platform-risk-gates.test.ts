@@ -444,7 +444,7 @@ it.each([
   expect(plan.macosProfile).toBe('expanded')
 })
 
-// Real diffs that previously fell back to all three portable shards.
+// Bounded models preserve the selective policy for both historical PR shapes.
 it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s', (event) => {
   for (const fixture of [
     {
@@ -490,6 +490,68 @@ it.each(['pull_request', 'merge_group'])('keeps known PR diffs selective for %s'
     )
   }
 })
+
+// The real connector and reviewer boundaries now require their declared full fallbacks.
+it.each(['pull_request', 'merge_group'])(
+  'uses declared modes for known PR diffs on %s',
+  (event) => {
+    for (const fixture of [
+      {
+        number: 2696,
+        mode: 'full',
+        fullReason: productionFullReasonContracts.connector_builtins,
+        paths: [
+          'packages/connector-builtins/src/genomes-ensembl.test.ts',
+          'packages/connector-builtins/src/genomes-ensembl.ts',
+          'src/main/notebook/host-mcp.integration.test.ts'
+        ]
+      },
+      {
+        number: 2682,
+        mode: 'full',
+        fullReason:
+          'The reviewer_orchestrator owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including research-material-authority.test.ts, run-observation-external-port.test.ts, inspection.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.',
+        paths: [
+          'src/main/acp/runtime-coordinator.test.ts',
+          'src/main/acp/runtime-coordinator.ts',
+          'src/main/acp/runtime.test.ts',
+          'src/main/acp/runtime.ts',
+          'src/main/reviewer/correction-context.test.ts',
+          'src/main/reviewer/correction-context.ts',
+          'src/main/reviewer/correction.test.ts',
+          'src/main/reviewer/correction.ts',
+          'src/main/reviewer/fix-loop.test.ts',
+          'src/main/reviewer/orchestrator.ts',
+          'src/main/reviewer/reviewer-fix-loop-owner.test.ts',
+          'src/main/reviewer/reviewer-fix-loop-owner.ts',
+          'src/main/reviewer/scope.ts'
+        ]
+      }
+    ]) {
+      const { plan, report } = runModuleImpactAuthorityCli(
+        ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+        { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+        {
+          execute: () => Buffer.from(fixture.paths.map((path) => `M\0${path}\0`).join('')),
+          write: () => undefined
+        }
+      )
+      expect(plan.mode, `PR ${fixture.number}: ${plan.reasonChains.join('\n')}`).toBe(fixture.mode)
+      expect(plan.macosProfile).toBe('expanded')
+      expect(report.shadow.mode).toBe('full')
+      expect(report.shadow.reasonChains.join('\n')).toContain(fixture.fullReason)
+      expect(plan.bundles).toEqual(
+        expect.arrayContaining([
+          'policy',
+          'static',
+          'linux_runtime',
+          'windows_core',
+          event === 'pull_request' ? 'windows_e2e' : 'macos_e2e'
+        ])
+      )
+    }
+  }
+)
 
 describe('queue-only Mac policy', () => {
   const inputs = [

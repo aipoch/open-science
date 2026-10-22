@@ -1,0 +1,37 @@
+{
+  "ownerPaths": [
+    "src/shared/artifact-version-locator.test.ts",
+    "src/shared/artifact-version-locator.ts",
+    "src/shared/file-save.ts",
+    "src/shared/managed-file-versions.test.ts",
+    "src/shared/managed-file-versions.ts",
+    "src/shared/replay-reference.ts",
+    "src/shared/replay.ts",
+    "src/shared/session-reading.ts",
+    "src/shared/uploads.test.ts",
+    "src/shared/uploads.ts",
+    "src/shared/replay-reference.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/artifact-version-locator.ts",
+    "src/shared/file-save.ts",
+    "src/shared/managed-file-versions.ts",
+    "src/shared/replay-reference.ts",
+    "src/shared/replay.ts",
+    "src/shared/session-reading.ts",
+    "src/shared/uploads.ts"
+  ],
+  "consumerModules": [],
+  "testFiles": {
+    "owner": [
+      "src/shared/artifact-version-locator.test.ts",
+      "src/shared/managed-file-versions.test.ts",
+      "src/shared/uploads.test.ts",
+      "src/shared/replay-reference.test.ts"
+    ],
+    "contract": [],
+    "consumer": ["src/shared/notebook-env.typecheck.test.ts"]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

@@ -17,6 +17,8 @@ import { describe, expect, it } from 'vitest'
 import { macosGroupsForPlan } from './classify-pr-changes.mjs'
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { createModuleImpactModel } from './module-impact-model.test-support'
+import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
 
 type Step = {
   'continue-on-error'?: boolean
@@ -395,8 +397,17 @@ describe('PR Gate workflow', () => {
         mkdirSync(join(root, path, '..'), { recursive: true })
         writeFileSync(join(root, path), contents)
       }
-      const source = 'packages/connector-builtins/src/cancer-models.ts'
-      const test = 'packages/connector-builtins/src/cancer-models.test.ts'
+      const source = 'packages/connector-core/src/engine.ts'
+      const test = 'packages/connector-core/src/engine.test.ts'
+      // This Git fixture tests trusted policy transport and revision selection against a small,
+      // explicitly bounded registry. The real expanded owner is verified separately below.
+      const registered = createModuleImpactModel({
+        connector_core: {
+          ownerPaths: [source, test],
+          interfacePaths: [source],
+          ownerTests: [test]
+        }
+      })
       try {
         git('init', '--quiet', '-b', 'main')
         git('config', 'user.email', 'ci@example.com')
@@ -426,12 +437,13 @@ describe('PR Gate workflow', () => {
           put(
             `scripts/ci/${name}`,
             name === 'module-impact.json'
-              ? JSON.stringify(loadModuleImpactManifest())
-              : readFileSync(`scripts/ci/${name}`, 'utf8')
+              ? JSON.stringify(registered)
+              : name === 'module-derived-consumers.json'
+                ? JSON.stringify({ schemaVersion: 1, modules: {} })
+                : readFileSync(`scripts/ci/${name}`, 'utf8')
           )
         }
         if (scenario === 'sharded') {
-          const registered = loadModuleImpactManifest()
           put('scripts/ci/module-impact.json', JSON.stringify({ schemaVersion: 1 }))
           for (const [id, module] of Object.entries(registered.modules)) {
             put(`scripts/ci/module-impact/${id}.json`, JSON.stringify(module))
@@ -459,7 +471,7 @@ describe('PR Gate workflow', () => {
         }
         if (scenario === 'deleted') git('rm', source)
         else if (scenario === 'renamed')
-          git('mv', source, source.replace('cancer-models', 'renamed-cancer-models'))
+          git('mv', source, source.replace('engine', 'renamed-engine'))
         else if (scenario === 'ci-edit') put('.github/workflows/pr-gate.yml', '# PR CI update\n')
         else {
           put(source, 'export const value = 2\n')
@@ -534,7 +546,7 @@ describe('PR Gate workflow', () => {
         ).toContain('// current trusted policy')
         expect(
           loadModuleImpactManifest(join(root, 'pr-gate-trusted-classifier/module-impact.json'))
-        ).toEqual(loadModuleImpactManifest())
+        ).toEqual(registered)
         const classified = spawnSync(
           process.execPath,
           [
@@ -576,6 +588,29 @@ describe('PR Gate workflow', () => {
       } finally {
         rmSync(root, { recursive: true, force: true })
       }
+    }
+  )
+
+  it.each(['pull_request', 'merge_group'])(
+    'retains the real Connector core full-validation explanation on %s',
+    (event) => {
+      const reason =
+        'The connector_core owner retains 4 explicit research consumer obligations beyond its reviewed source-derived edges, including local-rpc-server.managed-execution.test.ts, managed-nested-generation.integration.test.ts, managed-output-publication.integration.test.ts. 4 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+      expect(loadModuleImpactManifest().modules.connector_core.fullTestReason).toBe(reason)
+      const { plan, report } = runModuleImpactAuthorityCli(
+        ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+        { EVENT_NAME: event, PR_GATE_PLATFORM_POLICY: 'risk-v1' },
+        {
+          execute: () => Buffer.from('M\0packages/connector-core/src/engine.ts\0'),
+          write: () => undefined
+        }
+      )
+      expect(report.resolved.mode).toBe('full')
+      expect(plan.mode).toBe('full')
+      expect(plan.reasonChains.join('\n')).toContain(`connector_core -> ${reason} -> full`)
+      expect(plan.bundles).toEqual(
+        expect.arrayContaining(['policy', 'static', 'linux_runtime', 'windows_core'])
+      )
     }
   )
 

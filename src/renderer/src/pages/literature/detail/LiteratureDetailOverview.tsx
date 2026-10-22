@@ -1,7 +1,7 @@
 import type { LiteraturePreviewItem } from '../renderer-host'
-import { FileDropOverlay } from '@/components/FileDropOverlay'
+import { FileDropZone } from '@/components/FileDropZone'
+import { ErrorNotice } from '@/components/error-notice'
 import { Button } from '@/components/ui/button'
-import type { useFileDropZone } from '@/hooks/useFileDropZone'
 import type { LiteratureItemType } from '@aipoch/literature-citations/contracts'
 import type { LiteratureDetailController } from '@aipoch/literature-library/client'
 import type {
@@ -9,7 +9,7 @@ import type {
   LiteratureItemView
 } from '@aipoch/literature-library/contracts'
 import type { SmartCollectionView } from '@aipoch/literature-screening/contracts'
-import { Download, FilePlus2, LoaderCircle, Upload } from 'lucide-react'
+import { Download } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { createLiteratureAttachmentVersionReference } from '../../../../../shared/literature-attachment-reference'
 import { ResourceTagSummary } from '../../settings/ResourceTagControls'
@@ -52,12 +52,11 @@ export function LiteratureDetailOverview({
   changeDetailMode,
   isAddingPdf,
   pdfInputRef,
-  addPdf,
+  addPdfs,
   pdfError,
   detailController,
   setPreviewItem,
-  pdfDropZoneProps,
-  isDraggingPdf
+  pdfProgress
 }: {
   selectedCollection: LiteratureCollectionView | undefined
   updateSmartEvidence: () => Promise<void>
@@ -89,12 +88,11 @@ export function LiteratureDetailOverview({
   changeDetailMode: ReturnType<typeof useLiteratureMetadata>['changeMode']
   isAddingPdf: boolean
   pdfInputRef: React.RefObject<HTMLInputElement | null>
-  addPdf: (file: File) => Promise<void>
+  addPdfs: (files: File[]) => Promise<void>
   pdfError: string | undefined
   detailController: LiteratureDetailController
   setPreviewItem: React.Dispatch<React.SetStateAction<LiteraturePreviewItem | undefined>>
-  pdfDropZoneProps: ReturnType<typeof useFileDropZone>['dropZoneProps']
-  isDraggingPdf: boolean
+  pdfProgress: string | undefined
 }): React.JSX.Element | null {
   const { t } = useTranslation()
   return (
@@ -205,96 +203,56 @@ export function LiteratureDetailOverview({
             <Download className="size-3.5" aria-hidden="true" />
             {t('Find full-text PDF')}
           </Button>
-          {selectedItem.attachments.length > 0 ? (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={isAddingPdf}
-              onClick={() => pdfInputRef.current?.click()}
-            >
-              {isAddingPdf ? (
-                <LoaderCircle
-                  className="size-3.5 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : (
-                <FilePlus2 className="size-3.5" aria-hidden="true" />
-              )}
-              {t('Add PDF')}
-            </Button>
+        </div>
+        <FileDropZone
+          key={selectedItem.id}
+          data-slot="literature-pdf-drop-zone"
+          className="mt-3"
+          busy={isAddingPdf}
+          onFiles={(files) => void addPdfs(files)}
+          dropLabel={t('Drop PDFs to attach to this reference')}
+          picker={{
+            label: t('Add PDFs'),
+            description: t('Drop PDFs here to attach to this reference, or choose files.'),
+            accept: 'application/pdf,.pdf',
+            multiple: true,
+            inputRef: pdfInputRef
+          }}
+        >
+          {pdfProgress ? (
+            <p role="status" className="mt-2 break-words text-xs text-muted-foreground">
+              {pdfProgress}
+            </p>
           ) : null}
-          <input
-            ref={pdfInputRef}
-            type="file"
-            accept="application/pdf,.pdf"
-            className="sr-only"
-            aria-label={t('Add PDF')}
-            onChange={(event) => {
-              const file = event.currentTarget.files?.[0]
-              event.currentTarget.value = ''
-              if (file) void addPdf(file)
+          {pdfError ? (
+            <ErrorNotice inline role="alert" tone="amber" description={pdfError} />
+          ) : null}
+          <LiteratureAttachments
+            readItem={detailController.read}
+            key={selectedItem.id}
+            item={selectedItem}
+            onPreview={(version) => {
+              const attachment = selectedItem.attachments.find((candidate) =>
+                candidate.versions.some((candidateVersion) => candidateVersion.id === version.id)
+              )
+              if (!attachment) return
+              setPreviewItem({
+                id: `literature:${version.id}`,
+                sessionId: LITERATURE_PREVIEW_SESSION_ID,
+                title: version.filename,
+                type: 'file',
+                source: 'literature',
+                managedFileId: attachment.id,
+                path: createLiteratureAttachmentVersionReference(version.id),
+                format: 'pdf',
+                name: version.filename,
+                mimeType: version.contentType,
+                size: version.sizeBytes,
+                versionNumber: version.versionNumber
+              })
             }}
           />
-        </div>
-        {pdfError ? (
-          <p role="alert" className="mt-2 text-sm text-danger-000">
-            {pdfError}
-          </p>
-        ) : null}
-        <LiteratureAttachments
-          readItem={detailController.read}
-          key={selectedItem.id}
-          item={selectedItem}
-          onPreview={(version) => {
-            const attachment = selectedItem.attachments.find((candidate) =>
-              candidate.versions.some((candidateVersion) => candidateVersion.id === version.id)
-            )
-            if (!attachment) return
-            setPreviewItem({
-              id: `literature:${version.id}`,
-              sessionId: LITERATURE_PREVIEW_SESSION_ID,
-              title: version.filename,
-              type: 'file',
-              source: 'literature',
-              managedFileId: attachment.id,
-              path: createLiteratureAttachmentVersionReference(version.id),
-              format: 'pdf',
-              name: version.filename,
-              mimeType: version.contentType,
-              size: version.sizeBytes,
-              versionNumber: version.versionNumber
-            })
-          }}
-        />
-        {selectedItem.attachments.length === 0 ? (
-          <button
-            type="button"
-            data-slot="literature-pdf-drop-zone"
-            {...pdfDropZoneProps}
-            disabled={isAddingPdf}
-            className="relative mt-2 flex w-full cursor-pointer flex-col items-center gap-2 overflow-hidden rounded-lg border border-dashed border-border bg-muted/20 px-6 py-8 text-center transition-colors hover:bg-muted/40 disabled:cursor-not-allowed disabled:opacity-60"
-            onClick={() => pdfInputRef.current?.click()}
-          >
-            {isDraggingPdf ? (
-              <FileDropOverlay label={t('Drop to upload')} className="rounded-lg" />
-            ) : null}
-            <span className="inline-flex size-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-              {isAddingPdf ? (
-                <LoaderCircle
-                  className="size-4 animate-spin motion-reduce:animate-none"
-                  aria-hidden="true"
-                />
-              ) : (
-                <Upload className="size-4" aria-hidden="true" />
-              )}
-            </span>
-            <span className="text-sm font-medium text-foreground">{t('Add PDF')}</span>
-            <span className="text-xs text-muted-foreground">
-              {t('Drag and drop or click to upload')}
-            </span>
-          </button>
-        ) : null}
+        </FileDropZone>
       </section>
     </div>
   )
