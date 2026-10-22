@@ -159,7 +159,7 @@ describe('assertShellSearchScope with granted roots', () => {
     // Use platform='linux' to force bash parsing on all platforms
     await expect(
       assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
-    ).rejects.toThrow(/outside the session cwd/)
+    ).rejects.toThrow(/outside the session cwd and authorized directories/)
   })
 
   it('allows search with rw access granted root with absolute path', async () => {
@@ -182,7 +182,7 @@ describe('assertShellSearchScope with granted roots', () => {
     // Use platform='linux' to force bash parsing on all platforms
     await expect(
       assertShellSearchScope(`grep pattern "${outside}"`, cwd, grantedRoots, 'linux')
-    ).rejects.toThrow(/outside the session cwd/)
+    ).rejects.toThrow(/outside the session cwd and authorized directories/)
   })
 
   it('allows search when multiple granted roots exist with absolute paths', async () => {
@@ -250,7 +250,7 @@ describe('assertShellSearchScope with granted roots', () => {
         assertShellSearchScope(`ls /mnt/c`, cwd, grantedRoots, 'linux', undefined, {
           kind: 'wsl2-bash'
         })
-      ).rejects.toThrow(/outside the session cwd/)
+      ).rejects.toThrow(/outside the session cwd and authorized directories/)
     }
   )
 

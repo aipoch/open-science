@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto'
+import {
+  AuthorizedDirectoryDiscovery,
+  type ConversationDiscoveryRecord,
+  type AuthorizedDirectoriesSnapshot
+} from './authorized-directories'
 import type { GrantedLocalRoot as PrismaGrantedLocalRoot, PrismaClient } from '@prisma/client'
 
 import type { GrantedLocalRoot, GrantedLocalRootAccess } from '../../shared/local-fs'
 
-// Only the grantedLocalRoot delegate is needed; typing to this subset keeps the repository
-// testable against any client that provides it (aligns with the compute and projects repositories).
-type GrantedLocalRootClient = Pick<PrismaClient, 'grantedLocalRoot'>
+// Grant records and conversation receipts share the application database.
+type GrantedLocalRootClient = Pick<PrismaClient, 'grantedLocalRoot' | '$queryRaw' | '$executeRaw'>
 
 // Resolves the Prisma client on demand so a failed schema-ensure initialization is not held
 // forever (see projects/repository.ts).
@@ -36,6 +41,34 @@ const toRoot = (row: PrismaGrantedLocalRoot): GrantedLocalRoot => ({
 // repository is a plain table wrapper.
 class GrantedLocalRootsRepository {
   private migration: Promise<void> | undefined
+  readonly discovery = new AuthorizedDirectoryDiscovery(() => this.authorizedSnapshot(), {
+    load: async (sessionId) => {
+      const client = await this.getClient()
+      const [row] = await client.$queryRaw<
+        Array<{
+          initialRevision: string
+          queriedRevision: string | null
+          notifiedRevision: string | null
+        }>
+      >`SELECT "initialRevision", "queriedRevision", "notifiedRevision"
+           FROM "AuthorizedDirectoryDiscovery" WHERE "sessionId" = ${sessionId}`
+      return row
+        ? {
+            initialRevision: row.initialRevision,
+            queriedRevision: row.queriedRevision ?? undefined,
+            notifiedRevision: row.notifiedRevision ?? undefined
+          }
+        : undefined
+    },
+    save: async (sessionId, state: ConversationDiscoveryRecord) => {
+      const client = await this.getClient()
+      await client.$executeRaw`INSERT INTO "AuthorizedDirectoryDiscovery"
+        ("sessionId", "initialRevision", "queriedRevision", "notifiedRevision")
+        VALUES (${sessionId}, ${state.initialRevision}, ${state.queriedRevision ?? null}, ${state.notifiedRevision ?? null})
+        ON CONFLICT("sessionId") DO UPDATE SET
+          "queriedRevision" = excluded."queriedRevision", "notifiedRevision" = excluded."notifiedRevision"`
+    }
+  })
 
   constructor(
     private readonly getClient: GrantedLocalRootClientProvider,
@@ -84,6 +117,36 @@ class GrantedLocalRootsRepository {
     const rows = await client.grantedLocalRoot.findMany({ orderBy: { createdAt: 'asc' } })
 
     return rows.map(toRoot)
+  }
+
+  // One table snapshot supplies both the revision and creation times; never inspect granted paths.
+  async authorizedSnapshot(): Promise<AuthorizedDirectoriesSnapshot> {
+    await this.migrateLegacy()
+    const client = await this.getClient()
+    const rows = await client.grantedLocalRoot.findMany({
+      orderBy: [{ createdAt: 'asc' }, { id: 'asc' }]
+    })
+    return {
+      revision: createHash('sha256')
+        .update(
+          JSON.stringify(
+            rows.map(({ id, path, name, access, createdAt }) => ({
+              id,
+              path,
+              name,
+              access,
+              createdAt
+            }))
+          )
+        )
+        .digest('hex'),
+      directories: rows.map((row) => ({
+        path: row.path,
+        name: row.name,
+        access: asAccess(row.access),
+        grantedAt: row.createdAt.toISOString()
+      }))
+    }
   }
 
   // Inserts a new grant, or updates the access of the existing row with the same resolved path

@@ -154,7 +154,8 @@ type AcpRuntimeCompositionOptions = AcpRuntimeArtifacts & {
   // The SQLite-backed granted-roots store ("Grant folder access"); the linked-folder file-reference
   // resolver reads it fresh per resolution. Absent only in tests — linked-folder references then
   // fail closed (no root resolves).
-  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'>
+  grantedRootsRepository?: Pick<GrantedLocalRootsRepository, 'list'> &
+    Partial<Pick<GrantedLocalRootsRepository, 'discovery'>>
   permissionGrantRegistry?: PermissionGrantRegistry
   permissionGrantContext?: Readonly<{ projectId: string; sessionId: string }>
   initializationBarrier?: Promise<unknown>
@@ -771,6 +772,7 @@ const createAcpRuntime = ({
             }
           : {}),
         ...(delegatedNotebookConnection ? {} : { uploads: { repository: uploadRepository } }),
+        authorizedDirectories: grantedRootsRepository?.discovery,
         grantedRoots: grantedRootsRepository
           ? {
               list: () => grantedRootsRepository.list(),

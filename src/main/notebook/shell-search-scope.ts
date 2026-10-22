@@ -21,7 +21,7 @@ const mapWsl2GuestPathToHost = (guestPath: string): string => {
 
 const denied = (reason: string): never => {
   throw new Error(
-    `Shell search scope denied: ${reason}. Search an explicit directory inside the session cwd, or use host.artifacts() for managed files.`
+    `Shell search scope denied: ${reason}. Search an explicit directory inside the session cwd or an authorized directory, or use host.artifacts() for managed files.`
   )
 }
 
@@ -201,7 +201,8 @@ const rootsFor = (name: string, args: string[]): string[] => {
   }
   if (name === 'mdfind') {
     const index = args.indexOf('-onlyin')
-    if (index < 0 || !args[index + 1]) return denied('mdfind requires -onlyin inside cwd')
+    if (index < 0 || !args[index + 1])
+      return denied('mdfind requires -onlyin inside the session cwd or an authorized directory')
     return args.flatMap((arg, offset) => (arg === '-onlyin' ? [args[offset + 1] ?? ''] : []))
   }
   const paths: string[] = []
@@ -317,7 +318,7 @@ export const assertShellSearchScope = async (
     }
 
     // Neither inside cwd nor any granted root
-    return denied('the search directory is outside the session cwd')
+    return denied('the search directory is outside the session cwd and authorized directories')
   }
   const analyze = async (source: string, state: State, depth = 0): Promise<void> => {
     if (depth > 8) return denied('nested shell commands are too deeply wrapped to resolve')

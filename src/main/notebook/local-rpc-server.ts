@@ -1,3 +1,4 @@
+import type { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
 import { createHash, randomUUID } from 'node:crypto'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import {
@@ -130,6 +131,7 @@ type NotebookLocalRpcServerOptions = {
   host?: string
   requestBytes?: number
   now?: () => number
+  authorizedDirectories?: Pick<AuthorizedDirectoryDiscovery, 'query'>
   onSessionReleased?: (sessionId: string) => void
   isHostSkillsAvailable?: (sessionId: string) => boolean
   resolveSpecialistSkillIds?: (specialistId: string) => Promise<readonly string[]>
@@ -538,6 +540,7 @@ const CONTROL_RPC_METHODS = new Set([
   'listModelsCall',
   'viewImageCall',
   'requestUserInput',
+  'listAuthorizedDirectories',
   'memoryListCategories',
   'memorySearch',
   'memoryRemember'
@@ -649,6 +652,7 @@ const closeRequestAfterResponse = (request: IncomingMessage, response: ServerRes
 // Hosts an authenticated app-local bridge between MCP stdio tools and the runtime service. The wire
 // protocol is HTTP/JSON; Windows carries it over a named pipe instead of loopback TCP.
 class NotebookLocalRpcServer {
+  private readonly authorizedDirectories: NotebookLocalRpcServerOptions['authorizedDirectories']
   private readonly token: string
   private readonly host: string
   private readonly requestBytes: number
@@ -746,6 +750,7 @@ class NotebookLocalRpcServer {
     private readonly service: NotebookLocalRpcCapability,
     options: NotebookLocalRpcServerOptions = {}
   ) {
+    this.authorizedDirectories = options.authorizedDirectories
     this.token = options.token ?? randomUUID()
     this.host = options.host ?? '127.0.0.1'
     this.requestBytes = options.requestBytes ?? LOCAL_RESOURCE_BUDGETS.requestBytes
@@ -2936,6 +2941,15 @@ class NotebookLocalRpcServer {
       return {
         path: await lease.resolve({ sourceKind, inputFileVersionId })
       }
+    }
+
+    if (method === 'listAuthorizedDirectories') {
+      if (!this.authorizedDirectories)
+        throw new Error('Authorized directory records are unavailable.')
+      const sessionId = typeof params.sessionId === 'string' ? params.sessionId : ''
+      if (!sessionId)
+        throw new RpcHttpError(403, 'Authorized directories require a session-bound token.')
+      return this.authorizedDirectories.query(sessionId)
     }
 
     // mcpCall carries no runtime routing fields, so it bypasses assertSessionParams below. It does

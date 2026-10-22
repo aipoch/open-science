@@ -1,3 +1,4 @@
+import type { GrantedLocalRootsRepository } from '../local-fs/granted-roots-repository'
 import { runtimeMetadata } from '../runtime-metadata'
 import { bindNotebookApprovals } from './notebook-approvals'
 import { ReviewRepository } from '../reviewer/repository'
@@ -69,6 +70,7 @@ export async function composeNotebookBridge({
   visionEvidenceRepository,
   notebookService,
   notebookLocalRpc,
+  grantedRootsRepository,
   specialistService,
   memoryService,
   removeResourceTags,
@@ -99,6 +101,7 @@ export async function composeNotebookBridge({
   sessionPersistenceCoordinator: Pick<SessionPersistenceCommands, 'runSessionMutation'>
   visionEvidenceRepository: VisionEvidenceRepository
   notebookService: NotebookRuntimeService
+  grantedRootsRepository: GrantedLocalRootsRepository
   notebookLocalRpc: ReturnType<typeof createNotebookApplicationModule>['capability']['localRpc']
   specialistService: SpecialistService
   memoryService: MemoryService
@@ -206,6 +209,7 @@ export async function composeNotebookBridge({
   bindNotebookApprovals(notebookService, () => runtimeRef.current)
   const notebookRpcServer = await modules.add(
     new NotebookLocalRpcServer(notebookLocalRpc, {
+      authorizedDirectories: grantedRootsRepository.discovery,
       // The Notebook REPL runs in a process sandbox whose only TCP egress is the approval gateway.
       // Keep its privileged Host SDK channel on an explicitly shared local socket instead.
       transport: 'pipe',

@@ -1,3 +1,4 @@
+import type { AuthorizedDirectoryDiscovery } from '../local-fs/authorized-directories'
 import type { ActiveSession, PromptResponse, SessionNotification } from '@agentclientprotocol/sdk'
 
 import { createLogger, errorLogFields } from '@aipoch/diagnostics/node'
@@ -86,6 +87,7 @@ type AcpActivatedPromptTurn = Readonly<{
 }>
 
 type AcpPromptTurnEnvironment = Readonly<{
+  authorizedDirectories?: Pick<AuthorizedDirectoryDiscovery, 'prepareNotice'>
   connectionGeneration?: () => number
   backend: () => AcpBackendGenerationView
   tooling: () => AcpSessionToolingAvailability
@@ -532,6 +534,11 @@ class AcpPromptTurnWorkflow {
       const backend = env.backend()
       const planContext =
         turn.plan.active ?? turn.plan.protectedPending ?? turn.plan.protectedRejected
+      // Only an explicit user send carries the notice; continuations never consume it.
+      const authorizationNotice =
+        turn.mode.kind === 'user' && !request.continuation && !request.suppressUserMessage
+          ? await env.authorizedDirectories?.prepareNotice(sessionId)
+          : undefined
       prepared = await preparation.prepare({
         request: preparationRequest,
         classificationEnabled:
@@ -555,9 +562,10 @@ class AcpPromptTurnWorkflow {
         ...(planContext
           ? { protectedContext: formatPlanProtectedContext(planContext, turn.plan.source) }
           : {}),
-        ...(request.turnIntent === 'plan-first'
-          ? { turnPromptReminders: [PLAN_FIRST_TURN_PROMPT_REMINDER] }
-          : {}),
+        turnPromptReminders: [
+          ...(request.turnIntent === 'plan-first' ? [PLAN_FIRST_TURN_PROMPT_REMINDER] : []),
+          ...(authorizationNotice ? [authorizationNotice.text] : [])
+        ],
         signal: interaction.signal,
         isCurrent: () => this.isCurrent(turn),
         cancellationCheckpoint: () => this.checkpoint(interaction),
@@ -639,6 +647,14 @@ class AcpPromptTurnWorkflow {
             return interactions.captureTerminal(interaction, 'stop')
           },
           onAccepted: async () => {
+            try {
+              await authorizationNotice?.commit()
+            } catch (error) {
+              log.warn(
+                'authorization notice receipt failed after provider acceptance',
+                errorLogFields(error)
+              )
+            }
             if (resumeAccepted) {
               const accept = resumeAccepted
               resumeAccepted = undefined

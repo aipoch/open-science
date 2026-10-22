@@ -1,3 +1,4 @@
+import { AUTHORIZED_DIRECTORIES_DESCRIPTION } from '../local-fs/authorized-directories'
 import { nodeRuntimeEnvironmentEntries } from '../node-process-host'
 import type { McpServerStdio } from '@agentclientprotocol/sdk'
 import { McpServer as ModelContextProtocolServer } from '@modelcontextprotocol/sdk/server/mcp.js'
@@ -1634,6 +1635,25 @@ const NOTEBOOK_RPC_TOOLS: NotebookRpcToolDefinition[] = [
     inputSchema: {},
     mapResult: compactNotebookStateResult,
     resultLimitChars: NOTEBOOK_MCP_STATE_RESULT_LIMIT
+  },
+  {
+    name: 'list_authorized_directories',
+    title: 'List authorized directories',
+    description: AUTHORIZED_DIRECTORIES_DESCRIPTION,
+    method: 'listAuthorizedDirectories',
+    inputSchema: {},
+    outputSchema: z.object({
+      revision: z.string(),
+      directories: z.array(
+        z.object({
+          path: z.string(),
+          name: z.string(),
+          access: z.enum(['ro', 'rw']),
+          grantedAt: z.string().datetime()
+        })
+      )
+    }),
+    mapResult: (raw) => raw
   },
   {
     name: 'list_notebook_runtimes',

@@ -60,7 +60,8 @@ describe('default permission grants', () => {
       { kind: 'mcp_tool', key: 'mcp:open-science-library/search_library' },
       { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_abstract' },
       { kind: 'mcp_tool', key: 'mcp:open-science-library/read_library_pdf' },
-      { kind: 'mcp_tool', key: 'mcp:open-science-library/format_references' }
+      { kind: 'mcp_tool', key: 'mcp:open-science-library/format_references' },
+      { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_authorized_directories' }
     ])
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.skill_operation).toContain('skill:invoke')
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool).toContain(
@@ -83,10 +84,14 @@ describe('default permission grants', () => {
         orderBy: { id: 'asc' },
         select: { id: true }
       })
-    ).resolves.toEqual([{ id: 'global-customize-v1' }, { id: 'global-literature-read-v2' }])
+    ).resolves.toEqual([
+      { id: 'global-customize-v1' },
+      { id: 'global-directory-discovery-v1' },
+      { id: 'global-literature-read-v2' }
+    ])
   })
 
-  it('adds only the new read-only literature defaults after the v1 seed was applied', async () => {
+  it('adds only new read-only defaults after the v1 seed was applied', async () => {
     const fixture = await setup()
     await fixture.client.permissionGrantSeed.create({
       data: { id: 'global-customize-v1', appliedAt: new Date() }
@@ -95,7 +100,7 @@ describe('default permission grants', () => {
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
 
     const grants = await fixture.registry.list()
-    expect(grants).toHaveLength(DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES.length)
+    expect(grants).toHaveLength(DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES.length + 1)
     expect(grants).toEqual(
       expect.arrayContaining(
         DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES.map((capability) =>
@@ -113,12 +118,13 @@ describe('default permission grants', () => {
     await expect(restoreDefaultPermissionGrants(fixture.registry)).resolves.toBe(0)
   })
 
-  it('does not recreate a revoked literature default on a later startup', async () => {
+  it.each([
+    'mcp:open-science-library/search_library',
+    'mcp:open-science-notebook/list_authorized_directories'
+  ])('does not recreate a revoked default %s on a later startup', async (key) => {
     const fixture = await setup()
     await seedDefaultPermissionGrants(fixture.registry, fixture.client)
-    const revoked = (await fixture.registry.list()).find(
-      (grant) => grant.capability.key === 'mcp:open-science-library/search_library'
-    )
+    const revoked = (await fixture.registry.list()).find((grant) => grant.capability.key === key)
     expect(revoked).toBeDefined()
     await fixture.registry.revoke({ grants: [{ id: revoked!.id, revision: revoked!.revision }] })
 

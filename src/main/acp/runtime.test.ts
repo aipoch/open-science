@@ -12581,7 +12581,7 @@ describe('ACP runtime session management', () => {
     expect(fakeAgent.prompts.every(({ text }) => !text.includes(persistentInstructions))).toBe(true)
   })
 
-  it('passes current granted local roots into backend context and prompt guidance', async () => {
+  it('keeps current granted roots in the sandbox context without exposing them in prompts', async () => {
     const process = new FakeAgentProcess()
     startFakeAgent(process, ['granted-context-session'], {
       modes: {
@@ -12620,12 +12620,11 @@ describe('ACP runtime session management', () => {
     await runtime.createSession({ cwd: '/workspace' })
 
     expect(resolvedContext?.grantedLocalRoots).toEqual(grantedLocalRoots)
-    const grantedGuidance = resolvedContext?.systemPromptAppends?.find((append) =>
-      append.includes('<open_science_granted_local_roots>')
-    )
-    expect(grantedGuidance).toContain('D:\\\\Data \\u0026 \\u003cresearch\\u003e')
-    expect(grantedGuidance).toContain('"access":"rw"')
-    expect(grantedGuidance).toContain('"access":"ro"')
+    const guidance = resolvedContext?.systemPromptAppends?.join('\n') ?? ''
+    expect(guidance).toContain('list_authorized_directories')
+    expect(guidance).not.toContain('open_science_granted_local_roots')
+    expect(guidance).not.toContain('ReadOnly')
+    expect(guidance).not.toContain('Data & <research>')
   })
 
   it('forwards resolved Claude session options on create and resume', async () => {
@@ -13546,7 +13545,7 @@ describe('ACP runtime session management', () => {
     }
   })
 
-  it('lets an ACP agent use a folder grant during a real prompt', async () => {
+  it('enforces revocation and read-only changes after an ACP agent has cached the directory list', async () => {
     const workspaceRoot = await mkdtemp(join(tmpdir(), 'open-science-acp-runtime-'))
     const grantedRoot = await realpath(await mkdtemp(join(tmpdir(), 'open-science-acp-granted-')))
     const inputPath = join(grantedRoot, 'progress.txt')
@@ -13554,6 +13553,11 @@ describe('ACP runtime session management', () => {
     const process = new FakeAgentProcess()
     let readContent = ''
     let filesystemError: unknown
+    let writeError: unknown
+    let currentRoots: Array<{ path: string; access: 'ro' | 'rw' }> = [
+      { path: grantedRoot, access: 'rw' }
+    ]
+    const cachedRoots = structuredClone(currentRoots)
 
     try {
       await writeFile(inputPath, 'authorized progress', 'utf8')
@@ -13581,11 +13585,15 @@ describe('ACP runtime session management', () => {
             return { stopReason: 'end_turn' }
           }
           readContent = input.content
-          await ctx.client.request(acp.methods.client.fs.writeTextFile, {
-            sessionId: 'granted-folder-session',
-            path: outputPath,
-            content: `${input.content} (processed)`
-          })
+          try {
+            await ctx.client.request(acp.methods.client.fs.writeTextFile, {
+              sessionId: 'granted-folder-session',
+              path: outputPath,
+              content: `${input.content} (processed)`
+            })
+          } catch (error) {
+            writeError = error
+          }
           return { stopReason: 'end_turn' }
         })
         .connect(
@@ -13600,8 +13608,8 @@ describe('ACP runtime session management', () => {
         defaultCwd: workspaceRoot,
         spawnAgent: () => asAgentProcess(process),
         grantedRoots: {
-          list: async () => [{ path: grantedRoot, access: 'rw' as const }],
-          resolveRoot: async () => ({ path: grantedRoot, access: 'rw' as const })
+          list: async () => currentRoots,
+          resolveRoot: async () => currentRoots[0]
         }
       })
       const session = await runtime.createSession({ cwd: workspaceRoot })
@@ -13610,6 +13618,23 @@ describe('ACP runtime session management', () => {
 
       expect(filesystemError).toBeUndefined()
       expect(readContent).toBe('authorized progress')
+      await expect(readFile(outputPath, 'utf8')).resolves.toBe('authorized progress (processed)')
+      currentRoots = [{ path: grantedRoot, access: 'ro' }]
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Write using the earlier listing'
+      })
+      expect(writeError).toBeDefined()
+      expect(filesystemError).toBeUndefined()
+      currentRoots = []
+      readContent = ''
+      await runtime.sendPrompt({
+        sessionId: session.sessionId,
+        text: 'Read using the earlier listing'
+      })
+      expect(filesystemError).toBeDefined()
+      expect(readContent).toBe('')
+      expect(cachedRoots).toEqual([{ path: grantedRoot, access: 'rw' }])
       await expect(readFile(outputPath, 'utf8')).resolves.toBe('authorized progress (processed)')
       await runtime.disconnect()
     } finally {

@@ -376,6 +376,7 @@ describe('notebook MCP server config', () => {
       'bash_execute',
       'request_network_access',
       'notebook_state',
+      'list_authorized_directories',
       'list_notebook_runtimes',
       'notebook_bind_runtime',
       'notebook_switch_runtime',
@@ -2542,7 +2543,9 @@ describe('compactManagePackagesResult', () => {
 describe('notebook control tool results', () => {
   it('gives every notebook tool a global result budget and projects only results that need it', () => {
     for (const tool of NOTEBOOK_RPC_TOOLS) {
-      expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
+      // Directory discovery must return a complete reusable snapshot, never a truncated list.
+      if (tool.name === 'list_authorized_directories') expect(tool.resultLimitChars).toBeUndefined()
+      else expect(tool.resultLimitChars, tool.name).toBeGreaterThan(0)
       if (!tool.name.includes('memor')) expect(tool.mapResult, tool.name).toBeTypeOf('function')
     }
   })

@@ -41,9 +41,14 @@ const DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES: readonly PermissionCapabi
   { kind: 'mcp_tool', key: 'mcp:open-science-library/format_references' }
 ]
 
+const DEFAULT_DIRECTORY_DISCOVERY_CAPABILITIES: readonly PermissionCapability[] = [
+  { kind: 'mcp_tool', key: 'mcp:open-science-notebook/list_authorized_directories' }
+]
+
 const DEFAULT_GLOBAL_PERMISSION_CAPABILITIES: readonly PermissionCapability[] = [
   ...LEGACY_DEFAULT_GLOBAL_PERMISSION_CAPABILITIES,
-  ...DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES
+  ...DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES,
+  ...DEFAULT_DIRECTORY_DISCOVERY_CAPABILITIES
 ]
 
 const missingDefaultGlobalPermissionCapabilities = (
@@ -102,6 +107,7 @@ const seedDefaultPermissionGrants = async (
     DEFAULT_LITERATURE_READ_PERMISSION_GRANT_SEED_ID,
     DEFAULT_LITERATURE_READ_PERMISSION_CAPABILITIES
   )
+  await applySeed('global-directory-discovery-v1', DEFAULT_DIRECTORY_DISCOVERY_CAPABILITIES)
 }
 
 export {

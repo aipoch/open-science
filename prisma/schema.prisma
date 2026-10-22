@@ -1236,6 +1236,14 @@ model ComputeAuthOperation {
 // the realpath'd absolute folder and is unique, so re-granting a folder updates its access in place.
 // `access` is 'ro' | 'rw'. Legacy installs import settings.json's grantedLocalRoots on first use (see
 // src/main/local-fs/granted-roots-repository.ts); production never writes the settings field again.
+// App-session receipts are independent of the rebuildable Session query projection.
+model AuthorizedDirectoryDiscovery {
+  sessionId        String  @id
+  initialRevision  String
+  queriedRevision  String?
+  notifiedRevision String?
+}
+
 model GrantedLocalRoot {
   id        String   @id
   path      String   @unique

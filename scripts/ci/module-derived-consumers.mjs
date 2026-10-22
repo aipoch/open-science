@@ -1564,6 +1564,7 @@ export const dependencyConsumerBoundaries = {
   },
   main_database: {
     sources: [
+      'src/main/database/migrations/0051-authorized-directory-discovery.ts',
       'src/main/database/database-startup-ipc.ts',
       'src/main/database/database-startup-logging.ts',
       'src/main/database/database-startup-owner.ts',
@@ -1878,6 +1879,7 @@ export const dependencyConsumerBoundaries = {
   },
   main_local_fs: {
     sources: [
+      'src/main/local-fs/authorized-directories.ts',
       'src/main/local-fs/granted-roots-repository.ts',
       'src/main/local-fs/ipc.ts',
       'src/main/local-fs/service.ts',
@@ -1887,6 +1889,8 @@ export const dependencyConsumerBoundaries = {
     sourceLayers: {},
     consumerModules: [],
     requiredTests: [
+      'src/main/local-fs/authorized-directories.test.ts',
+      'src/main/notebook/authorized-directories.integration.test.ts',
       'src/main/local-fs/granted-roots-repository.test.ts',
       'src/main/local-fs/ipc.test.ts',
       'src/main/local-fs/service.test.ts',

@@ -36,6 +36,17 @@ describe('resolveCanonicalMcpToolIdentity', () => {
     ).toBe(`Use ${prefix}list_memory_categories then ${prefix}search_memories.`)
   })
 
+  it.each([
+    ['claude-code', 'mcp__open-science-notebook__'],
+    ['codebuddy', 'mcp__open_science_notebook__'],
+    ['opencode', 'open_science_notebook_'],
+    ['codex', '']
+  ] as const)('renders authorized directory discovery for %s', (frameworkId, prefix) => {
+    expect(
+      renderAppMcpToolReferences(frameworkId, 'Call list_authorized_directories when needed.')
+    ).toBe(`Call ${prefix}list_authorized_directories when needed.`)
+  })
+
   it('keeps the app MCP inventory aligned with the remembered-permission catalog', () => {
     expect(PRE_REGISTERED_PERMISSION_IDENTITIES.mcp_tool.toSorted()).toEqual(
       appMcpToolIdentities()
