@@ -181,13 +181,12 @@ export function checkModuleConsumerCoverage({
 
 // The index is formatted like every other committed JSON file, so that regenerating it can never
 // fail the repository format check. Prettier is a devDependency, never part of trusted preflight.
-function formatIndexJson(text, destination) {
-  // Prettier resolves .prettierrc.yaml from the spawned process's cwd, not from
-  // --stdin-filepath. Pin it to the repository root so the result does not depend on
-  // whatever directory the caller's process happened to inherit.
+function formatIndexJson(text) {
+  // Format as the repository path, not the destination: a checkout under /tmp would otherwise
+  // match the `tmp` .prettierignore entry and Prettier would echo the input unformatted.
   const repositoryRoot = fileURLToPath(new URL('../../..', import.meta.url))
   const prettier = resolve(repositoryRoot, 'node_modules/prettier/bin/prettier.cjs')
-  return execFileSync(process.execPath, [prettier, '--stdin-filepath', destination], {
+  return execFileSync(process.execPath, [prettier, '--stdin-filepath', derivedConsumersPath], {
     cwd: repositoryRoot,
     input: text,
     encoding: 'utf8',
@@ -211,7 +210,7 @@ export function runDerivedConsumersCli(args = process.argv.slice(2), cwd = proce
     const destination = resolve(cwd, derivedConsumersPath)
     if (existsSync(destination) && !lstatSync(destination).isFile())
       throw Error('Index must be a regular file')
-    writeFileSync(destination, formatIndexJson(JSON.stringify(index, null, 2) + '\n', destination))
+    writeFileSync(destination, formatIndexJson(JSON.stringify(index, null, 2) + '\n'))
   }
 }
 
