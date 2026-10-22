@@ -8,23 +8,17 @@ on:
   workflow_dispatch:
     inputs:
       release_run_id:
-        description: Successful stable Release push run to publish (v1.0.1 is 39409106648).
+        description: Successful stable Release push run containing verified npm artifacts.
         type: string
         required: true
-        default: '39409106648'
       dry_run:
-        description: Build and verify without registry writes or npm credentials.
+        description: Verify the complete Release artifact set without registry writes or npm credentials.
         type: boolean
         default: true
       bootstrap:
         description: Explicitly use the temporary npm environment token for first publication.
         type: boolean
         default: false
-      target:
-        description: Focused dry-run target; real publication requires all five platforms.
-        type: choice
-        options: [all, linux-x64-gnu, linux-arm64-gnu, darwin-arm64, darwin-x64, win32-x64]
-        default: all
 
 permissions:
   contents: read
@@ -57,7 +51,6 @@ jobs:
         env:
           NPM_RELEASE_RUN_ID: ${{ github.event.workflow_run.id || inputs.release_run_id }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run }}
-          TARGET: ${{ inputs.target || 'all' }}
         run: |
           node --input-type=module <<'JS'
           import assert from 'node:assert/strict';
@@ -66,7 +59,6 @@ jobs:
           assert.match(process.env.NPM_RELEASE_RUN_ID, /^[1-9]\d*$/);
           if (process.env.DRY_RUN !== 'true') {
             assertReleasePublisher(process.env);
-            assert.equal(process.env.TARGET, 'all', 'Publication requires all five native targets');
           }
           appendFileSync(process.env.GITHUB_OUTPUT, `release_run_id=${process.env.NPM_RELEASE_RUN_ID}\n`);
           JS
@@ -78,11 +70,26 @@ jobs:
 
   verify:
     needs: source
-    uses: ./.github/workflows/runtime-packages.yml
-    with:
-      distribution: npm
-      source_sha: ${{ needs.source.outputs.source_sha }}
-      target: ${{ inputs.target || 'all' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: npm-*
+          path: out/distributions
+          run-id: ${{ needs.source.outputs.release_run_id }}
+          github-token: ${{ github.token }}
+      - name: Verify certified source and complete artifact set
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NPM_RELEASE_RUN_ID: ${{ needs.source.outputs.release_run_id }}
+        run: npm run publish:npm-release -- out/distributions --verify-release
 
   publish:
     needs: [source, verify]
@@ -109,11 +116,8 @@ jobs:
         with:
           pattern: npm-*
           path: out/distributions
-      - name: Revalidate certified source and complete artifact set
-        env:
-          GH_TOKEN: ${{ github.token }}
-          NPM_RELEASE_RUN_ID: ${{ needs.source.outputs.release_run_id }}
-        run: npm run publish:npm-release -- out/distributions --verify-release
+          run-id: ${{ needs.source.outputs.release_run_id }}
+          github-token: ${{ github.token }}
       - name: Publish verified packages
         env:
           GH_TOKEN: ${{ github.token }}
