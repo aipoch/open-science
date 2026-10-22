@@ -38,10 +38,15 @@ type PdfTranslationSourceData = Readonly<{
   resourceRequestKey: string
   fingerprint: string
   pages: PdfTranslation['pages']
+  /** Atomic original figures/tables, kept out of paragraph reflow. */
+  originalRegions?: readonly Readonly<Pick<PdfTranslationFragment, 'pageNumber' | 'rect'>>[]
   units: readonly Readonly<
     Pick<PdfTranslationUnit, 'id' | 'source' | 'fragments'> & {
       /** Located source only; no paragraph/table translation contract has been established. */
       sourceOnly?: true
+      /** Text owned by an original picture/diagram, never a translation request. */
+      figure?: true
+      preserve?: 'formula' | 'code' | 'literal' | 'reference'
     }
   >[]
 }>
@@ -88,12 +93,26 @@ export function createPdfTranslationSource(input: PdfTranslationSourceData): Pdf
     resourceRequestKey: input.resourceRequestKey,
     fingerprint: input.fingerprint,
     pages: Object.freeze(input.pages.map(({ width, height }) => Object.freeze({ width, height }))),
+    ...(input.originalRegions
+      ? {
+          originalRegions: Object.freeze(
+            input.originalRegions.map((region) =>
+              Object.freeze({
+                pageNumber: region.pageNumber,
+                rect: Object.freeze({ ...region.rect })
+              })
+            )
+          )
+        }
+      : {}),
     units: Object.freeze(
-      input.units.map(({ id, source, fragments, sourceOnly }) =>
+      input.units.map(({ id, source, fragments, sourceOnly, figure, preserve }) =>
         Object.freeze({
           id,
           source,
           ...(sourceOnly === true ? { sourceOnly: true as const } : {}),
+          ...(figure === true ? { figure: true as const } : {}),
+          ...(preserve ? { preserve } : {}),
           fragments: Object.freeze(
             fragments.map(({ pageNumber, rect, items }) =>
               Object.freeze({

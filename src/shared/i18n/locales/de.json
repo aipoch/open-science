@@ -7543,6 +7543,11 @@
     "Download this file to view it.": "Laden Sie diese Datei herunter, um sie anzuzeigen.",
     "Preview truncated.": "Vorschau gekürzt.",
     "Hide file": "Datei ausblenden",
+    "Content first": "Inhalt bevorzugen",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Fließtext und Beschriftungen einspaltig neu anordnen und Abbildungen, Tabellen, Formeln, Code und Literaturangaben möglichst beibehalten. Das Ergebnis hängt von der Qualität der PDF-Extraktion ab. Ohne Häkchen wird das ursprüngliche Layout möglichst beibehalten.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Textrichtung oder ihr Layout nicht sicher neu anordnen ließ.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Diese Quellseiten wurden im PDF unverändert beibehalten, da sich ihre Links nicht sicher auf die neuen Positionen übertragen ließen.",
+    "Source pages: {{pages}}": "Quellseiten: {{pages}}",
     "This animated image is too large to preview safely. Download the original to view it.": "Dieses animierte Bild ist für eine sichere Vorschau zu groß. Laden Sie das Original herunter, um es anzusehen.",
     "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "Dieses Bild überschreitet die Vorschaugrenze von {{limit}} Pixeln. Laden Sie das Original herunter, um es anzusehen.",
     "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "Dieses Bild überschreitet die Grenze von 50 MiB für die Größenänderung. Laden Sie das Original herunter, um es anzusehen.",
@@ -7587,6 +7592,7 @@
     "Excluded references were not imported. Their details remain below.": "Ausgeschlossene Literaturangaben wurden nicht importiert. Ihre Details bleiben unten verfügbar.",
     "Select reference {{number}}: {{title}}": "Literaturangabe {{number}} auswählen: {{title}}",
     "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Einige Kennungen widersprechen sich oder passen zu unterschiedlichen Literaturangaben. Schließen Sie widersprüchliche Literaturangaben aus, korrigieren Sie die Quelldatei oder behalten Sie separate Kopien der ausgewählten Literaturangaben.",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "Die Original-PDF wurde beibehalten, da ihre dokumentweiten Strukturen nicht sicher erhalten werden konnten. Lesen Sie die Übersetzung in der Seitenleiste.",
     "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "Ihr Konto konnte nicht verifiziert werden. Stellen Sie den Zugriff wieder her, um fortzufahren. Konversation und Entwurf bleiben erhalten.",
     "Open account settings": "Kontoeinstellungen öffnen",
     "Update the saved credential, then test the connection.": "Aktualisieren Sie die gespeicherten Zugangsdaten und testen Sie anschließend die Verbindung.",
@@ -7626,6 +7632,9 @@
     "Add PDFs": "PDFs hinzufügen",
     "Drop PDFs here to attach to this reference, or choose files.": "PDFs hier ablegen, um sie an diese Referenz anzuhängen, oder Dateien auswählen.",
     "Import PDFs together, or one reference file at a time. No files were added.": "Importieren Sie PDFs gemeinsam oder jeweils eine Referenzdatei. Es wurden keine Dateien hinzugefügt.",
-    "Drop PDFs or reference files to import": "PDFs oder Referenzdateien zum Importieren ablegen"
+    "Drop PDFs or reference files to import": "PDFs oder Referenzdateien zum Importieren ablegen",
+    "The Agent runtime could not apply the selected Specialist.": "Die Agent-Laufzeit konnte den ausgewählten Spezialisten nicht anwenden.",
+    "The Specialist was applied, but its completion state could not be saved.": "Der Spezialist wurde angewendet, aber der Abschlussstatus konnte nicht gespeichert werden.",
+    "Your draft and queued messages are preserved.": "Ihr Entwurf und die Nachrichten in der Warteschlange bleiben erhalten."
   }
 }

@@ -1839,10 +1839,116 @@ describe('ConversationPanel Specialist reconfigure recovery', () => {
 
     const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
     expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    expect(banner?.textContent).toContain('switch rejected')
     clickRetry()
 
     expect(retrySpecialistSelection).toHaveBeenCalledOnce()
     expect(retryDraftReconfigure).not.toHaveBeenCalled()
+  })
+
+  it('shows the failure reason when retrying an already saved selection rejects', () => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: {
+          specialist: {
+            reconfigureError: { ...errorView, committed: true, message: 'connection lost' }
+          }
+        }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Could not switch to Specialist B')
+    expect(banner?.textContent).toContain('connection lost')
+  })
+
+  it('keeps recovery available for a restored pending selection without an observed failure', () => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: { ...errorView, committed: true, message: '' } } }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain('Specialist switch is pending for Specialist B')
+    expect(banner?.textContent).toContain(
+      'The selection is saved, but the Agent runtime has not applied it yet.'
+    )
+    expect(banner?.textContent).toContain('Retry')
+    expect(banner?.textContent).toContain('Choose another specialist')
+    expect(banner?.textContent).toContain('Use None (Main Agent)')
+  })
+
+  it('shows progress instead of recovery actions while retrying a Specialist switch', () => {
+    renderPanel({
+      view: { activeSession: { ...activeSession, specialistId: 'previous' } },
+      specialist: {
+        view: {
+          specialist: {
+            barrierInFlight: true,
+            historyId: undefined,
+            reconfigureError: errorView
+          }
+        }
+      }
+    })
+
+    const progress = container.querySelector('[data-testid="specialist-switch-loading"]')
+    expect(progress?.getAttribute('role')).toBe('status')
+    expect(progress?.classList.contains('sr-only')).toBe(true)
+    const picker = container.querySelector('[data-testid="composer-specialist-picker-trigger"]')
+    expect(picker?.getAttribute('aria-busy')).toBe('true')
+    expect(picker?.querySelector('.animate-spin')).not.toBeNull()
+    expect(progress?.textContent).toContain('Switching to Main Agent')
+    expect(container.querySelector('[data-testid="reconfigure-error-banner"]')).toBeNull()
+  })
+
+  it('disables both send controls and Enter while a Specialist switch is in flight', () => {
+    const submit = vi.fn()
+    renderPanel({
+      view: { activeSession },
+      composer: { view: { doc: { nodes: [{ type: 'text', text: 'Keep this draft' }] } } },
+      conversation: { availability: { submit: true }, actions: { submit: { draft: submit } } },
+      specialist: { view: { specialist: { barrierInFlight: true, historyId: 'target' } } }
+    })
+    const send = container.querySelector<HTMLButtonElement>('[aria-label="Send message"]')!
+    const options = container.querySelector<HTMLButtonElement>('[aria-label="More send options"]')!
+    const editor = container.querySelector<HTMLElement>('[role="textbox"]')!
+    act(() => {
+      send.click()
+      editor.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })
+      )
+    })
+    expect(submit).not.toHaveBeenCalled()
+    expect(send.disabled).toBe(true)
+    expect(options.disabled).toBe(true)
+    expect(
+      container
+        .querySelector('[aria-label="Send message options"]')
+        ?.classList.contains('bg-bg-300')
+    ).toBe(true)
+    expect(editor.getAttribute('contenteditable')).toBe('true')
+    expect(editor.textContent).toContain('Keep this draft')
+  })
+
+  it.each([
+    ['runtime-application-failed', 'The Agent runtime could not apply the selected Specialist.'],
+    [
+      'pending-state-clear-failed',
+      'The Specialist was applied, but its completion state could not be saved.'
+    ]
+  ] as const)('explains a completed %s failure before offering recovery', (reason, message) => {
+    renderPanel({
+      view: { activeSession },
+      specialist: {
+        view: { specialist: { reconfigureError: { ...errorView, committed: true, reason } } }
+      }
+    })
+    const banner = container.querySelector('[data-testid="reconfigure-error-banner"]')
+    expect(banner?.textContent).toContain(message)
+    expect(banner?.textContent).toContain('Your draft and queued messages are preserved.')
+    expect(container.querySelector('[data-testid="specialist-switch-loading"]')).toBeNull()
   })
 
   it('keeps send-barrier Retry routed through draft submission', () => {

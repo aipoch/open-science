@@ -34,14 +34,16 @@ function reportFor(
 
 describe('module impact shadow', () => {
   it('retains Linux sandbox certification when the PDF corpus test itself changes', () => {
-    const plan = createAffectedTestPlan(
-      [{ path: 'scripts/pdf-translation-corpus.test.ts', status: 'modified' }],
-      manifestOnlyGraph
+    const report = reportFor([
+      { path: 'scripts/pdf-translation-corpus.test.ts', status: 'modified' }
+    ])
+    expect(report.shadow.mode).toBe('full')
+    expect(report.shadow.reasonChains).toContainEqual(
+      expect.stringMatching(/^workspace_previews -> .+ -> full$/)
     )
-    expect(plan.mode).toBe('selective')
-    expect(plan.testFiles).toEqual(['scripts/pdf-translation-corpus.test.ts'])
-    expect(plan.capabilityOverlays).toContain('notebook_network_sandbox')
-    expect(requiredLanesForModulePlan(plan)).toContain('linux_runtime')
+    expect(report.resolved.mode).toBe('full')
+    expect(report.resolved.lanes).toEqual(changeImpactManifest.laneOrder)
+    expect(report.resolved.lanes).toContain('linux_runtime')
   })
 
   it.each([

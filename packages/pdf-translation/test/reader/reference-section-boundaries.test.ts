@@ -69,6 +69,10 @@ test.each(['decimal', 'declarations', 'supplement'] as const)(
       result.units.find((u) => u.source.startsWith('The following independent'))?.sourceOnly
     ).not.toBe(true)
     expect(result.units.find((u) => u.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+    expect(result.units.find((u) => u.source.startsWith('[1]'))?.preserve).toBe('reference')
+    expect(
+      result.units.find((u) => u.source.startsWith('The following independent'))?.preserve
+    ).toBeUndefined()
     if (title === 'declarations')
       expect(result.units.find((u) => u.source.startsWith('• Funding'))?.sourceOnly).not.toBe(true)
     expect(result.units.flatMap((u) => u.items).sort()).toEqual(
@@ -193,6 +197,10 @@ test('ends references at a complete wrapped quoted supplement title and independ
     result.units.find((u) => u.source.startsWith('The independent supplementary'))?.sourceOnly
   ).not.toBe(true)
   expect(result.units.find((u) => u.source.startsWith('[1]'))?.sourceOnly).toBe(true)
+  expect(result.units.find((u) => u.source.startsWith('[1]'))?.preserve).toBe('reference')
+  expect(
+    result.units.find((u) => u.source.startsWith('The supplementary material'))?.preserve
+  ).toBeUndefined()
   expect(result.units.flatMap((u) => u.items).sort()).toEqual(
     pages.flatMap((p) => p.items.map((_, i) => `${p.page}:${i}`)).sort()
   )

@@ -2,7 +2,12 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import { applyCachedPdfTableSources } from '../../src/reader/table-source.js'
-import { applyCachedPdfFigureSources } from '../../src/reader/figure-source.js'
+import {
+  applyCachedPdfFigureSources,
+  preservePdfFigureSources
+} from '../../src/reader/figure-source.js'
+import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
+import { applyPdfContentFirstPolicy } from '../../src/reader/content-policy.js'
 import { bindPdfTranslation, createPdfTranslationSource } from '../../src/reader/source.js'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
 import { parsePdfStructureResult, type PdfStructureResult } from '@aipoch/pdf-structure/result'
@@ -994,6 +999,143 @@ describe('cached PDF table source ownership', () => {
       expect(fixture.page.cleanup).not.toHaveBeenCalled()
     }
   )
+
+  it.each(['success', 'operator-error', 'page-error', 'abort-page', 'abort-operators'] as const)(
+    'releases graphic detection page caches after %s',
+    async (outcome) => {
+      const f = setup()
+      const page = {
+        ...f.page,
+        getOperatorList: vi.fn(async () => {
+          expect(f.page.cleanup).not.toHaveBeenCalled()
+          if (outcome === 'operator-error') throw new Error('Invalid graphics')
+          if (outcome === 'abort-operators') f.controller.abort()
+          return { fnArray: [], argsArray: [] }
+        })
+      }
+      const getPage = vi.fn(async () => {
+        if (outcome === 'page-error') throw new Error('Page unavailable')
+        if (outcome === 'abort-page') f.controller.abort()
+        return page
+      })
+      const result = preservePdfFigureSources({
+        extraction: f.extraction,
+        document: { ...f.document, getPage } as unknown as PDFDocumentProxy,
+        operators: OPS,
+        signal: f.controller.signal
+      })
+      if (outcome.startsWith('abort'))
+        await expect(result).rejects.toMatchObject({ name: 'AbortError' })
+      else await expect(result).resolves.toBe(f.extraction)
+      expect(f.page.cleanup).toHaveBeenCalledTimes(outcome === 'page-error' ? 0 : 1)
+      expect(page.getOperatorList).toHaveBeenCalledTimes(
+        outcome === 'page-error' || outcome === 'abort-page' ? 0 : 1
+      )
+      expect(f.document.destroy).not.toHaveBeenCalled()
+    }
+  )
+
+  it('requests cleanup before scanning the next page even when a shared render defers it', async () => {
+    const f = setup()
+    const pages = [false, true].map((cleaned) => ({
+      ...f.page,
+      getOperatorList: vi.fn(async () => ({ fnArray: [], argsArray: [] })),
+      cleanup: vi.fn(() => cleaned)
+    }))
+    const extraction = {
+      source: createPdfTranslationSource({
+        ...f.extraction.source,
+        pages: [...f.extraction.source.pages, ...f.extraction.source.pages],
+        units: [
+          ...f.extraction.source.units,
+          ...f.extraction.source.units.map((unit) => ({
+            ...unit,
+            id: `${unit.id}-page-2`,
+            fragments: unit.fragments.map((fragment) => ({ ...fragment, pageNumber: 2 }))
+          }))
+        ]
+      })
+    }
+    const getPage = vi.fn(async (number: number) => {
+      if (number === 2) expect(pages[0].cleanup).toHaveBeenCalledOnce()
+      return pages[number - 1]
+    })
+    await expect(
+      preservePdfFigureSources({
+        extraction,
+        document: { ...f.document, getPage } as unknown as PDFDocumentProxy,
+        operators: OPS,
+        signal: f.controller.signal
+      })
+    ).resolves.toBe(extraction)
+    expect(getPage.mock.calls).toEqual([[1], [2]])
+    for (const page of pages) {
+      expect(page.getOperatorList).toHaveBeenCalledOnce()
+      expect(page.cleanup).toHaveBeenCalledOnce()
+    }
+    expect(f.document.destroy).not.toHaveBeenCalled()
+  })
+
+  it('keeps cached ownership when graphic regions are added before choosing content-first', async () => {
+    const f = setup()
+    f.cached.elements = [
+      {
+        id: 'figure-1',
+        kind: 'figure',
+        issues: [],
+        regions: [{ page: 1, x: 0.05, y: 0.05, width: 0.7, height: 0.3 }],
+        caption: {
+          text: 'Figure 1. Measured signals.',
+          regions: [{ page: 1, x: 0.05, y: 0.4, width: 0.7, height: 0.1 }]
+        },
+        sourceItems: [
+          { pageNumber: 1, index: 0, text: 'Row' },
+          { pageNumber: 1, index: 1, text: '10' }
+        ]
+      }
+    ]
+    const verified = await applyCachedPdfFigureSources(f.context)
+    const page = {
+      ...f.page,
+      getViewport: () => ({ width: 100, height: 100, transform: [1, 0, 0, 1, 0, 0] }),
+      getOperatorList: async () => ({
+        fnArray: [OPS.transform, OPS.paintImageXObject],
+        argsArray: [[20, 0, 0, 10, 10, 60], ['image']]
+      })
+    }
+    const prepared = await preservePdfFigureSources({
+      extraction: verified,
+      document: { getPage: async () => page } as unknown as PDFDocumentProxy,
+      operators: OPS,
+      signal: f.controller.signal,
+      skipTranslation: false
+    })
+    expect(prepared.source.units[0].sourceOnly).toBe(true)
+    expect(prepared.source.units[1].figure).toBe(true)
+    expect(prepared.source.units[1].sourceOnly).toBeUndefined()
+    expect(prepared.source.originalRegions).toEqual([
+      {
+        pageNumber: 1,
+        rect: { x: 0.05, y: 0.05, width: 0.7, height: 0.3 }
+      },
+      {
+        pageNumber: 1,
+        rect: {
+          x: 0.1,
+          y: 0.6,
+          width: expect.closeTo(0.2),
+          height: expect.closeTo(0.1)
+        }
+      }
+    ])
+    const contentFirst = applyPdfContentFirstPolicy(prepared.source)
+    expect(contentFirst.units[1].sourceOnly).toBe(true)
+    expect(contentFirst.units.map((unit) => unit.id)).toEqual(
+      f.extraction.source.units.map((unit) => unit.id)
+    )
+    expect(prepared.coverage).toEqual(f.extraction.coverage)
+    expect(f.extraction.source.units[0].sourceOnly).toBeUndefined()
+  })
 
   const measuredSegmentsSetup = () => {
     const f = setup()

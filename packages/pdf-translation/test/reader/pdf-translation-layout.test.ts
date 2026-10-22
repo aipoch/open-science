@@ -202,6 +202,9 @@ test.each([
     fault !== 'complete'
   )
   expect(result.units.find((u) => u.source.startsWith('[1] A.'))?.sourceOnly).toBe(true)
+  expect(result.units.find((u) => u.source.startsWith('[1] A.'))?.preserve).toBe('reference')
+  if (fault === 'complete')
+    expect(result.units.find((u) => u.items.includes('2:0'))?.preserve).toBeUndefined()
 })
 
 test.each(['complete', 'no-caption', 'missing-font', 'unclosed', 'math'])(

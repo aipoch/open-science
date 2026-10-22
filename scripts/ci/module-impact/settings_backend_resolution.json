@@ -586,8 +586,7 @@
       "src/main/desktop-runtime-launcher.test.ts",
       "src/main/update/installation-artifact.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts",
-      "src/main/project-files/artifact-hidden.integration.test.ts"
+      "src/main/update/installation-preparation.test.ts"
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],

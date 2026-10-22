@@ -7711,6 +7711,11 @@
     "Download this file to view it.": "Téléchargez ce fichier pour le consulter.",
     "Preview truncated.": "Aperçu tronqué.",
     "Hide file": "Masquer le fichier",
+    "Content first": "Priorité au contenu",
+    "Reflow body text and captions into a single column, preserving figures, tables, formulas, code and references where possible. Results depend on PDF extraction quality. Leave unchecked to preserve the original layout where possible.": "Réorganiser le texte et les légendes sur une seule colonne, en préservant autant que possible les figures, tableaux, formules, code et références. Le résultat dépend de la qualité de l’extraction du PDF. Laisser cette option décochée pour préserver autant que possible la mise en page d’origine.",
+    "These source pages were kept in their original form because their text direction or layout could not be reflowed safely.": "Ces pages sources ont été conservées telles quelles dans le PDF, car leur orientation du texte ou leur mise en page ne pouvait pas être réorganisée de manière fiable.",
+    "These source pages were kept in their original form because their links could not be remapped safely.": "Ces pages sources ont été conservées telles quelles dans le PDF, car leurs liens ne pouvaient pas être associés de manière fiable aux nouvelles positions.",
+    "Source pages: {{pages}}": "Pages sources : {{pages}}",
     "This animated image is too large to preview safely. Download the original to view it.": "Cette image animée est trop grande pour être prévisualisée en toute sécurité. Téléchargez l’original pour la consulter.",
     "This image exceeds the preview limit of {{limit}} pixels. Download the original to view it.": "Cette image dépasse la limite de {{limit}} pixels pour la prévisualisation. Téléchargez l’original pour la consulter.",
     "This image exceeds the 50 MiB limit for resizing. Download the original to view it.": "Cette image dépasse la limite de 50 MiB pour le redimensionnement. Téléchargez l’original pour la consulter.",
@@ -7755,6 +7760,7 @@
     "Excluded references were not imported. Their details remain below.": "Les références exclues n’ont pas été importées. Leurs détails restent disponibles ci-dessous.",
     "Select reference {{number}}: {{title}}": "Sélectionner la référence {{number}} : {{title}}",
     "Some identifiers disagree or match different references. Exclude conflicting references, correct the source file, or keep separate copies of the selected references.": "Certains identifiants sont incohérents ou correspondent à des références différentes. Excluez les références en conflit, corrigez le fichier source ou conservez des copies distinctes des références sélectionnées.",
+    "The original PDF was kept because its document-level structures could not be preserved safely. Read the translated text in the sidebar.": "Le PDF original a été conservé, car ses structures au niveau du document ne pouvaient pas être préservées de façon sûre. Consultez la traduction dans le panneau latéral.",
     "Your account could not be verified. Restore access to continue. Your conversation and draft are preserved.": "Votre compte n’a pas pu être vérifié. Rétablissez l’accès pour continuer. Votre conversation et votre brouillon sont conservés.",
     "Open account settings": "Ouvrir les paramètres du compte",
     "Update the saved credential, then test the connection.": "Mettez à jour les identifiants enregistrés, puis testez la connexion.",
@@ -7794,6 +7800,9 @@
     "Add PDFs": "Ajouter des PDF",
     "Drop PDFs here to attach to this reference, or choose files.": "Déposez des PDF ici pour les joindre à cette référence, ou sélectionnez des fichiers.",
     "Import PDFs together, or one reference file at a time. No files were added.": "Importez les PDF ensemble, ou un seul fichier de références à la fois. Aucun fichier n’a été ajouté.",
-    "Drop PDFs or reference files to import": "Déposez des PDF ou des fichiers de références pour les importer"
+    "Drop PDFs or reference files to import": "Déposez des PDF ou des fichiers de références pour les importer",
+    "The Agent runtime could not apply the selected Specialist.": "L’environnement d’exécution de l’Agent n’a pas pu appliquer le Spécialiste sélectionné.",
+    "The Specialist was applied, but its completion state could not be saved.": "Le Spécialiste a été appliqué, mais son état d’achèvement n’a pas pu être enregistré.",
+    "Your draft and queued messages are preserved.": "Votre brouillon et les messages en attente sont conservés."
   }
 }

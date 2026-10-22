@@ -59,6 +59,8 @@ export type PdfTranslationBeginRequest = Readonly<{
   batchShortSources?: boolean
   /** Maximum simultaneous paragraph requests; omitted preserves serial execution. */
   concurrency?: 1 | 2 | 4
+  /** Reflow the PDF for reading; omitted preserves the original layout. */
+  contentFirst?: boolean
   language: string
   glossary: PdfTranslationGlossary
   sources: readonly string[]
@@ -239,8 +241,17 @@ export function pdfGenerationFailure(error: unknown): PdfGenerationFailure {
 /** Local rendering input. The main process owns all cache destinations. */
 export type PdfTranslationPdfRequest = Readonly<{
   id: string
+  /** Content-first, single-column pagination; original crops retain figures and unsupported glyphs. */
+  layout?: 'reflow'
+  /** Whole original tables/figures, never split into translated paragraphs. */
+  originalRegions?: readonly Readonly<{
+    pageNumber: number
+    rect: Readonly<{ x: number; y: number; width: number; height: number }>
+  }>[]
   /** Keep safely verified source regions when their translations cannot preserve layout. */
   preserveUnsupported?: boolean
+  /** Leave unmatched source objects untouched instead of rejecting the entire PDF. Requires preserveUnsupported. */
+  preserveUnmatched?: boolean
   /** Reuse only this saved edition; permission and content checks remain main-owned. */
   cache?: Readonly<{
     source: PdfTranslationCheckpointRequest
@@ -254,6 +265,8 @@ export type PdfTranslationPdfRequest = Readonly<{
   units: readonly Readonly<{
     source: string
     translation: string
+    /** Reflow separates ordinary text from figures/formulas and bibliography regions. */
+    kind?: 'text' | 'reference' | 'visual'
     fragments: readonly Readonly<{
       pageNumber: number
       rect: Readonly<{ x: number; y: number; width: number; height: number }>
@@ -264,6 +277,7 @@ export type PdfTranslationPdfRequest = Readonly<{
 export const pdfTranslationLayoutFailureSchema = z
   .object({
     code: z.enum([
+      'document-structure',
       'annotations',
       'overflow',
       'unsupported-layout',
@@ -282,11 +296,47 @@ export const pdfTranslationLayoutFailureSchema = z
 export type PdfTranslationLayoutFailure = z.infer<typeof pdfTranslationLayoutFailureSchema>
 export type PdfTranslationPdfResult = Readonly<{
   data: Uint8Array
+  reflow?: PdfTranslationReflowLayout
   /** A generated candidate is published only after renderer verification. */
   cacheToken?: string
   cacheHit?: boolean
   layoutFailures: readonly (PdfTranslationLayoutFailure & { unitIndex: number })[]
 }>
+export const pdfTranslationReflowLayoutSchema = z
+  .object({
+    originalPageNumbers: z.array(z.number().int().min(1).max(2000)).max(2000).optional(),
+    /** Every original page contributing to an output page, including shared flow pages. */
+    sourcePages: z
+      .array(z.array(z.number().int().min(1).max(500)).min(1).max(500))
+      .max(2000)
+      .optional(),
+    sourcePageNumbers: z.array(z.number().int().min(1).max(500)).min(1).max(2000),
+    units: z
+      .array(
+        z.object({
+          unitIndex: z.number().int().min(0).max(9999),
+          fragments: z
+            .array(
+              z.object({
+                pageNumber: z.number().int().min(1).max(2000),
+                rect: z.object({
+                  x: z.number().finite().min(0).max(1),
+                  y: z.number().finite().min(0).max(1),
+                  width: z.number().finite().positive().max(1),
+                  height: z.number().finite().positive().max(1)
+                }),
+                /** Exact text assigned to this output fragment, before whitespace-only wrapping. */
+                text: z.string().max(100000)
+              })
+            )
+            .min(1)
+            .max(2000)
+        })
+      )
+      .max(10000)
+  })
+  .strict()
+export type PdfTranslationReflowLayout = z.infer<typeof pdfTranslationReflowLayoutSchema>
 export const pdfTranslationLayoutReportSchema = z
   .object({
     sourceIndex: z.number().int().min(0).max(9999),
@@ -344,6 +394,7 @@ export const pdfTranslationCheckpointSchema = z
     language: z.string().trim().min(1).max(80),
     glossary: pdfTranslationGlossarySchema,
     concurrency: z.union([z.literal(1), z.literal(2), z.literal(4)]).optional(),
+    contentFirst: z.boolean().optional(),
     targetKey: z.string().regex(/^[a-f0-9]{64}$/),
     model: z.object({
       frameworkId: z.string().min(1).max(80),

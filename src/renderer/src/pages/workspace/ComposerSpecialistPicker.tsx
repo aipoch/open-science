@@ -1,4 +1,4 @@
-import { Check, Search } from 'lucide-react'
+import { Check, Loader2, Search } from 'lucide-react'
 import { useEffect, useId, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -13,6 +13,7 @@ type RunnableSpecialistItem = Exclude<SpecialistListItem, { kind: 'reviewer' }>
 type ComposerSpecialistPickerProps = {
   selectedId: string | undefined
   readOnly?: boolean
+  loadingLabel?: string
   onChange: (specialistId: string | undefined) => void
 }
 
@@ -27,6 +28,7 @@ type PickerOption = {
 const ComposerSpecialistPicker = ({
   selectedId,
   readOnly = false,
+  loadingLabel,
   onChange
 }: ComposerSpecialistPickerProps): React.JSX.Element | null => {
   const { t } = useTranslation()
@@ -53,7 +55,7 @@ const ComposerSpecialistPicker = ({
     })
   }, [load])
 
-  if (!selectedId) return null
+  if (!selectedId && !loadingLabel) return null
 
   const selected = items.find(
     (item): item is RunnableSpecialistItem => item.kind !== 'reviewer' && item.id === selectedId
@@ -105,12 +107,19 @@ const ComposerSpecialistPicker = ({
       <PopoverTrigger asChild>
         <button
           type="button"
-          disabled={readOnly}
+          disabled={readOnly || Boolean(loadingLabel)}
+          aria-busy={Boolean(loadingLabel)}
+          title={loadingLabel}
           className="relative flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-text-300 transition-colors before:absolute before:content-[''] hover:bg-bg-200 hover:text-text-100 focus-visible:outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 [@media(pointer:coarse)]:before:-inset-y-1.5 [@media(pointer:coarse)]:before:inset-x-0"
           aria-label={t('Choose Specialist: {{name}}', { name: selectedName })}
           data-testid="composer-specialist-picker-trigger"
         >
-          {selected ? (
+          {loadingLabel ? (
+            <Loader2
+              className="size-4 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
+          ) : selected ? (
             <SpecialistAvatar iconKey={selected.iconKey} colorKey={selected.colorKey} />
           ) : (
             <span
@@ -122,6 +131,17 @@ const ComposerSpecialistPicker = ({
           )}
         </button>
       </PopoverTrigger>
+      {loadingLabel ? (
+        <span
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+          className="sr-only"
+          data-testid="specialist-switch-loading"
+        >
+          {loadingLabel}
+        </span>
+      ) : null}
       <PopoverContent
         side="top"
         align="start"
