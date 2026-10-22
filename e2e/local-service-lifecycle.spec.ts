@@ -41,8 +41,15 @@ const evidence = resolve('.scratch/local-service-lifecycle-implementation/e2e')
 const quote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`
 // eslint-disable-next-line @typescript-eslint/explicit-function-return-type
 async function launchFixture(stalled = false) {
-  const baseline = process.env.OPEN_SCIENCE_E2E_BASELINE?.trim()
-  const buildId = process.env.OPEN_SCIENCE_E2E_BUILD_ID?.trim()
+  // Ordinary source-build regressions record their checkout automatically. An external
+  // packaged executable still requires explicit provenance because it may differ from HEAD.
+  const sourceRevision = process.env.OPEN_SCIENCE_E2E_EXECUTABLE
+    ? undefined
+    : (await promisify(execFile)('git', ['rev-parse', 'HEAD'])).stdout.trim()
+  const baseline = process.env.OPEN_SCIENCE_E2E_BASELINE?.trim() ?? sourceRevision
+  const buildId =
+    process.env.OPEN_SCIENCE_E2E_BUILD_ID?.trim() ??
+    (sourceRevision ? `source-${sourceRevision}` : undefined)
   if (
     !baseline ||
     !/^[a-f\d]{40}$/i.test(baseline) ||

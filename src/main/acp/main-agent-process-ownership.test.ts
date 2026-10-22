@@ -140,7 +140,7 @@ it('preserves shutdown failure instead of treating unresolved trees as clean', a
   expect(f.recover).toHaveBeenCalledTimes(2)
 })
 
-describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
+describe.skipIf(!['linux', 'darwin', 'win32'].includes(process.platform))(
   'real connection recovery isolation',
   () => {
     let root: string | undefined
@@ -157,7 +157,12 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
       root = undefined
     })
 
-    it.each(['identity-less', 'truncated', 'pending', 'unreadable-directory'] as const)(
+    it.each(
+      (['identity-less', 'truncated', 'pending', 'unreadable-directory'] as const).filter(
+        // Windows chmod does not model a POSIX directory search-permission failure.
+        (kind) => process.platform !== 'win32' || kind !== 'unreadable-directory'
+      )
+    )(
       'starts and stops fresh connections despite a historical %s receipt, preserving the evidence',
       async (kind) => {
         root = await mkdtemp(join(tmpdir(), 'main-agent-isolation-'))
@@ -190,10 +195,16 @@ describe.skipIf(process.platform !== 'linux' && process.platform !== 'darwin')(
         await expect(owner.configureMainAgentProcessOwnership(ownership)).rejects.toThrow()
         for (const framework of ['claude', 'codex', 'opencode', 'codebuddy']) {
           const child = await owner.spawnMainAgentProcess(framework, (spawn) =>
-            spawn!(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'pipe' })
+            spawn!(
+              process.execPath,
+              ['-e', 'process.stdout.write("ready"); setInterval(() => {}, 1000)'],
+              { stdio: 'pipe' }
+            )
           )
           children.push(child)
-          await once(child, 'spawn')
+          // The native Windows wrapper can publish spawn before the async call returns.
+          const [output] = await once(child.stdout, 'data')
+          expect(output.toString()).toBe('ready')
           expect(child.pid).toBeGreaterThan(0)
         }
         const scopes = []
