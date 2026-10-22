@@ -251,7 +251,7 @@ if (params.has('manual')) {
         runtime: 'unknown',
         installation: 'pending',
         canCancel: false,
-        canRecover: true,
+        canRecover: false,
         canRetryInstall: false
       },
       manualInstall: { ...info, kind: 'blocked' }

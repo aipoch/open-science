@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "清理資料庫檢查資源"
   },
   "renderer": {
+    "The installer may still be running. This app cannot check its progress. Quit Open-Science and wait for the installer to finish before reopening it. Do not start another installation.": "安裝程式可能仍在執行。此應用程式無法檢查其進度。請結束 Open-Science，等待安裝程式完成後再重新開啟。請勿開始另一次安裝。",
     "Could not load Reviewer log.": "無法載入審閱器記錄。",
     "Preparing to receive package…": "正在準備接收套件…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "無法準備瀏覽器匯入。請解決啟動錯誤後重試。",

@@ -27,7 +27,8 @@
       "src/main/update/manual-install.test.ts",
       "src/main/update/service.save-dialog.test.ts",
       "src/main/update/service.test.ts",
-      "src/main/update/update-integrity-regressions.test.ts"
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ],
     "connector_core": [
       "packages/connector-builtins/src/optional-research.test.ts",
@@ -45,6 +46,7 @@
       "src/main/update/manual-install-strategy.test.ts",
       "src/main/update/update-integrity-regressions.test.ts",
       "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
@@ -61,18 +63,29 @@
       "src/main/session-package/materialize.test.ts"
     ],
     "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
-    "host_http_transport": ["src/main/update/manual-install-strategy.test.ts"],
-    "host_installation": ["src/main/update/manual-install-strategy.test.ts"],
+    "host_http_transport": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
+    "host_installation": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
     "host_process_runtime": [
       "src/main/update/manual-install-strategy.test.ts",
-      "src/main/update/manual-install.test.ts"
+      "src/main/update/manual-install.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ],
     "host_runtime_lifecycle": [
       "src/main/update/manual-install-strategy.test.ts",
       "src/main/update/manual-install.test.ts",
-      "src/main/update/windows-update-handoff.test.ts"
+      "src/main/update/windows-update-handoff.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ],
-    "host_runtime_ports": ["src/main/update/manual-install-strategy.test.ts"],
+    "host_runtime_ports": [
+      "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
+    ],
     "host_value_guards": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
@@ -126,6 +139,7 @@
     "main_database": ["src/main/session-package/materialize.test.ts"],
     "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
     "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_update": ["src/renderer/src/components/RuntimeUpdateDialog.test.tsx"],
     "managed_version_files": [
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
@@ -245,7 +259,8 @@
       "src/main/update/manual-install.test.ts",
       "src/main/update/service.save-dialog.test.ts",
       "src/main/update/service.test.ts",
-      "src/main/update/update-integrity-regressions.test.ts"
+      "src/main/update/update-integrity-regressions.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx"
     ],
     "notebook_analysis": [
       "src/main/session-package/materialize.test.ts",
@@ -5110,6 +5125,7 @@
     ],
     "shared_promise_identity": [
       "src/main/update/manual-install-strategy.test.ts",
+      "src/renderer/src/components/RuntimeUpdateDialog.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"

@@ -365,6 +365,7 @@ it.each(['electron', 'manifest'] as const)(
       await owner[command]()
     expect(owner.getStatus().recovery).toMatchObject({
       installation: 'pending',
+      canRecover: false,
       canRetryInstall: false
     })
     expect((await owner.getManualInstall()).kind).toBe('blocked')
@@ -634,7 +635,7 @@ it('does not infer terminal failure from a synchronous native submission excepti
   await f.strategy.apply({ relaunch: false })
   expect(f.strategy.getStatus().recovery).toMatchObject({
     installation: 'pending',
-    canRecover: true,
+    canRecover: false,
     canRetryInstall: false
   })
   expect((await f.strategy.getManualInstall()).kind).toBe('blocked')

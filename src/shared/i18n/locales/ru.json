@@ -194,6 +194,7 @@
     "Cleaning up database inspection resources": "Очистка ресурсов проверки базы данных"
   },
   "renderer": {
+    "The installer may still be running. This app cannot check its progress. Quit Open-Science and wait for the installer to finish before reopening it. Do not start another installation.": "Возможно, программа установки ещё работает. Это приложение не может проверить её ход. Закройте Open-Science и дождитесь завершения установки, прежде чем открывать приложение снова. Не запускайте другую установку.",
     "Could not load Reviewer log.": "Не удалось загрузить журнал рецензента.",
     "Preparing to receive package…": "Подготовка к получению пакета…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Не удалось подготовить импорт из браузера. Устраните ошибку запуска и повторите попытку.",

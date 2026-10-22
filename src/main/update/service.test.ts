@@ -1562,7 +1562,7 @@ describe('UpdateService.apply', () => {
       else await service.apply()
       expect(service.getStatus().recovery).toMatchObject({
         installation: 'pending',
-        canRecover: true,
+        canRecover: false,
         canRetryInstall: false
       })
       await service.recover()

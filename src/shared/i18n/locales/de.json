@@ -192,6 +192,7 @@
     "Cleaning up database inspection resources": "Datenbankprüfungsressourcen bereinigen"
   },
   "renderer": {
+    "The installer may still be running. This app cannot check its progress. Quit Open-Science and wait for the installer to finish before reopening it. Do not start another installation.": "Das Installationsprogramm wird möglicherweise noch ausgeführt. Diese App kann den Fortschritt nicht prüfen. Beenden Sie Open-Science und warten Sie, bis die Installation abgeschlossen ist, bevor Sie die App erneut öffnen. Starten Sie keine weitere Installation.",
     "Could not load Reviewer log.": "Das Reviewer-Protokoll konnte nicht geladen werden.",
     "Preparing to receive package…": "Empfang des Pakets wird vorbereitet…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "Der Browserimport konnte nicht vorbereitet werden. Beheben Sie den Startfehler und versuchen Sie es erneut.",

@@ -51,6 +51,7 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
   const cancelRef = useRef(false)
   const id = runtimeUpdateState(status)
   const recovery = recoveryStates.has(id)
+  const installationCheckUnavailable = id === 'S13' && status.recovery?.canRecover === false
   const progress = progressStates.has(id)
   const downloading = status.state === 'downloading'
   const checking =
@@ -350,17 +351,21 @@ export const RuntimeUpdateDialog = ({ active = true }: { active?: boolean }): Re
                         ? t(
                             'Open-Science cannot verify whether commands from an earlier session are still running. If they are, their results may be lost during the update. Back up the old launch records and retry?'
                           )
-                        : saveFailed
+                        : installationCheckUnavailable
                           ? t(
-                              'Keep Open-Science open. Return to your work and save your changes before trying the update again.'
+                              'The installer may still be running. This app cannot check its progress. Quit Open-Science and wait for the installer to finish before reopening it. Do not start another installation.'
                             )
-                          : copy.description
+                          : saveFailed
+                            ? t(
+                                'Keep Open-Science open. Return to your work and save your changes before trying the update again.'
+                              )
+                            : copy.description
                     }
                   >
                     {manual.entry}
                   </ErrorNotice>
                 ) : null}
-                {status.error || checkFailed ? (
+                {(status.error || checkFailed) && !installationCheckUnavailable ? (
                   <ErrorNotice
                     className="mt-3"
                     role="alert"

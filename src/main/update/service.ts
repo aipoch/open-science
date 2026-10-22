@@ -564,7 +564,8 @@ export class UpdateService implements UpdateStrategy {
               installation: 'pending',
               canCancel: false,
               canRetryInstall: false,
-              canRecover: true
+              // No authoritative settlement check exists for this legacy native handoff.
+              canRecover: false
             }
           }
         : {}

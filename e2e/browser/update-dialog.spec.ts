@@ -28,6 +28,14 @@ for (const runtime of [false, true]) {
     await page.evaluate(() => document.dispatchEvent(new Event('manual-fixture-native-pending')))
     await expect(page.getByRole('button', { name: 'Show in File Explorer' })).toHaveCount(0)
     await expect(entry).toHaveCount(0)
+    await expect(page.getByRole('button', { name: 'Check installation', exact: true })).toHaveCount(
+      0
+    )
+    await expect(page.getByRole('button', { name: 'Quit', exact: true })).toBeEnabled()
+    await expect(page.getByRole('dialog')).toContainText('This app cannot check its progress.')
+    await page.screenshot({
+      path: testInfo.outputPath(`unknown-handoff-${runtime ? 'runtime' : 'legacy'}.png`)
+    })
     expect(page.context().pages()).toHaveLength(1)
   })
 }

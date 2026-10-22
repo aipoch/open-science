@@ -191,6 +191,7 @@
     "Cleaning up database inspection resources": "データベース検査リソースの後処理"
   },
   "renderer": {
+    "The installer may still be running. This app cannot check its progress. Quit Open-Science and wait for the installer to finish before reopening it. Do not start another installation.": "インストーラーがまだ実行中の可能性があります。このアプリでは進行状況を確認できません。Open-Science を終了し、インストーラーの完了を待ってから再度開いてください。別のインストールを開始しないでください。",
     "Could not load Reviewer log.": "レビュアーログを読み込めませんでした。",
     "Preparing to receive package…": "パッケージの受信を準備中…",
     "Unable to prepare browser import. Resolve the startup error and try again.": "ブラウザーからのインポートを準備できません。起動エラーを解決してから再試行してください。",

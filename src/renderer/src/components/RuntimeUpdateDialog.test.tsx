@@ -1,4 +1,11 @@
 // @vitest-environment jsdom
+import { EventEmitter } from 'node:events'
+import { createHash } from 'node:crypto'
+import { mkdtemp, writeFile, rm } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { ElectronUpdaterStrategy } from '../../../main/update/electron-updater-strategy'
+import { createUpdateCommandOwner } from '../../../main/update/command-owner'
 import { act } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -7,6 +14,18 @@ import { UpdateDialog } from './UpdateDialog'
 import { RuntimeUpdateDialog } from './RuntimeUpdateDialog'
 import { useUpdateStore } from '@/stores/update-store'
 import type { UpdateStatus } from '../../../shared/update'
+
+vi.mock('electron-updater', () => ({
+  AppImageUpdater: class {},
+  DebUpdater: class {},
+  autoUpdater: {},
+  CancellationToken: class {
+    cancelled = false
+    cancel(): void {
+      this.cancelled = true
+    }
+  }
+}))
 
 let root: Root, container: HTMLDivElement
 const original = useUpdateStore.getState()
@@ -673,3 +692,105 @@ describe('update check and download admission', () => {
     expect(buttons('Retry')).toHaveLength(1)
   })
 })
+
+it.each(['sdk-error', 'submission-throw'] as const)(
+  'offers only an honest quit action for an uncheckable native handoff (%s)',
+  async (failure) => {
+    const directory = await mkdtemp(join(tmpdir(), 'update-handoff-ui-'))
+    const originalApi = window.api
+    try {
+      const bytes = Buffer.from('installer fixture; never executed')
+      const name = 'aipoch-open-science-2.0.0-mac-arm64.zip'
+      const path = join(directory, name)
+      await writeFile(path, bytes)
+      const files = [
+        {
+          url: name,
+          size: bytes.length,
+          sha512: createHash('sha512').update(bytes).digest('base64')
+        }
+      ]
+      class Updater extends EventEmitter {
+        autoDownload = false
+        autoInstallOnAppQuit = false
+        checkForUpdates = vi.fn(async () => {
+          this.emit('update-available', { version: '2.0.0', files })
+        })
+        downloadUpdate = vi.fn(async () => {
+          this.emit('update-downloaded', { version: '2.0.0', files, downloadedFile: path })
+        })
+        quitAndInstall = vi.fn(() => {
+          if (failure === 'submission-throw') throw new Error('native result unknown')
+        })
+      }
+      const updater = new Updater()
+      const recoverInstall = vi.fn(async () => ({ outcome: 'recovered' as const }))
+      const recheckInstall = vi.fn(async () => ({}))
+      const strategy = new ElectronUpdaterStrategy({
+        updater,
+        currentVersion: '1.0.0',
+        platform: 'darwin',
+        arch: 'arm64',
+        broadcast: () => {},
+        installationGuard: () => false,
+        markUpdateShutdown: () => () => {},
+        manualInstallStorePath: join(directory, 'fallback.json'),
+        verifyManualInstallerSignature: async () => {},
+        fetchImpl: async () => {
+          throw new Error('no release notes in fixture')
+        },
+        recoverInstall,
+        recheckInstall,
+        installGate: async () => {
+          strategy.publishLifecycleStatus({
+            recovery: r({
+              phase: 'stopped',
+              runtime: 'stopped-clean',
+              canCancel: false,
+              canRecover: true
+            })
+          })
+          return { completed: true, reaped: true }
+        }
+      })
+      await strategy.check()
+      await strategy.download()
+      await strategy.apply()
+      if (failure === 'sdk-error') updater.emit('error', new Error('native result unknown'))
+      const owner = createUpdateCommandOwner(strategy)
+      const quit = vi.fn(async () => {})
+      window.api = { update: owner, runtimeStartup: { quit } } as unknown as typeof window.api
+      useUpdateStore.setState({ ...original, isDialogOpen: true, status: strategy.getStatus() })
+      await act(async () => root.render(<RuntimeUpdateDialog />))
+      expect(useUpdateStore.getState().status.recovery).toMatchObject({
+        installation: 'pending',
+        canRecover: false,
+        canRetryInstall: false
+      })
+      expect(document.body.textContent).toContain('This app cannot check its progress.')
+      expect(document.body.textContent).not.toContain(
+        'The app will reopen only after verification succeeds.'
+      )
+      expect(document.body.textContent).not.toContain(
+        'The operation could not be completed. Try again.'
+      )
+      expect(buttons('Check installation')).toHaveLength(0)
+      expect(buttons('Retry')).toHaveLength(0)
+      expect(buttons('Install manually…')).toHaveLength(0)
+      expect(buttons('Quit')).toHaveLength(1)
+      await act(async () => buttons('Quit')[0].click())
+      expect(quit).toHaveBeenCalledOnce()
+      // Stale clients must not bypass the same protection just because the UI no longer offers it.
+      await useUpdateStore.getState().recover()
+      await useUpdateStore.getState().recheck()
+      await strategy.apply()
+      expect(recoverInstall).not.toHaveBeenCalled()
+      expect(recheckInstall).not.toHaveBeenCalled()
+      expect(updater.quitAndInstall).toHaveBeenCalledOnce()
+      expect((await owner.getManualInstall()).kind).toBe('blocked')
+    } finally {
+      window.api = originalApi
+      await rm(directory, { recursive: true, force: true })
+    }
+  }
+)
