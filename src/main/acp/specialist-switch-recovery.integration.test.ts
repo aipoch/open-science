@@ -1,15 +1,16 @@
 import { spawn } from 'node:child_process'
 import { createRequire } from 'node:module'
-import { mkdtemp, mkdir, rm } from 'node:fs/promises'
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 import { expect, it, onTestFinished, vi } from 'vitest'
 
 vi.mock('electron', () => ({ app: { getPath: () => tmpdir(), isPackaged: true } }))
 
 import { claudeCodeFramework } from '../agent-framework/claude-code'
+import { createCodexFramework } from '../agent-framework/codex'
 import { AcpRuntime } from './runtime.test-utils'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
@@ -22,6 +23,117 @@ import {
   SessionSpecialistReconfiguration,
   type PersistedSessionSpecialistBinding
 } from '../specialist/session-reconfiguration'
+
+it
+  .runIf(Boolean(process.env.CODEX_ACP_PATH && process.env.CODEX_NATIVE_PATH))
+  .each(['codex-responses', 'codex-bridge'] as const)(
+  'applies consecutive Specialist selections before the first real %s prompt',
+  async (modelRoute) => {
+    const root = await mkdtemp(join(tmpdir(), 'specialist-codex-unprompted-'))
+    const cwd = join(root, 'project')
+    await mkdir(cwd)
+    const framework = createCodexFramework()
+    const config = framework.prepareModelConfig(
+      {
+        type: 'custom',
+        baseUrl: 'http://127.0.0.1:9/v1',
+        key: 'synthetic-no-inference-key',
+        apiEndpoints: modelRoute === 'codex-bridge' ? ['chat-completions'] : ['responses'],
+        model: 'gpt-5.4',
+        contextWindow: 128000
+      },
+      {
+        storageRoot: root,
+        executablePath: process.env.CODEX_ACP_PATH!,
+        ...(modelRoute === 'codex-bridge'
+          ? {
+              responsesConnection: {
+                baseUrl: 'http://127.0.0.1:9/v1',
+                token: 'synthetic-loopback-key'
+              }
+            }
+          : {})
+      }
+    )
+    for (const file of config.configFiles ?? []) {
+      await mkdir(dirname(file.path), { recursive: true })
+      await writeFile(file.path, file.content)
+    }
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: cwd,
+      resolveBackend: () => ({
+        framework: {
+          ...framework,
+          spawn: () => {
+            const child = spawn(process.execPath, [process.env.CODEX_ACP_PATH!], {
+              cwd,
+              env: {
+                PATH: process.env.PATH,
+                TMPDIR: process.env.TMPDIR,
+                ...config.env,
+                CODEX_PATH: process.env.CODEX_NATIVE_PATH!
+              },
+              stdio: 'pipe'
+            })
+            return child
+          }
+        },
+        executablePath: process.env.CODEX_ACP_PATH!,
+        env: config.env ?? {},
+        authentication: config.authentication,
+        providerConfiguration: config.providerConfiguration,
+        modelRoute
+      }),
+      resolveSpecialistIdentity: async (id) => ({ append: '', prefix: `Specialist ${id}` })
+    })
+    onTestFinished(async () => {
+      await runtime.disconnect()
+      await rm(root, { recursive: true, force: true })
+    })
+    let persisted: PersistedSessionSpecialistBinding = {}
+    const errors: unknown[] = []
+    const reconfiguration = new SessionSpecialistReconfiguration({
+      sessionBinding: {
+        resolve: async () => ({ kind: 'main' }),
+        setBinding: () => undefined,
+        clearSession: () => undefined
+      },
+      loadBinding: async () => persisted,
+      persistBinding: async (_id, specialistId, pending) => {
+        persisted = {
+          specialistId,
+          ...(pending ? { specialistBindingPending: true as const } : {})
+        }
+      },
+      applyRuntime: async (id, target) => {
+        try {
+          return await runtime.switchSpecialist(id, target)
+        } catch (error) {
+          errors.push(error)
+          throw error
+        }
+      }
+    })
+    const first = await reconfiguration.requestSwitch('app-session', 'first')
+    const second = await reconfiguration.requestSwitch('app-session', 'second')
+    const retry = await reconfiguration.requestSwitch('app-session', 'second')
+    expect(
+      { first, second, retry },
+      JSON.stringify(
+        errors.map((error) => ({
+          message: (error as Error).message,
+          data: (error as { data?: unknown }).data
+        }))
+      )
+    ).toMatchObject({
+      first: { status: 'applied' },
+      second: { status: 'applied' },
+      retry: { status: 'applied' }
+    })
+  },
+  30_000
+)
 
 // Real runtime, ACP adapter and SDK processes; only model inference is deterministic.
 // A never-prompted Claude session has no transcript to resume after a Skill reload.

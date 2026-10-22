@@ -11,7 +11,11 @@ import {
   normalizePermissionProfile
 } from '../../shared/permission-profiles'
 import type { EffectiveSpecialistSkills } from '@aipoch/specialists'
-import { createLogger, diagnosticErrorFields, errorLogFields } from '@aipoch/diagnostics/node'
+import {
+  createLogger,
+  diagnosticErrorFields,
+  startDiagnosticOperation
+} from '@aipoch/diagnostics/node'
 import type { AcpBackendGenerationView } from './backend-generation-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import {
@@ -531,6 +535,17 @@ export class AcpProviderSessionResumer {
           currentModelRoute: backend.modelRoute,
           providerSessionIdPersisted
         })
+        startDiagnosticOperation(log, {
+          operation: 'acp-provider-resume-rejection',
+          fields: {
+            sessionId: request.sessionId,
+            frameworkId: backend.framework.id,
+            modelRoute: backend.modelRoute,
+            reason: failure.reason,
+            disposition: failure.disposition,
+            contextReplacementAllowed: !compatibleOnly
+          }
+        }).fail(error)
         if (failure.disposition !== 'adoptable' || compatibleOnly) throw error
         try {
           identity.assertCurrent()
@@ -543,7 +558,8 @@ export class AcpProviderSessionResumer {
         capability = undefined
         log.info('resumed session adopted after unrecoverable resume error', {
           sessionId: request.sessionId,
-          ...errorLogFields(error)
+          reason: failure.reason,
+          ...diagnosticErrorFields(error)
         })
         // Adoption now owns cleanup and releases identity even on failure. Do not catch its
         // rejection below: checking that released reservation would mask the provider error as

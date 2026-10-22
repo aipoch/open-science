@@ -1,5 +1,6 @@
 import type { ClientConnection } from '@agentclientprotocol/sdk'
 import { resolve } from 'node:path'
+import { createLogger, startDiagnosticOperation } from '@aipoch/diagnostics/node'
 
 import type { AcpCreateSessionResponse, AcpResumeSessionRequest } from '../../shared/acp'
 import type { AgentFrameworkId } from '../../shared/settings'
@@ -10,10 +11,13 @@ import type { AcpPermissionContext } from './permission-context'
 import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpProviderSessionAdopter } from './provider-session-adopter'
 import type { AcpSessionInteractionOwner } from './session-interaction-owner'
+import { AcpSessionResumePolicy } from './session-resume-policy'
 import type {
   AcpPrimarySessionIdentityReservationResult,
   AcpSessionRegistry
 } from './session-registry'
+
+const log = createLogger('acp:specialist-switch')
 
 type AcpSessionReplacementWorkflowDependencies = Readonly<{
   defaultCwd: string
@@ -172,7 +176,7 @@ export class AcpSessionReplacementWorkflow {
 
       if (refreshCodex) {
         const snapshot = aggregate.snapshot()
-        await this.deps.reconfigureSession({
+        const request: AcpResumeSessionRequest = {
           sessionId,
           providerSessionId: previousAttachment.providerSessionId,
           previousFrameworkId: 'codex',
@@ -182,7 +186,31 @@ export class AcpSessionReplacementWorkflow {
           permissionProfile: snapshot.permissionProfile?.selectedProfile,
           specialistId,
           memoryEnabled: snapshot.memoryEnabled
-        })
+        }
+        try {
+          await this.deps.reconfigureSession(request)
+        } catch (error) {
+          const failure = new AcpSessionResumePolicy().classifyFailure(error, {
+            currentFrameworkId: 'codex',
+            providerSessionIdPersisted: true
+          })
+          if (failure.reason !== 'codex-rollout-not-found') throw error
+          // A newly created native thread has no rollout until its first prompt. Complete the
+          // same recovery that a manual Retry would perform, and request existing branch replay.
+          const recovery = startDiagnosticOperation(log, {
+            operation: 'specialist-missing-rollout-recovery',
+            fields: { sessionId, reason: failure.reason }
+          })
+          try {
+            recovery.phase('replace-provider-session')
+            await this.reset(request)
+            recovery.complete({ contextReset: true })
+            return { contextReset: true }
+          } catch (replacementError) {
+            recovery.fail(replacementError)
+            throw replacementError
+          }
+        }
       }
 
       // A drained/reconnected Claude runtime may retain the App Session without a provider
