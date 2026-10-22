@@ -136,6 +136,8 @@ type PendingResumeReconciliation = {
 }
 
 type RootAdmissionLease = {
+  cancellation: RootAdmissionCancellation
+  settled: Promise<void>
   release: () => void
 }
 
@@ -206,7 +208,11 @@ class AcpRuntimeCoordinator {
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
   private readonly sessionResumeOperations = new Map<
     string,
-    { operation: Promise<AcpCreateSessionResponse>; invalidated: boolean }
+    {
+      operation: Promise<AcpCreateSessionResponse>
+      invalidated: boolean
+      admittedRoot?: RootAdmissionLease
+    }
   >()
   private readonly pendingSessionAdoptions = new Map<
     string,
@@ -640,9 +646,29 @@ class AcpRuntimeCoordinator {
   ): Promise<AcpCreateSessionResponse> {
     const previous = this.sessionResumeOperations.get(request.sessionId)
     if (pinnedRuntime && previous) {
+      // The admitted activity may need its own lazy resume before the outer handoff can drain it.
+      if (
+        previous.admittedRoot === this.activeRootAdmissions.get(request.sessionId) &&
+        previous.admittedRoot
+      ) {
+        return this.performSessionResume(request, pinnedRuntime)
+      }
       throw new Error('ACP session must finish resuming before sending a prompt')
     }
     const generation = this.initializationGeneration
+    const activeRoot = this.activeRootAdmissions.get(request.sessionId)
+    const admittedRoot =
+      previous?.admittedRoot ??
+      (!pinnedRuntime && !activeRoot?.cancellation.cancelled ? activeRoot : undefined)
+    const perform = async (): Promise<AcpCreateSessionResponse> => {
+      if (admittedRoot) {
+        await admittedRoot.settled
+        if (generation !== this.initializationGeneration || queue.invalidated) {
+          throw new Error('ACP session resume was superseded.')
+        }
+      }
+      return this.performSessionResume(request, pinnedRuntime)
+    }
     const operation = previous
       ? previous.operation
           .catch(() => undefined)
@@ -650,10 +676,11 @@ class AcpRuntimeCoordinator {
             if (previous.invalidated || generation !== this.initializationGeneration) {
               throw new Error('ACP session resume was superseded.')
             }
-            return this.performSessionResume(request, pinnedRuntime)
+            return perform()
           })
-      : this.performSessionResume(request, pinnedRuntime)
-    const queue = previous ?? { operation, invalidated: false }
+      : perform()
+    const queue = previous ?? { operation, invalidated: false, admittedRoot }
+    queue.admittedRoot = admittedRoot
     queue.operation = operation
     this.sessionResumeOperations.set(request.sessionId, queue)
     try {
@@ -1247,6 +1274,7 @@ class AcpRuntimeCoordinator {
     operation: (cancellation: RootAdmissionCancellation) => Promise<Result>
   ): Promise<Result> {
     const previous = this.rootAdmissionTails.get(sessionId)
+    let released = false
     let rejectCancellation!: (error: unknown) => void
     const cancellationPromise = new Promise<never>((_, reject) => {
       rejectCancellation = reject
@@ -1256,7 +1284,7 @@ class AcpRuntimeCoordinator {
       promise: cancellationPromise,
       reject: rejectCancellation,
       throwIfCancelled: () => {
-        if (cancellation.cancelled) {
+        if (cancellation.cancelled || released) {
           throw new DelegateMessagePreAcceptanceError(
             'ACP prompt was superseded before provider dispatch during Session teardown'
           )
@@ -1270,8 +1298,9 @@ class AcpRuntimeCoordinator {
     const gate = new Promise<void>((resolve) => {
       resolveGate = resolve
     })
-    let released = false
     const lease: RootAdmissionLease = {
+      cancellation,
+      settled: gate,
       release: () => {
         if (released) return
         released = true
@@ -1541,10 +1570,12 @@ class AcpRuntimeCoordinator {
     cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.admissionClosedReason()) return this.rejectPromptForQuit()
-    if (
-      this.pendingSessionAdoptions.has(request.sessionId) ||
-      this.sessionResumeOperations.has(request.sessionId)
-    ) {
+    const resume = this.sessionResumeOperations.get(request.sessionId)
+    const admittedBeforeResume =
+      cancellation &&
+      resume?.admittedRoot?.cancellation === cancellation &&
+      this.activeRootAdmissions.get(request.sessionId) === resume.admittedRoot
+    if (this.pendingSessionAdoptions.has(request.sessionId) || (resume && !admittedBeforeResume)) {
       return Promise.reject(new Error('ACP session must finish resuming before sending a prompt'))
     }
     const origin =
