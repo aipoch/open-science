@@ -124,12 +124,16 @@ export class LiteratureSupplementAttachments {
         throw new Error('The reference changed. Search for supplementary materials again.')
     }
     await check()
-    const filename = selected.filename
+    const sourceFilename = selected.filename
       .replaceAll('\\', '/')
       .split('/')
       .at(-1)!
       .replace(/[<>:"|?*\p{Cc}]/gu, '_')
-      .slice(0, 240)
+    const suffix = extname(sourceFilename)
+    const filename =
+      suffix && suffix.length < 240
+        ? sourceFilename.slice(0, -suffix.length).slice(0, 240 - suffix.length) + suffix
+        : sourceFilename.slice(0, 240)
     const extension = extname(filename).toLowerCase()
     const contentType = contentTypes[extension] ?? 'application/octet-stream'
     let bytes = await this.options.download(

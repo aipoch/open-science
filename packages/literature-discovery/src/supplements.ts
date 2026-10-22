@@ -56,13 +56,23 @@ const dataciteRecord = z.object({
     rightsList: z.array(z.object({ rights: optionalText })).nullish()
   })
 })
-const plain = (text: string): string =>
-  text
-    .replace(/<[^<>]*>/gu, '')
-    .replace(/[<>]/gu, '')
-    .replace(/\s+/gu, ' ')
-    .trim()
-    .slice(0, 2048)
+const plain = (text: string): string => {
+  let output = ''
+  let pending = ''
+  let inTag = false
+  for (const character of text) {
+    if (character === '<') {
+      output += pending
+      pending = ''
+      inTag = true
+    } else if (character === '>') {
+      pending = ''
+      inTag = false
+    } else if (inTag) pending += character
+    else output += character
+  }
+  return (output + pending).replace(/\s+/gu, ' ').trim().slice(0, 2048)
+}
 const literal = (doi: string): string => `"${doi.replace(/[\\"]/gu, '\\$&')}"`
 type Issue = LiteratureSupplementResult['issues'][number]
 class SourceError extends Error {

@@ -32,6 +32,7 @@ function setup(): {
   download: ReturnType<typeof vi.fn>
   getDownload: ReturnType<typeof vi.fn>
   publish: ReturnType<typeof vi.fn>
+  pageCount: ReturnType<typeof vi.fn>
 } {
   const get = vi.fn().mockResolvedValue(item)
   const attachContent = vi
@@ -48,17 +49,47 @@ function setup(): {
     expect(await readFile(sourcePath)).toEqual(document)
     return commit({ id: 'blob', sizeBytes: document.length, checksum: 'a'.repeat(64) })
   })
+  const pageCount = vi.fn().mockResolvedValue(3)
   const service = new LiteratureSupplementAttachments({
     finder: { getDownload },
     catalog: { get, attachContent },
     content: { withPublishedContent: publish } as never,
     download,
-    pageCount: vi.fn()
+    pageCount
   })
-  return { service, get, attachContent, download, getDownload, publish }
+  return { service, get, attachContent, download, getDownload, publish, pageCount }
 }
 
 describe('supplement attachment admission', () => {
+  it.each([
+    ['.PDF', 'application/pdf'],
+    ['.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document']
+  ])('retains %s when truncating a long archived filename', async (suffix, contentType) => {
+    const { service, getDownload, download, publish, attachContent, pageCount } = setup()
+    const filename = 'x'.repeat(260) + suffix
+    const bytes = suffix === '.PDF' ? Buffer.from('%PDF-1.7 test') : document
+    getDownload.mockReturnValue({ ...selected, filename, archiveEntry: filename })
+    download.mockResolvedValue(Buffer.from(zipSync({ [filename]: bytes })))
+    publish.mockImplementation(async ({ sourcePath }, commit) => {
+      expect(await readFile(sourcePath)).toEqual(bytes)
+      return commit({ id: 'blob', sizeBytes: bytes.length, checksum: 'a'.repeat(64) })
+    })
+    await service.run(request, new AbortController().signal)
+    expect(attachContent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        filename: 'x'.repeat(240 - suffix.length) + suffix,
+        contentType,
+        pageCount: suffix === '.PDF' ? 3 : undefined
+      })
+    )
+    expect(pageCount).toHaveBeenCalledTimes(suffix === '.PDF' ? 1 : 0)
+    download.mockResolvedValue(Buffer.from(zipSync({ [filename]: strToU8('not a document') })))
+    await expect(service.run(request, new AbortController().signal)).rejects.toThrow(
+      'Invalid supplementary'
+    )
+    expect(attachContent).toHaveBeenCalledTimes(1)
+  })
+
   it('extracts only the selected DOCX and commits ordinary-file metadata and provenance', async () => {
     const { service, attachContent, download, getDownload } = setup()
     const signal = new AbortController().signal
