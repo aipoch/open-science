@@ -114,7 +114,7 @@ it.runIf(opencodePath)(
       externalPlugin,
       [
         "import { writeFileSync } from 'node:fs'",
-        `export const ExternalProbe = async () => { writeFileSync(${JSON.stringify(marker)}, 'loaded'); return {} }`
+        "export const ExternalProbe = async () => { writeFileSync(new URL('./external-plugin-loaded', import.meta.url), 'loaded'); return {} }"
       ].join('\n')
     )
     const externalConfig = join(root, 'external-config.json')
