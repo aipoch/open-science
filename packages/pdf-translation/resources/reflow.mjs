@@ -210,20 +210,10 @@ function planGraphics(objects, input, number, footerUnits, geometry) {
     }
     graphics.push(merged)
   }
-  // Isolated rules/underlines are decoration, not separate figures. Join
-  // horizontally separated parts of a figure occupying the same rows.
+  // Isolated rules/underlines are decoration, not separate figures. Keep
+  // disconnected crops separate: a same-row union can absorb adjacent prose.
   for (let i = graphics.length - 1; i >= 0; i--)
     if (graphics[i].width < 0.005 || graphics[i].height < 0.005) graphics.splice(i, 1)
-  for (let i = 0; i < graphics.length; i++)
-    for (let j = i + 1; j < graphics.length;) {
-      const a = graphics[i],
-        b = graphics[j]
-      if (a.y <= b.y + b.height + 0.01 && b.y <= a.y + a.height + 0.01) {
-        graphics[i] = union(a, b)
-        graphics.splice(j, 1)
-        j = i + 1
-      } else j++
-    }
   // Expand crops to keep protruding labels with their figures.
   const pageUnits = readingOrder(
     input.units.flatMap((unit, unitIndex) => {

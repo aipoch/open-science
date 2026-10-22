@@ -452,80 +452,92 @@ it('moves a figure link with its retained crop while keeping body text translate
   }
 })
 
-it('paginates all translated text while retaining a figure inside a page Form', async () => {
-  const original = await PDFDocument.create()
-  const font = await original.embedFont(StandardFonts.Helvetica)
-  const page = original.addPage([400, 500])
-  page.drawText('Original body.', { font, size: 12, x: 40, y: 440 })
-  page.drawRectangle({ x: 40, y: 260, width: 120, height: 90, color: rgb(0.1, 0.5, 0.8) })
-  page.drawRectangle({ x: 180, y: 260, width: 160, height: 90, color: rgb(0.2, 0.7, 0.4) })
-  page.drawText('Figure label', { font, size: 12, x: 50, y: 290 })
-  page.drawText('Failed original paragraph.', { font, size: 12, x: 40, y: 160 })
-  const wrapped = await PDFDocument.create()
-  const embedded = await wrapped.embedPage(page)
-  wrapped.addPage([400, 500]).drawPage(embedded)
-  const translation =
-    '完整的学术译文应当换行并在空间不足时继续分页，不能被原来的文本框截断。'.repeat(130) +
-    '• · End.'
-  const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
-  const caller = new TestCallerRegistry().acquire({ leaseId: 'reflow', surface: 'electron' })
-  let task: ReturnType<typeof getDocument> | undefined
-  try {
-    const output = await writer.generateDetailed(
-      {
-        id: 'reflow',
-        layout: 'reflow',
-        data: await wrapped.save(),
-        pages: [{ width: 400, height: 500 }],
-        units: [
-          { source: 'Original body.', translation, fragments: [fragment(1, 0.08)] },
-          // Labels remain in the figure crop; translating them separately would duplicate them.
-          {
-            source: 'Figure label',
-            translation: 'Figure label',
-            fragments: [{ pageNumber: 1, rect: { x: 0.125, y: 0.39, width: 0.2, height: 0.04 } }]
-          },
-          {
-            source: 'Failed original paragraph.',
-            translation: 'Failed original paragraph.',
-            fragments: [fragment(1, 0.65)]
-          }
-        ]
-      },
-      caller.lease
-    )
-    expect(output?.layoutFailures).toEqual([])
-    expect(output!.reflow!.sourcePageNumbers.length).toBeGreaterThan(1)
-    expect(new Set(output!.reflow!.sourcePageNumbers)).toEqual(new Set([1]))
-    const placements = output!.reflow!.units.find((u) => u.unitIndex === 0)!
-    expect(placements.fragments.length).toBeGreaterThan(1)
-    expect(
-      placements.fragments
-        .map((f) => f.text)
-        .join('')
-        .replace(/\s/gu, '')
-    ).toBe(translation.replace(/\s/gu, ''))
-    expect(output!.reflow!.units.some((u) => u.unitIndex === 2)).toBe(true)
-    task = getDocument({ data: output!.data.slice() })
-    const pdf = await task.promise
-    let text = '',
-      figures = 0
-    for (let n = 1; n <= pdf.numPages; n++) {
-      const page = await pdf.getPage(n)
-      const content = await page.getTextContent()
-      text += content.items.map((i) => ('str' in i ? i.str : '')).join('')
-      const operators = await page.getOperatorList()
-      figures += operators.fnArray.filter((fn) => fn === OPS.paintImageXObject).length
-      page.cleanup()
+it.each([false, true])(
+  'paginates translated text and preserves Form graphics (explicit figure=%s)',
+  async (explicit) => {
+    const original = await PDFDocument.create()
+    const font = await original.embedFont(StandardFonts.Helvetica)
+    const page = original.addPage([400, 500])
+    page.drawText('Original body.', { font, size: 12, x: 40, y: 440 })
+    page.drawRectangle({ x: 40, y: 260, width: 120, height: 90, color: rgb(0.1, 0.5, 0.8) })
+    page.drawRectangle({ x: 180, y: 260, width: 160, height: 90, color: rgb(0.2, 0.7, 0.4) })
+    page.drawText('Figure label', { font, size: 12, x: 50, y: 290 })
+    page.drawText('Failed original paragraph.', { font, size: 12, x: 40, y: 160 })
+    const wrapped = await PDFDocument.create()
+    const embedded = await wrapped.embedPage(page)
+    wrapped.addPage([400, 500]).drawPage(embedded)
+    const translation =
+      '完整的学术译文应当换行并在空间不足时继续分页，不能被原来的文本框截断。'.repeat(130) +
+      '• · End.'
+    const writer = new PdfTranslationWriter(() => resolve('resources/worker.mjs'))
+    const caller = new TestCallerRegistry().acquire({ leaseId: 'reflow', surface: 'electron' })
+    let task: ReturnType<typeof getDocument> | undefined
+    try {
+      const output = await writer.generateDetailed(
+        {
+          id: 'reflow',
+          layout: 'reflow',
+          data: await wrapped.save(),
+          pages: [{ width: 400, height: 500 }],
+          ...(explicit
+            ? {
+                originalRegions: [
+                  { pageNumber: 1, rect: { x: 0.1, y: 0.3, width: 0.75, height: 0.18 } }
+                ]
+              }
+            : {}),
+          units: [
+            { source: 'Original body.', translation, fragments: [fragment(1, 0.08)] },
+            // Labels remain in the figure crop; translating them separately would duplicate them.
+            {
+              source: 'Figure label',
+              translation: 'Figure label',
+              fragments: [{ pageNumber: 1, rect: { x: 0.125, y: 0.39, width: 0.2, height: 0.04 } }]
+            },
+            {
+              source: 'Failed original paragraph.',
+              translation: 'Failed original paragraph.',
+              fragments: [fragment(1, 0.65)]
+            }
+          ]
+        },
+        caller.lease
+      )
+      expect(output?.layoutFailures).toEqual([])
+      expect(output!.reflow!.sourcePageNumbers.length).toBeGreaterThan(1)
+      expect(new Set(output!.reflow!.sourcePageNumbers)).toEqual(new Set([1]))
+      const placements = output!.reflow!.units.find((u) => u.unitIndex === 0)!
+      expect(placements.fragments.length).toBeGreaterThan(1)
+      expect(
+        placements.fragments
+          .map((f) => f.text)
+          .join('')
+          .replace(/\s/gu, '')
+      ).toBe(translation.replace(/\s/gu, ''))
+      expect(output!.reflow!.units.some((u) => u.unitIndex === 2)).toBe(true)
+      task = getDocument({ data: output!.data.slice() })
+      const pdf = await task.promise
+      let text = '',
+        figures = 0
+      for (let n = 1; n <= pdf.numPages; n++) {
+        const page = await pdf.getPage(n)
+        const content = await page.getTextContent()
+        text += content.items.map((i) => ('str' in i ? i.str : '')).join('')
+        const operators = await page.getOperatorList()
+        figures += operators.fnArray.filter((fn) => fn === OPS.paintImageXObject).length
+        page.cleanup()
+      }
+      expect(text.replace(/\s/gu, '')).toContain(translation.replace(/\s/gu, ''))
+      expect(text).not.toContain('Original body.')
+      // Only an explicit region establishes that the disconnected panels form one figure.
+      // Both paths retain the failed paragraph as an additional original crop.
+      expect(figures).toBe(explicit ? 2 : 3)
+    } finally {
+      await task?.destroy()
+      caller.release()
     }
-    expect(text.replace(/\s/gu, '')).toContain(translation.replace(/\s/gu, ''))
-    expect(text).not.toContain('Original body.')
-    expect(figures).toBe(2) // one complete two-part figure, one failed paragraph crop
-  } finally {
-    await task?.destroy()
-    caller.release()
   }
-})
+)
 
 it('retains every source fragment when an unsupported glyph spans two source pages', async () => {
   const pdf = await PDFDocument.create(),
@@ -1849,6 +1861,75 @@ it('keeps the visible part of an off-page raster alongside translated text', asy
   }
 })
 
+it.each([false, true])(
+  'keeps unequal-height table columns separate from translated prose (explicit regions=%s)',
+  async (explicit) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    // The right table overlaps the left table vertically, but their bounding
+    // rectangle would also capture the unrelated red body text above the left table.
+    page.drawRectangle({ x: 30, y: 60, width: 150, height: 100, color: rgb(0, 0, 1) })
+    page.drawRectangle({ x: 220, y: 60, width: 150, height: 300, color: rgb(0, 1, 0) })
+    page.drawText('Original body.', { font, x: 30, y: 300, size: 12, color: rgb(1, 0, 0) })
+    const translation = '正文应全部排入译本，不因相邻图表而丢失。'.repeat(100)
+    const output = await generate(
+      pdf,
+      [
+        {
+          source: 'Original body.',
+          translation,
+          fragments: [{ pageNumber: 1, rect: { x: 0.075, y: 0.37, width: 0.35, height: 0.04 } }]
+        }
+      ],
+      explicit
+        ? {
+            originalRegions: [
+              { pageNumber: 1, rect: { x: 0.075, y: 0.68, width: 0.375, height: 0.2 } },
+              { pageNumber: 1, rect: { x: 0.55, y: 0.28, width: 0.375, height: 0.6 } }
+            ]
+          }
+        : {}
+    )
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise,
+        texts: string[] = []
+      let images = 0,
+        red = 0,
+        blue = 0,
+        green = 0
+      for (let number = 1; number <= parsed.numPages; number++) {
+        const current = await parsed.getPage(number),
+          content = await current.getTextContent()
+        texts.push(content.items.map((item) => ('str' in item ? item.str : '')).join(''))
+        images += (await current.getOperatorList()).fnArray.filter(
+          (op) => op === OPS.paintImageXObject
+        ).length
+        const viewport = current.getViewport({ scale: 1 }),
+          canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height)),
+          context = canvas.getContext('2d')
+        await current.render({ canvasContext: context, viewport }).promise
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+        for (let at = 0; at < pixels.length; at += 4) {
+          if (pixels[at] > 180 && pixels[at + 1] < 100 && pixels[at + 2] < 100) red++
+          if (pixels[at] < 100 && pixels[at + 1] < 100 && pixels[at + 2] > 180) blue++
+          if (pixels[at] < 100 && pixels[at + 1] > 180 && pixels[at + 2] < 100) green++
+        }
+      }
+      expect(texts.join('').replace(/\s/gu, '')).toContain(translation)
+      expect(blue).toBeGreaterThan(1000)
+      expect(green).toBeGreaterThan(1000)
+      expect(images).toBe(2)
+      expect(red).toBe(0)
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
 it.each([
   'shading',
   'border',
@@ -1865,7 +1946,7 @@ it.each([
       font = await pdf.embedFont(StandardFonts.Helvetica),
       page = pdf.addPage([400, 500])
     if (mode === 'merged') {
-      // Neither path intersects the body; their same-row crop union does.
+      // Disconnected same-row paths must stay separate from the body between them.
       for (const x of [10, 350])
         page.drawRectangle({ x, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
     } else if (mode === 'pixel-edge') {
@@ -1969,7 +2050,7 @@ it.each([
         (await (await parsed.getPage(1)).getOperatorList()).fnArray.filter(
           (op) => op === OPS.paintImageXObject
         )
-      ).toHaveLength(1)
+      ).toHaveLength(mode === 'merged' ? 2 : 1)
     } finally {
       await task.destroy()
     }
