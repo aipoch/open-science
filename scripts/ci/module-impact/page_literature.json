@@ -149,7 +149,8 @@
     "src/renderer/src/pages/literature/collections/LiteratureCollectionDeleteDialog.tsx",
     "src/renderer/src/pages/literature/workflows/LiteratureReadingProjectDialog.tsx",
     "src/renderer/src/pages/literature/public/page.ts",
-    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts"
+    "src/renderer/src/pages/literature/public-boundary.architecture.test.ts",
+    "src/renderer/src/pages/literature/detail/LiteratureDownloadFileRow.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/literature/workflows/LiteratureBatchLookupDialog.tsx",

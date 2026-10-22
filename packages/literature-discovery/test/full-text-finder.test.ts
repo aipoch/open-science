@@ -791,6 +791,8 @@ describe('getFullTextFilename', () => {
     ['https://example.org/%ZZ.pdf', 'Example paper', 'Example paper.pdf'],
     ['https://example.org/download', 'Title.pdf', 'Title.pdf'],
     ['https://example.org/download', '', 'paper.pdf'],
+    [`https://example.org/${'-'.repeat(100_000)}`, 'Title', 'Title.pdf'],
+    ['https://example.org/.pdf', 'Title', 'Title.pdf'],
     ['https://example.org/a%3Ab.pdf', 'Title', 'a b.pdf']
   ])('names %s consistently for display and storage', (url, title, expected) => {
     expect(getFullTextFilename(url, title)).toBe(expected)

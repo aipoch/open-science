@@ -144,7 +144,7 @@ export function getFullTextFilename(url: string, title: string): string {
       link.searchParams.get('filename'),
       link.searchParams.get('file')
     ]) {
-      if (!name || !/[^.].*\.pdf$/iu.test(name)) continue
+      if (!name || name.length <= 4 || !name.toLowerCase().endsWith('.pdf')) continue
       const stem = clean(name.slice(0, -4)).slice(0, 120)
       if (stem && stem !== '.' && stem !== '..') return `${stem}.pdf`
     }

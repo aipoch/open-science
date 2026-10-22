@@ -59,6 +59,20 @@ const supplement =
   '<supplementary-material id="s1"><label>File S1</label><caption><p>Data table</p></caption><media xlink:href="supplement.xls"/></supplementary-material>'
 
 describe('supplementary material search', () => {
+  it.each([
+    ['<b>Supplement</b> data', 'Supplement data'],
+    ['<scr<script>ipt>alert(1)</scr</script>ipt>', 'scriptalert(1)/script'],
+    ['<'.repeat(100_000) + 'Supplement', 'Supplement']
+  ])('normalizes provider markup without retaining partial tags', async (title, expected) => {
+    const { finder } = setup(
+      vi.fn<typeof fetch>(async (url) =>
+        json(String(url).endsWith('/search') ? [{ id: fig.id }] : { ...fig, title })
+      )
+    )
+    const result = await finder.run(request('figshare'))
+    expect(result.records[0].title).toBe(expected)
+  })
+
   it('finds new-field-only Figshare records and fetches metadata without files', async () => {
     const fetcher = vi.fn<typeof fetch>(async (url, init) => {
       if (String(url).endsWith('/search')) {

@@ -58,7 +58,8 @@ const dataciteRecord = z.object({
 })
 const plain = (text: string): string =>
   text
-    .replace(/<[^>]*>/gu, '')
+    .replace(/<[^<>]*>/gu, '')
+    .replace(/[<>]/gu, '')
     .replace(/\s+/gu, ' ')
     .trim()
     .slice(0, 2048)
