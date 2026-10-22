@@ -884,7 +884,11 @@ const ConversationPanel = ({
     ? t('Wait for all subagents to finish.')
     : saveAsSkillDisabledReasonFromParent
   const effectiveCanSend =
-    canSendMessage && !pendingInteractionFacts?.rootPermissionPending && !isStopping && !isResuming
+    canSendMessage &&
+    !specialistSwitchInFlight &&
+    !pendingInteractionFacts?.rootPermissionPending &&
+    !isStopping &&
+    !isResuming
   const activePendingPlan = activeBranchPlan?.approval === 'pending' ? activeBranchPlan : undefined
   // Keep the mounted editor stable across receipts and run completion. Only a
   // different Plan or an explicit review request owns a fresh draft/collapse state.
@@ -1377,15 +1381,17 @@ const ConversationPanel = ({
       }),
       t
     )
-  const canOpenSideChat = !openSideChatReason && Boolean(sideChatController.createDraft)
-  const canStartSideChat = !sendSideChatReason
+  const canOpenSideChat =
+    !specialistSwitchInFlight && !openSideChatReason && Boolean(sideChatController.createDraft)
+  const canStartSideChat = !specialistSwitchInFlight && !sendSideChatReason
   const canRetrySideChatHydration = Boolean(onRetrySideChatHydration)
   const canOpenSendOptions =
-    canPlanFirst ||
-    canOpenSideChat ||
-    canStartSideChat ||
-    canRetrySideChatHydration ||
-    (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession)
+    !specialistSwitchInFlight &&
+    (canPlanFirst ||
+      canOpenSideChat ||
+      canStartSideChat ||
+      canRetrySideChatHydration ||
+      (effectiveCanSend && Boolean(onBranchInNewSession) && canBranchInNewSession))
 
   const handlePlanFirst = (): void => {
     if (!canPlanFirst) return
@@ -1996,30 +2002,7 @@ const ConversationPanel = ({
                     )}
                   />
 
-                  {specialistSwitchInFlight ? (
-                    <div
-                      role="status"
-                      aria-live="polite"
-                      aria-atomic="true"
-                      data-testid="specialist-switch-loading"
-                      className="relative z-10 mb-2 flex min-w-0 items-center gap-2 px-1 py-1.5 text-sm text-muted-foreground"
-                    >
-                      <Loader2
-                        className="size-4 shrink-0 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                      <span className="min-w-0 [overflow-wrap:anywhere]">
-                        {t('Switching to {{target}}', {
-                          target:
-                            specialist.view.specialist.historyId === undefined
-                              ? t('Main Agent')
-                              : selectedSpecialist && selectedSpecialist.kind !== 'reviewer'
-                                ? (selectedSpecialist.displayName ?? selectedSpecialist.name)
-                                : t('Unavailable')
-                        })}
-                      </span>
-                    </div>
-                  ) : reconfigureError ? (
+                  {!specialistSwitchInFlight && reconfigureError ? (
                     <div className="relative z-10 mb-2" data-testid="reconfigure-error-banner">
                       <ErrorNotice
                         role="alert"
@@ -3213,6 +3196,20 @@ const ConversationPanel = ({
 
                             <ComposerSpecialistPicker
                               selectedId={specialistId}
+                              loadingLabel={
+                                specialistSwitchInFlight
+                                  ? t('Switching to {{target}}', {
+                                      target:
+                                        specialist.view.specialist.historyId === undefined
+                                          ? t('Main Agent')
+                                          : selectedSpecialist &&
+                                              selectedSpecialist.kind !== 'reviewer'
+                                            ? (selectedSpecialist.displayName ??
+                                              selectedSpecialist.name)
+                                            : t('Unavailable')
+                                    })
+                                  : undefined
+                              }
                               readOnly={!canChangeSpecialist}
                               onChange={onSpecialistChange}
                             />
@@ -3382,8 +3379,14 @@ const ConversationPanel = ({
                                   role="group"
                                   aria-label={t('Send message options')}
                                   className={cn(
-                                    'flex rounded-md bg-primary text-primary-foreground [@media(pointer:coarse)]:mx-3',
-                                    !effectiveCanSend && !canOpenSendOptions && 'opacity-50'
+                                    'flex rounded-md [@media(pointer:coarse)]:mx-3',
+                                    specialistSwitchInFlight
+                                      ? 'bg-bg-300 text-text-300'
+                                      : 'bg-primary text-primary-foreground',
+                                    !specialistSwitchInFlight &&
+                                      !effectiveCanSend &&
+                                      !canOpenSendOptions &&
+                                      'opacity-50'
                                   )}
                                 >
                                   <Tooltip>
@@ -3396,6 +3399,7 @@ const ConversationPanel = ({
                                         disabled={!effectiveCanSend}
                                         className={cn(
                                           composerSplitSendPrimaryButtonClassName,
+                                          specialistSwitchInFlight && 'text-text-300',
                                           canOpenSendOptions && 'disabled:opacity-50'
                                         )}
                                         aria-label={t('Send message')}
@@ -3429,6 +3433,8 @@ const ConversationPanel = ({
                                             disabled={!canOpenSendOptions}
                                             className={cn(
                                               composerSplitSendMenuButtonClassName,
+                                              specialistSwitchInFlight &&
+                                                'text-text-300 after:bg-text-300/20',
                                               effectiveCanSend && 'disabled:opacity-50'
                                             )}
                                             aria-label={t('More send options')}

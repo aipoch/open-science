@@ -46,6 +46,7 @@ let root: Root
 const renderPicker = (props?: {
   selectedId?: string
   readOnly?: boolean
+  loadingLabel?: string
   onChange?: (id: string | undefined) => void
 }): void => {
   act(() => {
@@ -53,6 +54,7 @@ const renderPicker = (props?: {
       <ComposerSpecialistPicker
         selectedId={props?.selectedId ?? 'researcher'}
         readOnly={props?.readOnly}
+        loadingLabel={props?.loadingLabel}
         onChange={props?.onChange ?? vi.fn()}
       />
     )
@@ -94,6 +96,44 @@ describe('ComposerSpecialistPicker', () => {
     expect(trigger.className).toContain('w-8')
     expect(trigger.className.split(' ')).not.toContain('bg-bg-200')
     expect(trigger.textContent).toBe('')
+  })
+
+  it('replaces the avatar with progress and restores the picker after switching', () => {
+    const onChange = vi.fn()
+    renderPicker({ loadingLabel: 'Switching to Researcher', onChange })
+    const trigger = container.querySelector<HTMLButtonElement>(
+      '[data-testid="composer-specialist-picker-trigger"]'
+    )!
+    expect(trigger.disabled).toBe(true)
+    expect(trigger.getAttribute('aria-busy')).toBe('true')
+    expect(trigger.querySelector('.animate-spin')).not.toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Switching to Researcher')
+    act(() => trigger.click())
+    expect(onChange).not.toHaveBeenCalled()
+
+    renderPicker({ onChange })
+    expect(trigger.disabled).toBe(false)
+    expect(trigger.getAttribute('aria-busy')).toBe('false')
+    expect(trigger.querySelector('.animate-spin')).toBeNull()
+    expect(container.querySelector('[role="status"]')).toBeNull()
+  })
+
+  it('keeps a progress icon available while switching to Main Agent without a selected avatar', () => {
+    act(() =>
+      root.render(
+        <ComposerSpecialistPicker
+          selectedId={undefined}
+          loadingLabel="Switching to Main Agent"
+          onChange={vi.fn()}
+        />
+      )
+    )
+    expect(
+      container.querySelector('[data-testid="composer-specialist-picker-trigger"]')
+    ).not.toBeNull()
+    expect(container.querySelector('[role="status"]')?.textContent).toBe('Switching to Main Agent')
+    act(() => root.render(<ComposerSpecialistPicker selectedId={undefined} onChange={vi.fn()} />))
+    expect(container.querySelector('[data-testid="composer-specialist-picker-trigger"]')).toBeNull()
   })
 
   it('filters by Specialist metadata and selects the result with Enter', () => {
