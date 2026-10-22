@@ -1,7 +1,7 @@
 import type { ProviderValidationSnapshot } from '@/lib/provider-validation-snapshot'
 import { useState } from 'react'
 import { useSettingsStore } from '@/stores/settings-store'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import type { ProviderView, SessionAgentConfiguration } from '../../../../shared/settings'
 import {
   isAgentAuthenticationRequired,

@@ -1,7 +1,8 @@
 /* eslint-disable @typescript-eslint/explicit-function-return-type */
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { execFileSync } from 'node:child_process'
+import { execFileSync, spawn } from 'node:child_process'
+import { setTimeout } from 'node:timers/promises'
 import { appendFile, readFile } from 'node:fs/promises'
 import { basename, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -71,7 +72,16 @@ export async function collectPackages(directory, version, sha) {
   const result = new Map()
   for (const target of runtimeTargets) {
     const folder = join(directory, `npm-${target.id}`)
-    const report = JSON.parse(await readFile(join(folder, `${target.id}.json`), 'utf8'))
+    const report = JSON.parse(
+      await readFile(join(folder, `${target.id}.json`), 'utf8').catch((error) => {
+        if (error.code === 'ENOENT')
+          throw new Error(
+            `Missing verified npm artifact: ${target.id}. Use the original Release artifacts; do not rebuild partially published versions.`,
+            { cause: error }
+          )
+        throw error
+      })
+    )
     assert.equal(report.sourceSha, sha, 'Artifact source commit mismatch')
     assert.equal(report.target, target.id)
     assert.equal(report.packages.length, 2)
@@ -132,6 +142,100 @@ export async function publishPlan(packages, lookup) {
   }
   return plan
 }
+async function registryPackage(name) {
+  const response = await fetch(`${registry}/${encodeURIComponent(name)}`, {
+    signal: AbortSignal.timeout(30_000)
+  })
+  if (response.status === 404) return null
+  assert.ok(response.ok, `Registry lookup failed: ${response.status} ${name}`)
+  return response.json()
+}
+
+export async function waitForPublished(pkg, lookup, delay = setTimeout) {
+  const { name, version } = pkg.manifest
+  for (let attempt = 0; attempt < 6; attempt++) {
+    const published = (await lookup(name))?.versions?.[version]
+    if (published) {
+      assert.equal(
+        published.dist?.integrity,
+        pkg.integrity,
+        `Published bytes differ: ${name}@${version}`
+      )
+      return
+    }
+    if (attempt < 5) await delay(5_000)
+  }
+  throw new Error(`Published version is not visible in the registry: ${name}@${version}`)
+}
+
+export function publishTarball(pkg, npmCli = process.env.npm_execpath) {
+  console.log(`Publishing ${pkg.manifest.name}@${pkg.manifest.version}`)
+  return new Promise((accept, reject) => {
+    const child = spawn(
+      process.execPath,
+      [
+        npmCli,
+        'publish',
+        pkg.path,
+        '--registry',
+        registry,
+        '--access',
+        'public',
+        '--ignore-scripts',
+        '--provenance',
+        '--loglevel=error'
+      ],
+      { stdio: 'inherit' }
+    )
+    child.once('error', reject)
+    child.once('close', (code, signal) => {
+      if (code === 0) accept()
+      else
+        reject(
+          new Error(`npm publish failed for ${pkg.manifest.name} (exit ${code}, signal ${signal})`)
+        )
+    })
+  })
+}
+
+export async function publishPackages(
+  packages,
+  lookup = registryPackage,
+  publish = publishTarball,
+  delay = setTimeout
+) {
+  const names = packages.map((pkg) => pkg.manifest.name)
+  assert.deepEqual(names, [...runtimeTargets.map(runtimePackageName), '@aipoch/open-science'])
+  // Finish the complete batch preflight before starting any immutable registry write.
+  const plan = await publishPlan(packages, lookup)
+  const entry = plan.at(-1)
+  const publishMissing = async (pkg) => {
+    if (pkg.published)
+      console.log(`Already published with matching integrity: ${pkg.manifest.name}`)
+    else await publish(pkg)
+  }
+  const results = await Promise.allSettled(
+    plan.slice(0, -1).map(async (pkg) => {
+      try {
+        await publishMissing(pkg)
+        await waitForPublished(pkg, lookup, delay)
+      } catch (error) {
+        throw new Error(`${pkg.manifest.name}: ${error.message}`, { cause: error })
+      }
+    })
+  )
+  const errors = results
+    .filter((result) => result.status === 'rejected')
+    .map((result) => result.reason)
+  if (errors.length)
+    throw new AggregateError(
+      errors,
+      `Platform publication failed; entry package blocked:\n${errors.map((error) => error.message).join('\n')}`
+    )
+  await publishMissing(entry)
+  await waitForPublished(entry, lookup, delay)
+}
+
 async function main() {
   const root = resolve(import.meta.dirname, '..')
   if (process.argv[2] === '--plan-release') {
@@ -157,41 +261,14 @@ async function main() {
   if (!releaseMode && process.env.GITHUB_REF?.startsWith('refs/tags/'))
     assert.equal(process.env.GITHUB_REF_NAME, `v${version}`)
   const packages = await collectPackages(resolve(process.argv[2]), version, sourceSha)
-  const plan = await publishPlan(packages, async (name) => {
-    const response = await fetch(`${registry}/${encodeURIComponent(name)}`, {
-      signal: AbortSignal.timeout(30_000)
-    })
-    if (response.status === 404) return null
-    assert.ok(response.ok, `Registry lookup failed: ${response.status} ${name}`)
-    return response.json()
-  })
   const publish = mode === '--publish' || mode === '--publish-release'
   if (mode === '--publish') {
     assert.equal(process.env.GITHUB_EVENT_NAME, 'push')
     assert.equal(process.env.GITHUB_REF, `refs/tags/v${version}`)
   }
-  // All integrity and registry checks finish before the first immutable registry write.
-  for (const pkg of plan) {
-    if (pkg.published) {
-      console.log(`Already published with matching integrity: ${pkg.manifest.name}`)
-      continue
-    }
-    execFileSync(
-      process.execPath,
-      [
-        process.env.npm_execpath,
-        'publish',
-        pkg.path,
-        '--registry',
-        registry,
-        '--access',
-        'public',
-        '--ignore-scripts',
-        '--provenance',
-        ...(publish ? [] : ['--dry-run'])
-      ],
-      { stdio: 'inherit' }
-    )
-  }
+  if (publish) await publishPackages(packages)
+  else if (mode === '--verify-release') await publishPlan(packages, registryPackage)
+  // Build-time checks are local: registry availability must not block a GitHub Release.
+  console.log(`Verified ${packages.length} npm packages at ${version} from ${sourceSha}`)
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

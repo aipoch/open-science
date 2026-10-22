@@ -5,6 +5,18 @@ export function connectorDescription(
   connector: { id: string; description: string; sources?: string[] },
   t: TFunction
 ): string {
+  if (connector.id === 'rxnorm') {
+    return t('Drug name resolution and concept properties from RxNorm.')
+  }
+  if (connector.id === 'dailymed') {
+    return t('Drug label identities and version history from DailyMed.')
+  }
+  if (connector.id === 'biosamples') {
+    return t('Public sample metadata and cross-references from BioSamples.')
+  }
+  if (connector.id === 'wikipathways') {
+    return t('Pathway discovery, metadata and revisions from WikiPathways.')
+  }
   if (connector.id === 'orphadata') {
     return t('Rare-disease genes, phenotypes and frequency evidence from Orphadata.')
   }
@@ -79,6 +91,22 @@ export function connectorDescription(
 
 export function connectorToolDescription(id: string, fallback: string, t: TFunction): string {
   switch (id) {
+    case 'rxnorm/resolve_name':
+      return t('Resolve drug names to RxNorm identifiers.')
+    case 'rxnorm/get_concept':
+      return t('Retrieve active RxNorm concept properties.')
+    case 'dailymed/search_labels':
+      return t('Search DailyMed drug label metadata.')
+    case 'dailymed/get_label_history':
+      return t('Retrieve DailyMed label version history.')
+    case 'biosamples/search_samples':
+      return t('Search BioSamples metadata, one cursor page at a time.')
+    case 'biosamples/get_sample':
+      return t('Retrieve a BioSamples record and external references.')
+    case 'wikipathways/search_pathways':
+      return t('Find WikiPathways by name and species.')
+    case 'wikipathways/get_pathway':
+      return t('Retrieve WikiPathways metadata and revision dates.')
     case 'genes/get_hgnc_gene':
       return t('Retrieve HGNC gene names and aliases.')
     case 'genes/resolve_hgnc_alias':

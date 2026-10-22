@@ -1,0 +1,32 @@
+{
+  "ownerPaths": [
+    "src/shared/pdf-preparation-scope.ts",
+    "src/shared/pdf-table-copy.ts",
+    "src/shared/pdf-translation-models.ts",
+    "src/shared/pdf-table-copy.test.ts",
+    "src/shared/pdf-translation-models.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/pdf-preparation-scope.ts",
+    "src/shared/pdf-table-copy.ts",
+    "src/shared/pdf-translation-models.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/pdf-table-copy.test.ts", "src/shared/pdf-translation-models.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

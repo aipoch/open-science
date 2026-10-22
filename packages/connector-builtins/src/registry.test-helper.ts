@@ -1,3 +1,7 @@
+import { RXNORM_TOOLS } from './rxnorm'
+import { DAILYMED_TOOLS } from './dailymed'
+import { BIOSAMPLES_TOOLS } from './biosamples'
+import { WIKIPATHWAYS_TOOLS } from './wikipathways'
 import { createConnectorRegistry } from '@aipoch/connector-core'
 import { ALLIANCE_TOOLS } from './alliance'
 import { BIOMART_TOOLS } from './biomart'
@@ -41,6 +45,11 @@ import { ZINC_TOOLS } from './zinc'
 import type { ToolDescriptor } from '@aipoch/connector-core'
 
 const ALL_TOOLS: ToolDescriptor[] = [
+  ...RXNORM_TOOLS,
+  ...DAILYMED_TOOLS,
+  ...BIOSAMPLES_TOOLS,
+  ...WIKIPATHWAYS_TOOLS,
+
   ...ALLIANCE_TOOLS,
   ...BIOMART_TOOLS,
   ...BIORXIV_TOOLS,

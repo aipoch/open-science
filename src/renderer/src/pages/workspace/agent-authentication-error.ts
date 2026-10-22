@@ -1,6 +1,6 @@
 import type { ProviderView } from '../../../../shared/settings'
 import { resolveProviderEffectiveModel } from '../../../../shared/provider-reasoning-effort'
-import type { ChatSession } from '@/stores/session-store'
+import type { ChatSession } from '@/stores/session-store-contract'
 import {
   latestOutcomePrompt,
   resolvePreparationNoticeBaseline

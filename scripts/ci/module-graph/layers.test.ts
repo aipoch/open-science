@@ -1,6 +1,5 @@
 import { expect, it } from 'vitest'
-import { boundaryViolations, dependencyLayer } from './module-relationships.mjs'
-import { createConsumerDependencyReader } from './consumer-retirement.mjs'
+import { boundaryViolations, createDependencyReader, dependencyLayer } from './index.mjs'
 
 it('rejects reversed layers and private cross-owner imports, including type relationships', () => {
   const modules = {
@@ -53,13 +52,12 @@ it.each([
   ])
   const source = { files: new Set(contents.keys()), read: (path: string) => contents.get(path) }
   const owners = new Set(['src/owner.ts'])
-  expect(createConsumerDependencyReader(source, [])('src/test.ts', owners).reachable).toBe(true)
+  expect(createDependencyReader(source, [])('src/test.ts', owners).reachable).toBe(true)
   expect(
-    createConsumerDependencyReader(source, [], { runtimeOnly: true })('src/test.ts', owners)
-      .reachable
+    createDependencyReader(source, [], { runtimeOnly: true })('src/test.ts', owners).reachable
   ).toBe(reachable)
   expect(
-    createConsumerDependencyReader(source, [['src/owner.ts', ['src/test.ts']]], {
+    createDependencyReader(source, [['src/owner.ts', ['src/test.ts']]], {
       runtimeOnly: true
     })('src/test.ts', owners).reachable
   ).toBe(true)

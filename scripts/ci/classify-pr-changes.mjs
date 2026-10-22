@@ -31,6 +31,15 @@ export function fixtureTestPatterns(path, manifest = defaultManifest) {
     .flatMap((suite) => suite.tests)
 }
 
+// Playwright-owned inputs run in E2E lanes; only their declared Vitest readers can be affected.
+export function playwrightReaderTests(path, manifest = defaultManifest) {
+  const rules = manifest.rules.filter((rule) =>
+    rule.paths.some((pattern) => matchesPath(path, pattern))
+  )
+  if (!rules.some((rule) => rule.runner === 'playwright')) return undefined
+  return [...new Set(rules.flatMap((rule) => rule.tests ?? []))].sort()
+}
+
 const statusNames = {
   A: 'added',
   C: 'copied',

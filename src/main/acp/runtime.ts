@@ -112,7 +112,10 @@ import type { AcpPromptContentOwner } from './prompt-content-owner'
 import type { AcpPromptTurnWorkflow } from './prompt-turn-workflow'
 import type { AcpProviderPromptExecutor } from './provider-prompt-executor'
 import type { AcpProviderSessionCreator } from './provider-session-creator'
-import type { AcpProviderSessionResumer } from './provider-session-resumer'
+import type {
+  AcpProviderSessionResumer,
+  AcpSessionWriterTransfer
+} from './provider-session-resumer'
 import { RepeatedToolFailureGuard } from './repeated-tool-failure-guard'
 import type {
   ReviewerSessionDisposition,
@@ -902,9 +905,12 @@ class AcpRuntime {
   }
 
   // Reattaches a persisted protocol session after an app restart so later prompts can stream.
-  async resumeSession(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {
+  async resumeSession(
+    request: AcpResumeSessionRequest,
+    writerTransfer?: AcpSessionWriterTransfer
+  ): Promise<AcpCreateSessionResponse> {
     return this.withOperationLease(async () => {
-      const resumed = await this.providerSessionResumer.resume(request)
+      const resumed = await this.providerSessionResumer.resume(request, writerTransfer)
       const session = this.activeSessionFor(request.sessionId)
       if (session) await this.options.authorizedDirectories?.initialize(session)
       if (resumed.contextReset) {
@@ -922,6 +928,21 @@ class AcpRuntime {
       return this.restoredContinuationContextResetSessionIds?.has(request.sessionId)
         ? { ...resumed, contextReset: true }
         : resumed
+    })
+  }
+
+  hasPendingSessionWriterRelease(sessionId: string): boolean {
+    return this.providerSessionResumer.hasPendingWriterRelease(sessionId)
+  }
+
+  async releaseSessionForTransfer(sessionId: string): Promise<string | undefined> {
+    return this.withOperationLease(async () => {
+      if (this.sessionInteractions.current(sessionId)) {
+        throw new Error('Cannot transfer a Session while the Agent is running.')
+      }
+      const providerSessionId = await this.providerSessionResumer.releaseForTransfer(sessionId)
+      if (providerSessionId) this.sessionCapabilities.revokeSession(sessionId)
+      return providerSessionId
     })
   }
 
@@ -1575,8 +1596,20 @@ class AcpRuntime {
   ): Promise<PromptResponse> {
     return withDataRootWrite(async () => {
       let response: PromptResponse | undefined
+      const assertWriterAvailable = (): void => {
+        if (this.hasPendingSessionWriterRelease(request.sessionId)) {
+          throw new Error(
+            'Cannot send a prompt while its writer release is pending. Resume the Session first.'
+          )
+        }
+      }
       try {
-        response = await this.promptTurnWorkflow.run(request, intent, onPromptAdmitted)
+        assertWriterAvailable()
+        response = await this.promptTurnWorkflow.run(request, intent, async () => {
+          // Preflight can yield before interaction ownership prevents a new writer release.
+          assertWriterAvailable()
+          return onPromptAdmitted?.()
+        })
         return response
       } finally {
         this.repeatedToolFailureGuard.clearSession(request.sessionId)

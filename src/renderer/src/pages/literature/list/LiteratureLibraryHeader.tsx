@@ -3,7 +3,6 @@ import { Button } from '@/components/ui/button'
 import type { LiteratureCollectionView } from '@aipoch/literature-library/contracts'
 import { ExternalLink, Sparkles } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { type PdfImportDestination } from '../imports/LiteraturePdfBatchImportDialog'
 import { LiteratureAddMenu, LiteratureLibraryActionsMenu } from './LiteratureLibraryMenus'
 import { type LibrarySection } from './LiteratureLibrarySidebar'
 import { LiteratureSearchInput } from './LiteratureSearchInput'
@@ -20,12 +19,8 @@ export function LiteratureLibraryHeader({
   startLiteratureReviewConversation,
   setShouldCueLiteratureReview,
   importPdfInputRef,
-  setPdfBatch,
-  projectId,
-  collectionId,
-  beginPdfImport,
+  onImportFiles,
   importRecordsInputRef,
-  previewRecordImport,
   beginManualImport,
   query,
   searchResetRevision,
@@ -50,14 +45,8 @@ export function LiteratureLibraryHeader({
   startLiteratureReviewConversation: LiteratureNavigation['startLiteratureReviewConversation']
   setShouldCueLiteratureReview: React.Dispatch<React.SetStateAction<boolean>>
   importPdfInputRef: React.RefObject<HTMLInputElement | null>
-  setPdfBatch: React.Dispatch<
-    React.SetStateAction<{ files: File[]; destination: PdfImportDestination } | undefined>
-  >
-  projectId: string | undefined
-  collectionId: string | undefined
-  beginPdfImport: (file: File) => void
+  onImportFiles: (files: File[]) => void
   importRecordsInputRef: React.RefObject<HTMLInputElement | null>
-  previewRecordImport: (file: File) => Promise<void>
   beginManualImport: (resetDraft?: boolean) => void
   query: string
   searchResetRevision: number
@@ -172,17 +161,7 @@ export function LiteratureLibraryHeader({
               onChange={(event) => {
                 const files = Array.from(event.currentTarget.files ?? [])
                 event.currentTarget.value = ''
-                if (files.length > 1)
-                  setPdfBatch({
-                    files,
-                    destination: {
-                      name:
-                        selectedProject?.name ?? selectedCollection?.name ?? t('All references'),
-                      projectId,
-                      collectionId
-                    }
-                  })
-                else if (files[0]) beginPdfImport(files[0])
+                onImportFiles(files)
               }}
             />
             <input
@@ -194,7 +173,7 @@ export function LiteratureLibraryHeader({
               onChange={(event) => {
                 const file = event.currentTarget.files?.[0]
                 event.currentTarget.value = ''
-                if (file) void previewRecordImport(file)
+                if (file) onImportFiles([file])
               }}
             />
             <LiteratureAddMenu

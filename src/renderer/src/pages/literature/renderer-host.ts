@@ -91,7 +91,7 @@ export type LiteratureNavigation = {
 
 export type LiteratureRendererApi = Pick<
   OpenScienceAPI,
-  'literature' | 'saveBlobFile' | 'platform'
+  'literature' | 'saveBlobFile' | 'saveManagedFile' | 'platform'
 > & {
   uploads: UploadStagingApi & Pick<OpenScienceAPI['uploads'], 'claimLocalFile'>
   previewResources: Pick<OpenScienceAPI['previewResources'], 'acquire' | 'release'>

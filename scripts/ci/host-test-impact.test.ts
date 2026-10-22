@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path'
 import { afterEach, expect, it, vi } from 'vitest'
 import { refineHostTests } from './package-host-test-impact.mjs'
 import { runModuleTestCli } from './module-test-impact.mjs'
-import { moduleRelationships } from './module-relationships.mjs'
+import { moduleRelationships } from './module-graph/index.mjs'
 
 const roots: string[] = []
 afterEach(() => roots.splice(0).forEach((root) => rmSync(root, { recursive: true, force: true })))

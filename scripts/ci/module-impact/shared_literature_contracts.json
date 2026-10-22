@@ -1,0 +1,36 @@
+{
+  "ownerPaths": [
+    "src/shared/literature.ts",
+    "src/shared/literature-export.ts",
+    "src/shared/literature-jobs.ts",
+    "src/shared/literature-save.ts",
+    "src/shared/journal-attributes.ts",
+    "src/shared/literature.test.ts",
+    "src/shared/smart-collection-rule.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/literature.ts",
+    "src/shared/literature-export.ts",
+    "src/shared/literature-jobs.ts",
+    "src/shared/literature-save.ts",
+    "src/shared/journal-attributes.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": ["src/shared/literature.test.ts", "src/shared/smart-collection-rule.test.ts"],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}
