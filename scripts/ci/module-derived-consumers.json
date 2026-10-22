@@ -6,13 +6,24 @@
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
     "artifact_content_contracts": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "artifact_provenance": ["src/main/session-package/materialize.test.ts"],
-    "artifact_publication_request": ["src/main/session-package/materialize.test.ts"],
-    "artifact_storage": ["src/main/session-package/materialize.test.ts"],
+    "artifact_provenance": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "artifact_publication_request": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "artifact_storage": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "artifact_storage_validation": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
@@ -25,6 +36,7 @@
     "connector_mcp_client": ["src/main/credential-identity/recovery.test.ts"],
     "connector_url_admission": ["src/main/credential-identity/recovery.test.ts"],
     "durable_files": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -36,24 +48,31 @@
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "environment_engine": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "host_bounded_io": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/image-preview-resize.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
-    "host_file_publisher": ["src/main/session-package/materialize.test.ts"],
+    "host_file_publisher": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "host_runtime_lifecycle": ["src/main/update/windows-update-handoff.test.ts"],
     "host_value_guards": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/ConversationPanel.interaction.test.tsx"
     ],
@@ -75,7 +94,10 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "immutable_input_authority": ["src/main/session-package/materialize.test.ts"],
+    "immutable_input_authority": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "literature_presentation_model": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/literature/CitationStylesView.test.tsx",
@@ -101,10 +123,20 @@
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "main_database": ["src/main/session-package/materialize.test.ts"],
-    "main_managed_file_versions": ["src/main/session-package/materialize.test.ts"],
-    "main_storage": ["src/main/session-package/materialize.test.ts"],
+    "main_database": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_managed_file_versions": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "main_storage": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "managed_version_files": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
       "src/main/compute/cancellation.real-ssh.integration.test.ts",
@@ -175,6 +207,7 @@
       "src/main/artifacts/artifact-reproducibility-recipe.test.ts",
       "src/main/artifacts/provenance-analysis-revision.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/compute/ambiguous-dispatch-recovery.integration.test.ts",
       "src/main/compute/cancellation-runtime.integration.test.ts",
@@ -215,16 +248,32 @@
       "src/renderer/src/pages/workspace/ArtifactProvenancePanel.render.test.tsx"
     ],
     "notebook_analysis": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "notebook_analysis_engine": ["src/main/session-package/materialize.test.ts"],
-    "notebook_execution_model": ["src/main/session-package/materialize.test.ts"],
-    "notebook_input_materialization": ["src/main/session-package/materialize.test.ts"],
-    "notebook_repository": ["src/main/session-package/materialize.test.ts"],
-    "notebook_syntax": ["src/main/session-package/materialize.test.ts"],
+    "notebook_analysis_engine": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_execution_model": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_input_materialization": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_repository": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "notebook_syntax": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "package_journal_catalog": [
       "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -239,6 +288,7 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_citations": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -265,6 +315,7 @@
       "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
     ],
     "package_literature_library": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx",
@@ -309,6 +360,7 @@
     "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
     "pdf_annotations": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -321,7 +373,10 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
-    "pdf_documents": ["src/main/session-package/materialize.test.ts"],
+    "pdf_documents": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "pdf_preview_runtime": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
@@ -339,6 +394,7 @@
       "src/renderer/src/pages/workspace/previews/renderers/use-pdf-reflow-document.test.tsx"
     ],
     "pdf_text": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
@@ -346,14 +402,19 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "project_database": ["src/main/session-package/materialize.test.ts"],
+    "project_database": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "project_file_mentions": [
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
+    "project_files_repository": ["src/main/artifacts/provenance-user-edit.integration.test.ts"],
     "project_files_view": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "providers_package": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/credential-identity/inventory-handoff.test.ts",
       "src/main/credential-identity/recovery.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -619,16 +680,29 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
     "reproducibility_contracts": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx"
     ],
-    "reproducibility_engine": ["src/main/session-package/materialize.test.ts"],
-    "reviewer_evidence": ["src/main/session-package/materialize.test.ts"],
-    "reviewer_repository": ["src/main/session-package/materialize.test.ts"],
-    "reviewer_tool_contracts": ["src/main/session-package/materialize.test.ts"],
+    "reproducibility_engine": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "reviewer_evidence": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "reviewer_repository": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "reviewer_tool_contracts": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "session_diagnostics": ["src/main/session-package/desktop.test.ts"],
     "session_persistence": ["src/main/session-details/owner.test.ts"],
     "session_renderer": [
@@ -1132,6 +1206,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -1845,6 +1920,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/background-result-delivery/continuation.test.ts",
@@ -2325,6 +2401,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/background-result-delivery/continuation.test.ts",
@@ -4046,6 +4123,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -4528,6 +4606,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/background-result-delivery/continuation.test.ts",
@@ -5533,6 +5612,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/background-result-delivery/continuation.test.ts",
@@ -6113,6 +6193,7 @@
       "src/main/artifacts/artifact-save.integration.test.ts",
       "src/main/artifacts/code-reconstruction.test.ts",
       "src/main/artifacts/provenance-lifecycle-contract.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/composition/project-lifecycle.test.ts",
       "src/main/composition/reviewer.test.ts",
       "src/main/composition/session-packages.test.ts",
@@ -6324,6 +6405,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/bookmarks/repository.integration.test.ts",
@@ -6752,6 +6834,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
       "src/main/artifacts/session-reproducibility-store.test.ts",
@@ -7374,6 +7457,7 @@
       "src/main/artifacts/provenance-message-snapshot.test.ts",
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/repository.characterization.test.ts",
       "src/main/artifacts/repository.rollback.test.ts",
@@ -8196,6 +8280,7 @@
       "src/main/artifacts/provenance-repository.test.ts",
       "src/main/artifacts/provenance-snapshot-decoder.test.ts",
       "src/main/artifacts/provenance-startup.integration.test.ts",
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/artifacts/provenance-write-contract.test.ts",
       "src/main/artifacts/reproducibility-host.test.ts",
       "src/main/artifacts/resumed-finalization-ownership.test.ts",
@@ -8822,18 +8907,22 @@
     ],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
     "storage_location": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "storage_state": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
     "upload_file_transport": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
     "upload_repository": [
+      "src/main/artifacts/provenance-user-edit.integration.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"
     ],
