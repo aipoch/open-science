@@ -455,16 +455,25 @@ describe('AcpRuntimeCoordinator', () => {
   )
 
   it('preserves a consumed timeout receipt across failed same-model resume and later model switch', async () => {
+    const unavailable = vi.fn()
+    const published = vi.fn()
     const created: ReturnType<typeof createFakeRuntime>[] = []
-    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
-      const fake = createFakeRuntime({
-        frameworkId: 'codex',
-        sessionIds: ['thread-1', 'sibling'],
-        callbacks
-      })
-      created.push(fake)
-      return fake.runtime
-    })
+    const coordinator = new AcpRuntimeCoordinator(
+      (callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1', 'sibling'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      },
+      { onStateChanged: published },
+      '',
+      undefined,
+      undefined,
+      unavailable
+    )
     const target = {
       frameworkId: 'codex',
       providerId: 'provider',
@@ -482,7 +491,8 @@ describe('AcpRuntimeCoordinator', () => {
     await expect(
       coordinator.resumeSession({ sessionId: 'thread-1', cwd: '/workspace', agentTarget: target })
     ).rejects.toThrow('provider unavailable')
-    owner.emitState({})
+    expect(unavailable).toHaveBeenCalledWith('thread-1')
+    expect(published.mock.lastCall?.[0].sessionIds).not.toContain('thread-1')
     await coordinator.resumeSession({
       sessionId: 'thread-1',
       cwd: '/workspace',

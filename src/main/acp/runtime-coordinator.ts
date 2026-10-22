@@ -835,11 +835,9 @@ class AcpRuntimeCoordinator {
           )
         : await runtime.resumeSession(request)
     } catch (error) {
-      if (
-        transfersOwnership &&
-        this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption
-      ) {
+      if (this.pendingSessionAdoptions.get(request.sessionId) === pendingAdoption) {
         this.pendingSessionAdoptions.delete(request.sessionId)
+        // A consumed close can detach the writer even when the retry reuses the same runtime.
         if (owner) this.handleRuntimeState(owner, owner.getSnapshot())
       }
       await this.retireUnusedTargetedRuntime(runtime)
