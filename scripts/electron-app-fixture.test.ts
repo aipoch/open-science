@@ -177,6 +177,8 @@ it.skipIf(process.platform !== 'win32')(
       const environment = launchEnvironment(join(root, 'storage'))
       for (const path of [environment.USERPROFILE, environment.APPDATA, environment.LOCALAPPDATA])
         await mkdir(path, { recursive: true })
+      // This smoke verifies system-tool availability in a fresh isolated profile, not a startup
+      // latency SLA. Production identity reads still stop after 2s and may report unknown.
       const query = (script: string, timeout: number): string =>
         execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {
           env: environment,
@@ -187,19 +189,20 @@ it.skipIf(process.platform !== 'win32')(
       expect(
         query(
           `$p = Get-Process -Id ${process.pid} -ErrorAction Stop; $p.StartTime.ToUniversalTime().ToFileTimeUtc()`,
-          2000
+          15_000
         )
       ).toMatch(/^\d+$/)
       expect(
         query(
           "Add-Type -TypeDefinition 'public class FixtureProbe { public static int Value() { return 17; } }'; [FixtureProbe]::Value()",
-          5000
+          30_000
         )
       ).toBe('17')
     } finally {
       await rm(root, { recursive: true, force: true })
     }
-  }
+  },
+  60_000
 )
 
 it.each([undefined, 'enabled'])(
