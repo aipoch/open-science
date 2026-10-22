@@ -1,3 +1,4 @@
+import { isSettingsWebContents, projectSettingsEvent } from './settings-window-policy'
 import { BrowserWindow } from 'electron'
 import type { ApplicationEventChannel, ApplicationEventMap } from './application-events'
 import { addRendererBroadcastSink } from './renderer-broadcast'
@@ -10,7 +11,11 @@ const projectToElectron = <Channel extends ApplicationEventChannel>(
 ): void => {
   for (const window of BrowserWindow.getAllWindows()) {
     try {
-      if (!window.isDestroyed()) window.webContents.send(channel, payload)
+      if (window.isDestroyed()) continue
+      const event = isSettingsWebContents(window.webContents)
+        ? projectSettingsEvent(channel, payload)
+        : ([channel, payload] as [string, unknown])
+      if (event) window.webContents.send(...event)
     } catch (error) {
       // Destruction can race the liveness check. One failed window must not starve its peers.
       log.warn('Could not deliver application event to renderer', {

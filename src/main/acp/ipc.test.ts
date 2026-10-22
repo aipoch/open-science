@@ -488,6 +488,7 @@ describe('ACP module transport seam', () => {
       'acp:delete-session',
       'acp:disconnect',
       'acp:get-plan-projection',
+      'acp:get-prompt-in-flight',
       'acp:get-state',
       'acp:reset-session-context',
       'acp:resume-session',
@@ -497,7 +498,12 @@ describe('ACP module transport seam', () => {
       'acp:set-permission-profile',
       'acp:steer-follow-up'
     ])
-    expect(invokeChannels).toEqual([...handlers.keys(), ...runtimeValidatedChannels].sort())
+    expect(invokeChannels).toEqual(
+      [...handlers.keys(), ...runtimeValidatedChannels]
+        .filter((channel) => channel !== 'acp:get-prompt-in-flight')
+        .sort()
+    )
+    expect(WEB_INVOKE_CHANNELS).not.toHaveProperty('acp.getPromptInFlight')
     expect(eventChannels).toEqual([
       'acp:agent-runtime-update',
       'acp:event',

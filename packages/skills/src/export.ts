@@ -102,11 +102,12 @@ const collectFiles = async (
 export const buildSkillExportArchive = async (
   skill: BundledSkill,
   storageRoot?: string,
-  validateHelper?: SkillHelperValidator
+  validateHelper?: SkillHelperValidator,
+  compress: (files: Zippable) => Uint8Array | Promise<Uint8Array> = (files) =>
+    zipSync(files, { level: 6 })
 ): Promise<SkillExportArchive> => ({
   fileName: skillExportFileName(skill.displayName, basename(skill.sourceDir) || skill.id),
-  archiveBytes: zipSync(
-    await collectFiles(skill.sourceDir, skill.name, storageRoot, validateHelper),
-    { level: 6 }
+  archiveBytes: await compress(
+    await collectFiles(skill.sourceDir, skill.name, storageRoot, validateHelper)
   )
 })

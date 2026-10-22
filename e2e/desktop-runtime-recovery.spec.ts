@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { acquireRuntimeDirectorySync } from '../src/main/runtime-ownership'
 import { spawn, execFile, type ChildProcess } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -330,6 +331,22 @@ for (const borrowed of [false, true])
           (globalThis as typeof globalThis & { recoveryNetworkProbe: { calls: number } })
             .recoveryNetworkProbe.calls
       )
+      // Keep a separate settings document attached during both visible and hidden recovery.
+      await page.evaluate(() => window.api.window.openSettings!({ route: { panel: 'model' } }))
+      const settings = await getSettingsPage(page)
+      const settingsDialog = settings.getByRole('dialog', { name: 'Settings', exact: true })
+      await settingsDialog.locator('[data-settings-anchor="model.add-provider"]').click()
+      const settingsDraft = settingsDialog.getByRole('textbox', {
+        name: 'Provider name',
+        exact: true
+      })
+      await settingsDraft.fill('Uncommitted recovery draft')
+      if (borrowed)
+        await app.evaluate(({ BrowserWindow }) => {
+          BrowserWindow.getAllWindows()
+            .find((window) => window.webContents.getURL().endsWith('/settings.html'))!
+            .hide()
+        })
       const before = owner
       // Pipe sockets in Electron main contain only the private desktop connection; stdio and the
       // inspector are excluded by writable/readable handle identity. Assert before injecting loss.
@@ -375,6 +392,18 @@ for (const borrowed of [false, true])
         .poll(() => page.evaluate(() => window.api.desktopRuntime?.getState()), { timeout: 20_000 })
         .toMatchObject({ phase: 'connected' })
       await expect(page.getByRole('button', { name: 'Reconnect', exact: true })).not.toBeVisible()
+      await expect
+        .poll(() => settings.evaluate(() => window.api.desktopRuntime?.getState()))
+        .toMatchObject({ phase: 'connected' })
+      if (borrowed) await page.evaluate(() => window.api.window.openSettings!())
+      await expect(settingsDraft).toHaveValue('Uncommitted recovery draft')
+      await settings.evaluate(() => window.api.settings.setNotificationsEnabled({ enabled: false }))
+      await expect
+        .poll(() =>
+          page.evaluate(async () => (await window.api.settings.getSettings()).notificationsEnabled)
+        )
+        .toBe(false)
+
       await expect
         .poll(() =>
           app!.evaluate(

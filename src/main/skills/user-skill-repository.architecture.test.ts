@@ -244,8 +244,8 @@ describe('User Skill repository architecture', () => {
     expect(readSource(repositoryPath).replace(/\s+/g, '')).toContain(
       'newUserSkillStore(storageRoot,this.transactions,this.compatibilityIndex,validateHelper)'
     )
-    expect(readSource(repositoryPath)).toContain(
-      'new SkillBundleImportOwner(this.store, this.transactions)'
+    expect(readSource(repositoryPath).replace(/\s+/g, '')).toContain(
+      'newSkillBundleImportOwner(this.store,this.transactions,options.discoverArchive)'
     )
     expect(readSource(repositoryPath)).toContain(
       'new AgentHomeSkillOwner(this.store, this.transactions)'

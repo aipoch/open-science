@@ -1,3 +1,4 @@
+import { ELECTRON_EVENT, type RemoveListener } from './definition'
 import type {
   CancelComputeJobRequest,
   ComputeHost,
@@ -33,6 +34,12 @@ import type { PersistedChatSession } from '../session-persistence'
 import { callable, EVENT, LOCAL } from './definition'
 
 export const contracts = {
+  'compute.onHostsChanged': callable<(listener: () => void) => RemoveListener>()(
+    'compute',
+    ['compute:hosts-changed', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
+
   'compute.bookmarksGet': callable<(providerId: string) => Promise<string[]>>()('compute', [
     'compute:bookmarks:get'
   ]),

@@ -1,3 +1,4 @@
+import { verifyMarketplaceArchive } from './archive-verification'
 import { z } from 'zod'
 import type {
   SkillMarketplaceCatalog,
@@ -8,11 +9,7 @@ import type {
   SkillMarketplaceResult
 } from '../../shared/skill-marketplace'
 import { createLogger } from '@aipoch/diagnostics/node'
-import {
-  marketplaceReceiptSchema,
-  verifyMarketplacePackage,
-  type MarketplacePackage
-} from './package'
+import { marketplaceReceiptSchema, type MarketplacePackage } from './package'
 import {
   toMarketplaceEntry,
   verifyMarketplaceDetail,
@@ -163,7 +160,7 @@ export class SkillMarketplaceService {
     root: MarketplaceRoot,
     path: string,
     limit: number,
-    verify: (bytes: Uint8Array) => T,
+    verify: (bytes: Uint8Array) => T | Promise<T>,
     signal = AbortSignal.timeout(25000)
   ): Promise<T> {
     let failure: unknown
@@ -171,7 +168,7 @@ export class SkillMarketplaceService {
     for (const [index, url] of urls.entries()) {
       try {
         // GitHub metadata assets redirect too; CDN requests never follow redirects.
-        return verify(await this.read(url, limit, signal, index === 1))
+        return await verify(await this.read(url, limit, signal, index === 1))
       } catch (error) {
         // Preserve an integrity failure when the other mirror is merely unavailable.
         if (!failure || !(error instanceof NetworkError)) failure = error
@@ -380,7 +377,7 @@ export class SkillMarketplaceService {
         listing.artifact.path,
         Math.min(listing.artifact.bytes, 64 * 1024 * 1024),
         (bytes) =>
-          verifyMarketplacePackage(Buffer.from(bytes), id, listing.artifact, descriptor.package),
+          verifyMarketplaceArchive(Buffer.from(bytes), id, listing.artifact, descriptor.package),
         signal
       )
       return {

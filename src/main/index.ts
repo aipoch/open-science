@@ -494,6 +494,11 @@ async function startDesktop(): Promise<void> {
 
   startupDiagnostics?.phase('load-native-shell')
   const { createMainWindow, configureMainWindow, isMainWindow } = await import('./windows')
+  const { isSettingsWebContents } = await import('./settings-window-policy')
+  const { registerSettingsWindowIpcHandlers } = await import('./settings-window-ipc')
+  // Auxiliary documents share the desktop transport, never a backend service instance.
+  const isDesktopWindow = (window: BrowserWindow): boolean =>
+    !window.isDestroyed() && (isMainWindow(window) || isSettingsWebContents(window.webContents))
   const { applyInterfaceScaleShortcut, installWindowShortcuts } = await import('./window-shortcuts')
   const { registerWindowZoomIpcHandler, registerWindowCloseIpcHandler } =
     await import('./window-ipc')
@@ -529,16 +534,18 @@ async function startDesktop(): Promise<void> {
   const menu = buildZoomSafeApplicationMenu(
     Menu.getApplicationMenu(),
     Menu,
-    isMainWindow,
+    isDesktopWindow,
     applyInterfaceScaleShortcut
   )
   if (menu) Menu.setApplicationMenu(menu)
   electronApp.setAppUserModelId(APP_USER_MODEL_ID)
-  installWindowShortcuts(app, undefined, isMainWindow)
+  installWindowShortcuts(app, undefined, isDesktopWindow)
   registerWindowZoomIpcHandler()
   registerWindowsTitleBarIpc({ isMainWindow })
   registerWindowCloseIpcHandler()
   registerWindowFindIpcHandlers()
+  const removeSettingsWindow = registerSettingsWindowIpcHandlers()
+  app.once('will-quit', removeSettingsWindow)
   startupDiagnostics?.phase('native-shell-configured')
   let requestSystemShutdown = (): void => app.quit()
   const system = installSystemLifecycleAdapters({
@@ -553,7 +560,7 @@ async function startDesktop(): Promise<void> {
   system.installPowerMonitorListeners()
   const isApplicationWindow = (sender: WebContents): boolean => {
     const window = BrowserWindow.fromWebContents(sender)
-    return Boolean(window && isMainWindow(window))
+    return Boolean(window && isDesktopWindow(window))
   }
   let getMainWindow = (): BrowserWindow | undefined => undefined
   let isMainWindowHidden = (): boolean => false
@@ -590,7 +597,7 @@ async function startDesktop(): Promise<void> {
   const broadcast = (channel: string, payload: unknown): void => {
     deliverDesktopEvent(
       BrowserWindow.getAllWindows(),
-      isMainWindow,
+      isDesktopWindow,
       channel,
       payload,
       channel === DESKTOP_RUNTIME_RECOVERY_CHANNELS.stateChanged
@@ -690,6 +697,7 @@ async function startDesktop(): Promise<void> {
     'settings:is-npm-available',
     'lifecycle:client-id',
     'acp:get-state',
+    'acp:get-prompt-in-flight',
     'compute:jobs:list',
     'compute:list',
     'notebook:state'
@@ -1092,7 +1100,7 @@ async function startDesktop(): Promise<void> {
         if (sender) markStale(sender)
         else
           for (const window of BrowserWindow.getAllWindows())
-            if (isMainWindow(window)) markStale(window.webContents)
+            if (isDesktopWindow(window)) markStale(window.webContents)
       },
       onDisconnect: () => {
         if (attached !== client || !attached) return
@@ -1165,7 +1173,7 @@ async function startDesktop(): Promise<void> {
         const epoch = recovery!.state().epoch
         await new Promise<void>((resolve, reject) => {
           const windows = BrowserWindow.getAllWindows().filter(
-            (window) => !window.isDestroyed() && isMainWindow(window)
+            (window) => isDesktopWindow(window) && !window.webContents.isDestroyed()
           )
           const pending = new Map(
             windows.map((window) => [window.webContents.id, window.webContents.mainFrame])
@@ -1225,7 +1233,7 @@ async function startDesktop(): Promise<void> {
       },
       onState: (next) => {
         for (const window of BrowserWindow.getAllWindows()) {
-          if (!isMainWindow(window) || window.webContents.isDestroyed()) continue
+          if (!isDesktopWindow(window) || window.webContents.isDestroyed()) continue
           const sender = window.webContents
           try {
             sender.send(

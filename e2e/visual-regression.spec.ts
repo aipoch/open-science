@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { Page } from 'playwright'
 import { createProject, sendPrompt } from './certification/helpers'
@@ -179,8 +180,15 @@ test('keeps core desktop surfaces visually stable', async ({ app }) => {
   await appVersion.getByRole('status').evaluateAll((elements) => {
     for (const element of elements) element.style.visibility = 'hidden'
   })
-  // Allow slight font-antialiasing differences on hosted macOS runners for this text-dense surface.
-  await expectStableScreenshot(page, 'settings-general.png', 0.004)
+  // The text-dense settings surface has slightly different font antialiasing on macos-14 runners.
+  await prepareVisualPage(await getSettingsPage(page))
+  await settings
+    .locator('[data-slot="settings-navigation-scroll"], [data-slot="settings-content-scroll"]')
+    .evaluateAll((elements) => {
+      for (const element of elements) element.scrollTop = 0
+    })
+  await expect(settings.getByRole('heading', { name: 'Appearance', exact: true })).toBeInViewport()
+  await expectStableScreenshot(await getSettingsPage(page), 'settings-general.png', 0.004)
 })
 
 test('keeps home actions and content inside compact viewports', async ({ app }) => {
@@ -294,8 +302,8 @@ test('keeps representative conversation, project, and recovery states visually s
   await setVisualState(page, { theme: 'Dark', width: 1280 })
   const settings = await openSettingsPage(page, 'Compute')
   await expect(settings.getByRole('heading', { name: 'SSH hosts' })).toBeVisible()
-  await setViewport(page, 767)
-  await expectStableScreenshot(page, 'compute-narrow-dark.png')
+  await setViewport(await getSettingsPage(page), 767)
+  await expectStableScreenshot(await getSettingsPage(page), 'compute-narrow-dark.png')
   await settings.getByRole('button', { name: 'Close settings' }).click()
   await expect(settings).toBeHidden()
 

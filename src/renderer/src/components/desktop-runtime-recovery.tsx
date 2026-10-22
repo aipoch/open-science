@@ -15,8 +15,34 @@ import { useSettingsStore } from '@/stores/settings-store'
 import { useSessionJobStore } from '@/stores/session-job-store'
 import { flushComposerDrafts } from '@/pages/workspace/composer-draft-storage'
 
+const recoverWorkspace = (epoch: number): Promise<unknown> => {
+  return Promise.all([
+    waitForDesktopSessionRecovery(epoch),
+    refreshDesktopRecoveryReaders(),
+    useProjectStore
+      .getState()
+      .loadProjects()
+      .then(() => {
+        if (useProjectStore.getState().loadError) throw new Error('Project refresh failed.')
+      }),
+    useSettingsStore
+      .getState()
+      .load({ force: true })
+      .then((loaded) => {
+        if (!loaded) throw new Error('Settings refresh failed.')
+      }),
+    useSessionJobStore.getState().hydrateForRecovery()
+  ])
+}
+
 /** Keeps the application mounted: recovery must never discard editors or composer drafts. */
-export function DesktopRuntimeRecovery(): React.JSX.Element | null {
+export function DesktopRuntimeRecovery({
+  reconcile = recoverWorkspace,
+  flushDrafts = flushComposerDrafts
+}: {
+  reconcile?: (epoch: number) => Promise<unknown>
+  flushDrafts?: () => void
+} = {}): React.JSX.Element | null {
   const { t } = useTranslation()
   const state = useDesktopRuntimeRecoveryStore()
   const updating = useUpdateStore((store) => store.status.state === 'applying')
@@ -36,7 +62,7 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
         previousFocus.current =
           document.activeElement instanceof HTMLElement ? document.activeElement : null
       }
-      if (next.phase !== 'connected') flushComposerDrafts()
+      if (next.phase !== 'connected') flushDrafts()
       useDesktopRuntimeRecoveryStore.setState(next)
     }
     let receivedEvent = false
@@ -54,27 +80,11 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
       live = false
       remove()
     }
-  }, [])
+  }, [flushDrafts])
   useEffect(() => {
     if (state.phase !== 'reconciling') return
     let live = true
-    void Promise.all([
-      waitForDesktopSessionRecovery(state.epoch),
-      refreshDesktopRecoveryReaders(),
-      useProjectStore
-        .getState()
-        .loadProjects()
-        .then(() => {
-          if (useProjectStore.getState().loadError) throw new Error('Project refresh failed.')
-        }),
-      useSettingsStore
-        .getState()
-        .load({ force: true })
-        .then((loaded) => {
-          if (!loaded) throw new Error('Settings refresh failed.')
-        }),
-      useSessionJobStore.getState().hydrateForRecovery()
-    ]).then(
+    void reconcile(state.epoch).then(
       () => {
         if (live) void window.api.desktopRuntime?.reconciled(state.epoch, true)
       },
@@ -85,7 +95,7 @@ export function DesktopRuntimeRecovery(): React.JSX.Element | null {
     return () => {
       live = false
     }
-  }, [state.epoch, state.phase])
+  }, [reconcile, state.epoch, state.phase])
   // The update dialog owns planned shutdown; an aborted/failed update restores recovery here.
   if (state.phase === 'connected' || (state.closing && updating)) return null
   const busy = state.phase === 'reconnecting' || state.phase === 'reconciling'

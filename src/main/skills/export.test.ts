@@ -1,3 +1,4 @@
+import { zipSettingsFiles } from '../archive-tasks'
 import { describe, expect, it, vi } from 'vitest'
 import { buildSkillExportArchive, saveSkillExport } from './export'
 import { buildSkillExportArchive as buildPackageArchive } from '@aipoch/skills/sources'
@@ -67,6 +68,7 @@ it('supplies the host helper validator and storage root to package export', asyn
   expect(buildPackageArchive).toHaveBeenCalledExactlyOnceWith(
     skill,
     '/storage',
-    validateSkillHelper
+    validateSkillHelper,
+    zipSettingsFiles
   )
 })

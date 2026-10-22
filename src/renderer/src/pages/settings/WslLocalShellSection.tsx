@@ -492,8 +492,7 @@ export const WslLocalShellSection = ({
     setBusy(true)
     setConversationError(false)
     try {
-      const opened = await startWslSetupConversation(chatProjectId, t)
-      if (opened) useSettingsStore.getState().closeSettings()
+      await startWslSetupConversation(chatProjectId, t, useSettingsStore.getState().closeSettings)
     } catch {
       setConversationError(true)
     } finally {
@@ -502,8 +501,9 @@ export const WslLocalShellSection = ({
   }
 
   const createProjectForSetup = (): void => {
-    useSettingsStore.getState().closeSettings()
-    useNavigationStore.getState().requestWslSetupProjectCreation()
+    useNavigationStore
+      .getState()
+      .requestWslSetupProjectCreation(useSettingsStore.getState().closeSettings)
   }
 
   const switchToPowerShell = async (): Promise<void> => {

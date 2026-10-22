@@ -1,3 +1,4 @@
+import type { SkillDiscovery } from './skill-archive-discovery'
 import type { SkillHelperValidator } from './registered-helper-catalog'
 import type { AgentHomeSkillRef, AgentHomeSkillSource, SkillBundlePreviewResult } from './types'
 import {
@@ -36,6 +37,8 @@ export type { ImportOutcome } from './user-skill-import-contracts'
 export { SkillReleaseInstallConflict } from './skill-bundle-import-owner'
 
 export type UserSkillRepositoryOptions = {
+  /** Hosts may isolate CPU-bound discovery while this repository keeps transaction ownership. */
+  discoverArchive?: (bytes: Buffer) => SkillDiscovery | Promise<SkillDiscovery>
   validatePromotion?: (list: () => Promise<BundledSkill[]>) => Promise<void>
   withExternalRecoveryBarrier?: <T>(operation: () => Promise<T>) => Promise<T>
   validateHelper?: SkillHelperValidator
@@ -65,7 +68,11 @@ class UserSkillRepository {
       this.compatibilityIndex,
       validateHelper
     )
-    this.bundleImports = new SkillBundleImportOwner(this.store, this.transactions)
+    this.bundleImports = new SkillBundleImportOwner(
+      this.store,
+      this.transactions,
+      options.discoverArchive
+    )
     this.agentHomeSkills = new AgentHomeSkillOwner(this.store, this.transactions)
     if (validatePromotion) {
       this.transactions.setPromotedValidator(() =>

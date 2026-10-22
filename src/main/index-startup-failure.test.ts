@@ -685,9 +685,9 @@ it('refreshes cached package progress when an operation completed while desktop 
       expect(f.completedStartup).toHaveBeenCalledOnce()
     })
     deliver({ channel: 'sessions:package-operation-changed', payload: current })
-    vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue(
-      {} as InstanceType<typeof BrowserWindow>
-    )
+    vi.spyOn(BrowserWindow, 'fromWebContents').mockReturnValue({
+      isDestroyed: () => false
+    } as InstanceType<typeof BrowserWindow>)
     vi.mocked(isMainWindow).mockReturnValue(true)
     const frame = {}
     const event = { sender: { mainFrame: frame }, senderFrame: frame }

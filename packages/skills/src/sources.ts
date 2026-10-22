@@ -48,3 +48,6 @@ export type {
   SkillReleasePolicy
 } from './skill-release'
 export { isAppOwnedSkillRootFile, isSkillPackageIgnoredPath } from './skill-import-limits'
+
+export { discoverSkillRoots } from './skill-archive-discovery'
+export type { SkillDiscovery, SkillRoot } from './skill-archive-discovery'

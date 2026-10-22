@@ -13,7 +13,9 @@
     "src/main/skill-marketplace/protocol.ts",
     "src/main/skill-marketplace/service.test.ts",
     "src/main/skill-marketplace/service.ts",
-    "src/main/skill-marketplace/source.ts"
+    "src/main/skill-marketplace/source.ts",
+    "src/main/skill-marketplace/archive-worker.ts",
+    "src/main/skill-marketplace/archive-verification.ts"
   ],
   "interfacePaths": [
     "src/main/skill-marketplace/install-queue.ts",
@@ -201,5 +203,6 @@
     ]
   },
   "capabilityOverlays": ["windows_sensitive", "e2e_regressions", "e2e_delegation"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Archive validation now crosses a Node Worker import boundary whose dependency cone is not statically proven."
 }

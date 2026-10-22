@@ -144,6 +144,7 @@ describe('ACP application commands', () => {
       'acp:discard-unavailable-plan',
       'acp:disconnect',
       'acp:get-plan-projection',
+      'acp:get-prompt-in-flight',
       'acp:get-state',
       'acp:reset-session-context',
       'acp:respond-elicitation',
@@ -168,6 +169,9 @@ describe('ACP application commands', () => {
     const dependencies = createDependencies()
     const router = createApplicationCommandRouter()
     registerAcpCommands(router.registrar, dependencies)
+    await expect(
+      router.dispatcher.invoke(acpCommands.getPromptInFlight, invocation([]))
+    ).resolves.toBe(snapshot.promptInFlight)
     const connect = { cwd: '/workspace' }
     const createSession = { projectId: 'project-1', permissionProfile: 'ask' as const }
     const resumeSession = { sessionId: 'session-1', cwd: '/workspace' }

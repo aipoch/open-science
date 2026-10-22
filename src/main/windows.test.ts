@@ -122,6 +122,7 @@ class FakeBrowserWindow {
   }
   webContents = {
     id: 101,
+    isDestroyed: (): boolean => this.destroyed,
     setWindowOpenHandler: (handler: (details: WindowOpenDetails) => unknown): void => {
       windowOpenHandler = handler
     },
@@ -152,6 +153,10 @@ class FakeBrowserWindow {
     list.push(handler)
     this.handlers.set(event, list)
     return this
+  }
+
+  once(event: string, handler: (event: CloseEvent) => void): this {
+    return this.on(event, handler)
   }
 
   // Mirror Electron: close() fires the 'close' handlers, so a close-to-tray interceptor that
@@ -226,7 +231,7 @@ vi.mock('@electron-toolkit/utils', () => ({ is: { dev: false } }))
 
 vi.mock('../../resources/icon.png?asset', () => ({ default: 'icon-path' }))
 
-const { createMainWindow } = await import('./windows')
+const { createMainWindow, createSettingsWindow } = await import('./windows')
 
 // A keyDown close chord for the host platform: Cmd+W on macOS, Ctrl+W elsewhere. Built off
 // process.platform so the interception test passes on every CI runner (windows, linux, macOS).
@@ -267,6 +272,13 @@ const emitClose = (window: FakeBrowserWindow): CloseEvent => {
 }
 
 describe('window presentation', () => {
+  it('destroys a crashed settings renderer so it cannot strand desktop recovery', () => {
+    createSettingsWindow()
+    const window = lastWindow!
+    window.webContentsHandlers.get('render-process-gone')!()
+    expect(window.destroyed).toBe(true)
+  })
+
   afterEach(() => {
     vi.unstubAllEnvs()
   })

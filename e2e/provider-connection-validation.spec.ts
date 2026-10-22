@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
 import { expect } from '@playwright/test'
@@ -64,11 +65,17 @@ test('tests current provider input and commits only verified configurations', as
     let settings = await openSettingsPage(page, 'Model')
     await settings.locator('[data-settings-anchor="model.add-provider"]').click()
     await settings.getByRole('combobox', { name: 'Provider type', exact: true }).click()
-    await page.getByRole('option', { name: 'Custom Gateway', exact: true }).click()
+    await (
+      await getSettingsPage(page)
+    )
+      .getByRole('option', { name: 'Custom Gateway', exact: true })
+      .click()
     await settings.getByRole('textbox', { name: 'Provider name', exact: true }).fill(PROVIDER_NAME)
     await settings.getByRole('textbox', { name: 'Base URL', exact: true }).fill(baseUrl)
     await settings.getByRole('combobox', { name: 'API format', exact: true }).click()
-    await page
+    await (
+      await getSettingsPage(page)
+    )
       .getByRole('option', {
         name: 'Messages (/v1/messages) — Claude / Anthropic-compatible',
         exact: true

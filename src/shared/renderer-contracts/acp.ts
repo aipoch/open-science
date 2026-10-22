@@ -1,3 +1,4 @@
+import { ELECTRON, ELECTRON_EVENT } from './definition'
 import type {
   AcpAgentRuntimeUpdate,
   AcpCancelPromptRequest,
@@ -41,6 +42,17 @@ import {
 } from './definition'
 
 export const contracts = {
+  'acp.getPromptInFlight': callable<() => Promise<boolean>>()(
+    'acp',
+    ['acp:get-prompt-in-flight', ELECTRON],
+    { optionalMember: true }
+  ),
+  'acp.onPromptInFlightChanged': callable<(listener: (busy: boolean) => void) => RemoveListener>()(
+    'acp',
+    ['acp:prompt-in-flight-changed', ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
+
   'acp.cancel': callable<(request: AcpCancelPromptRequest) => Promise<AcpStateCommandResponse>>()(
     'acp',
     ['acp:cancel']

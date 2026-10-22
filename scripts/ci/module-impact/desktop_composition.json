@@ -203,7 +203,11 @@
     "src/main/desktop-update-integration.test.ts",
     "src/main/desktop-update-integration.ts",
     "src/main/runtime-network-node.test.ts",
-    "src/main/composition/document-reading.architecture.test.ts"
+    "src/main/composition/document-reading.architecture.test.ts",
+    "src/main/settings-window-ipc.test.ts",
+    "src/main/settings-window-ipc.ts",
+    "src/main/settings-window-policy.test.ts",
+    "src/main/settings-window-policy.ts"
   ],
   "interfacePaths": [
     "src/main/app-lifecycle.ts",
@@ -379,7 +383,9 @@
       "src/main/desktop-update-integration.test.ts",
       "src/main/runtime-network-node.test.ts",
       "src/main/legacy-service-termination.test.ts",
-      "src/main/composition/document-reading.architecture.test.ts"
+      "src/main/composition/document-reading.architecture.test.ts",
+      "src/main/settings-window-ipc.test.ts",
+      "src/main/settings-window-policy.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import { test } from './fixtures/electron-app'
 import { createProjectViaUi } from './fixtures/project'
@@ -174,7 +175,7 @@ test.describe('Windows window system', () => {
     const closeAction = settings.getByRole('combobox', { name: 'When closing the window' })
 
     await closeAction.click()
-    await page.getByRole('option', { name: 'Minimize to tray' }).click()
+    await (await getSettingsPage(page)).getByRole('option', { name: 'Minimize to tray' }).click()
     await expect(closeAction).toContainText('Minimize to tray')
     await settings.getByRole('button', { name: 'Close settings' }).click()
 

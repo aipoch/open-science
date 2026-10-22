@@ -1,3 +1,4 @@
+import { zipSettingsFiles } from '../archive-tasks'
 import type { SkillExportArchive } from '@aipoch/skills/sources'
 import { englishNativeTranslator, type NativeTranslator } from '../locale/main-process-messages'
 import { publishUserFile } from '../user-file-publisher'
@@ -5,7 +6,7 @@ import { buildSkillExportArchive as buildArchive } from '@aipoch/skills/sources'
 import { validateSkillHelper } from './helper-validation'
 
 export const buildSkillExportArchive: typeof buildArchive = (skill, storageRoot) =>
-  buildArchive(skill, storageRoot, validateSkillHelper)
+  buildArchive(skill, storageRoot, validateSkillHelper, zipSettingsFiles)
 
 type SkillExportDialog = {
   showSaveDialog: (options: {

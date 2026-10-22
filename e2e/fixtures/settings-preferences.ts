@@ -1,10 +1,14 @@
+import { getSettingsPage } from './settings-window'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 
 // Home and Workspace expose the same Settings action.
 export const openSettingsPage = async (page: Page, section: string): Promise<Locator> => {
   await page.getByRole('button', { name: /^Settings$/ }).click()
-  const settings = page.getByRole('dialog', { name: 'Settings', exact: true })
+  const settings = (await getSettingsPage(page)).getByRole('dialog', {
+    name: 'Settings',
+    exact: true
+  })
   await expect(settings).toBeVisible()
   const navigation = settings.getByRole('navigation', { name: 'Settings', exact: true })
   if (!(await navigation.isVisible())) {
@@ -37,8 +41,9 @@ export const setTheme = async (page: Page, theme: 'Dark' | 'Light'): Promise<voi
 export const selectLanguage = async (page: Page, label: string): Promise<void> => {
   const settings = await openGeneralSettings(page)
   await settings.getByRole('combobox', { name: 'Interface language' }).click()
-  await page.getByRole('option', { name: label, exact: true }).click()
+  const settingsPage = await getSettingsPage(page)
+  await settingsPage.getByRole('option', { name: label, exact: true }).click()
   // The dialog name changes with the locale; use Escape rather than the old English close label.
-  await page.keyboard.press('Escape')
-  await expect(page.getByRole('dialog')).toBeHidden()
+  await settingsPage.keyboard.press('Escape')
+  await expect(settingsPage.getByRole('dialog')).toBeHidden()
 }

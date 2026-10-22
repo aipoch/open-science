@@ -190,5 +190,10 @@
   "resources/pdf-translation-local/worker.mjs": [
     "src/main/literature/pdf-translation/local.ts",
     "src/main/literature/pdf-translation/local-worker.integration.test.ts"
+  ],
+  "src/main/archive-tasks/worker.ts": ["src/main/archive-tasks/index.ts"],
+  "src/renderer/src/settings.tsx": ["src/main/windows.ts"],
+  "src/main/skill-marketplace/archive-worker.ts": [
+    "src/main/skill-marketplace/archive-verification.ts"
   ]
 }

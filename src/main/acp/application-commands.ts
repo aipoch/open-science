@@ -154,6 +154,9 @@ const acpResponseCommandContracts = Object.freeze({
 })
 
 const acpCommands = Object.freeze({
+  getPromptInFlight: defineApplicationCommand<'acp:get-prompt-in-flight', readonly [], boolean>(
+    'acp:get-prompt-in-flight'
+  ),
   getState: defineApplicationCommand<'acp:get-state', readonly [], AcpStateSnapshot>(
     'acp:get-state'
   ),
@@ -253,6 +256,7 @@ const acpCommands = Object.freeze({
 })
 
 const acpApplicationCommands = defineApplicationCommandGroup('acp', [
+  acpCommands.getPromptInFlight,
   acpCommands.getState,
   acpCommands.connect,
   acpCommands.disconnect,
@@ -333,6 +337,7 @@ const registerAcpCommands = (
   const scope = registrar.createScope()
   try {
     scope.registerGroup(acpApplicationCommands, {
+      'acp:get-prompt-in-flight': () => dependencies.runtime.getSnapshot().promptInFlight,
       'acp:get-state': () => dependencies.runtime.getSnapshot(),
       'acp:connect': (invocation) => stateCommand(dependencies.runtime.connect(invocation.args[0])),
       'acp:disconnect': () => stateCommand(dependencies.runtime.disconnect()),

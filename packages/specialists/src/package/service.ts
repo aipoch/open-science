@@ -30,8 +30,8 @@ import { silentLogger, type SpecialistLogger } from '../ports'
 import type { SpecialistOrigin, StoredSpecialist, StoredSpecialists } from '../types'
 import { SpecialistRepository } from '../repository'
 import { validateSpecialistZip } from './zip-adapter'
-import { compareSemver } from './semver'
 import { buildDeterministicSpecialistZip } from './contribution-template'
+import { compareSemver } from './semver'
 import {
   specialistContentModifiedSinceImport,
   specialistLegacyPayloadContentHash
@@ -67,6 +67,13 @@ type Candidate = {
 }
 
 export type SpecialistPackageServiceOptions = {
+  /** CPU execution ports do not own candidates, recovery, or repository commits. */
+  validateArchive?: (
+    ...args: Parameters<typeof validateSpecialistZip>
+  ) => ReturnType<typeof validateSpecialistZip> | Promise<ReturnType<typeof validateSpecialistZip>>
+  compressArchive?: (
+    files: Readonly<Record<string, Uint8Array>>
+  ) => Uint8Array | Promise<Uint8Array>
   storageDir: string
   logger?: SpecialistLogger
   repository: SpecialistRepository
@@ -501,7 +508,11 @@ export class SpecialistPackageService {
     // renderer's prior capability so another window can finish its own confirmation flow.
     this.clearCandidates(ownerId)
     const catalog = await this.validationCatalog()
-    const result = validateSpecialistZip(archiveBytes, catalog, this.options.parseSkillDocument)
+    const result = await (this.options.validateArchive ?? validateSpecialistZip)(
+      archiveBytes,
+      catalog,
+      this.options.parseSkillDocument
+    )
     const token = this.token()
     const diagnostics = [...result.preview.diagnostics]
     let overwrite: SpecialistPackageCandidatePreview['overwrite']
@@ -826,12 +837,14 @@ export class SpecialistPackageService {
             : file.bytes
       }
     }
-    const archiveBytes = buildDeterministicSpecialistZip(files)
+    const archiveBytes = await (this.options.compressArchive ?? buildDeterministicSpecialistZip)(
+      files
+    )
     const validationCatalog = {
       ...catalog,
       skills: catalog.skills.filter((skill) => !request.includedSkillIds.includes(skill.id))
     }
-    const validation = validateSpecialistZip(
+    const validation = await (this.options.validateArchive ?? validateSpecialistZip)(
       archiveBytes,
       validationCatalog,
       this.options.parseSkillDocument
@@ -953,7 +966,7 @@ export class SpecialistPackageService {
     let specialist: Extract<SpecialistPackageInstallResult, { status: 'installed' }>['specialist']
     try {
       const catalog = await this.validationCatalog()
-      const liveValidation = validateSpecialistZip(
+      const liveValidation = await (this.options.validateArchive ?? validateSpecialistZip)(
         candidate.archiveBytes,
         catalog,
         this.options.parseSkillDocument

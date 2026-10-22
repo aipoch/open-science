@@ -11,14 +11,16 @@
     "src/main/settings/process-tree.ts",
     "src/main/settings/codex-authentication-status.test.ts",
     "src/main/settings/codex-authentication-status.ts",
-    "src/main/settings/fixtures/codex-acp-1.6.2-authentication-status.txt"
+    "src/main/settings/fixtures/codex-acp-1.6.2-authentication-status.txt",
+    "src/main/settings/platform-probes.ts"
   ],
   "interfacePaths": [
     "src/main/settings/codex-paths.ts",
     "src/main/settings/managed-claude.ts",
     "src/main/settings/managed-codex.ts",
     "src/main/settings/managed-opencode.ts",
-    "src/main/settings/process-tree.ts"
+    "src/main/settings/process-tree.ts",
+    "src/main/settings/platform-probes.ts"
   ],
   "testFiles": {
     "owner": [
@@ -596,5 +598,6 @@
   },
   "consumerModules": [],
   "capabilityOverlays": ["e2e_delegation", "e2e_regressions", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Settings platform probes now use asynchronous host execution outside the previously reviewed source boundary; retain full verification until that boundary is reviewed."
 }

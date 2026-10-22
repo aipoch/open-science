@@ -174,3 +174,37 @@ it('does not hide an unexpected disconnect just because an update is preparing',
   expect(screen.getByRole('button', { name: 'Reconnect' })).toBeTruthy()
   cleanup()
 })
+
+it('uses auxiliary reconciliation without waiting for a workspace saver or flushing workspace drafts', async () => {
+  const { flushComposerDrafts } = await import('@/pages/workspace/composer-draft-storage')
+  vi.mocked(flushComposerDrafts).mockClear()
+  useDesktopRuntimeRecoveryStore.setState({ phase: 'connected', closing: false, epoch: 0 })
+  let publish!: (state: DesktopRuntimeRecoveryState) => void
+  const reconciled = vi.fn()
+  let finish!: () => void
+  const reconcile = vi.fn(
+    () =>
+      new Promise<void>((resolve) => {
+        finish = resolve
+      })
+  )
+  window.api = {
+    desktopRuntime: {
+      getState: async () => ({ phase: 'connected', closing: false, epoch: 0 }),
+      onStateChanged: (listener: typeof publish) => {
+        publish = listener
+        return () => undefined
+      },
+      reconciled
+    }
+  } as unknown as Window['api']
+  render(<DesktopRuntimeRecovery reconcile={reconcile} flushDrafts={() => undefined} />)
+  await act(async () => publish({ phase: 'disconnected', closing: false, epoch: 1 }))
+  expect(flushComposerDrafts).not.toHaveBeenCalled()
+  await act(async () => publish({ phase: 'reconciling', closing: false, epoch: 1 }))
+  expect(reconcile).toHaveBeenCalledExactlyOnceWith(1)
+  expect(reconciled).not.toHaveBeenCalled()
+  await act(async () => finish())
+  expect(reconciled).toHaveBeenCalledExactlyOnceWith(1, true)
+  cleanup()
+})

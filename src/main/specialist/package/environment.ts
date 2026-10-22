@@ -1,3 +1,4 @@
+import { validateSpecialistArchive, zipSpecialistFiles } from '../../archive-tasks'
 import { createLogger } from '@aipoch/diagnostics/node'
 import { parseSkillDocument } from '@aipoch/skills/document'
 import {
@@ -12,6 +13,8 @@ export const specialistPackageEnvironment = (
   settings: Pick<SettingsRepository, 'getSettings' | 'setSkillsEnabled'>
 ): Pick<
   SpecialistArchiveOptions,
+  | 'validateArchive'
+  | 'compressArchive'
   | 'parseSkillDocument'
   | 'skillSettings'
   | 'disableNewSkills'
@@ -19,6 +22,8 @@ export const specialistPackageEnvironment = (
   | 'preservePresentation'
 > => ({
   parseSkillDocument,
+  validateArchive: validateSpecialistArchive,
+  compressArchive: zipSpecialistFiles,
   skillSettings: {
     disabledSkillIds: async () => (await settings.getSettings()).disabledSkillIds ?? [],
     setSkillsEnabled: async (ids, enabled) => {

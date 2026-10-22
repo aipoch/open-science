@@ -2,12 +2,7 @@ import { createHash, randomUUID } from 'node:crypto'
 import { lstat, mkdir, readFile, readdir, writeFile } from 'node:fs/promises'
 import { dirname, join, resolve, sep } from 'node:path'
 
-import type {
-  SkillReplacementPreview,
-  SkillBundlePreview,
-  SkillBundlePreviewResult,
-  SkippedSkill
-} from './types'
+import type { SkillReplacementPreview, SkillBundlePreview, SkillBundlePreviewResult } from './types'
 import { SKILL_IMPORT_LIMITS, isAppOwnedSkillRootFile } from './skill-import-limits'
 import {
   fetchSkillFiles,
@@ -29,9 +24,8 @@ import {
 import type { BundledSkill } from './registry'
 import { canonicalSkillDocument } from './skill-document-name'
 import { normalizeImportedSkillName } from './skill-name'
-import { selectSkillManifestRoots } from './skill-bundle-paths'
 import { inspectSkillPackage } from './skill-package-inspection'
-import { extractZip, extractZipLenient } from './zip-extract'
+import { discoverSkillRoots, type SkillRoot, type SkillDiscovery } from './skill-archive-discovery'
 import type { SkillPackageTransactionOwner } from './skill-package-transaction-owner'
 import type { ImportOutcome, ParsedSkillPreview } from './user-skill-import-contracts'
 import type {
@@ -48,8 +42,12 @@ import {
 } from './skill-release'
 import { UserSkillStore, isUsableSkillName, parseUserSkillId } from './user-skill-store'
 
-type SkillRoot = { subPath: string; files: FetchedSkillFile[] }
-type SkillDiscovery = { roots: SkillRoot[]; skipped: SkippedSkill[] }
+const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
+
+const reasonFromError = (error: unknown): string => {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/^(Error invoking remote method '[^']*': )?(Error: )?/, '') || 'unreadable'
+}
 
 // Installation identity excludes the pinned revision; package paths remain case-sensitive.
 const githubSourceKey = (url: string): string | undefined => {
@@ -117,126 +115,6 @@ type ReleaseTarget = {
   usageRevision: string
 }
 
-const findSkillRoots = (entries: { path: string; content: Buffer }[]): SkillRoot[] => {
-  const roots = selectSkillManifestRoots(entries.map((entry) => entry.path))
-  return roots.map((subPath) => {
-    const prefix = subPath === '' ? '' : `${subPath}/`
-    const files = entries
-      .filter((entry) => entry.path.startsWith(prefix))
-      .map((entry) => ({ relativePath: entry.path.slice(prefix.length), content: entry.content }))
-    return { subPath, files }
-  })
-}
-
-const isNestedArchive = (path: string): boolean => /\.(zip|skill)$/i.test(path)
-
-const reasonFromError = (error: unknown): string => {
-  const message = error instanceof Error ? error.message : String(error)
-  return message.replace(/^(Error invoking remote method '[^']*': )?(Error: )?/, '') || 'unreadable'
-}
-
-const mb = (bytes: number): string => `${Math.round(bytes / (1024 * 1024))} MB`
-
-const perSkillCapReason = (files: FetchedSkillFile[]): string | null => {
-  if (files.length > SKILL_IMPORT_LIMITS.maxFiles) {
-    return `skill has more than ${SKILL_IMPORT_LIMITS.maxFiles} files`
-  }
-  if (files.some((file) => file.content.length > SKILL_IMPORT_LIMITS.maxFileBytes)) {
-    return `contains a file over ${mb(SKILL_IMPORT_LIMITS.maxFileBytes)}`
-  }
-  const total = files.reduce((sum, file) => sum + file.content.length, 0)
-  if (total > SKILL_IMPORT_LIMITS.maxTotalBytes) {
-    return `skill exceeds ${mb(SKILL_IMPORT_LIMITS.maxTotalBytes)}`
-  }
-  return null
-}
-
-const discoverSkillRoots = (zip: Buffer): SkillDiscovery => {
-  const skipped: SkippedSkill[] = []
-  const { files, skipped: outerSkips } = extractZipLenient(zip, {
-    maxFiles: SKILL_IMPORT_LIMITS.maxBundleEntries,
-    maxFileBytes: SKILL_IMPORT_LIMITS.maxSkillArchiveBytes,
-    maxTotalBytes: SKILL_IMPORT_LIMITS.maxBundleBytes,
-    maxDepth: SKILL_IMPORT_LIMITS.maxDepth
-  })
-  for (const entry of outerSkips) skipped.push({ source: entry.path, reason: entry.reason })
-
-  const roots: SkillRoot[] = []
-  const used = new Set<string>()
-  const addRoot = (subPath: string, rootFiles: FetchedSkillFile[]): void => {
-    let unique = subPath
-    for (let n = 2; used.has(unique); n += 1) unique = `${subPath}#${n}`
-    used.add(unique)
-    roots.push({ subPath: unique, files: rootFiles })
-  }
-
-  const looseRoots = findSkillRoots(files.filter((file) => !isNestedArchive(file.path)))
-  const rootPrefixes = looseRoots.map((root) => ({
-    root,
-    prefix: root.subPath === '' ? '' : `${root.subPath}/`
-  }))
-
-  const standaloneArchives: typeof files = []
-  for (const archive of files.filter((file) => isNestedArchive(file.path))) {
-    const owner = rootPrefixes.find(({ prefix }) => archive.path.startsWith(prefix))
-    if (owner) {
-      owner.root.files.push({
-        relativePath: archive.path.slice(owner.prefix.length),
-        content: archive.content
-      })
-    } else {
-      standaloneArchives.push(archive)
-    }
-  }
-
-  for (const { root, prefix } of rootPrefixes) {
-    const droppedFile = outerSkips.find(
-      (entry) => entry.path === root.subPath || entry.path.startsWith(prefix)
-    )
-    if (droppedFile) {
-      skipped.push({
-        source: root.subPath || 'skill',
-        reason: `contains a file that couldn't be imported (${droppedFile.reason})`
-      })
-      continue
-    }
-    const violation = perSkillCapReason(root.files)
-    if (violation) {
-      skipped.push({ source: root.subPath || 'skill', reason: violation })
-      continue
-    }
-    addRoot(root.subPath, root.files)
-  }
-
-  for (const archive of standaloneArchives) {
-    let innerRoots: SkillRoot[]
-    try {
-      innerRoots = findSkillRoots(extractZip(archive.content))
-    } catch (error) {
-      skipped.push({ source: archive.path, reason: reasonFromError(error) })
-      continue
-    }
-    if (innerRoots.length === 0) {
-      skipped.push({ source: archive.path, reason: 'no SKILL.md found' })
-      continue
-    }
-    for (const root of innerRoots) {
-      addRoot(root.subPath === '' ? archive.path : `${archive.path}/${root.subPath}`, root.files)
-    }
-  }
-
-  if (roots.length > SKILL_IMPORT_LIMITS.maxSkillsPerBundle) {
-    for (const dropped of roots.splice(SKILL_IMPORT_LIMITS.maxSkillsPerBundle)) {
-      skipped.push({
-        source: dropped.subPath || 'skill',
-        reason: `bundle has more than ${SKILL_IMPORT_LIMITS.maxSkillsPerBundle} skills`
-      })
-    }
-  }
-
-  return { roots: roots.sort((left, right) => left.subPath.localeCompare(right.subPath)), skipped }
-}
-
 // Owns GitHub and ZIP discovery, preview, deduplication and import. Remote/archive work stays outside
 // the shared filesystem lock; recovery through promotion remains one transaction per operation.
 export class SkillBundleImportOwner {
@@ -254,7 +132,10 @@ export class SkillBundleImportOwner {
 
   constructor(
     private readonly store: UserSkillStore,
-    private readonly transactions: SkillPackageTransactionOwner
+    private readonly transactions: SkillPackageTransactionOwner,
+    private readonly discoverArchive: (
+      zip: Buffer
+    ) => SkillDiscovery | Promise<SkillDiscovery> = discoverSkillRoots
   ) {}
 
   async importFromGitHub(
@@ -335,7 +216,7 @@ export class SkillBundleImportOwner {
   }
 
   async previewZip(zip: Buffer): Promise<SkillBundlePreviewResult> {
-    const { roots, skipped } = discoverSkillRoots(zip)
+    const { roots, skipped } = await this.discoverArchive(zip)
     return this.transactions.runRecovered(async () => {
       const previews: SkillBundlePreview[] = []
       let previewContentBytes = 0
@@ -396,7 +277,7 @@ export class SkillBundleImportOwner {
     zip: Buffer,
     options: { subPath?: string; replaceId?: string; reservedNames?: readonly string[] } = {}
   ): Promise<ImportOutcome> {
-    const { roots } = discoverSkillRoots(zip)
+    const { roots } = await this.discoverArchive(zip)
     if (roots.length === 0) throw new Error('The bundle must contain a SKILL.md.')
     const root = this.selectRoot(roots, options.subPath)
     return this.transactions.runMutationRecovered(() =>
@@ -797,7 +678,7 @@ export class SkillBundleImportOwner {
     items: { subPath: string; replaceId?: string }[],
     reservedNames: readonly string[] = []
   ): Promise<{ subPath: string; outcome?: ImportOutcome; error?: string }[]> {
-    const { roots } = discoverSkillRoots(zip)
+    const { roots } = await this.discoverArchive(zip)
     const bySubPath = new Map(roots.map((root) => [root.subPath, root]))
 
     return this.transactions.runMutationRecovered(async () => {

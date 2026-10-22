@@ -78,7 +78,8 @@
     "packages/skills/src/materializer.test.ts",
     "packages/skills/src/export.test.ts",
     "packages/skills/src/registered-helper-catalog.test.ts",
-    "packages/skills/src/catalog.test.ts"
+    "packages/skills/src/catalog.test.ts",
+    "packages/skills/src/skill-archive-discovery.ts"
   ],
   "interfacePaths": [
     "packages/skills/src/index.ts",

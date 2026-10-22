@@ -4,7 +4,8 @@
     "src/renderer/src/lib/session-persistence/session-persistence.test.ts",
     "src/renderer/src/lib/session-persistence/session-persistence.ts",
     "src/renderer/src/lib/acp/runtime-writer-client.test.ts",
-    "src/renderer/src/lib/acp/runtime-writer-client.ts"
+    "src/renderer/src/lib/acp/runtime-writer-client.ts",
+    "src/renderer/src/lib/session-persistence/session-catalog-recovery.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/lib/session-persistence/session-persistence.ts",
@@ -145,5 +146,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Settings catalog recovery now reuses a separate session-catalog adapter outside the previously reviewed persistence boundary."
 }

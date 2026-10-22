@@ -425,6 +425,7 @@
         "e2e/brand-storage.spec.ts",
         "e2e/electron-foundation.spec.ts",
         "e2e/settings-persistence.spec.ts",
+        "e2e/settings-window.spec.ts",
         "e2e/windows-window-system.spec.ts",
         "e2e/wsl-setup-conversation.spec.ts",
         "e2e/session-package.spec.ts",
@@ -589,7 +590,8 @@
         "e2e/fixtures/research-analysis.mjs",
         "e2e/fixtures/sanitized-performance.png",
         "e2e/fixtures/session-outcome-preload.cjs",
-        "e2e/fixtures/settings-preferences.ts"
+        "e2e/fixtures/settings-preferences.ts",
+        "e2e/fixtures/settings-window.ts"
       ],
       "capabilities": ["desktop_e2e_source", "desktop_e2e_all"]
     },
@@ -644,7 +646,11 @@
     {
       "id": "desktop_e2e_browser_fixtures",
       "role": "overlay",
-      "paths": ["e2e/fixtures/localized-settings.ts", "e2e/fixtures/settings-preferences.ts"],
+      "paths": [
+        "e2e/fixtures/localized-settings.ts",
+        "e2e/fixtures/settings-preferences.ts",
+        "e2e/fixtures/settings-window.ts"
+      ],
       "capabilities": ["renderer_browser_e2e"]
     },
     {

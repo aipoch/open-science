@@ -19,7 +19,9 @@
     "src/renderer/src/hooks/useWindowFindAppearanceSync.overlay.test.tsx",
     "src/renderer/src/hooks/useWindowFindAppearanceSync.test.tsx",
     "src/renderer/src/hooks/useWindowFindAppearanceSync.ts",
-    "src/renderer/src/pages/workspace/previews/useNearViewport.ts"
+    "src/renderer/src/pages/workspace/previews/useNearViewport.ts",
+    "src/renderer/src/hooks/useSettingsSnapshotSync.ts",
+    "src/renderer/src/hooks/useSettingsWorkspaceBridge.ts"
   ],
   "interfacePaths": [
     "src/renderer/src/hooks/useApplicationEventBindings.ts",
@@ -216,5 +218,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Cross-window settings snapshot and workspace synchronization add runtime event subscriptions outside the previously reviewed hook boundary."
 }

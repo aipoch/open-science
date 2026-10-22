@@ -312,6 +312,10 @@ type NativeMenuProbe = {
   dispose: () => void
 }
 type ElectronApp = {
+  setSettingsWindowZoomFactor: (factor: number) => Promise<void>
+  setSettingsWindowSize: (width: number, height: number) => Promise<void>
+  pressSettingsWindowShortcut: (key: string, modifiers: ShortcutModifier[]) => Promise<void>
+  rendererWindowProcesses: () => Promise<Array<{ url: string; pid: number; visible: boolean }>>
   addCleanupAudit: (audit: () => Promise<void>) => void
   captureBrandState: () => Promise<BrandState>
   restartWithBrandFixture: (
@@ -1011,8 +1015,13 @@ class ElectronAppHarness implements ElectronApp {
   async completeOnboarding(): Promise<Page> {
     await this.page.evaluate(async () => {
       const bridge = globalThis as unknown as {
-        api: { settings: { markOnboardingComplete: () => Promise<unknown> } }
+        api: {
+          settings: { markOnboardingComplete: () => Promise<unknown> }
+          locale: { setPreference: (request: { preference: 'en' }) => Promise<unknown> }
+        }
       }
+      // Journey assertions use English, independently of the host system language.
+      await bridge.api.locale.setPreference({ preference: 'en' })
       await bridge.api.settings.markOnboardingComplete()
     })
     await this.page.reload({ waitUntil: 'domcontentloaded' })
@@ -1209,10 +1218,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async findOverlayIsVisible(): Promise<boolean> {
-    return this.runningApplication.evaluate(({ BrowserWindow }) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) return false
-
+    const window = await this.runningApplication.browserWindow(this.page)
+    return window.evaluate((mainWindow: Electron.BrowserWindow) => {
       return mainWindow.contentView.children.some((view) => {
         const contents = (view as Electron.WebContentsView).webContents
         if (!contents || contents.isDestroyed() || !contents.getURL().includes('/find-overlay/'))
@@ -1223,10 +1230,9 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async mainWindowState(): Promise<{ minimized: boolean; visible: boolean }> {
-    return this.runningApplication.evaluate(({ BrowserWindow }) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open-Science main window was not found.')
-
+    // Retained auxiliary windows can precede the workspace in Electron's window list.
+    const window = await this.runningApplication.browserWindow(this.page)
+    return window.evaluate((mainWindow: Electron.BrowserWindow) => {
       return { minimized: mainWindow.isMinimized(), visible: mainWindow.isVisible() }
     })
   }
@@ -1310,7 +1316,8 @@ class ElectronAppHarness implements ElectronApp {
     await this.runningApplication.evaluate(({ BrowserWindow }, nextStatus) => {
       const mainWindow = BrowserWindow.getAllWindows()[0]
       if (!mainWindow) throw new Error('Open Science main window was not found.')
-      mainWindow.webContents.send('update:status', nextStatus)
+      for (const window of BrowserWindow.getAllWindows())
+        window.webContents.send('update:status', nextStatus)
     }, status)
   }
 
@@ -1358,9 +1365,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async showMainWindow(): Promise<void> {
-    await this.runningApplication.evaluate(({ BrowserWindow }) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open-Science main window was not found.')
+    const window = await this.runningApplication.browserWindow(this.page)
+    await window.evaluate((mainWindow: Electron.BrowserWindow) => {
       mainWindow.show()
     })
     await expect.poll(() => this.mainWindowState()).toMatchObject({ visible: true })
@@ -1407,6 +1413,29 @@ class ElectronAppHarness implements ElectronApp {
     }, factor)
   }
 
+  async setSettingsWindowZoomFactor(factor: number): Promise<void> {
+    await this.runningApplication.evaluate(({ BrowserWindow }, nextFactor) => {
+      const mainWindow = BrowserWindow.getAllWindows().find((window) =>
+        window.webContents.getURL().endsWith('/settings.html')
+      )
+      if (!mainWindow) throw new Error('Open-Science main window was not found.')
+      mainWindow.webContents.setZoomFactor(nextFactor)
+    }, factor)
+  }
+
+  async setSettingsWindowSize(width: number, height: number): Promise<void> {
+    await this.runningApplication.evaluate(
+      ({ BrowserWindow }, size) => {
+        const settings = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().endsWith('/settings.html')
+        )
+        if (!settings) throw new Error('Open-Science settings window was not found.')
+        settings.setSize(size.width, size.height)
+      },
+      { width, height }
+    )
+  }
+
   async launchSecondInstance(): Promise<Page> {
     const { appPath, executable } = await this.runningApplication.evaluate(({ app }) => ({
       appPath: app.getAppPath(),
@@ -1441,9 +1470,31 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async pressMainWindowShortcut(key: string, modifiers: ShortcutModifier[]): Promise<void> {
+    const window = await this.runningApplication.browserWindow(this.page)
+    await window.evaluate(
+      (mainWindow, input) => {
+        mainWindow.webContents.focus()
+        mainWindow.webContents.sendInputEvent({
+          type: 'keyDown',
+          keyCode: input.key,
+          modifiers: input.modifiers
+        })
+        mainWindow.webContents.sendInputEvent({
+          type: 'keyUp',
+          keyCode: input.key,
+          modifiers: input.modifiers
+        })
+      },
+      { key, modifiers }
+    )
+  }
+
+  async pressSettingsWindowShortcut(key: string, modifiers: ShortcutModifier[]): Promise<void> {
     await this.runningApplication.evaluate(
       ({ BrowserWindow }, input) => {
-        const mainWindow = BrowserWindow.getAllWindows()[0]
+        const mainWindow = BrowserWindow.getAllWindows().find((window) =>
+          window.webContents.getURL().endsWith('/settings.html')
+        )
         if (!mainWindow) throw new Error('Open-Science main window was not found.')
 
         mainWindow.webContents.focus()
@@ -1463,9 +1514,8 @@ class ElectronAppHarness implements ElectronApp {
   }
 
   async requestMainWindowClose(): Promise<void> {
-    await this.runningApplication.evaluate(({ BrowserWindow }) => {
-      const mainWindow = BrowserWindow.getAllWindows()[0]
-      if (!mainWindow) throw new Error('Open-Science main window was not found.')
+    const window = await this.runningApplication.browserWindow(this.page)
+    await window.evaluate((mainWindow: Electron.BrowserWindow) => {
       mainWindow.close()
     })
   }
@@ -1809,6 +1859,16 @@ class ElectronAppHarness implements ElectronApp {
         .evaluate(({ app }) => app.getPath('logs'))
         .catch(() => undefined)
     }
+  }
+
+  async rendererWindowProcesses(): Promise<Array<{ url: string; pid: number; visible: boolean }>> {
+    return this.runningApplication.evaluate(({ BrowserWindow }) =>
+      BrowserWindow.getAllWindows().map((window) => ({
+        url: window.webContents.getURL(),
+        pid: window.webContents.getOSProcessId(),
+        visible: window.isVisible()
+      }))
+    )
   }
 
   private get runningApplication(): ElectronApplication {

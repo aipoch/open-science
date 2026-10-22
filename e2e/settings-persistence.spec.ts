@@ -1,3 +1,4 @@
+import { getSettingsPage } from './fixtures/settings-window'
 import { expect } from '@playwright/test'
 import type { Locator, Page } from 'playwright'
 import { sendPrompt } from './certification/helpers'
@@ -166,7 +167,9 @@ test('shows project-scoped memory and opens its project from Settings', async ({
     .filter({ hasText: 'Use a 15 minute incubation.' })
   await expect(entry).toContainText('Research protocol')
   await expect(entry.locator('[data-slot="memory-entry-metadata"]')).toBeVisible()
-  await page.screenshot({ path: testInfo.outputPath('memory-project-scope.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-project-scope.png') })
 
   await settings.getByRole('button', { name: 'Open project' }).click()
   await expect(settings).toBeHidden()
@@ -255,14 +258,20 @@ test('contains long memory lists and layers destructive confirmations above sett
         .evaluate((element) => getComputedStyle(element).borderBottomWidth)
     )
     .toBe('0px')
-  await page.screenshot({ path: testInfo.outputPath('memory-long-list.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-long-list.png') })
 
   await settings.getByRole('button', { name: 'Clear all' }).click()
-  const clearDialog = page.getByRole('alertdialog', { name: 'Clear all memory?' })
+  const clearDialog = (await getSettingsPage(page)).getByRole('alertdialog', {
+    name: 'Clear all memory?'
+  })
   await expect(clearDialog).toBeVisible()
   await expect(clearDialog).toHaveCSS('z-index', '70')
   await expectMemoryConfirmDialogChrome(clearDialog, 'Clear all')
-  await page.screenshot({ path: testInfo.outputPath('memory-clear-confirmation.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-clear-confirmation.png') })
   await clearDialog.getByRole('button', { name: 'Cancel' }).click()
 
   await entryList.evaluate((element) => {
@@ -275,22 +284,30 @@ test('contains long memory lists and layers destructive confirmations above sett
   await lastNoteRow.hover()
   await expect(settings).toHaveCSS('z-index', '60')
   await lastNoteRow.getByRole('button', { name: 'Delete note' }).click()
-  const noteDialog = page.getByRole('alertdialog', { name: 'Delete note?' })
+  const noteDialog = (await getSettingsPage(page)).getByRole('alertdialog', {
+    name: 'Delete note?'
+  })
   await expect(noteDialog).toBeVisible()
   await expect(noteDialog).toHaveCSS('z-index', '70')
   await expectMemoryConfirmDialogChrome(noteDialog, 'Delete note')
-  await page.screenshot({ path: testInfo.outputPath('memory-note-confirmation.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-note-confirmation.png') })
   await noteDialog.getByRole('button', { name: 'Cancel' }).click()
   await expect(lastNote).toBeVisible()
 
   await settings.getByRole('button', { name: 'Layer check', exact: false }).click()
   await settings.getByRole('button', { name: 'Category actions' }).click()
-  await page.getByRole('menuitem', { name: 'Delete category' }).click()
-  const categoryDialog = page.getByRole('alertdialog', { name: 'Delete category?' })
+  await (await getSettingsPage(page)).getByRole('menuitem', { name: 'Delete category' }).click()
+  const categoryDialog = (await getSettingsPage(page)).getByRole('alertdialog', {
+    name: 'Delete category?'
+  })
   await expect(categoryDialog).toBeVisible()
   await expect(categoryDialog).toHaveCSS('z-index', '70')
   await expectMemoryConfirmDialogChrome(categoryDialog, 'Delete category')
-  await page.screenshot({ path: testInfo.outputPath('memory-category-confirmation.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-category-confirmation.png') })
   await categoryDialog.getByRole('button', { name: 'Cancel' }).click()
 })
 
@@ -409,11 +426,13 @@ test('preserves Memory drafts and shows externally saved values on conflict', as
   await expect(settings.getByRole('textbox', { name: 'Memory note' })).toHaveValue(
     'My draft: repeat the buffer experiment at pH 7.4.'
   )
-  await page.screenshot({ path: testInfo.outputPath('memory-note-conflict.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-note-conflict.png') })
   await settings.getByRole('button', { name: 'Cancel', exact: true }).click()
   await settings.getByRole('button', { name: 'Experiments', exact: false }).click()
   await settings.getByRole('button', { name: 'Category actions' }).click()
-  await page.getByRole('menuitem', { name: 'Edit', exact: true }).click()
+  await (await getSettingsPage(page)).getByRole('menuitem', { name: 'Edit', exact: true }).click()
   await settings.getByRole('textbox', { name: 'Name', exact: true }).fill('My draft experiments')
   await page.evaluate(async () => {
     const snapshot = await window.api.memory.snapshot()
@@ -440,7 +459,9 @@ test('preserves Memory drafts and shows externally saved values on conflict', as
   await expect(settings.getByRole('region', { name: 'Latest saved version' })).toContainText(
     'Disabled'
   )
-  await page.screenshot({ path: testInfo.outputPath('memory-category-conflict.png') })
+  await (
+    await getSettingsPage(page)
+  ).screenshot({ path: testInfo.outputPath('memory-category-conflict.png') })
   const saved = await page.evaluate(() => window.api.memory.snapshot())
   expect(saved.categories[0]!.entries[0]!.content).toBe(
     'Another window saved: use pH 6.8 for this buffer.'

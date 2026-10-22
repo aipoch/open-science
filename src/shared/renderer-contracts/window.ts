@@ -1,3 +1,10 @@
+import {
+  SETTINGS_WINDOW_CHANNELS,
+  type SettingsWindowOpenRequest,
+  type SettingsWindowState,
+  type SettingsWindowContext,
+  type SettingsWorkspaceNavigation
+} from '../settings-window'
 import type {
   CloseConfirmDismissal,
   CloseConfirmRequest,
@@ -25,6 +32,55 @@ import {
 } from './definition'
 
 export const contracts = {
+  'window.openSettings': callable<(request?: SettingsWindowOpenRequest) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.open, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.closeSettings': callable<() => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.close, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onSettingsCloseRequested': callable<(listener: () => void) => RemoveListener>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.closeRequested, ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
+  'window.settingsReady': callable<() => Promise<SettingsWindowState>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.ready, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onSettingsOpened': callable<
+    (listener: (state: SettingsWindowState) => void) => RemoveListener
+  >()('window', [SETTINGS_WINDOW_CHANNELS.opened, ELECTRON_EVENT], { optionalMember: true }),
+  'window.updateSettingsContext': callable<(context: SettingsWindowContext) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.context, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.navigateWorkspace': callable<(request: SettingsWorkspaceNavigation) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.navigate, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onWorkspaceNavigation': callable<
+    (
+      listener: (request: SettingsWorkspaceNavigation & { navigationToken: number }) => void
+    ) => RemoveListener
+  >()('window', [SETTINGS_WINDOW_CHANNELS.navigation, ELECTRON_EVENT], { optionalMember: true }),
+  'window.workspaceNavigated': callable<(navigationToken: number) => Promise<void>>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.navigated, ELECTRON],
+    { optionalMember: true }
+  ),
+  'window.onSettingsCatalogChanged': callable<(listener: () => void) => RemoveListener>()(
+    'window',
+    [SETTINGS_WINDOW_CHANNELS.catalogChanged, ELECTRON_EVENT],
+    { optionalMember: true }
+  ),
+
   'window.announceWindowFindAppearance': callable<(appearance: WindowFindAppearance) => void>()(
     'window',
     ['window:find-appearance-changed', SEND],
