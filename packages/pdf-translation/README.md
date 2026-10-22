@@ -283,9 +283,14 @@ new saved fields or diagnostic values.
 Accepted, source-matching translations take priority over locally re-derived figure/reference/code/
 literal classification. Classification still protects content with no valid accepted translation;
 it does not erase an existing translation when reopening or regenerating an edition. Graphic crops
-may include source prose when backgrounds, borders or neighboring paths are ambiguous. Such local
-overlap no longer rejects the page or propagates rejection across joined paragraphs: keep the crop
-and emit the accepted translation, tolerating local duplication instead of losing translated output.
+exclude decorative vector backgrounds, borders and paths whose actual rounded pixel bounds touch
+translated source fragments. Connected paths and unchanged internal labels are merged only when
+the resulting crop remains separate from translated prose; captions do not extend graphics. This
+also checks explicit regions from older heuristic preparation, without dropping independent safe
+figures/tables or rejecting the page or joined paragraphs. Accepted translations are emitted once
+without a screenshot of the same source prose. Raster-background retention is unchanged.
+Without verified ownership, a real vector graphic containing accepted label translations can also
+be excluded by this rule; a geometric bounding box alone does not distinguish it from shaded prose.
 This policy changes no persisted fields or diagnostic enums; regenerate existing previews/exports
 to apply it, and successful layout reports replace prior failures for the same accepted translations.
 

@@ -183,10 +183,37 @@ function readGraphics(native, page) {
   return objects
 }
 
-function planGraphics(objects, input, number, footerUnits, geometry) {
+// Match the pixels actually embedded by crop(), including outward rounding.
+function cropPixels(rect, pw, ph) {
+  const x = Math.max(0, Math.floor(rect.x * pw)),
+    y = Math.max(0, Math.floor(rect.y * ph))
+  return {
+    x,
+    y,
+    width: Math.max(1, Math.min(pw - x, Math.ceil((rect.x + rect.width) * pw) - x)),
+    height: Math.max(1, Math.min(ph - y, Math.ceil((rect.y + rect.height) * ph) - y))
+  }
+}
+
+function planGraphics(objects, input, number, footerUnits, geometry, pw, ph) {
   const dimensions = geometry[number - 1]
+  const translated = input.units.flatMap((unit) =>
+    unit.source !== unit.translation
+      ? unit.fragments.filter((fragment) => fragment.pageNumber === number).map((f) => f.rect)
+      : []
+  )
+  const safeCrop = (rect) => {
+    const pixels = cropPixels(rect, pw, ph),
+      visible = {
+        x: pixels.x / pw,
+        y: pixels.y / ph,
+        width: pixels.width / pw,
+        height: pixels.height / ph
+      }
+    return !translated.some((fragment) => touches(visible, fragment, 0))
+  }
   const graphics = (input.originalRegions ?? [])
-    .filter((region) => region.pageNumber === number)
+    .filter((region) => region.pageNumber === number && safeCrop(region.rect))
     .map((region) => ({ ...region.rect }))
   for (const object of objects) {
     if (object.type === 1) continue
@@ -200,10 +227,13 @@ function planGraphics(objects, input, number, footerUnits, geometry) {
       continue
     const rect = graphicRect(object.bounds, dimensions)
     if (rect.width * rect.height > 0.85) continue
+    // A decorative path can surround prose. Keep the translation without copying
+    // its source into an image. Raster handling remains with the existing policy.
+    if (object.type !== 3 && !safeCrop(rect)) continue
     // Merge connected diagram paths into one crop, retaining labels in place.
     let merged = rect
     for (let i = 0; i < graphics.length;) {
-      if (touches(merged, graphics[i], 0.006)) {
+      if (touches(merged, graphics[i], 0.006) && safeCrop(union(merged, graphics[i]))) {
         merged = union(merged, graphics.splice(i, 1)[0])
         i = 0
       } else i++
@@ -223,9 +253,15 @@ function planGraphics(objects, input, number, footerUnits, geometry) {
   )
   for (const graphic of graphics)
     for (const { unit, fragments } of pageUnits) {
+      if (unit.source !== unit.translation || unit.kind === 'text' || unit.kind === 'reference')
+        continue
       if (/^(?:Table|Tab\.|Figure|Fig\.)\s*\d/iu.test(unit.source)) continue
       for (const fragment of fragments)
-        if (fragment.rect.height < 0.045 && touches(graphic, fragment.rect, 0.003))
+        if (
+          fragment.rect.height < 0.045 &&
+          inside(fragment.rect, graphic) &&
+          safeCrop(union(graphic, fragment.rect))
+        )
           Object.assign(graphic, union(graphic, fragment.rect))
     }
   return graphics.sort((a, b) => a.y - b.y || a.x - b.x)
@@ -520,10 +556,7 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
             p.FPDFBitmap_FillRect(bitmap, 0, 0, pw, ph, 0xffffffff)
             p.FPDF_RenderPageBitmap(bitmap, nativePage, 0, 0, pw, ph, 0, 1)
           }
-          const x = Math.max(0, Math.floor(rect.x * pw)),
-            y = Math.max(0, Math.floor(rect.y * ph))
-          const w = Math.max(1, Math.min(pw - x, Math.ceil((rect.x + rect.width) * pw) - x)),
-            h = Math.max(1, Math.min(ph - y, Math.ceil((rect.y + rect.height) * ph) - y))
+          const { x, y, width: w, height: h } = cropPixels(rect, pw, ph)
           const stride = p.FPDFBitmap_GetStride(bitmap),
             at = p.FPDFBitmap_GetBuffer(bitmap)
           const image = await document.embedPng(
@@ -558,7 +591,15 @@ export async function generateReflow(input, retainedLinkPages = new Set()) {
           cursor += drawHeight + 12
           return target
         }
-        const graphics = planGraphics(objects, input, number, footerUnits, sourceLinks.geometry)
+        const graphics = planGraphics(
+          objects,
+          input,
+          number,
+          footerUnits,
+          sourceLinks.geometry,
+          pw,
+          ph
+        )
         const pageUnits = readingOrder(
           input.units.flatMap((unit, unitIndex) => {
             const fragments = unit.fragments.filter((f) => f.pageNumber === number)

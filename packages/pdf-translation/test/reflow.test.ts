@@ -1933,6 +1933,8 @@ it.each([false, true])(
 it.each([
   'shading',
   'border',
+  'decorative-path',
+  'connected',
   'explicit-region',
   'nested-form',
   'merged',
@@ -1940,7 +1942,7 @@ it.each([
   'pixel-edge',
   'joined'
 ] as const)(
-  'keeps accepted translations when a graphic crop also contains source prose (%s)',
+  'does not screenshot source prose with a vector background while retaining its translation (%s)',
   async (mode) => {
     const pdf = await PDFDocument.create(),
       font = await pdf.embedFont(StandardFonts.Helvetica),
@@ -1949,11 +1951,20 @@ it.each([
       // Disconnected same-row paths must stay separate from the body between them.
       for (const x of [10, 350])
         page.drawRectangle({ x, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
+    } else if (mode === 'connected') {
+      // Each arm is safe; their bounding union would capture the body between them.
+      page.drawRectangle({ x: 10, y: 350, width: 30, height: 120, color: rgb(0.8, 0.8, 0.8) })
+      page.drawRectangle({ x: 10, y: 350, width: 350, height: 30, color: rgb(0.8, 0.8, 0.8) })
+    } else if (mode === 'decorative-path') {
+      page.drawSvgPath('M 30 0 C 120 15 260 15 370 0 L 340 70 L 60 70 Z', {
+        y: 470,
+        color: rgb(0.8, 0.8, 0.8)
+      })
     } else if (mode === 'pixel-edge') {
       // The mathematical bounds stop short of the prose; raster rounding reaches it.
       page.drawRectangle({ x: 49.8, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
     } else if (mode === 'label') {
-      page.drawRectangle({ x: 10, y: 400, width: 30, height: 70, color: rgb(0.8, 0.8, 0.8) })
+      page.drawRectangle({ x: 10, y: 400, width: 65, height: 70, color: rgb(0.8, 0.8, 0.8) })
       page.drawText('Label', { font, x: 35, y: 405, size: 12 })
     } else if (mode === 'nested-form') {
       const inner = await PDFDocument.create(),
@@ -1978,7 +1989,8 @@ it.each([
           : { color: rgb(0.8, 0.8, 0.8) })
       })
     }
-    page.drawText('Original callout body.', { font, x: 80, y: 440, size: 12 })
+    const sourceBody = mode === 'pixel-edge' ? 'jOriginal callout body.' : 'Original callout body.'
+    page.drawText(sourceBody, { font, x: 80, y: 440, size: 12, color: rgb(1, 0, 0) })
     const joined = mode === 'joined',
       independentPage = joined ? 3 : 2
     if (joined)
@@ -1988,7 +2000,7 @@ it.each([
       pdf,
       [
         {
-          source: joined ? 'Original callout body. Continued source.' : 'Original callout body.',
+          source: joined ? `${sourceBody} Continued source.` : sourceBody,
           translation: 'Translated callout body.',
           fragments: [
             { pageNumber: 1, rect: { x: 0.2, y: 0.08, width: 0.6, height: 0.05 } },
@@ -2002,7 +2014,7 @@ it.each([
                 translation: 'Label',
                 // Protruding label expands the crop into the body column.
                 fragments: [
-                  { pageNumber: 1, rect: { x: 0.0875, y: 0.17, width: 0.2, height: 0.03 } }
+                  { pageNumber: 1, rect: { x: 0.0875, y: 0.17, width: 0.175, height: 0.03 } }
                 ]
               }
             ]
@@ -2033,9 +2045,17 @@ it.each([
     try {
       const parsed = await task.promise,
         texts: string[] = []
+      let red = 0
       for (let number = 1; number <= parsed.numPages; number++) {
         const current = await parsed.getPage(number),
           content = await current.getTextContent()
+        const viewport = current.getViewport({ scale: 2 }),
+          canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height)),
+          context = canvas.getContext('2d')
+        await current.render({ canvasContext: context, viewport }).promise
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+        for (let at = 0; at < pixels.length; at += 4)
+          if (pixels[at] > 180 && pixels[at + 1] < 100 && pixels[at + 2] < 100) red++
         texts.push(
           content.items
             .filter((item) => 'str' in item)
@@ -2046,11 +2066,13 @@ it.each([
       const text = texts.join(' ')
       expect(text.match(/Translated callout body\./gu)).toHaveLength(1)
       expect(text).toContain('Independent translation.')
+      // Text extraction cannot see old prose embedded in a screenshot; inspect actual pixels.
+      expect(red).toBe(0)
       expect(
         (await (await parsed.getPage(1)).getOperatorList()).fnArray.filter(
           (op) => op === OPS.paintImageXObject
         )
-      ).toHaveLength(mode === 'merged' ? 2 : 1)
+      ).toHaveLength(['merged', 'connected', 'label'].includes(mode) ? 2 : 0)
     } finally {
       await task.destroy()
     }
@@ -2091,6 +2113,82 @@ it.each([false, true])(
           .map((item) => item.str)
           .join(' ')
       ).toContain('Figure 1. Translated caption.')
+    } finally {
+      await task.destroy()
+    }
+  }
+)
+
+it.each(['table', 'figure'] as const)(
+  'preserves a verified %s and its original labels when a decorative background also covers prose',
+  async (kind) => {
+    const pdf = await PDFDocument.create(),
+      font = await pdf.embedFont(StandardFonts.Helvetica),
+      page = pdf.addPage([400, 500])
+    page.drawRectangle({ x: 20, y: 60, width: 360, height: 410, color: rgb(0.8, 0.8, 0.8) })
+    page.drawRectangle({ x: 40, y: 100, width: 140, height: 100, color: rgb(0, 0, 1) })
+    page.drawText('Internal label', { font, x: 50, y: 140, size: 12, color: rgb(0, 1, 0) })
+    page.drawText('Original body.', { font, x: 40, y: 440, size: 12, color: rgb(1, 0, 0) })
+    const caption = `${kind === 'table' ? 'Table' : 'Figure'} 1. Original caption.`
+    page.drawText(caption, { font, x: 40, y: 70, size: 12, color: rgb(1, 0, 0) })
+    const output = await generate(
+      pdf,
+      [
+        {
+          source: 'Original body.',
+          translation: 'Translated body.',
+          kind: 'text',
+          fragments: [fragment(1, 0.08)]
+        },
+        {
+          source: 'Internal label',
+          translation: 'Internal label',
+          kind: 'visual',
+          fragments: [{ pageNumber: 1, rect: { x: 0.125, y: 0.69, width: 0.2, height: 0.04 } }]
+        },
+        {
+          source: caption,
+          translation: 'Translated caption.',
+          kind: 'text',
+          fragments: [fragment(1, 0.83)]
+        }
+      ],
+      { originalRegions: [{ pageNumber: 1, rect: { x: 0.1, y: 0.6, width: 0.35, height: 0.2 } }] }
+    )
+    expect(output.layoutFailures).toEqual([])
+    expect(output.reflow!.originalPageNumbers).toEqual([])
+    const task = getDocument({ data: output.data.slice() })
+    try {
+      const parsed = await task.promise
+      let red = 0,
+        blue = 0,
+        green = 0,
+        images = 0,
+        text = ''
+      for (let number = 1; number <= parsed.numPages; number++) {
+        const current = await parsed.getPage(number),
+          content = await current.getTextContent(),
+          viewport = current.getViewport({ scale: 2 }),
+          canvas = createCanvas(Math.ceil(viewport.width), Math.ceil(viewport.height)),
+          context = canvas.getContext('2d')
+        text += content.items.map((item) => ('str' in item ? item.str : '')).join(' ')
+        images += (await current.getOperatorList()).fnArray.filter(
+          (op) => op === OPS.paintImageXObject
+        ).length
+        await current.render({ canvasContext: context, viewport }).promise
+        const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
+        for (let at = 0; at < pixels.length; at += 4) {
+          if (pixels[at] > 180 && pixels[at + 1] < 100 && pixels[at + 2] < 100) red++
+          if (pixels[at] < 100 && pixels[at + 1] < 100 && pixels[at + 2] > 180) blue++
+          if (pixels[at] < 100 && pixels[at + 1] > 180 && pixels[at + 2] < 100) green++
+        }
+      }
+      expect(text.match(/Translated body\./gu)).toHaveLength(1)
+      expect(text.match(/Translated caption\./gu)).toHaveLength(1)
+      expect(images).toBe(1)
+      expect(red).toBe(0)
+      expect(blue).toBeGreaterThan(1000)
+      expect(green).toBeGreaterThan(20)
     } finally {
       await task.destroy()
     }
