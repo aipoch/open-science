@@ -591,7 +591,7 @@ export const LiteratureFullTextLookup = ({
       </div>
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-border px-5 py-3 sm:px-6">
         <p className="max-w-sm text-xs leading-5 text-muted-foreground">
-          {t('Existing attachments are kept. PDFs are added only after you confirm a source.')}
+          {t('Existing attachments are kept. You can also add files from your device.')}
         </p>
         <div className="flex flex-wrap gap-2">
           {!failed && !missingIdentifiers ? (
@@ -615,7 +615,7 @@ export const LiteratureFullTextLookup = ({
             onClick={onUpload}
           >
             <FileUp className="size-4" aria-hidden="true" />
-            {t('Add PDF')}
+            {t('Add attachment')}
           </Button>
         </div>
       </div>

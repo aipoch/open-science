@@ -317,5 +317,6 @@
     ]
   },
   "capabilityOverlays": [],
-  "fallbackCapability": "renderer_view"
+  "fallbackCapability": "renderer_view",
+  "fullTestReason": "Supplementary lookup and shared download rows expand the reviewed literature renderer boundary; require full CI validation until the expanded sources and interaction contracts are reviewed."
 }

@@ -256,20 +256,6 @@
       "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
       "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx"
     ],
-    "package_literature_discovery": [
-      "src/main/literature/supplement-attachments.test.ts",
-      "src/renderer/src/lib/compute/WorkspaceComputeRecoveryBridge.render.test.tsx",
-      "src/renderer/src/lib/literature-renderer-host.test.ts",
-      "src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.render.test.tsx",
-      "src/renderer/src/pages/literature/renderer-host.test.tsx",
-      "src/renderer/src/pages/workspace/LiteratureCandidateStatus.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx",
-      "src/renderer/src/pages/workspace/WorkspaceSidebar.session-gestures.test.tsx",
-      "src/renderer/src/pages/workspace/agent-authentication-error.test.ts",
-      "src/renderer/src/pages/workspace/pdf-annotations/PdfAnnotationPreviewDialog.test.tsx",
-      "src/renderer/src/pages/workspace/use-agent-authentication-recovery.test.tsx",
-      "src/renderer/src/pages/workspace/workspace-conversation-controller.test.ts"
-    ],
     "package_literature_library": [
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
@@ -313,7 +299,6 @@
       "src/renderer/src/lib/literature-renderer-host.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
-    "page_literature": ["src/renderer/src/pages/literature/renderer-host.test.tsx"],
     "pdf_annotation_repository": ["src/main/session-package/materialize.test.ts"],
     "pdf_annotations": [
       "src/main/session-package/materialize.test.ts",

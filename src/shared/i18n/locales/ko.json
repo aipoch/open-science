@@ -494,7 +494,6 @@
     "PDF could not be added": "PDF를 추가하지 못했습니다",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "위의 출처 상태와 연결을 확인한 후 다시 시도하세요. 기기에서 PDF를 추가할 수도 있습니다.",
     "Try another source or add a PDF from your device.": "다른 출처를 시도하거나 기기에서 PDF를 추가하세요.",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "기존 첨부 파일은 유지됩니다. 출처를 확인한 후에만 PDF가 추가됩니다.",
     "Duplicates": "중복 문헌",
     "Review possible duplicates before merging. Nothing is removed automatically.": "병합하기 전에 중복 가능성이 있는 문헌을 확인하세요. 자동으로 삭제되는 항목은 없습니다.",
     "No duplicates found": "중복 문헌이 없습니다",
@@ -1578,7 +1577,6 @@
     "File unavailable": "파일을 사용할 수 없음",
     "File view": "파일 보기",
     "Files": "파일",
-    "Add PDF": "PDF 추가",
     "Upload progress": "업로드 진행률",
     "{{received}} / {{total}} bytes uploaded": "{{received}} / {{total}}바이트 업로드됨",
     "Cancel upload": "업로드 취소",
@@ -7493,6 +7491,7 @@
     "This source could not be checked. Other results remain available.": "이 출처를 확인하지 못했습니다. 다른 결과는 계속 확인할 수 있습니다.",
     "No readable article text is available from this source.": "이 출처에는 읽을 수 있는 논문 본문이 없습니다.",
     "Drop files to attach to this reference": "파일을 끌어다 놓아 이 참고 문헌에 첨부",
-    "Partial results": "일부 결과"
+    "Partial results": "일부 결과",
+    "Existing attachments are kept. You can also add files from your device.": "기존 첨부 파일은 유지됩니다. 기기에서 파일을 추가할 수도 있습니다."
   }
 }

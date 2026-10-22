@@ -498,7 +498,6 @@
     "PDF could not be added": "No se pudo añadir el PDF",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "Compruebe el estado de las fuentes y su conexión e inténtelo de nuevo. También puede añadir un PDF desde su dispositivo.",
     "Try another source or add a PDF from your device.": "Pruebe otra fuente o añada un PDF desde su dispositivo.",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "Se conservan los archivos adjuntos existentes. Los PDF solo se añaden tras confirmar una fuente.",
     "Duplicates": "Duplicados",
     "Review possible duplicates before merging. Nothing is removed automatically.": "Revise los posibles duplicados antes de fusionarlos. No se elimina nada automáticamente.",
     "No duplicates found": "No se encontraron duplicados",
@@ -1615,7 +1614,6 @@
     "File unavailable": "Archivo no disponible",
     "File view": "Vista de archivo",
     "Files": "Archivos",
-    "Add PDF": "Añadir PDF",
     "Upload progress": "Progreso de la carga",
     "{{received}} / {{total}} bytes uploaded": "{{received}} / {{total}} bytes cargados",
     "Cancel upload": "Cancelar carga",
@@ -7823,6 +7821,7 @@
     "This source could not be checked. Other results remain available.": "No se pudo consultar esta fuente. Los demás resultados siguen disponibles.",
     "No readable article text is available from this source.": "Esta fuente no dispone de un texto del artículo que se pueda leer.",
     "Drop files to attach to this reference": "Soltar archivos para adjuntarlos a esta referencia",
-    "Partial results": "Resultados parciales"
+    "Partial results": "Resultados parciales",
+    "Existing attachments are kept. You can also add files from your device.": "Se conservan los archivos adjuntos existentes. También puede añadir archivos desde su equipo."
   }
 }

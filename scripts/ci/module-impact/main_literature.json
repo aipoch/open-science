@@ -447,5 +447,6 @@
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],
-  "fallbackCapability": "main_runtime"
+  "fallbackCapability": "main_runtime",
+  "fullTestReason": "Supplementary attachment downloads add a command owner and transfer lifecycle beyond the reviewed literature host boundary; require full CI validation until the expanded sources and runtime contracts are reviewed."
 }

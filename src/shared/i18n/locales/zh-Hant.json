@@ -494,7 +494,6 @@
     "PDF could not be added": "無法新增 PDF",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "請檢查上方來源狀態與網路連線後重試，也可以從裝置新增 PDF。",
     "Try another source or add a PDF from your device.": "請嘗試其他來源，或從裝置新增 PDF。",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "保留現有附件，僅在您確認來源後新增 PDF。",
     "Duplicates": "重複題錄",
     "Review possible duplicates before merging. Nothing is removed automatically.": "合併前請檢查疑似重複題錄。不會自動移除任何內容。",
     "No duplicates found": "未發現重複題錄",
@@ -1644,7 +1643,6 @@
     "File unavailable": "檔案無法使用",
     "File view": "檔案檢視",
     "Files": "檔案",
-    "Add PDF": "新增 PDF",
     "Upload progress": "上傳進度",
     "{{received}} / {{total}} bytes uploaded": "已上傳 {{received}} / {{total}} 位元組",
     "Cancel upload": "取消上傳",
@@ -7495,6 +7493,7 @@
     "This source could not be checked. Other results remain available.": "無法查詢此來源。其他結果仍可查看。",
     "No readable article text is available from this source.": "此來源暫無可讀取的文章內文。",
     "Drop files to attach to this reference": "拖放檔案以附加至此參考文獻",
-    "Partial results": "部分結果"
+    "Partial results": "部分結果",
+    "Existing attachments are kept. You can also add files from your device.": "保留現有附件，也可從裝置新增檔案。"
   }
 }

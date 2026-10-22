@@ -34,6 +34,8 @@ const item: LiteratureItemView = {
     identifiers: [{ scheme: 'doi', value: '10.1234/example' }]
   })
 }
+const results = (): ReturnType<typeof within> =>
+  within(screen.getByRole('region', { name: 'Search results' }))
 const onUpload = vi.fn()
 const props = { item, onUpload, onAdded: vi.fn(), onCompleteMetadata: vi.fn() }
 const validate = vi.fn()
@@ -96,13 +98,13 @@ describe('LiteratureFullTextLookup', () => {
       if (entry === 'reopened') transfer.mockResolvedValue(receipt)
       render(<LiteratureFullTextLookup {...props} />)
       if (entry === 'attached') {
-        const add = await screen.findByRole('button', { name: 'Add attachment' })
+        const add = await results().findByRole('button', { name: 'Add attachment' })
         fullText.mockResolvedValue(receipt)
         transfer.mockResolvedValue(receipt)
         fireEvent.click(add)
       }
       expect(await screen.findByText('Saving…')).not.toBeNull()
-      expect(screen.queryByRole('button', { name: 'Add attachment' })).toBeNull()
+      expect(results().queryByRole('button', { name: 'Add attachment' })).toBeNull()
       const polls = transfer.mock.calls.length
       await waitFor(() => expect(transfer.mock.calls.length).toBeGreaterThan(polls))
       expect(screen.queryByText('PDF could not be added')).toBeNull()
@@ -178,7 +180,7 @@ describe('LiteratureFullTextLookup', () => {
     })
     window.api.literature.fullText = fullText
     const first = render(<LiteratureFullTextLookup {...props} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
+    fireEvent.click(await results().findByRole('button', { name: 'Add attachment' }))
     await screen.findByText('512 B / 1.0 KB · 256 B/s')
     first.unmount()
     const reopened = render(<LiteratureFullTextLookup {...props} />)
@@ -191,7 +193,7 @@ describe('LiteratureFullTextLookup', () => {
           })
         )
         .resolves.toBeUndefined()
-      const add = screen.queryByRole('button', { name: 'Add attachment' })
+      const add = results().queryByRole('button', { name: 'Add attachment' })
       if (add && !(add as HTMLButtonElement).disabled) {
         fireEvent.click(add)
         await waitFor(() => expect(attached).toHaveLength(2))
@@ -351,7 +353,7 @@ describe('LiteratureFullTextLookup', () => {
           .getByRole('button', { name: 'Settings' })
           .getAttribute('aria-expanded')
       ).toBe('false')
-      fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
+      fireEvent.click(await results().findByRole('button', { name: 'Add attachment' }))
       expect(
         await screen.findByText(known ? '512 B / 1.0 KB · 256 B/s' : '512 B · 256 B/s')
       ).not.toBeNull()
@@ -388,7 +390,7 @@ describe('LiteratureFullTextLookup', () => {
     expect(await screen.findByText('paper final.pdf')).not.toBeNull()
     expect(screen.getByText('Example paper.pdf')).not.toBeNull()
     expect(screen.queryByText('CC BY-NC')).toBeNull()
-    expect(screen.getAllByRole('button', { name: 'Add attachment' })).toHaveLength(2)
+    expect(results().getAllByRole('button', { name: 'Add attachment' })).toHaveLength(2)
     expect(view.container.querySelectorAll('.lucide-file-type-corner')).toHaveLength(2)
     expect(fullText).toHaveBeenCalledTimes(1)
   })
@@ -403,7 +405,10 @@ describe('LiteratureFullTextLookup', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Settings' }))
     fireEvent.click(screen.getByRole('button', { name: 'Configure OpenAlex' }))
     expect(screen.getByLabelText('OpenAlex API key')).not.toBeNull()
-    expect(screen.getByRole('button', { name: 'Add PDF' })).toHaveProperty('disabled', false)
+    const upload = screen.getByRole('button', { name: 'Add attachment' })
+    expect(upload).toHaveProperty('disabled', false)
+    fireEvent.click(upload)
+    expect(onUpload).toHaveBeenCalledOnce()
   })
 
   it('reports provider failures without also claiming no PDF exists', async () => {
@@ -484,7 +489,7 @@ describe('LiteratureFullTextLookup', () => {
           }
     )
     render(<LiteratureFullTextLookup {...props} />)
-    fireEvent.click(await screen.findByRole('button', { name: 'Add attachment' }))
+    fireEvent.click(await results().findByRole('button', { name: 'Add attachment' }))
     expect(
       await screen.findByText(
         'This source is limiting downloads (HTTP 429). Wait before trying again, choose another source, or upload a PDF.'
@@ -538,7 +543,7 @@ describe('LiteratureFullTextLookup', () => {
     )
     const onAdded = vi.fn()
     render(<LiteratureFullTextLookup {...props} item={arxivItem} onAdded={onAdded} />)
-    const add = await screen.findByRole('button', { name: 'Add attachment' })
+    const add = await results().findByRole('button', { name: 'Add attachment' })
     expect(fullText.mock.calls.every(([request]) => request.mode === 'search')).toBe(true)
     expect(screen.getByRole('link', { name: 'Open source' }).getAttribute('href')).toBe(
       'https://arxiv.org/abs/2401.12345'

@@ -227,16 +227,12 @@ it('PDF workflow sources contain no application source taxonomy or database adap
 
 it('local module and affected plans obey the same downstream package direction as Ubuntu', async () => {
   const { createModuleTestPlan, createAffectedTestPlan } = await import('./module-test-impact.mjs')
-  for (const id of ['main_pdf_translation', 'main_literature', 'page_literature']) {
+  for (const id of ['main_pdf_translation']) {
     const plan = createModuleTestPlan(id)
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles.filter((path) => path.startsWith('packages/'))).toEqual([])
   }
-  for (const path of [
-    'src/main/literature/pdf-translation/index.ts',
-    'src/main/literature/command-owner.ts',
-    'src/main/literature/journal-attributes.ts'
-  ]) {
+  for (const path of ['src/main/literature/pdf-translation/index.ts']) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
       status: 'unavailable',
       testFiles: ['packages/pdf-translation/test/checkpoints.test.ts']
@@ -250,15 +246,20 @@ it('local module and affected plans obey the same downstream package direction a
   expect(plan.testFiles.some((path) => path.startsWith('packages/pdf-structure/'))).toBe(false)
 })
 
-it('runs unfiltered tests for reclassified workspace preview module and affected plans', async () => {
+it.each([
+  ['workspace_previews', 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx'],
+  ['main_literature', 'src/main/literature/command-owner.ts'],
+  ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
+  ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts']
+])('runs unfiltered tests for reclassified %s module and affected plans', async (id, path) => {
   const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
     await import('./module-test-impact.mjs')
   for (const plan of [
-    createModuleTestPlan('workspace_previews'),
+    createModuleTestPlan(id),
     createAffectedTestPlan(
       [
         {
-          path: 'src/renderer/src/pages/workspace/previews/renderers/PdfPreview.tsx',
+          path,
           status: 'modified'
         }
       ],
@@ -267,7 +268,7 @@ it('runs unfiltered tests for reclassified workspace preview module and affected
   ]) {
     expect(plan.mode).toBe('full')
     expect(plan.reasonChains).toContainEqual(
-      expect.stringMatching(/^workspace_previews -> .+ -> full$/)
+      expect.stringMatching(new RegExp(`^${id} -> .+ -> full$`))
     )
     const invocations: string[][] = []
     expect(
@@ -427,6 +428,16 @@ it('Compute host edits never register or select upstream Compute units', async (
     'packages/compute/src/model.ts'
   ]) {
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    if (
+      path.startsWith('src/main/literature/') ||
+      path.startsWith('src/renderer/src/pages/literature/')
+    ) {
+      expect(plan.mode, path).toBe('full')
+      expect(plan.reasonChains).toContainEqual(
+        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+      )
+      continue
+    }
     expect(plan.mode, path).toBe('selective')
     expect(plan.testFiles, path).toEqual(
       expect.arrayContaining([
@@ -497,6 +508,16 @@ it('selects durable file consumers downstream without testing unchanged prerequi
     const packagePlan = createPackageTestPlan([path], registry)
     expect([...packagePlan.selected].sort(), path).toEqual([...selected].sort())
     const plan = createAffectedTestPlan([{ path, status: 'modified' }], graph)
+    if (
+      path.startsWith('src/main/literature/') ||
+      path.startsWith('src/renderer/src/pages/literature/')
+    ) {
+      expect(plan.mode, path).toBe('full')
+      expect(plan.reasonChains).toContainEqual(
+        expect.stringMatching(/^(main_literature|page_literature) -> .+ -> full$/)
+      )
+      continue
+    }
     expect(plan.mode, path).toBe('selective')
     for (const entry of registry.packages) {
       const included = plan.testFiles.some((test: string) => test.startsWith(entry.root + '/'))

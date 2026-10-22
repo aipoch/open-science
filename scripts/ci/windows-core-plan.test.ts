@@ -39,19 +39,10 @@ const select = (
 const core = select(['src/main/literature/catalog.ts'])
 
 describe('Windows core impact and event selection', () => {
-  it('keeps literature regressions and defers indirect process integration to queue', () => {
-    expect(core.windowsCoreChecks).toContain('windows_regressions')
-    expect(core.windowsCoreChecks).not.toContain('windows_process')
-    expect(core.windowsCoreChecks).not.toContain('windows_wheel_evidence')
-    expect(core.windowsCoreChecks).not.toContain('windows_shell')
-    expect(core.windowsCoreChecks).not.toContain('windows_sandbox')
+  it('keeps all native checks for the reclassified literature boundary on PRs and in queue', () => {
+    expect(core.windowsCoreChecks).toEqual(expect.arrayContaining(Object.keys(windowsCoreChecks)))
     const queue = select(['src/main/literature/catalog.ts'], 'merge_group')
-    expect(queue.windowsCoreChecks).toEqual(
-      expect.arrayContaining([...core.windowsCoreChecks, 'windows_process'])
-    )
-    expect(core.reasonChains).toEqual(
-      expect.arrayContaining([expect.stringContaining('deferred to merge queue')])
-    )
+    expect(queue.windowsCoreChecks).toEqual(expect.arrayContaining(Object.keys(windowsCoreChecks)))
   })
 
   it.each([
@@ -92,14 +83,14 @@ describe('Windows core impact and event selection', () => {
     )
   })
 
-  it('keeps manual coverage and does not introduce core for renderer/docs changes', () => {
+  it('keeps manual and reclassified renderer coverage without introducing core for docs', () => {
     expect(
       select(['src/main/literature/catalog.ts'], 'workflow_dispatch').windowsCoreChecks
     ).toEqual(expect.arrayContaining(Object.keys(windowsCoreChecks)))
     expect(select(['docs/testing.md']).windowsCoreChecks).toBeUndefined()
     expect(
       select(['src/renderer/src/pages/literature/LiteratureLibraryPage.tsx']).windowsCoreChecks
-    ).toBeUndefined()
+    ).toEqual(expect.arrayContaining(Object.keys(windowsCoreChecks)))
   })
 
   it('selects the union of stacked merge-group changes', () => {

@@ -498,7 +498,6 @@
     "PDF could not be added": "Impossible d’ajouter le PDF",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "Vérifiez l’état des sources ci-dessus et votre connexion, puis réessayez. Vous pouvez aussi ajouter un PDF depuis votre appareil.",
     "Try another source or add a PDF from your device.": "Essayez une autre source ou ajoutez un PDF depuis votre appareil.",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "Les pièces jointes existantes sont conservées. Les PDF ne sont ajoutés qu’après confirmation d’une source.",
     "Duplicates": "Doublons",
     "Review possible duplicates before merging. Nothing is removed automatically.": "Vérifiez les doublons potentiels avant de les fusionner. Aucun élément n’est supprimé automatiquement.",
     "No duplicates found": "Aucun doublon trouvé",
@@ -1613,7 +1612,6 @@
     "File unavailable": "Fichier indisponible",
     "File view": "Vue fichier",
     "Files": "Fichiers",
-    "Add PDF": "Ajouter un PDF",
     "Upload progress": "Progression du téléversement",
     "{{received}} / {{total}} bytes uploaded": "{{received}} / {{total}} octets téléversés",
     "Cancel upload": "Annuler le téléversement",
@@ -7823,6 +7821,7 @@
     "This source could not be checked. Other results remain available.": "Cette source n’a pas pu être consultée. Les autres résultats restent disponibles.",
     "No readable article text is available from this source.": "Aucun texte d’article lisible n’est disponible auprès de cette source.",
     "Drop files to attach to this reference": "Déposer des fichiers pour les joindre à cette référence",
-    "Partial results": "Résultats partiels"
+    "Partial results": "Résultats partiels",
+    "Existing attachments are kept. You can also add files from your device.": "Les pièces jointes existantes sont conservées. Vous pouvez aussi ajouter des fichiers depuis votre appareil."
   }
 }

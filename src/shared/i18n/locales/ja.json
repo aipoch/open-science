@@ -494,7 +494,6 @@
     "PDF could not be added": "PDF を追加できませんでした",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "上の検索元の状態と接続を確認してから再試行してください。デバイスから PDF を追加することもできます。",
     "Try another source or add a PDF from your device.": "別の検索元を試すか、デバイスから PDF を追加してください。",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "既存の添付ファイルは保持されます。検索元を確認してから PDF が追加されます。",
     "Duplicates": "重複文献",
     "Review possible duplicates before merging. Nothing is removed automatically.": "統合する前に重複の可能性がある文献を確認してください。自動的に削除されることはありません。",
     "No duplicates found": "重複文献は見つかりませんでした",
@@ -1558,7 +1557,6 @@
     "File unavailable": "ファイルが利用できません",
     "File view": "ファイルビュー",
     "Files": "ファイル",
-    "Add PDF": "PDFを追加",
     "Upload progress": "アップロードの進捗",
     "{{received}} / {{total}} bytes uploaded": "{{received}} / {{total}} バイトをアップロード済み",
     "Cancel upload": "アップロードをキャンセル",
@@ -7495,6 +7493,7 @@
     "This source could not be checked. Other results remain available.": "この取得元を確認できませんでした。他の結果は引き続き表示されます。",
     "No readable article text is available from this source.": "この取得元には読み取り可能な論文本文がありません。",
     "Drop files to attach to this reference": "ファイルをドロップしてこの文献に添付",
-    "Partial results": "一部の結果"
+    "Partial results": "一部の結果",
+    "Existing attachments are kept. You can also add files from your device.": "既存の添付ファイルは保持されます。お使いのデバイスからファイルを追加することもできます。"
   }
 }

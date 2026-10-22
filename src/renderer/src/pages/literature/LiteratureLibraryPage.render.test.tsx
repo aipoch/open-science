@@ -6354,7 +6354,11 @@ describe('LiteratureLibraryPage', () => {
       'href',
       'https://journal.example/articles/paper'
     )
-    fireEvent.click(within(detail).getByRole('button', { name: 'Add attachment' }))
+    fireEvent.click(
+      within(within(detail).getByRole('region', { name: 'Search results' })).getByRole('button', {
+        name: 'Add attachment'
+      })
+    )
     await waitFor(() =>
       expect(fullText).toHaveBeenCalledWith({
         mode: 'attach',
@@ -6428,13 +6432,19 @@ describe('LiteratureLibraryPage', () => {
     await openReferenceDetail(await screen.findByText('Corrective Retrieval Augmented Generation'))
     const detail = screen.getByRole('dialog')
     fireEvent.click(within(detail).getByRole('button', { name: 'Find full-text PDF' }))
-    fireEvent.click(await within(detail).findByRole('button', { name: 'Add attachment' }))
-    await within(detail).findByRole('alert')
-    expect(within(detail).getByRole('button', { name: 'Add attachment' })).toHaveProperty(
-      'disabled',
-      false
+    fireEvent.click(
+      await within(within(detail).getByRole('region', { name: 'Search results' })).findByRole(
+        'button',
+        { name: 'Add attachment' }
+      )
     )
-    expect(within(detail).getByRole('button', { name: 'Add PDF' })).not.toBeNull()
+    await within(detail).findByRole('alert')
+    expect(
+      within(within(detail).getByRole('region', { name: 'Search results' })).getByRole('button', {
+        name: 'Add attachment'
+      })
+    ).toHaveProperty('disabled', false)
+    expect(within(detail).getAllByRole('button', { name: 'Add attachment' })).toHaveLength(2)
     expect(
       within(within(detail).getByRole('region', { name: 'OpenAlex' })).getByRole('status')
     ).not.toBeNull()

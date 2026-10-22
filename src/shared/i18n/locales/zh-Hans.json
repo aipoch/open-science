@@ -494,7 +494,6 @@
     "PDF could not be added": "无法添加 PDF",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "请检查上方来源状态和网络连接后重试，也可以从设备添加 PDF。",
     "Try another source or add a PDF from your device.": "请尝试其他来源，或从设备添加 PDF。",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "保留现有附件，仅在您确认来源后添加 PDF。",
     "Duplicates": "重复题录",
     "Review possible duplicates before merging. Nothing is removed automatically.": "合并前请检查疑似重复题录。不会自动移除任何内容。",
     "No duplicates found": "未发现重复题录",
@@ -1644,7 +1643,6 @@
     "File unavailable": "文件不可用",
     "File view": "文件视图",
     "Files": "文件",
-    "Add PDF": "添加 PDF",
     "Upload progress": "上传进度",
     "{{received}} / {{total}} bytes uploaded": "已上传 {{received}} / {{total}} 字节",
     "Cancel upload": "取消上传",
@@ -7495,6 +7493,7 @@
     "This source could not be checked. Other results remain available.": "无法查询此来源。其他结果仍可查看。",
     "No readable article text is available from this source.": "此来源暂无可读取的文章正文。",
     "Drop files to attach to this reference": "拖放文件以附加到此参考文献",
-    "Partial results": "部分结果"
+    "Partial results": "部分结果",
+    "Existing attachments are kept. You can also add files from your device.": "保留现有附件，也可从设备添加文件。"
   }
 }

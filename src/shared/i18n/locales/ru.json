@@ -500,7 +500,6 @@
     "PDF could not be added": "Не удалось добавить PDF",
     "Check the source status above and your connection, then try again. You can also add a PDF from your device.": "Проверьте состояние источников выше и подключение, затем повторите попытку. Можно также добавить PDF с устройства.",
     "Try another source or add a PDF from your device.": "Попробуйте другой источник или добавьте PDF с устройства.",
-    "Existing attachments are kept. PDFs are added only after you confirm a source.": "Существующие вложения сохраняются. PDF добавляются только после подтверждения источника.",
     "Duplicates": "Дубликаты",
     "Review possible duplicates before merging. Nothing is removed automatically.": "Проверьте возможные дубликаты перед объединением. Ничего не удаляется автоматически.",
     "No duplicates found": "Дубликаты не найдены",
@@ -1611,7 +1610,6 @@
     "File unavailable": "Файл недоступен",
     "File view": "Просмотр файла",
     "Files": "Файлы",
-    "Add PDF": "Добавить PDF",
     "Upload progress": "Ход загрузки",
     "{{received}} / {{total}} bytes uploaded": "Загружено {{received}} / {{total}} байт",
     "Cancel upload": "Отменить загрузку",
@@ -7962,6 +7960,7 @@
     "This source could not be checked. Other results remain available.": "Не удалось проверить этот источник. Другие результаты по-прежнему доступны.",
     "No readable article text is available from this source.": "В этом источнике нет доступного для чтения текста статьи.",
     "Drop files to attach to this reference": "Перетащите файлы, чтобы прикрепить их к этой ссылке",
-    "Partial results": "Частичные результаты"
+    "Partial results": "Частичные результаты",
+    "Existing attachments are kept. You can also add files from your device.": "Существующие вложения сохраняются. Также можно добавить файлы с вашего устройства."
   }
 }
