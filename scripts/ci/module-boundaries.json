@@ -1600,7 +1600,8 @@
         "src/main/database/migrations/0048-pdf-annotation-sharing.ts",
         "src/main/database/migrations/0049-pascalcase-table-names.ts",
         "test/fixtures/application-database.ts",
-        "src/main/database/migrations/0050-literature-translation.ts"
+        "src/main/database/migrations/0050-literature-translation.ts",
+        "src/main/database/migrations/0051-artifact-hidden.ts"
       ],
       "layer": "host-owner",
       "sourceLayers": {
@@ -1644,7 +1645,8 @@
         "src/preload/index.test.ts",
         "src/renderer/web/api-installer.test.ts",
         "src/shared/renderer-contract-catalog.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/main/database/artifact-hidden-migration.test.ts"
       ],
       "externalImports": [
         "@aipoch/diagnostics/node",
@@ -4298,7 +4300,10 @@
         "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
         "src/renderer/src/pages/workspace/project-files-query-model.ts",
         "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts",
-        "src/renderer/src/pages/workspace/use-project-files-index.ts"
+        "src/renderer/src/pages/workspace/use-project-files-index.ts",
+        "src/renderer/src/pages/workspace/project-files-filter-option.tsx",
+        "src/renderer/src/pages/workspace/HiddenArtifactFiles.tsx",
+        "src/renderer/src/pages/workspace/project-files-section.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -4307,7 +4312,10 @@
         "src/renderer/src/pages/workspace/project-files-preview-owner.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/project-files-query-model.ts": "presentation-adapter",
         "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts": "presentation-adapter",
-        "src/renderer/src/pages/workspace/use-project-files-index.ts": "presentation-adapter"
+        "src/renderer/src/pages/workspace/use-project-files-index.ts": "presentation-adapter",
+        "src/renderer/src/pages/workspace/project-files-filter-option.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/HiddenArtifactFiles.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/project-files-section.tsx": "presentation-adapter"
       },
       "consumerModules": [
         "workspace_page",
@@ -4319,7 +4327,8 @@
         "src/renderer/src/pages/workspace/workspace-components.test.tsx",
         "src/renderer/src/pages/workspace/use-project-files-index.test.tsx",
         "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/pages/workspace/HiddenArtifactFiles.test.tsx"
       ],
       "externalImports": [
         "lucide-react",
@@ -8346,7 +8355,10 @@
         "src/renderer/src/pages/workspace/artifact-environment-lock-store.ts",
         "src/renderer/src/pages/workspace/artifact-preview.tsx",
         "src/renderer/src/pages/workspace/project-artifact-download-data.ts",
-        "src/renderer/src/pages/workspace/use-artifact-save-progress.ts"
+        "src/renderer/src/pages/workspace/use-artifact-save-progress.ts",
+        "src/renderer/src/pages/workspace/use-artifact-hidden-state.ts",
+        "src/renderer/web/project-archive.ts",
+        "src/renderer/src/pages/workspace/ArtifactHideButton.tsx"
       ],
       "layer": "presentation-runtime",
       "sourceLayers": {
@@ -8355,7 +8367,8 @@
         "src/renderer/src/pages/workspace/DownloadSessionArtifactsDialog.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/ProvenanceLoadNotice.tsx": "presentation-adapter",
         "src/renderer/src/pages/workspace/WorkspaceArtifactVisibility.tsx": "presentation-adapter",
-        "src/renderer/src/pages/workspace/artifact-preview.tsx": "presentation-adapter"
+        "src/renderer/src/pages/workspace/artifact-preview.tsx": "presentation-adapter",
+        "src/renderer/src/pages/workspace/ArtifactHideButton.tsx": "presentation-adapter"
       },
       "consumerModules": [],
       "requiredTests": [
@@ -8370,9 +8383,18 @@
         "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
         "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
         "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
-        "src/main/host-layer-dependencies.architecture.test.ts"
+        "src/main/host-layer-dependencies.architecture.test.ts",
+        "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
+        "src/renderer/web/project-archive.test.ts"
       ],
-      "externalImports": ["lucide-react", "papaparse", "react", "react-i18next", "zustand"]
+      "externalImports": [
+        "fflate",
+        "lucide-react",
+        "papaparse",
+        "react",
+        "react-i18next",
+        "zustand"
+      ]
     },
     "workspace_composer": {
       "sources": [

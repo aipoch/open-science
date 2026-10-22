@@ -62,6 +62,7 @@ const BROWSER_NATIVE_CALLABLE_PATHS = [
   'getRuntimeVersions',
   'saveBlobFile',
   'saveManagedFile',
+  'saveProjectArtifacts',
   'window.close'
 ] as const
 

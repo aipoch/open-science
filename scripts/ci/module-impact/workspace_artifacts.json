@@ -19,6 +19,11 @@
     "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
     "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
     "src/renderer/src/pages/workspace/project-artifact-download-data.ts",
+    "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
+    "src/renderer/src/pages/workspace/use-artifact-hidden-state.ts",
+    "src/renderer/web/project-archive.test.ts",
+    "src/renderer/web/project-archive.ts",
+    "src/renderer/src/pages/workspace/ArtifactHideButton.tsx",
     "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx",
     "src/renderer/src/pages/workspace/use-artifact-save-progress.ts"
   ],
@@ -53,6 +58,8 @@
       "src/renderer/src/pages/workspace/artifact-publication-preview.integration.test.tsx",
       "src/renderer/src/pages/workspace/literature-save-contract.test.tsx",
       "src/renderer/src/pages/workspace/project-artifact-download-data.test.ts",
+      "src/renderer/src/pages/workspace/use-artifact-hidden-state.test.tsx",
+      "src/renderer/web/project-archive.test.ts",
       "src/renderer/src/pages/workspace/use-artifact-save-progress.test.tsx"
     ],
     "contract": ["src/main/host-layer-dependencies.architecture.test.ts"],
@@ -229,7 +236,8 @@
       "src/renderer/src/components/desktop-runtime-recovery.test.tsx",
       "src/renderer/src/pages/workspace/ArtifactLiteratureDetailDialog.test.tsx",
       "src/renderer/src/pages/workspace/artifact-reproducibility-start.test.tsx",
-      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts"
+      "src/renderer/src/pages/workspace/literature-pdf-options.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": [],

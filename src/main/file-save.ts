@@ -51,6 +51,11 @@ type RegisterFileSaveHandlersOptions = {
     source: 'artifact' | 'upload',
     request: { projectId: string; fileId: string; versionId: string }
   ) => Promise<ManagedFileVersionHandle>
+  openHiddenArtifactVersion?: (request: {
+    projectId: string
+    fileId: string
+    versionId: string
+  }) => Promise<ManagedFileVersionHandle>
   createProjectArtifactTemporaryRoot?: () => Promise<string>
   projectArtifactExportLimits?: ProjectArtifactExportLimits
   publishUserFile?: typeof publishUserFile
@@ -189,6 +194,11 @@ const assertSaveProjectArtifactsRequest = (request: SaveProjectArtifactsRequest)
       }
       if (typeof file.fileId !== 'string' || file.fileId.trim().length === 0) return true
       if (typeof file.versionId !== 'string' || file.versionId.trim().length === 0) return true
+      if (
+        file.hidden !== undefined &&
+        (typeof file.hidden !== 'boolean' || file.source !== 'artifact')
+      )
+        return true
       if ('path' in file) return true
       return false
     })
@@ -268,6 +278,7 @@ const writeProjectArtifactArchive = async (options: {
   projectId: string
   files: SaveProjectArtifactsRequest['files']
   openManagedFileVersion: NonNullable<RegisterFileSaveHandlersOptions['openManagedFileVersion']>
+  openHiddenArtifactVersion?: RegisterFileSaveHandlersOptions['openHiddenArtifactVersion']
   publishUserFile: typeof publishUserFile
   failures: SaveProjectArtifactFailure[]
   limits: ProjectArtifactExportLimits
@@ -286,6 +297,7 @@ const writeProjectArtifactArchive = async (options: {
     archiveHandle = await open(temporaryArchivePath, 'wx', 0o600)
     let archiveFailure: Error | undefined
     let pendingArchiveWrite = Promise.resolve()
+    const includedFiles: SaveProjectArtifactsRequest['files'] = []
     let streamedEntries = 0
     let streamedBytes = 0
     const takenNames = new Set<string>()
@@ -315,11 +327,19 @@ const writeProjectArtifactArchive = async (options: {
         if (streamedEntries >= options.limits.maxFiles) {
           throw new Error('Project export exceeds the file-count limit.')
         }
-        managedSource = await options.openManagedFileVersion(file.source, {
+        const identity = {
           projectId: options.projectId,
           fileId: file.fileId,
           versionId: file.versionId
-        })
+        }
+        managedSource =
+          file.hidden === true
+            ? file.source === 'artifact' && options.openHiddenArtifactVersion
+              ? await options.openHiddenArtifactVersion(identity)
+              : (() => {
+                  throw new Error('Hidden artifact export is unavailable.')
+                })()
+            : await options.openManagedFileVersion(file.source, identity)
         const sourceSize = managedSource.size
         if (!Number.isSafeInteger(sourceSize) || sourceSize < 0) {
           throw new Error('Project export source size is invalid.')
@@ -343,7 +363,11 @@ const writeProjectArtifactArchive = async (options: {
           throw new Error('Project export exceeds the total size limit.')
         }
 
-        const categoryDirectory = file.source === 'upload' ? 'uploads' : 'generated'
+        const categoryDirectory = file.hidden
+          ? 'hidden'
+          : file.source === 'upload'
+            ? 'uploads'
+            : 'generated'
         const entryName = claimZipEntryName(
           takenNames,
           `${categoryDirectory}/${getSafeZipEntryName(file.suggestedName)}`
@@ -376,6 +400,7 @@ const writeProjectArtifactArchive = async (options: {
         throwIfArchiveFailed()
         streamedBytes += entryBytes
         streamedEntries += 1
+        includedFiles.push(file)
       } catch (error) {
         if (entryStarted) throw error
         options.failures.push({
@@ -398,8 +423,29 @@ const writeProjectArtifactArchive = async (options: {
     throwIfArchiveFailed()
     await archiveHandle.close()
     archiveHandleClosed = true
-    await options.publishUserFile(options.destinationPath, (temporaryPath) =>
-      copyFile(temporaryArchivePath, temporaryPath, constants.COPYFILE_EXCL)
+    await options.publishUserFile(
+      options.destinationPath,
+      (temporaryPath) => copyFile(temporaryArchivePath, temporaryPath, constants.COPYFILE_EXCL),
+      {
+        // Earlier entries may have been hidden while a later entry was streaming.
+        validateDestination: async () => {
+          for (const file of includedFiles) {
+            const identity = {
+              projectId: options.projectId,
+              fileId: file.fileId,
+              versionId: file.versionId
+            }
+            const lease = file.hidden
+              ? await options.openHiddenArtifactVersion!(identity)
+              : await options.openManagedFileVersion(file.source, identity)
+            try {
+              await lease.verifyUnchanged()
+            } finally {
+              await lease.close()
+            }
+          }
+        }
+      }
     )
     return true
   } catch (error) {
@@ -932,6 +978,7 @@ export const createFileSaveCommands = (
           projectId: request.projectId,
           files: request.files,
           openManagedFileVersion,
+          openHiddenArtifactVersion: options.openHiddenArtifactVersion,
           publishUserFile: publish,
           failures,
           limits: options.projectArtifactExportLimits ?? PROJECT_ARTIFACT_EXPORT_LIMITS,

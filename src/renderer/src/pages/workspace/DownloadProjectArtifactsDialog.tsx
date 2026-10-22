@@ -62,8 +62,12 @@ const getErrorMessage = (error: unknown): string =>
 // are dropped entirely, and rows stay flat inside a group — no per-session nesting.
 const groupFiles = (files: ProjectFileItem[], t: TFunction): FileGroup[] =>
   [
-    { label: t('Generated'), files: files.filter((file) => file.source === 'artifact') },
-    { label: t('Uploads'), files: files.filter((file) => file.source === 'upload') }
+    {
+      label: t('Generated'),
+      files: files.filter((file) => file.source === 'artifact' && !file.hidden)
+    },
+    { label: t('Uploads'), files: files.filter((file) => file.source === 'upload') },
+    { label: t('Hidden'), files: files.filter((file) => file.hidden) }
   ].filter((group) => group.files.length > 0)
 
 const DownloadProjectArtifactsDialog = ({
@@ -95,27 +99,32 @@ const DownloadProjectArtifactsDialog = ({
       readExportFiles: window.api.projectFiles.readExportFiles,
       repairIndex: window.api.projectFiles.repairIndex,
       projectId
-    }).then(
-      (nextFiles) => {
-        if (!isCurrent) return
-        setSettledFileList({
-          requestKey,
-          status: 'ready',
-          files: nextFiles
-        })
-        setSelectedIds(new Set(nextFiles.map((file) => file.id)))
-        setDownloadError(undefined)
-      },
-      (error: unknown) => {
-        if (!isCurrent) return
-        setSettledFileList({
-          requestKey,
-          status: 'error',
-          files: [],
-          loadError: getErrorMessage(error)
-        })
-      }
-    )
+    })
+      .then(async (visibleFiles) => [
+        ...visibleFiles,
+        ...(await window.api.projectFiles.readExportFiles({ projectId, category: 'hidden' }))
+      ])
+      .then(
+        (nextFiles) => {
+          if (!isCurrent) return
+          setSettledFileList({
+            requestKey,
+            status: 'ready',
+            files: nextFiles
+          })
+          setSelectedIds(new Set(nextFiles.filter((file) => !file.hidden).map((file) => file.id)))
+          setDownloadError(undefined)
+        },
+        (error: unknown) => {
+          if (!isCurrent) return
+          setSettledFileList({
+            requestKey,
+            status: 'error',
+            files: [],
+            loadError: getErrorMessage(error)
+          })
+        }
+      )
 
     return () => {
       isCurrent = false
@@ -171,6 +180,7 @@ const DownloadProjectArtifactsDialog = ({
         suggestedArchiveName: project.name,
         files: selectedFiles.map((file) => ({
           source: file.source,
+          ...(file.hidden ? { hidden: true } : {}),
           sessionId: file.sessionId,
           fileId: file.sourceFileId,
           versionId: file.sourceVersionId,
@@ -327,18 +337,22 @@ const DownloadProjectArtifactsDialog = ({
           {isDownloading ? (
             <div className="shrink-0 space-y-2 border-t border-border-300/90 px-5 py-3 text-sm">
               <p role="status" aria-live="polite">
-                {transfer.cancelPending
-                  ? t('Cancelling download…')
-                  : transfer.progress?.phase === 'preparing'
-                    ? t('Choose a destination to start the download.')
-                    : t('Processed {{completed}} of {{total}} files.', {
-                        completed: transfer.progress?.completedFiles ?? 0,
-                        total: transfer.progress?.totalFiles ?? 0
-                      })}
+                {typeof window.api.getArtifactSaveProgress !== 'function'
+                  ? t('Downloading…')
+                  : transfer.cancelPending
+                    ? t('Cancelling download…')
+                    : transfer.progress?.phase === 'preparing'
+                      ? t('Choose a destination to start the download.')
+                      : t('Processed {{completed}} of {{total}} files.', {
+                          completed: transfer.progress?.completedFiles ?? 0,
+                          total: transfer.progress?.totalFiles ?? 0
+                        })}
               </p>
-              <p className="text-xs text-muted-foreground">
-                {t('Cancellation takes effect at the next safe stopping point.')}
-              </p>
+              {typeof window.api.cancelArtifactSave === 'function' ? (
+                <p className="text-xs text-muted-foreground">
+                  {t('Cancellation takes effect at the next safe stopping point.')}
+                </p>
+              ) : null}
               {transfer.progressUnavailable ? (
                 <ErrorNotice
                   inline

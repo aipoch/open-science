@@ -73,7 +73,9 @@ export function composeManagedFiles({
   managedPreviewOwners: ReturnType<typeof createManagedPreviewOwnerRegistry>
 } {
   // Share one repository and registry so runtime artifact claims and renderer finalization meet.
-  const artifactRepository = createDefaultArtifactRepository()
+  const artifactRepository = createDefaultArtifactRepository((path) =>
+    managedFileVersionService.assertArtifactPathVisible(path)
+  )
   const notebookRepository = new NotebookRunRepository(resolveDataRoot())
   const notebookDependencyAnalyzer = createNotebookDependencyAnalyzer({
     storageRoot: resolveDataRoot(),
@@ -130,8 +132,10 @@ export function composeManagedFiles({
     settingsService
   )
   grantedRootsRepositoryRef.current = grantedRootsRepository
-  const localFsService = new LocalFsService(grantedRootsRepository, () =>
-    shutdownNotebooksBeforePolicyChange('granted-roots')
+  const localFsService = new LocalFsService(
+    grantedRootsRepository,
+    () => shutdownNotebooksBeforePolicyChange('granted-roots'),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   // One source-neutral resolver keeps previews and user-requested exports on identical trust checks.
   const resolveManagedFilePath = (
@@ -156,6 +160,7 @@ export function composeManagedFiles({
   }
   // One registry owns short-lived capability URLs for both managed artifact repositories.
   const previewResources = new ManagedPreviewResources({
+    assertPathVisible: (path) => managedFileVersionService.assertArtifactPathVisible(path),
     resolvePath: resolveManagedFilePath,
     openLiterature: (reference) => literatureAttachmentAuthority.openReference(reference),
     openLatestManagedFile: (source, request) =>

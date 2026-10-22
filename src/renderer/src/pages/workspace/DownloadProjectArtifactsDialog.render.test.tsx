@@ -45,7 +45,7 @@ const files: ProjectFileItem[] = [
 
 let container: HTMLElement
 let root: Root
-let readExportFiles: ReturnType<typeof vi.fn>
+let readExportFiles: ReturnType<typeof vi.fn<(request: unknown) => Promise<ProjectFileItem[]>>>
 let saveProjectArtifacts: ReturnType<typeof vi.fn>
 
 beforeEach(() => {
@@ -63,7 +63,8 @@ beforeEach(() => {
         artifactGroupCount: 2,
         isIndexComplete: true
       }),
-      readExportFiles,
+      readExportFiles: (request: { category?: string }) =>
+        request.category === 'hidden' ? Promise.resolve([]) : readExportFiles(request),
       repairIndex: vi.fn().mockResolvedValue(undefined)
     },
     saveProjectArtifacts
@@ -378,6 +379,10 @@ describe('DownloadProjectArtifactsDialog', () => {
       await Promise.resolve()
     })
     expect(saveProjectArtifacts).toHaveBeenCalledTimes(1)
+    // Browser archives have no native destination picker or transfer-control API.
+    expect(document.body.querySelector('[role="status"]')?.textContent).toBe('Downloading…')
+    expect(document.body.textContent).not.toContain('Choose a destination')
+    expect(document.body.textContent).not.toContain('Cancellation takes effect')
 
     const closeButton = document.body.querySelector<HTMLButtonElement>('button[aria-label="Close"]')
     expect(closeButton?.disabled).toBe(true)

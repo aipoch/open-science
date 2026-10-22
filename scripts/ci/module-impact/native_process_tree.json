@@ -609,7 +609,8 @@
       "src/main/update/installation-artifact.test.ts",
       "src/main/composition/session-packages.test.ts",
       "src/main/update/installation-occupancy.test.ts",
-      "src/main/update/installation-preparation.test.ts"
+      "src/main/update/installation-preparation.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

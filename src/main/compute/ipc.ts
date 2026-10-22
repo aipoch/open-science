@@ -163,7 +163,8 @@ const createComputeHandlers = (
   operationRepository?: ComputeJobOperationRepository,
   sessionLimitPersistence?: SessionComputePolicyAuthority,
   resultDelivery?: Pick<ComputeResultDeliveryProjection, 'hasDeliveryPath'>,
-  admitSessionWork?: (projectId: string, sessionId: string) => () => void
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void,
+  assertPathVisible?: (path: string) => Promise<void>
 ): ComputeHandlers => {
   const permissionGrants = permissionGrantRegistry
     ? createComputePermissionGrantAdapter(permissionGrantRegistry, legacyComputeGrants)
@@ -462,6 +463,7 @@ const createComputeHandlers = (
     listDir: (providerId, path) => service.listDir(providerId, path),
     download: (providerId, remotePath, dest) => service.download(providerId, remotePath, dest),
     revealInFolder: async (filePath) => {
+      await assertPathVisible?.(filePath)
       await desktopShellInteraction().revealPath(filePath)
     },
     computeService: service,
@@ -704,7 +706,8 @@ const createComputeIpcModule = (
   hostLifecycle?: ComputeHostLifecycle,
   sessionLimitPersistence?: SessionComputePolicyAuthority,
   resultDelivery?: ComputeResultDeliveryProjection,
-  admitSessionWork?: (projectId: string, sessionId: string) => () => void
+  admitSessionWork?: (projectId: string, sessionId: string) => () => void,
+  assertPathVisible?: (path: string) => Promise<void>
 ): ComputeIpcModule => {
   const operationRepository = createDefaultComputeJobOperationRepository()
   const configRoot = resolveConfigRoot()
@@ -744,7 +747,8 @@ const createComputeIpcModule = (
     operationRepository,
     sessionLimitPersistence,
     resultDelivery,
-    admitSessionWork
+    admitSessionWork,
+    assertPathVisible
   )
   const jobDeletionOwner = handlers.jobDeletionOwner
   if (!jobDeletionOwner) throw new Error('Compute Job deletion owner is unavailable.')

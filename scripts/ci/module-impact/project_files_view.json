@@ -2,12 +2,16 @@
   "ownerPaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
     "src/renderer/src/pages/workspace/project-files-presentation-owner.tsx",
+    "src/renderer/src/pages/workspace/project-files-filter-option.tsx",
     "src/renderer/src/pages/workspace/project-files-preview-owner.ts",
     "src/renderer/src/pages/workspace/project-files-query-model.ts",
     "src/renderer/src/pages/workspace/use-project-file-mention-drag.ts",
     "src/renderer/src/pages/workspace/use-project-files-index.ts",
     "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
-    "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+    "src/renderer/src/pages/workspace/use-project-files-index.test.tsx",
+    "src/renderer/src/pages/workspace/HiddenArtifactFiles.tsx",
+    "src/renderer/src/pages/workspace/project-files-section.tsx",
+    "src/renderer/src/pages/workspace/HiddenArtifactFiles.test.tsx"
   ],
   "interfacePaths": [
     "src/renderer/src/pages/workspace/ProjectFilesView.tsx",
@@ -22,7 +26,8 @@
     "owner": [
       "src/renderer/src/pages/workspace/ProjectFilesView.test.tsx",
       "src/renderer/src/pages/workspace/workspace-components.test.tsx",
-      "src/renderer/src/pages/workspace/use-project-files-index.test.tsx"
+      "src/renderer/src/pages/workspace/use-project-files-index.test.tsx",
+      "src/renderer/src/pages/workspace/HiddenArtifactFiles.test.tsx"
     ],
     "contract": [
       "src/renderer/src/pages/workspace/PreviewFileSurface.test.tsx",

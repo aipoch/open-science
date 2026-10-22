@@ -28,14 +28,15 @@ it('upgrades the prior translation schema without changing its saved records and
     '0050_literature_translation'
   )
   await client.$executeRawUnsafe('DROP TABLE "PdfTranslationBlock"')
+  await client.$executeRawUnsafe('ALTER TABLE "ArtifactLineage" DROP COLUMN "hiddenAt"')
   await client.$executeRawUnsafe(
-    'DELETE FROM "_open_science_migrations" WHERE id = ?',
+    'DELETE FROM "_open_science_migrations" WHERE id >= ?',
     '0050_literature_translation'
   )
   expect(await migrateApplicationDatabase(client)).toMatchObject({
     from: '0049_pascalcase_table_names',
-    to: '0050_literature_translation',
-    applied: ['0050_literature_translation']
+    to: '0051_artifact_hidden',
+    applied: ['0050_literature_translation', '0051_artifact_hidden']
   })
   expect(
     await client.$queryRawUnsafe(

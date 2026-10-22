@@ -34,7 +34,7 @@ type ProjectFilesFilterOption = {
   id: string
   label: string
   count: number
-  kind: 'all' | 'uploads' | 'session'
+  kind: 'all' | 'uploads' | 'session' | 'hidden'
   originSession?: ProjectFileOriginSession
 }
 
@@ -297,6 +297,12 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
       })
     }
 
+    options.push({
+      id: 'hidden',
+      label: t('Hidden'),
+      count: catalogIndex.overview.hiddenArtifactCount ?? 0,
+      kind: 'hidden'
+    })
     return options
   }, [
     getArtifactGroupTitle,
@@ -594,3 +600,18 @@ const useProjectFilesQueryModel = (activeProjectId: string | undefined): Project
 
 export { readPersistedProjectFilesFilter, useProjectFileInfiniteLoad, useProjectFilesQueryModel }
 export type { ProjectFilesFilterOption }
+
+export const COLLAPSED_SESSION_OPTION_COUNT = 5
+// Caps the collapsed menu at five sessions while reserving the final slot for an active session
+// that lies later in the independently paginated option catalog.
+export const getCollapsedSessionOptions = (
+  options: ProjectFilesFilterOption[],
+  selectedOptionId: string
+): ProjectFilesFilterOption[] => {
+  const firstOptions = options.slice(0, COLLAPSED_SESSION_OPTION_COUNT)
+  const selectedOption = options.find((option) => option.id === selectedOptionId)
+  if (!selectedOption || firstOptions.some((option) => option.id === selectedOptionId)) {
+    return firstOptions
+  }
+  return [...firstOptions.slice(0, COLLAPSED_SESSION_OPTION_COUNT - 1), selectedOption]
+}

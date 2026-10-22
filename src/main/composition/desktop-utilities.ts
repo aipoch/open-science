@@ -35,6 +35,8 @@ export async function composeDesktopUtilities({
   const githubCommandOwner = createGithubCommandOwner({ fetch: netFetchStandard })
   const logsCommandOwner = createLogsCommandOwner()
   const fileSaveCommands = createFileSaveCommands({
+    openHiddenArtifactVersion: (request) =>
+      managedFileVersionService.openHiddenArtifactVersion(request, request.versionId),
     resolveManagedFilePath: managedFiles.resolveManagedFilePath,
     openLatestManagedFile: (source, request) =>
       managedFileVersionService.openLatest({ source, ...request }),

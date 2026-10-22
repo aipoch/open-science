@@ -16,6 +16,7 @@ import { createPreviewFileItem } from './preview-file-item'
 import { SessionReplayProgressWriter } from './session-replay-progress-writer'
 import { SessionReplayEvidence } from './SessionReplayEvidence'
 import { SessionDiscussionDialog } from './SessionDiscussionDialog'
+import { useArtifactHiddenState } from './use-artifact-hidden-state'
 
 type Props = { item: PreviewToolItem; isActive?: boolean }
 type LoadedReplay = {
@@ -25,7 +26,11 @@ type LoadedReplay = {
   attempt: number
 }
 
-const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Element => {
+const SessionReplayContent = ({
+  item,
+  isActive = true,
+  hiddenIds
+}: Props & { hiddenIds: ReadonlySet<string> }): React.JSX.Element => {
   const { t } = useTranslation()
   // Restored background tabs should not read entire archives before their first activation.
   const [activated, setActivated] = useState(isActive)
@@ -86,6 +91,43 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
     ])
       .then(([document, snapshot]) => {
         if (abort.signal.aborted) return
+        const hiddenResources = new Set(
+          document.resources
+            .filter(
+              (resource) =>
+                resource.source !== 'upload' &&
+                [resource.id, resource.artifactId, resource.versionId].some(
+                  (id) => id && hiddenIds.has(id)
+                )
+            )
+            .map((resource) => resource.id)
+        )
+        const visibleEvidence = (evidence: ReplayStep['evidence'][number]): boolean =>
+          evidence.kind !== 'artifact-version' ||
+          ![evidence.id, evidence.versionId, evidence.artifactId, evidence.fileId].some(
+            (id) => id && (hiddenIds.has(id) || hiddenResources.has(id))
+          )
+        document = {
+          ...document,
+          resources: document.resources.filter((resource) => !hiddenResources.has(resource.id)),
+          branches: document.branches.map((branch) => ({
+            ...branch,
+            steps: branch.steps
+              .map((step) => ({
+                ...step,
+                resourceIds: step.resourceIds.filter(
+                  (id) => !hiddenResources.has(id) && !hiddenIds.has(id)
+                ),
+                evidence: step.evidence.filter(visibleEvidence)
+              }))
+              .filter(
+                (step) =>
+                  step.kind !== 'artifact' ||
+                  step.resourceIds.length > 0 ||
+                  step.evidence.length > 0
+              )
+          }))
+        }
         useSessionReplayStore.getState().put(snapshot)
         if (snapshot.sourceStatus !== 'available' && snapshot.sourceStatus !== 'archived')
           throw new Error(t('The source research is unavailable.'))
@@ -121,7 +163,7 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
       writer?.dispose()
       if (activeWriter.current === writer) activeWriter.current = undefined
     }
-  }, [activated, projectId, sourceSessionId, attempt, t])
+  }, [activated, projectId, sourceSessionId, attempt, t, hiddenIds])
 
   useEffect(() => {
     if (sourceUnavailable) {
@@ -278,13 +320,23 @@ const SessionReplayContent = ({ item, isActive = true }: Props): React.JSX.Eleme
 
 // A source change remounts all viewing state. Late writes from the previous source keep their
 // original identity and can never supply the new source's CAS revision or player state.
-export const SessionReplayPreview = (props: Props): React.JSX.Element => (
-  <SessionReplayContent
-    key={JSON.stringify([
-      props.item.projectId,
-      props.item.replaySourceProjectId,
-      props.item.replaySourceSessionId ?? props.item.sessionId
-    ])}
-    {...props}
-  />
-)
+export const SessionReplayPreview = (props: Props): React.JSX.Element => {
+  const hidden = useArtifactHiddenState(
+    props.item.replaySourceProjectId ?? props.item.projectId,
+    true
+  )
+  // Unmount decoded resources and pending captures during every authoritative visibility refresh.
+  if (!hidden.ready) return <div role="status" />
+  return (
+    <SessionReplayContent
+      key={JSON.stringify([
+        props.item.projectId,
+        props.item.replaySourceProjectId,
+        props.item.replaySourceSessionId ?? props.item.sessionId,
+        [...hidden.ids].sort()
+      ])}
+      {...props}
+      hiddenIds={hidden.ids}
+    />
+  )
+}

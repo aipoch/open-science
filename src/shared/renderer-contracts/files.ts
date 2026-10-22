@@ -37,6 +37,9 @@ import type {
 
 import type {
   ArtifactGroupPage,
+  SetArtifactHiddenRequest,
+  HiddenArtifactIdentity,
+  ReadHiddenArtifactRequest,
   GetProjectFilesOverviewRequest,
   ListArtifactGroupsRequest,
   ListProjectFilesRequest,
@@ -158,6 +161,15 @@ export const platformContracts = {
 } as const
 
 export const projectFilesGetOverviewContracts = {
+  'projectFiles.setArtifactHidden': callable<
+    (request: SetArtifactHiddenRequest) => Promise<void>
+  >()('project-files', ['project-files:set-artifact-hidden']),
+  'projectFiles.getHiddenArtifactIds': callable<
+    (request: { projectId: string }) => Promise<HiddenArtifactIdentity[]>
+  >()('project-files', ['project-files:get-hidden-artifact-ids']),
+  'projectFiles.readHiddenArtifact': callable<
+    (request: ReadHiddenArtifactRequest) => Promise<ArtifactPreviewResult>
+  >()('project-files', ['project-files:read-hidden-artifact']),
   'projectFiles.getOverview': callable<
     (request: GetProjectFilesOverviewRequest) => Promise<ProjectFilesOverview>
   >()('project-files', ['project-files:get-overview']),
@@ -203,7 +215,7 @@ export const saveBlobFileContracts = {
   ),
   saveProjectArtifacts: callable<
     (request: SaveProjectArtifactsRequest) => Promise<SaveProjectArtifactsResult>
-  >()('platform-file-save', ['file:save-project-artifacts', MAPPED_ELECTRON]),
+  >()('platform-file-save', ['file:save-project-artifacts', DELEGATED_NATIVE]),
   saveSessionArtifacts: callable<
     (request: SaveSessionArtifactsRequest) => Promise<SaveSessionArtifactsResult>
   >()('platform-file-save', ['file:save-session-artifacts', MAPPED_ELECTRON])

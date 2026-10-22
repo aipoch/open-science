@@ -143,7 +143,8 @@ describe('database startup logging', () => {
               '0047_session_replay',
               '0048_pdf_annotation_sharing',
               '0049_pascalcase_table_names',
-              '0050_literature_translation'
+              '0050_literature_translation',
+              '0051_artifact_hidden'
             ],
             adoptedLegacy: true
           })

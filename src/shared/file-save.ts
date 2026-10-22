@@ -66,6 +66,7 @@ type SaveSessionArtifactsResult =
     }
 
 type SaveProjectArtifactFile = {
+  hidden?: boolean
   source: 'artifact' | 'upload'
   sessionId: string
   fileId: string

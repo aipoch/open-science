@@ -33,6 +33,7 @@ export function composeComputeServices({
   computeJobResultDelivery,
   sessionRepository,
   artifactRepository,
+  managedFileVersionService,
   permissionGrantRegistry,
   sessionPersistenceCoordinator,
   archiveCoordinator,
@@ -43,6 +44,7 @@ export function composeComputeServices({
   settingsRepository: SettingsRepository
   computeJobResultDelivery: ComputeJobResultDeliveryAdapter
   sessionRepository: ReturnType<typeof createDefaultSessionRepository>
+  managedFileVersionService: ManagedFileVersionService
   artifactRepository: ReturnType<typeof createDefaultArtifactRepository>
   permissionGrantRegistry: Awaited<ReturnType<typeof createPermissionGrantRegistry>>
   sessionPersistenceCoordinator: Pick<
@@ -62,8 +64,10 @@ export function composeComputeServices({
   // Electron to be ready — this is always the case here since we're inside registerIpcHandlers.
   // Absolute Compute inputs may be legacy managed artifacts or exact immutable files staged for
   // the submitting Notebook Session. Both resolvers enforce their own storage boundary.
-  const computeArtifactResolver = createComputeArtifactResolver(resolveDataRoot(), (path) =>
-    artifactRepository.resolveManagedFilePath({ path })
+  const computeArtifactResolver = createComputeArtifactResolver(
+    resolveDataRoot(),
+    (path) => artifactRepository.resolveManagedFilePath({ path }),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   const sessionLimitPersistence = {
     resolve: (sessionId: string, expectedProjectId?: string) =>
@@ -116,7 +120,8 @@ export function composeComputeServices({
     },
     sessionLimitPersistence,
     computeJobResultDelivery,
-    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId)
+    (projectId, sessionId) => archiveCoordinator.admitSessionWork(projectId, sessionId),
+    (path) => managedFileVersionService.assertArtifactPathVisible(path)
   )
   return { computeIpcModule }
 }

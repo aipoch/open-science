@@ -317,6 +317,11 @@ describe('ProjectFilesView', () => {
       )
 
     window.api.projectFiles = {
+      setArtifactHidden: vi.fn().mockResolvedValue(undefined),
+      getHiddenArtifactIds: vi.fn().mockResolvedValue([]),
+      readHiddenArtifact: vi
+        .fn()
+        .mockResolvedValue({ content: '', encoding: 'utf8', size: 0, truncated: false }),
       readExportFiles: vi.fn(),
       searchArtifacts: vi.fn(),
       getOverview: vi.fn(async (request) => {
@@ -388,6 +393,40 @@ describe('ProjectFilesView', () => {
       await Promise.resolve()
     })
   }
+
+  it.each(['Grid view', 'List view'])(
+    'omits hover Hide in %s and keeps the Hidden filter reachable',
+    async (view) => {
+      await renderView([
+        createSession({
+          artifacts: [
+            {
+              id: 'artifact-hide',
+              kind: 'managed-file',
+              path: '/workspace/result.txt',
+              name: 'result.txt'
+            }
+          ]
+        })
+      ])
+      if (view === 'List view') {
+        await act(async () =>
+          container.querySelector<HTMLButtonElement>('[aria-label="List view"]')!.click()
+        )
+      }
+      expect(
+        container.querySelector('[aria-label="Preview generated file result.txt"]')
+      ).not.toBeNull()
+      expect(container.querySelector('[aria-label="Hide result.txt"]')).toBeNull()
+      expect(
+        container.querySelector('[aria-label="Open result.txt in split view beside the session"]')
+      ).not.toBeNull()
+      await act(async () => {
+        clickDropdownTrigger(container.querySelector('[aria-label="Filter project files"]'))
+      })
+      expect(document.querySelector('[data-filter-id="hidden"]')?.textContent).toContain('Hidden')
+    }
+  )
 
   it('renders an empty state when the project has no files', async () => {
     await renderView([])

@@ -42,6 +42,7 @@ export type ManagedLogicalFile = {
 }
 
 export type ResolvedManagedFileVersion = {
+  hiddenAccess?: boolean
   logicalFile: ManagedLogicalFile
   version: ManagedFileVersionRecord
 }

@@ -830,7 +830,8 @@
       "src/main/session-replay/session-reading.test.ts",
       "src/main/storage/normalize-legacy-paths.test.ts",
       "src/main/desktop-runtime-session-size.integration.test.ts",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["notebook_network_sandbox", "windows_sensitive"],

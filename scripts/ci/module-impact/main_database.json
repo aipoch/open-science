@@ -93,7 +93,9 @@
     "src/main/database/migrations/0050-literature-translation.ts",
     "src/main/database/literature-translation-migration.test.ts",
     "src/main/database/workspace-pdf-translation-migration.test.ts",
-    "scripts/database-migration-ledger-smoke.test.ts"
+    "scripts/database-migration-ledger-smoke.test.ts",
+    "src/main/database/migrations/0051-artifact-hidden.ts",
+    "src/main/database/artifact-hidden-migration.test.ts"
   ],
   "interfacePaths": [
     "src/main/database/database-startup-ipc.ts",
@@ -139,7 +141,8 @@
       "src/main/database/literature-smart-collections-migration.test.ts",
       "src/main/database/pascalcase-table-names-migration.test.ts",
       "src/main/database/literature-translation-migration.test.ts",
-      "src/main/database/workspace-pdf-translation-migration.test.ts"
+      "src/main/database/workspace-pdf-translation-migration.test.ts",
+      "src/main/database/artifact-hidden-migration.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",
@@ -528,7 +531,8 @@
       "src/main/desktop-native-electron.test.ts",
       "src/main/session-plan/session-plan-turn-outcome.test.ts",
       "src/renderer/src/pages/literature/literature-localization.render.test.tsx",
-      "src/main/web-service/session-payload.integration.test.ts"
+      "src/main/web-service/session-payload.integration.test.ts",
+      "src/main/project-files/artifact-hidden.integration.test.ts"
     ]
   },
   "capabilityOverlays": ["e2e_regressions", "e2e_delegation", "windows_sensitive"],

@@ -235,6 +235,55 @@ describe('ManagedPreviewResources', () => {
     }
   )
 
+  it.each(['artifact', 'local'] as const)(
+    'rejects cached %s image reads after the original becomes hidden',
+    async (source) => {
+      const png = createCompressedPng(4_001, 4_000)
+      const filePath = await createFile(png, 'figure.png')
+      let hidden = false
+      const assertVisible = async (): Promise<void> => {
+        if (hidden) throw new Error('Artifact is hidden.')
+      }
+      const resources = new ManagedPreviewResources({
+        resolvePath: async () => filePath,
+        assertPathVisible: assertVisible,
+        openLatestManagedFile: vi.fn().mockResolvedValue({
+          path: filePath,
+          size: png.length,
+          versionToken: 1,
+          snapshot: { dev: 1n, ino: 2n, size: BigInt(png.length), mtimeNs: 3n },
+          readRange: async (begin: number, end: number) => png.subarray(begin, end),
+          verifyUnchanged: assertVisible,
+          close: vi.fn().mockResolvedValue(undefined)
+        })
+      })
+      const resource = await resources.acquire(
+        17,
+        source === 'artifact'
+          ? { source, projectId: 'project-1', fileId: 'figure-1', imagePreview: true }
+          : { source, path: filePath, imagePreview: true }
+      )
+      const stream = await resources.resolveProtocolResource(resource.id)
+      if (!('fileHandle' in stream)) throw new Error('Expected cached image stream')
+      try {
+        await expect(stream.fileHandle.read(Buffer.alloc(1), 0, 1, 0)).resolves.toMatchObject({
+          bytesRead: 1
+        })
+        hidden = true
+        // Existing readers and newly requested capabilities must both recheck visibility.
+        await expect(stream.fileHandle.read(Buffer.alloc(1), 0, 1, 0)).rejects.toThrow(/hidden/)
+        await expect(stream.verifyUnchanged()).rejects.toThrow(/hidden/)
+        await expect(resources.resolveProtocolResource(resource.id)).rejects.toThrow(/hidden/)
+        await expect(
+          resources.readRange(17, { resourceId: resource.id, begin: 0, end: 1 })
+        ).rejects.toThrow(/hidden/)
+      } finally {
+        await stream.fileHandle.close()
+        resources.releaseOwner(17)
+      }
+    }
+  )
+
   it('keeps raw acquisition at 16 MP', async () => {
     const filePath = await createFile(createCompressedPng(9_456, 2_800), 'figure.png')
     const resources = new ManagedPreviewResources({ resolvePath: async () => filePath })

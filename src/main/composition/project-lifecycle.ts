@@ -22,7 +22,7 @@ import type { NotebookRuntimeService } from '../notebook/runtime-service'
 import { createNotificationInboxController } from '../notifications/notification-inbox-controller'
 import { bindNotificationInboxDeletionRuntime } from '../notifications/notification-inbox-runtime'
 import { createPermissionGrantRegistry } from '../permission-grants/registry'
-import { createProjectFilesHandlers } from '../project-files/ipc'
+import { createProjectFilesHandlers, readHiddenArtifactChunk } from '../project-files/ipc'
 import { createManagedFileIndexRepository } from '../project-files/repository'
 import {
   ProjectDeletionCoordinator,
@@ -333,6 +333,13 @@ export function composeProjectLifecycle({
     projectFilesRepository,
     sessionPersistenceCoordinator,
     projectDeletionCoordinator,
+    {
+      onChanged: (event) => broadcastToRenderers('project-files:changed', event),
+      readHiddenArtifact: (request) =>
+        readHiddenArtifactChunk(request, (identity) =>
+          managedFileVersionService.openHiddenArtifactVersion(identity, identity.versionId)
+        )
+    },
     (file) =>
       managedFileVersionService.openVersion(
         {

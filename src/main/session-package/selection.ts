@@ -12,7 +12,12 @@ export const selectablePackageFiles = (
   records: PackageRecords,
   notebooks: readonly NotebookRunDocument[] = []
 ): PackageSelectableFile[] => {
-  const artifacts = records.tables.ArtifactVersion
+  // captureNativeRecords omits hidden lineages entirely. Keep this boundary defensive so a
+  // malformed or hand-built record set cannot make an orphaned ArtifactVersion selectable.
+  const visibleArtifactIds = new Set(records.tables.ArtifactLineage.map((row) => String(row.id)))
+  const artifacts = records.tables.ArtifactVersion.filter((row) =>
+    visibleArtifactIds.has(String(row.artifactId))
+  )
   const versions = [...artifacts, ...records.tables.UploadVersion]
   const byId = new Map(artifacts.map((row) => [row.id, row]))
   const inputUsers = new Map<unknown, string[]>()
@@ -57,7 +62,7 @@ export const selectablePackageFiles = (
         }))
     ) ?? []),
     ...(['ArtifactVersion', 'UploadVersion'] as const).flatMap((table) =>
-      records.tables[table].map((row) => ({
+      (table === 'ArtifactVersion' ? artifacts : records.tables.UploadVersion).map((row) => ({
         storageKey: String(row.contentStorageKey),
         filename: String(row.filename),
         sizeBytes: Number(row.sizeBytes),

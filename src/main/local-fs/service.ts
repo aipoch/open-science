@@ -76,7 +76,8 @@ export class LocalFsService {
   constructor(
     private readonly grantedRootsStore?: GrantedLocalRootsStore,
     private readonly beforeGrantedRootsChange: () => Promise<PolicyChangeShutdownResult | void> = async () =>
-      undefined
+      undefined,
+    private readonly assertPathVisible: (path: string) => Promise<void> = async () => undefined
   ) {}
 
   private async ensureGrantedRootsChangeAllowed(): Promise<void> {
@@ -211,6 +212,7 @@ export class LocalFsService {
   async listDir(path: string): Promise<LocalDirListing> {
     assertValidLocalPath(path)
     const resolvedPath = await realpath(path)
+    await this.assertPathVisible(resolvedPath)
     const dirents = await readdir(resolvedPath, { withFileTypes: true })
     const truncated = dirents.length > LOCAL_DIR_ENTRY_CAP
     // readdir order is filesystem-dependent. Sort the inexpensive Dirent metadata before applying
@@ -247,7 +249,16 @@ export class LocalFsService {
       entries.push(...batch)
     }
 
-    return { entries: sortLocalEntries(entries), truncated, resolvedPath }
+    const visibleEntries = [] as LocalDirEntry[]
+    for (const entry of entries) {
+      try {
+        await this.assertPathVisible(join(resolvedPath, entry.name))
+        visibleEntries.push(entry)
+      } catch {
+        /* Hidden entries are not local-browser resources. */
+      }
+    }
+    return { entries: sortLocalEntries(visibleEntries), truncated, resolvedPath }
   }
 
   // Validates + canonicalizes an absolute file path, asserting it is a regular file. Shared by the
@@ -255,6 +266,7 @@ export class LocalFsService {
   async resolveFilePath(request: { path: string }): Promise<string> {
     assertValidLocalPath(request.path)
     const resolvedPath = await realpath(request.path)
+    await this.assertPathVisible(resolvedPath)
     const fileStat = await stat(resolvedPath)
     if (!fileStat.isFile()) throw new Error('Local preview path is not a file.')
     return resolvedPath
@@ -269,12 +281,14 @@ export class LocalFsService {
   // Reveals a file in the OS file manager (Finder / Explorer).
   async revealInFolder(path: string): Promise<void> {
     assertValidLocalPath(path)
+    await this.assertPathVisible(path)
     await desktopShellInteraction().revealPath(path)
   }
 
   // Opens a file with the OS default application. Returns the shell error string, or '' on success.
   async openPath(path: string): Promise<string> {
     assertValidLocalPath(path)
+    await this.assertPathVisible(path)
     return desktopShellInteraction().openPath(path)
   }
 }

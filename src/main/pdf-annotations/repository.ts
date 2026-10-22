@@ -148,6 +148,7 @@ const readAnnotations = async (
   client: Pick<
     Transaction,
     | 'tagAssignment'
+    | 'artifactVersion'
     | 'pdfAnnotationSourceBinding'
     | 'project'
     | 'projectDeletionIntent'
@@ -168,7 +169,10 @@ const readAnnotations = async (
     byId.set(resourceId, ids)
   }
   const sources = await client.pdfAnnotationSourceBinding.findMany({
-    where: { documentId: { in: rows.map((row) => row.documentId) } },
+    where: {
+      documentId: { in: rows.map((row) => row.documentId) },
+      ...(await visibleBindings(client))
+    },
     orderBy: { id: 'asc' }
   })
   const [projects, deletions, versions] = await Promise.all([
@@ -267,6 +271,17 @@ const deletePdfAnnotations = async (
   return (await transaction.pdfAnnotation.deleteMany({ where: { id: { in: ids } } })).count
 }
 
+const visibleBindings = async (
+  client: Pick<Transaction, 'artifactVersion'>
+): Promise<Prisma.PdfAnnotationSourceBindingWhereInput> => {
+  const hidden = await client.artifactVersion.findMany({
+    where: { artifact: { hiddenAt: { not: null } } },
+    select: { id: true }
+  })
+  return {
+    NOT: { sourceKind: 'artifact-version', versionId: { in: hidden.map((version) => version.id) } }
+  }
+}
 const scopeWhere = (request: ListPdfAnnotationsRequest): Prisma.PdfAnnotationWhereInput => ({
   document: { sources: { some: bindingWhere(request) } }
 })
@@ -276,7 +291,7 @@ const scopedRow = async (
   scope: ListPdfAnnotationsRequest
 ): Promise<PdfAnnotationRow> => {
   const source = await tx.pdfAnnotationSourceBinding.findFirst({
-    where: { ...bindingWhere(scope), documentId: row.documentId },
+    where: { ...bindingWhere(scope), documentId: row.documentId, ...(await visibleBindings(tx)) },
     orderBy: { id: 'asc' }
   })
   if (!source) throw new Error('PDF annotation source is not available.')
@@ -501,6 +516,9 @@ class PdfAnnotationRepository {
         }
       : {}
     return client.$transaction(async (transaction) => {
+      const visible = await visibleBindings(transaction)
+      const bindings = { ...bindingWhere(request), ...visible }
+      scope.document = { sources: { some: bindings } }
       if (request.id) {
         const id = await resolveAnnotationId(transaction, request.id)
         if (!id) return { items: [], total: 0 }
@@ -514,8 +532,8 @@ class PdfAnnotationRepository {
       })
       const total = await transaction.pdfAnnotation.count({ where: scope })
       const documents = await transaction.pdfAnnotationDocument.findMany({
-        where: { sources: { some: bindingWhere(request) } },
-        include: { sources: { orderBy: { id: 'asc' } } }
+        where: { sources: { some: bindings } },
+        include: { sources: { where: visible, orderBy: { id: 'asc' } } }
       })
       const sourceGroups = documents
         .filter((document) => document.sources.length > 1)
@@ -549,7 +567,7 @@ class PdfAnnotationRepository {
         (request.literatureVersionId || (request.sourceFileId && request.versionId))
           ? await transaction.pdfAnnotationImport.findFirst({
               where: {
-                document: { sources: { some: bindingWhere(request) } }
+                document: { sources: { some: bindings } }
               }
             })
           : null

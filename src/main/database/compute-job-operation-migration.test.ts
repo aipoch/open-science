@@ -47,10 +47,7 @@ describe('Compute Job operation migration', () => {
       client.$queryRawUnsafe<Array<{ id: string }>>(
         `SELECT "id" FROM "_open_science_migrations" ORDER BY "id" DESC LIMIT 2`
       )
-    ).resolves.toEqual([
-      { id: '0050_literature_translation' },
-      { id: '0049_pascalcase_table_names' }
-    ])
+    ).resolves.toEqual([{ id: '0051_artifact_hidden' }, { id: '0050_literature_translation' }])
   })
 
   it('adds a constrained operation sidecar without rebuilding historical ComputeJob rows', async () => {

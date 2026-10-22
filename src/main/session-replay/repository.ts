@@ -12,7 +12,11 @@ import {
 
 export type SessionReplayClient = Pick<
   PrismaClient,
-  '$transaction' | 'project' | 'sessionReplayProgress' | 'sessionDiscussionSnapshot'
+  | '$transaction'
+  | 'project'
+  | 'sessionReplayProgress'
+  | 'sessionDiscussionSnapshot'
+  | 'artifactVersion'
 >
 export type SessionReplayClientProvider = () => Promise<SessionReplayClient>
 export const replayViewSnapshot = (
@@ -32,7 +36,33 @@ export const replayViewSnapshot = (
 export class SessionReplayRepository {
   constructor(readonly getClient: SessionReplayClientProvider) {}
 
+  private async isSelectionVisible(context: SessionDiscussionSnapshot): Promise<boolean> {
+    const evidence = context.evidence.filter((item) => item.kind === 'artifact-version')
+    const versionIds = evidence.flatMap((item) => [
+      item.id,
+      ...(item.versionId ? [item.versionId] : [])
+    ])
+    for (const record of context.records ?? []) {
+      if (record.id.startsWith('artifact-version:'))
+        versionIds.push(record.id.slice('artifact-version:'.length))
+    }
+    const fileIds = evidence.flatMap((item) =>
+      [item.artifactId, item.fileId].filter((id): id is string => !!id)
+    )
+    if (!versionIds.length && !fileIds.length) return true
+    const client = await this.getClient()
+    return !(await client.artifactVersion.findFirst({
+      where: {
+        artifact: { hiddenAt: { not: null } },
+        OR: [{ id: { in: versionIds } }, { artifactId: { in: fileIds } }]
+      },
+      select: { id: true }
+    }))
+  }
+
   async saveSelectionSnapshot(context: SessionDiscussionSnapshot): Promise<void> {
+    if (!(await this.isSelectionVisible(context)))
+      throw new Error('The discussion snapshot is unavailable.')
     const client = await this.getClient()
     // Parse into a stable key order so a retry with equivalent object-property order is idempotent.
     const contextJson = JSON.stringify(sessionDiscussionSnapshotSchema.parse(context))
@@ -67,7 +97,9 @@ export class SessionReplayRepository {
         sourceProject: { deletedAt: null }
       }
     })
-    return row ? sessionDiscussionSnapshotSchema.parse(JSON.parse(row.contextJson)) : undefined
+    if (!row) return undefined
+    const context = sessionDiscussionSnapshotSchema.parse(JSON.parse(row.contextJson))
+    return (await this.isSelectionVisible(context)) ? context : undefined
   }
 
   async listSelectionSnapshots(
@@ -82,7 +114,11 @@ export class SessionReplayRepository {
       },
       orderBy: { id: 'asc' }
     })
-    return rows.map((row) => sessionDiscussionSnapshotSchema.parse(JSON.parse(row.contextJson)))
+    const contexts = rows.map((row) =>
+      sessionDiscussionSnapshotSchema.parse(JSON.parse(row.contextJson))
+    )
+    const visible = await Promise.all(contexts.map((context) => this.isSelectionVisible(context)))
+    return contexts.filter((_, index) => visible[index])
   }
 
   async get(request: SessionReplayRequest): Promise<SessionReplayProgress | null> {

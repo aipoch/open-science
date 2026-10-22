@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   archive: vi.fn(),
   projects: vi.fn(),
   files: vi.fn(),
+  readHidden: vi.fn(),
   versions: vi.fn(),
   broadcast: vi.fn(),
   visionDelete: vi.fn(),
@@ -31,7 +32,10 @@ vi.mock('../uploads/command-owner', () => ({ createUploadCommandOwner: mocks.upl
 vi.mock('../projects/deletion-coordinator', () => ({ ProjectDeletionCoordinator: mocks.deletion }))
 vi.mock('../archive/coordinator', () => ({ ArchiveCoordinator: mocks.archive }))
 vi.mock('../projects/ipc', () => ({ createProjectHandlers: mocks.projects }))
-vi.mock('../project-files/ipc', () => ({ createProjectFilesHandlers: mocks.files }))
+vi.mock('../project-files/ipc', () => ({
+  createProjectFilesHandlers: mocks.files,
+  readHiddenArtifactChunk: mocks.readHidden
+}))
 vi.mock('../managed-file-versions/ipc', () => ({
   createManagedFileVersionHandlers: mocks.versions,
   createManagedFileVersionCommandOwner: (handlers: unknown) => handlers
@@ -77,7 +81,11 @@ const fixture = (() => {
       reconcileSessionCatalog: vi.fn()
     },
     uploadRepository: {},
-    managedFileVersionService: { openLatest: vi.fn(), openVersion: vi.fn() },
+    managedFileVersionService: {
+      openLatest: vi.fn(),
+      openVersion: vi.fn(),
+      openHiddenArtifactVersion: vi.fn()
+    },
     runtimeRef: { current: runtime as typeof runtime | undefined },
     backgroundResultDelivery: {
       prepareProjectDeletion: vi.fn(),
@@ -274,7 +282,7 @@ describe('Project lifecycle composition', () => {
       'session-1',
       mutation
     )
-    mocks.files.mock.calls[0][3]({
+    mocks.files.mock.calls[0][4]({
       source: 'artifact',
       sourceFileId: 'file-2',
       sourceVersionId: 'version-2',
@@ -283,6 +291,16 @@ describe('Project lifecycle composition', () => {
     expect(d.managedFileVersionService.openVersion).toHaveBeenCalledWith(
       { source: 'artifact', fileId: 'file-2', projectId: 'project-1' },
       'version-2'
+    )
+    const visibility = mocks.files.mock.calls[0][3]
+    visibility.onChanged(file)
+    expect(mocks.broadcast).toHaveBeenCalledWith('project-files:changed', file)
+    visibility.readHiddenArtifact(file)
+    expect(mocks.readHidden).toHaveBeenCalledWith(file, expect.any(Function))
+    mocks.readHidden.mock.calls[0][1](file)
+    expect(d.managedFileVersionService.openHiddenArtifactVersion).toHaveBeenCalledWith(
+      file,
+      'version-1'
     )
     mocks.versions.mock.calls[0][1].onChanged(file)
     expect(mocks.broadcast).toHaveBeenCalledWith('project-files:changed', file)

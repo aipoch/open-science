@@ -110,6 +110,76 @@ beforeEach(() => {
 afterEach(cleanup)
 
 describe('SessionReplayPreview lifecycle', () => {
+  it('unmounts decoded replay resources during visibility refresh and removes hidden versions', async () => {
+    const resource: ReplayResource = {
+      id: 'artifact-version:v1',
+      name: 'secret.txt',
+      projectId: 'project',
+      sessionId: 'source',
+      artifactId: 'secret',
+      versionId: 'v1',
+      availability: 'recorded'
+    }
+    mocks.load.mockResolvedValue({
+      ...doc(),
+      resources: [resource],
+      branches: [
+        {
+          ...doc().branches[0],
+          steps: [
+            {
+              ...step,
+              resourceIds: [resource.id],
+              evidence: [
+                {
+                  kind: 'artifact-version',
+                  id: 'v1',
+                  versionId: 'v1',
+                  projectId: 'project',
+                  sessionId: 'source'
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    })
+    let changed: (event: {
+      projectId: string
+      artifactVisibilityChanged?: boolean
+    }) => void = () => {}
+    let finish: (rows: Array<{ fileId: string; versionIds: string[] }>) => void = () => {}
+    const hidden = vi.fn().mockResolvedValue([])
+    Object.assign(window.api, {
+      projectFiles: {
+        getHiddenArtifactIds: hidden,
+        onChanged: (listener: typeof changed) => {
+          changed = listener
+          return () => {}
+        }
+      }
+    })
+    render(<SessionReplayPreview item={item()} />)
+    await screen.findByTestId('replay-panel')
+    expect(props().document.resources).toEqual([resource])
+    act(() => changed({ projectId: 'project' }))
+    expect(screen.getByTestId('replay-panel')).toBeDefined()
+    expect(mocks.load).toHaveBeenCalledTimes(1)
+    hidden.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          finish = resolve
+        })
+    )
+    act(() => changed({ projectId: 'project', artifactVisibilityChanged: true }))
+    expect(screen.queryByTestId('replay-panel')).toBeNull()
+    await act(async () => finish([{ fileId: 'secret', versionIds: ['v1'] }]))
+    await screen.findByTestId('replay-panel')
+    expect(props().document.resources).toEqual([])
+    expect(props().document.branches[0].steps[0].evidence).toEqual([])
+    expect(props().document.branches[0].steps[0].resourceIds).toEqual([])
+  })
+
   it('defers restored background archives until activation and retains them across tab switches', async () => {
     const mounted = render(<SessionReplayPreview item={item()} isActive={false} />)
     await act(async () => {})

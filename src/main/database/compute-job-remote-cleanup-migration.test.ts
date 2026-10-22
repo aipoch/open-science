@@ -92,10 +92,11 @@ describe('Compute Job remote cleanup migration', () => {
         '0047_session_replay',
         '0048_pdf_annotation_sharing',
         '0049_pascalcase_table_names',
-        '0050_literature_translation'
+        '0050_literature_translation',
+        '0051_artifact_hidden'
       ],
       from: '0025_managed_file_version_foundation',
-      to: '0050_literature_translation'
+      to: '0051_artifact_hidden'
     })
     await expect(
       client.$queryRawUnsafe<Array<{ remoteCleanupDisposition: string }>>(

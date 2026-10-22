@@ -28,7 +28,7 @@ export const readPackagePdfSource = async (
       include: { uploadFile: true }
     }),
     client.artifactVersion.findFirst({
-      where: { id: versionId, state: 'finalized', artifact: owner },
+      where: { id: versionId, state: 'finalized', artifact: { ...owner, hiddenAt: null } },
       include: { artifact: true }
     })
   ])

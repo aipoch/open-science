@@ -413,6 +413,7 @@ export const createApplicationModules = async (
     composition
   })
   const computeServices = composeComputeServices({
+    managedFileVersionService: uploadStorage.managedFileVersionService,
     applicationEvents,
     ...settingsBootstrap,
     ...backgroundResults,

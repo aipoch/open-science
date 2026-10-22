@@ -120,6 +120,16 @@ export class ReviewerTurnFileEvidenceReader {
   }): Promise<ReviewerFileEvidenceRecord[]> {
     const versionIds = [...new Set(request.artifactVersionIds)]
     const client = await this.options.getClient()
+    const hiddenVersionIds = async (): Promise<Set<string>> =>
+      new Set(
+        (
+          await client.artifactLineage.findMany({
+            where: { hiddenAt: { not: null } },
+            select: { versions: { select: { id: true } } }
+          })
+        ).flatMap((file) => file.versions.map((version) => version.id))
+      )
+    const hidden = await hiddenVersionIds()
     const versions =
       versionIds.length === 0
         ? []
@@ -128,7 +138,9 @@ export class ReviewerTurnFileEvidenceReader {
               id: { in: versionIds },
               state: 'finalized',
               messageId: { in: [...request.messageIds] },
-              artifact: { is: { projectId: request.projectId, sessionId: request.sessionId } }
+              artifact: {
+                is: { projectId: request.projectId, sessionId: request.sessionId, hiddenAt: null }
+              }
             },
             include: { inputs: { orderBy: { ordinal: 'asc' } } }
           })
@@ -164,7 +176,7 @@ export class ReviewerTurnFileEvidenceReader {
 
     for (const versionId of versionIds) {
       const version = versions.find((candidate) => candidate.id === versionId)
-      if (!version || !version.messageId) continue
+      if (!version || !version.messageId || hidden.has(version.id)) continue
       const producer = producerEvidence(version.evidenceJson)
       const executionId = version.producerRunId ?? producer.connectorInvocationId
       workProducts.push({
@@ -188,6 +200,7 @@ export class ReviewerTurnFileEvidenceReader {
         directlyRead: false
       })
       for (const input of version.inputs) {
+        if (hidden.has(input.inputFileVersionId)) continue
         const directlyRead =
           input.strongestAssociation === 'resolver-accessed' ||
           producer.directlyReadInputKeys.has(`${input.sourceKind}\0${input.inputFileVersionId}`)
@@ -221,6 +234,7 @@ export class ReviewerTurnFileEvidenceReader {
     for (const run of documents.flatMap((document) => document.runs)) {
       if (!run.promptMessageId || !messageIds.has(run.promptMessageId)) continue
       for (const input of run.inputFiles ?? []) {
+        if (hidden.has(input.inputFileVersionId)) continue
         if (input.association !== 'resolver-accessed' && input.accessEvidence !== 'file-evidence') {
           continue
         }
@@ -240,7 +254,8 @@ export class ReviewerTurnFileEvidenceReader {
         directlyRead: candidate.directlyRead
       }))
     })
-    return [...workProducts, ...sources]
+    const latestHidden = await hiddenVersionIds()
+    return [...workProducts, ...sources].filter((record) => !latestHidden.has(record.versionId))
   }
 
   private async sourceDescriptor(
