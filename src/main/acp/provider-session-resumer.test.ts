@@ -20,6 +20,17 @@ import {
 } from './session-capability-owner'
 import { AcpSessionRegistry } from './session-registry'
 
+const diagnosticLogs = vi.hoisted(() => ({ info: vi.fn(), error: vi.fn() }))
+vi.mock('@aipoch/diagnostics/node', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@aipoch/diagnostics/node')>()),
+  createLogger: () => ({
+    debug: vi.fn(),
+    info: diagnosticLogs.info,
+    warn: vi.fn(),
+    error: diagnosticLogs.error
+  })
+}))
+
 const permissionProfile: SessionPermissionProfileState = {
   selectedProfile: 'ask',
   effectiveProfile: 'ask',
@@ -843,6 +854,49 @@ describe('AcpProviderSessionResumer', () => {
       expect(harness.adopt).not.toHaveBeenCalled()
     }
   )
+
+  it('records a fixed missing-rollout reason without retaining the provider payload', async () => {
+    diagnosticLogs.info.mockClear()
+    diagnosticLogs.error.mockClear()
+    const secret = 'private-research-credential-and-path'
+    const resumeError = Object.assign(new Error('Internal error'), {
+      code: -32603,
+      data: {
+        details: 'no rollout found for thread id 019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+        prompt: secret,
+        credential: secret
+      },
+      stack: secret
+    })
+    const harness = createHarness({
+      attached: true,
+      initialBackend: codexResponsesBackend,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb',
+      resumeError
+    })
+
+    await expect(harness.reconfigure()).rejects.toBe(resumeError)
+
+    expect(diagnosticLogs.error).toHaveBeenCalledWith(
+      'operation failed',
+      expect.objectContaining({
+        operation: 'acp-provider-resume-rejection',
+        frameworkId: 'codex',
+        modelRoute: 'codex-responses',
+        reason: 'codex-rollout-not-found',
+        disposition: 'adoptable',
+        contextReplacementAllowed: false,
+        errorCategory: 'request'
+      })
+    )
+    const logs = JSON.stringify([
+      ...diagnosticLogs.info.mock.calls,
+      ...diagnosticLogs.error.mock.calls
+    ])
+    expect(logs).not.toContain(secret)
+    expect(logs).not.toContain('019fb8c8-6c66-7f22-9653-17b5b287dbbb')
+    expect(harness.adopt).not.toHaveBeenCalled()
+  })
 
   it('does not silently adopt a fresh context when capability reconfiguration cannot resume', async () => {
     const harness = createHarness({

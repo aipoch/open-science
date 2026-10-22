@@ -53,6 +53,51 @@ describe('opencodeFramework spawn seam', () => {
   })
 })
 
+it.each(['darwin', 'linux', 'win32'] as const)(
+  'ignores inherited OpenCode config and plugin controls on %s while keeping the app configuration',
+  (platform) => {
+    const spawnProcess = vi.fn().mockReturnValue(fakeChild)
+    const sourceEnv = {
+      PATH: '/parent-bin',
+      OPENCODE_CONFIG: '/personal/opencode.json',
+      OPENCODE_CONFIG_DIR: '/personal/plugins',
+      OPENCODE_CONFIG_CONTENT: '{"plugin":["personal-plugin"]}',
+      OPENCODE_TEST_MANAGED_CONFIG_DIR: '/personal/managed',
+      OPENCODE_PLUGIN_META_FILE: '/personal/plugin-metadata.json',
+      OPENCODE_PURE: '1'
+    }
+    const inheritedEnv =
+      platform === 'win32'
+        ? Object.fromEntries(
+            Object.entries(sourceEnv).map(([key, value]) => [key.toLowerCase(), value])
+          )
+        : sourceEnv
+    const framework = createOpencodeFramework({ platform, sourceEnv: inheritedEnv, spawnProcess })
+    const config = framework.prepareModelConfig(
+      { type: 'custom', baseUrl: 'https://gw/v1', model: 'm', key: 'k' },
+      { storageRoot: '/data', executablePath: '/bin/opencode' }
+    )
+    framework.spawn({ executablePath: '/bin/opencode', args: [], env: config.env ?? {} })
+    const env = spawnProcess.mock.calls[0][2].env
+    for (const name of [
+      'OPENCODE_CONFIG',
+      'OPENCODE_CONFIG_DIR',
+      'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+      'OPENCODE_PLUGIN_META_FILE',
+      'OPENCODE_PURE'
+    ]) {
+      expect(env).not.toHaveProperty(name)
+      expect(env).not.toHaveProperty(name.toLowerCase())
+    }
+    expect(inheritedEnv).toHaveProperty(
+      platform === 'win32' ? 'opencode_config' : 'OPENCODE_CONFIG'
+    )
+    expect(env.OPENCODE_CONFIG_CONTENT).toBe(config.env?.OPENCODE_CONFIG_CONTENT)
+    expect(env.OPENCODE_CONFIG_CONTENT).not.toContain('personal-plugin')
+    expect(env.OPENCODE_DISABLE_PROJECT_CONFIG).toBe('true')
+  }
+)
+
 describe('opencodeFramework.prepareModelConfig', () => {
   it('writes connector conventions and wires them into opencode.json instructions', () => {
     const config = opencodeFramework.prepareModelConfig(

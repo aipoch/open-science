@@ -486,12 +486,29 @@ export const createOpencodeFramework = ({
     // a shell (spawn EINVAL, same as Claude's cli.js shim), so those go through the shell with the
     // path quoted; a native `.exe`/Unix binary spawns directly.
     const needsShell = platform === 'win32' && /\.(cmd|bat)$/i.test(input.executablePath)
+    const inheritedEnv = { ...augmentedPathEnv(sourceEnv) }
+    // Config overrides bypass HOME/XDG isolation; PURE also disables our required Go plugin.
+    // Drop shell-owned controls, then apply the explicit app backend configuration below.
+    for (const key of Object.keys(inheritedEnv)) {
+      if (
+        [
+          'OPENCODE_CONFIG',
+          'OPENCODE_CONFIG_DIR',
+          'OPENCODE_CONFIG_CONTENT',
+          'OPENCODE_TEST_MANAGED_CONFIG_DIR',
+          'OPENCODE_PLUGIN_META_FILE',
+          'OPENCODE_PURE'
+        ].includes(key.toUpperCase())
+      ) {
+        delete inheritedEnv[key]
+      }
+    }
 
     return (input.spawnProcess ?? spawnProcess)(
       needsShell ? `"${input.executablePath}"` : input.executablePath,
       ['acp', ...input.args],
       {
-        env: { ...augmentedPathEnv(sourceEnv), ...input.env },
+        env: { ...inheritedEnv, ...input.env },
         stdio: 'pipe',
         windowsHide: true,
         shell: needsShell

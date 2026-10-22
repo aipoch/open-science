@@ -1,5 +1,6 @@
 import { configureTestRuntimeMetadata } from '../../../test/runtime-metadata'
 import { RuntimeSessionOwner } from '../session-persistence/runtime-session-owner'
+import { SessionSpecialistReconfiguration } from '../specialist/session-reconfiguration'
 import { createClaudeCodeCompletionGateRuntime } from '../agents/claude-code-handoff'
 import { AcpRuntimeCoordinator } from './runtime-coordinator'
 import { continueInterruptedTurn } from './interrupted-turn-continuation'
@@ -20130,9 +20131,8 @@ describe('ACP runtime session management', () => {
       )?.[1]
     ).toMatchObject({
       sessionId: 'restarted-session',
-      error: 'Internal error',
-      code: -32603,
-      data: { details: 'Failed to restore the previous conversation' }
+      reason: 'legacy-unresumable-details',
+      errorCategory: 'request'
     })
 
     await runtime.sendPrompt({ sessionId: 'restarted-session', text: 'keep going' })
@@ -30405,6 +30405,222 @@ describe('Specialist Skill scoping', () => {
     expect(events.some((event) => event.kind === 'message' && event.role === 'user')).toBe(false)
     expect(notebookSpecialists.at(-1)).toBe('new')
     expect(startedTurnTokens).toEqual([startedTurnTokens[0], startedTurnTokens[0]])
+  })
+
+  it.each([
+    [claudeCodeFramework, 'claude-anthropic'],
+    [opencodeFramework, 'opencode-anthropic'],
+    [opencodeFramework, 'opencode-openai'],
+    [codeBuddyFramework, 'codebuddy-openai']
+  ] as const)(
+    'applies consecutive unprompted Specialist selections with %s (%s)',
+    async (framework, modelRoute) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(process, ['original', 'first', 'second', 'main', 'third'])
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...framework, spawn: () => asAgentProcess(process) },
+          executablePath: '/fixture/agent',
+          env: {},
+          modelRoute
+        }),
+        resolveSpecialistIdentity: async (id) => ({
+          append: `IDENTITY_${id}`,
+          prefix: `IDENTITY_${id}`
+        })
+      })
+      let persisted: { specialistId?: string; specialistBindingPending?: true } = {}
+      const reconfiguration = new SessionSpecialistReconfiguration({
+        sessionBinding: {
+          resolve: async () => ({ kind: 'main' }),
+          setBinding: vi.fn(),
+          clearSession: vi.fn()
+        },
+        loadBinding: async () => persisted,
+        persistBinding: async (_id, specialistId, pending) => {
+          persisted = {
+            specialistId,
+            ...(pending ? { specialistBindingPending: true as const } : {})
+          }
+        },
+        applyRuntime: (id, target) => runtime.switchSpecialist(id, target)
+      })
+      try {
+        const { sessionId } = await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project'
+        })
+        for (const target of ['first', 'second', undefined, 'third']) {
+          await expect(reconfiguration.requestSwitch(sessionId, target)).resolves.toEqual({
+            status: 'applied',
+            contextReset: framework.id === 'claude-code'
+          })
+          expect(persisted.specialistId).toBe(target)
+          expect(persisted.specialistBindingPending).toBeUndefined()
+          await expect(reconfiguration.assertUserPromptReady(sessionId)).resolves.toBeUndefined()
+        }
+        // Switching itself never tries to resume unprompted provider history on these frameworks.
+        expect(agent.resumedSessions).toHaveLength(0)
+        expect(agent.newSessions).toHaveLength(framework.id === 'claude-code' ? 5 : 1)
+        await runtime.sendPrompt({ sessionId, text: 'Continue after the selections' })
+        expect(agent.prompts[0]?.sessionId).toBe(
+          framework.id === 'claude-code' ? 'third' : 'original'
+        )
+        const identity =
+          framework.id === 'claude-code'
+            ? JSON.stringify(agent.newSessions.at(-1)?._meta)
+            : agent.prompts[0]?.text
+        expect(identity).toContain('IDENTITY_third')
+        expect(identity).not.toContain('IDENTITY_first')
+        expect(identity).not.toContain('IDENTITY_second')
+        expect(runtime.liveSessionProjectId(sessionId)).toBe('project')
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it.each([
+    ['codex-responses', false],
+    ['codex-responses', true],
+    ['codex-bridge', false],
+    ['codex-bridge', true]
+  ] as const)(
+    'applies a %s Specialist switch when the unprompted native thread has no rollout (scoped loader: %s)',
+    async (modelRoute, scopedLoader) => {
+      const process = new FakeAgentProcess()
+      const agent = startFakeAgent(
+        process,
+        ['019fb8c8-6c66-7f22-9653-17b5b287dbbb', 'replacement-thread'],
+        {
+          modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+          onResumeRequest: ({ sessionId }) => {
+            // Captured from the installed Codex ACP/native process after session/new without a prompt.
+            throw acp.RequestError.internalError({
+              details: `no rollout found for thread id ${sessionId}`
+            })
+          }
+        }
+      )
+      const runtime = new AcpRuntime({
+        appVersion: '0.1.0',
+        defaultCwd: '/workspace',
+        resolveBackend: () => ({
+          framework: { ...codexFramework, spawn: () => asAgentProcess(process) },
+          executablePath: '/bin/codex-acp',
+          env: {},
+          modelRoute,
+          ...(scopedLoader
+            ? {
+                sessionOptions: {
+                  openScienceSkillRuntime: {
+                    command: '/node',
+                    entryPath: '/main.js',
+                    root: '/codex',
+                    skillsDirectory: '/codex/skills'
+                  }
+                }
+              }
+            : {}),
+          ...(modelRoute === 'codex-bridge'
+            ? { responsesTransportLease: createBackendLeaseHarness().lease }
+            : {})
+        }),
+        resolveSpecialistIdentity: async () => ({ append: '', prefix: 'Selected Specialist' })
+      })
+      const reconfiguration = new SessionSpecialistReconfiguration({
+        sessionBinding: {
+          resolve: async () => ({ kind: 'main' }),
+          setBinding: vi.fn(),
+          clearSession: vi.fn()
+        },
+        loadBinding: async () => ({}),
+        persistBinding: vi.fn(async () => undefined),
+        applyRuntime: (id, target) => runtime.switchSpecialist(id, target)
+      })
+      try {
+        const { sessionId } = await runtime.createSession({
+          cwd: '/workspace',
+          projectId: 'project'
+        })
+        const first = await reconfiguration.requestSwitch(sessionId, 'selected')
+        // Exercise the reported recovery too, before asserting the initial result.
+        if (first.status === 'pending') {
+          await expect(reconfiguration.requestSwitch(sessionId, 'selected')).resolves.toEqual({
+            status: 'applied',
+            contextReset: true
+          })
+        }
+        await runtime.sendPrompt({ sessionId, text: 'Continue with the selected Specialist' })
+        expect(agent.prompts[0]?.sessionId).toBe('replacement-thread')
+        expect(agent.prompts[0]?.text).toContain('Selected Specialist')
+        expect(first).toEqual({ status: 'applied', contextReset: true })
+        expect(runtime.liveSessionProjectId(sessionId)).toBe('project')
+        await expect(reconfiguration.assertUserPromptReady(sessionId)).resolves.toBeUndefined()
+      } finally {
+        await runtime.disconnect()
+      }
+    }
+  )
+
+  it('retains pending when missing-rollout recovery fails and allows an explicit retry', async () => {
+    const process = new FakeAgentProcess()
+    const agent = startFakeAgent(
+      process,
+      ['019fb8c8-6c66-7f22-9653-17b5b287dbbb', 'failed-replacement', 'usable-replacement'],
+      {
+        modes: createModes(['read-only', 'agent', 'agent-full-access'], 'agent'),
+        onResumeRequest: ({ sessionId }) => {
+          throw acp.RequestError.internalError({
+            details: `no rollout found for thread id ${sessionId}`
+          })
+        },
+        onNewSession: ({ index }) => {
+          if (index === 1) throw acp.RequestError.internalError({ details: 'provider unavailable' })
+        }
+      }
+    )
+    const runtime = new AcpRuntime({
+      appVersion: '0.1.0',
+      defaultCwd: '/workspace',
+      framework: codexFramework,
+      spawnAgent: () => asAgentProcess(process),
+      resolveSpecialistIdentity: async () => ({ append: '', prefix: 'Selected Specialist' })
+    })
+    const persistBinding = vi.fn(async () => undefined)
+    const reconfiguration = new SessionSpecialistReconfiguration({
+      sessionBinding: {
+        resolve: async () => ({ kind: 'main' }),
+        setBinding: vi.fn(),
+        clearSession: vi.fn()
+      },
+      loadBinding: async () => ({}),
+      persistBinding,
+      applyRuntime: (id, target) => runtime.switchSpecialist(id, target)
+    })
+    try {
+      const { sessionId } = await runtime.createSession({ cwd: '/workspace', projectId: 'project' })
+      await expect(reconfiguration.requestSwitch(sessionId, 'selected')).resolves.toEqual({
+        status: 'pending',
+        reason: 'runtime-application-failed'
+      })
+      expect(persistBinding).toHaveBeenLastCalledWith(sessionId, 'selected', true)
+      await expect(reconfiguration.assertUserPromptReady(sessionId)).rejects.toThrow(
+        'Retry the switch'
+      )
+      expect(agent.newSessions).toHaveLength(2)
+      await expect(reconfiguration.requestSwitch(sessionId, 'selected')).resolves.toEqual({
+        status: 'applied',
+        contextReset: true
+      })
+      expect(persistBinding).toHaveBeenLastCalledWith(sessionId, 'selected', false)
+      await runtime.sendPrompt({ sessionId, text: 'Continue after recovery' })
+      expect(agent.prompts[0]?.sessionId).toBe('usable-replacement')
+    } finally {
+      await runtime.disconnect()
+    }
   })
 
   it.each([
