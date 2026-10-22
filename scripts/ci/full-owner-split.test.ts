@@ -187,6 +187,19 @@ it.each([
   expect(rejected(state.check())).toContain('shared.ownerPaths')
 })
 
+it('still moves templates whose colons are prose, URLs or markup', () => {
+  const state = fixture({
+    [value]: [
+      'export const error = (message: string) => `Error: ${message}`',
+      'export const resume = (reason: string) => `Agent session resume failed: ${reason}`',
+      'export const repo = (name: string) => `https://github.com/${name}`',
+      'export const link = (id: string) => `](#session-replay:${id})`'
+    ].join('\n')
+  })
+  state.split()
+  expect(state.check().violations).toEqual([])
+})
+
 it('still moves ordinary kebab-case values that are not dispatched by name', () => {
   const state = fixture({
     [value]: "export const kinds = ['project-file', 'image-point'] as const"
