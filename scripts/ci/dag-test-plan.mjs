@@ -37,6 +37,7 @@ export const testBoundaries = [
       'src/main/locale/*.test.ts',
       'src/shared/locale.test.ts',
       'scripts/native-locale-assets.test.ts',
+      'scripts/build-backend.integration.test.ts',
       '**/*i18n*.test.ts',
       '**/*i18n*.test.tsx',
       '**/*locale*.test.ts',
@@ -45,9 +46,26 @@ export const testBoundaries = [
   }
 ]
 
+// Tests that scan production source files via fs rather than import — they must run whenever
+// any file matching their glob changes, regardless of import reachability.
+export const sourceReaderTests = [
+  {
+    // Scans all src/{main,renderer,shared}/** production source via git ls-files + readFileSync.
+    paths: ['src/main/**', 'src/renderer/**', 'src/shared/**'],
+    excludePattern: /\.(test|spec)\.[cm]?[jt]sx?$/,
+    tests: ['src/main/host-layer-dependencies.architecture.test.ts']
+  }
+]
+
 export function createDagTestPlan(
   changes,
-  { source, reverse, classify = classifyChanges, boundaries = testBoundaries }
+  {
+    source,
+    reverse,
+    classify = classifyChanges,
+    boundaries = testBoundaries,
+    sourceReaders = sourceReaderTests
+  }
 ) {
   const changePlan = classify(changes)
   if (changePlan.mode === 'full')
@@ -110,6 +128,16 @@ export function createDagTestPlan(
       if (!source.files.has(path)) {
         unresolved.push(path)
         continue
+      }
+      // Source-scanning tests observe any production file in their glob via fs, not import.
+      for (const reader of sourceReaders) {
+        if (
+          !reader.excludePattern?.test(path) &&
+          reader.paths.some((pattern) => matchesPath(path, pattern))
+        ) {
+          for (const test of reader.tests) selected.add(test)
+          reasons.push(`${path} -> source-reader ${reader.tests.join(', ')}`)
+        }
       }
       const reached = reach(path)
       for (const test of reached) selected.add(test)

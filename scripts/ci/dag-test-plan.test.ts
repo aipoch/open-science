@@ -14,7 +14,8 @@ const files = {
   'src/main/owner.ts': "import { LOCALES } from '../shared/locale'",
   'src/main/owner.test.ts': "import './owner'",
   'src/main/typed.test.ts': "import type { Value } from './owner'",
-  'src/main/dynamic.test.ts': 'loadByName(name)'
+  'src/main/dynamic.test.ts': 'loadByName(name)',
+  'src/main/host-layer-dependencies.architecture.test.ts': "import './owner'"
 }
 const source = {
   files: new Set(Object.keys(files)),
@@ -49,17 +50,25 @@ const plan = (paths: string[], edges: Edges = []): Plan =>
 
 describe('createDagTestPlan', () => {
   it('selects runtime-reachable tests and ignores type-only importers', () => {
-    expect(plan(['src/main/owner.ts']).testFiles).toEqual(['src/main/owner.test.ts'])
+    expect(plan(['src/main/owner.ts']).testFiles).toEqual([
+      'src/main/host-layer-dependencies.architecture.test.ts',
+      'src/main/owner.test.ts'
+    ])
   })
 
   it('follows declared dynamic edges', () => {
     expect(
       plan(['src/main/owner.ts'], [['src/main/owner.ts', ['src/main/dynamic.test.ts']]]).testFiles
-    ).toEqual(['src/main/dynamic.test.ts', 'src/main/owner.test.ts'])
+    ).toEqual([
+      'src/main/dynamic.test.ts',
+      'src/main/host-layer-dependencies.architecture.test.ts',
+      'src/main/owner.test.ts'
+    ])
   })
 
   it('stops at the i18n boundary and runs only its suites', () => {
     expect(plan(['src/renderer/src/i18n/index.ts']).testFiles).toEqual([
+      'src/main/host-layer-dependencies.architecture.test.ts',
       'src/renderer/src/i18n/resources.test.ts',
       'src/renderer/src/pages/Page.i18n.render.test.tsx'
     ])
@@ -67,6 +76,7 @@ describe('createDagTestPlan', () => {
 
   it('does not leak through the boundary from an upstream contract', () => {
     expect(plan(['src/shared/locale.ts']).testFiles).toEqual([
+      'src/main/host-layer-dependencies.architecture.test.ts',
       'src/main/owner.test.ts',
       'src/renderer/src/i18n/resources.test.ts',
       'src/renderer/src/pages/Page.i18n.render.test.tsx'
@@ -75,13 +85,24 @@ describe('createDagTestPlan', () => {
 
   it('keeps ordinary consumers selective outside the boundary', () => {
     expect(plan(['src/renderer/src/pages/Page.tsx']).testFiles).toEqual([
+      'src/main/host-layer-dependencies.architecture.test.ts',
       'src/renderer/src/pages/Page.i18n.render.test.tsx',
       'src/renderer/src/pages/Page.test.tsx'
     ])
   })
 
+  it('runs source-reader tests when a production file in the glob changes', () => {
+    expect(plan(['src/main/owner.ts']).testFiles).toContain(
+      'src/main/host-layer-dependencies.architecture.test.ts'
+    )
+    expect(plan(['src/main/owner.test.ts']).testFiles).not.toContain(
+      'src/main/host-layer-dependencies.architecture.test.ts'
+    )
+  })
+
   it('never selects tests from registration data', () => {
     expect(plan(['scripts/ci/module-impact/owner.json', 'src/main/owner.ts']).testFiles).toEqual([
+      'src/main/host-layer-dependencies.architecture.test.ts',
       'src/main/owner.test.ts'
     ])
   })
