@@ -48,6 +48,53 @@ describe('persistent platform shell cells', () => {
     await rm(root, { recursive: true, force: true })
   })
 
+  it.skipIf(process.platform !== 'darwin')(
+    'runs diagnostic searches in fresh and live shells while enforcing filesystem grants',
+    async () => {
+      vi.stubEnv('OPEN_SCIENCE_E2E_STORAGE_ROOT', root)
+      sandbox = new NotebookNetworkSandboxOwner({
+        resourceRoot: join(process.cwd(), 'packages', 'notebook-network-sandbox', 'vendor'),
+        temporaryRoot: join(root, 'command-temp'),
+        getSettings: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        persistAlwaysAllow: async () => DEFAULT_NOTEBOOK_NETWORK_SETTINGS,
+        requestDecision: async () => 'deny',
+        logger: { debug: vi.fn(), info: vi.fn(), warn: vi.fn(), error: vi.fn() }
+      })
+      adapter = new NotebookShellProcessAdapter(process.platform, sandbox)
+      const home = join(root, 'tool-home')
+      const bin = join(home, '.diagnostic-tools')
+      const privateDir = join(root, 'private-files')
+      await mkdir(bin, { recursive: true })
+      await mkdir(privateDir)
+      await writeFile(join(bin, 'diagnostic-tool'), '#!/bin/sh\nprintf fixture\n', { mode: 0o700 })
+      await writeFile(join(privateDir, 'private.txt'), 'private')
+      const diagnosticRequest = (code: string, sessionId = 'one'): NotebookShellProcessRequest => ({
+        ...request(code, sessionId),
+        environment: { PATH: `${bin}:/usr/bin:/bin`, HOME: home }
+      })
+      expect(await adapter.execute(diagnosticRequest('printf ready'))).toMatchObject({
+        exitCode: 0,
+        stdout: 'ready'
+      })
+      for (const sessionId of ['one', 'fresh']) {
+        const diagnostics = await adapter.execute(
+          diagnosticRequest('command -v diagnostic-tool; ls ~/.diagnostic-tools', sessionId)
+        )
+        expect(diagnostics, JSON.stringify(diagnostics)).toMatchObject({ exitCode: 0, stderr: '' })
+        expect(diagnostics.stdout).toContain('diagnostic-tool')
+      }
+      const denied = await adapter.execute(diagnosticRequest(`ls '${privateDir}'`))
+      expect(denied, JSON.stringify(denied)).toMatchObject({ exitCode: 1 })
+      expect(denied.stderr).toMatch(/Operation not permitted|Permission denied/)
+      expect(denied.stdout).not.toContain('private.txt')
+      const readOnlyWrite = await adapter.execute(
+        diagnosticRequest('printf changed > ~/.diagnostic-tools/diagnostic-tool')
+      )
+      expect(readOnlyWrite.exitCode).not.toBe(0)
+      expect(await readFile(join(bin, 'diagnostic-tool'), 'utf8')).toContain('printf fixture')
+    }
+  )
+
   it.for([false, true])(
     'shares global npm tools without globalizing local installs (sandbox=%s)',
     { timeout: 60_000 },

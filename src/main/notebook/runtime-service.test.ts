@@ -5268,7 +5268,7 @@ describe('notebook runtime service', () => {
       await vi.waitFor(() => expect(settled).toBe(true), { timeout: 1000 })
     })
 
-    it('releases Shell admission after scope preflight rejects without persisting a Run', async () => {
+    it('releases Shell admission after preparation rejects without persisting a Run', async () => {
       const root = await createStorageRoot()
       const execute = vi.fn<NotebookShellProcess['execute']>()
       const preparedExecute = vi
@@ -5276,7 +5276,7 @@ describe('notebook runtime service', () => {
         .mockResolvedValue({ stdout: 'scoped', stderr: '', exitCode: 0 })
       const prepare = vi
         .fn<NonNullable<NotebookShellProcess['prepare']>>()
-        .mockRejectedValueOnce(new Error('Shell search scope denied: outside cwd'))
+        .mockRejectedValueOnce(new Error('Shell runtime preparation failed'))
         .mockResolvedValue({ execute: preparedExecute, dispose: vi.fn() })
       const service = new NotebookRuntimeService({
         configRoot: root,
@@ -5288,7 +5288,7 @@ describe('notebook runtime service', () => {
       })
       const scope = { sessionId: 'session-1', workspaceCwd: root }
       await expect(service.executeShell({ ...scope, command: 'unsafe-search' })).rejects.toThrow(
-        /search scope denied/i
+        /runtime preparation failed/i
       )
       expect((await service.state(scope)).runs).toEqual([])
       await expect(

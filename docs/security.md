@@ -44,6 +44,12 @@ sensitive data.
 Python, R, REPL, Notebook Bash, and package-management processes use the app-owned
 Notebook execution path.
 
+Shell executable lookup and directory searches use the same filesystem policy as other
+commands. There is no separate search parser restricting them to the session directory;
+expansions, pipelines, and working-directory changes are evaluated by the selected shell.
+Code-risk approval and managed-runtime write protection still apply. Removing the search
+preflight does not grant a directory or disable OS sandbox enforcement.
+
 - On macOS, Seatbelt enforces declared filesystem and network rules.
 - On Linux, bubblewrap enforces declared filesystem and network rules.
 - On Windows, protected mode uses AppContainer and Windows Filtering Platform rules after
