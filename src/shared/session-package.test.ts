@@ -93,3 +93,57 @@ it('preserves verified selection digests through the transport and accepts old s
     })
   ).toThrow()
 })
+
+it('weights import stages using completed work and reserves 100 percent for success', async () => {
+  const { packageImportPercent, PACKAGE_IMPORT_STAGES } = await import('./session-package')
+  expect(packageImportPercent({ phase: 'copying' })).toBeUndefined()
+  expect(
+    packageImportPercent({
+      phase: 'validating',
+      importStage: 'read-archive',
+      completedBytes: 50,
+      totalBytes: 100
+    })
+  ).toBe(4)
+  expect(
+    packageImportPercent({
+      phase: 'validating',
+      importStage: 'verify-archive',
+      completedFiles: 1,
+      totalFiles: 2
+    })
+  ).toBe(10)
+  expect(
+    packageImportPercent({
+      phase: 'validating',
+      importStage: 'prepare-preview',
+      totalBytes: 0,
+      completedBytes: 0
+    })
+  ).toBe(12)
+  expect(
+    packageImportPercent({ phase: 'importing', importStage: 'publish', stageProgress: 1 })
+  ).toBe(99)
+  for (const importStage of Object.keys(
+    PACKAGE_IMPORT_STAGES
+  ) as (keyof typeof PACKAGE_IMPORT_STAGES)[]) {
+    const progress = {
+      phase: 'validating' as const,
+      importStage,
+      stageProgress: 0.5,
+      overallPercent: 50
+    }
+    const snapshot = { id: 'progress', kind: 'import', state: 'running', progress }
+    expect(sessionPackageCommandContracts.operation.result.parse(snapshot)?.progress).toEqual(
+      progress
+    )
+  }
+  expect(() =>
+    sessionPackageCommandContracts.operation.result.parse({
+      id: 'progress',
+      kind: 'import',
+      state: 'running',
+      progress: { phase: 'validating', overallPercent: 101 }
+    })
+  ).toThrow()
+})

@@ -349,3 +349,26 @@ it('retains the failed import retry state when cancellation leaves publication r
   expect(owner.snapshot?.result?.recovery).toBeUndefined()
   expect(owner.active).toBe(false)
 })
+
+it('keeps weighted import progress monotonic through stage changes and resets for a new operation', async () => {
+  const owner = new SessionPackageOperation()
+  await owner.run('import', undefined, async () => {
+    owner.report({
+      phase: 'validating',
+      importStage: 'prepare-preview',
+      completedBytes: 5,
+      totalBytes: 10
+    })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'validating', importStage: 'read-archive', stageProgress: 0.5 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'importing' })
+    expect(owner.snapshot?.progress.overallPercent).toBe(21)
+    owner.report({ phase: 'importing', importStage: 'publish', stageProgress: 1 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(99)
+  })
+  await owner.run('import', undefined, async () => {
+    owner.report({ phase: 'validating', importStage: 'read-archive', stageProgress: 0.5 })
+    expect(owner.snapshot?.progress.overallPercent).toBe(4)
+  })
+})

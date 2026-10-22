@@ -4,7 +4,7 @@ import { z } from 'zod'
 import type { NotebookRunDocument } from '../../shared/notebook'
 import { PACKAGE_MAX_FILE_BYTES } from '../../shared/session-package'
 import { resolveStorageKey } from '../artifacts/provenance-storage'
-import { createPackageContentVerifier } from './content-verification'
+import { createPackageContentVerifier } from './materialize'
 import { assertPackageSourcePath, fileChecksum, readPackageJson } from './archive'
 import type { PackageRecords } from './records-contract'
 

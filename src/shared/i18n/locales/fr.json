@@ -7796,6 +7796,16 @@
     "The Specialist was applied, but its completion state could not be saved.": "Le Spécialiste a été appliqué, mais son état d’achèvement n’a pas pu être enregistré.",
     "Your draft and queued messages are preserved.": "Votre brouillon et les messages en attente sont conservés.",
     "Reading package…": "Lecture du paquet…",
-    "Checking {{completed}} of {{total}} files…": "Vérification de {{completed}} fichiers sur {{total}}…"
+    "Checking {{completed}} of {{total}} files…": "Vérification de {{completed}} fichiers sur {{total}}…",
+    "Verifying package files…": "Vérification des fichiers du paquet…",
+    "Preparing package preview…": "Préparation de l’aperçu du paquet…",
+    "Checking package relationships…": "Vérification des relations dans le paquet…",
+    "Importing files…": "Importation des fichiers…",
+    "Verifying imported files…": "Vérification des fichiers importés…",
+    "Preparing final validation…": "Préparation de la validation finale…",
+    "Checking imported relationships…": "Vérification des relations importées…",
+    "Finishing import…": "Finalisation de l’importation…",
+    "Overall import progress (estimated)": "Progression globale de l’importation (estimée)",
+    "Stage {{current}} of {{total}}": "Étape {{current}} sur {{total}}"
   }
 }

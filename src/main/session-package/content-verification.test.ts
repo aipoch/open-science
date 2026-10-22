@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, expect, it } from 'vitest'
 import { withFileIoPacing } from '../file-io-pacing'
-import { createPackageContentVerifier } from './content-verification'
+import { createPackageContentVerifier } from './materialize'
 
 const roots: string[] = []
 const fixture = async (): Promise<{ source: string; alias: string; payload: Buffer }> => {

@@ -13,6 +13,7 @@
     "artifact_publication_request": ["src/main/session-package/materialize.test.ts"],
     "artifact_storage": ["src/main/session-package/materialize.test.ts"],
     "artifact_storage_validation": [
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
@@ -35,11 +36,13 @@
       "src/renderer/src/pages/settings/SkillsPanel.render.test.tsx"
     ],
     "environment_contracts": [
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"
     ],
     "environment_engine": [
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/literature-source.test.ts",
       "src/main/session-package/materialize.test.ts"
     ],
@@ -7525,6 +7528,7 @@
       "src/main/reviewer/reviewer-resilience.test.ts",
       "src/main/runtime-electron-wiring.test.ts",
       "src/main/session-package/archive.test.ts",
+      "src/main/session-package/content-verification.test.ts",
       "src/main/session-package/deletion.test.ts",
       "src/main/session-package/desktop-composition.test.ts",
       "src/main/session-package/desktop.test.ts",
@@ -8817,8 +8821,14 @@
       "src/shared/session-persistence/turn-outcome.test.ts"
     ],
     "specialist_package": ["src/renderer/src/pages/workspace/WorkspacePage.compute-entry.test.tsx"],
-    "storage_location": ["src/main/session-package/materialize.test.ts"],
-    "storage_state": ["src/main/session-package/materialize.test.ts"],
+    "storage_location": [
+      "src/main/session-package/content-verification.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
+    "storage_state": [
+      "src/main/session-package/content-verification.test.ts",
+      "src/main/session-package/materialize.test.ts"
+    ],
     "upload_file_transport": [
       "src/main/session-package/materialize.test.ts",
       "src/renderer/src/components/ProjectPackageDropZone.test.tsx"

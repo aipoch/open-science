@@ -2430,3 +2430,45 @@ it('groups verified duplicate evidence and retains expandable source paths', asy
       expect(requiredFiles.querySelector('details')?.textContent).toContain(path)
   }
 })
+
+it('shows weighted overall import progress through checking, publication and success', async () => {
+  const operation: PackageOperationSnapshot = {
+    id: 'weighted-import',
+    kind: 'import',
+    state: 'running',
+    importFilename: 'research.science',
+    progress: { phase: 'validating', importStage: 'prepare-preview', overallPercent: 21 }
+  }
+  vi.stubGlobal('api', {
+    sessions: { packageOperation: async () => operation, onPackageOperation: () => () => undefined }
+  })
+  usePackageOperationStore.setState({ operation, open: true })
+  await act(async () => root.render(<SessionPackageOperation />))
+  const bar = (): Element | null => document.querySelector('[role="progressbar"]')
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('21')
+  expect(document.body.textContent).toContain('Preparing package preview…')
+  expect(document.body.textContent).toContain('Stage 3 of 9')
+  expect(document.body.textContent).toContain('Overall import progress (estimated)')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      progress: { phase: 'importing', importStage: 'publish', overallPercent: 99 }
+    })
+  )
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('99')
+  expect(document.body.textContent).toContain('Finishing import…')
+  act(() =>
+    usePackageOperationStore.getState().receive({
+      ...operation,
+      state: 'succeeded',
+      progress: { phase: 'importing', importStage: 'publish', overallPercent: 99 }
+    })
+  )
+  expect(bar()?.getAttribute('aria-valuenow')).toBe('100')
+  act(() =>
+    usePackageOperationStore
+      .getState()
+      .receive({ ...operation, state: 'cancelling', progress: { phase: 'cleaning' } })
+  )
+  expect(bar()).toBeNull()
+})

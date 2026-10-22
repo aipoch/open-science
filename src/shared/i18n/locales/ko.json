@@ -7466,6 +7466,16 @@
     "The Specialist was applied, but its completion state could not be saved.": "스페셜리스트는 적용되었지만 완료 상태를 저장하지 못했습니다.",
     "Your draft and queued messages are preserved.": "초안과 대기 중인 메시지는 보존됩니다.",
     "Reading package…": "패키지 읽는 중…",
-    "Checking {{completed}} of {{total}} files…": "파일 {{total}}개 중 {{completed}}개 확인 중…"
+    "Checking {{completed}} of {{total}} files…": "파일 {{total}}개 중 {{completed}}개 확인 중…",
+    "Verifying package files…": "패키지 파일 검증 중…",
+    "Preparing package preview…": "패키지 미리보기 준비 중…",
+    "Checking package relationships…": "패키지 내 관계 확인 중…",
+    "Importing files…": "파일 가져오는 중…",
+    "Verifying imported files…": "가져온 파일 검증 중…",
+    "Preparing final validation…": "최종 검증 준비 중…",
+    "Checking imported relationships…": "가져온 데이터의 관계 확인 중…",
+    "Finishing import…": "가져오기 마무리 중…",
+    "Overall import progress (estimated)": "전체 가져오기 진행률(예상)",
+    "Stage {{current}} of {{total}}": "단계 {{current}} / {{total}}"
   }
 }

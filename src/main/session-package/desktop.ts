@@ -6,7 +6,7 @@ import {
 } from './sensitive-content'
 import { ForkRecoveryRequiredError } from './fork-session'
 import { redactSensitiveText } from '@aipoch/diagnostics'
-import { formatPackageBytes } from '../../shared/session-package'
+import { formatPackageBytes, packageImportPercent } from '../../shared/session-package'
 import { randomUUID } from 'node:crypto'
 import { mkdtemp, realpath, rm, stat } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
@@ -813,7 +813,12 @@ export class SessionPackageDesktop {
             this.operations.report({ phase: 'validating' })
             try {
               await this.acceptCleanup(() =>
-                this.options.service.inspect(sourcePath, signal, this.operations.report)
+                this.options.service.inspect(sourcePath, signal, (progress) =>
+                  this.operations.report({
+                    ...progress,
+                    overallPercent: (packageImportPercent(progress) ?? 0) / 4
+                  })
+                )
               )
             } catch (error) {
               this.failOperation(error)
@@ -872,11 +877,20 @@ export class SessionPackageDesktop {
                       signal,
                       // Inspection reports before confirmation; subsequent validation belongs to import.
                       (progress) =>
-                        this.operations.report(
-                          confirmed && progress.phase === 'validating'
-                            ? { ...progress, phase: 'importing' }
-                            : progress
-                        ),
+                        this.operations.report({
+                          ...progress,
+                          phase:
+                            confirmed && progress.phase === 'validating'
+                              ? 'importing'
+                              : progress.phase,
+                          ...(validateBeforeTarget
+                            ? {
+                                overallPercent:
+                                  10 +
+                                  (packageImportPercent(progress) ?? (confirmed ? 40 : 0)) * 0.9
+                              }
+                            : {})
+                        }),
                       async (preview, budgetSignal) => {
                         await this.operations.waitForImport(
                           { preview, filename: basename(input) },

@@ -7628,6 +7628,16 @@
     "The Specialist was applied, but its completion state could not be saved.": "Der Spezialist wurde angewendet, aber der Abschlussstatus konnte nicht gespeichert werden.",
     "Your draft and queued messages are preserved.": "Ihr Entwurf und die Nachrichten in der Warteschlange bleiben erhalten.",
     "Reading package…": "Paket wird gelesen…",
-    "Checking {{completed}} of {{total}} files…": "{{completed}} von {{total}} Dateien werden geprüft…"
+    "Checking {{completed}} of {{total}} files…": "{{completed}} von {{total}} Dateien werden geprüft…",
+    "Verifying package files…": "Paketdateien werden überprüft…",
+    "Preparing package preview…": "Paketvorschau wird vorbereitet…",
+    "Checking package relationships…": "Beziehungen im Paket werden überprüft…",
+    "Importing files…": "Dateien werden importiert…",
+    "Verifying imported files…": "Importierte Dateien werden überprüft…",
+    "Preparing final validation…": "Abschließende Überprüfung wird vorbereitet…",
+    "Checking imported relationships…": "Importierte Beziehungen werden überprüft…",
+    "Finishing import…": "Import wird abgeschlossen…",
+    "Overall import progress (estimated)": "Gesamter Importfortschritt (geschätzt)",
+    "Stage {{current}} of {{total}}": "Phase {{current}} von {{total}}"
   }
 }

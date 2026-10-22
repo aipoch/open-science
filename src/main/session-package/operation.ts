@@ -11,7 +11,8 @@ import {
   PACKAGE_MAX_IO_BYTES_PER_SECOND,
   PACKAGE_MIN_IO_BYTES_PER_SECOND,
   PACKAGE_MAX_FILE_BYTES,
-  formatPackageBytes
+  formatPackageBytes,
+  packageImportPercent
 } from '../../shared/session-package'
 import type {
   BrowserPackageTransfer,
@@ -89,7 +90,15 @@ export class SessionPackageOperation {
   }
   report = (progress: PackageProgress): void => {
     if (!this.current || !this.controller) return
-    const phaseChanged = progress.phase !== this.current.progress.phase
+    const previous = this.current.progress
+    const phaseChanged =
+      progress.phase !== previous.phase || progress.importStage !== previous.importStage
+    if (this.current.kind === 'import' && progress.phase !== 'cleaning') {
+      const percent =
+        progress.overallPercent ?? packageImportPercent(progress) ?? previous.overallPercent
+      if (percent !== undefined)
+        progress = { ...progress, overallPercent: Math.max(previous.overallPercent ?? 0, percent) }
+    }
     this.current = { ...this.current, progress }
     this.observeDiagnostics()
     if (phaseChanged || Date.now() - this.lastProgressAt >= 150) {
@@ -248,7 +257,7 @@ export class SessionPackageOperation {
       importFilename: input.filename ?? this.current.importFilename,
       importPreview: input.preview,
       state: 'awaiting-selection',
-      progress: { phase: input.preview ? 'confirming' : 'selecting' }
+      progress: { ...this.current.progress, phase: input.preview ? 'confirming' : 'selecting' }
     }
     this.publish()
     return pending

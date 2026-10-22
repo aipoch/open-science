@@ -7468,6 +7468,16 @@
     "The Specialist was applied, but its completion state could not be saved.": "スペシャリストは適用されましたが、完了状態を保存できませんでした。",
     "Your draft and queued messages are preserved.": "下書きと送信待ちのメッセージは保持されています。",
     "Reading package…": "パッケージを読み込み中…",
-    "Checking {{completed}} of {{total}} files…": "{{total}} ファイル中 {{completed}} ファイルを確認中…"
+    "Checking {{completed}} of {{total}} files…": "{{total}} ファイル中 {{completed}} ファイルを確認中…",
+    "Verifying package files…": "パッケージ内のファイルを検証中…",
+    "Preparing package preview…": "パッケージのプレビューを準備中…",
+    "Checking package relationships…": "パッケージ内の関連を確認中…",
+    "Importing files…": "ファイルをインポート中…",
+    "Verifying imported files…": "インポートしたファイルを検証中…",
+    "Preparing final validation…": "最終検証を準備中…",
+    "Checking imported relationships…": "インポート後の関連を確認中…",
+    "Finishing import…": "インポートの完了処理中…",
+    "Overall import progress (estimated)": "インポート全体の進捗（推定）",
+    "Stage {{current}} of {{total}}": "段階 {{current}} / {{total}}"
   }
 }

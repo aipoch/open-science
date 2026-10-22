@@ -71,12 +71,21 @@ export const inspectSessionPackage = async (
   onProgress?: (progress: PackageProgress) => void
 ): Promise<SessionPackagePreview> => {
   const manifest = await readPackageArchive(path, directory, signal, onProgress)
-  onProgress?.({ phase: 'validating' })
+  onProgress?.({ phase: 'validating', importStage: 'prepare-preview' })
   const session = await readSession(directory)
   if (manifest.source.projectId !== session.projectId || manifest.source.sessionId !== session.id)
     throw new Error('Session package source identity mismatch.')
   const records = parseNativeRecords(await readPackageJson(join(directory, 'records.json')))
   validatePackageLiteratureSession(records, session)
-  await validatePackageRecords(directory, manifest, records, signal, manifest.source, temporaryRoot)
+  await validatePackageRecords(
+    directory,
+    manifest,
+    records,
+    signal,
+    manifest.source,
+    temporaryRoot,
+    onProgress
+  )
+  onProgress?.({ phase: 'validating', importStage: 'validate-preview', stageProgress: 1 })
   return preview(manifest, session)
 }

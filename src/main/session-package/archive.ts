@@ -18,7 +18,7 @@ import { resolveStorageKey } from '../artifacts/provenance-storage'
 import { digestFileWithinBudget } from '../bounded-file-io'
 import { pacedFileTransform } from '../file-io-pacing'
 import { assertPackageCapacity, packageCapacityChecker } from './capacity'
-import { createPackageContentVerifier } from './content-verification'
+import { createPackageContentVerifier } from './materialize'
 
 // Keep this diagnostic stable across the inspection worker's error-message boundary.
 export const PACKAGE_REQUIRES_UPDATE = 'Session package requires a newer version of Open Science.'
@@ -283,7 +283,12 @@ export const readPackageArchive = async (
     const source = input.createReadStream({ highWaterMark: 64 * 1024 })
     source.on('data', (chunk) => {
       readBytes += Buffer.byteLength(chunk)
-      onProgress?.({ phase: 'validating', completedBytes: readBytes, totalBytes: metadata.size })
+      onProgress?.({
+        phase: 'validating',
+        importStage: 'read-archive',
+        completedBytes: readBytes,
+        totalBytes: metadata.size
+      })
     })
     try {
       await pipeline(
@@ -345,7 +350,12 @@ export const validatePackageDirectory = async (
     throw new Error('Session package exceeds the reconstructed content limit.')
   const verifyContent = createPackageContentVerifier()
   let completedFiles = 0
-  onProgress?.({ phase: 'validating', completedFiles, totalFiles: manifest.inventory.length })
+  onProgress?.({
+    phase: 'validating',
+    importStage: 'verify-archive',
+    completedFiles,
+    totalFiles: manifest.inventory.length
+  })
   for (const entry of manifest.inventory) {
     signal?.throwIfAborted()
     const existing = contentPaths.get(entry.path)
@@ -376,6 +386,7 @@ export const validatePackageDirectory = async (
     }
     onProgress?.({
       phase: 'validating',
+      importStage: 'verify-archive',
       completedFiles: ++completedFiles,
       totalFiles: manifest.inventory.length
     })

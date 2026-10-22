@@ -81,7 +81,7 @@ import {
   writePackageArchive
 } from './archive'
 import { assertPackageCapacity } from './capacity'
-import { createPackageContentVerifier } from './content-verification'
+import { createPackageContentVerifier } from './materialize'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { SessionPackageDeletion } from './deletion'
 import { executionEvidenceKeys } from './execution-evidence'
@@ -1556,6 +1556,14 @@ export class SessionPackageService {
       const files: SessionPackageReceipt['files'] = []
       const nativeInventory: SessionPackageManifest['inventory'] = []
       const verifyContent = createPackageContentVerifier()
+      let verifiedFiles = 0
+      const totalFiles = manifest.inventory.filter((entry) => entry.storageKey).length
+      onProgress?.({
+        phase: 'importing',
+        importStage: 'verify-files',
+        completedFiles: 0,
+        totalFiles
+      })
       for (const entry of manifest.inventory) {
         if (!entry.storageKey) continue
         const localStorageKey = remapStorageKey(entry.storageKey, native.identities)
@@ -1579,6 +1587,12 @@ export class SessionPackageService {
           ...localEntry,
           storageKey: localStorageKey
         })
+        onProgress?.({
+          phase: 'importing',
+          importStage: 'verify-files',
+          completedFiles: ++verifiedFiles,
+          totalFiles
+        })
       }
       // Re-open derived evidence through the same native readers before publishing any authority.
       await validatePackageRecords(
@@ -1597,9 +1611,12 @@ export class SessionPackageService {
         },
         native.records,
         this.signal,
-        manifest.source
+        manifest.source,
+        undefined,
+        onProgress,
+        true
       )
-      onProgress?.({ phase: 'importing' })
+      onProgress?.({ importStage: 'publish', phase: 'importing' })
       await rename(sourceRoot, join(evidenceDirectory, 'source'))
       await writeDurableJsonFile(
         join(evidenceDirectory, 'receipt.json'),

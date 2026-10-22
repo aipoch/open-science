@@ -7468,6 +7468,16 @@
     "The Specialist was applied, but its completion state could not be saved.": "專家已套用，但無法儲存完成狀態。",
     "Your draft and queued messages are preserved.": "你的草稿和佇列中的訊息已保留。",
     "Reading package…": "正在讀取套件…",
-    "Checking {{completed}} of {{total}} files…": "正在檢查檔案：{{completed}} / {{total}}…"
+    "Checking {{completed}} of {{total}} files…": "正在檢查檔案：{{completed}} / {{total}}…",
+    "Verifying package files…": "正在驗證套件內的檔案…",
+    "Preparing package preview…": "正在準備套件預覽…",
+    "Checking package relationships…": "正在檢查套件內的關聯…",
+    "Importing files…": "正在匯入檔案…",
+    "Verifying imported files…": "正在驗證已匯入的檔案…",
+    "Preparing final validation…": "正在準備最終驗證…",
+    "Checking imported relationships…": "正在檢查匯入後的關聯…",
+    "Finishing import…": "正在完成匯入…",
+    "Overall import progress (estimated)": "整體匯入進度（估算）",
+    "Stage {{current}} of {{total}}": "階段 {{current}} / {{total}}"
   }
 }
