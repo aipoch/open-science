@@ -5,6 +5,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  realpath,
   rm,
   symlink,
   writeFile
@@ -92,6 +93,29 @@ describe('persistent platform shell cells', () => {
       )
       expect(readOnlyWrite.exitCode).not.toBe(0)
       expect(await readFile(join(bin, 'diagnostic-tool'), 'utf8')).toContain('printf fixture')
+      // Changing cwd must not promote a read-only tool directory into a writable root.
+      expect(await adapter.execute(diagnosticRequest(`cd '${bin}'; ls .`))).toMatchObject({
+        exitCode: 0
+      })
+      const afterCd = await adapter.execute(diagnosticRequest('printf changed > diagnostic-tool'))
+      expect(afterCd.exitCode).not.toBe(0)
+      expect(await readFile(join(bin, 'diagnostic-tool'), 'utf8')).toContain('printf fixture')
+      expect(await adapter.execute(diagnosticRequest('cd /; pwd'))).toMatchObject({
+        exitCode: 0,
+        stdout: '/\n'
+      })
+      const afterRootCd = await adapter.execute(
+        diagnosticRequest(`printf changed > '${bin}/diagnostic-tool'`)
+      )
+      expect(afterRootCd.exitCode).not.toBe(0)
+      expect(await readFile(join(bin, 'diagnostic-tool'), 'utf8')).toContain('printf fixture')
+      const resetRequest = diagnosticRequest('pwd')
+      const reset = await adapter.execute({
+        ...resetRequest,
+        environment: { ...resetRequest.environment, DIAGNOSTIC_CONTEXT: 'reset' }
+      })
+      expect(reset.exitCode).toBe(0)
+      expect(await realpath(reset.stdout.trim())).toBe(await realpath(join(root, 'workspace')))
     }
   )
 
