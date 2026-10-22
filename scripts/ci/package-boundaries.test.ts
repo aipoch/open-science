@@ -251,8 +251,10 @@ it.each([
   ['main_literature', 'src/main/literature/command-owner.ts'],
   ['page_literature', 'src/renderer/src/pages/literature/detail/LiteratureSupplementLookup.tsx'],
   ['package_literature_discovery', 'packages/literature-discovery/src/supplements.ts'],
-  ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts']
-])('runs unfiltered tests for reclassified %s module and affected plans', async (id, path) => {
+  ['notebook_execution', 'src/main/notebook/windows-runtime-manager.ts'],
+  ['notebook_execution', 'src/main/notebook/scientific-output-analysis.ts'],
+  ['notebook_execution', 'src/main/notebook/working-file-observer.ts']
+])('runs unfiltered tests for reclassified %s and affected path %s', async (id, path) => {
   const { createModuleTestPlan, createAffectedTestPlan, executeModuleTestPlan } =
     await import('./module-test-impact.mjs')
   for (const plan of [
