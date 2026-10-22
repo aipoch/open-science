@@ -112,9 +112,7 @@ describe('Attachment safety and version access', () => {
     )
     fireEvent.click(screen.getByRole('button', { name: 'Attachment actions for paper-v1.pdf' }))
     expect(
-      (await screen.findByRole('menuitem', { name: 'Download' })).getAttribute(
-        'aria-disabled'
-      )
+      (await screen.findByRole('menuitem', { name: 'Download' })).getAttribute('aria-disabled')
     ).toBe('true')
     expect(saveManagedFile).not.toHaveBeenCalled()
   })
