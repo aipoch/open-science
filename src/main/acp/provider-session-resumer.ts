@@ -93,7 +93,11 @@ export type AcpSessionWriterTransfer = {
 export class AcpProviderSessionResumer {
   private readonly policy = new AcpSessionResumePolicy()
   private readonly presentation = new AcpSessionPresentationPolicy()
-  private readonly writerReleases = new Map<string, Promise<string | undefined>>()
+  private readonly writerReleases = new Map<
+    string,
+    { attachment: AcpSessionAttachment; operation: Promise<string | undefined> }
+  >()
+  private readonly pendingResumeTransfers = new Map<string, AcpSessionWriterTransfer>()
   private readonly progressObservers = new Map<string, Set<() => void>>()
 
   constructor(private readonly deps: AcpProviderSessionResumerDependencies) {}
@@ -108,20 +112,60 @@ export class AcpProviderSessionResumer {
     request: AcpResumeSessionRequest,
     writerTransfer?: AcpSessionWriterTransfer
   ): Promise<AcpCreateSessionResponse> {
+    if (this.writerReleases.has(request.sessionId)) {
+      const providerSessionId = await this.releaseForTransfer(request.sessionId)
+      if (providerSessionId) {
+        request = { ...request, providerSessionId }
+        writerTransfer = { providerSessionId, writerReleased: true }
+        this.pendingResumeTransfers.set(request.sessionId, writerTransfer)
+      }
+    }
     const attached = this.deps.registry.lookup(request.sessionId)?.attachment
-    if (attached) return this.resumeAttached(request, attached)
-
-    return this.resumeDetached(request, false, writerTransfer)
+    if (attached) {
+      this.pendingResumeTransfers.delete(request.sessionId)
+      return this.resumeAttached(request, attached)
+    }
+    writerTransfer ??= this.pendingResumeTransfers.get(request.sessionId)
+    if (writerTransfer)
+      request = { ...request, providerSessionId: writerTransfer.providerSessionId }
+    const response = await this.resumeDetached(request, false, writerTransfer)
+    this.pendingResumeTransfers.delete(request.sessionId)
+    return response
   }
 
-  releaseForTransfer(sessionId: string): Promise<string | undefined> {
-    const pending = this.writerReleases.get(sessionId)
-    if (pending) return pending
-    const release = this.releaseWriter(sessionId).finally(() => {
-      if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+  hasPendingWriterRelease(sessionId: string): boolean {
+    return this.writerReleases.has(sessionId)
+  }
+
+  async releaseForTransfer(sessionId: string): Promise<string | undefined> {
+    let release = this.writerReleases.get(sessionId)
+    if (!release) {
+      const attachment = this.deps.registry.lookup(sessionId)?.attachment
+      if (!attachment) return undefined
+      release = { attachment, operation: this.releaseWriter(sessionId) }
+      this.writerReleases.set(sessionId, release)
+      const current = release
+      void release.operation.catch(() => {
+        if (this.writerReleases.get(sessionId) === current) this.writerReleases.delete(sessionId)
+      })
+    }
+    // Keep ownership discoverable after a caller timeout. Only a caller consuming the confirmed
+    // release may detach it; otherwise sibling state updates could discard the retry identity.
+    const providerSessionId = await this.withTimeout(() => release.operation, [], {
+      preserveConnection: true
     })
-    this.writerReleases.set(sessionId, release)
-    return release
+    const current = this.deps.registry.lookup(sessionId)?.attachment
+    if (current === release.attachment) {
+      if (!this.deps.registry.detach(release.attachment, 'connection')) {
+        throw new Error('ACP session transfer was superseded.')
+      }
+      release.attachment.session.dispose()
+    } else if (current) {
+      if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+      throw new Error('ACP session transfer was superseded.')
+    }
+    if (this.writerReleases.get(sessionId) === release) this.writerReleases.delete(sessionId)
+    return providerSessionId
   }
 
   private async releaseWriter(sessionId: string): Promise<string | undefined> {
@@ -134,24 +178,13 @@ export class AcpProviderSessionResumer {
     }
     // Close only this writer, preserving provider history and sibling Sessions. A failed close
     // must not allow another generation to resume the same thread.
-    return this.withTimeout(
-      async (cancellationSignal) => {
-        await connection.agent.request(
-          acp.methods.agent.session.close,
-          { sessionId: attachment.providerSessionId },
-          { cancellationSignal }
-        )
-        cancellationSignal.throwIfAborted()
-        this.deps.assertCurrentConnection(connection)
-        if (!this.deps.registry.detach(attachment, 'connection')) {
-          throw new Error('ACP session transfer was superseded.')
-        }
-        attachment.session.dispose()
-        return attachment.providerSessionId
-      },
-      [],
-      { preserveConnection: true }
+    await connection.agent.request(
+      acp.methods.agent.session.close,
+      { sessionId: attachment.providerSessionId },
+      { cancellationSignal: new AbortController().signal }
     )
+    this.deps.assertCurrentConnection(connection)
+    return attachment.providerSessionId
   }
 
   async reconfigure(request: AcpResumeSessionRequest): Promise<AcpCreateSessionResponse> {

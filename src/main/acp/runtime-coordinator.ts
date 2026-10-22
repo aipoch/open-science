@@ -204,6 +204,10 @@ class AcpRuntimeCoordinator {
   private promptAdmissionClosedForQuit = false
   private providerShutdownStartedForQuit = false
   private readonly pendingSessionCreations = new Set<{ runtime: AcpRuntime; projectId?: string }>()
+  private readonly sessionResumeOperations = new Map<
+    string,
+    { operation: Promise<AcpCreateSessionResponse>; invalidated: boolean }
+  >()
   private readonly pendingSessionAdoptions = new Map<
     string,
     { runtime: AcpRuntime; projectId?: string }
@@ -634,6 +638,37 @@ class AcpRuntimeCoordinator {
     request: AcpResumeSessionRequest,
     pinnedRuntime?: AcpRuntime
   ): Promise<AcpCreateSessionResponse> {
+    const previous = this.sessionResumeOperations.get(request.sessionId)
+    if (pinnedRuntime && previous) {
+      throw new Error('ACP session must finish resuming before sending a prompt')
+    }
+    const generation = this.initializationGeneration
+    const operation = previous
+      ? previous.operation
+          .catch(() => undefined)
+          .then(() => {
+            if (previous.invalidated || generation !== this.initializationGeneration) {
+              throw new Error('ACP session resume was superseded.')
+            }
+            return this.performSessionResume(request, pinnedRuntime)
+          })
+      : this.performSessionResume(request, pinnedRuntime)
+    const queue = previous ?? { operation, invalidated: false }
+    queue.operation = operation
+    this.sessionResumeOperations.set(request.sessionId, queue)
+    try {
+      return await operation
+    } finally {
+      if (this.sessionResumeOperations.get(request.sessionId)?.operation === operation) {
+        this.sessionResumeOperations.delete(request.sessionId)
+      }
+    }
+  }
+
+  private async performSessionResume(
+    request: AcpResumeSessionRequest,
+    pinnedRuntime?: AcpRuntime
+  ): Promise<AcpCreateSessionResponse> {
     await this.waitForInitialization()
     // A pinned activity must not reacquire the prior writer while another runtime adopts it.
     if (pinnedRuntime && this.pendingSessionAdoptions.has(request.sessionId)) {
@@ -644,6 +679,25 @@ class AcpRuntimeCoordinator {
       request = { ...request, providerSessionId: retainedProviderId }
     }
     const owner = this.findRuntimeForSession(request.sessionId)
+    // Consume a timed-out close on its owning runtime even when retrying the same model.
+    // Publish the receipt here before resume can fail or state updates can remove the old owner.
+    if (owner?.hasPendingSessionWriterRelease(request.sessionId)) {
+      const generation = this.initializationGeneration
+      const providerSessionId = await owner.releaseSessionForTransfer(request.sessionId)
+      if (
+        generation !== this.initializationGeneration ||
+        this.sessionResumeOperations.get(request.sessionId)?.invalidated
+      ) {
+        throw new Error('ACP session resume was superseded.')
+      }
+      if (providerSessionId) {
+        this.sessionWriterTransfers.set(request.sessionId, {
+          providerSessionId,
+          writerReleased: true
+        })
+        request = { ...request, providerSessionId }
+      }
+    }
     const pendingReconciliation = this.pendingResumeReconciliations.get(request.sessionId)
     if (
       pendingReconciliation &&
@@ -1485,7 +1539,10 @@ class AcpRuntimeCoordinator {
     cancellation?: RootAdmissionCancellation
   ): ReturnType<AcpRuntime['sendPrompt']> {
     if (this.admissionClosedReason()) return this.rejectPromptForQuit()
-    if (this.pendingSessionAdoptions.has(request.sessionId)) {
+    if (
+      this.pendingSessionAdoptions.has(request.sessionId) ||
+      this.sessionResumeOperations.has(request.sessionId)
+    ) {
       return Promise.reject(new Error('ACP session must finish resuming before sending a prompt'))
     }
     const origin =
@@ -1709,6 +1766,8 @@ class AcpRuntimeCoordinator {
   }
 
   async deleteSession(request: AcpDeleteSessionRequest): Promise<AcpRuntimeState> {
+    const queuedResume = this.sessionResumeOperations.get(request.sessionId)
+    if (queuedResume) queuedResume.invalidated = true
     this.invalidateSessionTurn(request.sessionId)
     this.cancelRootAdmissions(request.sessionId)
     this.teardownCallbacks.onSessionDeleteStarted?.(request.sessionId)

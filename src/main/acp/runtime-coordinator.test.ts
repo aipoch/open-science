@@ -273,6 +273,7 @@ const createFakeRuntime = (options: {
   const sendAppContinuation = vi.fn(runPrompt)
   const sessionEfforts = new Map<string, import('@aipoch/providers').ResolvedReasoningEffort>()
   const runtime = {
+    hasPendingSessionWriterRelease: vi.fn(() => false),
     releaseSessionForTransfer: vi.fn(async () => undefined),
     getSessionReasoningEffort: (id: string) => sessionEfforts.get(id),
     applySessionReasoningEffortChange: vi.fn(
@@ -409,6 +410,156 @@ const createFakeRuntime = (options: {
 }
 
 describe('AcpRuntimeCoordinator', () => {
+  it('preserves a consumed timeout receipt across failed same-model resume and later model switch', async () => {
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['thread-1', 'sibling'],
+        callbacks
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'provider',
+      model: 'old',
+      reasoningEffort: 'high'
+    } as const
+    await coordinator.createSession({ agentTarget: target })
+    const owner = created.at(-1)!
+    vi.mocked(owner.runtime.hasPendingSessionWriterRelease).mockReturnValueOnce(true)
+    vi.mocked(owner.runtime.releaseSessionForTransfer).mockImplementationOnce(async () => {
+      owner.setStateSilently({ sessionIds: ['sibling'], sessionId: 'sibling' })
+      return 'provider-thread-1'
+    })
+    owner.resumeSession.mockRejectedValueOnce(new Error('provider unavailable'))
+    await expect(
+      coordinator.resumeSession({ sessionId: 'thread-1', cwd: '/workspace', agentTarget: target })
+    ).rejects.toThrow('provider unavailable')
+    owner.emitState({})
+    await coordinator.resumeSession({
+      sessionId: 'thread-1',
+      cwd: '/workspace',
+      agentTarget: { ...target, model: 'new' }
+    })
+    expect(created.at(-1)!.resumeSession).toHaveBeenCalledWith(
+      expect.objectContaining({ providerSessionId: 'provider-thread-1' }),
+      { providerSessionId: 'provider-thread-1', writerReleased: true }
+    )
+  })
+
+  it.each(['disconnect', 'delete'] as const)(
+    'fences prompts and invalidates an early close wait on %s',
+    async (action) => {
+      const closed = createDeferred<string>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const owner = created[0]
+      vi.mocked(owner.runtime.hasPendingSessionWriterRelease).mockReturnValue(true)
+      vi.mocked(owner.runtime.releaseSessionForTransfer).mockReturnValue(closed.promise)
+      const resumed = coordinator.resumeSession({ sessionId: 'thread-1', cwd: '/workspace' })
+      const rejected = expect(resumed).rejects.toThrow('superseded')
+      await vi.waitFor(() => expect(owner.runtime.releaseSessionForTransfer).toHaveBeenCalledOnce())
+      await expect(
+        coordinator.sendPrompt({ sessionId: 'thread-1', text: 'too soon' })
+      ).rejects.toThrow('finish resuming')
+      if (action === 'disconnect') await coordinator.disconnect()
+      else await coordinator.deleteSession({ sessionId: 'thread-1' })
+      closed.resolve('provider-thread-1')
+      await rejected
+      expect(owner.resumeSession).not.toHaveBeenCalled()
+      expect(owner.sendPrompt).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['disconnect', 'delete'] as const)(
+    'invalidates a queued resume on %s',
+    async (action) => {
+      const held = createDeferred<void>()
+      const created: ReturnType<typeof createFakeRuntime>[] = []
+      const coordinator = new AcpRuntimeCoordinator((callbacks) => {
+        const fake = createFakeRuntime({
+          frameworkId: 'codex',
+          sessionIds: ['thread-1'],
+          callbacks,
+          beforeResume: () => held.promise
+        })
+        created.push(fake)
+        return fake.runtime
+      })
+      await coordinator.createSession({ cwd: '/workspace' })
+      const first = coordinator.resumeSession({ sessionId: 'thread-1', cwd: '/workspace' })
+      const firstSettled = first.catch(() => undefined)
+      await vi.waitFor(() => expect(created[0].resumeSession).toHaveBeenCalledOnce())
+      const second = coordinator.resumeSession({ sessionId: 'thread-1', cwd: '/workspace' })
+      const rejected = expect(second).rejects.toThrow('superseded')
+      if (action === 'disconnect') await coordinator.disconnect()
+      else await coordinator.deleteSession({ sessionId: 'thread-1' })
+      held.resolve()
+      await firstSettled
+      await rejected
+      expect(created.flatMap((fake) => fake.resumeSession.mock.calls)).toHaveLength(1)
+    }
+  )
+
+  it('serializes successive model handoffs before acquiring another writer', async () => {
+    const adoption = createDeferred<void>()
+    const created: ReturnType<typeof createFakeRuntime>[] = []
+    const coordinator = new AcpRuntimeCoordinator((callbacks, _grants, target) => {
+      const fake = createFakeRuntime({
+        frameworkId: 'codex',
+        sessionIds: ['thread-1'],
+        callbacks,
+        beforeResume: () => (target?.model === 'new' ? adoption.promise : Promise.resolve())
+      })
+      Object.assign(fake.runtime, {
+        releaseSessionForTransfer: vi.fn(async () => {
+          fake.setStateSilently({ sessionIds: [], sessionId: undefined })
+          return 'provider-thread-1'
+        })
+      })
+      created.push(fake)
+      return fake.runtime
+    })
+    const target = {
+      frameworkId: 'codex',
+      providerId: 'provider',
+      model: 'old',
+      reasoningEffort: 'high'
+    } as const
+    await coordinator.createSession({ agentTarget: target })
+    const request = { sessionId: 'thread-1', cwd: '/workspace' }
+    const first = coordinator.resumeSession({
+      ...request,
+      agentTarget: { ...target, model: 'new' }
+    })
+    await vi.waitFor(() => expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce())
+    const incoming = created.at(-1)!
+    const count = created.length
+    const second = coordinator.resumeSession({
+      ...request,
+      agentTarget: { ...target, model: 'newer' }
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(created).toHaveLength(count)
+    adoption.resolve()
+    await first
+    await second
+    expect(incoming.runtime.releaseSessionForTransfer).toHaveBeenCalledOnce()
+    expect(created.at(-1)!.resumeSession).toHaveBeenCalledOnce()
+  })
+
   it.each(['sendPrompt', 'sendApplicationPrompt'] as const)(
     'blocks pinned %s from reacquiring a writer during adoption',
     async (operation) => {
@@ -1359,17 +1510,17 @@ describe('AcpRuntimeCoordinator', () => {
     }
   )
 
-  it('does not retire a shared runtime when an earlier duplicate resume fails', async () => {
+  it('retries a queued duplicate resume after the earlier resume fails', async () => {
     const firstResume = createDeferred<void>()
     const secondResume = createDeferred<void>()
     const created: ReturnType<typeof createFakeRuntime>[] = []
+    let call = 0
     const coordinator = new AcpRuntimeCoordinator((callbacks, _permissionGrants, target) => {
       const fake = createFakeRuntime({
         frameworkId: target?.frameworkId ?? 'claude-code',
         sessionIds: [],
         callbacks
       })
-      let call = 0
       fake.resumeSession.mockImplementation(async (request) => {
         call += 1
         if (call === 1) {
@@ -1405,15 +1556,15 @@ describe('AcpRuntimeCoordinator', () => {
       cwd: '/workspace',
       agentTarget
     })
-    await vi.waitFor(() => expect(created[1]?.resumeSession).toHaveBeenCalledTimes(2))
+    expect(created[1].resumeSession).toHaveBeenCalledOnce()
 
     firstResume.resolve()
     await expect(first).rejects.toThrow('earlier resume failed')
     secondResume.resolve()
     await expect(second).resolves.toMatchObject({ sessionId: 'duplicate-session' })
-    expect(created[1].requestRetirement).not.toHaveBeenCalled()
+    expect(created[1].requestRetirement).toHaveBeenCalledOnce()
     await coordinator.sendPrompt({ sessionId: 'duplicate-session', text: 'continue' })
-    expect(created[1].sendPrompt).toHaveBeenCalledOnce()
+    expect(created.at(-1)!.sendPrompt).toHaveBeenCalledOnce()
   })
 
   it('keeps a pending creation usable when another creation fails on the shared target', async () => {

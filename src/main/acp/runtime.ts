@@ -952,6 +952,10 @@ class AcpRuntime {
     })
   }
 
+  hasPendingSessionWriterRelease(sessionId: string): boolean {
+    return this.providerSessionResumer.hasPendingWriterRelease(sessionId)
+  }
+
   async releaseSessionForTransfer(sessionId: string): Promise<string | undefined> {
     return this.withOperationLease(async () => {
       if (this.sessionInteractions.current(sessionId)) {

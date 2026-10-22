@@ -448,6 +448,137 @@ describe('AcpProviderSessionResumer', () => {
     expect(h.providerSession.dispose).not.toHaveBeenCalled()
   })
 
+  it.each(['success', 'failure'] as const)(
+    'serializes release retries after timeout until late %s',
+    async (outcome) => {
+      const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+      let finish!: () => void
+      let fail!: (error: Error) => void
+      h.request.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve, reject) => {
+            finish = resolve
+            fail = reject
+          })
+      )
+      const first = h.releaseForTransfer()
+      const rejection = expect(first).rejects.toThrow('timed out')
+      h.fireTimeout()
+      await rejection
+      const retry = h.releaseForTransfer()
+      expect(h.request).toHaveBeenCalledOnce()
+      expect(h.request.mock.calls[0][2].cancellationSignal.aborted).toBe(false)
+      if (outcome === 'success') {
+        finish()
+        await expect(retry).resolves.toBe('provider-session')
+        expect(h.providerSession.dispose).toHaveBeenCalledOnce()
+      } else {
+        const rejected = expect(retry).rejects.toThrow('close failed')
+        fail(new Error('close failed'))
+        await rejected
+        await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+        expect(h.request).toHaveBeenCalledTimes(2)
+      }
+    }
+  )
+
+  it('keeps a late successful release discoverable until retry consumes it', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    finish()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeDefined()
+    await expect(h.releaseForTransfer()).resolves.toBe('provider-session')
+    expect(h.request).toHaveBeenCalledOnce()
+    expect(h.registry.lookup('stable-app-session')?.attachment).toBeUndefined()
+  })
+
+  it('waits for a timed-out close before resuming the original attached model', async () => {
+    const h = createHarness({
+      attached: true,
+      initialBackend: codexResponsesBackend,
+      providerSessionId: '019fb8c8-6c66-7f22-9653-17b5b287dbbb'
+    })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    const resumed = h.resume({
+      previousFrameworkId: 'codex',
+      previousBackendId: codexResponsesBackend.backendId
+    })
+    await Promise.resolve()
+    expect(h.request).toHaveBeenCalledOnce()
+    h.request.mockRejectedValueOnce(new Error('provider unavailable'))
+    const failed = expect(resumed).rejects.toThrow('provider unavailable')
+    finish()
+    await failed
+    await h.resume({
+      previousFrameworkId: 'codex',
+      previousBackendId: codexResponsesBackend.backendId
+    })
+    expect(h.request.mock.calls.map(([method]) => method)).toEqual([
+      acp.methods.agent.session.close,
+      acp.methods.agent.session.resume,
+      acp.methods.agent.session.resume
+    ])
+  })
+
+  it('discards stale release confirmation without detaching a replacement', async () => {
+    const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
+    let finish!: () => void
+    h.request.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve
+        })
+    )
+    const first = h.releaseForTransfer()
+    const rejected = expect(first).rejects.toThrow('timed out')
+    h.fireTimeout()
+    await rejected
+    finish()
+    await Promise.resolve()
+    const old = h.registry.lookup('stable-app-session')!.attachment!
+    h.registry.detach(old, 'connection')
+    const successor = h.registry.reserve({
+      sessionIds: ['stable-app-session', h.successorSession.sessionId],
+      blockStartup: false
+    })
+    if (successor.collision) throw successor.collision
+    h.registry.publish(successor.reservation, 'stable-app-session', {
+      session: h.successorSession,
+      projectId: 'old-project',
+      cwd: '/workspace',
+      frameworkId: 'codex',
+      backendId: 'codex',
+      permissionProfile
+    })
+    successor.reservation.release()
+    await expect(h.releaseForTransfer()).rejects.toThrow('superseded')
+    expect(h.successorSession.dispose).not.toHaveBeenCalled()
+    await expect(h.releaseForTransfer()).resolves.toBe('successor-provider-session')
+    expect(h.request).toHaveBeenCalledTimes(2)
+  })
+
   it('does not disconnect sibling Sessions when writer close times out', async () => {
     const h = createHarness({ attached: true, initialBackend: codexResponsesBackend })
     h.request.mockImplementationOnce(() => new Promise(() => undefined))
