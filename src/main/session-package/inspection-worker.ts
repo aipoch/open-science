@@ -1,7 +1,7 @@
 import type { Worker, WorkerOptions } from 'node:worker_threads'
 import { mkdir, mkdtemp, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import type { SessionPackagePreview } from '../../shared/session-package'
+import type { PackageProgress, SessionPackagePreview } from '../../shared/session-package'
 import { PackageCapacityError } from './capacity'
 import { PackageCleanupPendingError, withPackageCleanup } from './cleanup'
 import { withPackageTransfer } from './transfer'
@@ -15,6 +15,7 @@ export type InspectionWorkerInput = {
 export type InspectionWorkerMessage =
   | { kind: 'pace'; id: number; bytes: number }
   | { kind: 'result'; preview: SessionPackagePreview }
+  | { kind: 'progress'; progress: PackageProgress }
   | {
       kind: 'error'
       message: string
@@ -25,7 +26,7 @@ export type InspectionWorkerMessage =
 // DB access nor a Session graph crosses this boundary; the caller owns source staging.
 export const createPackageInspector =
   (createWorker: (options: WorkerOptions) => Worker): typeof inspectSessionPackage =>
-  async (path, directory, signal) =>
+  async (path, directory, signal, _temporaryRoot, onProgress) =>
     withPackageTransfer(async (transfer) => {
       signal = AbortSignal.any([signal, transfer.signal])
       signal.throwIfAborted()
@@ -49,6 +50,7 @@ export const createPackageInspector =
                 const message = (value: InspectionWorkerMessage): void => {
                   if (!active) return
                   if (value.kind === 'result') resolve(value.preview)
+                  else if (value.kind === 'progress') onProgress?.(value.progress)
                   else if (value.kind === 'error') {
                     const capacity = value.capacity
                     reject(

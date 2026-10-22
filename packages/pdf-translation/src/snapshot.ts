@@ -5,6 +5,20 @@ const item = z
   .strict()
 const pageNumber = z.number().int().min(1).max(500)
 const count = z.number().int().min(0).max(1000000)
+const originalRegion = z
+  .object({
+    pageNumber,
+    rect: z
+      .object({
+        x: z.number().min(0).max(1),
+        y: z.number().min(0).max(1),
+        width: z.number().positive().max(1),
+        height: z.number().positive().max(1)
+      })
+      .strict()
+      .refine((r) => r.x + r.width <= 1.000001 && r.y + r.height <= 1.000001)
+  })
+  .strict()
 
 // This version describes stored data, not the currently installed grouping algorithm.
 // Old runs keep their original ownership, reading order and coordinates after upgrades.
@@ -13,6 +27,7 @@ export const pdfTranslationLayoutSnapshotSchema = z
     version: z.literal(1),
     parserVersion: z.string().min(1).max(128),
     fingerprint: z.string().min(1).max(256),
+    originalRegions: z.array(originalRegion).max(10000).optional(),
     pages: z
       .array(
         z
@@ -31,6 +46,8 @@ export const pdfTranslationLayoutSnapshotSchema = z
             id: z.string().min(1).max(256),
             source: z.string().min(1).max(100000),
             sourceOnly: z.literal(true).optional(),
+            figure: z.literal(true).optional(),
+            preserve: z.enum(['formula', 'code', 'literal', 'reference']).optional(),
             fragments: z
               .array(
                 z
@@ -106,7 +123,8 @@ export const pdfTranslationLayoutSnapshotSchema = z
         value.coverage.pageCount !== value.pages.length ||
         value.coverage.textItemCount !==
           value.coverage.includedItemCount + value.coverage.excludedItemCount ||
-        new Set(value.units.map((unit) => unit.id)).size !== value.units.length
+        new Set(value.units.map((unit) => unit.id)).size !== value.units.length ||
+        value.originalRegions?.some((region) => region.pageNumber > value.pages.length)
       )
         return false
       const owned = new Set<string>()

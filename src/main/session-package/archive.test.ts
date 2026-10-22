@@ -11,6 +11,7 @@ import { Header, Pax, c } from 'tar'
 import { afterEach, expect, it, vi } from 'vitest'
 import { SessionPackageService } from './service'
 import { withPackageTransfer } from './transfer'
+import { withFileIoPacing } from '../file-io-pacing'
 import { packageInventoryEntrySchema } from '../../shared/session-package'
 import { executionEvidenceSchema, readExecutionEvidence } from './execution-evidence'
 import * as storageUsage from '../storage/usage'
@@ -137,6 +138,23 @@ it('deduplicates identical content objects in a self-contained package', async (
   )
   await expect(readdir(join(extracted, 'objects'))).resolves.toEqual([checksum])
   await expect(readFile(join(extracted, objectPath))).resolves.toEqual(content)
+  let readBytes = 0
+  await withFileIoPacing(
+    async (bytes) => {
+      readBytes += bytes
+    },
+    () => validatePackageDirectory(extracted)
+  )
+  expect(readBytes).toBe(
+    Buffer.byteLength(session) +
+      Buffer.byteLength(records) +
+      Buffer.byteLength(readme) +
+      content.length
+  )
+  // Reusing object bytes must not accept an alias that claims different content.
+  manifest.inventory[manifest.inventory.length - 1].checksum = 'b'.repeat(64)
+  await writeFile(join(extracted, 'manifest.json'), JSON.stringify(manifest))
+  await expect(validatePackageDirectory(extracted)).rejects.toThrow('duplicate entries')
 })
 
 it('bounds the reconstructed size of content-dedupe aliases', async () => {

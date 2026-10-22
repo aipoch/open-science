@@ -2,6 +2,7 @@ import { useCallback, useRef, useState, type Dispatch, type SetStateAction } fro
 
 import type {
   CompletionHandoffLifecycleEvent,
+  SetSessionSpecialistResponse,
   SpecialistListItem
 } from '../../../../shared/specialist'
 
@@ -10,6 +11,7 @@ type WorkspaceSpecialistReconfigureError = {
   specialistName: string
   message: string
   committed: boolean
+  reason?: Extract<SetSessionSpecialistResponse, { status: 'pending' }>['reason']
 }
 
 type IdleSpecialistFailure = {
@@ -36,12 +38,15 @@ const specialistNameFor = (
 const pendingSpecialistReconfigureError = (
   sessionId: string,
   items: readonly SpecialistListItem[],
-  specialistId: string | undefined
+  specialistId: string | undefined,
+  reason?: WorkspaceSpecialistReconfigureError['reason']
 ): WorkspaceSpecialistReconfigureError => ({
   sessionId,
   specialistName: specialistNameFor(items, specialistId),
-  message: 'The selection is saved, but the Agent runtime has not applied it yet.',
-  committed: true
+  // Restored pending state has no observed failure; the renderer supplies localized recovery copy.
+  message: '',
+  committed: true,
+  ...(reason ? { reason } : {})
 })
 
 const useWorkspaceSpecialistReconfiguration = (

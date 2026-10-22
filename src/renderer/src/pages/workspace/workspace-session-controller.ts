@@ -372,7 +372,12 @@ const useWorkspaceSessionController = ({
             setSessionSpecialistId(sessionId, specialistId, true)
             setPendingSpecialists((current) => ({ ...current, [sessionId]: specialistId }))
             setReconfigureError(
-              pendingSpecialistReconfigureError(sessionId, specialistItems, specialistId)
+              pendingSpecialistReconfigureError(
+                sessionId,
+                specialistItems,
+                specialistId,
+                result.reason
+              )
             )
             return
           }
@@ -463,7 +468,7 @@ const useWorkspaceSessionController = ({
       if (result?.status === 'pending') {
         setSessionSpecialistId(sessionId, specialistId, true)
         setReconfigureError(
-          pendingSpecialistReconfigureError(sessionId, specialistItems, specialistId)
+          pendingSpecialistReconfigureError(sessionId, specialistItems, specialistId, result.reason)
         )
         setBarrier(sessionId, false)
         return false
@@ -506,6 +511,7 @@ const useWorkspaceSessionController = ({
     if (!setter || isWorkspaceSpecialistBarrierInFlight(sessionId)) return
     specialistResolutionTokens.current.set(sessionId, Symbol())
     const attempt = reconfiguration.beginIdleAttempt(sessionId, undefined)
+    setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
     setBarrier(sessionId, true)
     void setter({ sessionId, specialistId: undefined })
       .then((result) => {
@@ -514,7 +520,7 @@ const useWorkspaceSessionController = ({
           setSessionSpecialistId(sessionId, undefined, true)
           setPendingSpecialists((current) => ({ ...current, [sessionId]: undefined }))
           setReconfigureError(
-            pendingSpecialistReconfigureError(sessionId, specialistItems, undefined)
+            pendingSpecialistReconfigureError(sessionId, specialistItems, undefined, result.reason)
           )
           return
         }
@@ -531,6 +537,9 @@ const useWorkspaceSessionController = ({
   }
   useEffect(() => {
     if (!activeSession) return
+    // Main broadcasts the durable pending marker before the switch request finishes. Only
+    // restore recovery when no local attempt owns that intermediate state.
+    if (isWorkspaceSpecialistBarrierInFlight(activeSession.id)) return
     if (activeSession.specialistBindingPending !== true) {
       if (!restoredPendingBindings.current.has(activeSession.id)) return
       const restoredId = restoredPendingBindings.current.get(activeSession.id)
@@ -565,7 +574,7 @@ const useWorkspaceSessionController = ({
             activeSession.specialistId
           )
     )
-  }, [activeSession, setReconfigureError, specialistItems])
+  }, [activeSession, barrierInFlightIds, setReconfigureError, specialistItems])
 
   useEffect(() => {
     if (typeof window.api?.specialist?.list !== 'function') return

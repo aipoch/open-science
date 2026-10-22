@@ -661,9 +661,24 @@ it('clears copying counters while finalizing an import', async () => {
     getClient: async () => target.client
   }).importFrom(archive, undefined, (update) => progress.push(update))
   expect(progress.some((update) => update.totalBytes && update.completedBytes)).toBe(true)
-  expect(publishing).toEqual({ phase: 'importing' })
+  expect(publishing).toEqual({ phase: 'importing', importStage: 'publish' })
   const lastCopy = progress.findLastIndex((update) => update.totalBytes !== undefined)
-  expect(progress.slice(lastCopy + 1)).toContainEqual({ phase: 'validating' })
+  expect(progress.slice(lastCopy + 1)).toContainEqual({
+    phase: 'validating',
+    importStage: 'validate-import',
+    stageProgress: 0
+  })
+  expect([...new Set(progress.map((update) => update.importStage).filter(Boolean))]).toEqual([
+    'read-archive',
+    'verify-archive',
+    'prepare-preview',
+    'validate-preview',
+    'import-files',
+    'verify-files',
+    'prepare-validation',
+    'validate-import',
+    'publish'
+  ])
 })
 
 it.each(['success', 'rollback', 'late-ack', 'publication-retry', 'ownership-collision'] as const)(

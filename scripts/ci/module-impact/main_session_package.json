@@ -65,7 +65,8 @@
     "src/main/session-package/literature-source.ts",
     "src/main/session-package/literature-source.test.ts",
     "src/main/session-package/materialize.ts",
-    "src/main/session-package/materialize.test.ts"
+    "src/main/session-package/materialize.test.ts",
+    "src/main/session-package/content-verification.test.ts"
   ],
   "interfacePaths": [
     "src/main/session-package/desktop.ts",
@@ -108,7 +109,8 @@
       "src/main/session-package/browser-import.test.ts",
       "src/main/session-package/browser-import-protocol.test.ts",
       "src/main/session-package/browser-import-sdk.integration.test.ts",
-      "src/main/session-package/materialize.test.ts"
+      "src/main/session-package/materialize.test.ts",
+      "src/main/session-package/content-verification.test.ts"
     ],
     "contract": [
       "src/preload/index.test.ts",

@@ -4,6 +4,7 @@ import { OPS } from 'pdfjs-dist/legacy/build/pdf.mjs'
 import type { PDFDocumentProxy } from 'pdfjs-dist'
 import type { PdfStructureResult } from '@aipoch/pdf-structure/result'
 import { applyCachedPdfFigureSources } from '../../src/reader/figure-source.js'
+import { applyCachedPdfStructureSources } from '../../src/reader/structure-source.js'
 import { createPdfTranslationSource } from '../../src/reader/source.js'
 import type { PdfTranslationExtraction } from '../../src/reader/extraction.js'
 
@@ -137,6 +138,29 @@ it.each(['math-table', 'algorithm'] as const)(
     expect(f.cached).toEqual(before)
     expect(f.extraction.source.units[0].sourceOnly).toBeUndefined()
     expect(f.context.readCached).toHaveBeenCalledTimes(1)
+  }
+)
+
+it.each(['math-table', 'algorithm'] as const)(
+  'keeps existing %s retention and diagnostics through default structure preparation',
+  async (kind) => {
+    const f = setup(kind)
+    const { extraction, retainedUnitIds } = await applyCachedPdfStructureSources(f.context)
+    expect(extraction.source.units).toEqual(
+      f.extraction.source.units.map((unit, index) =>
+        index === 0 ? { ...unit, sourceOnly: true } : unit
+      )
+    )
+    expect(extraction.coverage.warnings).toEqual(
+      kind === 'algorithm'
+        ? f.extraction.coverage.warnings
+        : [
+            { unitId: 'second', reasons: ['formula-extraction', 'table-structure-unreliable'] },
+            { unitId: 'first', reasons: ['table-structure-unreliable'] }
+          ]
+    )
+    expect(retainedUnitIds).toEqual([])
+    expect(extraction.source.originalRegions).toBeUndefined()
   }
 )
 
@@ -396,6 +420,15 @@ it('restores only a complete native prose algorithm caption after full body veri
   )
   expect(result.coverage).toEqual(f.context.extraction.coverage)
   expect(f.cached).toEqual(before)
+  expect(f.context.extraction.source.units[2].sourceOnly).toBe(true)
+})
+it('keeps verified algorithm captions translatable through default structure preparation', async () => {
+  const f = protectedAlgorithmCaption()
+  const { extraction } = await applyCachedPdfStructureSources(f.context)
+  expect(extraction.source.units[0].sourceOnly).toBe(true)
+  expect(extraction.source.units[2].sourceOnly).toBeUndefined()
+  expect(extraction.source.units[2].source).toBe(f.context.extraction.source.units[2].source)
+  expect(extraction.coverage).toEqual(f.context.extraction.coverage)
   expect(f.context.extraction.source.units[2].sourceOnly).toBe(true)
 })
 it.each([
