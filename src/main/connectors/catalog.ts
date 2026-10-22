@@ -2,6 +2,10 @@ import { CONNECTOR_CATALOG as providers } from '@aipoch/connector-builtins/catal
 
 // Settings sections and application capabilities are host presentation policy.
 const directory = new Set([
+  'rxnorm',
+  'dailymed',
+  'biosamples',
+  'wikipathways',
   'orphadata',
   'pdc',
   'iedb',

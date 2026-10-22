@@ -69,7 +69,7 @@ multi-hop consumers. Opaque IPC, event, filesystem, native or unresolved imports
 independence and retain tests. `test:affected:explain -- --base <base> --head <head> --tier pr` shows
 exclusions, retained boundary reasons, deferrals, capabilities and fallback reasons.
 
-`node scripts/ci/module-relationships.mjs <revision>` exports all registered modules with file-role
+`node scripts/ci/module-graph/relationships.mjs <revision>` exports all registered modules with file-role
 layers, public interfaces, test counts, unresolved runtime files and file evidence for each edge.
 Runtime imports, type imports and explicit dynamic contracts point **consumer → dependency**;
 `test-routing` points **changed owner → consumer evidence**, while `capability-routing` points
@@ -226,7 +226,7 @@ Run from the repository root:
 
 ```bash
 node scripts/ci/audit-module-ownership.mjs
-npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-consumer-coverage.test.ts
+npx vitest run scripts/ci/validate-module-impact.test.ts scripts/ci/check-module-ownership.test.ts scripts/ci/module-graph/consumer-coverage.test.ts
 ```
 
 These checks validate registration, not the changed product behavior. Also run

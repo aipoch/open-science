@@ -1,16 +1,13 @@
 import { expect, it } from 'vitest'
-import { createConsumerDependencyReader } from './consumer-retirement.mjs'
+import { createDependencyReader } from './index.mjs'
 
-function graph(
-  text: string,
-  runtimeOnly: boolean
-): ReturnType<typeof createConsumerDependencyReader> {
+function graph(text: string, runtimeOnly: boolean): ReturnType<typeof createDependencyReader> {
   const files = {
     'src/test.ts': text,
     'src/value.ts': 'export const value = 1; export type Value = number',
     'src/adapter.ts': "import type { Value } from './value'; export const adapter = 1"
   }
-  return createConsumerDependencyReader(
+  return createDependencyReader(
     {
       files: new Set(Object.keys(files)),
       read: (path: string) => files[path as keyof typeof files]

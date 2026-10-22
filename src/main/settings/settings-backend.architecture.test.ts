@@ -924,14 +924,33 @@ describe('Settings backend ownership architecture', () => {
       'packages/providers/src/responses/types.ts',
       'packages/providers/src/models/text-generation.ts'
     ])
-    expectBoundaryPaths(manifest, 'shared_application_contracts', [
+    // Static provider policy may stay with the full-validation contracts or move to its own
+    // module, which routes it by imports. Either way each file keeps exactly one owner and the
+    // platform routing of the contracts it came from. The URL policy stays with the settings
+    // contracts that import it, which keeps the module graph acyclic.
+    for (const path of [
       'src/shared/reasoning-effort.ts',
       'src/shared/model-preference-contract.ts',
       'src/shared/provider-url-policy.ts',
       'src/shared/provider-model-policy.ts',
       'src/shared/provider-bridge-policy.ts',
       'src/shared/provider-error.ts'
-    ])
+    ]) {
+      const owners = Object.entries(manifest.modules).filter(([, module]) =>
+        module.ownerPaths.includes(path)
+      )
+      expect(owners, `unique owner of ${path}`).toHaveLength(1)
+      const [ownerId, owner] = owners[0]
+      if (ownerId === 'shared_application_contracts') {
+        expectBoundaryPaths(manifest, ownerId, [path])
+        continue
+      }
+      expect(ownerId, path).toBe('shared_provider_policy')
+      expect(owner.fullTestReason, path).toBeUndefined()
+      expect(owner.fallbackCapability, path).toBe(
+        manifest.modules.shared_application_contracts.fallbackCapability
+      )
+    }
     expectBoundaryPaths(
       manifest,
       'settings_provider_accounts',

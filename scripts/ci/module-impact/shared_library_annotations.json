@@ -1,0 +1,43 @@
+{
+  "ownerPaths": [
+    "src/shared/tags.ts",
+    "src/shared/bookmarks.ts",
+    "src/shared/pdf-annotations.ts",
+    "src/shared/pdf-bookmarks.ts",
+    "src/shared/annotation-contract.ts",
+    "src/shared/tags.test.ts",
+    "src/shared/bookmarks.test.ts",
+    "src/shared/pdf-annotations.test.ts",
+    "src/shared/pdf-bookmarks.test.ts"
+  ],
+  "interfacePaths": [
+    "src/shared/tags.ts",
+    "src/shared/bookmarks.ts",
+    "src/shared/pdf-annotations.ts",
+    "src/shared/pdf-bookmarks.ts",
+    "src/shared/annotation-contract.ts"
+  ],
+  "consumerModules": [
+    "host_command_runtime",
+    "desktop_composition",
+    "main_web_service",
+    "web_renderer_bridge"
+  ],
+  "testFiles": {
+    "owner": [
+      "src/shared/tags.test.ts",
+      "src/shared/bookmarks.test.ts",
+      "src/shared/pdf-annotations.test.ts",
+      "src/shared/pdf-bookmarks.test.ts"
+    ],
+    "contract": [],
+    "consumer": [
+      "src/shared/application-command-contract.test.ts",
+      "src/shared/in-flight-promise.test.ts",
+      "src/shared/pdf-text.test.ts",
+      "scripts/build-backend.integration.test.ts"
+    ]
+  },
+  "capabilityOverlays": [],
+  "fallbackCapability": "shared_contract"
+}

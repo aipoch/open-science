@@ -303,14 +303,16 @@ const useAcpRuntime = (): {
   const runValueAction = useCallback(
     async <Value>(
       setPending: PendingSetter | undefined,
-      action: ValueAction<Value>
+      action: ValueAction<Value>,
+      recordActionError = true
     ): Promise<Value> => {
       const generation = beginAction(setPending)
 
       try {
         return await action()
       } catch (error) {
-        if (generation === actionGenerationRef.current) setActionError(getErrorMessage(error))
+        if (recordActionError && generation === actionGenerationRef.current)
+          setActionError(getErrorMessage(error))
         throw error
       } finally {
         finishPendingAction(setPending)
@@ -393,21 +395,25 @@ const useAcpRuntime = (): {
       agentTarget?: AcpSessionAgentTarget,
       memoryEnabled = true
     ) =>
-      runValueAction(setIsConnecting, () =>
-        window.api.acp.resumeSession({
-          sessionId,
-          cwd,
-          projectId,
-          permissionProfile,
-          memoryEnabled,
-          previousFrameworkId,
-          previousBackendId,
-          specialistId,
-          providerSessionId,
-          providerContinuityToken,
-          specialistBindingPending,
-          ...(agentTarget ? { agentTarget } : {})
-        })
+      runValueAction(
+        setIsConnecting,
+        () =>
+          window.api.acp.resumeSession({
+            sessionId,
+            cwd,
+            projectId,
+            permissionProfile,
+            memoryEnabled,
+            previousFrameworkId,
+            previousBackendId,
+            specialistId,
+            providerSessionId,
+            providerContinuityToken,
+            specialistBindingPending,
+            ...(agentTarget ? { agentTarget } : {})
+          }),
+        // The caller owns this Session's error surface; a global error leaks into new chats.
+        false
       ),
     [runValueAction]
   )

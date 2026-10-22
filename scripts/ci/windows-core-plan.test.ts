@@ -112,6 +112,19 @@ describe('Windows core impact and event selection', () => {
       expect(union).toEqual(expect.arrayContaining(select([path], 'merge_group').windowsCoreChecks))
   })
 
+  it.each(['pull_request', 'merge_group'])(
+    'does not widen %s core checks for a Playwright-only input in a mixed diff',
+    (event) => {
+      const source = select(['src/main/literature/catalog.ts'], event)
+      const mixed = select(
+        ['src/main/literature/catalog.ts', 'e2e/desktop-runtime-recovery.spec.ts'],
+        event
+      )
+      expect(mixed.windowsCoreChecks).toEqual(source.windowsCoreChecks)
+      expect(select(['e2e/fixtures/new-unattributed-helper.ts'], event).mode).toBe('full')
+    }
+  )
+
   it('falls back when a platform overlay has no mapped evidence', () => {
     const plan = selectWindowsCoreChecks(
       core,

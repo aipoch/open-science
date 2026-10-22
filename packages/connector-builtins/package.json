@@ -287,6 +287,22 @@
     "./orphadata": {
       "types": "./dist/orphadata.d.ts",
       "default": "./dist/orphadata.js"
+    },
+    "./rxnorm": {
+      "types": "./dist/rxnorm.d.ts",
+      "default": "./dist/rxnorm.js"
+    },
+    "./dailymed": {
+      "types": "./dist/dailymed.d.ts",
+      "default": "./dist/dailymed.js"
+    },
+    "./biosamples": {
+      "types": "./dist/biosamples.d.ts",
+      "default": "./dist/biosamples.js"
+    },
+    "./wikipathways": {
+      "types": "./dist/wikipathways.d.ts",
+      "default": "./dist/wikipathways.js"
     }
   },
   "files": [
