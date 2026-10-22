@@ -12,6 +12,8 @@ import { tmpdir } from 'node:os'
 import { join, normalize, sep } from 'node:path'
 import { parse } from 'yaml'
 import { executeModuleTestPlan } from './module-test-impact.mjs'
+import { createModuleImpactModel } from './module-impact-model.test-support'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
 import { describe, expect, it } from 'vitest'
 import {
   createPackageTestPlan,
@@ -564,7 +566,17 @@ it('skips unchanged environment units for host edits and retains downstream cont
   expect(host.testFiles).toContain('src/main/notebook/runtime-service.test.ts')
   const environment = createAffectedTestPlan(
     [{ path: 'packages/environment/src/environment-state-tracker.ts', status: 'modified' }],
-    graph
+    graph,
+    createModuleImpactModel({
+      environment_engine: {
+        ownerPaths: ['packages/environment/src/environment-state-tracker.ts'],
+        ownerTests: ['packages/environment/src/environment-state-tracker.test.ts'],
+        consumerTests: [
+          'src/main/notebook/environment-capture.contract.test.ts',
+          'src/main/notebook/environment-process.contract.test.ts'
+        ]
+      }
+    })
   )
   expect(environment.mode).toBe('selective')
   expect(environment.testFiles).toContain(
@@ -597,10 +609,29 @@ it.each([
   'keeps unchanged reproduction units excluded when only host behavior changes: %s',
   async (path) => {
     const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
-    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
-      status: 'not-used',
-      testFiles: []
+    // A controlled host-only model tests package direction independently of the
+    // expanded production provenance graph, which is checked below on full.
+    const model = createModuleImpactModel({
+      host_reproduction_model: {
+        ownerPaths: [
+          'src/main/artifacts/reproducibility-host.ts',
+          'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
+          'src/main/notebook/reproduction-runtime.ts',
+          'src/main/artifacts/session-reproducibility-store.ts'
+        ],
+        ownerTests: [
+          'src/main/artifacts/reproducibility-host.test.ts',
+          'src/main/artifacts/artifact-reproducibility-lifecycle.test.ts',
+          'src/main/notebook/reproduction-runtime.test.ts',
+          'src/main/artifacts/session-reproducibility-store.test.ts'
+        ]
+      }
     })
+    const plan = createAffectedTestPlan(
+      [{ path, status: 'modified' }],
+      { status: 'not-used', testFiles: [] },
+      model
+    )
     expect(plan.mode).toBe('selective')
     expect(plan.testFiles.some((file) => file.startsWith('packages/reproducibility/'))).toBe(false)
   }
@@ -702,3 +733,66 @@ describe('installed-consumer input selection', () => {
     )
   })
 })
+
+it.each([
+  'src/main/artifacts/reproducibility-host.ts',
+  'src/main/notebook/reproduction-runtime.ts'
+])(
+  'retains the real bounded host plan without unchanged reproduction units for %s',
+  async (path) => {
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'not-used',
+      testFiles: []
+    })
+    expect(plan.mode).toBe('selective')
+    expect(plan.testFiles.some((file) => file.startsWith('packages/reproducibility/'))).toBe(false)
+  }
+)
+
+// Literal contracts pin the actual expanded graph; no model manifest is passed here.
+it.each([
+  {
+    id: 'environment_engine',
+    path: 'packages/environment/src/environment-state-tracker.ts',
+    reason:
+      'The environment_engine owner retains 3 explicit research consumer obligations beyond its reviewed source-derived edges, including managed-research-environment.test.ts, managed-research-node-runtime.test.ts, run-observation-external-port.test.ts. 3 consumer cones have opaque runtime access, so their process, IPC, filesystem or renderer effects cannot be proven independent. Retain full main_runtime validation until these research consumer boundaries are reviewed; preserve all existing contracts and platform lanes.'
+  },
+  {
+    id: 'artifact_provenance',
+    path: 'src/main/artifacts/artifact-reproducibility-lifecycle.ts',
+    reason:
+      'Published research versions now share content-authority, persistence and replay ports with artifact publication; this expanded mixed owner requires full validation of its package, observation and recovery consumers.'
+  },
+  {
+    id: 'artifact_provenance',
+    path: 'src/main/artifacts/session-reproducibility-store.ts',
+    reason:
+      'Published research versions now share content-authority, persistence and replay ports with artifact publication; this expanded mixed owner requires full validation of its package, observation and recovery consumers.'
+  }
+])(
+  'retains the real full $id boundary and independent package direction for $path',
+  async ({ id, path, reason }) => {
+    const { createAffectedTestPlan } = await import('./module-test-impact.mjs')
+    const plan = createAffectedTestPlan([{ path, status: 'modified' }], {
+      status: 'not-used',
+      testFiles: []
+    })
+    expect(loadModuleImpactManifest().modules[id].fullTestReason).toBe(reason)
+    expect(plan.mode).toBe('full')
+    expect(plan.reasonChains.join('\n')).toContain(`${id} -> ${reason} -> full`)
+    const actualRegistry = JSON.parse(
+      readFileSync('scripts/ci/package-test-boundaries.json', 'utf8')
+    )
+    const packages = createPackageTestPlan([path], actualRegistry)
+    if (id === 'environment_engine') {
+      expect(packages.selected).toContain('packages/environment')
+      expect(packages.excluded).toContain('packages/diagnostics')
+    } else {
+      expect(packages.selected).toEqual([])
+      expect(packages.excluded).toEqual(
+        expect.arrayContaining(['packages/reproducibility', 'packages/environment'])
+      )
+    }
+  }
+)

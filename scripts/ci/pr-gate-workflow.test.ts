@@ -88,89 +88,112 @@ const manifest = JSON.parse(
   readFileSync(join(process.cwd(), 'scripts/ci/change-impact.json'), 'utf8')
 ) as { bundleOrder: string[]; laneBundles: Record<string, string>; laneOrder: string[] }
 
+type PackageRunnerFixture = {
+  cwd: string
+  git: (...args: string[]) => string
+  write: (path: string, content?: string) => void
+  run: (head: string, event?: string, dir?: string, trustedBase?: string) => string[]
+  base: string
+  trustedDir: string
+  host: string[]
+  both: string[]
+}
+
+// Each matrix input gets its own test deadline; all trusted-policy checks stay unchanged.
+const withPackageRunnerFixture = (body: (fixture: PackageRunnerFixture) => void): void => {
+  const cwd = mkdtempSync(join(tmpdir(), 'portable-matrix-'))
+  const git = (...args: string[]): string =>
+    execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
+  const write = (path: string, content = 'changed'): void => {
+    mkdirSync(dirname(join(cwd, path)), { recursive: true })
+    writeFileSync(join(cwd, path), content)
+  }
+  const step = workflow.jobs.preflight.steps!.find(({ id }) => id === 'portable_matrix')!
+  const trustedDir = join(process.cwd(), 'scripts/ci')
+  const registry = readFileSync(join(trustedDir, 'package-test-boundaries.json'), 'utf8')
+  try {
+    git('init', '--quiet')
+    git('config', 'user.email', 'ci@example.com')
+    git('config', 'user.name', 'CI Test')
+    write('scripts/ci/package-test-boundaries.json', registry)
+    for (const { root } of JSON.parse(registry).packages) {
+      write(`${root}/package.json`, readFileSync(join(process.cwd(), root, 'package.json'), 'utf8'))
+    }
+    write('packages/compute/src/old.ts')
+    git('add', '.')
+    git('commit', '--quiet', '-m', 'trusted package baseline')
+    const base = git('rev-parse', 'HEAD')
+    const run = (
+      head: string,
+      event = 'pull_request',
+      dir = trustedDir,
+      trustedBase = base
+    ): string[] => {
+      const output = join(cwd, 'output')
+      writeFileSync(output, '')
+      const result = spawnSync('bash', ['-e', '-c', step.run!], {
+        cwd,
+        encoding: 'utf8',
+        env: {
+          ...process.env,
+          EVENT_NAME: event,
+          BASE_SHA: base,
+          HEAD_SHA: head,
+          TRUSTED_BASE_SHA: trustedBase,
+          TRUSTED_CLASSIFIER_DIR: dir,
+          GITHUB_OUTPUT: output,
+          GITHUB_STEP_SUMMARY: join(cwd, 'summary')
+        }
+      })
+      expect(result.status, result.stderr).toBe(0)
+      const matrix = JSON.parse(readFileSync(output, 'utf8').trim().slice('matrix='.length))
+      return matrix.include.map(
+        ({ scope, shard, total }: { scope: string; shard: number; total: number }) =>
+          `${scope}:${shard}/${total}`
+      )
+    }
+    const host = [1, 2, 3, 4].map((shard) => `host:${shard}/4`)
+    const both = [...host, 'packages:1/2', 'packages:2/2']
+    body({ cwd, git, write, run, base, trustedDir, host, both })
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
 describe('PR Gate workflow', () => {
+  it.skipIf(process.platform === 'win32').each([
+    ['src/main/host.ts', false],
+    ['docs/packages.md', false],
+    ['scripts/unrelated.test.ts', false],
+    ['test/fixtures/nbformat.v4.5.schema.json', false],
+    ['packages/compute/src/index.ts', true],
+    ['packages/open-science/cli.ts', true],
+    ['packages/new-package/test.ts', true],
+    ['test/fixtures/pdf-translation/sample.json', true],
+    ['package-lock.json', true],
+    ['.nvmrc', true]
+  ] as const)(
+    'allocates package runners only for trusted affected package evidence: %s',
+    (path, selected) => {
+      withPackageRunnerFixture(({ git, write, run, base, host, both }) => {
+        git('reset', '--hard', base)
+        write(path)
+        git('add', path)
+        git('commit', '--quiet', '-m', 'changed input')
+        const head = git('rev-parse', 'HEAD')
+        // Candidate selector code cannot authorize a skip.
+        write('scripts/ci/package-test-impact.mjs', 'throw new Error("candidate executed")')
+        for (const event of ['pull_request', 'merge_group']) {
+          expect(run(head, event), `${event}: ${path}`).toEqual(selected ? both : host)
+        }
+      })
+    }
+  )
+
   it.skipIf(process.platform === 'win32')(
     'allocates package runners only for trusted affected package evidence',
     () => {
-      const cwd = mkdtempSync(join(tmpdir(), 'portable-matrix-'))
-      const git = (...args: string[]): string =>
-        execFileSync('git', args, { cwd, encoding: 'utf8' }).trim()
-      const write = (path: string, content = 'changed'): void => {
-        mkdirSync(dirname(join(cwd, path)), { recursive: true })
-        writeFileSync(join(cwd, path), content)
-      }
-      const step = workflow.jobs.preflight.steps!.find(({ id }) => id === 'portable_matrix')!
-      const trustedDir = join(process.cwd(), 'scripts/ci')
-      const registry = readFileSync(join(trustedDir, 'package-test-boundaries.json'), 'utf8')
-      try {
-        git('init', '--quiet')
-        git('config', 'user.email', 'ci@example.com')
-        git('config', 'user.name', 'CI Test')
-        write('scripts/ci/package-test-boundaries.json', registry)
-        for (const { root } of JSON.parse(registry).packages) {
-          write(
-            `${root}/package.json`,
-            readFileSync(join(process.cwd(), root, 'package.json'), 'utf8')
-          )
-        }
-        write('packages/compute/src/old.ts')
-        git('add', '.')
-        git('commit', '--quiet', '-m', 'trusted package baseline')
-        const base = git('rev-parse', 'HEAD')
-        const run = (
-          head: string,
-          event = 'pull_request',
-          dir = trustedDir,
-          trustedBase = base
-        ): string[] => {
-          const output = join(cwd, 'output')
-          writeFileSync(output, '')
-          const result = spawnSync('bash', ['-e', '-c', step.run!], {
-            cwd,
-            encoding: 'utf8',
-            env: {
-              ...process.env,
-              EVENT_NAME: event,
-              BASE_SHA: base,
-              HEAD_SHA: head,
-              TRUSTED_BASE_SHA: trustedBase,
-              TRUSTED_CLASSIFIER_DIR: dir,
-              GITHUB_OUTPUT: output,
-              GITHUB_STEP_SUMMARY: join(cwd, 'summary')
-            }
-          })
-          expect(result.status, result.stderr).toBe(0)
-          const matrix = JSON.parse(readFileSync(output, 'utf8').trim().slice('matrix='.length))
-          return matrix.include.map(
-            ({ scope, shard, total }: { scope: string; shard: number; total: number }) =>
-              `${scope}:${shard}/${total}`
-          )
-        }
-        const host = [1, 2, 3, 4].map((shard) => `host:${shard}/4`)
-        const both = [...host, 'packages:1/2', 'packages:2/2']
-        for (const [path, selected] of [
-          ['src/main/host.ts', false],
-          ['docs/packages.md', false],
-          ['scripts/unrelated.test.ts', false],
-          ['test/fixtures/nbformat.v4.5.schema.json', false],
-          ['packages/compute/src/index.ts', true],
-          ['packages/open-science/cli.ts', true],
-          ['packages/new-package/test.ts', true],
-          ['test/fixtures/pdf-translation/sample.json', true],
-          ['package-lock.json', true],
-          ['.nvmrc', true]
-        ] as const) {
-          git('reset', '--hard', base)
-          write(path)
-          git('add', path)
-          git('commit', '--quiet', '-m', 'changed input')
-          const head = git('rev-parse', 'HEAD')
-          // Candidate selector code cannot authorize a skip.
-          write('scripts/ci/package-test-impact.mjs', 'throw new Error("candidate executed")')
-          for (const event of ['pull_request', 'merge_group']) {
-            expect(run(head, event), `${event}: ${path}`).toEqual(selected ? both : host)
-          }
-        }
+      withPackageRunnerFixture(({ cwd, git, write, run, base, trustedDir, both }) => {
         git('reset', '--hard', base)
         write('src/main/host.ts')
         git('add', 'src/main/host.ts')
@@ -184,9 +207,7 @@ describe('PR Gate workflow', () => {
         git('commit', '--quiet', '-m', 'delete package source')
         expect(run(head)).toEqual(both)
         expect(run(git('rev-parse', 'HEAD'), 'merge_group')).toEqual(both)
-      } finally {
-        rmSync(cwd, { recursive: true, force: true })
-      }
+      })
     }
   )
 

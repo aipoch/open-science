@@ -9,6 +9,13 @@ import { classifyChanges, macosGroupsForPlan, toGitHubOutputPlan } from './class
 import { evaluatePrGate } from './evaluate-pr-gate.mjs'
 import { createAffectedTestPlan } from './module-test-impact.mjs'
 import { resolveAuthoritativePlan } from './module-impact-shadow.mjs'
+import { loadModuleImpactManifest } from './load-module-impact.mjs'
+import { runModuleImpactAuthorityCli } from './module-impact-authority.mjs'
+import {
+  createModuleImpactModel,
+  productionFullReasonContracts
+} from './module-impact-model.test-support'
+import { reviewedBoundaries } from './module-graph/policy.mjs'
 
 type Step = {
   'continue-on-error'?: boolean
@@ -55,6 +62,59 @@ const resolvePlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
   const changes = changesFor(paths)
   const candidate = classifyChanges(changes)
   return resolveAuthoritativePlan(candidate, createAffectedTestPlan(changes, graph))
+}
+
+// Controlled source-regression policy examples, independently declared from the expanded
+// production graph. Only the protected reviewed Settings source cohort is reused so the
+// capability-only boundary mechanic is exercised; this does not certify production review.
+const supplementalModel = (): ReturnType<typeof createModuleImpactModel> =>
+  createModuleImpactModel({
+    connector_builtins: {
+      ownerPaths: [
+        'packages/connector-builtins/src/genes-ontology.ts',
+        'packages/connector-builtins/src/genes-ontology.test.ts'
+      ],
+      interfacePaths: ['packages/connector-builtins/src/genes-ontology.ts'],
+      ownerTests: ['packages/connector-builtins/src/genes-ontology.test.ts'],
+      consumerTests: [
+        'src/main/connectors/registry.test.ts',
+        'src/main/connectors/service.test.ts',
+        'src/main/connectors/skill-doc.test.ts',
+        'src/main/notebook/local-rpc-server.mcpcall.test.ts'
+      ]
+    },
+    i18n_main_adapter: {
+      ownerPaths: ['src/main/locale/main-process-messages.ts'],
+      ownerTests: ['src/main/locale/owner.test.ts']
+    },
+    acp_runtime: {
+      ownerPaths: ['src/main/acp/runtime.ts'],
+      ownerTests: ['src/main/acp/runtime.test.ts'],
+      capabilityOverlays: ['e2e_regressions', 'e2e_delegation']
+    },
+    settings_provider_accounts: {
+      ownerPaths: [...reviewedBoundaries.settings_provider_accounts.sources],
+      ownerTests: ['src/main/settings/provider-accounts.test.ts'],
+      consumerModules: ['settings_backend_resolution']
+    },
+    settings_backend_resolution: {
+      ownerPaths: [...reviewedBoundaries.settings_backend_resolution.sources],
+      ownerTests: ['src/main/settings/backend-resolver.test.ts'],
+      capabilityOverlays: ['e2e_regressions', 'e2e_delegation']
+    },
+    notebook_application: {
+      ownerPaths: ['src/main/notebook/host-mcp.integration.test.ts'],
+      interfacePaths: ['src/main/notebook/host-mcp.integration.test.ts'],
+      ownerTests: ['src/main/notebook/host-mcp.integration.test.ts'],
+      capabilityOverlays: ['e2e_regressions', 'e2e_delegation']
+    }
+  })
+
+const resolveBoundedPlan = (paths: string[]): ReturnType<typeof classifyChanges> => {
+  const changes = changesFor(paths)
+  const manifest = supplementalModel()
+  const candidate = classifyChanges(changes, undefined, { moduleManifest: manifest })
+  return resolveAuthoritativePlan(candidate, createAffectedTestPlan(changes, graph, manifest))
 }
 
 it('uses the packaging heap budget for Web builds in every workflow', () => {
@@ -107,11 +167,11 @@ describe('trusted supplemental selection', () => {
   ])(
     'keeps portable and core journey coverage without unrelated supplemental groups: %s',
     (path) => {
-      const plan = resolvePlan([path])
+      const plan = resolveBoundedPlan([path])
       expect(plan.mode).toBe('selective')
       expect(plan.bundles).toContain('unit')
       expect(macosGroupsForPlan(plan)).toEqual(['journeys'])
-      const mixed = resolvePlan([path, 'src/main/acp/runtime.ts'])
+      const mixed = resolveBoundedPlan([path, 'src/main/acp/runtime.ts'])
       expect(macosGroupsForPlan(mixed)).toEqual(
         expect.arrayContaining(['regressions', 'delegation'])
       )
@@ -135,9 +195,11 @@ describe('trusted supplemental selection', () => {
   })
 
   it('carries supplemental coverage through module consumers as well as changed paths', () => {
+    const manifest = supplementalModel()
     const modules = createAffectedTestPlan(
       changesFor(['src/main/settings/provider-accounts.ts']),
-      graph
+      graph,
+      manifest
     )
     expect(modules.mode).toBe('selective')
     // Reviewed boundaries route consumers for capabilities only, not their test inventories.
@@ -147,7 +209,9 @@ describe('trusted supplemental selection', () => {
     )
     // Even a candidate with no supplemental lanes must gain its consumers' mandatory coverage.
     const candidate = classifyChanges(
-      changesFor(['packages/connector-builtins/src/genes-ontology.ts'])
+      changesFor(['packages/connector-builtins/src/genes-ontology.ts']),
+      undefined,
+      { moduleManifest: manifest }
     )
     expect(macosGroupsForPlan(candidate)).toEqual(['journeys'])
     const plan = resolveAuthoritativePlan(candidate, modules)
@@ -161,8 +225,12 @@ describe('trusted supplemental selection', () => {
       'packages/connector-builtins/src/genes-ontology.test.ts',
       'src/main/notebook/host-mcp.integration.test.ts'
     ])
-    const modules = createAffectedTestPlan(changes, graph)
-    const plan = resolveAuthoritativePlan(classifyChanges(changes), modules)
+    const manifest = supplementalModel()
+    const modules = createAffectedTestPlan(changes, graph, manifest)
+    const plan = resolveAuthoritativePlan(
+      classifyChanges(changes, undefined, { moduleManifest: manifest }),
+      modules
+    )
     expect(plan.mode).toBe('selective')
     expect(modules.modules).toEqual(['connector_builtins', 'notebook_application'])
     expect(modules.testFiles).toEqual(
@@ -177,7 +245,7 @@ describe('trusted supplemental selection', () => {
   })
 
   it('runs the whole browser lane without forcing unrelated Vitest or Electron groups', () => {
-    const plan = resolvePlan(['e2e/browser/settings-undo.spec.ts'])
+    const plan = resolveBoundedPlan(['e2e/browser/settings-undo.spec.ts'])
     expect(plan.mode).toBe('selective')
     // Keep real Windows font, clipboard and browser-startup behavior in the existing bundle.
     expect(plan.bundles).toEqual(['policy', 'static', 'macos_e2e', 'windows_e2e'])
@@ -186,14 +254,14 @@ describe('trusted supplemental selection', () => {
     expect(plan.lanes).not.toContain('e2e_workspace_windows')
     expect(toGitHubOutputPlan(plan).macosGroups).toEqual(['presentation'])
     expect(plan.lanes).toContain('e2e_visual_macos')
-    const mixed = resolvePlan([
+    const mixed = resolveBoundedPlan([
       'e2e/browser/settings-undo.spec.ts',
       'packages/connector-builtins/src/genes-ontology.ts'
     ])
     expect(mixed.mode).toBe('selective')
     expect(mixed.lanes).toContain('e2e_visual_macos')
     expect(mixed.bundles).toContain('unit')
-    const native = resolvePlan([
+    const native = resolveBoundedPlan([
       'e2e/browser/settings-undo.spec.ts',
       'src/main/notebook/kernel-executor.ts'
     ])
@@ -809,3 +877,51 @@ it('offers a focused scheduled-fixes dry-run on the real Mac job', () => {
   expect(step.run).toContain('--retries=0 --fail-on-flaky-tests')
   expect(step['continue-on-error']).toBe(true)
 })
+
+it.each([
+  ['connector_builtins', 'packages/connector-builtins/src/genes-ontology.ts'],
+  ['i18n_main_adapter', 'src/main/locale/main-process-messages.ts']
+] as const)(
+  'retains real full source regression and blocking platform coverage for %s',
+  (id, path) => {
+    const reason = productionFullReasonContracts[id]
+    expect(loadModuleImpactManifest().modules[id].fullTestReason).toBe(reason)
+    const { plan: cli } = runModuleImpactAuthorityCli(
+      ['--base', 'a'.repeat(40), '--head', 'b'.repeat(40)],
+      {},
+      { execute: () => Buffer.from(`M\0${path}\0`), write: () => undefined }
+    )
+    for (const plan of [resolvePlan([path]), cli]) {
+      expect(plan.mode).toBe('full')
+      expect(plan.reasonChains.join('\n')).toContain(reason)
+      expect(macosGroupsForPlan(plan)).toEqual([
+        'journeys',
+        'presentation',
+        'regressions',
+        'delegation'
+      ])
+      expect(plan.bundles).toEqual(
+        expect.arrayContaining([
+          'unit',
+          'linux_runtime',
+          'windows_core',
+          'macos_e2e',
+          'windows_e2e'
+        ])
+      )
+      const output = toGitHubOutputPlan(plan)
+      const conclusions = Object.fromEntries(
+        ['preflight', ...plan.bundles].map((job) => [job, 'success'])
+      )
+      expect(evaluatePrGate(output, conclusions, { executionMode: 'bundles' }).ok).toBe(true)
+      for (const required of ['unit', 'linux_runtime', 'windows_core', 'macos_e2e', 'windows_e2e'])
+        expect(
+          evaluatePrGate(
+            output,
+            { ...conclusions, [required]: 'skipped' },
+            { executionMode: 'bundles' }
+          ).ok
+        ).toBe(false)
+    }
+  }
+)
